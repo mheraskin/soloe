@@ -8,6 +8,27 @@ import type {
   WorkerStatusResult
 } from './agents.js';
 import type {
+  GitAheadBehind,
+  GitBranch,
+  GitCheckoutRequest,
+  GitChangeEvent,
+  GitCommit,
+  GitDirty,
+  GitRecentCommitsRequest,
+  GitRepoRequest,
+  GitShortstat,
+  GitStatus,
+  GitStatusRequest,
+  GitWorktree
+} from './git.js';
+import type {
+  FileOpenRequest,
+  FilePasteRequest,
+  FileSearchRequest,
+  FileSearchResult
+} from './files.js';
+import type { CrashLogSummary, DiagnosticItem } from './diagnostics.js';
+import type {
   Project,
   ProjectDetectResult,
   ProjectDraft,
@@ -64,7 +85,9 @@ export const IpcChannels = {
     event: 'observer:event'
   },
   system: {
-    openPath: 'system:open-path'
+    openPath: 'system:open-path',
+    saveText: 'system:save-text',
+    openExternal: 'system:open-external'
   },
   settings: {
     get: 'settings:get',
@@ -80,6 +103,26 @@ export const IpcChannels = {
     touch: 'projects:touch',
     detectFromPath: 'projects:detect-from-path',
     change: 'projects:change'
+  },
+  git: {
+    status: 'git:status',
+    aheadBehind: 'git:ahead-behind',
+    shortstat: 'git:shortstat',
+    dirty: 'git:dirty',
+    worktrees: 'git:worktrees',
+    branches: 'git:branches',
+    recentCommits: 'git:recent-commits',
+    checkout: 'git:checkout',
+    change: 'git:change'
+  },
+  files: {
+    search: 'files:search',
+    openInEditor: 'files:open-in-editor',
+    pasteIntoTerminal: 'files:paste-into-terminal'
+  },
+  diagnostics: {
+    list: 'diagnostics:list',
+    crashLogs: 'diagnostics:crash-logs'
   }
 } as const;
 
@@ -89,7 +132,10 @@ export type IpcChannel =
   | (typeof IpcChannels.observer)[keyof typeof IpcChannels.observer]
   | (typeof IpcChannels.system)[keyof typeof IpcChannels.system]
   | (typeof IpcChannels.settings)[keyof typeof IpcChannels.settings]
-  | (typeof IpcChannels.projects)[keyof typeof IpcChannels.projects];
+  | (typeof IpcChannels.projects)[keyof typeof IpcChannels.projects]
+  | (typeof IpcChannels.git)[keyof typeof IpcChannels.git]
+  | (typeof IpcChannels.files)[keyof typeof IpcChannels.files]
+  | (typeof IpcChannels.diagnostics)[keyof typeof IpcChannels.diagnostics];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -139,6 +185,8 @@ export interface ObserverApi {
 
 export interface SystemApi {
   openPath(sessionId: SessionId): Promise<IpcResult<true>>;
+  saveText(request: { defaultPath?: string; content: string }): Promise<IpcResult<true>>;
+  openExternal(url: string): Promise<IpcResult<true>>;
 }
 
 export interface SettingsApi {
@@ -158,6 +206,29 @@ export interface ProjectsApi {
   onChange(listener: (projects: Project[]) => void): () => void;
 }
 
+export interface GitApi {
+  status(request: GitStatusRequest): Promise<IpcResult<GitStatus>>;
+  aheadBehind(request: GitRepoRequest): Promise<IpcResult<GitAheadBehind>>;
+  shortstat(request: GitRepoRequest): Promise<IpcResult<GitShortstat>>;
+  dirty(request: GitRepoRequest): Promise<IpcResult<GitDirty>>;
+  worktrees(request: GitRepoRequest): Promise<IpcResult<GitWorktree[]>>;
+  branches(request: GitRepoRequest): Promise<IpcResult<GitBranch[]>>;
+  recentCommits(request: GitRecentCommitsRequest): Promise<IpcResult<GitCommit[]>>;
+  checkout(request: GitCheckoutRequest): Promise<IpcResult<GitStatus>>;
+  onChange(listener: (event: GitChangeEvent) => void): () => void;
+}
+
+export interface FilesApi {
+  search(request: FileSearchRequest): Promise<IpcResult<FileSearchResult[]>>;
+  openInEditor(request: FileOpenRequest): Promise<IpcResult<true>>;
+  pasteIntoTerminal(request: FilePasteRequest): Promise<IpcResult<true>>;
+}
+
+export interface DiagnosticsApi {
+  list(): Promise<IpcResult<DiagnosticItem[]>>;
+  crashLogs(): Promise<IpcResult<CrashLogSummary[]>>;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -165,6 +236,9 @@ export interface SoloeApi {
   system: SystemApi;
   settings: SettingsApi;
   projects: ProjectsApi;
+  git: GitApi;
+  files: FilesApi;
+  diagnostics: DiagnosticsApi;
 }
 
 declare global {

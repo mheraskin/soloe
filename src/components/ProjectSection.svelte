@@ -1,9 +1,11 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, Folder, Pencil, Plus } from 'lucide-svelte';
+  import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
   import { modal } from '../stores/modal.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
+  import { ipc } from '../lib/ipc';
   import WorktreeGroup from './WorktreeGroup.svelte';
 
   let {
@@ -13,6 +15,7 @@
   }: { project: Project | null; sessions: Session[]; filter?: string } = $props();
 
   let expanded = $state(true);
+  let gitWorktrees = $state<GitWorktree[]>([]);
 
   function normPath(p: string): string {
     return p.replace(/[/\\]+$/, '');
@@ -33,9 +36,30 @@
     return parts[parts.length - 1] || sessionCwd;
   }
 
+  $effect(() => {
+    if (!project) {
+      gitWorktrees = [];
+      return;
+    }
+    ipc.git.worktrees({ repoPath: project.path })
+      .then((worktrees) => {
+        gitWorktrees = worktrees;
+      })
+      .catch(() => {
+        gitWorktrees = [];
+      });
+  });
+
   let worktrees = $derived.by<{ cwd: string; label: string; items: Session[] }[]>(() => {
     const order: string[] = [];
     const buckets: Record<string, Session[]> = {};
+    for (const worktree of gitWorktrees) {
+      const key = normPath(worktree.path);
+      if (!buckets[key]) {
+        buckets[key] = [];
+        order.push(key);
+      }
+    }
     for (const s of items) {
       const key = normPath(s.cwd);
       if (!buckets[key]) {
@@ -44,11 +68,14 @@
       }
       buckets[key].push(s);
     }
-    return order.map((key) => ({
-      cwd: key,
-      label: worktreeLabel(key),
-      items: buckets[key]!
-    }));
+    return order.map((key) => {
+      const gitWorktree = gitWorktrees.find((wt) => normPath(wt.path) === key);
+      return {
+        cwd: key,
+        label: gitWorktree?.branch ?? (gitWorktree?.detached ? 'detached' : worktreeLabel(key)),
+        items: buckets[key]!
+      };
+    });
   });
 
   let title = $derived(project?.name ?? 'Unassigned');

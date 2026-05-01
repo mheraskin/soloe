@@ -25,6 +25,18 @@ import type {
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type {
+  GitCheckoutRequest,
+  GitChangeEvent,
+  GitRecentCommitsRequest,
+  GitRepoRequest,
+  GitStatusRequest
+} from '@shared/types/git.js';
+import type {
+  FileOpenRequest,
+  FilePasteRequest,
+  FileSearchRequest
+} from '@shared/types/files.js';
+import type {
   TerminalExitEvent,
   TerminalId,
   TerminalOutputEvent,
@@ -85,7 +97,10 @@ const soloe: SoloeApi = {
       subscribe<ObserverEvent>(IpcChannels.observer.event, cb)
   },
   system: {
-    openPath: (sessionId: SessionId) => ipcRenderer.invoke(IpcChannels.system.openPath, sessionId)
+    openPath: (sessionId: SessionId) => ipcRenderer.invoke(IpcChannels.system.openPath, sessionId),
+    saveText: (request: { defaultPath?: string; content: string }) =>
+      ipcRenderer.invoke(IpcChannels.system.saveText, request),
+    openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.system.openExternal, url)
   },
   settings: {
     get: () => ipcRenderer.invoke(IpcChannels.settings.get),
@@ -104,6 +119,31 @@ const soloe: SoloeApi = {
     detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
     onChange: (cb: (projects: Project[]) => void) =>
       subscribe<Project[]>(IpcChannels.projects.change, cb)
+  },
+  git: {
+    status: (request: GitStatusRequest) => ipcRenderer.invoke(IpcChannels.git.status, request),
+    aheadBehind: (request: GitRepoRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.aheadBehind, request),
+    shortstat: (request: GitRepoRequest) => ipcRenderer.invoke(IpcChannels.git.shortstat, request),
+    dirty: (request: GitRepoRequest) => ipcRenderer.invoke(IpcChannels.git.dirty, request),
+    worktrees: (request: GitRepoRequest) => ipcRenderer.invoke(IpcChannels.git.worktrees, request),
+    branches: (request: GitRepoRequest) => ipcRenderer.invoke(IpcChannels.git.branches, request),
+    recentCommits: (request: GitRecentCommitsRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.recentCommits, request),
+    checkout: (request: GitCheckoutRequest) => ipcRenderer.invoke(IpcChannels.git.checkout, request),
+    onChange: (cb: (event: GitChangeEvent) => void) =>
+      subscribe<GitChangeEvent>(IpcChannels.git.change, cb)
+  },
+  files: {
+    search: (request: FileSearchRequest) => ipcRenderer.invoke(IpcChannels.files.search, request),
+    openInEditor: (request: FileOpenRequest) =>
+      ipcRenderer.invoke(IpcChannels.files.openInEditor, request),
+    pasteIntoTerminal: (request: FilePasteRequest) =>
+      ipcRenderer.invoke(IpcChannels.files.pasteIntoTerminal, request)
+  },
+  diagnostics: {
+    list: () => ipcRenderer.invoke(IpcChannels.diagnostics.list),
+    crashLogs: () => ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs)
   }
 };
 

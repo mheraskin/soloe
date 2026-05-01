@@ -1,5 +1,6 @@
-import { ipcMain, shell } from 'electron';
+import { dialog, ipcMain, shell } from 'electron';
 import { spawn } from 'node:child_process';
+import { promises as fs } from 'node:fs';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type { SessionId } from '@shared/types/sessions.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
@@ -32,11 +33,34 @@ export class SystemIpc {
         return true as const;
       })
     );
+
+    ipcMain.handle(
+      IpcChannels.system.saveText,
+      (_e, request: { defaultPath?: string; content: string }) =>
+        ipcInvoke(async () => {
+          const result = await dialog.showSaveDialog({
+            ...(request.defaultPath ? { defaultPath: request.defaultPath } : {}),
+            filters: [{ name: 'Text', extensions: ['txt', 'log', 'md'] }]
+          });
+          if (result.canceled || !result.filePath) return true as const;
+          await fs.writeFile(result.filePath, request.content, 'utf8');
+          return true as const;
+        })
+    );
+
+    ipcMain.handle(IpcChannels.system.openExternal, (_e, url: string) =>
+      ipcInvoke(async () => {
+        await shell.openExternal(url);
+        return true as const;
+      })
+    );
   }
 
   dispose(): void {
     if (!this.registered) return;
     ipcMain.removeHandler(IpcChannels.system.openPath);
+    ipcMain.removeHandler(IpcChannels.system.saveText);
+    ipcMain.removeHandler(IpcChannels.system.openExternal);
     this.registered = false;
   }
 }

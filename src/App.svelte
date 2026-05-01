@@ -3,8 +3,10 @@
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
+  import { git } from './stores/git.svelte';
   import { nav } from './stores/nav.svelte';
   import { commandPalette } from './stores/command-palette.svelte';
+  import { filePalette } from './stores/file-palette.svelte';
   import { reportError } from './stores/toast.svelte';
   import { Keymap, tabIndexFromEvent } from './lib/keymap';
   import Sidebar from './components/Sidebar.svelte';
@@ -16,6 +18,8 @@
   import SettingsDrawer from './components/SettingsDrawer.svelte';
   import ProjectModal from './components/ProjectModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
+  import FilePalette from './components/FilePalette.svelte';
+  import DiagnosticsPane from './components/DiagnosticsPane.svelte';
 
   onMount(() => {
     sessions.attachListeners();
@@ -24,10 +28,12 @@
     settings.load().catch(reportError);
     projects.attachListeners();
     projects.load().catch(reportError);
+    git.attachListeners();
     return () => {
       sessions.detach();
       settings.detach();
       projects.detach();
+      git.detach();
     };
   });
 
@@ -37,7 +43,17 @@
       commandPalette.toggle();
       return;
     }
-    if (commandPalette.open) return;
+    if (Keymap.filePalette.match(e)) {
+      e.preventDefault();
+      filePalette.toggle();
+      return;
+    }
+    if (Keymap.terminalFind.match(e)) {
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent('soloe:terminal-find'));
+      return;
+    }
+    if (commandPalette.open || filePalette.open) return;
     const idx = tabIndexFromEvent(e);
     if (idx !== null) {
       e.preventDefault();
@@ -76,8 +92,10 @@
   <NewSessionModal />
   <ProjectModal />
   <CommandPalette />
+  <FilePalette />
   <ConfirmDialog />
   <SettingsDrawer />
+  <DiagnosticsPane />
   <Toast />
 </div>
 

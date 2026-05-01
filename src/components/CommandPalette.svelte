@@ -1,12 +1,22 @@
 <script lang="ts">
-  import { Plus, FolderPlus, Settings as SettingsIcon, Terminal, FolderOpen, Trash2, Pencil } from 'lucide-svelte';
-  import type { Component } from 'svelte';
+  import {
+    Plus,
+    FolderPlus,
+    Settings as SettingsIcon,
+    Terminal,
+    FolderOpen,
+    Trash2,
+    Pencil,
+    Activity
+  } from 'lucide-svelte';
+  import type { ComponentType, SvelteComponent } from 'svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { modal } from '../stores/modal.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { settings } from '../stores/settings.svelte';
+  import { diagnosticsPane } from '../stores/diagnostics-pane.svelte';
   import { nav } from '../stores/nav.svelte';
   import { rank } from '../lib/fuzzy';
 
@@ -15,7 +25,7 @@
     title: string;
     hint?: string;
     section: string;
-    icon: Component;
+    icon: ComponentType<SvelteComponent>;
     run: () => void | Promise<void>;
   }
 
@@ -60,6 +70,13 @@
       section: 'Actions',
       icon: SettingsIcon,
       run: () => settings.openDrawer()
+    });
+    list.push({
+      id: 'action.open-diagnostics',
+      title: 'Open diagnostics',
+      section: 'Actions',
+      icon: Activity,
+      run: () => diagnosticsPane.show()
     });
 
     for (const session of sessions.sessions) {

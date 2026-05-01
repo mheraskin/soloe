@@ -15,6 +15,18 @@ import type {
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type {
+  GitCheckoutRequest,
+  GitChangeEvent,
+  GitRecentCommitsRequest,
+  GitRepoRequest,
+  GitStatusRequest
+} from '@shared/types/git.js';
+import type {
+  FileOpenRequest,
+  FilePasteRequest,
+  FileSearchRequest
+} from '@shared/types/files.js';
+import type {
   TerminalExitEvent,
   TerminalId,
   TerminalOutputEvent,
@@ -67,7 +79,10 @@ export const ipc = {
     onEvent: (cb: (event: ObserverEvent) => void) => c.observer.onEvent(cb)
   },
   system: {
-    openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId))
+    openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId)),
+    saveText: async (request: { defaultPath?: string; content: string }) =>
+      unwrap(await c.system.saveText(request)),
+    openExternal: async (url: string) => unwrap(await c.system.openExternal(url))
   },
   settings: {
     get: async () => unwrap(await c.settings.get()),
@@ -84,5 +99,28 @@ export const ipc = {
     touch: async (id: ProjectId) => unwrap(await c.projects.touch(id)),
     detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
     onChange: (cb: (projects: Project[]) => void) => c.projects.onChange(cb)
+  },
+  git: {
+    status: async (request: GitStatusRequest) => unwrap(await c.git.status(request)),
+    aheadBehind: async (request: GitRepoRequest) => unwrap(await c.git.aheadBehind(request)),
+    shortstat: async (request: GitRepoRequest) => unwrap(await c.git.shortstat(request)),
+    dirty: async (request: GitRepoRequest) => unwrap(await c.git.dirty(request)),
+    worktrees: async (request: GitRepoRequest) => unwrap(await c.git.worktrees(request)),
+    branches: async (request: GitRepoRequest) => unwrap(await c.git.branches(request)),
+    recentCommits: async (request: GitRecentCommitsRequest) =>
+      unwrap(await c.git.recentCommits(request)),
+    checkout: async (request: GitCheckoutRequest) => unwrap(await c.git.checkout(request)),
+    onChange: (cb: (event: GitChangeEvent) => void) => c.git.onChange(cb)
+  },
+  files: {
+    search: async (request: FileSearchRequest) => unwrap(await c.files.search(request)),
+    openInEditor: async (request: FileOpenRequest) =>
+      unwrap(await c.files.openInEditor(request)),
+    pasteIntoTerminal: async (request: FilePasteRequest) =>
+      unwrap(await c.files.pasteIntoTerminal(request))
+  },
+  diagnostics: {
+    list: async () => unwrap(await c.diagnostics.list()),
+    crashLogs: async () => unwrap(await c.diagnostics.crashLogs())
   }
 };

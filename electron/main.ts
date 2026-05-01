@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell } from 'electron';
 import * as path from 'node:path';
+import { promises as fs } from 'node:fs';
 import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
 import { SessionStore } from './sessions/SessionStore.js';
 import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
@@ -14,12 +15,18 @@ import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
 import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
+import { GitService } from './git/GitService.js';
+import { FileSearchService } from './files/FileSearchService.js';
+import { DiagnosticsService } from './diagnostics/DiagnosticsService.js';
 import { SessionsIpc } from './ipc/sessions.ipc.js';
 import { TerminalIpc } from './ipc/terminal.ipc.js';
 import { ObserverIpc } from './ipc/observer.ipc.js';
 import { SystemIpc } from './ipc/system.ipc.js';
 import { SettingsIpc } from './ipc/settings.ipc.js';
 import { ProjectsIpc } from './ipc/projects.ipc.js';
+import { GitIpc } from './ipc/git.ipc.js';
+import { FilesIpc } from './ipc/files.ipc.js';
+import { DiagnosticsIpc } from './ipc/diagnostics.ipc.js';
 
 interface AppServices {
   store: SessionStore;
@@ -30,12 +37,18 @@ interface AppServices {
   observerStore: AgentObserverStore;
   runtime: AgentRuntimeManager;
   mcp: SoloeMcpServer;
+  git: GitService;
+  files: FileSearchService;
+  diagnostics: DiagnosticsService;
   sessionsIpc: SessionsIpc;
   terminalIpc: TerminalIpc;
   observerIpc: ObserverIpc;
   systemIpc: SystemIpc;
   settingsIpc: SettingsIpc;
   projectsIpc: ProjectsIpc;
+  gitIpc: GitIpc;
+  filesIpc: FilesIpc;
+  diagnosticsIpc: DiagnosticsIpc;
 }
 
 let services: AppServices | null = null;
@@ -48,6 +61,7 @@ async function setupServices(): Promise<AppServices> {
   const observerFile = path.join(userDataPath, 'observer.json');
   const settingsFile = path.join(userDataPath, 'settings.json');
   const projectsFile = path.join(userDataPath, 'projects.json');
+  const crashDir = path.join(userDataPath, 'crashes');
 
   const store = new SessionStore(sessionsFile);
   await store.init();
@@ -115,12 +129,35 @@ async function setupServices(): Promise<AppServices> {
     store: projects,
     getWindows: () => BrowserWindow.getAllWindows()
   });
+  const git = new GitService({
+    getGitBinary: async () => (await settings.get()).binaries.git
+  });
+  const gitIpc = new GitIpc({
+    service: git,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  const files = new FileSearchService({ getBinaries });
+  const filesIpc = new FilesIpc({
+    service: files,
+    pty: manager,
+    getBinaries
+  });
+  const diagnostics = new DiagnosticsService({
+    settings,
+    projects,
+    git,
+    crashDir
+  });
+  const diagnosticsIpc = new DiagnosticsIpc({ service: diagnostics });
   sessionsIpc.register();
   terminalIpc.register();
   observerIpc.register();
   systemIpc.register();
   settingsIpc.register();
   projectsIpc.register();
+  gitIpc.register();
+  filesIpc.register();
+  diagnosticsIpc.register();
 
   return {
     store,
@@ -131,12 +168,18 @@ async function setupServices(): Promise<AppServices> {
     observerStore,
     runtime,
     mcp,
+    git,
+    files,
+    diagnostics,
     sessionsIpc,
     terminalIpc,
     observerIpc,
     systemIpc,
     settingsIpc,
-    projectsIpc
+    projectsIpc,
+    gitIpc,
+    filesIpc,
+    diagnosticsIpc
   };
 }
 
@@ -184,6 +227,10 @@ async function cleanup(): Promise<void> {
     services.systemIpc.dispose();
     services.settingsIpc.dispose();
     services.projectsIpc.dispose();
+    services.gitIpc.dispose();
+    services.filesIpc.dispose();
+    services.diagnosticsIpc.dispose();
+    services.git.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);
     await services.pty.dispose();
@@ -234,4 +281,16 @@ if (ensureSingleInstance()) {
 
   process.on('SIGINT', () => { void cleanup().then(() => app.exit(0)); });
   process.on('SIGTERM', () => { void cleanup().then(() => app.exit(0)); });
+  process.on('uncaughtException', (err) => {
+    void writeCrashLog(err).catch(() => {});
+    console.error('Uncaught exception:', err);
+  });
+}
+
+async function writeCrashLog(err: unknown): Promise<void> {
+  const crashDir = path.join(app.getPath('userData'), 'crashes');
+  await fs.mkdir(crashDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const message = err instanceof Error ? `${err.stack ?? err.message}\n` : `${String(err)}\n`;
+  await fs.writeFile(path.join(crashDir, `${stamp}.log`), message, 'utf8');
 }

@@ -8,6 +8,7 @@
   import { ipc } from '../lib/ipc';
   import { shortCwd } from '../lib/sessions-helpers';
   import StatusDot from './StatusDot.svelte';
+  import SidebarBranchLine from './SidebarBranchLine.svelte';
 
   let { session }: { session: Session } = $props();
 
@@ -90,11 +91,16 @@
   title={session.cwd}
 >
   <StatusDot {status} />
-  <span class="name">{session.name || '(unnamed)'}</span>
-  {#if workerCount > 0}
-    <span class="workers" title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}>{workerCount}</span>
-  {/if}
-  <span class="cwd">{shortCwd(session.cwd)}</span>
+  <span class="main">
+    <span class="top">
+      <span class="name">{session.name || '(unnamed)'}</span>
+      {#if workerCount > 0}
+        <span class="workers" title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}>{workerCount}</span>
+      {/if}
+      <span class="cwd">{shortCwd(session.cwd)}</span>
+    </span>
+    <SidebarBranchLine cwd={session.cwd} />
+  </span>
 </button>
 
 {#if menuOpen}
@@ -120,7 +126,7 @@
 <style>
   .row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     width: 100%;
     padding: 6px 10px;
@@ -144,6 +150,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
   }
   .cwd {
     color: var(--muted);

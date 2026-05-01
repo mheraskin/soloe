@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { Play, Square, RotateCw, Pencil, FolderOpen, Copy, Trash2, Settings } from 'lucide-svelte';
+  import {
+    Play,
+    Square,
+    RotateCw,
+    Pencil,
+    FolderOpen,
+    Copy,
+    Trash2,
+    Settings,
+    Search,
+    FileText
+  } from 'lucide-svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
   import { settings } from '../stores/settings.svelte';
@@ -8,6 +19,7 @@
   import { ipc } from '../lib/ipc';
   import { kindLabel } from '../lib/sessions-helpers';
   import StatusDot from './StatusDot.svelte';
+  import GitBranchWidget from './GitBranchWidget.svelte';
 
   let selected = $derived(sessions.selected);
   let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
@@ -54,6 +66,18 @@
   function edit() {
     if (selected) modal.openEdit(selected);
   }
+  function terminalAction(name: string) {
+    window.dispatchEvent(new CustomEvent(name));
+  }
+  async function openInEditor() {
+    if (!selected) return;
+    try {
+      await ipc.files.openInEditor({ absolutePath: selected.cwd });
+      toasts.push('Opened cwd in editor', 'info');
+    } catch (e) {
+      reportError(e);
+    }
+  }
 </script>
 
 <div class="bar">
@@ -62,6 +86,7 @@
       <StatusDot {status} />
       <strong>{selected.name}</strong>
       <span class="dim">· {kindLabel(selected.kind)} · {selected.runMode}</span>
+      <GitBranchWidget cwd={selected.cwd} />
     </div>
     <div class="actions">
       <button onclick={start} disabled={!canStart}>
@@ -82,6 +107,23 @@
       </button>
       <button onclick={copyCmd}>
         <Copy size={12} /><span>Copy command</span>
+      </button>
+      <span class="sep"></span>
+      <button onclick={() => terminalAction('soloe:terminal-find')} disabled={!isRunning}>
+        <Search size={12} /><span>Find</span>
+      </button>
+      <button onclick={() => terminalAction('soloe:terminal-save-buffer')} disabled={!isRunning}>
+        <FileText size={12} /><span>Save buffer</span>
+      </button>
+      <button onclick={() => terminalAction('soloe:terminal-copy-buffer')} disabled={!isRunning}>
+        <Copy size={12} /><span>Copy buffer</span>
+      </button>
+      <span class="sep"></span>
+      <button onclick={() => terminalAction('soloe:terminal-copy-markdown')} disabled={!isRunning}>
+        <FileText size={12} /><span>Copy Markdown</span>
+      </button>
+      <button onclick={openInEditor}>
+        <FolderOpen size={12} /><span>Open editor</span>
       </button>
       <span class="sep"></span>
       <button class="danger" onclick={remove}>

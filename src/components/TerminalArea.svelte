@@ -24,6 +24,7 @@
       <div class="pane" class:active={rt.sessionId === sessions.selectedId}>
         <TerminalPane
           terminalId={rt.terminalId}
+          sessionId={rt.sessionId}
           active={rt.sessionId === sessions.selectedId}
         />
       </div>
