@@ -52,6 +52,9 @@ const cockpit: CockpitApi = {
       subscribe<TerminalExitEvent>(IpcChannels.terminal.exit, cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) =>
       subscribe<TerminalStatusEvent>(IpcChannels.terminal.status, cb)
+  },
+  system: {
+    openPath: (sessionId: SessionId) => ipcRenderer.invoke(IpcChannels.system.openPath, sessionId)
   }
 };
 

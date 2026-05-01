@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
   main: {
@@ -40,6 +41,7 @@ export default defineConfig({
   },
   renderer: {
     root: 'src',
+    plugins: [svelte()],
     resolve: {
       alias: {
         '@shared': resolve(__dirname, 'shared'),

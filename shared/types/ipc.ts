@@ -35,12 +35,16 @@ export const IpcChannels = {
     output: 'terminal:output',
     exit: 'terminal:exit',
     status: 'terminal:status'
+  },
+  system: {
+    openPath: 'system:open-path'
   }
 } as const;
 
 export type IpcChannel =
   | (typeof IpcChannels.sessions)[keyof typeof IpcChannels.sessions]
-  | (typeof IpcChannels.terminal)[keyof typeof IpcChannels.terminal];
+  | (typeof IpcChannels.terminal)[keyof typeof IpcChannels.terminal]
+  | (typeof IpcChannels.system)[keyof typeof IpcChannels.system];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -76,9 +80,14 @@ export interface TerminalApi {
   onStatus(listener: (event: TerminalStatusEvent) => void): () => void;
 }
 
+export interface SystemApi {
+  openPath(sessionId: SessionId): Promise<IpcResult<true>>;
+}
+
 export interface CockpitApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
+  system: SystemApi;
 }
 
 declare global {

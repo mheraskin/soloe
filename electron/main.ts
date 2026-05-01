@@ -10,12 +10,14 @@ import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
 import { SessionsIpc } from './ipc/sessions.ipc.js';
 import { TerminalIpc } from './ipc/terminal.ipc.js';
+import { SystemIpc } from './ipc/system.ipc.js';
 
 interface AppServices {
   store: SessionStore;
   pty: PtyManager;
   sessionsIpc: SessionsIpc;
   terminalIpc: TerminalIpc;
+  systemIpc: SystemIpc;
 }
 
 let services: AppServices | null = null;
@@ -46,10 +48,12 @@ async function setupServices(): Promise<AppServices> {
     pty: manager,
     getWindows: () => BrowserWindow.getAllWindows()
   });
+  const systemIpc = new SystemIpc({ store });
   sessionsIpc.register();
   terminalIpc.register();
+  systemIpc.register();
 
-  return { store, pty: manager, sessionsIpc, terminalIpc };
+  return { store, pty: manager, sessionsIpc, terminalIpc, systemIpc };
 }
 
 async function createWindow(): Promise<BrowserWindow> {
@@ -92,6 +96,7 @@ async function cleanup(): Promise<void> {
   if (services) {
     services.sessionsIpc.dispose();
     services.terminalIpc.dispose();
+    services.systemIpc.dispose();
     await services.pty.dispose();
     services = null;
   }

@@ -1,0 +1,92 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f0f10;
+  --bg-elev-1: #161618;
+  --bg-elev-2: #1d1d20;
+  --bg-elev-3: #26262a;
+  --fg: #e6e6e6;
+  --fg-strong: #ffffff;
+  --muted: #8a8a8a;
+  --muted-2: #5e5e62;
+  --accent: #6cf;
+  --accent-strong: #4cb7f0;
+  --green: #5fd07a;
+  --amber: #f0bf66;
+  --red: #ef6f6f;
+  --border: #2a2a2c;
+  --border-strong: #3a3a40;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --font-ui: ui-sans-serif, -apple-system, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-elev-3);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input[type="text"], input[type="search"], select, textarea {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  color: var(--fg);
+  width: 100%;
+}
+
+input[type="text"]:focus, input[type="search"]:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+label > input, label > select, label > textarea {
+  color: var(--fg);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--bg-elev-3); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
