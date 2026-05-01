@@ -7,6 +7,7 @@
   import StandardForm from './forms/StandardForm.svelte';
   import ClaudeForm from './forms/ClaudeForm.svelte';
   import CodexForm from './forms/CodexForm.svelte';
+  import KindIcon from './KindIcon.svelte';
 
   const kinds: SessionKind[] = ['standard_terminal', 'claude_code', 'codex'];
   let submitting = $state(false);
@@ -73,7 +74,8 @@
                 class:active={modal.draft.kind === k}
                 onclick={() => setKind(k)}
               >
-                {kindLabel(k)}
+                <KindIcon kind={k} size={18} />
+                <span>{kindLabel(k)}</span>
               </button>
             {/each}
           </div>
@@ -234,6 +236,10 @@
     padding: 10px;
     background: var(--bg-elev-2);
     border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
   }
   .kind-row button.active {
     border-color: var(--accent);

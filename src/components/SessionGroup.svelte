@@ -2,6 +2,7 @@
   import type { Session, SessionKind } from '@shared/types/sessions.js';
   import { modal } from '../stores/modal.svelte';
   import SessionItem from './SessionItem.svelte';
+  import KindIcon from './KindIcon.svelte';
 
   let {
     title,
@@ -12,7 +13,10 @@
 
 <section>
   <header>
-    <h3>{title}</h3>
+    <div class="title">
+      <KindIcon {kind} size={12} />
+      <h3>{title}</h3>
+    </div>
     <button class="add" title="New {title} session" onclick={() => modal.openNew(kind)}>+</button>
   </header>
   {#if items.length === 0}
@@ -37,6 +41,11 @@
     align-items: center;
     justify-content: space-between;
     padding: 4px 4px 2px 6px;
+  }
+  .title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   h3 {
     margin: 0;
