@@ -1,4 +1,13 @@
 import type {
+  CreateWorkerSessionRequest,
+  CreateWorkerSessionResult,
+  ListObserverEventsRequest,
+  ObservedAgentSnapshot,
+  ObserverEvent,
+  SendWorkerPromptRequest,
+  WorkerStatusResult
+} from './agents.js';
+import type {
   Session,
   SessionDraft,
   SessionId,
@@ -36,6 +45,16 @@ export const IpcChannels = {
     exit: 'terminal:exit',
     status: 'terminal:status'
   },
+  observer: {
+    list: 'observer:list',
+    listEvents: 'observer:list-events',
+    createWorkerSession: 'observer:create-worker-session',
+    sendWorkerPrompt: 'observer:send-worker-prompt',
+    getWorkerStatus: 'observer:get-worker-status',
+    stopWorkerSession: 'observer:stop-worker-session',
+    snapshot: 'observer:snapshot',
+    event: 'observer:event'
+  },
   system: {
     openPath: 'system:open-path'
   }
@@ -44,6 +63,7 @@ export const IpcChannels = {
 export type IpcChannel =
   | (typeof IpcChannels.sessions)[keyof typeof IpcChannels.sessions]
   | (typeof IpcChannels.terminal)[keyof typeof IpcChannels.terminal]
+  | (typeof IpcChannels.observer)[keyof typeof IpcChannels.observer]
   | (typeof IpcChannels.system)[keyof typeof IpcChannels.system];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -80,6 +100,18 @@ export interface TerminalApi {
   onStatus(listener: (event: TerminalStatusEvent) => void): () => void;
 }
 
+export interface ObserverApi {
+  list(): Promise<IpcResult<ObservedAgentSnapshot[]>>;
+  listEvents(request?: ListObserverEventsRequest): Promise<IpcResult<ObserverEvent[]>>;
+  createWorkerSession(request: CreateWorkerSessionRequest): Promise<IpcResult<CreateWorkerSessionResult>>;
+  sendWorkerPrompt(request: SendWorkerPromptRequest): Promise<IpcResult<WorkerStatusResult>>;
+  getWorkerStatus(workerId: string): Promise<IpcResult<WorkerStatusResult>>;
+  stopWorkerSession(workerId: string): Promise<IpcResult<WorkerStatusResult>>;
+
+  onSnapshot(listener: (snapshot: ObservedAgentSnapshot) => void): () => void;
+  onEvent(listener: (event: ObserverEvent) => void): () => void;
+}
+
 export interface SystemApi {
   openPath(sessionId: SessionId): Promise<IpcResult<true>>;
 }
@@ -87,6 +119,7 @@ export interface SystemApi {
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
+  observer: ObserverApi;
   system: SystemApi;
 }
 

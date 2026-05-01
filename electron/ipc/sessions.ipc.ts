@@ -3,12 +3,15 @@ import { IpcChannels } from '@shared/types/ipc.js';
 import type { SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js';
+import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import { ipcInvoke } from './result.js';
 
 export interface SessionsIpcOptions {
   store: SessionStore;
   commandBuilder: SessionCommandBuilder;
   baseEnv?: NodeJS.ProcessEnv;
+  observer?: AgentObserverManager;
+  bridgeInfo?: () => { url: string; token: string } | null;
 }
 
 export class SessionsIpc {
@@ -21,7 +24,11 @@ export class SessionsIpc {
     this.registered = true;
 
     ipcMain.handle(IpcChannels.sessions.list, () =>
-      ipcInvoke(() => this.opts.store.list())
+      ipcInvoke(async () => {
+        const sessions = await this.opts.store.list();
+        for (const session of sessions) this.opts.observer?.registerTuiSession(session);
+        return sessions;
+      })
     );
 
     ipcMain.handle(IpcChannels.sessions.get, (_e, id: SessionId) =>
@@ -29,16 +36,25 @@ export class SessionsIpc {
     );
 
     ipcMain.handle(IpcChannels.sessions.create, (_e, draft: SessionDraft) =>
-      ipcInvoke(() => this.opts.store.create(draft))
+      ipcInvoke(async () => {
+        const session = await this.opts.store.create({ ...draft, runtimeMode: 'tui' });
+        this.opts.observer?.registerTuiSession(session);
+        return session;
+      })
     );
 
     ipcMain.handle(IpcChannels.sessions.update, (_e, id: SessionId, patch: SessionUpdate) =>
-      ipcInvoke(() => this.opts.store.update(id, patch))
+      ipcInvoke(async () => {
+        const session = await this.opts.store.update(id, patch);
+        this.opts.observer?.registerTuiSession(session);
+        return session;
+      })
     );
 
     ipcMain.handle(IpcChannels.sessions.delete, (_e, id: SessionId) =>
       ipcInvoke(async () => {
         await this.opts.store.delete(id);
+        this.opts.observer?.removeSession(id);
         return true as const;
       })
     );
@@ -48,7 +64,8 @@ export class SessionsIpc {
         const session = await this.opts.store.get(id);
         if (!session) throw new Error(`Session not found: ${id}`);
         return this.opts.commandBuilder.build(session, {
-          baseEnv: this.opts.baseEnv ?? process.env
+          baseEnv: this.opts.baseEnv ?? process.env,
+          bridge: this.opts.bridgeInfo?.() ?? undefined
         });
       })
     );

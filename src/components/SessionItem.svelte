@@ -15,6 +15,7 @@
 
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
+  let workerCount = $derived(sessions.childWorkersFor(session.id).length);
   let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
@@ -82,6 +83,9 @@
 >
   <StatusDot {status} />
   <span class="name">{session.name || '(unnamed)'}</span>
+  {#if workerCount > 0}
+    <span class="workers" title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}>{workerCount}</span>
+  {/if}
   <span class="cwd">{shortCwd(session.cwd)}</span>
 </button>
 
@@ -141,6 +145,19 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 100px;
+  }
+  .workers {
+    min-width: 18px;
+    height: 18px;
+    border-radius: 9px;
+    background: var(--bg-elev-3);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 
   .menu {

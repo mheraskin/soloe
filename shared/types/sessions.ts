@@ -6,15 +6,35 @@ export type ShellKind = 'auto' | 'bash' | 'zsh' | 'pwsh' | 'cmd' | 'custom';
 
 export type SessionKind = 'standard_terminal' | 'claude_code' | 'codex';
 
+export type SessionRuntimeMode = 'tui' | 'sdk_worker';
+
+export type AgentObservedState =
+  | 'starting'
+  | 'idle'
+  | 'working'
+  | 'running_tool'
+  | 'waiting_for_input'
+  | 'waiting_for_approval'
+  | 'completed'
+  | 'failed'
+  | 'exited';
+
 export interface SessionBase {
   id: SessionId;
   kind: SessionKind;
+  runtimeMode?: SessionRuntimeMode;
   name: string;
   cwd: string;
   runMode: RunMode;
   wslDistro?: string;
   createdAt: string;
   lastUsedAt: string;
+  originSessionId?: SessionId;
+  workerId?: string;
+  providerThreadId?: string;
+  transcriptPath?: string;
+  lastEventAt?: string;
+  confidence?: number;
 }
 
 export interface StandardTerminalSession extends SessionBase {
@@ -57,6 +77,8 @@ export type SessionStatus = 'stopped' | 'starting' | 'running' | 'exited' | 'err
 
 export interface SessionRuntimeState {
   sessionId: SessionId;
+  runtimeMode?: SessionRuntimeMode;
+  observedState?: AgentObservedState;
   status: SessionStatus;
   terminalId: string | null;
   startedAt?: string;

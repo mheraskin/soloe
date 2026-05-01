@@ -1,4 +1,11 @@
 import type { IpcResult } from '@shared/types/ipc.js';
+import type {
+  CreateWorkerSessionRequest,
+  ListObserverEventsRequest,
+  ObservedAgentSnapshot,
+  ObserverEvent,
+  SendWorkerPromptRequest
+} from '@shared/types/agents.js';
 import type { SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
 import type {
   TerminalExitEvent,
@@ -37,6 +44,20 @@ export const ipc = {
     onOutput: (cb: (event: TerminalOutputEvent) => void) => c.terminal.onOutput(cb),
     onExit: (cb: (event: TerminalExitEvent) => void) => c.terminal.onExit(cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) => c.terminal.onStatus(cb)
+  },
+  observer: {
+    list: async () => unwrap(await c.observer.list()),
+    listEvents: async (request?: ListObserverEventsRequest) =>
+      unwrap(await c.observer.listEvents(request)),
+    createWorkerSession: async (request: CreateWorkerSessionRequest) =>
+      unwrap(await c.observer.createWorkerSession(request)),
+    sendWorkerPrompt: async (request: SendWorkerPromptRequest) =>
+      unwrap(await c.observer.sendWorkerPrompt(request)),
+    getWorkerStatus: async (workerId: string) => unwrap(await c.observer.getWorkerStatus(workerId)),
+    stopWorkerSession: async (workerId: string) =>
+      unwrap(await c.observer.stopWorkerSession(workerId)),
+    onSnapshot: (cb: (snapshot: ObservedAgentSnapshot) => void) => c.observer.onSnapshot(cb),
+    onEvent: (cb: (event: ObserverEvent) => void) => c.observer.onEvent(cb)
   },
   system: {
     openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId))

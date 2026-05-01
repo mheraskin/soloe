@@ -15,6 +15,7 @@ import type {
 import { DEFAULT_COLS, DEFAULT_ROWS } from '@shared/types/terminal.js';
 import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
+import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
 
 interface TerminalInstance {
@@ -42,6 +43,8 @@ export interface PtyManagerOptions {
   store: SessionStore;
   batcher: TerminalOutputBatcher;
   baseEnv?: NodeJS.ProcessEnv;
+  observer?: AgentObserverManager;
+  bridgeInfo?: () => { url: string; token: string } | null;
 }
 
 export declare interface PtyManager {
@@ -74,7 +77,9 @@ export class PtyManager extends EventEmitter {
     const session = await this.opts.store.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-    const spec = this.opts.commandBuilder.build(session, { baseEnv: this.baseEnv });
+    this.opts.observer?.registerTuiSession(session);
+    const bridge = this.opts.bridgeInfo?.() ?? undefined;
+    const spec = this.opts.commandBuilder.build(session, { baseEnv: this.baseEnv, bridge });
     const cols = options.cols ?? DEFAULT_COLS;
     const rows = options.rows ?? DEFAULT_ROWS;
     const terminalId = newTerminalId();
@@ -233,13 +238,16 @@ export class PtyManager extends EventEmitter {
   ): void {
     const event: TerminalStatusEvent = { sessionId, terminalId, status };
     if (message !== undefined) event.message = message;
+    this.opts.observer?.updateTuiStatus(event);
     this.emit('status', event);
   }
 
   private toRuntimeState(instance: TerminalInstance): SessionRuntimeState {
     const state: SessionRuntimeState = {
       sessionId: instance.sessionId,
+      runtimeMode: 'tui',
       status: instance.status,
+      observedState: this.opts.observer?.getSnapshot(instance.sessionId)?.state,
       terminalId: instance.terminalId,
       startedAt: instance.startedAt
     };

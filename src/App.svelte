@@ -4,6 +4,7 @@
   import { reportError } from './stores/toast.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
+  import AgentInspector from './components/AgentInspector.svelte';
   import NewSessionModal from './components/NewSessionModal.svelte';
   import Toast from './components/Toast.svelte';
 
@@ -21,6 +22,7 @@
   <div class="body">
     <Sidebar />
     <TerminalArea />
+    <AgentInspector />
   </div>
   <NewSessionModal />
   <Toast />

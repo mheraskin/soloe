@@ -1,4 +1,8 @@
 import type {
+  ObservedAgentSnapshot,
+  ObserverEvent
+} from '@shared/types/agents.js';
+import type {
   Session,
   SessionDraft,
   SessionId,
@@ -15,6 +19,8 @@ interface RuntimeEntry extends SessionRuntimeState {
 class SessionsStore {
   sessions = $state<Session[]>([]);
   runtime = $state<Record<SessionId, RuntimeEntry>>({});
+  observed = $state<Record<string, ObservedAgentSnapshot>>({});
+  observerEvents = $state<Record<string, ObserverEvent[]>>({});
   selectedId = $state<SessionId | null>(null);
   loading = $state(false);
 
@@ -38,17 +44,33 @@ class SessionsStore {
     return this.runtime[id]?.terminalId ?? null;
   }
 
+  observationFor(id: string): ObservedAgentSnapshot | null {
+    return this.observed[id] ?? null;
+  }
+
+  childWorkersFor(id: SessionId): ObservedAgentSnapshot[] {
+    return Object.values(this.observed)
+      .filter((s) => s.subjectKind === 'worker' && s.originSessionId === id)
+      .sort((a, b) => (b.lastEventAt ?? '').localeCompare(a.lastEventAt ?? ''));
+  }
+
+  eventsFor(id: string): ObserverEvent[] {
+    return this.observerEvents[id] ?? [];
+  }
+
   async load(): Promise<void> {
     this.loading = true;
     try {
-      const [list, running] = await Promise.all([
+      const [list, running, observed] = await Promise.all([
         ipc.sessions.list(),
-        ipc.terminal.listRunning()
+        ipc.terminal.listRunning(),
+        ipc.observer.list()
       ]);
       this.sessions = list;
       const next: Record<SessionId, RuntimeEntry> = {};
       for (const r of running) next[r.sessionId] = { ...r };
       this.runtime = next;
+      this.observed = Object.fromEntries(observed.map((s) => [s.id, s]));
       if (!this.selectedId && list.length > 0) {
         this.selectedId = list[0]!.id;
       }
@@ -95,6 +117,20 @@ class SessionsStore {
         };
       })
     );
+    this.detachers.push(
+      ipc.observer.onSnapshot((snapshot) => {
+        this.observed = { ...this.observed, [snapshot.id]: snapshot };
+      })
+    );
+    this.detachers.push(
+      ipc.observer.onEvent((event) => {
+        const current = this.observerEvents[event.subjectId] ?? [];
+        this.observerEvents = {
+          ...this.observerEvents,
+          [event.subjectId]: [event, ...current].slice(0, 30)
+        };
+      })
+    );
   }
 
   detach(): void {
@@ -129,6 +165,12 @@ class SessionsStore {
     const next = { ...this.runtime };
     delete next[id];
     this.runtime = next;
+    const observed = { ...this.observed };
+    delete observed[id];
+    for (const snapshot of Object.values(observed)) {
+      if (snapshot.originSessionId === id) delete observed[snapshot.id];
+    }
+    this.observed = observed;
     if (this.selectedId === id) {
       this.selectedId = this.sessions[0]?.id ?? null;
     }
@@ -146,6 +188,13 @@ class SessionsStore {
 
   async restart(id: SessionId): Promise<void> {
     await ipc.terminal.restart(id);
+  }
+
+  async stopWorker(workerId: string): Promise<void> {
+    const status = await ipc.observer.stopWorkerSession(workerId);
+    if (status.snapshot) {
+      this.observed = { ...this.observed, [status.snapshot.id]: status.snapshot };
+    }
   }
 
   select(id: SessionId | null): void {

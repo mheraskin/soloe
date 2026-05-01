@@ -127,6 +127,18 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     const s = { ...claudeBase('new'), fullscreenTui: true } as Session;
     expect(innerLine(builder.build(s, ctx).args)).toContain('CLAUDE_CODE_NO_FLICKER=1');
   });
+
+  it('injects Soloe bridge environment for Claude TUI sessions', () => {
+    const s = claudeBase('new');
+    const inner = innerLine(builder.build(s, {
+      ...ctx,
+      bridge: { url: 'http://127.0.0.1:1234/mcp', token: 'secret' }
+    }).args);
+    expect(inner).toContain('SOLOE_SESSION_ID=test');
+    expect(inner).toContain('SOLOE_AGENT_PROVIDER=claude_code');
+    expect(inner).toContain('SOLOE_BRIDGE_URL=http://127.0.0.1:1234/mcp');
+    expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
+  });
 });
 
 describe('SessionCommandBuilder — codex kind', () => {
@@ -158,6 +170,24 @@ describe('SessionCommandBuilder — codex kind', () => {
     const inner = innerLine(builder.build(s, ctx).args);
     expect(inner).toContain('resume');
     expect(inner).toContain('cdx-123');
+  });
+
+  it('injects Soloe bridge environment for Codex TUI sessions', () => {
+    const s: Session = {
+      ...baseFields(),
+      kind: 'codex',
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      resumeMode: 'new'
+    };
+    const inner = innerLine(builder.build(s, {
+      ...ctx,
+      bridge: { url: 'http://127.0.0.1:1234/mcp', token: 'secret' }
+    }).args);
+    expect(inner).toContain('SOLOE_SESSION_ID=test');
+    expect(inner).toContain('SOLOE_AGENT_PROVIDER=codex');
+    expect(inner).toContain('SOLOE_BRIDGE_URL=http://127.0.0.1:1234/mcp');
+    expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
   });
 });
 

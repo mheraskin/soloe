@@ -6,6 +6,13 @@ import type {
   TerminalResizePayload
 } from '@shared/types/ipc.js';
 import type {
+  CreateWorkerSessionRequest,
+  ListObserverEventsRequest,
+  ObservedAgentSnapshot,
+  ObserverEvent,
+  SendWorkerPromptRequest
+} from '@shared/types/agents.js';
+import type {
   SessionDraft,
   SessionId,
   SessionUpdate
@@ -52,6 +59,23 @@ const soloe: SoloeApi = {
       subscribe<TerminalExitEvent>(IpcChannels.terminal.exit, cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) =>
       subscribe<TerminalStatusEvent>(IpcChannels.terminal.status, cb)
+  },
+  observer: {
+    list: () => ipcRenderer.invoke(IpcChannels.observer.list),
+    listEvents: (request?: ListObserverEventsRequest) =>
+      ipcRenderer.invoke(IpcChannels.observer.listEvents, request),
+    createWorkerSession: (request: CreateWorkerSessionRequest) =>
+      ipcRenderer.invoke(IpcChannels.observer.createWorkerSession, request),
+    sendWorkerPrompt: (request: SendWorkerPromptRequest) =>
+      ipcRenderer.invoke(IpcChannels.observer.sendWorkerPrompt, request),
+    getWorkerStatus: (workerId: string) =>
+      ipcRenderer.invoke(IpcChannels.observer.getWorkerStatus, workerId),
+    stopWorkerSession: (workerId: string) =>
+      ipcRenderer.invoke(IpcChannels.observer.stopWorkerSession, workerId),
+    onSnapshot: (cb: (snapshot: ObservedAgentSnapshot) => void) =>
+      subscribe<ObservedAgentSnapshot>(IpcChannels.observer.snapshot, cb),
+    onEvent: (cb: (event: ObserverEvent) => void) =>
+      subscribe<ObserverEvent>(IpcChannels.observer.event, cb)
   },
   system: {
     openPath: (sessionId: SessionId) => ipcRenderer.invoke(IpcChannels.system.openPath, sessionId)

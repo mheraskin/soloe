@@ -6,17 +6,27 @@ import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
 import { ShellDetector } from './terminal/ShellDetector.js';
 import { TerminalOutputBatcher } from './terminal/TerminalOutputBatcher.js';
 import { PtyManager } from './terminal/PtyManager.js';
+import { AgentObserverManager } from './agents/AgentObserverManager.js';
+import { AgentObserverStore } from './agents/AgentObserverStore.js';
+import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
+import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
 import { SessionsIpc } from './ipc/sessions.ipc.js';
 import { TerminalIpc } from './ipc/terminal.ipc.js';
+import { ObserverIpc } from './ipc/observer.ipc.js';
 import { SystemIpc } from './ipc/system.ipc.js';
 
 interface AppServices {
   store: SessionStore;
   pty: PtyManager;
+  observer: AgentObserverManager;
+  observerStore: AgentObserverStore;
+  runtime: AgentRuntimeManager;
+  mcp: SoloeMcpServer;
   sessionsIpc: SessionsIpc;
   terminalIpc: TerminalIpc;
+  observerIpc: ObserverIpc;
   systemIpc: SystemIpc;
 }
 
@@ -27,9 +37,22 @@ let cleanedUp = false;
 async function setupServices(): Promise<AppServices> {
   const userDataPath = app.getPath('userData');
   const sessionsFile = path.join(userDataPath, 'sessions.json');
+  const observerFile = path.join(userDataPath, 'observer.json');
 
   const store = new SessionStore(sessionsFile);
   await store.init();
+  const observerStore = new AgentObserverStore(observerFile);
+  const persistedObserverState = await observerStore.load();
+  const observer = new AgentObserverManager({
+    initialSnapshots: persistedObserverState.snapshots,
+    initialEvents: persistedObserverState.events
+  });
+  observerStore.attach(observer);
+  for (const session of await store.list()) observer.registerTuiSession(session);
+  const runtime = new AgentRuntimeManager({ observer });
+  const mcp = new SoloeMcpServer({ observer, runtime });
+  let mcpInfo: SoloeMcpServerInfo | null = await mcp.start();
+  const getBridgeInfo = () => mcpInfo;
 
   const commandBuilder = new SessionCommandBuilder(
     new ShellDetector(),
@@ -41,19 +64,47 @@ async function setupServices(): Promise<AppServices> {
   const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
     manager.forwardBatchedOutput(events);
   });
-  manager = new PtyManager({ commandBuilder, store, batcher });
+  manager = new PtyManager({
+    commandBuilder,
+    store,
+    batcher,
+    observer,
+    bridgeInfo: getBridgeInfo
+  });
 
-  const sessionsIpc = new SessionsIpc({ store, commandBuilder });
+  const sessionsIpc = new SessionsIpc({
+    store,
+    commandBuilder,
+    observer,
+    bridgeInfo: getBridgeInfo
+  });
   const terminalIpc = new TerminalIpc({
     pty: manager,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  const observerIpc = new ObserverIpc({
+    observer,
+    runtime,
     getWindows: () => BrowserWindow.getAllWindows()
   });
   const systemIpc = new SystemIpc({ store });
   sessionsIpc.register();
   terminalIpc.register();
+  observerIpc.register();
   systemIpc.register();
 
-  return { store, pty: manager, sessionsIpc, terminalIpc, systemIpc };
+  return {
+    store,
+    pty: manager,
+    observer,
+    observerStore,
+    runtime,
+    mcp,
+    sessionsIpc,
+    terminalIpc,
+    observerIpc,
+    systemIpc
+  };
 }
 
 async function createWindow(): Promise<BrowserWindow> {
@@ -96,8 +147,13 @@ async function cleanup(): Promise<void> {
   if (services) {
     services.sessionsIpc.dispose();
     services.terminalIpc.dispose();
+    services.observerIpc.dispose();
     services.systemIpc.dispose();
+    services.observerStore.dispose();
+    await services.observerStore.persist(services.observer);
     await services.pty.dispose();
+    await services.runtime.dispose();
+    await services.mcp.stop();
     services = null;
   }
 }

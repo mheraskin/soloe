@@ -12,6 +12,10 @@ import { ShellDetector } from '../terminal/ShellDetector.js';
 
 export interface SessionBuildContext {
   baseEnv: Record<string, string | undefined>;
+  bridge?: {
+    url: string;
+    token: string;
+  };
 }
 
 export class SessionCommandBuilder {
@@ -22,7 +26,7 @@ export class SessionCommandBuilder {
   ) {}
 
   build(session: Session, ctx: SessionBuildContext): SpawnSpec {
-    const inner = this.buildInner(session);
+    const inner = this.buildInner(session, ctx);
     if (session.runMode === 'wsl') {
       if (!session.wslDistro) {
         throw new Error('wslDistro is required for WSL sessions');
@@ -38,14 +42,14 @@ export class SessionCommandBuilder {
     });
   }
 
-  private buildInner(session: Session): InnerCommand {
+  private buildInner(session: Session, ctx: SessionBuildContext): InnerCommand {
     switch (session.kind) {
       case 'standard_terminal':
         return this.buildStandard(session);
       case 'claude_code':
-        return this.buildClaude(session);
+        return this.buildClaude(session, ctx);
       case 'codex':
-        return this.buildCodex(session);
+        return this.buildCodex(session, ctx);
     }
   }
 
@@ -67,7 +71,7 @@ export class SessionCommandBuilder {
     return { executable: resolved.executable, args: resolved.args, env: {} };
   }
 
-  private buildClaude(s: ClaudeCodeSession): InnerCommand {
+  private buildClaude(s: ClaudeCodeSession, ctx: SessionBuildContext): InnerCommand {
     const args: string[] = [];
     switch (s.resumeMode) {
       case 'new':
@@ -88,12 +92,12 @@ export class SessionCommandBuilder {
         args.push('--resume', s.claudeSessionId);
         break;
     }
-    const env: Record<string, string> = {};
+    const env: Record<string, string> = this.buildSoloeEnv(s, 'claude_code', ctx);
     if (s.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
     return { executable: 'claude', args, env };
   }
 
-  private buildCodex(s: CodexSession): InnerCommand {
+  private buildCodex(s: CodexSession, ctx: SessionBuildContext): InnerCommand {
     const args: string[] = [];
     switch (s.resumeMode) {
       case 'new':
@@ -112,6 +116,22 @@ export class SessionCommandBuilder {
     if (s.reasoningEffort) {
       args.push('-c', `model_reasoning_effort=${s.reasoningEffort}`);
     }
-    return { executable: 'codex', args, env: {} };
+    return { executable: 'codex', args, env: this.buildSoloeEnv(s, 'codex', ctx) };
+  }
+
+  private buildSoloeEnv(
+    session: ClaudeCodeSession | CodexSession,
+    provider: 'claude_code' | 'codex',
+    ctx: SessionBuildContext
+  ): Record<string, string> {
+    const env: Record<string, string> = {
+      SOLOE_SESSION_ID: session.id,
+      SOLOE_AGENT_PROVIDER: provider
+    };
+    if (ctx.bridge) {
+      env['SOLOE_BRIDGE_URL'] = ctx.bridge.url;
+      env['SOLOE_BRIDGE_TOKEN'] = ctx.bridge.token;
+    }
+    return env;
   }
 }
