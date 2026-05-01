@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type { SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
@@ -12,6 +13,7 @@ export interface SessionsIpcOptions {
   baseEnv?: NodeJS.ProcessEnv;
   observer?: AgentObserverManager;
   bridgeInfo?: () => { url: string; token: string } | null;
+  getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
 }
 
 export class SessionsIpc {
@@ -63,9 +65,11 @@ export class SessionsIpc {
       ipcInvoke(async () => {
         const session = await this.opts.store.get(id);
         if (!session) throw new Error(`Session not found: ${id}`);
+        const binaries = this.opts.getBinaries ? await this.opts.getBinaries() : undefined;
         return this.opts.commandBuilder.build(session, {
           baseEnv: this.opts.baseEnv ?? process.env,
-          bridge: this.opts.bridgeInfo?.() ?? undefined
+          bridge: this.opts.bridgeInfo?.() ?? undefined,
+          ...(binaries ? { binaries } : {})
         });
       })
     );

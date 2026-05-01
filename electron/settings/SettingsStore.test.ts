@@ -1,0 +1,90 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { SettingsStore } from './SettingsStore.js';
+import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
+
+let tmpDir: string;
+let storePath: string;
+
+beforeEach(async () => {
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-settings-'));
+  storePath = path.join(tmpDir, 'settings.json');
+});
+
+afterEach(async () => {
+  await fs.rm(tmpDir, { recursive: true, force: true });
+});
+
+describe('SettingsStore — defaults', () => {
+  it('returns defaults when file does not exist', async () => {
+    const store = new SettingsStore(path.join(tmpDir, 'no-such.json'));
+    const s = await store.get();
+    expect(s).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('does not write a file just by reading defaults', async () => {
+    const store = new SettingsStore(path.join(tmpDir, 'no-such.json'));
+    await store.get();
+    const exists = await fs.access(path.join(tmpDir, 'no-such.json')).then(() => true).catch(() => false);
+    expect(exists).toBe(false);
+  });
+});
+
+describe('SettingsStore — update', () => {
+  it('merges appearance updates', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({ appearance: { theme: 'light' } });
+    expect(updated.appearance.theme).toBe('light');
+    expect(updated.appearance.density).toBe(DEFAULT_SETTINGS.appearance.density);
+  });
+
+  it('removes a binary path when set to empty string', async () => {
+    const store = new SettingsStore(storePath);
+    await store.update({ binaries: { claude: '/usr/bin/claude' } });
+    const after = await store.update({ binaries: { claude: '' } });
+    expect(after.binaries.claude).toBeUndefined();
+  });
+
+  it('rejects invalid theme value', async () => {
+    const store = new SettingsStore(storePath);
+    await expect(
+      store.update({ appearance: { theme: 'rainbow' as never } })
+    ).rejects.toThrow(/Invalid theme/);
+  });
+});
+
+describe('SettingsStore — disk round-trip', () => {
+  it('persists across instances pointing at the same file', async () => {
+    const a = new SettingsStore(storePath);
+    await a.update({ appearance: { theme: 'light' }, binaries: { claude: '/x/claude' } });
+    const b = new SettingsStore(storePath);
+    const fromDisk = await b.get();
+    expect(fromDisk.appearance.theme).toBe('light');
+    expect(fromDisk.binaries.claude).toBe('/x/claude');
+  });
+
+  it('backs up corrupt JSON and starts with defaults', async () => {
+    await fs.writeFile(storePath, '{ broken json', 'utf8');
+    const store = new SettingsStore(storePath);
+    expect((await store.get()).appearance).toEqual(DEFAULT_SETTINGS.appearance);
+    const entries = await fs.readdir(tmpDir);
+    expect(entries.some((f) => f.startsWith('settings.json.corrupt-'))).toBe(true);
+  });
+});
+
+describe('SettingsStore — listeners', () => {
+  it('notifies subscribers on update', async () => {
+    const store = new SettingsStore(storePath);
+    let lastTheme: string | null = null;
+    const off = store.onChange((s) => {
+      lastTheme = s.appearance.theme;
+    });
+    await store.update({ appearance: { theme: 'light' } });
+    expect(lastTheme).toBe('light');
+    off();
+    await store.update({ appearance: { theme: 'dark' } });
+    expect(lastTheme).toBe('light'); // unchanged after detach
+  });
+});

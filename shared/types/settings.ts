@@ -1,0 +1,47 @@
+import type { ShellKind, RunMode } from './sessions.js';
+
+export type ThemePref = 'dark' | 'light' | 'system';
+export type DensityPref = 'comfortable' | 'compact';
+export type FontSizePref = 11 | 12 | 13 | 14;
+
+export interface SettingsAppearance {
+  theme: ThemePref;
+  density: DensityPref;
+  fontSize: FontSizePref;
+}
+
+export interface SettingsDefaults {
+  runMode: RunMode;
+  wslDistro?: string;
+  shell: ShellKind;
+}
+
+export interface SettingsBinaries {
+  claude?: string;
+  codex?: string;
+  git?: string;
+  gh?: string;
+  fd?: string;
+  rg?: string;
+  editor?: string;
+}
+
+export interface Settings {
+  version: 1;
+  appearance: SettingsAppearance;
+  defaults: SettingsDefaults;
+  binaries: SettingsBinaries;
+}
+
+export type SettingsUpdate = {
+  appearance?: Partial<SettingsAppearance>;
+  defaults?: Partial<SettingsDefaults>;
+  binaries?: Partial<SettingsBinaries>;
+};
+
+export const DEFAULT_SETTINGS: Settings = {
+  version: 1,
+  appearance: { theme: 'dark', density: 'comfortable', fontSize: 13 },
+  defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto' },
+  binaries: {}
+};

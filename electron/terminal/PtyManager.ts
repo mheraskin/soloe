@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import * as pty from 'node-pty';
 import type { SessionId, SessionRuntimeState, SessionStatus } from '@shared/types/sessions.js';
+import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
   TerminalDimensions,
@@ -45,6 +46,7 @@ export interface PtyManagerOptions {
   baseEnv?: NodeJS.ProcessEnv;
   observer?: AgentObserverManager;
   bridgeInfo?: () => { url: string; token: string } | null;
+  getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
 }
 
 export declare interface PtyManager {
@@ -79,7 +81,12 @@ export class PtyManager extends EventEmitter {
 
     this.opts.observer?.registerTuiSession(session);
     const bridge = this.opts.bridgeInfo?.() ?? undefined;
-    const spec = this.opts.commandBuilder.build(session, { baseEnv: this.baseEnv, bridge });
+    const binaries = this.opts.getBinaries ? await this.opts.getBinaries() : undefined;
+    const spec = this.opts.commandBuilder.build(session, {
+      baseEnv: this.baseEnv,
+      bridge,
+      ...(binaries ? { binaries } : {})
+    });
     const cols = options.cols ?? DEFAULT_COLS;
     const rows = options.rows ?? DEFAULT_ROWS;
     const terminalId = newTerminalId();

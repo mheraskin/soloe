@@ -35,6 +35,10 @@ export interface SessionBase {
   transcriptPath?: string;
   lastEventAt?: string;
   confidence?: number;
+  projectId?: string;
+  tags?: string[];
+  pinned?: boolean;
+  lastBranch?: string;
 }
 
 export interface StandardTerminalSession extends SessionBase {

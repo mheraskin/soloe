@@ -6,6 +6,8 @@ import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
 import { ShellDetector } from './terminal/ShellDetector.js';
 import { TerminalOutputBatcher } from './terminal/TerminalOutputBatcher.js';
 import { PtyManager } from './terminal/PtyManager.js';
+import { SettingsStore } from './settings/SettingsStore.js';
+import { ProjectStore } from './projects/ProjectStore.js';
 import { AgentObserverManager } from './agents/AgentObserverManager.js';
 import { AgentObserverStore } from './agents/AgentObserverStore.js';
 import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
@@ -16,9 +18,13 @@ import { SessionsIpc } from './ipc/sessions.ipc.js';
 import { TerminalIpc } from './ipc/terminal.ipc.js';
 import { ObserverIpc } from './ipc/observer.ipc.js';
 import { SystemIpc } from './ipc/system.ipc.js';
+import { SettingsIpc } from './ipc/settings.ipc.js';
+import { ProjectsIpc } from './ipc/projects.ipc.js';
 
 interface AppServices {
   store: SessionStore;
+  settings: SettingsStore;
+  projects: ProjectStore;
   pty: PtyManager;
   observer: AgentObserverManager;
   observerStore: AgentObserverStore;
@@ -28,6 +34,8 @@ interface AppServices {
   terminalIpc: TerminalIpc;
   observerIpc: ObserverIpc;
   systemIpc: SystemIpc;
+  settingsIpc: SettingsIpc;
+  projectsIpc: ProjectsIpc;
 }
 
 let services: AppServices | null = null;
@@ -38,9 +46,18 @@ async function setupServices(): Promise<AppServices> {
   const userDataPath = app.getPath('userData');
   const sessionsFile = path.join(userDataPath, 'sessions.json');
   const observerFile = path.join(userDataPath, 'observer.json');
+  const settingsFile = path.join(userDataPath, 'settings.json');
+  const projectsFile = path.join(userDataPath, 'projects.json');
 
   const store = new SessionStore(sessionsFile);
   await store.init();
+  const settings = new SettingsStore(settingsFile);
+  await settings.init();
+  const getBinaries = async () => (await settings.get()).binaries;
+  const projects = new ProjectStore(projectsFile, {
+    gitBinary: (await settings.get()).binaries.git ?? 'git'
+  });
+  await projects.init();
   const observerStore = new AgentObserverStore(observerFile);
   const persistedObserverState = await observerStore.load();
   const observer = new AgentObserverManager({
@@ -69,14 +86,16 @@ async function setupServices(): Promise<AppServices> {
     store,
     batcher,
     observer,
-    bridgeInfo: getBridgeInfo
+    bridgeInfo: getBridgeInfo,
+    getBinaries
   });
 
   const sessionsIpc = new SessionsIpc({
     store,
     commandBuilder,
     observer,
-    bridgeInfo: getBridgeInfo
+    bridgeInfo: getBridgeInfo,
+    getBinaries
   });
   const terminalIpc = new TerminalIpc({
     pty: manager,
@@ -88,13 +107,25 @@ async function setupServices(): Promise<AppServices> {
     getWindows: () => BrowserWindow.getAllWindows()
   });
   const systemIpc = new SystemIpc({ store });
+  const settingsIpc = new SettingsIpc({
+    store: settings,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  const projectsIpc = new ProjectsIpc({
+    store: projects,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
   sessionsIpc.register();
   terminalIpc.register();
   observerIpc.register();
   systemIpc.register();
+  settingsIpc.register();
+  projectsIpc.register();
 
   return {
     store,
+    settings,
+    projects,
     pty: manager,
     observer,
     observerStore,
@@ -103,7 +134,9 @@ async function setupServices(): Promise<AppServices> {
     sessionsIpc,
     terminalIpc,
     observerIpc,
-    systemIpc
+    systemIpc,
+    settingsIpc,
+    projectsIpc
   };
 }
 
@@ -149,6 +182,8 @@ async function cleanup(): Promise<void> {
     services.terminalIpc.dispose();
     services.observerIpc.dispose();
     services.systemIpc.dispose();
+    services.settingsIpc.dispose();
+    services.projectsIpc.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);
     await services.pty.dispose();

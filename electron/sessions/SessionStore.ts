@@ -204,6 +204,20 @@ function validateSession(s: Session): void {
   if (s.runMode === 'wsl' && !s.wslDistro) {
     throw new Error('wslDistro is required when runMode is wsl');
   }
+  if (s.projectId !== undefined && (typeof s.projectId !== 'string' || !s.projectId.trim())) {
+    throw new Error('projectId must be a non-empty string when set');
+  }
+  if (s.tags !== undefined) {
+    if (!Array.isArray(s.tags) || s.tags.some((t) => typeof t !== 'string')) {
+      throw new Error('tags must be an array of strings when set');
+    }
+  }
+  if (s.pinned !== undefined && typeof s.pinned !== 'boolean') {
+    throw new Error('pinned must be a boolean when set');
+  }
+  if (s.lastBranch !== undefined && typeof s.lastBranch !== 'string') {
+    throw new Error('lastBranch must be a string when set');
+  }
   switch (s.kind) {
     case 'standard_terminal':
       if (!s.shell) throw new Error('shell is required for standard_terminal');

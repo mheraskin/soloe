@@ -17,6 +17,13 @@ import type {
   SessionId,
   SessionUpdate
 } from '@shared/types/sessions.js';
+import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
+import type {
+  Project,
+  ProjectDraft,
+  ProjectId,
+  ProjectUpdate
+} from '@shared/types/projects.js';
 import type {
   TerminalExitEvent,
   TerminalId,
@@ -79,6 +86,24 @@ const soloe: SoloeApi = {
   },
   system: {
     openPath: (sessionId: SessionId) => ipcRenderer.invoke(IpcChannels.system.openPath, sessionId)
+  },
+  settings: {
+    get: () => ipcRenderer.invoke(IpcChannels.settings.get),
+    update: (patch: SettingsUpdate) => ipcRenderer.invoke(IpcChannels.settings.update, patch),
+    onChange: (cb: (settings: Settings) => void) =>
+      subscribe<Settings>(IpcChannels.settings.change, cb)
+  },
+  projects: {
+    list: () => ipcRenderer.invoke(IpcChannels.projects.list),
+    get: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.get, id),
+    create: (draft: ProjectDraft) => ipcRenderer.invoke(IpcChannels.projects.create, draft),
+    update: (id: ProjectId, patch: ProjectUpdate) =>
+      ipcRenderer.invoke(IpcChannels.projects.update, id, patch),
+    delete: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.delete, id),
+    touch: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.touch, id),
+    detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
+    onChange: (cb: (projects: Project[]) => void) =>
+      subscribe<Project[]>(IpcChannels.projects.change, cb)
   }
 };
 

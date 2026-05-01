@@ -8,12 +8,20 @@ import type {
   WorkerStatusResult
 } from './agents.js';
 import type {
+  Project,
+  ProjectDetectResult,
+  ProjectDraft,
+  ProjectId,
+  ProjectUpdate
+} from './projects.js';
+import type {
   Session,
   SessionDraft,
   SessionId,
   SessionRuntimeState,
   SessionUpdate
 } from './sessions.js';
+import type { Settings, SettingsUpdate } from './settings.js';
 import type {
   SpawnSpec,
   TerminalDimensions,
@@ -57,6 +65,21 @@ export const IpcChannels = {
   },
   system: {
     openPath: 'system:open-path'
+  },
+  settings: {
+    get: 'settings:get',
+    update: 'settings:update',
+    change: 'settings:change'
+  },
+  projects: {
+    list: 'projects:list',
+    get: 'projects:get',
+    create: 'projects:create',
+    update: 'projects:update',
+    delete: 'projects:delete',
+    touch: 'projects:touch',
+    detectFromPath: 'projects:detect-from-path',
+    change: 'projects:change'
   }
 } as const;
 
@@ -64,7 +87,9 @@ export type IpcChannel =
   | (typeof IpcChannels.sessions)[keyof typeof IpcChannels.sessions]
   | (typeof IpcChannels.terminal)[keyof typeof IpcChannels.terminal]
   | (typeof IpcChannels.observer)[keyof typeof IpcChannels.observer]
-  | (typeof IpcChannels.system)[keyof typeof IpcChannels.system];
+  | (typeof IpcChannels.system)[keyof typeof IpcChannels.system]
+  | (typeof IpcChannels.settings)[keyof typeof IpcChannels.settings]
+  | (typeof IpcChannels.projects)[keyof typeof IpcChannels.projects];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -116,11 +141,30 @@ export interface SystemApi {
   openPath(sessionId: SessionId): Promise<IpcResult<true>>;
 }
 
+export interface SettingsApi {
+  get(): Promise<IpcResult<Settings>>;
+  update(patch: SettingsUpdate): Promise<IpcResult<Settings>>;
+  onChange(listener: (settings: Settings) => void): () => void;
+}
+
+export interface ProjectsApi {
+  list(): Promise<IpcResult<Project[]>>;
+  get(id: ProjectId): Promise<IpcResult<Project | null>>;
+  create(draft: ProjectDraft): Promise<IpcResult<Project>>;
+  update(id: ProjectId, patch: ProjectUpdate): Promise<IpcResult<Project>>;
+  delete(id: ProjectId): Promise<IpcResult<true>>;
+  touch(id: ProjectId): Promise<IpcResult<Project | null>>;
+  detectFromPath(path: string): Promise<IpcResult<ProjectDetectResult>>;
+  onChange(listener: (projects: Project[]) => void): () => void;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
   observer: ObserverApi;
   system: SystemApi;
+  settings: SettingsApi;
+  projects: ProjectsApi;
 }
 
 declare global {

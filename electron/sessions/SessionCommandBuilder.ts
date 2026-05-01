@@ -4,6 +4,7 @@ import type {
   Session,
   StandardTerminalSession
 } from '@shared/types/sessions.js';
+import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { InnerCommand } from '../runtime/InnerCommand.js';
 import { WindowsCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
@@ -16,6 +17,7 @@ export interface SessionBuildContext {
     url: string;
     token: string;
   };
+  binaries?: SettingsBinaries;
 }
 
 export class SessionCommandBuilder {
@@ -94,7 +96,7 @@ export class SessionCommandBuilder {
     }
     const env: Record<string, string> = this.buildSoloeEnv(s, 'claude_code', ctx);
     if (s.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
-    return { executable: 'claude', args, env };
+    return { executable: ctx.binaries?.claude ?? 'claude', args, env };
   }
 
   private buildCodex(s: CodexSession, ctx: SessionBuildContext): InnerCommand {
@@ -116,7 +118,7 @@ export class SessionCommandBuilder {
     if (s.reasoningEffort) {
       args.push('-c', `model_reasoning_effort=${s.reasoningEffort}`);
     }
-    return { executable: 'codex', args, env: this.buildSoloeEnv(s, 'codex', ctx) };
+    return { executable: ctx.binaries?.codex ?? 'codex', args, env: this.buildSoloeEnv(s, 'codex', ctx) };
   }
 
   private buildSoloeEnv(
