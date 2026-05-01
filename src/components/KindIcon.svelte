@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { TerminalSquare } from 'lucide-svelte';
   import type { SessionKind } from '@shared/types/sessions.js';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexUrl from '../lib/icons/codex.svg';
@@ -16,22 +17,7 @@
 {#if entry}
   <img class="icon" src={entry.src} alt={entry.alt} width={size} height={size} />
 {:else if kind === 'standard_terminal'}
-  <svg
-    class="icon"
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    aria-label="Terminal"
-    role="img"
-  >
-    <polyline points="5 8 9 12 5 16" />
-    <line x1="12" y1="16" x2="18" y2="16" />
-  </svg>
+  <TerminalSquare class="icon" size={size} aria-label="Terminal" />
 {/if}
 
 <style>

@@ -1,7 +1,14 @@
-import type { Session, SessionDraft, SessionKind } from '@shared/types/sessions.js';
+import type { Session, SessionDraft } from '@shared/types/sessions.js';
 import { defaultDraft, toDraft } from '../lib/sessions-helpers';
+import { settings } from './settings.svelte';
 
 export type ModalMode = 'new' | 'edit';
+
+export interface NewSessionPrefill {
+  name?: string;
+  cwd?: string;
+  projectId?: string;
+}
 
 class ModalStore {
   open = $state(false);
@@ -10,10 +17,16 @@ class ModalStore {
   editingId = $state<string | null>(null);
   error = $state<string | null>(null);
 
-  openNew(kind: SessionKind = 'standard_terminal'): void {
+  openNew(prefill?: NewSessionPrefill): void {
     this.mode = 'new';
     this.editingId = null;
-    this.draft = defaultDraft(kind);
+    const base = defaultDraft('standard_terminal', settings.current.defaults);
+    this.draft = {
+      ...base,
+      ...(prefill?.name ? { name: prefill.name } : {}),
+      ...(prefill?.cwd ? { cwd: prefill.cwd } : {}),
+      ...(prefill?.projectId ? { projectId: prefill.projectId } : {})
+    } as SessionDraft;
     this.error = null;
     this.open = true;
   }
@@ -24,24 +37,6 @@ class ModalStore {
     this.draft = toDraft(session);
     this.error = null;
     this.open = true;
-  }
-
-  setKind(kind: SessionKind): void {
-    if (this.mode === 'edit') return;
-    const preserved = {
-      name: this.draft.name,
-      cwd: this.draft.cwd,
-      runMode: this.draft.runMode,
-      wslDistro: this.draft.wslDistro
-    };
-    const fresh = defaultDraft(kind);
-    this.draft = {
-      ...fresh,
-      name: preserved.name,
-      cwd: preserved.cwd,
-      runMode: preserved.runMode,
-      ...(preserved.wslDistro ? { wslDistro: preserved.wslDistro } : {})
-    } as SessionDraft;
   }
 
   close(): void {

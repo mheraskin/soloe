@@ -7,6 +7,13 @@ import type {
   SendWorkerPromptRequest
 } from '@shared/types/agents.js';
 import type { SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
+import type {
+  Project,
+  ProjectDraft,
+  ProjectId,
+  ProjectUpdate
+} from '@shared/types/projects.js';
 import type {
   TerminalExitEvent,
   TerminalId,
@@ -61,5 +68,21 @@ export const ipc = {
   },
   system: {
     openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId))
+  },
+  settings: {
+    get: async () => unwrap(await c.settings.get()),
+    update: async (patch: SettingsUpdate) => unwrap(await c.settings.update(patch)),
+    onChange: (cb: (s: Settings) => void) => c.settings.onChange(cb)
+  },
+  projects: {
+    list: async () => unwrap(await c.projects.list()),
+    get: async (id: ProjectId) => unwrap(await c.projects.get(id)),
+    create: async (draft: ProjectDraft) => unwrap(await c.projects.create(draft)),
+    update: async (id: ProjectId, patch: ProjectUpdate) =>
+      unwrap(await c.projects.update(id, patch)),
+    delete: async (id: ProjectId) => unwrap(await c.projects.delete(id)),
+    touch: async (id: ProjectId) => unwrap(await c.projects.touch(id)),
+    detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
+    onChange: (cb: (projects: Project[]) => void) => c.projects.onChange(cb)
   }
 };

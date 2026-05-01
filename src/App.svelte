@@ -1,17 +1,30 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { sessions } from './stores/sessions.svelte';
+  import { settings } from './stores/settings.svelte';
+  import { projects } from './stores/projects.svelte';
   import { reportError } from './stores/toast.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
   import AgentInspector from './components/AgentInspector.svelte';
   import NewSessionModal from './components/NewSessionModal.svelte';
   import Toast from './components/Toast.svelte';
+  import ConfirmDialog from './components/ConfirmDialog.svelte';
+  import SettingsDrawer from './components/SettingsDrawer.svelte';
+  import ProjectModal from './components/ProjectModal.svelte';
 
   onMount(() => {
     sessions.attachListeners();
     sessions.load().catch(reportError);
-    return () => sessions.detach();
+    settings.attachListeners();
+    settings.load().catch(reportError);
+    projects.attachListeners();
+    projects.load().catch(reportError);
+    return () => {
+      sessions.detach();
+      settings.detach();
+      projects.detach();
+    };
   });
 </script>
 
@@ -25,6 +38,9 @@
     <AgentInspector />
   </div>
   <NewSessionModal />
+  <ProjectModal />
+  <ConfirmDialog />
+  <SettingsDrawer />
   <Toast />
 </div>
 

@@ -1,26 +1,69 @@
 <script lang="ts">
-  import type { RunMode, SessionDraft, SessionKind } from '@shared/types/sessions.js';
+  import { X } from 'lucide-svelte';
+  import type { RunMode, SessionDraft } from '@shared/types/sessions.js';
+  import type { ProjectId } from '@shared/types/projects.js';
   import { modal } from '../stores/modal.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { projects } from '../stores/projects.svelte';
+  import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
-  import { kindLabel, validateDraft } from '../lib/sessions-helpers';
+  import { validateDraft } from '../lib/sessions-helpers';
   import StandardForm from './forms/StandardForm.svelte';
   import ClaudeForm from './forms/ClaudeForm.svelte';
   import CodexForm from './forms/CodexForm.svelte';
-  import KindIcon from './KindIcon.svelte';
+  import ProjectPicker from './ProjectPicker.svelte';
 
-  const kinds: SessionKind[] = ['standard_terminal', 'claude_code', 'codex'];
   let submitting = $state(false);
+  let lastDetectedCwd = $state('');
 
-  function setKind(k: SessionKind) {
-    modal.setKind(k);
-  }
-
-  function setBase<K extends 'name' | 'cwd' | 'runMode' | 'wslDistro'>(
+  function setBase<K extends 'name' | 'cwd' | 'runMode' | 'wslDistro' | 'projectId'>(
     key: K,
     value: SessionDraft[K]
   ) {
-    modal.draft = { ...modal.draft, [key]: value } as SessionDraft;
+    const next = { ...modal.draft, [key]: value } as SessionDraft;
+    if (key === 'projectId' && value === undefined) {
+      delete (next as { projectId?: ProjectId }).projectId;
+    }
+    modal.draft = next;
+  }
+
+  async function onCwdInput(e: Event) {
+    const value = (e.currentTarget as HTMLInputElement).value;
+    setBase('cwd', value);
+    if (modal.mode !== 'new') return;
+    if (modal.draft.projectId) return;
+    if (!value.trim()) return;
+    if (value === lastDetectedCwd) return;
+    lastDetectedCwd = value;
+    try {
+      const result = await projects.detectFromPath(value);
+      if (result.matchedProjectId && !modal.draft.projectId) {
+        setBase('projectId', result.matchedProjectId);
+      }
+    } catch {
+      // detection is best-effort
+    }
+  }
+
+  function setProjectId(id: ProjectId | null) {
+    setBase('projectId', id ?? undefined);
+    if (id && modal.mode === 'new') {
+      const project = projects.get(id);
+      if (!project) return;
+      if (!modal.draft.cwd.trim()) setBase('cwd', project.path);
+      if (project.defaultRunMode) setBase('runMode', project.defaultRunMode);
+      if (project.defaultRunMode === 'wsl' && project.defaultWslDistro) {
+        setBase('wslDistro', project.defaultWslDistro);
+      }
+    }
+  }
+
+  function createProjectFromCwd() {
+    const cwd = modal.draft.cwd.trim();
+    projectModal.openNew(
+      cwd ? { path: cwd } : {},
+      (created) => setProjectId(created.id)
+    );
   }
 
   async function submit(e: Event) {
@@ -59,29 +102,13 @@
   <div class="backdrop" onclick={() => modal.close()} role="presentation"></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Session details">
     <header>
-      <h2>{modal.mode === 'new' ? 'New session' : 'Edit session'}</h2>
-      <button class="close" onclick={() => modal.close()} aria-label="Close">×</button>
+      <h2>{modal.mode === 'new' ? 'New terminal' : 'Edit session'}</h2>
+      <button class="close" onclick={() => modal.close()} aria-label="Close">
+        <X size={16} />
+      </button>
     </header>
 
     <form onsubmit={submit}>
-      {#if modal.mode === 'new'}
-        <fieldset class="kinds">
-          <legend>Kind</legend>
-          <div class="kind-row">
-            {#each kinds as k (k)}
-              <button
-                type="button"
-                class:active={modal.draft.kind === k}
-                onclick={() => setKind(k)}
-              >
-                <KindIcon kind={k} size={18} />
-                <span>{kindLabel(k)}</span>
-              </button>
-            {/each}
-          </div>
-        </fieldset>
-      {/if}
-
       <label>
         Name
         <input
@@ -92,6 +119,12 @@
         />
       </label>
 
+      <ProjectPicker
+        value={modal.draft.projectId ?? null}
+        onchange={setProjectId}
+        onCreateNew={createProjectFromCwd}
+      />
+
       <label>
         Working directory
         <input
@@ -99,7 +132,7 @@
           required
           placeholder={modal.draft.runMode === 'wsl' ? '/home/you/project' : 'C:\\Users\\you\\project'}
           value={modal.draft.cwd}
-          oninput={(e) => setBase('cwd', (e.currentTarget as HTMLInputElement).value)}
+          oninput={onCwdInput}
         />
       </label>
 
@@ -129,14 +162,18 @@
         {/if}
       </div>
 
-      <hr />
-
-      {#if modal.draft.kind === 'standard_terminal'}
+      {#if modal.mode === 'new'}
+        <hr />
         <StandardForm />
-      {:else if modal.draft.kind === 'claude_code'}
-        <ClaudeForm />
-      {:else if modal.draft.kind === 'codex'}
-        <CodexForm />
+      {:else}
+        <hr />
+        {#if modal.draft.kind === 'standard_terminal'}
+          <StandardForm />
+        {:else if modal.draft.kind === 'claude_code'}
+          <ClaudeForm />
+        {:else if modal.draft.kind === 'codex'}
+          <CodexForm />
+        {/if}
       {/if}
 
       {#if modal.error}
@@ -193,10 +230,12 @@
     background: transparent;
     border: none;
     color: var(--muted);
-    font-size: 20px;
     line-height: 1;
-    padding: 0 4px;
+    padding: 4px;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .close:hover { color: var(--fg); }
 
@@ -216,35 +255,6 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
-  }
-  .kinds {
-    border: none;
-    padding: 0;
-    margin: 0;
-  }
-  .kinds legend {
-    font-size: 12px;
-    color: var(--muted);
-    padding: 0 0 4px;
-  }
-  .kind-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-  }
-  .kind-row button {
-    padding: 10px;
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-  }
-  .kind-row button.active {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--bg-elev-3);
   }
   .error {
     color: var(--red);

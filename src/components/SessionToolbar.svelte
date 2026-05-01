@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { Play, Square, RotateCw, Pencil, FolderOpen, Copy, Trash2, Settings } from 'lucide-svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
+  import { settings } from '../stores/settings.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
+  import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
   import { kindLabel } from '../lib/sessions-helpers';
   import StatusDot from './StatusDot.svelte';
@@ -25,7 +28,13 @@
   }
   async function remove() {
     if (!selected) return;
-    if (!confirm(`Delete session "${selected.name}"?`)) return;
+    const ok = await confirmStore.ask({
+      title: 'Delete session',
+      message: `Delete session "${selected.name}"?`,
+      confirmLabel: 'Delete',
+      tone: 'danger'
+    });
+    if (!ok) return;
     try { await sessions.remove(selected.id); } catch (e) { reportError(e); }
   }
   async function openCwd() {
@@ -55,15 +64,33 @@
       <span class="dim">· {kindLabel(selected.kind)} · {selected.runMode}</span>
     </div>
     <div class="actions">
-      <button onclick={start} disabled={!canStart}>Start</button>
-      <button onclick={stop} disabled={!isRunning}>Stop</button>
-      <button onclick={restart} disabled={status !== 'running'}>Restart</button>
+      <button onclick={start} disabled={!canStart}>
+        <Play size={12} /><span>Start</span>
+      </button>
+      <button onclick={stop} disabled={!isRunning}>
+        <Square size={12} /><span>Stop</span>
+      </button>
+      <button onclick={restart} disabled={status !== 'running'}>
+        <RotateCw size={12} /><span>Restart</span>
+      </button>
       <span class="sep"></span>
-      <button onclick={edit}>Edit</button>
-      <button onclick={openCwd}>Open cwd</button>
-      <button onclick={copyCmd}>Copy command</button>
+      <button onclick={edit}>
+        <Pencil size={12} /><span>Edit</span>
+      </button>
+      <button onclick={openCwd}>
+        <FolderOpen size={12} /><span>Open cwd</span>
+      </button>
+      <button onclick={copyCmd}>
+        <Copy size={12} /><span>Copy command</span>
+      </button>
       <span class="sep"></span>
-      <button class="danger" onclick={remove}>Delete</button>
+      <button class="danger" onclick={remove}>
+        <Trash2 size={12} /><span>Delete</span>
+      </button>
+      <span class="sep"></span>
+      <button onclick={() => settings.openDrawer()} title="Settings" aria-label="Settings">
+        <Settings size={12} />
+      </button>
     </div>
   {:else}
     <div class="meta dim">No session selected</div>
@@ -96,6 +123,11 @@
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
+  }
+  .actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
   .sep {
     width: 1px;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { X } from 'lucide-svelte';
   import { toasts } from '../stores/toast.svelte';
 </script>
 
@@ -6,7 +7,9 @@
   {#each toasts.items as t (t.id)}
     <div class="toast {t.kind}" role="status">
       <span>{t.message}</span>
-      <button onclick={() => toasts.dismiss(t.id)} aria-label="Dismiss">×</button>
+      <button onclick={() => toasts.dismiss(t.id)} aria-label="Dismiss">
+        <X size={14} />
+      </button>
     </div>
   {/each}
 </div>
@@ -40,9 +43,10 @@
     background: transparent;
     border: none;
     color: var(--muted);
-    padding: 0 4px;
+    padding: 2px 4px;
     cursor: pointer;
-    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
   }
   .toast button:hover { color: var(--fg); }
 </style>

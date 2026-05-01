@@ -2,6 +2,7 @@ import type {
   ObservedAgentSnapshot,
   ObserverEvent
 } from '@shared/types/agents.js';
+import type { ProjectId } from '@shared/types/projects.js';
 import type {
   Session,
   SessionDraft,
@@ -11,6 +12,35 @@ import type {
   SessionUpdate
 } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
+
+const LAST_SELECTED_KEY = 'soloe.lastSelectedByProject.v1';
+const UNASSIGNED_KEY = '__unassigned__';
+
+function readLastSelectedMap(): Record<string, SessionId> {
+  try {
+    const raw = localStorage.getItem(LAST_SELECTED_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: Record<string, SessionId> = {};
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'string') out[k] = v;
+      }
+      return out;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function writeLastSelectedMap(map: Record<string, SessionId>): void {
+  try {
+    localStorage.setItem(LAST_SELECTED_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
 
 interface RuntimeEntry extends SessionRuntimeState {
   // last known status events keep around for "exited" badge until re-start
@@ -33,6 +63,31 @@ class SessionsStore {
     codex: this.sessions.filter((s) => s.kind === 'codex'),
     terminal: this.sessions.filter((s) => s.kind === 'standard_terminal')
   });
+
+  byProject = $derived.by<Record<string, Session[]>>(() => {
+    const out: Record<string, Session[]> = {};
+    for (const session of this.sessions) {
+      const key = session.projectId ?? UNASSIGNED_KEY;
+      if (!out[key]) out[key] = [];
+      out[key]!.push(session);
+    }
+    return out;
+  });
+
+  projectIds = $derived.by<string[]>(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const session of this.sessions) {
+      const key = session.projectId ?? UNASSIGNED_KEY;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(key);
+      }
+    }
+    return out;
+  });
+
+  lastSelectedByProject = $state<Record<string, SessionId>>(readLastSelectedMap());
 
   private detachers: Array<() => void> = [];
 
@@ -71,11 +126,37 @@ class SessionsStore {
       for (const r of running) next[r.sessionId] = { ...r };
       this.runtime = next;
       this.observed = Object.fromEntries(observed.map((s) => [s.id, s]));
+      this.pruneLastSelected();
       if (!this.selectedId && list.length > 0) {
-        this.selectedId = list[0]!.id;
+        this.selectedId = this.pickInitialSelection(list);
       }
     } finally {
       this.loading = false;
+    }
+  }
+
+  private pickInitialSelection(list: Session[]): SessionId | null {
+    const lastIds = Object.values(this.lastSelectedByProject);
+    for (const id of lastIds) {
+      if (list.some((s) => s.id === id)) return id;
+    }
+    return list[0]?.id ?? null;
+  }
+
+  private pruneLastSelected(): void {
+    const ids = new Set(this.sessions.map((s) => s.id));
+    let changed = false;
+    const next: Record<string, SessionId> = {};
+    for (const [projectKey, sessionId] of Object.entries(this.lastSelectedByProject)) {
+      if (ids.has(sessionId)) {
+        next[projectKey] = sessionId;
+      } else {
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.lastSelectedByProject = next;
+      writeLastSelectedMap(next);
     }
   }
 
@@ -171,6 +252,18 @@ class SessionsStore {
       if (snapshot.originSessionId === id) delete observed[snapshot.id];
     }
     this.observed = observed;
+    const lastMap = { ...this.lastSelectedByProject };
+    let changed = false;
+    for (const [projectKey, sid] of Object.entries(lastMap)) {
+      if (sid === id) {
+        delete lastMap[projectKey];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.lastSelectedByProject = lastMap;
+      writeLastSelectedMap(lastMap);
+    }
     if (this.selectedId === id) {
       this.selectedId = this.sessions[0]?.id ?? null;
     }
@@ -199,7 +292,18 @@ class SessionsStore {
 
   select(id: SessionId | null): void {
     this.selectedId = id;
+    if (id) {
+      const session = this.sessions.find((s) => s.id === id);
+      if (session) {
+        const key = session.projectId ?? UNASSIGNED_KEY;
+        const nextMap = { ...this.lastSelectedByProject, [key]: id };
+        this.lastSelectedByProject = nextMap;
+        writeLastSelectedMap(nextMap);
+      }
+    }
   }
 }
+
+export const PROJECT_UNASSIGNED_KEY = UNASSIGNED_KEY;
 
 export const sessions = new SessionsStore();

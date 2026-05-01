@@ -1,4 +1,5 @@
 import type { Session, SessionDraft, SessionKind } from '@shared/types/sessions.js';
+import type { SettingsDefaults } from '@shared/types/settings.js';
 
 export function shortCwd(cwd: string): string {
   if (!cwd) return '';
@@ -23,16 +24,18 @@ export function kindGlyph(kind: SessionKind): string {
   }
 }
 
-export function defaultDraft(kind: SessionKind): SessionDraft {
+export function defaultDraft(kind: SessionKind, defaults?: SettingsDefaults): SessionDraft {
+  const runMode = defaults?.runMode ?? 'wsl';
   const base = {
     name: '',
     cwd: '',
-    runMode: 'wsl' as const,
-    wslDistro: 'Ubuntu'
-  };
+    runMode,
+    ...(runMode === 'wsl' ? { wslDistro: defaults?.wslDistro ?? 'Ubuntu' } : {})
+  } as { name: string; cwd: string; runMode: 'windows' | 'wsl'; wslDistro?: string };
+  const standardShell = defaults?.shell ?? 'auto';
   switch (kind) {
     case 'standard_terminal':
-      return { ...base, kind: 'standard_terminal', shell: 'auto' };
+      return { ...base, kind: 'standard_terminal', shell: standardShell };
     case 'claude_code':
       return { ...base, kind: 'claude_code', resumeMode: 'new', fullscreenTui: true };
     case 'codex':

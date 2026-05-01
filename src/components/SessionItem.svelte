@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { Play, Square, RotateCw, Pencil, FolderOpen, Copy, Trash2 } from 'lucide-svelte';
   import type { Session } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
   import { reportError } from '../stores/toast.svelte';
+  import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
   import { shortCwd } from '../lib/sessions-helpers';
   import StatusDot from './StatusDot.svelte';
@@ -54,7 +56,13 @@
   }
   async function remove() {
     closeMenu();
-    if (!confirm(`Delete session "${session.name}"?`)) return;
+    const ok = await confirmStore.ask({
+      title: 'Delete session',
+      message: `Delete session "${session.name}"?`,
+      confirmLabel: 'Delete',
+      tone: 'danger'
+    });
+    if (!ok) return;
     try { await sessions.remove(session.id); } catch (err) { reportError(err); }
   }
   async function openCwd() {
@@ -92,20 +100,20 @@
 {#if menuOpen}
   <div class="menu" style="left: {menuX}px; top: {menuY}px" role="menu">
     {#if canStart}
-      <button onclick={start}>Start</button>
+      <button onclick={start}><Play size={12} /><span>Start</span></button>
     {/if}
     {#if isRunning}
-      <button onclick={stop}>Stop</button>
+      <button onclick={stop}><Square size={12} /><span>Stop</span></button>
     {/if}
     {#if status === 'running'}
-      <button onclick={restart}>Restart</button>
+      <button onclick={restart}><RotateCw size={12} /><span>Restart</span></button>
     {/if}
     <hr />
-    <button onclick={edit}>Edit…</button>
-    <button onclick={openCwd}>Open cwd</button>
-    <button onclick={copyCmd}>Copy command</button>
+    <button onclick={edit}><Pencil size={12} /><span>Edit…</span></button>
+    <button onclick={openCwd}><FolderOpen size={12} /><span>Open cwd</span></button>
+    <button onclick={copyCmd}><Copy size={12} /><span>Copy command</span></button>
     <hr />
-    <button class="danger" onclick={remove}>Delete</button>
+    <button class="danger" onclick={remove}><Trash2 size={12} /><span>Delete</span></button>
   </div>
 {/if}
 
@@ -179,6 +187,9 @@
     padding: 6px 10px;
     border-radius: var(--radius-sm);
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
   }
   .menu button:hover {
     background: var(--bg-elev-3);
