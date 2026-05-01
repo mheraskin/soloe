@@ -4,6 +4,7 @@
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
   import { nav } from './stores/nav.svelte';
+  import { commandPalette } from './stores/command-palette.svelte';
   import { reportError } from './stores/toast.svelte';
   import { Keymap, tabIndexFromEvent } from './lib/keymap';
   import Sidebar from './components/Sidebar.svelte';
@@ -14,6 +15,7 @@
   import ConfirmDialog from './components/ConfirmDialog.svelte';
   import SettingsDrawer from './components/SettingsDrawer.svelte';
   import ProjectModal from './components/ProjectModal.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
 
   onMount(() => {
     sessions.attachListeners();
@@ -30,6 +32,12 @@
   });
 
   function onKey(e: KeyboardEvent) {
+    if (Keymap.commandPalette.match(e)) {
+      e.preventDefault();
+      commandPalette.toggle();
+      return;
+    }
+    if (commandPalette.open) return;
     const idx = tabIndexFromEvent(e);
     if (idx !== null) {
       e.preventDefault();
@@ -67,6 +75,7 @@
   </div>
   <NewSessionModal />
   <ProjectModal />
+  <CommandPalette />
   <ConfirmDialog />
   <SettingsDrawer />
   <Toast />
