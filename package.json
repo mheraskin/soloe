@@ -1,5 +1,5 @@
 {
-  "name": "agent-terminal-cockpit",
+  "name": "soloe",
   "version": "0.1.0",
   "description": "Manage Claude Code, Codex CLI, and standard terminal sessions in one local desktop app",
   "private": true,

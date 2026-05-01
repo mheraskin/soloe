@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
-  CockpitApi,
+  SoloeApi,
   TerminalInputPayload,
   TerminalResizePayload
 } from '@shared/types/ipc.js';
@@ -26,7 +26,7 @@ function subscribe<T>(channel: string, cb: (event: T) => void): () => void {
   };
 }
 
-const cockpit: CockpitApi = {
+const soloe: SoloeApi = {
   sessions: {
     list: () => ipcRenderer.invoke(IpcChannels.sessions.list),
     get: (id: SessionId) => ipcRenderer.invoke(IpcChannels.sessions.get, id),
@@ -58,4 +58,4 @@ const cockpit: CockpitApi = {
   }
 };
 
-contextBridge.exposeInMainWorld('cockpit', cockpit);
+contextBridge.exposeInMainWorld('soloe', soloe);

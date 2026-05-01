@@ -16,7 +16,7 @@
 
 <div class="app">
   <header class="titlebar">
-    <span class="title">Agent Terminal Cockpit</span>
+    <span class="title">Soloe</span>
   </header>
   <div class="body">
     <Sidebar />

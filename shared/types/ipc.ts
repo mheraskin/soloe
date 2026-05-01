@@ -84,7 +84,7 @@ export interface SystemApi {
   openPath(sessionId: SessionId): Promise<IpcResult<true>>;
 }
 
-export interface CockpitApi {
+export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
   system: SystemApi;
@@ -92,6 +92,6 @@ export interface CockpitApi {
 
 declare global {
   interface Window {
-    cockpit: CockpitApi;
+    soloe: SoloeApi;
   }
 }

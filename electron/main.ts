@@ -63,7 +63,7 @@ async function createWindow(): Promise<BrowserWindow> {
     minWidth: 800,
     minHeight: 500,
     show: false,
-    title: 'Agent Terminal Cockpit',
+    title: 'Soloe',
     backgroundColor: '#0f0f10',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),

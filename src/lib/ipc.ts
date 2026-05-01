@@ -13,7 +13,7 @@ function unwrap<T>(r: IpcResult<T>): T {
   return r.value;
 }
 
-const c = window.cockpit;
+const c = window.soloe;
 
 export const ipc = {
   sessions: {

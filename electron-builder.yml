@@ -1,5 +1,5 @@
-appId: com.soloe.agent-terminal-cockpit
-productName: Agent Terminal Cockpit
+appId: com.soloe.app
+productName: Soloe
 directories:
   output: release
   buildResources: build
