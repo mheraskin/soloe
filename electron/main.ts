@@ -1,0 +1,141 @@
+import { app, BrowserWindow, shell } from 'electron';
+import * as path from 'node:path';
+import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
+import { SessionStore } from './sessions/SessionStore.js';
+import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
+import { ShellDetector } from './terminal/ShellDetector.js';
+import { TerminalOutputBatcher } from './terminal/TerminalOutputBatcher.js';
+import { PtyManager } from './terminal/PtyManager.js';
+import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
+import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
+import { SessionsIpc } from './ipc/sessions.ipc.js';
+import { TerminalIpc } from './ipc/terminal.ipc.js';
+
+interface AppServices {
+  store: SessionStore;
+  pty: PtyManager;
+  sessionsIpc: SessionsIpc;
+  terminalIpc: TerminalIpc;
+}
+
+let services: AppServices | null = null;
+let mainWindow: BrowserWindow | null = null;
+let cleanedUp = false;
+
+async function setupServices(): Promise<AppServices> {
+  const userDataPath = app.getPath('userData');
+  const sessionsFile = path.join(userDataPath, 'sessions.json');
+
+  const store = new SessionStore(sessionsFile);
+  await store.init();
+
+  const commandBuilder = new SessionCommandBuilder(
+    new ShellDetector(),
+    new WindowsCommandBuilder(),
+    new WslCommandBuilder()
+  );
+
+  let manager: PtyManager;
+  const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
+    manager.forwardBatchedOutput(events);
+  });
+  manager = new PtyManager({ commandBuilder, store, batcher });
+
+  const sessionsIpc = new SessionsIpc({ store, commandBuilder });
+  const terminalIpc = new TerminalIpc({
+    pty: manager,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  sessionsIpc.register();
+  terminalIpc.register();
+
+  return { store, pty: manager, sessionsIpc, terminalIpc };
+}
+
+async function createWindow(): Promise<BrowserWindow> {
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 800,
+    minHeight: 500,
+    show: false,
+    title: 'Agent Terminal Cockpit',
+    backgroundColor: '#0f0f10',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  win.on('ready-to-show', () => win.show());
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  const devUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (!app.isPackaged && devUrl) {
+    await win.loadURL(devUrl);
+  } else {
+    await win.loadFile(path.join(__dirname, '../renderer/index.html'));
+  }
+
+  return win;
+}
+
+async function cleanup(): Promise<void> {
+  if (cleanedUp) return;
+  cleanedUp = true;
+  if (services) {
+    services.sessionsIpc.dispose();
+    services.terminalIpc.dispose();
+    await services.pty.dispose();
+    services = null;
+  }
+}
+
+function ensureSingleInstance(): boolean {
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+    return false;
+  }
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+  return true;
+}
+
+if (ensureSingleInstance()) {
+  app.whenReady().then(async () => {
+    services = await setupServices();
+    mainWindow = await createWindow();
+
+    app.on('activate', async () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = await createWindow();
+      }
+    });
+  }).catch((err) => {
+    console.error('Failed to start app:', err);
+    app.exit(1);
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+
+  app.on('before-quit', (event) => {
+    if (cleanedUp) return;
+    event.preventDefault();
+    cleanup().finally(() => app.quit());
+  });
+
+  process.on('SIGINT', () => { void cleanup().then(() => app.exit(0)); });
+  process.on('SIGTERM', () => { void cleanup().then(() => app.exit(0)); });
+}
