@@ -46,15 +46,15 @@ export const Keymap = {
   },
   cycleNext: {
     id: 'tabs.cycle-next',
-    description: 'Switch to next tab',
+    description: 'Switch to next session',
     match: (e: KeyboardEvent) =>
-      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && (key(e) === ']' || key(e) === 'tab')
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === ']'
   },
   cyclePrev: {
     id: 'tabs.cycle-prev',
-    description: 'Switch to previous tab',
+    description: 'Switch to previous session',
     match: (e: KeyboardEvent) =>
-      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && (key(e) === '[' || (key(e) === 'tab' && e.shiftKey))
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === '['
   }
 } as const satisfies Record<string, KeymapBinding>;
 

@@ -3,7 +3,9 @@
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
+  import { nav } from './stores/nav.svelte';
   import { reportError } from './stores/toast.svelte';
+  import { Keymap, tabIndexFromEvent } from './lib/keymap';
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
   import AgentInspector from './components/AgentInspector.svelte';
@@ -26,7 +28,33 @@
       projects.detach();
     };
   });
+
+  function onKey(e: KeyboardEvent) {
+    const idx = tabIndexFromEvent(e);
+    if (idx !== null) {
+      e.preventDefault();
+      nav.selectByIndex(idx);
+      return;
+    }
+    if (Keymap.closeActiveTab.match(e)) {
+      e.preventDefault();
+      void nav.closeActive();
+      return;
+    }
+    if (Keymap.cycleNext.match(e)) {
+      e.preventDefault();
+      nav.cycleNext();
+      return;
+    }
+    if (Keymap.cyclePrev.match(e)) {
+      e.preventDefault();
+      nav.cyclePrev();
+      return;
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <div class="app">
   <header class="titlebar">
