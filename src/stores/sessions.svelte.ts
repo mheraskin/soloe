@@ -168,6 +168,7 @@ class SessionsStore {
     this.detach();
     this.detachers.push(
       ipc.terminal.onStatus((e) => {
+        console.info('[DEBUG-terminal-start] renderer status received', e);
         const prev = this.runtime[e.sessionId];
         const merged: RuntimeEntry = {
           sessionId: e.sessionId,
@@ -321,7 +322,33 @@ class SessionsStore {
   }
 
   async start(id: SessionId): Promise<void> {
-    await ipc.terminal.start({ sessionId: id });
+    this.select(id);
+    console.info('[DEBUG-terminal-start] renderer start requested', { sessionId: id });
+    this.runtime = {
+      ...this.runtime,
+      [id]: {
+        ...(this.runtime[id] ?? { sessionId: id, terminalId: null }),
+        sessionId: id,
+        status: 'starting',
+        terminalId: null
+      }
+    };
+    const result = await ipc.terminal.start({ sessionId: id });
+    console.info('[DEBUG-terminal-start] renderer start returned', {
+      sessionId: id,
+      terminalId: result.terminalId,
+      pid: result.pid
+    });
+    this.runtime = {
+      ...this.runtime,
+      [id]: {
+        ...(this.runtime[id] ?? { sessionId: id, terminalId: result.terminalId }),
+        sessionId: id,
+        status: 'running',
+        terminalId: result.terminalId,
+        startedAt: new Date().toISOString()
+      }
+    };
   }
 
   async stop(id: SessionId): Promise<void> {
