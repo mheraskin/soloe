@@ -10,7 +10,6 @@ import type { InnerCommand } from '../runtime/InnerCommand.js';
 import { WindowsCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
 import { ShellDetector } from '../terminal/ShellDetector.js';
-import { posixSingleQuote } from '../runtime/posix-quote.js';
 
 export interface SessionBuildContext {
   baseEnv: Record<string, string | undefined>;
@@ -195,7 +194,6 @@ function executableName(executable: string): string {
 
 function buildWslBashLocationLine(): string {
   const rcLines = [
-    'trap \'rm -f "$__soloe_rc"\' EXIT',
     'test -r ~/.bashrc && source ~/.bashrc',
     `__soloe_emit_cwd() { ${BASH_LOCATION_PROMPT}; }`,
     'cd() { builtin cd "$@" && __soloe_emit_cwd; }',
@@ -204,6 +202,9 @@ function buildWslBashLocationLine(): string {
     'PROMPT_COMMAND="__soloe_emit_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"',
     '__soloe_emit_cwd'
   ];
-  const quotedLines = rcLines.map((line) => posixSingleQuote(line)).join(' ');
-  return `__soloe_dir="\${HOME:-.}/.soloe" && mkdir -p "$__soloe_dir" && __soloe_rc="$__soloe_dir/bashrc.$$" && export __soloe_rc && printf '%s\\n' ${quotedLines} > "$__soloe_rc" && exec bash --rcfile "$__soloe_rc" -i`;
+  return [
+    "exec bash --rcfile /proc/self/fd/3 -i 3<<'__SOLOE_BASHRC__'",
+    ...rcLines,
+    '__SOLOE_BASHRC__'
+  ].join('\n');
 }
