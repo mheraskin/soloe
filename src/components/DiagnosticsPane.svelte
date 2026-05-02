@@ -41,7 +41,7 @@
 </script>
 
 <Sheet.Root open={diagnosticsPane.open} {onOpenChange}>
-  <Sheet.Content side="right" class="w-[420px] max-w-full gap-0 p-0">
+  <Sheet.Content side="right" class="w-[420px] max-w-full gap-0 overflow-hidden p-0">
     <Sheet.Header class="border-b border-border">
       <Sheet.Title class="text-base font-medium">Diagnostics</Sheet.Title>
       <Sheet.Description class="text-xs text-muted-foreground">
@@ -49,7 +49,7 @@
       </Sheet.Description>
     </Sheet.Header>
 
-    <ScrollArea class="flex-1">
+    <ScrollArea class="min-h-0 flex-1">
       <div class="flex flex-col gap-2 p-3">
         {#if loading}
           <p class="m-0 text-xs text-muted-foreground">Checking…</p>
