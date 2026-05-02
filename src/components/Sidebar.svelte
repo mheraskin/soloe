@@ -14,10 +14,9 @@
   let query = $state('');
 
   let orderedProjectIds = $derived.by<string[]>(() => {
-    const present = new Set(sessions.projectIds);
     const ordered: string[] = [];
     for (const p of projects.recents) {
-      if (present.has(p.id)) ordered.push(p.id);
+      ordered.push(p.id);
     }
     for (const id of sessions.projectIds) {
       if (!ordered.includes(id)) ordered.push(id);

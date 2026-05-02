@@ -178,7 +178,7 @@
             {#if session.projectId}
               <Button
                 variant="ghost"
-                size="icon-xs"
+                size="icon-sm"
                 class="text-muted-foreground hover:text-foreground"
                 onclick={archive}
                 title="Archive session"
@@ -189,7 +189,7 @@
             {/if}
             <Button
               variant="ghost"
-              size="icon-xs"
+              size="icon-sm"
               class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               onclick={removeFromButton}
               title="Delete session"

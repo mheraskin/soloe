@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight, Folder, Pencil, Plus } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, Folder, Pencil, Plus, Trash2 } from '@lucide/svelte';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { projects } from '../stores/projects.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
+  import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
   import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
@@ -87,6 +89,25 @@
       .createWithDefaults({ projectId: project.id, cwd: project.path })
       .catch(reportError);
   }
+
+  async function removeProject(e: Event) {
+    e.stopPropagation();
+    const ok = await confirmStore.ask({
+      title: 'Delete project',
+      message: `Delete project "${project.name}" and its ${items.length} session${items.length === 1 ? '' : 's'} from Soloe? Files on disk will not be touched.`,
+      confirmLabel: 'Delete',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    try {
+      for (const session of items) {
+        await sessions.remove(session.id);
+      }
+      await projects.remove(project.id);
+    } catch (err) {
+      reportError(err);
+    }
+  }
 </script>
 
 <Collapsible.Root bind:open={expanded} class="flex flex-col gap-1">
@@ -112,7 +133,7 @@
     </Collapsible.Trigger>
     <Button
       variant="ghost"
-      size="icon-xs"
+      size="icon-sm"
       onclick={addSession}
       title="New terminal"
       aria-label="New terminal"
@@ -121,12 +142,22 @@
     </Button>
     <Button
       variant="ghost"
-      size="icon-xs"
+      size="icon-sm"
       onclick={edit}
       title="Edit project"
       aria-label="Edit project"
     >
       <Pencil />
+    </Button>
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      onclick={removeProject}
+      title="Delete project"
+      aria-label={`Delete ${project.name}`}
+    >
+      <Trash2 />
     </Button>
   </div>
 
