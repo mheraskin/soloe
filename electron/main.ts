@@ -209,6 +209,19 @@ async function createWindow(): Promise<BrowserWindow> {
 
   win.on('ready-to-show', () => win.show());
 
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const isF12 = input.key === 'F12';
+    const isToggleCombo =
+      (input.key === 'I' || input.key === 'i') &&
+      input.shift &&
+      (process.platform === 'darwin' ? input.meta && input.alt : input.control);
+    if (isF12 || isToggleCombo) {
+      event.preventDefault();
+      win.webContents.toggleDevTools();
+    }
+  });
+
   win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     if (!message.includes('[DEBUG-terminal-start]')) return;
     console.info('[DEBUG-terminal-start] renderer console', {
