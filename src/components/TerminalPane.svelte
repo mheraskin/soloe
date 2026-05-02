@@ -5,6 +5,8 @@
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import { WebglAddon } from '@xterm/addon-webgl';
   import { CanvasAddon } from '@xterm/addon-canvas';
+  import { Unicode11Addon } from '@xterm/addon-unicode11';
+  import { ClipboardAddon } from '@xterm/addon-clipboard';
   import '@xterm/xterm/css/xterm.css';
   import { ipc } from '../lib/ipc';
   import type { TerminalId } from '@shared/types/terminal.js';
@@ -103,16 +105,51 @@
     const t = new Terminal({
       fontFamily: 'JetBrains Mono, ui-monospace, monospace',
       fontSize: settings.current.terminal.fontSize,
-      lineHeight: 1.2,
+      fontWeight: 400,
+      fontWeightBold: 700,
+      // Integer lineHeight: non-integer values produce per-DPR-rounded row
+      // heights that shift by a pixel between frames, which flickers on
+      // rapidly redrawn rows under WebGL.
+      lineHeight: 1.0,
       letterSpacing: 0,
+      // Lifts low-contrast ANSI colors (e.g. dim blue on black) to WCAG AA.
+      minimumContrastRatio: 4.5,
+      drawBoldTextInBrightColors: false,
+      // Off: rescales adjacent glyph widths every frame, which makes cells
+      // breathe by ~1px during animation/typing on top of WebGL flicker.
+      rescaleOverlappingGlyphs: false,
+      smoothScrollDuration: 125,
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      cursorInactiveStyle: 'outline',
+      cursorBlink: true,
+      // Tokyo Night palette tuned to the #0f0f10 app shell.
       theme: {
         background: '#0f0f10',
         foreground: '#e6e6e6',
-        cursor: '#6cf'
+        cursor: '#e6e6e6',
+        cursorAccent: '#0f0f10',
+        selectionBackground: '#283457',
+        selectionForeground: '#e6e6e6',
+        black: '#15161e',
+        red: '#f7768e',
+        green: '#9ece6a',
+        yellow: '#e0af68',
+        blue: '#7aa2f7',
+        magenta: '#bb9af7',
+        cyan: '#7dcfff',
+        white: '#a9b1d6',
+        brightBlack: '#414868',
+        brightRed: '#ff899d',
+        brightGreen: '#9fe044',
+        brightYellow: '#faba4a',
+        brightBlue: '#8db0ff',
+        brightMagenta: '#c7a9ff',
+        brightCyan: '#a4daff',
+        brightWhite: '#e6e6e6'
       },
       allowProposedApi: true,
       scrollback: 5000,
-      cursorBlink: true,
       convertEol: false
     });
     const f = new FitAddon();
@@ -120,9 +157,14 @@
     const links = new WebLinksAddon((_event, uri) => {
       void ipc.system.openExternal(uri).catch(reportError);
     });
+    const unicode11 = new Unicode11Addon();
+    const clipboard = new ClipboardAddon();
     t.loadAddon(f);
     t.loadAddon(s);
     t.loadAddon(links);
+    t.loadAddon(unicode11);
+    t.loadAddon(clipboard);
+    t.unicode.activeVersion = '11';
     t.open(host);
 
     t.attachCustomKeyEventHandler((e) => {
@@ -190,6 +232,11 @@
       if (!active) return;
       try {
         f.fit();
+        // Sync PTY immediately so the first output isn't wrapped at the
+        // default 80x24 and replayed at the actual geometry.
+        if (Number.isFinite(t.cols) && Number.isFinite(t.rows)) {
+          void ipc.terminal.resize(terminalId, t.cols, t.rows).catch(() => {});
+        }
       } catch (err) {
         console.warn('[DEBUG-xterm] initial fit failed', { terminalId, sessionId, err });
       }
@@ -247,6 +294,8 @@
       onInput.dispose();
       offOutput();
       renderer?.dispose();
+      clipboard.dispose();
+      unicode11.dispose();
       t.dispose();
       term = null;
       fit = null;
