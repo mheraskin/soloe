@@ -37,7 +37,6 @@ describe('SettingsStore — update', () => {
     const store = new SettingsStore(storePath);
     const updated = await store.update({ appearance: { theme: 'light' } });
     expect(updated.appearance.theme).toBe('light');
-    expect(updated.appearance.density).toBe(DEFAULT_SETTINGS.appearance.density);
     expect(updated.terminal).toEqual(DEFAULT_SETTINGS.terminal);
   });
 
@@ -82,6 +81,7 @@ describe('SettingsStore — migration', () => {
     const store = new SettingsStore(storePath);
     const s = await store.get();
     expect(s.defaults.cwd).toBe('~');
+    expect('density' in s.appearance).toBe(false);
     expect('fontSize' in s.appearance).toBe(false);
     expect(s.terminal.fontSize).toBe(13);
   });
@@ -97,6 +97,7 @@ describe('SettingsStore — migration', () => {
     const store = new SettingsStore(storePath);
     const s = await store.get();
     expect(s.terminal.fontSize).toBe(14);
+    expect('density' in s.appearance).toBe(false);
     expect('fontSize' in s.appearance).toBe(false);
   });
 });

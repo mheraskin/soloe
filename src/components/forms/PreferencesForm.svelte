@@ -1,7 +1,6 @@
 <script lang="ts">
   import { settings } from '../../stores/settings.svelte';
   import type {
-    DensityPref,
     SettingsBinaries,
     TerminalFontSizePref,
     ThemePref
@@ -13,7 +12,6 @@
   import * as Select from '$lib/components/ui/select';
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
-  const densities: DensityPref[] = ['comfortable', 'compact'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
   const runModes: RunMode[] = ['windows', 'wsl'];
   const shells: ShellKind[] = ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom'];
@@ -27,9 +25,9 @@
     { key: 'editor', label: 'External editor', placeholder: 'code' }
   ];
 
-  async function setAppearance<K extends 'theme' | 'density'>(
+  async function setAppearance<K extends 'theme'>(
     key: K,
-    value: ThemePref | DensityPref
+    value: ThemePref
   ) {
     try {
       await settings.update({ appearance: { [key]: value } as never });
@@ -77,21 +75,6 @@
       <Select.Content>
         {#each themes as t (t)}
           <Select.Item value={t} label={t}>{t}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  </div>
-  <div class="flex flex-col gap-1.5">
-    <Label class="text-xs text-muted-foreground">Density</Label>
-    <Select.Root
-      type="single"
-      value={settings.current.appearance.density}
-      onValueChange={(v) => setAppearance('density', v as DensityPref)}
-    >
-      <Select.Trigger class="w-full">{settings.current.appearance.density}</Select.Trigger>
-      <Select.Content>
-        {#each densities as d (d)}
-          <Select.Item value={d} label={d}>{d}</Select.Item>
         {/each}
       </Select.Content>
     </Select.Root>

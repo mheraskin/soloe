@@ -1,12 +1,10 @@
 import type { ShellKind, RunMode } from './sessions.js';
 
 export type ThemePref = 'dark' | 'light' | 'system';
-export type DensityPref = 'comfortable' | 'compact';
 export type TerminalFontSizePref = 11 | 12 | 13 | 14;
 
 export interface SettingsAppearance {
   theme: ThemePref;
-  density: DensityPref;
 }
 
 export interface SettingsTerminal {
@@ -47,7 +45,7 @@ export type SettingsUpdate = {
 
 export const DEFAULT_SETTINGS: Settings = {
   version: 1,
-  appearance: { theme: 'dark', density: 'comfortable' },
+  appearance: { theme: 'dark' },
   terminal: { fontSize: 13 },
   defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
   binaries: {}

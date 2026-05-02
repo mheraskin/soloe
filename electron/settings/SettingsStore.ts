@@ -8,7 +8,6 @@ import {
 } from '@shared/types/settings.js';
 
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
-const VALID_DENSITY = new Set(['comfortable', 'compact']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
 const VALID_RUN_MODES = new Set(['windows', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
@@ -121,8 +120,7 @@ function parseSettings(raw: unknown): Settings {
   const out: Settings = {
     version: 1,
     appearance: {
-      theme: pickEnum(appearance['theme'], VALID_THEMES, DEFAULT_SETTINGS.appearance.theme) as Settings['appearance']['theme'],
-      density: pickEnum(appearance['density'], VALID_DENSITY, DEFAULT_SETTINGS.appearance.density) as Settings['appearance']['density']
+      theme: pickEnum(appearance['theme'], VALID_THEMES, DEFAULT_SETTINGS.appearance.theme) as Settings['appearance']['theme']
     },
     terminal: {
       fontSize: pickTerminalFontSize(terminal['fontSize'] ?? appearance['fontSize'])
@@ -162,7 +160,6 @@ function filterStringRecord(raw: Record<string, unknown>): Settings['binaries'] 
 function validateSettings(s: Settings): void {
   if (s.version !== 1) throw new Error(`Unsupported settings version: ${s.version}`);
   if (!VALID_THEMES.has(s.appearance.theme)) throw new Error(`Invalid theme: ${s.appearance.theme}`);
-  if (!VALID_DENSITY.has(s.appearance.density)) throw new Error(`Invalid density: ${s.appearance.density}`);
   if (!VALID_TERMINAL_FONT_SIZES.has(s.terminal.fontSize)) {
     throw new Error(`Invalid terminal.fontSize: ${s.terminal.fontSize}`);
   }
