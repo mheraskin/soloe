@@ -73,6 +73,8 @@ export class AgentHookDispatcher {
     try {
       const existing = await this.opts.sessionStore.get(soloeSessionId);
       if (!existing) return;
+      if (provider === 'claude_code' && existing.kind !== 'claude_code') return;
+      if (provider === 'codex' && existing.kind !== 'codex') return;
       const patch =
         provider === 'claude_code'
           ? { claudeSessionId: sessionId, providerThreadId: sessionId }
@@ -83,6 +85,7 @@ export class AgentHookDispatcher {
           : (existing as { codexSessionId?: string }).codexSessionId;
       if (current === sessionId && existing.providerThreadId === sessionId) return;
       await this.opts.sessionStore.update(soloeSessionId, patch);
+      this.opts.observer.updateTuiProviderThread(soloeSessionId, provider, sessionId);
     } catch (err) {
       this.opts.log?.('failed to capture provider session id', err);
     }

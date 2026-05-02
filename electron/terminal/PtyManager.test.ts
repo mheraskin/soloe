@@ -6,11 +6,7 @@ import type {
   TerminalLocationEvent,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
-import {
-  encodeClaudeProjectPath,
-  PtyManager,
-  type PtyManagerOptions
-} from './PtyManager.js';
+import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => ({
@@ -182,7 +178,7 @@ describe('PtyManager', () => {
     ]);
   });
 
-  it('persists a discovered Claude session id for future resume', async () => {
+  it('does not infer Claude session ids from transcript files', async () => {
     const claudeSession: Session = {
       ...session,
       id: 'claude-1',
@@ -191,11 +187,7 @@ describe('PtyManager', () => {
       resumeMode: 'new',
       fullscreenTui: true
     };
-    const update = vi.fn(async () => ({
-      ...claudeSession,
-      resumeMode: 'resume_by_id',
-      claudeSessionId: 'claude-session-123'
-    }));
+    const update = vi.fn();
     const manager = new PtyManager({
       commandBuilder: {
         build: vi.fn(() => spec)
@@ -211,27 +203,12 @@ describe('PtyManager', () => {
         removeTerminal: vi.fn(),
         destroy: vi.fn()
       } as unknown as PtyManagerOptions['batcher'],
-      baseEnv: {},
-      claudeSessionCaptureDelaysMs: [0],
-      resolveClaudeSession: vi.fn(async () => ({
-        sessionId: 'claude-session-123',
-        transcriptPath: '/home/me/.claude/projects/-home-me-app/claude-session-123.jsonl'
-      }))
+      baseEnv: {}
     });
 
     await manager.start({ sessionId: claudeSession.id });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(update).toHaveBeenCalledWith(claudeSession.id, {
-      resumeMode: 'resume_by_id',
-      claudeSessionId: 'claude-session-123',
-      providerThreadId: 'claude-session-123',
-      transcriptPath: '/home/me/.claude/projects/-home-me-app/claude-session-123.jsonl'
-    });
-  });
-
-  it('encodes Claude project transcript directories like Claude Code', () => {
-    expect(encodeClaudeProjectPath('/home/me/my-app')).toBe('-home-me-my-app');
-    expect(encodeClaudeProjectPath('C:\\Users\\me\\my-app')).toBe('C--Users-me-my-app');
+    expect(update).not.toHaveBeenCalled();
   });
 });

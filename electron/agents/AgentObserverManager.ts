@@ -123,6 +123,28 @@ export class AgentObserverManager extends EventEmitter {
     return snapshot;
   }
 
+  updateTuiProviderThread(
+    sessionId: SessionId,
+    provider: 'claude_code' | 'codex',
+    providerThreadId: string
+  ): ObservedAgentSnapshot {
+    const existing = this.snapshots.get(sessionId);
+    const snapshot: ObservedAgentSnapshot = {
+      ...(existing ?? {
+        id: sessionId,
+        runtimeMode: 'tui',
+        subjectKind: 'session',
+        provider,
+        sessionId,
+        state: 'idle'
+      }),
+      provider,
+      providerThreadId,
+      lastEventAt: new Date().toISOString()
+    };
+    return this.upsertSnapshot(snapshot, 'provider session bound');
+  }
+
   registerWorker(input: {
     workerId: string;
     originSessionId: SessionId;

@@ -113,6 +113,11 @@ describe('AgentHookDispatcher', () => {
         'claude-uuid-xyz'
       );
       expect(updated?.providerThreadId).toBe('claude-uuid-xyz');
+      expect(observer.getSnapshot(created.id)).toMatchObject({
+        provider: 'claude_code',
+        providerThreadId: 'claude-uuid-xyz',
+        state: 'starting'
+      });
     });
 
     it('stores codex session id on the matching session', async () => {
@@ -134,6 +139,11 @@ describe('AgentHookDispatcher', () => {
         'codex-uuid-abc'
       );
       expect(updated?.providerThreadId).toBe('codex-uuid-abc');
+      expect(observer.getSnapshot(created.id)).toMatchObject({
+        provider: 'codex',
+        providerThreadId: 'codex-uuid-abc',
+        state: 'starting'
+      });
     });
 
     it('skips capture when payload has no session_id', async () => {
@@ -152,6 +162,25 @@ describe('AgentHookDispatcher', () => {
       });
       const updated = await sessionStore.get(created.id);
       expect((updated as { claudeSessionId?: string } | null)?.claudeSessionId).toBeUndefined();
+    });
+
+    it('skips capture when the hook provider does not match the Soloe session kind', async () => {
+      const created = await sessionStore.create({
+        kind: 'claude_code',
+        name: 'work',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        resumeMode: 'new'
+      });
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'SessionStart', session_id: 'codex-uuid-abc' }
+      });
+      const updated = await sessionStore.get(created.id);
+      expect((updated as { codexSessionId?: string } | null)?.codexSessionId).toBeUndefined();
+      expect(updated?.providerThreadId).toBeUndefined();
     });
 
     it('does not crash when the soloe session id is unknown', async () => {

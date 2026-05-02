@@ -101,8 +101,6 @@ export class SessionCommandBuilder {
       case 'new':
         if (s.claudeSessionId ?? s.providerThreadId) {
           args.push('--resume', s.claudeSessionId ?? s.providerThreadId!);
-        } else if (s.lastUsedAt > s.createdAt) {
-          args.push('--continue');
         }
         break;
       case 'resume_last':
@@ -130,6 +128,9 @@ export class SessionCommandBuilder {
     const args: string[] = [];
     switch (s.resumeMode) {
       case 'new':
+        if (s.codexSessionId ?? s.providerThreadId) {
+          args.push('resume', s.codexSessionId ?? s.providerThreadId!);
+        }
         break;
       case 'resume_last':
         args.push('resume');

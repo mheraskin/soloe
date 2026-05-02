@@ -153,13 +153,14 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     expect(inner).toContain('--resume claude-123');
   });
 
-  it('falls back to `claude --continue` for previously used sessions without an id', () => {
+  it('does not resume the provider global last session for previously used managed sessions without an id', () => {
     const s = {
       ...claudeBase('new'),
       lastUsedAt: '2026-01-01T00:01:00Z'
     } as Session;
     const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('--continue');
+    expect(inner).not.toContain('--continue');
+    expect(inner).not.toContain('--resume');
   });
 
   it('emits `claude --continue` for resumeMode=resume_last', () => {
@@ -227,6 +228,20 @@ describe('SessionCommandBuilder — codex kind', () => {
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
       resumeMode: 'resume_by_id',
+      codexSessionId: 'cdx-123'
+    };
+    const inner = innerLine(builder.build(s, ctx).args);
+    expect(inner).toContain('resume');
+    expect(inner).toContain('cdx-123');
+  });
+
+  it('uses captured Codex session id for a persisted new session', () => {
+    const s: Session = {
+      ...baseFields(),
+      kind: 'codex',
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      resumeMode: 'new',
       codexSessionId: 'cdx-123'
     };
     const inner = innerLine(builder.build(s, ctx).args);

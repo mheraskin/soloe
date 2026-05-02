@@ -1,11 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
-import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
 import type {
-  ClaudeCodeSession,
   RunMode,
   Session,
   SessionId,
@@ -62,17 +58,6 @@ export interface PtyManagerOptions {
   observer?: AgentObserverManager;
   bridgeInfo?: () => { url: string; token: string } | null;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
-  resolveClaudeSession?: (
-    session: ClaudeCodeSession,
-    startedAt: string,
-    baseEnv: NodeJS.ProcessEnv
-  ) => Promise<ClaudeSessionCapture | null>;
-  claudeSessionCaptureDelaysMs?: number[];
-}
-
-export interface ClaudeSessionCapture {
-  sessionId: string;
-  transcriptPath?: string;
 }
 
 export declare interface PtyManager {
@@ -165,7 +150,6 @@ export class PtyManager extends EventEmitter {
     void this.opts.store.touch(sessionId).catch(() => {});
 
     this.emitStatus(sessionId, terminalId, 'running');
-    this.captureClaudeSessionId(session, instance.startedAt);
 
     return { terminalId, sessionId, pid: proc.pid, spec };
   }
@@ -281,35 +265,6 @@ export class PtyManager extends EventEmitter {
     this.emit('status', event);
   }
 
-  private captureClaudeSessionId(session: Session, startedAt: string): void {
-    if (session.kind !== 'claude_code') return;
-    if (session.resumeMode !== 'new') return;
-    if (session.claudeSessionId) return;
-    const delays = this.opts.claudeSessionCaptureDelaysMs ?? [250, 1000, 2500, 5000, 10000];
-    const resolve = this.opts.resolveClaudeSession ?? resolveClaudeSessionFromDisk;
-    void (async () => {
-      for (const delay of delays) {
-        await sleep(delay);
-        const captured = await resolve(session, startedAt, this.baseEnv);
-        if (!captured?.sessionId) continue;
-        await this.opts.store.update(session.id, {
-          resumeMode: 'resume_by_id',
-          claudeSessionId: captured.sessionId,
-          providerThreadId: captured.sessionId,
-          ...(captured.transcriptPath ? { transcriptPath: captured.transcriptPath } : {})
-        });
-        this.opts.observer?.registerTuiSession({
-          ...session,
-          resumeMode: 'resume_by_id',
-          claudeSessionId: captured.sessionId,
-          providerThreadId: captured.sessionId,
-          ...(captured.transcriptPath ? { transcriptPath: captured.transcriptPath } : {})
-        });
-        return;
-      }
-    })().catch(() => {});
-  }
-
   private handleLocationSequences(instance: TerminalInstance, data: string): void {
     const text = instance.locationBuffer + data;
     const regex = /\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
@@ -396,119 +351,6 @@ function errorMessage(err: unknown): string {
 
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function resolveClaudeSessionFromDisk(
-  session: ClaudeCodeSession,
-  startedAt: string,
-  baseEnv: NodeJS.ProcessEnv
-): Promise<ClaudeSessionCapture | null> {
-  const encoded = encodeClaudeProjectPath(session.cwd);
-  const startedAtMs = new Date(startedAt).getTime();
-  const minMtimeMs = Number.isFinite(startedAtMs) ? startedAtMs - 10000 : 0;
-  const transcripts = session.runMode === 'wsl'
-    ? await listWslClaudeTranscripts(session, encoded)
-    : await listNativeClaudeTranscripts(session, encoded, baseEnv);
-  const newest = newestTranscript(transcripts, minMtimeMs);
-  if (!newest) return null;
-  const sessionId = transcriptSessionId(newest.path);
-  return sessionId ? { sessionId, transcriptPath: newest.path } : null;
-}
-
-export function encodeClaudeProjectPath(cwd: string): string {
-  return cwd.replace(/[^A-Za-z0-9]/g, '-');
-}
-
-interface ClaudeTranscript {
-  path: string;
-  mtimeMs: number;
-}
-
-async function listNativeClaudeTranscripts(
-  _session: ClaudeCodeSession,
-  encoded: string,
-  baseEnv: NodeJS.ProcessEnv
-): Promise<ClaudeTranscript[]> {
-  const home = baseEnv['USERPROFILE'] ?? baseEnv['HOME'];
-  if (!home) return [];
-  const dir = path.join(home, '.claude', 'projects', encoded);
-  let entries: import('node:fs').Dirent[];
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const transcripts: ClaudeTranscript[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-    const filePath = path.join(dir, entry.name);
-    try {
-      const stat = await fs.stat(filePath);
-      transcripts.push({ path: filePath, mtimeMs: stat.mtimeMs });
-    } catch {
-      // ignore files that disappear while scanning
-    }
-  }
-  return transcripts;
-}
-
-function listWslClaudeTranscripts(
-  session: ClaudeCodeSession,
-  encoded: string
-): Promise<ClaudeTranscript[]> {
-  if (!session.wslDistro) return Promise.resolve([]);
-  const script = [
-    `dir="$HOME/.claude/projects/${encoded}"`,
-    '[ -d "$dir" ] || exit 0',
-    'find "$dir" -maxdepth 1 -type f -name "*.jsonl" -printf "%T@ %p\\n"'
-  ].join('; ');
-  return new Promise((resolve) => {
-    const child = spawn('wsl.exe', [
-      '-d',
-      session.wslDistro!,
-      '--cd',
-      session.cwd,
-      '--',
-      'sh',
-      '-lc',
-      script
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
-    let stdout = '';
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.once('error', () => resolve([]));
-    child.once('close', () => resolve(parseFindTranscripts(stdout)));
-  });
-}
-
-function parseFindTranscripts(stdout: string): ClaudeTranscript[] {
-  const transcripts: ClaudeTranscript[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const match = /^([0-9]+(?:\.[0-9]+)?)\s+(.+)$/.exec(line);
-    if (!match) continue;
-    const seconds = Number(match[1]);
-    const filePath = match[2];
-    if (!Number.isFinite(seconds) || !filePath) continue;
-    transcripts.push({ path: filePath, mtimeMs: seconds * 1000 });
-  }
-  return transcripts;
-}
-
-function newestTranscript(transcripts: ClaudeTranscript[], minMtimeMs: number): ClaudeTranscript | null {
-  return transcripts
-    .filter((item) => item.mtimeMs >= minMtimeMs)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0] ?? null;
-}
-
-function transcriptSessionId(transcriptPath: string): string | null {
-  const filename = transcriptPath.split(/[\\/]/).pop() ?? '';
-  const sessionId = filename.endsWith('.jsonl') ? filename.slice(0, -'.jsonl'.length) : filename;
-  return sessionId.trim() || null;
 }
 
 function hasOscTerminator(text: string, start: number): boolean {
