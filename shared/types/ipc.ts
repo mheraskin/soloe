@@ -61,6 +61,7 @@ import type {
 export const IpcChannels = {
   sessions: {
     list: 'sessions:list',
+    listArchived: 'sessions:list-archived',
     get: 'sessions:get',
     create: 'sessions:create',
     update: 'sessions:update',
@@ -157,6 +158,7 @@ export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string }
 
 export interface SessionsApi {
   list(): Promise<IpcResult<Session[]>>;
+  listArchived(): Promise<IpcResult<Session[]>>;
   get(id: SessionId): Promise<IpcResult<Session | null>>;
   create(draft: SessionDraft): Promise<IpcResult<Session>>;
   update(id: SessionId, patch: SessionUpdate): Promise<IpcResult<Session>>;

@@ -2,7 +2,7 @@
   import { ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
   import type { Session } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
-  import { rankMulti } from '../lib/fuzzy';
+  import { rankMulti, score } from '../lib/fuzzy';
   import { Badge } from '$lib/components/ui/badge';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import SessionItem from './SessionItem.svelte';
@@ -14,7 +14,8 @@
     projectId,
     items,
     isMain = false,
-    filter = ''
+    filter = '',
+    forceShow = false
   }: {
     title: string;
     cwd: string;
@@ -22,16 +23,24 @@
     items: Session[];
     isMain?: boolean;
     filter?: string;
+    forceShow?: boolean;
   } = $props();
 
   let expanded = $state(true);
 
-  let visible = $derived.by(() => {
-    const q = filter.trim();
-    if (!q) return items;
-    return rankMulti(q, items, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
+  let trimmedFilter = $derived(filter.trim());
+  let labelMatches = $derived.by(() => {
+    if (!trimmedFilter) return false;
+    return score(trimmedFilter, title) !== null;
   });
-  let hidden = $derived(filter.trim().length > 0 && visible.length === 0);
+  let visible = $derived.by(() => {
+    if (!trimmedFilter) return items;
+    if (forceShow || labelMatches) return items;
+    return rankMulti(trimmedFilter, items, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
+  });
+  let hidden = $derived(
+    trimmedFilter.length > 0 && !forceShow && !labelMatches && visible.length === 0
+  );
 </script>
 
 {#if !hidden}

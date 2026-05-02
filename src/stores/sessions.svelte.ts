@@ -51,11 +51,13 @@ interface RuntimeEntry extends SessionRuntimeState {
 
 class SessionsStore {
   sessions = $state<Session[]>([]);
+  archived = $state<Session[]>([]);
   runtime = $state<Record<SessionId, RuntimeEntry>>({});
   observed = $state<Record<string, ObservedAgentSnapshot>>({});
   observerEvents = $state<Record<string, ObserverEvent[]>>({});
   selectedId = $state<SessionId | null>(null);
   loading = $state(false);
+  showArchivedFor = $state<Record<string, boolean>>({});
 
   selected = $derived(
     this.selectedId ? this.sessions.find((s) => s.id === this.selectedId) ?? null : null
@@ -70,6 +72,16 @@ class SessionsStore {
   byProject = $derived.by<Record<string, Session[]>>(() => {
     const out: Record<string, Session[]> = {};
     for (const session of this.sessions) {
+      if (!session.projectId) continue;
+      if (!out[session.projectId]) out[session.projectId] = [];
+      out[session.projectId]!.push(session);
+    }
+    return out;
+  });
+
+  archivedByProject = $derived.by<Record<string, Session[]>>(() => {
+    const out: Record<string, Session[]> = {};
+    for (const session of this.archived) {
       if (!session.projectId) continue;
       if (!out[session.projectId]) out[session.projectId] = [];
       out[session.projectId]!.push(session);
@@ -122,12 +134,14 @@ class SessionsStore {
   async load(): Promise<void> {
     this.loading = true;
     try {
-      const [list, running, observed] = await Promise.all([
+      const [list, archived, running, observed] = await Promise.all([
         ipc.sessions.list(),
+        ipc.sessions.listArchived(),
         ipc.terminal.listRunning(),
         ipc.observer.list()
       ]);
       this.sessions = list;
+      this.archived = archived;
       const next: Record<SessionId, RuntimeEntry> = {};
       for (const r of running) next[r.sessionId] = { ...r };
       this.runtime = next;
@@ -139,6 +153,13 @@ class SessionsStore {
     } finally {
       this.loading = false;
     }
+  }
+
+  toggleArchivedFor(projectId: string): void {
+    this.showArchivedFor = {
+      ...this.showArchivedFor,
+      [projectId]: !this.showArchivedFor[projectId]
+    };
   }
 
   private pickInitialSelection(list: Session[]): SessionId | null {
@@ -404,8 +425,9 @@ class SessionsStore {
         // continue with archive even if stop fails
       }
     }
-    await ipc.sessions.update(id, { archivedAt: new Date().toISOString() });
+    const updated = await ipc.sessions.update(id, { archivedAt: new Date().toISOString() });
     this.sessions = this.sessions.filter((s) => s.id !== id);
+    this.archived = [updated, ...this.archived.filter((s) => s.id !== id)];
     const next = { ...this.runtime };
     delete next[id];
     this.runtime = next;
@@ -424,6 +446,14 @@ class SessionsStore {
     if (this.selectedId === id) {
       this.selectedId = this.sessions[0]?.id ?? null;
     }
+  }
+
+  async restore(id: SessionId): Promise<void> {
+    const session = this.archived.find((s) => s.id === id);
+    if (!session) return;
+    const updated = await ipc.sessions.update(id, { archivedAt: undefined });
+    this.archived = this.archived.filter((s) => s.id !== id);
+    this.sessions = [updated, ...this.sessions.filter((s) => s.id !== id)];
   }
 
   async start(id: SessionId): Promise<void> {

@@ -33,6 +33,10 @@ export class SessionsIpc {
       })
     );
 
+    ipcMain.handle(IpcChannels.sessions.listArchived, () =>
+      ipcInvoke(() => this.opts.store.listArchived())
+    );
+
     ipcMain.handle(IpcChannels.sessions.get, (_e, id: SessionId) =>
       ipcInvoke(() => this.opts.store.get(id))
     );
@@ -78,6 +82,7 @@ export class SessionsIpc {
   dispose(): void {
     if (!this.registered) return;
     ipcMain.removeHandler(IpcChannels.sessions.list);
+    ipcMain.removeHandler(IpcChannels.sessions.listArchived);
     ipcMain.removeHandler(IpcChannels.sessions.get);
     ipcMain.removeHandler(IpcChannels.sessions.create);
     ipcMain.removeHandler(IpcChannels.sessions.update);

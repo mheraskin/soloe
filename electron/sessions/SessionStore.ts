@@ -38,6 +38,15 @@ export class SessionStore {
       );
   }
 
+  async listArchived(): Promise<Session[]> {
+    await this.ensureLoaded();
+    return [...this.cache!.values()]
+      .filter((session) => Boolean(session.archivedAt))
+      .sort((a, b) =>
+        (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '')
+      );
+  }
+
   async get(id: SessionId): Promise<Session | null> {
     await this.ensureLoaded();
     return this.cache!.get(id) ?? null;

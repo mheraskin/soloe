@@ -57,6 +57,7 @@ function subscribe<T>(channel: string, cb: (event: T) => void): () => void {
 const soloe: SoloeApi = {
   sessions: {
     list: () => ipcRenderer.invoke(IpcChannels.sessions.list),
+    listArchived: () => ipcRenderer.invoke(IpcChannels.sessions.listArchived),
     get: (id: SessionId) => ipcRenderer.invoke(IpcChannels.sessions.get, id),
     create: (draft: SessionDraft) => ipcRenderer.invoke(IpcChannels.sessions.create, draft),
     update: (id: SessionId, patch: SessionUpdate) =>

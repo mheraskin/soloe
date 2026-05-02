@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight, Folder, Pencil, Trash2 } from '@lucide/svelte';
+  import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Folder, Pencil, Trash2 } from '@lucide/svelte';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
@@ -10,7 +10,7 @@
   import { reportError } from '../stores/toast.svelte';
   import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
-  import { rankMulti } from '../lib/fuzzy';
+  import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
@@ -105,10 +105,44 @@
   let hasWorktrees = $derived(gitWorktrees.some((wt) => !wt.isMain));
   let kbdIndex = $derived(nav.projectIndexHints[project.id] ?? null);
   let isActiveProject = $derived(nav.activeProjectId === project.id);
+  let trimmedFilter = $derived(filter.trim());
+  let showArchived = $derived(Boolean(sessions.showArchivedFor[project.id]));
+  let archivedItems = $derived(sessions.archivedByProject[project.id] ?? []);
+  let projectNameMatches = $derived.by(() => {
+    if (!trimmedFilter) return false;
+    return score(trimmedFilter, project.name) !== null
+      || score(trimmedFilter, project.path) !== null;
+  });
+  let anyWorktreeLabelMatches = $derived.by(() => {
+    if (!trimmedFilter) return false;
+    return worktrees.some((wt) => score(trimmedFilter, wt.label) !== null);
+  });
+  let anySessionMatches = $derived.by(() => {
+    if (!trimmedFilter) return false;
+    return items.some((s) =>
+      [s.name, s.cwd, ...(s.tags ?? [])].some((k) => score(trimmedFilter, k) !== null)
+    );
+  });
+  let anyArchivedMatches = $derived.by(() => {
+    if (!trimmedFilter || !showArchived) return false;
+    return archivedItems.some((s) =>
+      [s.name, s.cwd, ...(s.tags ?? [])].some((k) => score(trimmedFilter, k) !== null)
+    );
+  });
   let visibleSessions = $derived.by(() => {
-    const q = filter.trim();
-    if (!q) return items;
-    return rankMulti(q, items, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
+    if (!trimmedFilter) return items;
+    if (projectNameMatches) return items;
+    return rankMulti(trimmedFilter, items, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
+  });
+  let visibleArchived = $derived.by(() => {
+    if (!showArchived) return [];
+    if (!trimmedFilter) return archivedItems;
+    if (projectNameMatches) return archivedItems;
+    return rankMulti(trimmedFilter, archivedItems, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
+  });
+  let hidden = $derived.by(() => {
+    if (!trimmedFilter) return false;
+    return !projectNameMatches && !anyWorktreeLabelMatches && !anySessionMatches && !anyArchivedMatches;
   });
 
   function edit() {
@@ -134,6 +168,7 @@
   }
 </script>
 
+{#if !hidden}
 <Collapsible.Root bind:open={expanded} class="flex flex-col gap-1.5">
   <ContextMenu.Root>
     <ContextMenu.Trigger>
@@ -177,10 +212,20 @@
         </div>
       {/snippet}
     </ContextMenu.Trigger>
-    <ContextMenu.Content class="w-48">
+    <ContextMenu.Content class="w-56">
       <ContextMenu.Item onSelect={edit}>
         <Pencil /> <span>Edit project</span>
       </ContextMenu.Item>
+      <ContextMenu.Item onSelect={() => sessions.toggleArchivedFor(project.id)}>
+        {#if showArchived}
+          <ArchiveRestore />
+          <span>Hide archived sessions</span>
+        {:else}
+          <Archive />
+          <span>Show archived sessions{archivedItems.length > 0 ? ` (${archivedItems.length})` : ''}</span>
+        {/if}
+      </ContextMenu.Item>
+      <ContextMenu.Separator />
       <ContextMenu.Item variant="destructive" onSelect={removeProject}>
         <Trash2 /> <span>Delete project</span>
       </ContextMenu.Item>
@@ -197,6 +242,7 @@
           items={wt.items}
           isMain={wt.isMain}
           {filter}
+          forceShow={projectNameMatches}
         />
       {/each}
     {:else if visibleSessions.length > 0}
@@ -216,5 +262,32 @@
         <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No sessions</p>
       {/if}
     {/if}
+    {#if showArchived && visibleArchived.length > 0}
+      <div class="flex items-center gap-2 pt-1.5 pr-1 pl-1">
+        <Archive class="size-3 shrink-0 text-muted-foreground" />
+        <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+          Archived
+        </span>
+        <span class="h-px flex-1 bg-border"></span>
+        <span class="text-[10px] text-muted-foreground">{visibleArchived.length}</span>
+      </div>
+      <div class="flex flex-col gap-px opacity-70">
+        {#each visibleArchived as session (session.id)}
+          <SessionItem {session} branch={session.lastBranch ?? null} />
+        {/each}
+      </div>
+    {:else if showArchived}
+      <div class="flex items-center gap-2 pt-1.5 pr-1 pl-1">
+        <Archive class="size-3 shrink-0 text-muted-foreground" />
+        <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+          Archived
+        </span>
+        <span class="h-px flex-1 bg-border"></span>
+      </div>
+      <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">
+        {filter.trim() ? 'No matching archived sessions' : 'No archived sessions'}
+      </p>
+    {/if}
   </Collapsible.Content>
 </Collapsible.Root>
+{/if}

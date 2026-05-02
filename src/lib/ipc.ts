@@ -58,6 +58,7 @@ const c = globalThis.window?.soloe as Window['soloe'];
 export const ipc = {
   sessions: {
     list: async () => unwrap(await c.sessions.list()),
+    listArchived: async () => unwrap(await c.sessions.listArchived()),
     get: async (id: SessionId) => unwrap(await c.sessions.get(id)),
     create: async (draft: SessionDraft) => unwrap(await c.sessions.create(toIpcPayload(draft))),
     update: async (id: SessionId, patch: SessionUpdate) =>
