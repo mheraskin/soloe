@@ -209,6 +209,16 @@ async function createWindow(): Promise<BrowserWindow> {
 
   win.on('ready-to-show', () => win.show());
 
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (!message.includes('[DEBUG-terminal-start]')) return;
+    console.info('[DEBUG-terminal-start] renderer console', {
+      level,
+      message,
+      line,
+      sourceId
+    });
+  });
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };

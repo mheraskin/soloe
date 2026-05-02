@@ -105,7 +105,9 @@ export class PtyManager extends EventEmitter {
     const rows = options.rows ?? DEFAULT_ROWS;
     const terminalId = newTerminalId();
 
-    this.emitStatus(sessionId, null, 'starting');
+    this.sessionToTerminal.set(sessionId, terminalId);
+    this.emitStatus(sessionId, terminalId, 'starting');
+    await nextTick();
 
     let proc: pty.IPty;
     try {
@@ -131,6 +133,7 @@ export class PtyManager extends EventEmitter {
     } catch (err) {
       const message = errorMessage(err);
       console.info('[DEBUG-terminal-start] pty spawn threw', { sessionId, terminalId, message });
+      this.sessionToTerminal.delete(sessionId);
       this.emitStatus(sessionId, terminalId, 'error', message);
       throw new Error(`Failed to spawn terminal: ${message}`);
     }
@@ -146,7 +149,6 @@ export class PtyManager extends EventEmitter {
       startedAt: new Date().toISOString()
     };
     this.terminals.set(terminalId, instance);
-    this.sessionToTerminal.set(sessionId, terminalId);
 
     let loggedFirstOutput = false;
     proc.onData((data) => {
@@ -322,6 +324,10 @@ function mergeEnv(
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function nextTick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function redactForLog(value: string): string {

@@ -101,6 +101,11 @@
     fit = f;
     search = s;
 
+    console.info('[DEBUG-terminal-start] terminal pane mounted', {
+      sessionId,
+      terminalId
+    });
+
     let nextSeq = 1;
     const offOutput = ipc.terminal.onOutput((e) => {
       if (e.terminalId !== terminalId) return;

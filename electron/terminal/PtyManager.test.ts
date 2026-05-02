@@ -60,7 +60,7 @@ describe('PtyManager', () => {
     expect(options).not.toHaveProperty('encoding');
   });
 
-  it('does not expose a terminal id until spawn succeeds', async () => {
+  it('exposes a terminal id before spawn so the renderer can mount xterm', async () => {
     const manager = new PtyManager({
       commandBuilder: {
         build: vi.fn(() => spec)
@@ -85,7 +85,7 @@ describe('PtyManager', () => {
     expect(statuses[0]).toMatchObject({
       sessionId: session.id,
       status: 'starting',
-      terminalId: null
+      terminalId: expect.any(String)
     });
     expect(statuses[1]).toMatchObject({
       sessionId: session.id,
