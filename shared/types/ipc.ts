@@ -128,6 +128,11 @@ export const IpcChannels = {
   diagnostics: {
     list: 'diagnostics:list',
     crashLogs: 'diagnostics:crash-logs'
+  },
+  window: {
+    minimize: 'window:minimize',
+    toggleMaximize: 'window:toggle-maximize',
+    close: 'window:close'
   }
 } as const;
 
@@ -140,7 +145,8 @@ export type IpcChannel =
   | (typeof IpcChannels.projects)[keyof typeof IpcChannels.projects]
   | (typeof IpcChannels.git)[keyof typeof IpcChannels.git]
   | (typeof IpcChannels.files)[keyof typeof IpcChannels.files]
-  | (typeof IpcChannels.diagnostics)[keyof typeof IpcChannels.diagnostics];
+  | (typeof IpcChannels.diagnostics)[keyof typeof IpcChannels.diagnostics]
+  | (typeof IpcChannels.window)[keyof typeof IpcChannels.window];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -237,6 +243,12 @@ export interface DiagnosticsApi {
   crashLogs(): Promise<IpcResult<CrashLogSummary[]>>;
 }
 
+export interface WindowApi {
+  minimize(): Promise<IpcResult<true>>;
+  toggleMaximize(): Promise<IpcResult<true>>;
+  close(): Promise<IpcResult<true>>;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -247,6 +259,7 @@ export interface SoloeApi {
   git: GitApi;
   files: FilesApi;
   diagnostics: DiagnosticsApi;
+  window: WindowApi;
 }
 
 declare global {

@@ -143,5 +143,10 @@ export const ipc = {
   diagnostics: {
     list: async () => unwrap(await c.diagnostics.list()),
     crashLogs: async () => unwrap(await c.diagnostics.crashLogs())
+  },
+  window: {
+    minimize: async () => unwrap(await c.window.minimize()),
+    toggleMaximize: async () => unwrap(await c.window.toggleMaximize()),
+    close: async () => unwrap(await c.window.close())
   }
 };

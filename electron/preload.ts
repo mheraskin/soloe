@@ -147,6 +147,11 @@ const soloe: SoloeApi = {
   diagnostics: {
     list: () => ipcRenderer.invoke(IpcChannels.diagnostics.list),
     crashLogs: () => ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs)
+  },
+  window: {
+    minimize: () => ipcRenderer.invoke(IpcChannels.window.minimize),
+    toggleMaximize: () => ipcRenderer.invoke(IpcChannels.window.toggleMaximize),
+    close: () => ipcRenderer.invoke(IpcChannels.window.close)
   }
 };
 

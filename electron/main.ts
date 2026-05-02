@@ -27,6 +27,7 @@ import { ProjectsIpc } from './ipc/projects.ipc.js';
 import { GitIpc } from './ipc/git.ipc.js';
 import { FilesIpc } from './ipc/files.ipc.js';
 import { DiagnosticsIpc } from './ipc/diagnostics.ipc.js';
+import { WindowIpc } from './ipc/window.ipc.js';
 
 interface AppServices {
   store: SessionStore;
@@ -49,6 +50,7 @@ interface AppServices {
   gitIpc: GitIpc;
   filesIpc: FilesIpc;
   diagnosticsIpc: DiagnosticsIpc;
+  windowIpc: WindowIpc;
 }
 
 let services: AppServices | null = null;
@@ -149,6 +151,7 @@ async function setupServices(): Promise<AppServices> {
     crashDir
   });
   const diagnosticsIpc = new DiagnosticsIpc({ service: diagnostics });
+  const windowIpc = new WindowIpc();
   sessionsIpc.register();
   terminalIpc.register();
   observerIpc.register();
@@ -158,6 +161,7 @@ async function setupServices(): Promise<AppServices> {
   gitIpc.register();
   filesIpc.register();
   diagnosticsIpc.register();
+  windowIpc.register();
 
   return {
     store,
@@ -179,7 +183,8 @@ async function setupServices(): Promise<AppServices> {
     projectsIpc,
     gitIpc,
     filesIpc,
-    diagnosticsIpc
+    diagnosticsIpc,
+    windowIpc
   };
 }
 
@@ -190,6 +195,7 @@ async function createWindow(): Promise<BrowserWindow> {
     minWidth: 800,
     minHeight: 500,
     autoHideMenuBar: true,
+    frame: false,
     show: false,
     title: 'Soloe',
     backgroundColor: '#0f0f10',
@@ -231,6 +237,7 @@ async function cleanup(): Promise<void> {
     services.gitIpc.dispose();
     services.filesIpc.dispose();
     services.diagnosticsIpc.dispose();
+    services.windowIpc.dispose();
     services.git.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);
