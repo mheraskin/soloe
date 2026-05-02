@@ -14,7 +14,7 @@
   import { reportError, toasts } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import { X } from '@lucide/svelte';
+  import { Loader2, X } from '@lucide/svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
 
   let {
@@ -27,6 +27,7 @@
   let findInput: HTMLInputElement | null = $state(null);
   let findOpen = $state(false);
   let findQuery = $state('');
+  let receivedOutput = $state(false);
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
   let search: SearchAddon | null = null;
@@ -90,6 +91,7 @@
     }
     try {
       term.write(data);
+      if (!receivedOutput && data.length > 0) receivedOutput = true;
     } catch (err) {
       pendingOutput = data + pendingOutput;
       console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
@@ -299,6 +301,14 @@
 </script>
 
 <div class="relative h-full w-full bg-[#0f0f10] p-2">
+  {#if !receivedOutput}
+    <div class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]">
+      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 class="size-4 animate-spin" />
+        <span>Connecting…</span>
+      </div>
+    </div>
+  {/if}
   {#if findOpen && active}
     <div class="absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
       <Input
