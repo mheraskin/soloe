@@ -7,6 +7,7 @@ import type {
   SessionDraft,
   SessionId,
   SessionRuntimeState,
+  SessionKind,
   SessionStatus,
   SessionUpdate
 } from '@shared/types/sessions.js';
@@ -274,6 +275,28 @@ class SessionsStore {
     cwd?: string;
     branch?: string;
   } = {}): Promise<Session> {
+    return this.createTypedWithDefaults('standard_terminal', opts);
+  }
+
+  async createAgentWithDefaults(
+    kind: Extract<SessionKind, 'claude_code' | 'codex'>,
+    opts: {
+      projectId?: string;
+      cwd?: string;
+      branch?: string;
+    } = {}
+  ): Promise<Session> {
+    return this.createTypedWithDefaults(kind, opts);
+  }
+
+  private async createTypedWithDefaults(
+    kind: SessionKind,
+    opts: {
+      projectId?: string;
+      cwd?: string;
+      branch?: string;
+    } = {}
+  ): Promise<Session> {
     const defaults = settings.current.defaults;
     const project = opts.projectId ? projects.get(opts.projectId) : null;
     const runMode = project?.defaultRunMode ?? defaults.runMode;
@@ -282,17 +305,25 @@ class SessionsStore {
       if (project?.defaultWslDistro) return project.defaultWslDistro;
       return defaults.wslDistro ?? 'Ubuntu';
     })();
-    const name = this.uniqueName(randomName(), opts.projectId);
-    const draft: SessionDraft = {
-      kind: 'standard_terminal',
+    const name = this.uniqueName(defaultSessionName(kind), opts.projectId);
+    const base = {
       name,
       cwd,
       runMode,
       ...(runMode === 'wsl' ? { wslDistro } : {}),
-      shell: defaults.shell,
       ...(opts.projectId ? { projectId: opts.projectId } : {}),
       ...(opts.branch ? { lastBranch: opts.branch } : {})
     };
+    const draft: SessionDraft = (() => {
+      switch (kind) {
+        case 'standard_terminal':
+          return { ...base, kind, shell: defaults.shell };
+        case 'claude_code':
+          return { ...base, kind, resumeMode: 'new', fullscreenTui: true };
+        case 'codex':
+          return { ...base, kind, resumeMode: 'new' };
+      }
+    })();
     const created = await this.create(draft);
     try {
       await this.start(created.id);
@@ -457,4 +488,15 @@ function normalizedDefaultCwd(cwd: string, runMode: 'windows' | 'wsl'): string {
   if (/^\/mnt\/[a-z]\/Users\/[^/\\]+\/?$/i.test(cwd)) return '~';
   if (/^[a-z]:[\\/]+Users[\\/]+[^\\/]+[\\/]?$/i.test(cwd)) return '~';
   return cwd;
+}
+
+function defaultSessionName(kind: SessionKind): string {
+  switch (kind) {
+    case 'standard_terminal':
+      return randomName();
+    case 'claude_code':
+      return 'Claude';
+    case 'codex':
+      return 'Codex';
+  }
 }

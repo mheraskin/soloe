@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight, Folder, Pencil, Plus, Trash2 } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, Folder, Pencil, Trash2 } from '@lucide/svelte';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
@@ -10,11 +10,11 @@
   import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
   import { rankMulti } from '../lib/fuzzy';
-  import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import SessionItem from './SessionItem.svelte';
   import WorktreeGroup from './WorktreeGroup.svelte';
+  import AgentLaunchPopover from './AgentLaunchPopover.svelte';
 
   let {
     project,
@@ -110,13 +110,6 @@
     projectModal.openEdit(project);
   }
 
-  function addSession(e: Event) {
-    e.stopPropagation();
-    void sessions
-      .createWithDefaults({ projectId: project.id, cwd: project.path })
-      .catch(reportError);
-  }
-
   async function removeProject() {
     const ok = await confirmStore.ask({
       title: 'Delete project',
@@ -163,15 +156,12 @@
             </span>
           </Collapsible.Trigger>
           {#if !hasWorktrees}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onclick={addSession}
+            <AgentLaunchPopover
+              projectId={project.id}
+              cwd={project.path}
               title="New session"
-              aria-label="New session"
-            >
-              <Plus />
-            </Button>
+              ariaLabel="New session"
+            />
           {/if}
         </div>
       {/snippet}

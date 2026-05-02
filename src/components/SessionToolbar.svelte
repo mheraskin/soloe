@@ -18,6 +18,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import StatusDot from './StatusDot.svelte';
   import GitBranchWidget from './GitBranchWidget.svelte';
+  import KindIcon from './KindIcon.svelte';
 
   let selected = $derived(sessions.selected);
   let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
@@ -58,6 +59,7 @@
   {#if selected}
     <div class="flex min-w-0 items-center gap-2.5">
       <StatusDot {status} />
+      <KindIcon kind={selected.kind} size={16} />
       <div class="flex min-w-0 flex-col leading-tight">
         <span class="truncate text-sm font-medium text-foreground">{selected.name}</span>
         <span class="truncate font-mono text-[11px] text-muted-foreground" title={selected.cwd}>

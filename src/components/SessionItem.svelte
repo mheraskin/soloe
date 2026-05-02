@@ -11,6 +11,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import StatusDot from './StatusDot.svelte';
+  import KindIcon from './KindIcon.svelte';
 
   let { session, branch = null }: { session: Session; branch?: string | null } = $props();
 
@@ -139,6 +140,7 @@
       >
         <div class="flex min-w-0 items-center gap-2">
           <StatusDot {status} />
+          <KindIcon kind={session.kind} size={14} />
           {#if editing}
             <input
               class="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-ring"
@@ -194,7 +196,7 @@
             </Button>
           </div>
         </div>
-        <div class="truncate pl-[18px] font-mono text-[11px] text-muted-foreground">
+        <div class="truncate pl-[40px] font-mono text-[11px] text-muted-foreground">
           {session.cwd}
         </div>
       </div>

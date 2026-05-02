@@ -1,14 +1,12 @@
 <script lang="ts">
-  import { Plus, ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
   import type { Session } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
-  import { sessions } from '../stores/sessions.svelte';
-  import { reportError } from '../stores/toast.svelte';
   import { rankMulti } from '../lib/fuzzy';
-  import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import SessionItem from './SessionItem.svelte';
+  import AgentLaunchPopover from './AgentLaunchPopover.svelte';
 
   let {
     title,
@@ -34,17 +32,6 @@
     return rankMulti(q, items, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
   });
   let hidden = $derived(filter.trim().length > 0 && visible.length === 0);
-
-  function addSession(e: Event) {
-    e.stopPropagation();
-    void sessions
-      .createWithDefaults({
-        ...(projectId ? { projectId } : {}),
-        cwd,
-        ...(title ? { branch: title } : {})
-      })
-      .catch(reportError);
-  }
 </script>
 
 {#if !hidden}
@@ -68,16 +55,13 @@
           {items.length}
         </Badge>
       </Collapsible.Trigger>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        class="shrink-0"
-        onclick={addSession}
+      <AgentLaunchPopover
+        {projectId}
+        {cwd}
+        branch={title}
         title="New session in this worktree"
-        aria-label="New session in this worktree"
-      >
-        <Plus />
-      </Button>
+        ariaLabel="New session in this worktree"
+      />
     </div>
     <Collapsible.Content class="flex flex-col gap-px pl-4">
       {#each visible as session (session.id)}
