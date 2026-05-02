@@ -158,9 +158,8 @@ export class SessionCommandBuilder {
 }
 
 const BASH_LOCATION_PROMPT =
-  '__soloe_cwd=$(pwd -P) && ' +
   'printf \'\\033]7;file://%s%s\\007\\033]633;P;Cwd=%s\\007\' ' +
-  '"${HOSTNAME:-localhost}" "$__soloe_cwd" "$__soloe_cwd"';
+  '"${HOSTNAME:-localhost}" "${PWD:-/}" "${PWD:-/}"';
 
 const POWERSHELL_LOCATION_SCRIPT =
   '$global:__soloeOriginalPrompt = (Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue).ScriptBlock; ' +

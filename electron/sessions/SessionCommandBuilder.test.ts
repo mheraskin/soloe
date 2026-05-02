@@ -30,7 +30,7 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(spec.args[5]).toBe('-lc');
     expect(innerLine(spec.args)).toContain('exec bash --rcfile /proc/self/fd/3 -i');
     expect(innerLine(spec.args)).toContain("<<'__SOLOE_BASHRC__'");
-    expect(innerLine(spec.args)).toContain('$(pwd -P)');
+    expect(innerLine(spec.args)).toContain('${PWD:-/}');
     expect(innerLine(spec.args)).toContain('633;P;Cwd=%s');
     expect(innerLine(spec.args)).not.toContain('mkdir');
     expect(innerLine(spec.args)).not.toContain('.soloe');
