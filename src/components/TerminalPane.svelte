@@ -133,6 +133,9 @@
       }
 
       const ctrlOrCmd = (e.ctrlKey || e.metaKey) && !e.altKey;
+      if (ctrlOrCmd && e.key.toLowerCase() === 'v') {
+        return false;
+      }
       if (ctrlOrCmd && e.key.toLowerCase() === 'c') {
         if (!e.shiftKey) {
           if (!t.hasSelection()) return true;
