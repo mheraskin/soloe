@@ -48,23 +48,23 @@
 </script>
 
 {#if !hidden}
-  <Collapsible.Root bind:open={expanded} class="flex flex-col gap-0.5">
-    <div class="flex items-center gap-px px-0.5 py-0.5">
+  <Collapsible.Root bind:open={expanded} class="flex flex-col gap-1">
+    <div class="flex items-center gap-1 px-0.5 py-0.5">
       <Collapsible.Trigger
-        class="flex flex-1 items-center gap-1.5 overflow-hidden rounded-md px-1.5 py-0.5 text-left text-muted-foreground hover:bg-muted hover:text-foreground"
+        class="flex flex-1 items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-muted hover:text-foreground"
         aria-label={`Toggle worktree ${title}`}
       >
         {#if expanded}
-          <ChevronDown class="size-2.5 shrink-0" />
+          <ChevronDown class="size-3 shrink-0" />
         {:else}
-          <ChevronRight class="size-2.5 shrink-0" />
+          <ChevronRight class="size-3 shrink-0" />
         {/if}
-        <FolderGit2 class="size-2.5 shrink-0" />
-        <span class="flex-1 truncate font-mono text-[11px]" title={cwd}>{title}</span>
+        <FolderGit2 class="size-3.5 shrink-0" />
+        <span class="flex-1 truncate font-mono text-xs leading-4" title={cwd}>{title}</span>
         {#if isMain}
-          <Badge variant="outline" class="h-4 rounded-full px-1.5 text-[9px] font-normal tracking-wider uppercase">main</Badge>
+          <Badge variant="outline" class="h-4 rounded-full px-1.5 text-[9px] font-medium tracking-wider uppercase">main</Badge>
         {/if}
-        <Badge variant="secondary" class="h-4 rounded-full bg-muted px-1.5 text-[10px] font-normal text-muted-foreground">
+        <Badge variant="secondary" class="h-4 rounded-full bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
           {items.length}
         </Badge>
       </Collapsible.Trigger>
@@ -78,7 +78,7 @@
         <Plus />
       </Button>
     </div>
-    <Collapsible.Content class="flex flex-col gap-px pl-3.5">
+    <Collapsible.Content class="flex flex-col gap-px pl-4">
       {#each visible as session (session.id)}
         <SessionItem {session} branch={title} />
       {/each}

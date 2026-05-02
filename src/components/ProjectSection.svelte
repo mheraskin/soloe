@@ -128,28 +128,28 @@
   }
 </script>
 
-<Collapsible.Root bind:open={expanded} class="flex flex-col gap-1">
+<Collapsible.Root bind:open={expanded} class="flex flex-col gap-1.5">
   <ContextMenu.Root>
     <ContextMenu.Trigger>
       {#snippet child({ props })}
-        <div {...props} class="flex items-center gap-px px-1 pt-1 pb-0.5">
+        <div {...props} class="flex items-center gap-1 px-1 pt-1.5 pb-1">
           <Collapsible.Trigger
-            class="group flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground hover:bg-muted"
+            class="group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground hover:bg-muted"
             aria-label={`Toggle ${project.name} project`}
           >
             {#if expanded}
-              <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
+              <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
             {:else}
-              <ChevronRight class="size-3 shrink-0 text-muted-foreground" />
+              <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" />
             {/if}
             {#if accent}
-              <span class="size-2.5 shrink-0 rounded-full" style={`background: ${accent}`}></span>
+              <span class="size-3 shrink-0 rounded-full" style={`background: ${accent}`}></span>
             {:else}
-              <Folder class="size-3 shrink-0 text-muted-foreground" />
+              <Folder class="size-3.5 shrink-0 text-muted-foreground" />
             {/if}
-            <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span class="truncate text-xs font-medium">{project.name}</span>
-              <span class="truncate font-mono text-[10px] text-muted-foreground" title={project.path}>
+            <span class="flex min-w-0 flex-1 flex-col gap-1">
+              <span class="truncate text-sm leading-4 font-semibold">{project.name}</span>
+              <span class="truncate font-mono text-[11px] leading-3.5 text-muted-foreground" title={project.path}>
                 {project.path}
               </span>
             </span>
@@ -176,7 +176,7 @@
     </ContextMenu.Content>
   </ContextMenu.Root>
 
-  <Collapsible.Content class="ml-2.5 flex flex-col gap-1 border-l border-border pl-1.5">
+  <Collapsible.Content class="ml-3 flex flex-col gap-1.5 border-l border-border pl-2">
     {#if worktrees.length === 0}
       {#if loadingWorktrees}
         <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">Loading worktrees...</p>
