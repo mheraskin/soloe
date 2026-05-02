@@ -213,12 +213,15 @@
             }
           : { defaultRunMode: 'windows' as const })
       });
-      if (suggestion.scope !== 'wsl') {
-        try {
-          await ipc.git.worktrees({ repoPath: opened.path, force: true });
-        } catch {
-          // worktree priming is best-effort
-        }
+      try {
+        await ipc.git.worktrees({
+          repoPath: opened.path,
+          force: true,
+          ...(opened.defaultRunMode ? { runMode: opened.defaultRunMode } : {}),
+          ...(opened.defaultWslDistro ? { wslDistro: opened.defaultWslDistro } : {})
+        });
+      } catch {
+        // worktree priming is best-effort
       }
       commandPalette.close();
     } catch (err) {

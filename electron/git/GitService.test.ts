@@ -128,6 +128,51 @@ describe.skipIf(!hasGit)('GitService', () => {
     }
   });
 
+  it('listWorktrees: reads WSL worktrees when native path resolution cannot stat the repo', async () => {
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: '/home/me/soloe\n', stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: '/home/me/soloe/.git\n', stderr: '' };
+        }
+        if (command === 'worktree list --porcelain') {
+          return {
+            code: 0,
+            stdout: [
+              'worktree /home/me/soloe',
+              'HEAD aaa',
+              'branch refs/heads/main',
+              '',
+              'worktree /home/me/soloe-2',
+              'HEAD bbb',
+              'branch refs/heads/soloe-2',
+              ''
+            ].join('\n'),
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const worktrees = await wslSvc.listWorktrees('/home/me/soloe', true, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+
+      expect(worktrees).toEqual([
+        expect.objectContaining({ path: '/home/me/soloe', branch: 'main', isMain: true }),
+        expect.objectContaining({ path: '/home/me/soloe-2', branch: 'soloe-2' })
+      ]);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
   it('checkout: switches branches when the repo is clean', async () => {
     await initRepo(tmpRoot);
     spawnSync('git', ['checkout', '-b', 'feature/demo'], { cwd: tmpRoot });

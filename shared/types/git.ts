@@ -1,3 +1,5 @@
+import type { RunMode } from './sessions.js';
+
 export interface GitStatus {
   cwd: string;
   repoPath: string | null;
@@ -20,6 +22,8 @@ export interface GitStatusRequest {
 export interface GitRepoRequest {
   repoPath: string;
   force?: boolean;
+  runMode?: RunMode;
+  wslDistro?: string;
 }
 
 export interface GitRecentCommitsRequest extends GitRepoRequest {

@@ -10,15 +10,25 @@ import type {
   GitStatus,
   GitWorktree
 } from '@shared/types/git.js';
+import type { RunMode } from '@shared/types/sessions.js';
 
 export interface GitServiceOptions {
   gitBinary?: string;
   getGitBinary?: () => Promise<string | undefined> | string | undefined;
+  wslBinary?: string;
+  runWslGit?: (distro: string, cwd: string, args: string[]) => Promise<GitResult>;
 }
 
 interface RepoInfo {
   repoPath: string;
   gitDir: string;
+  runMode: 'native' | 'wsl';
+  wslDistro?: string;
+}
+
+interface GitRepoContext {
+  runMode?: RunMode;
+  wslDistro?: string;
 }
 
 interface RepoCache {
@@ -110,12 +120,16 @@ export class GitService {
     };
   }
 
-  async listWorktrees(repoPath: string, force = false): Promise<GitWorktree[]> {
-    const info = await this.resolveRepo(repoPath);
+  async listWorktrees(
+    repoPath: string,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitWorktree[]> {
+    const info = await this.resolveRepo(repoPath, context);
     if (!info) return [];
     const cache = this.ensureCache(info);
     if (!force && cache.worktrees) return clone(cache.worktrees);
-    const output = await this.run(info.repoPath, ['worktree', 'list', '--porcelain']);
+    const output = await this.runInRepo(info, ['worktree', 'list', '--porcelain']);
     cache.worktrees = output.code === 0 ? parseWorktrees(output.stdout) : [];
     return clone(cache.worktrees);
   }
@@ -185,16 +199,22 @@ export class GitService {
     this.listeners.clear();
   }
 
-  private async resolveRepo(cwd: string): Promise<RepoInfo | null> {
+  private async resolveRepo(cwd: string, context: GitRepoContext = {}): Promise<RepoInfo | null> {
     const trimmed = cwd.trim();
     if (!trimmed) return null;
+    const nativeInfo = await this.resolveNativeRepo(trimmed);
+    if (nativeInfo) return nativeInfo;
+    return this.resolveWslRepo(trimmed, context);
+  }
+
+  private async resolveNativeRepo(cwd: string): Promise<RepoInfo | null> {
     try {
-      const stat = await fs.stat(trimmed);
+      const stat = await fs.stat(cwd);
       if (!stat.isDirectory()) return null;
     } catch {
       return null;
     }
-    const toplevel = await this.run(trimmed, ['rev-parse', '--show-toplevel']);
+    const toplevel = await this.run(cwd, ['rev-parse', '--show-toplevel']);
     if (toplevel.code !== 0) return null;
     const repoPath = toplevel.stdout.trim();
     if (!repoPath) return null;
@@ -202,7 +222,27 @@ export class GitService {
     if (gitDirResult.code !== 0) return null;
     const rawGitDir = gitDirResult.stdout.trim();
     const gitDir = path.isAbsolute(rawGitDir) ? rawGitDir : path.resolve(repoPath, rawGitDir);
-    return { repoPath, gitDir };
+    return { repoPath, gitDir, runMode: 'native' };
+  }
+
+  private async resolveWslRepo(
+    cwd: string,
+    context: GitRepoContext
+  ): Promise<RepoInfo | null> {
+    if (context.runMode !== 'wsl') return null;
+    const distro = context.wslDistro?.trim();
+    if (!distro) return null;
+    const toplevel = await this.runWsl(distro, cwd, ['rev-parse', '--show-toplevel']);
+    if (toplevel.code !== 0) return null;
+    const repoPath = toplevel.stdout.trim();
+    if (!repoPath) return null;
+    const gitDirResult = await this.runWsl(distro, repoPath, ['rev-parse', '--git-dir']);
+    if (gitDirResult.code !== 0) return null;
+    const rawGitDir = gitDirResult.stdout.trim();
+    const gitDir = path.posix.isAbsolute(rawGitDir)
+      ? rawGitDir
+      : path.posix.resolve(repoPath, rawGitDir);
+    return { repoPath, gitDir, runMode: 'wsl', wslDistro: distro };
   }
 
   private ensureCache(info: RepoInfo): RepoCache {
@@ -224,6 +264,7 @@ export class GitService {
   }
 
   private attachWatchers(cache: RepoCache): void {
+    if (cache.info.runMode === 'wsl') return;
     for (const target of [
       path.join(cache.info.gitDir, 'HEAD'),
       path.join(cache.info.gitDir, 'index'),
@@ -281,6 +322,16 @@ export class GitService {
 
   private async run(cwd: string, args: string[]): Promise<GitResult> {
     return runGit(await this.gitBinary(), cwd, args);
+  }
+
+  private async runInRepo(info: RepoInfo, args: string[]): Promise<GitResult> {
+    if (info.runMode === 'wsl') return this.runWsl(info.wslDistro!, info.repoPath, args);
+    return this.run(info.repoPath, args);
+  }
+
+  private async runWsl(distro: string, cwd: string, args: string[]): Promise<GitResult> {
+    if (this.options.runWslGit) return this.options.runWslGit(distro, cwd, args);
+    return runWslGit(this.options.wslBinary ?? 'wsl.exe', distro, cwd, args);
   }
 }
 
@@ -425,6 +476,37 @@ function runGit(bin: string, cwd: string, args: string[]): Promise<GitResult> {
     let stdout = '';
     let stderr = '';
     const child = spawn(bin, args, { cwd });
+    const finish = (result: GitResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    child.stdout.on('data', (b: Buffer) => {
+      stdout += b.toString('utf8');
+    });
+    child.stderr.on('data', (b: Buffer) => {
+      stderr += b.toString('utf8');
+    });
+    child.on('error', (err) => finish({ code: null, stdout, stderr: String(err) }));
+    child.on('exit', (code) => finish({ code, stdout, stderr }));
+  });
+}
+
+function runWslGit(
+  wslBinary: string,
+  distro: string,
+  cwd: string,
+  args: string[]
+): Promise<GitResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    const child = spawn(
+      wslBinary,
+      ['-d', distro, '--cd', cwd, '--', 'git', ...args],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    );
     const finish = (result: GitResult) => {
       if (settled) return;
       settled = true;

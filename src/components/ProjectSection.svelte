@@ -22,6 +22,8 @@
 
   let expanded = $state(true);
   let gitWorktrees = $state<GitWorktree[]>([]);
+  let loadingWorktrees = $state(false);
+  let worktreeLoadFailed = $state(false);
 
   function normPath(p: string): string {
     return p.replace(/[/\\]+$/, '');
@@ -39,13 +41,30 @@
   }
 
   $effect(() => {
-    ipc.git.worktrees({ repoPath: project.path, force: true })
+    let cancelled = false;
+    loadingWorktrees = true;
+    worktreeLoadFailed = false;
+    ipc.git.worktrees({
+      repoPath: project.path,
+      force: true,
+      ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+      ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+    })
       .then((worktrees) => {
+        if (cancelled) return;
         gitWorktrees = worktrees;
       })
       .catch(() => {
+        if (cancelled) return;
         gitWorktrees = [];
+        worktreeLoadFailed = true;
+      })
+      .finally(() => {
+        if (!cancelled) loadingWorktrees = false;
       });
+    return () => {
+      cancelled = true;
+    };
   });
 
   let worktrees = $derived.by<{ cwd: string; label: string; isMain: boolean; items: Session[] }[]>(() => {
@@ -159,7 +178,13 @@
 
   <Collapsible.Content class="ml-2.5 flex flex-col gap-1 border-l border-border pl-1.5">
     {#if worktrees.length === 0}
-      <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No terminals</p>
+      {#if loadingWorktrees}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">Loading worktrees...</p>
+      {:else if worktreeLoadFailed}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No worktrees found</p>
+      {:else}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No worktrees or terminals</p>
+      {/if}
     {:else}
       {#each worktrees as wt (wt.cwd)}
         <WorktreeGroup
