@@ -2,8 +2,8 @@
   import { settings } from '../../stores/settings.svelte';
   import type {
     DensityPref,
-    FontSizePref,
     SettingsBinaries,
+    TerminalFontSizePref,
     ThemePref
   } from '@shared/types/settings.js';
   import type { RunMode, ShellKind } from '@shared/types/sessions.js';
@@ -14,7 +14,7 @@
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const densities: DensityPref[] = ['comfortable', 'compact'];
-  const fontSizes: FontSizePref[] = [11, 12, 13, 14];
+  const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
   const runModes: RunMode[] = ['windows', 'wsl'];
   const shells: ShellKind[] = ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom'];
   const binaryKeys: { key: keyof SettingsBinaries; label: string; placeholder: string }[] = [
@@ -27,12 +27,18 @@
     { key: 'editor', label: 'External editor', placeholder: 'code' }
   ];
 
-  async function setAppearance<K extends 'theme' | 'density' | 'fontSize'>(
+  async function setAppearance<K extends 'theme' | 'density'>(
     key: K,
-    value: ThemePref | DensityPref | FontSizePref
+    value: ThemePref | DensityPref
   ) {
     try {
       await settings.update({ appearance: { [key]: value } as never });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setTerminalFontSize(value: TerminalFontSizePref) {
+    try {
+      await settings.update({ terminal: { fontSize: value } });
     } catch (e) { reportError(e); }
   }
 
@@ -90,16 +96,20 @@
       </Select.Content>
     </Select.Root>
   </div>
+</section>
+
+<section class="flex flex-col gap-2.5 border-b border-border py-3">
+  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Terminal</h3>
   <div class="flex flex-col gap-1.5">
     <Label class="text-xs text-muted-foreground">Font size</Label>
     <Select.Root
       type="single"
-      value={String(settings.current.appearance.fontSize)}
-      onValueChange={(v) => setAppearance('fontSize', Number(v) as FontSizePref)}
+      value={String(settings.current.terminal.fontSize)}
+      onValueChange={(v) => setTerminalFontSize(Number(v) as TerminalFontSizePref)}
     >
-      <Select.Trigger class="w-full">{settings.current.appearance.fontSize}px</Select.Trigger>
+      <Select.Trigger class="w-full">{settings.current.terminal.fontSize}px</Select.Trigger>
       <Select.Content>
-        {#each fontSizes as f (f)}
+        {#each terminalFontSizes as f (f)}
           <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
         {/each}
       </Select.Content>

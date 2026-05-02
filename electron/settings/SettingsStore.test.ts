@@ -38,6 +38,14 @@ describe('SettingsStore — update', () => {
     const updated = await store.update({ appearance: { theme: 'light' } });
     expect(updated.appearance.theme).toBe('light');
     expect(updated.appearance.density).toBe(DEFAULT_SETTINGS.appearance.density);
+    expect(updated.terminal).toEqual(DEFAULT_SETTINGS.terminal);
+  });
+
+  it('merges terminal updates', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({ terminal: { fontSize: 14 } });
+    expect(updated.terminal.fontSize).toBe(14);
+    expect(updated.appearance).toEqual(DEFAULT_SETTINGS.appearance);
   });
 
   it('removes a binary path when set to empty string', async () => {
@@ -53,6 +61,13 @@ describe('SettingsStore — update', () => {
       store.update({ appearance: { theme: 'rainbow' as never } })
     ).rejects.toThrow(/Invalid theme/);
   });
+
+  it('rejects invalid terminal font size', async () => {
+    const store = new SettingsStore(storePath);
+    await expect(
+      store.update({ terminal: { fontSize: 99 as never } })
+    ).rejects.toThrow(/Invalid terminal\.fontSize/);
+  });
 });
 
 describe('SettingsStore — migration', () => {
@@ -67,6 +82,22 @@ describe('SettingsStore — migration', () => {
     const store = new SettingsStore(storePath);
     const s = await store.get();
     expect(s.defaults.cwd).toBe('~');
+    expect('fontSize' in s.appearance).toBe(false);
+    expect(s.terminal.fontSize).toBe(13);
+  });
+
+  it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {
+    const onDisk = {
+      version: 1,
+      appearance: { theme: 'dark', density: 'comfortable', fontSize: 14 },
+      defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
+      binaries: {}
+    };
+    await fs.writeFile(storePath, JSON.stringify(onDisk), 'utf8');
+    const store = new SettingsStore(storePath);
+    const s = await store.get();
+    expect(s.terminal.fontSize).toBe(14);
+    expect('fontSize' in s.appearance).toBe(false);
   });
 });
 

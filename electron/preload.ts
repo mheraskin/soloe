@@ -151,6 +151,8 @@ const soloe: SoloeApi = {
   window: {
     minimize: () => ipcRenderer.invoke(IpcChannels.window.minimize),
     toggleMaximize: () => ipcRenderer.invoke(IpcChannels.window.toggleMaximize),
+    zoomIn: () => ipcRenderer.invoke(IpcChannels.window.zoomIn),
+    zoomOut: () => ipcRenderer.invoke(IpcChannels.window.zoomOut),
     close: () => ipcRenderer.invoke(IpcChannels.window.close)
   }
 };

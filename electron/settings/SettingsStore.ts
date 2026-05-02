@@ -9,7 +9,7 @@ import {
 
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_DENSITY = new Set(['comfortable', 'compact']);
-const VALID_FONT_SIZES = new Set([11, 12, 13, 14]);
+const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
 const VALID_RUN_MODES = new Set(['windows', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 
@@ -36,6 +36,7 @@ export class SettingsStore {
     const next: Settings = {
       version: 1,
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
+      terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
       defaults: { ...this.cache!.defaults, ...(patch.defaults ?? {}) },
       binaries: mergeBinaries(this.cache!.binaries, patch.binaries)
     };
@@ -113,6 +114,7 @@ function mergeBinaries(
 function parseSettings(raw: unknown): Settings {
   if (!isObject(raw)) return clone(DEFAULT_SETTINGS);
   const appearance = isObject(raw['appearance']) ? raw['appearance'] : {};
+  const terminal = isObject(raw['terminal']) ? raw['terminal'] : {};
   const defaults = isObject(raw['defaults']) ? raw['defaults'] : {};
   const binaries = isObject(raw['binaries']) ? raw['binaries'] : {};
 
@@ -120,8 +122,10 @@ function parseSettings(raw: unknown): Settings {
     version: 1,
     appearance: {
       theme: pickEnum(appearance['theme'], VALID_THEMES, DEFAULT_SETTINGS.appearance.theme) as Settings['appearance']['theme'],
-      density: pickEnum(appearance['density'], VALID_DENSITY, DEFAULT_SETTINGS.appearance.density) as Settings['appearance']['density'],
-      fontSize: pickFontSize(appearance['fontSize'])
+      density: pickEnum(appearance['density'], VALID_DENSITY, DEFAULT_SETTINGS.appearance.density) as Settings['appearance']['density']
+    },
+    terminal: {
+      fontSize: pickTerminalFontSize(terminal['fontSize'] ?? appearance['fontSize'])
     },
     defaults: {
       runMode: pickEnum(defaults['runMode'], VALID_RUN_MODES, DEFAULT_SETTINGS.defaults.runMode) as Settings['defaults']['runMode'],
@@ -139,10 +143,10 @@ function pickEnum(value: unknown, valid: Set<unknown>, fallback: string): string
   return valid.has(value) ? (value as string) : fallback;
 }
 
-function pickFontSize(value: unknown): Settings['appearance']['fontSize'] {
-  return VALID_FONT_SIZES.has(value as number)
-    ? (value as Settings['appearance']['fontSize'])
-    : DEFAULT_SETTINGS.appearance.fontSize;
+function pickTerminalFontSize(value: unknown): Settings['terminal']['fontSize'] {
+  return VALID_TERMINAL_FONT_SIZES.has(value as number)
+    ? (value as Settings['terminal']['fontSize'])
+    : DEFAULT_SETTINGS.terminal.fontSize;
 }
 
 function filterStringRecord(raw: Record<string, unknown>): Settings['binaries'] {
@@ -159,7 +163,9 @@ function validateSettings(s: Settings): void {
   if (s.version !== 1) throw new Error(`Unsupported settings version: ${s.version}`);
   if (!VALID_THEMES.has(s.appearance.theme)) throw new Error(`Invalid theme: ${s.appearance.theme}`);
   if (!VALID_DENSITY.has(s.appearance.density)) throw new Error(`Invalid density: ${s.appearance.density}`);
-  if (!VALID_FONT_SIZES.has(s.appearance.fontSize)) throw new Error(`Invalid fontSize: ${s.appearance.fontSize}`);
+  if (!VALID_TERMINAL_FONT_SIZES.has(s.terminal.fontSize)) {
+    throw new Error(`Invalid terminal.fontSize: ${s.terminal.fontSize}`);
+  }
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
   if (!VALID_SHELLS.has(s.defaults.shell)) throw new Error(`Invalid shell: ${s.defaults.shell}`);
   if (typeof s.defaults.cwd !== 'string' || !s.defaults.cwd) {

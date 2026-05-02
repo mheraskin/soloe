@@ -126,7 +126,7 @@
             {/snippet}
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="end" class="w-56">
-            <DropdownMenu.GroupHeading>Terminal</DropdownMenu.GroupHeading>
+            <DropdownMenu.Label>Terminal</DropdownMenu.Label>
             <DropdownMenu.Item disabled={!isRunning} onSelect={() => terminalAction('soloe:terminal-find')}>
               <Search /> <span>Find</span>
               <DropdownMenu.Shortcut>⌘F</DropdownMenu.Shortcut>

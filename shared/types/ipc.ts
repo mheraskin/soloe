@@ -132,6 +132,8 @@ export const IpcChannels = {
   window: {
     minimize: 'window:minimize',
     toggleMaximize: 'window:toggle-maximize',
+    zoomIn: 'window:zoom-in',
+    zoomOut: 'window:zoom-out',
     close: 'window:close'
   }
 } as const;
@@ -246,6 +248,8 @@ export interface DiagnosticsApi {
 export interface WindowApi {
   minimize(): Promise<IpcResult<true>>;
   toggleMaximize(): Promise<IpcResult<true>>;
+  zoomIn(): Promise<IpcResult<number>>;
+  zoomOut(): Promise<IpcResult<number>>;
   close(): Promise<IpcResult<true>>;
 }
 

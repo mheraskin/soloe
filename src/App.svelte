@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { ModeWatcher, setMode } from 'mode-watcher';
   import { Maximize2, Minus, X } from '@lucide/svelte';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
@@ -40,6 +41,10 @@
     };
   });
 
+  $effect(() => {
+    setMode(settings.current.appearance.theme);
+  });
+
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
       e.preventDefault();
@@ -54,6 +59,16 @@
     if (Keymap.terminalFind.match(e)) {
       e.preventDefault();
       window.dispatchEvent(new CustomEvent('soloe:terminal-find'));
+      return;
+    }
+    if (Keymap.zoomIn.match(e)) {
+      e.preventDefault();
+      void ipc.window.zoomIn().catch(reportError);
+      return;
+    }
+    if (Keymap.zoomOut.match(e)) {
+      e.preventDefault();
+      void ipc.window.zoomOut().catch(reportError);
       return;
     }
     if (commandPalette.isOpen || filePalette.open) return;
@@ -82,6 +97,7 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+<ModeWatcher defaultMode="dark" />
 
 <div class="flex h-full flex-col overflow-hidden">
   <header

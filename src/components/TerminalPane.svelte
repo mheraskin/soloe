@@ -9,6 +9,7 @@
   import { ipc } from '../lib/ipc';
   import type { TerminalId } from '@shared/types/terminal.js';
   import type { SessionId } from '@shared/types/sessions.js';
+  import { settings } from '../stores/settings.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -78,7 +79,7 @@
     if (!host) return;
     const t = new Terminal({
       fontFamily: 'JetBrains Mono, ui-monospace, monospace',
-      fontSize: 13,
+      fontSize: settings.current.terminal.fontSize,
       lineHeight: 1.2,
       letterSpacing: 0,
       theme: {
@@ -193,6 +194,24 @@
       fit = null;
       search = null;
     };
+  });
+
+  $effect(() => {
+    if (!term || !fit || !host) return;
+    term.options.fontSize = settings.current.terminal.fontSize;
+    requestAnimationFrame(() => {
+      if (!host) return;
+      const rect = host.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) return;
+      try {
+        fit?.fit();
+        if (term) {
+          void ipc.terminal.resize(terminalId, term.cols, term.rows).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+    });
   });
 
   // When this pane becomes active, refit and focus on next frame.

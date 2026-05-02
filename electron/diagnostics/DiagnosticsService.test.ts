@@ -20,7 +20,8 @@ describe('DiagnosticsService', () => {
       settings: {
         get: async () => ({
           version: 1,
-          appearance: { theme: 'dark', density: 'comfortable', fontSize: 13 },
+          appearance: { theme: 'dark', density: 'comfortable' },
+          terminal: { fontSize: 13 },
           defaults: { runMode: 'windows', shell: 'auto' },
           binaries: { claude: path.join(tmpRoot, 'missing-claude') }
         })

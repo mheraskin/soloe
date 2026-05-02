@@ -2,12 +2,15 @@ import type { ShellKind, RunMode } from './sessions.js';
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type DensityPref = 'comfortable' | 'compact';
-export type FontSizePref = 11 | 12 | 13 | 14;
+export type TerminalFontSizePref = 11 | 12 | 13 | 14;
 
 export interface SettingsAppearance {
   theme: ThemePref;
   density: DensityPref;
-  fontSize: FontSizePref;
+}
+
+export interface SettingsTerminal {
+  fontSize: TerminalFontSizePref;
 }
 
 export interface SettingsDefaults {
@@ -30,19 +33,22 @@ export interface SettingsBinaries {
 export interface Settings {
   version: 1;
   appearance: SettingsAppearance;
+  terminal: SettingsTerminal;
   defaults: SettingsDefaults;
   binaries: SettingsBinaries;
 }
 
 export type SettingsUpdate = {
   appearance?: Partial<SettingsAppearance>;
+  terminal?: Partial<SettingsTerminal>;
   defaults?: Partial<SettingsDefaults>;
   binaries?: Partial<SettingsBinaries>;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   version: 1,
-  appearance: { theme: 'dark', density: 'comfortable', fontSize: 13 },
+  appearance: { theme: 'dark', density: 'comfortable' },
+  terminal: { fontSize: 13 },
   defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
   binaries: {}
 };

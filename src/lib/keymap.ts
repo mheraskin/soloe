@@ -39,6 +39,18 @@ export const Keymap = {
     description: 'Find in terminal',
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'f'
   },
+  zoomIn: {
+    id: 'window.zoom-in',
+    description: 'Zoom in',
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && !e.altKey && (key(e) === '+' || key(e) === '=')
+  },
+  zoomOut: {
+    id: 'window.zoom-out',
+    description: 'Zoom out',
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && !e.altKey && (key(e) === '-' || key(e) === '_')
+  },
   closeActiveTab: {
     id: 'tabs.close-active',
     description: 'Close active tab',

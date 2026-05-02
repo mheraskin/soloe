@@ -147,6 +147,8 @@ export const ipc = {
   window: {
     minimize: async () => unwrap(await c.window.minimize()),
     toggleMaximize: async () => unwrap(await c.window.toggleMaximize()),
+    zoomIn: async () => unwrap(await c.window.zoomIn()),
+    zoomOut: async () => unwrap(await c.window.zoomOut()),
     close: async () => unwrap(await c.window.close())
   }
 };
