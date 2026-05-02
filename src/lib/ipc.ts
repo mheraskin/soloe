@@ -29,6 +29,10 @@ import type {
   FileSearchRequest
 } from '@shared/types/files.js';
 import type {
+  AgentIntegrationClaudeRequest,
+  AgentIntegrationStatus
+} from '@shared/types/ipc.js';
+import type {
   TerminalExitEvent,
   TerminalId,
   TerminalLocationEvent,
@@ -155,5 +159,17 @@ export const ipc = {
     zoomIn: async () => unwrap(await c.window.zoomIn()),
     zoomOut: async () => unwrap(await c.window.zoomOut()),
     close: async () => unwrap(await c.window.close())
+  },
+  agentIntegration: {
+    status: async (projectPath?: string) =>
+      unwrap(await c.agentIntegration.status(projectPath)),
+    installClaude: async (request: AgentIntegrationClaudeRequest) =>
+      unwrap(await c.agentIntegration.installClaude(toIpcPayload(request))),
+    uninstallClaude: async (request: AgentIntegrationClaudeRequest) =>
+      unwrap(await c.agentIntegration.uninstallClaude(toIpcPayload(request))),
+    installCodex: async () => unwrap(await c.agentIntegration.installCodex()),
+    uninstallCodex: async () => unwrap(await c.agentIntegration.uninstallCodex()),
+    onChange: (cb: (status: AgentIntegrationStatus) => void) =>
+      c.agentIntegration.onChange(cb)
   }
 };

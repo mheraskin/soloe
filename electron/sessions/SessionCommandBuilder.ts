@@ -2,6 +2,7 @@ import type {
   ClaudeCodeSession,
   CodexSession,
   Session,
+  SessionId,
   StandardTerminalSession
 } from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
@@ -9,6 +10,7 @@ import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { InnerCommand } from '../runtime/InnerCommand.js';
 import { WindowsCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
+import { posixSingleQuote } from '../runtime/posix-quote.js';
 import { ShellDetector } from '../terminal/ShellDetector.js';
 
 export interface SessionBuildContext {
@@ -56,9 +58,10 @@ export class SessionCommandBuilder {
   }
 
   private buildStandard(s: StandardTerminalSession, ctx: SessionBuildContext): InnerCommand {
+    const bridgeEnv = buildSoloeEnv(s.id, s.runMode, undefined, ctx);
     if (s.shell === 'custom') {
       if (!s.command) throw new Error('Custom shell requires a command');
-      return { executable: s.command, args: s.args ?? [], env: {} };
+      return { executable: s.command, args: s.args ?? [], env: bridgeEnv };
     }
     if (s.command) {
       const resolved = this.shellDetector.resolve(s.shell, s.runMode);
@@ -66,7 +69,7 @@ export class SessionCommandBuilder {
       return {
         executable: resolved.executable,
         args: [...resolved.args, '-c', cmdLine],
-        env: {}
+        env: bridgeEnv
       };
     }
     const resolved = this.shellDetector.resolve(s.shell, s.runMode);
@@ -75,20 +78,20 @@ export class SessionCommandBuilder {
         executable: resolved.executable,
         args: [],
         env: {},
-        rawLine: buildWslBashLocationLine()
+        rawLine: buildWslBashLocationLine(bridgeEnv)
       };
     }
     if (isPowerShell(resolved.executable)) {
       return {
         executable: resolved.executable,
         args: [...resolved.args, '-NoExit', '-Command', POWERSHELL_LOCATION_SCRIPT],
-        env: {}
+        env: bridgeEnv
       };
     }
     return {
       executable: resolved.executable,
       args: resolved.args,
-      env: shellLocationEnv(resolved.executable, ctx.baseEnv)
+      env: { ...shellLocationEnv(resolved.executable, ctx.baseEnv), ...bridgeEnv }
     };
   }
 
@@ -118,7 +121,7 @@ export class SessionCommandBuilder {
         args.push('--resume', s.claudeSessionId);
         break;
     }
-    const env: Record<string, string> = this.buildSoloeEnv(s, 'claude_code', ctx);
+    const env: Record<string, string> = buildSoloeEnv(s.id, s.runMode, 'claude_code', ctx);
     if (s.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
     return { executable: ctx.binaries?.claude ?? 'claude', args, env };
   }
@@ -142,23 +145,39 @@ export class SessionCommandBuilder {
     if (s.reasoningEffort) {
       args.push('-c', `model_reasoning_effort=${s.reasoningEffort}`);
     }
-    return { executable: ctx.binaries?.codex ?? 'codex', args, env: this.buildSoloeEnv(s, 'codex', ctx) };
-  }
-
-  private buildSoloeEnv(
-    session: ClaudeCodeSession | CodexSession,
-    provider: 'claude_code' | 'codex',
-    ctx: SessionBuildContext
-  ): Record<string, string> {
-    const env: Record<string, string> = {
-      SOLOE_SESSION_ID: session.id,
-      SOLOE_AGENT_PROVIDER: provider
+    return {
+      executable: ctx.binaries?.codex ?? 'codex',
+      args,
+      env: buildSoloeEnv(s.id, s.runMode, 'codex', ctx)
     };
-    if (ctx.bridge) {
-      env['SOLOE_BRIDGE_URL'] = ctx.bridge.url;
-      env['SOLOE_BRIDGE_TOKEN'] = ctx.bridge.token;
+  }
+}
+
+function buildSoloeEnv(
+  sessionId: SessionId,
+  runMode: 'windows' | 'wsl',
+  provider: 'claude_code' | 'codex' | undefined,
+  ctx: SessionBuildContext
+): Record<string, string> {
+  const env: Record<string, string> = { SOLOE_SESSION_ID: sessionId };
+  if (provider) env['SOLOE_AGENT_PROVIDER'] = provider;
+  if (ctx.bridge) {
+    env['SOLOE_BRIDGE_URL'] =
+      runMode === 'wsl' ? wslReachableBridgeUrl(ctx.bridge.url) : ctx.bridge.url;
+    env['SOLOE_BRIDGE_TOKEN'] = ctx.bridge.token;
+  }
+  return env;
+}
+
+export function wslReachableBridgeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '0.0.0.0') {
+      u.hostname = 'host.wsl.internal';
     }
-    return env;
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    return url;
   }
 }
 
@@ -198,10 +217,14 @@ function executableName(executable: string): string {
   return (parts[parts.length - 1] ?? executable).toLowerCase();
 }
 
-function buildWslBashLocationLine(): string {
+function buildWslBashLocationLine(env: Record<string, string>): string {
   const escaped = BASH_LOCATION_PROMPT.replace(/'/g, "'\\''");
+  const exportLines = Object.entries(env).map(
+    ([k, v]) => `export ${k}=${posixSingleQuote(v)}`
+  );
   const rcLines = [
     'test -r ~/.bashrc && source ~/.bashrc',
+    ...exportLines,
     `PROMPT_COMMAND='${escaped}'`,
     'eval "$PROMPT_COMMAND"'
   ];

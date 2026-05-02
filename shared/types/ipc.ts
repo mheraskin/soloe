@@ -139,6 +139,14 @@ export const IpcChannels = {
     zoomIn: 'window:zoom-in',
     zoomOut: 'window:zoom-out',
     close: 'window:close'
+  },
+  agentIntegration: {
+    status: 'agent-integration:status',
+    installClaude: 'agent-integration:install-claude',
+    uninstallClaude: 'agent-integration:uninstall-claude',
+    installCodex: 'agent-integration:install-codex',
+    uninstallCodex: 'agent-integration:uninstall-codex',
+    changed: 'agent-integration:changed'
   }
 } as const;
 
@@ -152,7 +160,8 @@ export type IpcChannel =
   | (typeof IpcChannels.git)[keyof typeof IpcChannels.git]
   | (typeof IpcChannels.files)[keyof typeof IpcChannels.files]
   | (typeof IpcChannels.diagnostics)[keyof typeof IpcChannels.diagnostics]
-  | (typeof IpcChannels.window)[keyof typeof IpcChannels.window];
+  | (typeof IpcChannels.window)[keyof typeof IpcChannels.window]
+  | (typeof IpcChannels.agentIntegration)[keyof typeof IpcChannels.agentIntegration];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -262,6 +271,35 @@ export interface WindowApi {
   close(): Promise<IpcResult<true>>;
 }
 
+export type AgentIntegrationClaudeScope = 'user' | 'project' | 'project_local';
+
+export interface AgentIntegrationClaudeStatus {
+  user: boolean;
+  project: boolean;
+  projectLocal: boolean;
+}
+
+export interface AgentIntegrationStatus {
+  claude: AgentIntegrationClaudeStatus;
+  codex: boolean;
+}
+
+export interface AgentIntegrationClaudeRequest {
+  scope: AgentIntegrationClaudeScope;
+  projectPath?: string;
+}
+
+export interface AgentIntegrationApi {
+  status(projectPath?: string): Promise<IpcResult<AgentIntegrationStatus>>;
+  installClaude(request: AgentIntegrationClaudeRequest): Promise<IpcResult<AgentIntegrationStatus>>;
+  uninstallClaude(
+    request: AgentIntegrationClaudeRequest
+  ): Promise<IpcResult<AgentIntegrationStatus>>;
+  installCodex(): Promise<IpcResult<AgentIntegrationStatus>>;
+  uninstallCodex(): Promise<IpcResult<AgentIntegrationStatus>>;
+  onChange(listener: (status: AgentIntegrationStatus) => void): () => void;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -273,6 +311,7 @@ export interface SoloeApi {
   files: FilesApi;
   diagnostics: DiagnosticsApi;
   window: WindowApi;
+  agentIntegration: AgentIntegrationApi;
 }
 
 declare global {

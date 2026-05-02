@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { SessionCommandBuilder, type SessionBuildContext } from './SessionCommandBuilder.js';
+import {
+  SessionCommandBuilder,
+  type SessionBuildContext,
+  wslReachableBridgeUrl
+} from './SessionCommandBuilder.js';
 import type { Session } from '@shared/types/sessions.js';
 
 const ctx: SessionBuildContext = { baseEnv: {} };
@@ -103,6 +107,28 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     };
     expect(() => builder.build(s, ctx)).toThrow(/Custom shell requires a command/);
   });
+
+  it('exports SOLOE_SESSION_ID and bridge env into a wsl bash rcfile when ctx.bridge is set', () => {
+    const s: Session = {
+      ...baseFields(),
+      kind: 'standard_terminal',
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      shell: 'bash'
+    };
+    const inner = innerLine(
+      builder.build(s, {
+        ...ctx,
+        bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
+      }).args
+    );
+    const m = inner.match(/printf %s ([A-Za-z0-9+/=]+) \| base64/);
+    const rc = Buffer.from(m![1]!, 'base64').toString('utf8');
+    expect(rc).toContain('export SOLOE_SESSION_ID=test');
+    expect(rc).toContain('export SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
+    expect(rc).toContain('export SOLOE_BRIDGE_TOKEN=secret');
+    expect(rc).not.toContain('SOLOE_AGENT_PROVIDER');
+  });
 });
 
 describe('SessionCommandBuilder — claude_code kind', () => {
@@ -164,15 +190,15 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     expect(innerLine(builder.build(s, ctx).args)).toContain('CLAUDE_CODE_NO_FLICKER=1');
   });
 
-  it('injects Soloe bridge environment for Claude TUI sessions', () => {
+  it('rewrites the bridge host to host.wsl.internal for wsl claude sessions', () => {
     const s = claudeBase('new');
     const inner = innerLine(builder.build(s, {
       ...ctx,
-      bridge: { url: 'http://127.0.0.1:1234/mcp', token: 'secret' }
+      bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
     }).args);
     expect(inner).toContain('SOLOE_SESSION_ID=test');
     expect(inner).toContain('SOLOE_AGENT_PROVIDER=claude_code');
-    expect(inner).toContain('SOLOE_BRIDGE_URL=http://127.0.0.1:1234/mcp');
+    expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
     expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
   });
 });
@@ -208,7 +234,7 @@ describe('SessionCommandBuilder — codex kind', () => {
     expect(inner).toContain('cdx-123');
   });
 
-  it('injects Soloe bridge environment for Codex TUI sessions', () => {
+  it('rewrites the bridge host to host.wsl.internal for wsl codex sessions', () => {
     const s: Session = {
       ...baseFields(),
       kind: 'codex',
@@ -218,11 +244,11 @@ describe('SessionCommandBuilder — codex kind', () => {
     };
     const inner = innerLine(builder.build(s, {
       ...ctx,
-      bridge: { url: 'http://127.0.0.1:1234/mcp', token: 'secret' }
+      bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
     }).args);
     expect(inner).toContain('SOLOE_SESSION_ID=test');
     expect(inner).toContain('SOLOE_AGENT_PROVIDER=codex');
-    expect(inner).toContain('SOLOE_BRIDGE_URL=http://127.0.0.1:1234/mcp');
+    expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
     expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
   });
 });
@@ -267,5 +293,41 @@ describe('SessionCommandBuilder — windows runMode', () => {
     expect(spec.env['PATH']).toBe('/usr/bin');
     expect(spec.env['HOME']).toBe('/h');
     expect(spec.env['CLAUDE_CODE_NO_FLICKER']).toBe('1');
+  });
+
+  it('does not rewrite bridge host for windows runMode', () => {
+    const s: Session = {
+      ...baseFields(),
+      kind: 'claude_code',
+      runMode: 'windows',
+      resumeMode: 'new'
+    };
+    const spec = builder.build(s, {
+      baseEnv: {},
+      bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
+    });
+    expect(spec.env['SOLOE_BRIDGE_URL']).toBe('http://127.0.0.1:1234');
+  });
+});
+
+describe('wslReachableBridgeUrl', () => {
+  it('rewrites 127.0.0.1 to host.wsl.internal', () => {
+    expect(wslReachableBridgeUrl('http://127.0.0.1:9000')).toBe('http://host.wsl.internal:9000');
+  });
+
+  it('rewrites localhost to host.wsl.internal', () => {
+    expect(wslReachableBridgeUrl('http://localhost:9000')).toBe('http://host.wsl.internal:9000');
+  });
+
+  it('rewrites 0.0.0.0 to host.wsl.internal', () => {
+    expect(wslReachableBridgeUrl('http://0.0.0.0:9000')).toBe('http://host.wsl.internal:9000');
+  });
+
+  it('preserves non-loopback hosts', () => {
+    expect(wslReachableBridgeUrl('http://example.com:9000')).toBe('http://example.com:9000');
+  });
+
+  it('returns the original string when not a valid URL', () => {
+    expect(wslReachableBridgeUrl('not-a-url')).toBe('not-a-url');
   });
 });

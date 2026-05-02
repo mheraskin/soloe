@@ -11,6 +11,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
+  import AgentIntegrationForm from './AgentIntegrationForm.svelte';
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
@@ -171,7 +172,7 @@
   </div>
 </section>
 
-<section class="flex flex-col gap-2.5 py-3">
+<section class="flex flex-col gap-2.5 border-b border-border py-3">
   <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Binaries</h3>
   <p class="m-0 text-[11px] text-muted-foreground">Leave blank to use the binary on PATH.</p>
   {#each binaryKeys as b (b.key)}
@@ -186,4 +187,9 @@
       />
     </div>
   {/each}
+</section>
+
+<section class="flex flex-col gap-2.5 py-3">
+  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Agent integration</h3>
+  <AgentIntegrationForm />
 </section>

@@ -93,6 +93,36 @@ export class AgentObserverManager extends EventEmitter {
     return this.upsertSnapshot(snapshot, event.message ?? `terminal ${event.status}`);
   }
 
+  setTuiObservedState(
+    sessionId: SessionId,
+    state: AgentObservedState,
+    summary: string,
+    detail?: string
+  ): ObservedAgentSnapshot {
+    const existing = this.snapshots.get(sessionId);
+    const snapshot: ObservedAgentSnapshot = {
+      ...(existing ?? {
+        id: sessionId,
+        runtimeMode: 'tui',
+        subjectKind: 'session',
+        provider: 'standard_terminal',
+        sessionId
+      }),
+      state,
+      lastEventAt: new Date().toISOString()
+    };
+    this.snapshots.set(sessionId, snapshot);
+    this.appendEvent({
+      subjectId: sessionId,
+      subjectKind: snapshot.subjectKind,
+      state,
+      summary,
+      detail
+    });
+    this.emit('snapshot', snapshot);
+    return snapshot;
+  }
+
   registerWorker(input: {
     workerId: string;
     originSessionId: SessionId;

@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
+  AgentIntegrationClaudeRequest,
+  AgentIntegrationStatus,
   SoloeApi,
   TerminalInputPayload,
   TerminalResizePayload
@@ -160,6 +162,18 @@ const soloe: SoloeApi = {
     zoomIn: () => ipcRenderer.invoke(IpcChannels.window.zoomIn),
     zoomOut: () => ipcRenderer.invoke(IpcChannels.window.zoomOut),
     close: () => ipcRenderer.invoke(IpcChannels.window.close)
+  },
+  agentIntegration: {
+    status: (projectPath?: string) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.status, projectPath),
+    installClaude: (request: AgentIntegrationClaudeRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.installClaude, request),
+    uninstallClaude: (request: AgentIntegrationClaudeRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallClaude, request),
+    installCodex: () => ipcRenderer.invoke(IpcChannels.agentIntegration.installCodex),
+    uninstallCodex: () => ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallCodex),
+    onChange: (cb: (status: AgentIntegrationStatus) => void) =>
+      subscribe<AgentIntegrationStatus>(IpcChannels.agentIntegration.changed, cb)
   }
 };
 

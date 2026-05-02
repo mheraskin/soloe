@@ -13,6 +13,7 @@ import { AgentObserverManager } from './agents/AgentObserverManager.js';
 import { AgentObserverStore } from './agents/AgentObserverStore.js';
 import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
 import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
+import { AgentHookDispatcher } from './agents/AgentHookDispatcher.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
 import { GitService } from './git/GitService.js';
@@ -28,6 +29,8 @@ import { GitIpc } from './ipc/git.ipc.js';
 import { FilesIpc } from './ipc/files.ipc.js';
 import { DiagnosticsIpc } from './ipc/diagnostics.ipc.js';
 import { WindowIpc } from './ipc/window.ipc.js';
+import { AgentIntegrationIpc } from './ipc/agent-integration.ipc.js';
+import { HookInstaller } from './integrations/HookInstaller.js';
 
 interface AppServices {
   store: SessionStore;
@@ -51,6 +54,7 @@ interface AppServices {
   filesIpc: FilesIpc;
   diagnosticsIpc: DiagnosticsIpc;
   windowIpc: WindowIpc;
+  agentIntegrationIpc: AgentIntegrationIpc;
 }
 
 let services: AppServices | null = null;
@@ -83,7 +87,16 @@ async function setupServices(): Promise<AppServices> {
   observerStore.attach(observer);
   for (const session of await store.list()) observer.registerTuiSession(session);
   const runtime = new AgentRuntimeManager({ observer });
-  const mcp = new SoloeMcpServer({ observer, runtime });
+  const hookDispatcher = new AgentHookDispatcher({
+    observer,
+    sessionStore: store,
+    log: (message, detail) => console.warn(`[hook-dispatcher] ${message}`, detail)
+  });
+  const mcp = new SoloeMcpServer({
+    observer,
+    runtime,
+    onHookEvent: (event) => hookDispatcher.dispatch(event)
+  });
   let mcpInfo: SoloeMcpServerInfo | null = await mcp.start();
   const getBridgeInfo = () => mcpInfo;
 
@@ -152,6 +165,11 @@ async function setupServices(): Promise<AppServices> {
   });
   const diagnosticsIpc = new DiagnosticsIpc({ service: diagnostics });
   const windowIpc = new WindowIpc();
+  const hookInstaller = new HookInstaller();
+  const agentIntegrationIpc = new AgentIntegrationIpc({
+    installer: hookInstaller,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
   sessionsIpc.register();
   terminalIpc.register();
   observerIpc.register();
@@ -162,6 +180,7 @@ async function setupServices(): Promise<AppServices> {
   filesIpc.register();
   diagnosticsIpc.register();
   windowIpc.register();
+  agentIntegrationIpc.register();
 
   return {
     store,
@@ -184,7 +203,8 @@ async function setupServices(): Promise<AppServices> {
     gitIpc,
     filesIpc,
     diagnosticsIpc,
-    windowIpc
+    windowIpc,
+    agentIntegrationIpc
   };
 }
 
@@ -251,6 +271,7 @@ async function cleanup(): Promise<void> {
     services.filesIpc.dispose();
     services.diagnosticsIpc.dispose();
     services.windowIpc.dispose();
+    services.agentIntegrationIpc.dispose();
     services.git.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);

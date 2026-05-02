@@ -14,6 +14,7 @@
   import StatusDot from './StatusDot.svelte';
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
+  import AgentStateBadge from './AgentStateBadge.svelte';
 
   let { session, branch = null }: { session: Session; branch?: string | null } = $props();
 
@@ -25,6 +26,13 @@
   let status = $derived(sessions.statusFor(session.id));
   let workerCount = $derived(sessions.childWorkersFor(session.id).length);
   let kbdIndex = $derived(nav.sessionIndexHints[session.id] ?? null);
+  let observation = $derived(sessions.observationFor(session.id));
+  let observedState = $derived(observation?.state ?? null);
+  let observedSummary = $derived(sessions.eventsFor(session.id)[0]?.summary ?? null);
+  let showAgentBadge = $derived(
+    !!observedState &&
+      !(session.kind === 'standard_terminal' && observation?.provider === 'standard_terminal')
+  );
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
@@ -151,6 +159,9 @@
       >
         <StatusDot {status} />
         <KindIcon kind={session.kind} size={14} />
+        {#if showAgentBadge && observedState}
+          <AgentStateBadge state={observedState} summary={observedSummary} />
+        {/if}
         <span class="flex min-w-0 flex-1 flex-col gap-1">
           {#if editing}
             <input

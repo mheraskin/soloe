@@ -3,12 +3,21 @@ import { randomBytes } from 'node:crypto';
 import type { AgentRuntimeManager } from './AgentRuntimeManager.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 
+export type HookProvider = 'claude_code' | 'codex';
+
+export interface HookEvent {
+  provider: HookProvider;
+  soloeSessionId: string;
+  payload: Record<string, unknown>;
+}
+
 export interface SoloeMcpServerOptions {
   observer: AgentObserverManager;
   runtime: AgentRuntimeManager;
   host?: string;
   port?: number;
   token?: string;
+  onHookEvent?: (event: HookEvent) => void | Promise<void>;
 }
 
 export interface SoloeMcpServerInfo {
@@ -97,7 +106,7 @@ export class SoloeMcpServer {
     this.server = server;
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen(this.opts.port ?? 0, this.opts.host ?? '127.0.0.1', () => {
+      server.listen(this.opts.port ?? 0, this.opts.host ?? '0.0.0.0', () => {
         server.off('error', reject);
         resolve();
       });
@@ -117,18 +126,27 @@ export class SoloeMcpServer {
     const addr = this.server.address();
     if (!addr || typeof addr === 'string') throw new Error('Soloe MCP server has no TCP address');
     return {
-      url: `http://${addr.address}:${addr.port}/mcp`,
+      url: `http://127.0.0.1:${addr.port}`,
       token: this.token
     };
   }
 
   async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST' || req.url !== '/mcp') {
+    if (req.method !== 'POST') {
+      writeJson(res, 404, { error: 'not found' });
+      return;
+    }
+    const url = req.url ?? '';
+    if (url !== '/mcp' && url !== '/hook/claude' && url !== '/hook/codex') {
       writeJson(res, 404, { error: 'not found' });
       return;
     }
     if (!isAuthorized(req, this.token)) {
       writeJson(res, 401, { error: 'unauthorized' });
+      return;
+    }
+    if (url === '/hook/claude' || url === '/hook/codex') {
+      await this.handleHookRequest(req, res, url === '/hook/claude' ? 'claude_code' : 'codex');
       return;
     }
     let payload: unknown;
@@ -142,6 +160,36 @@ export class SoloeMcpServer {
       writeJson(res, 200, await this.handlePayload(payload));
     } catch (err) {
       writeJson(res, 400, { error: errorMessage(err) });
+    }
+  }
+
+  private async handleHookRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    provider: HookProvider
+  ): Promise<void> {
+    const sessionHeader = req.headers['x-soloe-session-id'];
+    const soloeSessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+    if (!soloeSessionId) {
+      writeJson(res, 400, { error: 'X-Soloe-Session-Id header is required' });
+      return;
+    }
+    let payload: Record<string, unknown> = {};
+    try {
+      const body = await readBody(req);
+      if (body) {
+        const parsed: unknown = JSON.parse(body);
+        if (isRecord(parsed)) payload = parsed;
+      }
+    } catch {
+      writeJson(res, 400, { error: 'invalid json' });
+      return;
+    }
+    try {
+      await this.opts.onHookEvent?.({ provider, soloeSessionId, payload });
+      writeJson(res, 200, { ok: true });
+    } catch (err) {
+      writeJson(res, 500, { error: errorMessage(err) });
     }
   }
 
