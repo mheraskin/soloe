@@ -196,7 +196,7 @@ function buildWslBashLocationLine(): string {
   const rcLines = [
     'test -r ~/.bashrc && source ~/.bashrc',
     `__soloe_emit_cwd() { ${BASH_LOCATION_PROMPT}; }`,
-    'PROMPT_COMMAND="__soloe_emit_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"',
+    'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__soloe_emit_cwd"',
     '__soloe_emit_cwd'
   ];
   return [

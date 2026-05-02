@@ -36,7 +36,9 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(innerLine(spec.args)).not.toContain('mktemp');
     expect(innerLine(spec.args)).not.toContain('<(');
     expect(innerLine(spec.args)).toContain('source ~/.bashrc');
-    expect(innerLine(spec.args)).toContain('PROMPT_COMMAND=');
+    expect(innerLine(spec.args)).toContain(
+      'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__soloe_emit_cwd"'
+    );
     expect(innerLine(spec.args)).not.toContain('cd()');
     expect(innerLine(spec.args)).not.toContain('pushd()');
     expect(innerLine(spec.args)).not.toContain('popd()');
