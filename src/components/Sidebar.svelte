@@ -74,24 +74,28 @@
   style={`width: ${width}px`}
 >
   <div class="flex flex-col gap-2 border-b border-border p-2.5">
-    <Button
-      variant="outline"
-      size="sm"
-      class="w-full justify-center gap-1.5"
-      onclick={() => void sessions.createWithDefaults({}).catch(reportError)}
-    >
-      <Plus class="size-3.5" /> New session
-      <KbdHint keys={Keymap.newSession.keys} class="ml-1" />
-    </Button>
-    <Button
-      variant="ghost"
-      size="sm"
-      class="w-full justify-center gap-1.5"
-      onclick={() => commandPalette.open('open-project')}
-    >
-      <FolderOpen class="size-3.5" /> Open project
-      <KbdHint keys={Keymap.openProject.keys} class="ml-1" />
-    </Button>
+    <div class="grid grid-cols-2 gap-2">
+      <Button
+        variant="ghost"
+        size="sm"
+        class="min-w-0 justify-center gap-1.5 px-2"
+        onclick={() => commandPalette.open('open-project')}
+      >
+        <FolderOpen class="size-3.5" />
+        <span class="min-w-0 truncate">Open project</span>
+        <KbdHint keys={Keymap.openProject.keys} class="ml-0.5 shrink-0" />
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        class="min-w-0 justify-center gap-1.5 px-2"
+        onclick={() => void sessions.createWithDefaults({}).catch(reportError)}
+      >
+        <Plus class="size-3.5" />
+        <span class="min-w-0 truncate">New session</span>
+        <KbdHint keys={Keymap.newSession.keys} class="ml-0.5 shrink-0" />
+      </Button>
+    </div>
     <div class="relative">
       <Search class="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
       <Input
