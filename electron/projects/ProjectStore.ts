@@ -216,7 +216,9 @@ export class ProjectStore {
           : await suggestWindowsDirectories(childParsed, limit);
       for (const suggestion of childResults) {
         const key = normalizePath(suggestion.path);
-        if (!byPath.has(key)) byPath.set(key, suggestion);
+        if (!byPath.has(key)) {
+          byPath.set(key, { ...suggestion, name: `${single.name}/${suggestion.name}` });
+        }
       }
     }
 
