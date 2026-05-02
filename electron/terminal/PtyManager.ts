@@ -101,8 +101,7 @@ export class PtyManager extends EventEmitter {
         rows,
         cwd: spec.cwd,
         env: mergeEnv(this.baseEnv, spec.env),
-        useConpty: process.platform === 'win32',
-        encoding: 'utf8'
+        useConpty: process.platform === 'win32'
       } as pty.IPtyForkOptions);
     } catch (err) {
       const message = errorMessage(err);
