@@ -191,6 +191,35 @@ export class ProjectStore {
       if (!byPath.has(key)) byPath.set(key, suggestion);
     }
 
+    if (dirResults.length === 1 && parsed.fragment) {
+      const single = dirResults[0]!;
+      const childParsed: ParsedProjectQuery =
+        scope === 'wsl'
+          ? {
+              scope: 'wsl',
+              wslDistro: wslDistro!,
+              baseDir: single.path,
+              fragment: '',
+              original: '',
+              queryForKnown: ''
+            }
+          : {
+              scope: 'windows',
+              baseDir: single.path,
+              fragment: '',
+              original: '',
+              queryForKnown: ''
+            };
+      const childResults =
+        scope === 'wsl'
+          ? await this.suggestWslDirectories(wslDistro!, childParsed, limit)
+          : await suggestWindowsDirectories(childParsed, limit);
+      for (const suggestion of childResults) {
+        const key = normalizePath(suggestion.path);
+        if (!byPath.has(key)) byPath.set(key, suggestion);
+      }
+    }
+
     return {
       scope,
       ...(wslDistro ? { wslDistro } : {}),

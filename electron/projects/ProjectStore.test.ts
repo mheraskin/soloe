@@ -356,6 +356,57 @@ describe('ProjectStore — suggestPaths', () => {
     }
   });
 
+  it('auto-expands the only matching directory under home', async () => {
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-home-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      const projectsDir = path.join(fakeHome, 'soloe-rel-projects');
+      const snpDir = path.join(fakeHome, 'soloe-rel-snp');
+      await fs.mkdir(projectsDir);
+      await fs.mkdir(snpDir);
+      const alpha = path.join(projectsDir, 'alpha');
+      const beta = path.join(projectsDir, 'beta');
+      await fs.mkdir(alpha);
+      await fs.mkdir(beta);
+      const store = new ProjectStore(storePath);
+      const result = await store.suggestPaths('soloe-rel-proj', { scope: 'windows' });
+      const paths = result.suggestions.map((s) => s.path);
+      expect(paths).toContain(projectsDir);
+      expect(paths).toContain(alpha);
+      expect(paths).toContain(beta);
+      expect(paths).not.toContain(snpDir);
+    } finally {
+      if (originalHome !== undefined) process.env.HOME = originalHome;
+      else delete process.env.HOME;
+      await fs.rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('does not auto-expand when multiple directories match the fragment', async () => {
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-home-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      const projectsDir = path.join(fakeHome, 'soloe-rel-projects');
+      const projetzDir = path.join(fakeHome, 'soloe-rel-projetz');
+      await fs.mkdir(projectsDir);
+      await fs.mkdir(projetzDir);
+      const child = path.join(projectsDir, 'alpha');
+      await fs.mkdir(child);
+      const store = new ProjectStore(storePath);
+      const result = await store.suggestPaths('soloe-rel-pro', { scope: 'windows' });
+      const paths = result.suggestions.map((s) => s.path);
+      expect(paths).toContain(projectsDir);
+      expect(paths).toContain(projetzDir);
+      expect(paths).not.toContain(child);
+    } finally {
+      if (originalHome !== undefined) process.env.HOME = originalHome;
+      else delete process.env.HOME;
+      await fs.rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
   it('filters known projects by scope', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-suggest-'));
     try {
