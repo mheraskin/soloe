@@ -37,7 +37,7 @@ export class GitIpc {
       ipcInvoke(() => this.opts.service.getDirty(request.repoPath))
     );
     ipcMain.handle(IpcChannels.git.worktrees, (_e, request: GitRepoRequest) =>
-      ipcInvoke(() => this.opts.service.listWorktrees(request.repoPath))
+      ipcInvoke(() => this.opts.service.listWorktrees(request.repoPath, request.force))
     );
     ipcMain.handle(IpcChannels.git.branches, (_e, request: GitRepoRequest) =>
       ipcInvoke(() => this.opts.service.listLocalBranches(request.repoPath))

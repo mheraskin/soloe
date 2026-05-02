@@ -101,6 +101,33 @@ describe.skipIf(!hasGit)('GitService', () => {
     ]);
   });
 
+  it('listWorktrees: force refresh sees worktrees added after the first lookup', async () => {
+    await initRepo(tmpRoot);
+    const cached = await svc.listWorktrees(tmpRoot);
+    expect(cached).toHaveLength(1);
+
+    const worktreePath = path.join(path.dirname(tmpRoot), `${path.basename(tmpRoot)}-feature`);
+    const added = spawnSync(
+      'git',
+      ['worktree', 'add', '-q', '-b', 'feature/worktree', worktreePath],
+      { cwd: tmpRoot }
+    );
+    expect(added.status).toBe(0);
+
+    try {
+      const stale = await svc.listWorktrees(tmpRoot);
+      expect(stale).toHaveLength(1);
+
+      const refreshed = await svc.listWorktrees(tmpRoot, true);
+      expect(refreshed.map((wt) => wt.path)).toContain(worktreePath);
+      expect(refreshed).toContainEqual(
+        expect.objectContaining({ path: worktreePath, branch: 'feature/worktree' })
+      );
+    } finally {
+      await fs.rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it('checkout: switches branches when the repo is clean', async () => {
     await initRepo(tmpRoot);
     spawnSync('git', ['checkout', '-b', 'feature/demo'], { cwd: tmpRoot });

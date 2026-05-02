@@ -215,7 +215,7 @@
       });
       if (suggestion.scope !== 'wsl') {
         try {
-          await ipc.git.worktrees({ repoPath: opened.path });
+          await ipc.git.worktrees({ repoPath: opened.path, force: true });
         } catch {
           // worktree priming is best-effort
         }

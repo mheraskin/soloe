@@ -19,6 +19,7 @@ export interface GitStatusRequest {
 
 export interface GitRepoRequest {
   repoPath: string;
+  force?: boolean;
 }
 
 export interface GitRecentCommitsRequest extends GitRepoRequest {

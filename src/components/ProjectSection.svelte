@@ -39,7 +39,7 @@
   }
 
   $effect(() => {
-    ipc.git.worktrees({ repoPath: project.path })
+    ipc.git.worktrees({ repoPath: project.path, force: true })
       .then((worktrees) => {
         gitWorktrees = worktrees;
       })
