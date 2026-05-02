@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
@@ -189,6 +189,7 @@ async function createWindow(): Promise<BrowserWindow> {
     height: 800,
     minWidth: 800,
     minHeight: 500,
+    autoHideMenuBar: true,
     show: false,
     title: 'Soloe',
     backgroundColor: '#0f0f10',
@@ -256,6 +257,7 @@ function ensureSingleInstance(): boolean {
 
 if (ensureSingleInstance()) {
   app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
     services = await setupServices();
     mainWindow = await createWindow();
 
