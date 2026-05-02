@@ -10,7 +10,10 @@
     Activity
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
-  import type { ProjectPathSuggestion } from '@shared/types/projects.js';
+  import type {
+    ProjectPathSuggestion,
+    ProjectSearchScope
+  } from '@shared/types/projects.js';
   import { commandPalette } from '../stores/command-palette.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
@@ -22,6 +25,7 @@
   import { ipc } from '../lib/ipc';
   import * as Command from '$lib/components/ui/command';
   import { Badge } from '$lib/components/ui/badge';
+  import { cn } from '$lib/utils';
 
   interface Cmd {
     id: string;
@@ -34,8 +38,16 @@
 
   let query = $state('');
   let pathSuggestions = $state<ProjectPathSuggestion[]>([]);
+  let scope = $state<ProjectSearchScope>('windows');
+  let wslDistro = $state<string>('Ubuntu');
   let suggestRequest = 0;
   let debounceHandle = 0;
+
+  function resetScopeFromSettings() {
+    const defaults = settings.current.defaults;
+    scope = defaults.runMode === 'wsl' ? 'wsl' : 'windows';
+    wslDistro = defaults.wslDistro?.trim() || 'Ubuntu';
+  }
 
   $effect(() => {
     if (commandPalette.isOpen) {
@@ -44,15 +56,18 @@
   });
 
   $effect(() => {
-    void commandPalette.mode;
+    const mode = commandPalette.mode;
     query = '';
     pathSuggestions = [];
+    if (mode === 'open-project') resetScopeFromSettings();
   });
 
   $effect(() => {
     if (!commandPalette.isOpen) return;
     if (commandPalette.mode !== 'open-project') return;
     const q = query;
+    const requestScope = scope;
+    const requestDistro = wslDistro;
     if (debounceHandle) {
       window.clearTimeout(debounceHandle);
       debounceHandle = 0;
@@ -60,10 +75,14 @@
     debounceHandle = window.setTimeout(() => {
       const requestId = ++suggestRequest;
       void projects
-        .suggestPaths(q)
+        .suggestPaths(q, { scope: requestScope, wslDistro: requestDistro })
         .then((next) => {
           if (requestId !== suggestRequest) return;
-          pathSuggestions = next;
+          pathSuggestions = next.suggestions;
+          if (next.scope !== scope) scope = next.scope;
+          if (next.scope === 'wsl' && next.wslDistro && next.wslDistro !== wslDistro) {
+            wslDistro = next.wslDistro;
+          }
         })
         .catch(() => {
           if (requestId !== suggestRequest) return;
@@ -184,11 +203,21 @@
 
   async function openSuggestion(suggestion: ProjectPathSuggestion) {
     try {
-      const opened = await projects.open({ path: suggestion.path });
-      try {
-        await ipc.git.worktrees({ repoPath: opened.path });
-      } catch {
-        // worktree priming is best-effort
+      const opened = await projects.open({
+        path: suggestion.path,
+        ...(suggestion.scope === 'wsl'
+          ? {
+              defaultRunMode: 'wsl' as const,
+              ...(suggestion.wslDistro ? { defaultWslDistro: suggestion.wslDistro } : {})
+            }
+          : { defaultRunMode: 'windows' as const })
+      });
+      if (suggestion.scope !== 'wsl') {
+        try {
+          await ipc.git.worktrees({ repoPath: opened.path });
+        } catch {
+          // worktree priming is best-effort
+        }
       }
       commandPalette.close();
     } catch (err) {
@@ -223,6 +252,40 @@
       : 'Type a command or session name…'}
     bind:value={query}
   />
+  {#if commandPalette.mode === 'open-project'}
+    <div class="flex items-center gap-1.5 border-b border-border px-3 py-1.5">
+      <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Search</span>
+      <div class="flex items-center gap-1 rounded-md border border-border bg-muted/30 p-0.5">
+        <button
+          type="button"
+          class={cn(
+            'rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
+            scope === 'windows'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          )}
+          onclick={() => (scope = 'windows')}
+        >
+          Windows
+        </button>
+        <button
+          type="button"
+          class={cn(
+            'rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
+            scope === 'wsl'
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          )}
+          onclick={() => (scope = 'wsl')}
+        >
+          WSL: {wslDistro}
+        </button>
+      </div>
+      <span class="ml-auto font-mono text-[10px] text-muted-foreground">
+        wsl: / win: / \\wsl$\…
+      </span>
+    </div>
+  {/if}
   <Command.List class="max-h-[60vh]">
     {#if commandPalette.mode === 'open-project'}
       {#if pathSuggestions.length === 0}

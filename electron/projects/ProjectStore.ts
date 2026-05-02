@@ -11,6 +11,9 @@ import type {
   ProjectId,
   ProjectOpenRequest,
   ProjectPathSuggestion,
+  ProjectSearchScope,
+  ProjectSuggestOptions,
+  ProjectSuggestResult,
   ProjectUpdate
 } from '@shared/types/projects.js';
 
@@ -30,6 +33,7 @@ export class ProjectStore {
   private cache: Map<ProjectId, Project> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
   private listeners = new Set<(projects: Project[]) => void>();
+  private wslHomeCache = new Map<string, string>();
 
   constructor(
     private readonly filePath: string,
@@ -141,20 +145,28 @@ export class ProjectStore {
     return { path: resolved, suggestedName, matchedProjectId };
   }
 
-  async suggestPaths(query: string, limit = 10): Promise<ProjectPathSuggestion[]> {
+  async suggestPaths(
+    query: string,
+    options?: ProjectSuggestOptions,
+    limit = 10
+  ): Promise<ProjectSuggestResult> {
     await this.ensureLoaded();
-    const trimmed = query.trim();
+    const requested: ProjectSuggestOptions = options ?? { scope: 'windows' };
+    const parsed = parseProjectQuery(query, requested);
+    const scope = parsed.scope;
+    const wslDistro = scope === 'wsl' ? parsed.wslDistro ?? 'Ubuntu' : undefined;
     const byPath = new Map<string, ProjectPathSuggestion>();
 
     const known = [...this.cache!.values()]
+      .filter((project) => projectMatchesScope(project, scope, wslDistro))
       .map((project) => {
         const score = Math.max(
-          fuzzyScore(trimmed, project.name) ?? -1,
-          fuzzyScore(trimmed, project.path) ?? -1
+          fuzzyScore(parsed.queryForKnown, project.name) ?? -1,
+          fuzzyScore(parsed.queryForKnown, project.path) ?? -1
         );
         return { project, score };
       })
-      .filter((entry) => !trimmed || entry.score >= 0)
+      .filter((entry) => !parsed.queryForKnown || entry.score >= 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
 
@@ -163,16 +175,80 @@ export class ProjectStore {
         path: project.path,
         name: project.name,
         source: 'known',
+        scope: pathScope(project),
+        ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {}),
         projectId: project.id
       });
     }
 
-    for (const suggestion of await suggestDirectories(trimmed, limit)) {
+    const dirResults =
+      scope === 'wsl'
+        ? await this.suggestWslDirectories(wslDistro!, parsed, limit)
+        : await suggestWindowsDirectories(parsed, limit);
+
+    for (const suggestion of dirResults) {
       const key = normalizePath(suggestion.path);
       if (!byPath.has(key)) byPath.set(key, suggestion);
     }
 
-    return [...byPath.values()].slice(0, limit);
+    return {
+      scope,
+      ...(wslDistro ? { wslDistro } : {}),
+      suggestions: [...byPath.values()].slice(0, limit)
+    };
+  }
+
+  private async suggestWslDirectories(
+    distro: string,
+    parsed: ParsedProjectQuery,
+    limit: number
+  ): Promise<ProjectPathSuggestion[]> {
+    const home = await this.resolveWslHome(distro);
+    const baseDir = parsed.baseDir
+      ? expandWslHome(parsed.baseDir, home)
+      : home;
+    const fragment = parsed.fragment;
+    const unc = posixToWslUnc(distro, baseDir);
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(unc, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const fullQuery = parsed.original;
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .filter((entry) => fragment.startsWith('.') || !entry.name.startsWith('.'))
+      .map((entry) => {
+        const fullPath = joinPosix(baseDir, entry.name);
+        const score = Math.max(
+          fuzzyScore(fragment, entry.name) ?? -1,
+          fuzzyScore(fullQuery, fullPath) ?? -1
+        );
+        return {
+          suggestion: {
+            path: fullPath,
+            name: entry.name,
+            source: 'directory' as const,
+            scope: 'wsl' as const,
+            wslDistro: distro
+          },
+          score
+        };
+      })
+      .filter((entry) => !fragment || entry.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((entry) => entry.suggestion);
+  }
+
+  private async resolveWslHome(distro: string): Promise<string> {
+    const cached = this.wslHomeCache.get(distro);
+    if (cached) return cached;
+    const home = await runWslCommand(distro, 'printf %s "$HOME"');
+    const resolved = home.trim() || '/root';
+    this.wslHomeCache.set(distro, resolved);
+    return resolved;
   }
 
   onChange(fn: (projects: Project[]) => void): () => void {
@@ -321,9 +397,202 @@ function inferNameFromPath(projectPath: string): string {
   return path.basename(projectPath.replace(/[/\\]+$/, '')) || projectPath;
 }
 
-async function suggestDirectories(query: string, limit: number): Promise<ProjectPathSuggestion[]> {
-  const parsed = parsePathQuery(query);
-  if (!parsed) return [];
+interface ParsedProjectQuery {
+  scope: ProjectSearchScope;
+  wslDistro?: string;
+  baseDir: string;
+  fragment: string;
+  original: string;
+  queryForKnown: string;
+}
+
+const WSL_UNC_RE = /^\\\\wsl(?:\$|\.localhost)\\([^\\]+)\\?(.*)$/i;
+
+function parseProjectQuery(
+  query: string,
+  options: ProjectSuggestOptions
+): ParsedProjectQuery {
+  const trimmed = query.trim();
+
+  if (trimmed.toLowerCase().startsWith('wsl:')) {
+    const remainder = trimmed.slice(4).replace(/^[\s]+/, '');
+    return buildWslParsed(remainder, options.wslDistro ?? 'Ubuntu', remainder);
+  }
+  if (trimmed.toLowerCase().startsWith('win:')) {
+    const remainder = trimmed.slice(4).replace(/^[\s]+/, '');
+    return buildWindowsParsed(remainder, remainder);
+  }
+  const uncMatch = trimmed.match(WSL_UNC_RE);
+  if (uncMatch) {
+    const distro = uncMatch[1] ?? 'Ubuntu';
+    const tail = (uncMatch[2] ?? '').replace(/\\/g, '/');
+    const posix = tail ? `/${tail.replace(/^\/+/, '')}` : '/';
+    return buildWslParsed(posix, distro, trimmed);
+  }
+  if (options.scope === 'wsl') {
+    return buildWslParsed(trimmed, options.wslDistro ?? 'Ubuntu', trimmed);
+  }
+  return buildWindowsParsed(trimmed, trimmed);
+}
+
+function buildWindowsParsed(query: string, original: string): ParsedProjectQuery {
+  if (!query) {
+    return {
+      scope: 'windows',
+      baseDir: os.homedir(),
+      fragment: '',
+      original,
+      queryForKnown: original
+    };
+  }
+  const expanded = expandWindowsHome(query);
+  const lastSeparator = Math.max(expanded.lastIndexOf('/'), expanded.lastIndexOf('\\'));
+  if (query.endsWith('/') || query.endsWith('\\')) {
+    return {
+      scope: 'windows',
+      baseDir: expanded,
+      fragment: '',
+      original,
+      queryForKnown: original
+    };
+  }
+  if (lastSeparator >= 0) {
+    return {
+      scope: 'windows',
+      baseDir: expanded.slice(0, lastSeparator + 1),
+      fragment: expanded.slice(lastSeparator + 1),
+      original,
+      queryForKnown: original
+    };
+  }
+  return {
+    scope: 'windows',
+    baseDir: os.homedir(),
+    fragment: expanded,
+    original,
+    queryForKnown: original
+  };
+}
+
+function buildWslParsed(query: string, distro: string, original: string): ParsedProjectQuery {
+  if (!query) {
+    return {
+      scope: 'wsl',
+      wslDistro: distro,
+      baseDir: '',
+      fragment: '',
+      original,
+      queryForKnown: original
+    };
+  }
+  if (query.endsWith('/')) {
+    return {
+      scope: 'wsl',
+      wslDistro: distro,
+      baseDir: query,
+      fragment: '',
+      original,
+      queryForKnown: original
+    };
+  }
+  const lastSlash = query.lastIndexOf('/');
+  if (lastSlash >= 0) {
+    return {
+      scope: 'wsl',
+      wslDistro: distro,
+      baseDir: query.slice(0, lastSlash + 1),
+      fragment: query.slice(lastSlash + 1),
+      original,
+      queryForKnown: original
+    };
+  }
+  return {
+    scope: 'wsl',
+    wslDistro: distro,
+    baseDir: '',
+    fragment: query,
+    original,
+    queryForKnown: original
+  };
+}
+
+function expandWindowsHome(input: string): string {
+  if (input === '~') return os.homedir();
+  if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
+
+function expandWslHome(input: string, home: string): string {
+  if (!input) return home;
+  if (input === '~') return home;
+  if (input.startsWith('~/')) return joinPosix(home, input.slice(2));
+  return input;
+}
+
+function joinPosix(base: string, child: string): string {
+  if (!base) return `/${child.replace(/^\/+/, '')}`;
+  return `${base.replace(/\/+$/, '')}/${child.replace(/^\/+/, '')}`;
+}
+
+function posixToWslUnc(distro: string, posixPath: string): string {
+  const noLead = posixPath.replace(/^\/+/, '');
+  const winSubpath = noLead.replace(/\//g, '\\');
+  return winSubpath
+    ? `\\\\wsl.localhost\\${distro}\\${winSubpath}`
+    : `\\\\wsl.localhost\\${distro}\\`;
+}
+
+function pathScope(project: Project): ProjectSearchScope {
+  if (project.defaultRunMode) return project.defaultRunMode === 'wsl' ? 'wsl' : 'windows';
+  if (project.path.startsWith('/')) return 'wsl';
+  return 'windows';
+}
+
+function projectMatchesScope(
+  project: Project,
+  scope: ProjectSearchScope,
+  wslDistro: string | undefined
+): boolean {
+  const projectScope = pathScope(project);
+  if (projectScope !== scope) return false;
+  if (scope !== 'wsl') return true;
+  if (!wslDistro) return true;
+  if (!project.defaultWslDistro) return true;
+  return project.defaultWslDistro === wslDistro;
+}
+
+function runWslCommand(distro: string, bashLine: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      'wsl.exe',
+      ['-d', distro, '--', 'bash', '-lc', bashLine],
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    let stdout = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve('');
+    }, 2500);
+    child.stdout.on('data', (b: Buffer) => {
+      stdout += b.toString('utf8');
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve('');
+    });
+    child.on('exit', () => {
+      clearTimeout(timer);
+      resolve(stdout);
+    });
+  });
+}
+
+async function suggestWindowsDirectories(
+  parsed: ParsedProjectQuery,
+  limit: number
+): Promise<ProjectPathSuggestion[]> {
   let entries: Dirent[];
   try {
     entries = await fs.readdir(parsed.baseDir, { withFileTypes: true });
@@ -337,13 +606,14 @@ async function suggestDirectories(query: string, limit: number): Promise<Project
       const fullPath = path.join(parsed.baseDir, entry.name);
       const score = Math.max(
         fuzzyScore(parsed.fragment, entry.name) ?? -1,
-        fuzzyScore(query, fullPath) ?? -1
+        fuzzyScore(parsed.original, fullPath) ?? -1
       );
       return {
         suggestion: {
           path: fullPath,
           name: entry.name,
-          source: 'directory' as const
+          source: 'directory' as const,
+          scope: 'windows' as const
         },
         score
       };
@@ -352,28 +622,6 @@ async function suggestDirectories(query: string, limit: number): Promise<Project
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((entry) => entry.suggestion);
-}
-
-function parsePathQuery(query: string): { baseDir: string; fragment: string } | null {
-  if (!query) return { baseDir: os.homedir(), fragment: '' };
-  const expanded = expandHome(query);
-  const lastSeparator = Math.max(expanded.lastIndexOf('/'), expanded.lastIndexOf('\\'));
-  if (query.endsWith('/') || query.endsWith('\\')) {
-    return { baseDir: expanded, fragment: '' };
-  }
-  if (lastSeparator >= 0) {
-    const baseDir = expanded.slice(0, lastSeparator + 1);
-    return { baseDir, fragment: expanded.slice(lastSeparator + 1) };
-  }
-  return { baseDir: os.homedir(), fragment: expanded };
-}
-
-function expandHome(input: string): string {
-  if (input === '~') return os.homedir();
-  if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
-    return path.join(os.homedir(), input.slice(2));
-  }
-  return input;
 }
 
 function fuzzyScore(query: string, candidate: string): number | null {

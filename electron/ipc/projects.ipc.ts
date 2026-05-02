@@ -5,6 +5,7 @@ import type {
   ProjectDraft,
   ProjectId,
   ProjectOpenRequest,
+  ProjectSuggestOptions,
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type { ProjectStore } from '../projects/ProjectStore.js';
@@ -60,8 +61,10 @@ export class ProjectsIpc {
       ipcInvoke(() => this.opts.store.detectFromPath(p))
     );
 
-    ipcMain.handle(IpcChannels.projects.suggestPaths, (_e, query: string) =>
-      ipcInvoke(() => this.opts.store.suggestPaths(query))
+    ipcMain.handle(
+      IpcChannels.projects.suggestPaths,
+      (_e, query: string, options?: ProjectSuggestOptions) =>
+        ipcInvoke(() => this.opts.store.suggestPaths(query, options))
     );
 
     this.detachListener = this.opts.store.onChange((projects: Project[]) => {

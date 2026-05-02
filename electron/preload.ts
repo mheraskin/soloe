@@ -22,6 +22,7 @@ import type {
   Project,
   ProjectDraft,
   ProjectId,
+  ProjectSuggestOptions,
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type {
@@ -119,7 +120,8 @@ const soloe: SoloeApi = {
     delete: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.delete, id),
     touch: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.touch, id),
     detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
-    suggestPaths: (query: string) => ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query),
+    suggestPaths: (query: string, options?: ProjectSuggestOptions) =>
+      ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query, options),
     onChange: (cb: (projects: Project[]) => void) =>
       subscribe<Project[]>(IpcChannels.projects.change, cb)
   },

@@ -36,9 +36,24 @@ export interface ProjectDetectResult {
   matchedProjectId: ProjectId | null;
 }
 
+export type ProjectSearchScope = 'windows' | 'wsl';
+
+export interface ProjectSuggestOptions {
+  scope: ProjectSearchScope;
+  wslDistro?: string;
+}
+
 export interface ProjectPathSuggestion {
   path: string;
   name: string;
   source: 'known' | 'directory';
+  scope: ProjectSearchScope;
+  wslDistro?: string;
   projectId?: ProjectId;
+}
+
+export interface ProjectSuggestResult {
+  scope: ProjectSearchScope;
+  wslDistro?: string;
+  suggestions: ProjectPathSuggestion[];
 }

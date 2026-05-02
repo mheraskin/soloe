@@ -269,7 +269,7 @@ describe.runIf(hasGit)('ProjectStore — detectFromPath', () => {
 });
 
 describe('ProjectStore — suggestPaths', () => {
-  it('returns fuzzy known project matches and directory matches', async () => {
+  it('returns fuzzy known project matches and directory matches in windows scope', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-suggest-'));
     try {
       const alpha = path.join(root, 'alpha-app');
@@ -277,10 +277,91 @@ describe('ProjectStore — suggestPaths', () => {
       await fs.mkdir(alpha);
       await fs.mkdir(beta);
       const store = new ProjectStore(storePath);
-      const known = await store.create(draft({ name: 'Beta App', path: beta }));
-      const suggestions = await store.suggestPaths(path.join(root, 'aa'));
-      expect(suggestions.some((s) => s.path === alpha && s.source === 'directory')).toBe(true);
-      expect(suggestions.some((s) => s.projectId === known.id && s.source === 'known')).toBe(true);
+      const known = await store.create(
+        draft({ name: 'Beta App', path: beta, defaultRunMode: 'windows' })
+      );
+      const result = await store.suggestPaths(path.join(root, 'aa'), { scope: 'windows' });
+      expect(result.scope).toBe('windows');
+      expect(
+        result.suggestions.some((s) => s.path === alpha && s.source === 'directory')
+      ).toBe(true);
+      expect(
+        result.suggestions.some((s) => s.projectId === known.id && s.source === 'known')
+      ).toBe(true);
+      expect(result.suggestions.every((s) => s.scope === 'windows')).toBe(true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('upgrades scope to wsl when query starts with wsl: prefix', async () => {
+    const store = new ProjectStore(storePath);
+    const result = await store.suggestPaths('wsl:/no-such-path-xyz', {
+      scope: 'windows',
+      wslDistro: 'Ubuntu'
+    });
+    expect(result.scope).toBe('wsl');
+    expect(result.wslDistro).toBe('Ubuntu');
+  });
+
+  it('upgrades scope to wsl when query is a UNC \\\\wsl$ path and parses the distro', async () => {
+    const store = new ProjectStore(storePath);
+    const result = await store.suggestPaths('\\\\wsl$\\Debian\\home\\me', {
+      scope: 'windows'
+    });
+    expect(result.scope).toBe('wsl');
+    expect(result.wslDistro).toBe('Debian');
+  });
+
+  it('downgrades scope to windows when query starts with win: prefix', async () => {
+    const store = new ProjectStore(storePath);
+    const result = await store.suggestPaths('win:C:\\no-such-path-xyz', { scope: 'wsl' });
+    expect(result.scope).toBe('windows');
+    expect(result.wslDistro).toBeUndefined();
+  });
+
+  it('respects explicit scope when no prefix is present', async () => {
+    const store = new ProjectStore(storePath);
+    const result = await store.suggestPaths('/home/no-such', {
+      scope: 'windows',
+      wslDistro: 'Ubuntu'
+    });
+    expect(result.scope).toBe('windows');
+  });
+
+  it('filters known projects by scope', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-suggest-'));
+    try {
+      const winProject = path.join(root, 'win-proj');
+      await fs.mkdir(winProject);
+      const store = new ProjectStore(storePath);
+      await store.create(
+        draft({ name: 'Win Proj', path: winProject, defaultRunMode: 'windows' })
+      );
+      await store.create(
+        draft({
+          name: 'Wsl Proj',
+          path: '/home/me/wsl-proj',
+          defaultRunMode: 'wsl',
+          defaultWslDistro: 'Ubuntu'
+        })
+      );
+      const winResult = await store.suggestPaths('proj', { scope: 'windows' });
+      expect(
+        winResult.suggestions.some((s) => s.source === 'known' && s.scope === 'wsl')
+      ).toBe(false);
+      const wslResult = await store.suggestPaths('proj', {
+        scope: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+      expect(
+        wslResult.suggestions.some((s) => s.source === 'known' && s.scope === 'windows')
+      ).toBe(false);
+      expect(
+        wslResult.suggestions.some(
+          (s) => s.source === 'known' && s.path === '/home/me/wsl-proj'
+        )
+      ).toBe(true);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

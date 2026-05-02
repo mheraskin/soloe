@@ -34,7 +34,8 @@ import type {
   ProjectDraft,
   ProjectId,
   ProjectOpenRequest,
-  ProjectPathSuggestion,
+  ProjectSuggestOptions,
+  ProjectSuggestResult,
   ProjectUpdate
 } from './projects.js';
 import type {
@@ -218,7 +219,10 @@ export interface ProjectsApi {
   delete(id: ProjectId): Promise<IpcResult<true>>;
   touch(id: ProjectId): Promise<IpcResult<Project | null>>;
   detectFromPath(path: string): Promise<IpcResult<ProjectDetectResult>>;
-  suggestPaths(query: string): Promise<IpcResult<ProjectPathSuggestion[]>>;
+  suggestPaths(
+    query: string,
+    options?: ProjectSuggestOptions
+  ): Promise<IpcResult<ProjectSuggestResult>>;
   onChange(listener: (projects: Project[]) => void): () => void;
 }
 

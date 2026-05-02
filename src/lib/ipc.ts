@@ -13,6 +13,7 @@ import type {
   ProjectDraft,
   ProjectId,
   ProjectOpenRequest,
+  ProjectSuggestOptions,
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type {
@@ -113,7 +114,8 @@ export const ipc = {
     delete: async (id: ProjectId) => unwrap(await c.projects.delete(id)),
     touch: async (id: ProjectId) => unwrap(await c.projects.touch(id)),
     detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
-    suggestPaths: async (query: string) => unwrap(await c.projects.suggestPaths(query)),
+    suggestPaths: async (query: string, options?: ProjectSuggestOptions) =>
+      unwrap(await c.projects.suggestPaths(query, options ? toIpcPayload(options) : undefined)),
     onChange: (cb: (projects: Project[]) => void) => c.projects.onChange(cb)
   },
   git: {

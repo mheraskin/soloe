@@ -4,7 +4,8 @@ import type {
   ProjectDraft,
   ProjectId,
   ProjectOpenRequest,
-  ProjectPathSuggestion,
+  ProjectSuggestOptions,
+  ProjectSuggestResult,
   ProjectUpdate
 } from '@shared/types/projects.js';
 import { ipc } from '../lib/ipc';
@@ -84,8 +85,11 @@ class ProjectsStore {
     return ipc.projects.detectFromPath(path);
   }
 
-  async suggestPaths(query: string): Promise<ProjectPathSuggestion[]> {
-    return ipc.projects.suggestPaths(query);
+  async suggestPaths(
+    query: string,
+    options?: ProjectSuggestOptions
+  ): Promise<ProjectSuggestResult> {
+    return ipc.projects.suggestPaths(query, options);
   }
 }
 
