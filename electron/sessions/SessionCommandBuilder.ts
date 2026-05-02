@@ -195,13 +195,15 @@ function executableName(executable: string): string {
 
 function buildWslBashLocationLine(): string {
   const rcLines = [
+    'trap \'rm -f "$__soloe_rc"\' EXIT',
     'test -r ~/.bashrc && source ~/.bashrc',
     `__soloe_emit_cwd() { ${BASH_LOCATION_PROMPT}; }`,
-    '__soloe_track_cwd() { case "$BASH_COMMAND" in cd|cd\\ *|pushd|pushd\\ *|popd|popd\\ *) __soloe_emit_cwd ;; esac; }',
-    "trap '__soloe_track_cwd' DEBUG",
-    'PROMPT_COMMAND=__soloe_emit_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}',
+    'cd() { builtin cd "$@" && __soloe_emit_cwd; }',
+    'pushd() { builtin pushd "$@" && __soloe_emit_cwd; }',
+    'popd() { builtin popd "$@" && __soloe_emit_cwd; }',
+    'PROMPT_COMMAND="__soloe_emit_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"',
     '__soloe_emit_cwd'
   ];
   const quotedLines = rcLines.map((line) => posixSingleQuote(line)).join(' ');
-  return `exec bash --rcfile <(printf '%s\\n' ${quotedLines}) -i`;
+  return `__soloe_rc=$(mktemp "\${TMPDIR:-/tmp}/soloe-bashrc.XXXXXX") && export __soloe_rc && printf '%s\\n' ${quotedLines} > "$__soloe_rc" && exec bash --rcfile "$__soloe_rc" -i`;
 }
