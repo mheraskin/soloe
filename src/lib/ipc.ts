@@ -40,26 +40,38 @@ function unwrap<T>(r: IpcResult<T>): T {
   return r.value;
 }
 
-const c = window.soloe;
+export function toIpcPayload<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((item) => toIpcPayload(item)) as T;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = toIpcPayload(item);
+  }
+  return out as T;
+}
+
+const c = globalThis.window?.soloe as Window['soloe'];
 
 export const ipc = {
   sessions: {
     list: async () => unwrap(await c.sessions.list()),
     get: async (id: SessionId) => unwrap(await c.sessions.get(id)),
-    create: async (draft: SessionDraft) => unwrap(await c.sessions.create(draft)),
-    update: async (id: SessionId, patch: SessionUpdate) => unwrap(await c.sessions.update(id, patch)),
+    create: async (draft: SessionDraft) => unwrap(await c.sessions.create(toIpcPayload(draft))),
+    update: async (id: SessionId, patch: SessionUpdate) =>
+      unwrap(await c.sessions.update(id, toIpcPayload(patch))),
     delete: async (id: SessionId) => unwrap(await c.sessions.delete(id)),
     previewCommand: async (id: SessionId) => unwrap(await c.sessions.previewCommand(id))
   },
   terminal: {
-    start: async (opts: TerminalStartOptions) => unwrap(await c.terminal.start(opts)),
+    start: async (opts: TerminalStartOptions) => unwrap(await c.terminal.start(toIpcPayload(opts))),
     stop: async (terminalId: TerminalId) => unwrap(await c.terminal.stop(terminalId)),
     restart: async (sessionId: SessionId, opts?: { cols?: number; rows?: number }) =>
-      unwrap(await c.terminal.restart(sessionId, opts)),
+      unwrap(await c.terminal.restart(sessionId, opts ? toIpcPayload(opts) : undefined)),
     input: async (terminalId: TerminalId, data: string) =>
-      unwrap(await c.terminal.input({ terminalId, data })),
+      unwrap(await c.terminal.input(toIpcPayload({ terminalId, data }))),
     resize: async (terminalId: TerminalId, cols: number, rows: number) =>
-      unwrap(await c.terminal.resize({ terminalId, dimensions: { cols, rows } })),
+      unwrap(await c.terminal.resize(toIpcPayload({ terminalId, dimensions: { cols, rows } }))),
     listRunning: async () => unwrap(await c.terminal.listRunning()),
     onOutput: (cb: (event: TerminalOutputEvent) => void) => c.terminal.onOutput(cb),
     onExit: (cb: (event: TerminalExitEvent) => void) => c.terminal.onExit(cb),
@@ -68,11 +80,11 @@ export const ipc = {
   observer: {
     list: async () => unwrap(await c.observer.list()),
     listEvents: async (request?: ListObserverEventsRequest) =>
-      unwrap(await c.observer.listEvents(request)),
+      unwrap(await c.observer.listEvents(request ? toIpcPayload(request) : undefined)),
     createWorkerSession: async (request: CreateWorkerSessionRequest) =>
-      unwrap(await c.observer.createWorkerSession(request)),
+      unwrap(await c.observer.createWorkerSession(toIpcPayload(request))),
     sendWorkerPrompt: async (request: SendWorkerPromptRequest) =>
-      unwrap(await c.observer.sendWorkerPrompt(request)),
+      unwrap(await c.observer.sendWorkerPrompt(toIpcPayload(request))),
     getWorkerStatus: async (workerId: string) => unwrap(await c.observer.getWorkerStatus(workerId)),
     stopWorkerSession: async (workerId: string) =>
       unwrap(await c.observer.stopWorkerSession(workerId)),
@@ -82,22 +94,22 @@ export const ipc = {
   system: {
     openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId)),
     saveText: async (request: { defaultPath?: string; content: string }) =>
-      unwrap(await c.system.saveText(request)),
+      unwrap(await c.system.saveText(toIpcPayload(request))),
     openExternal: async (url: string) => unwrap(await c.system.openExternal(url)),
     listWslDistros: async () => unwrap(await c.system.listWslDistros())
   },
   settings: {
     get: async () => unwrap(await c.settings.get()),
-    update: async (patch: SettingsUpdate) => unwrap(await c.settings.update(patch)),
+    update: async (patch: SettingsUpdate) => unwrap(await c.settings.update(toIpcPayload(patch))),
     onChange: (cb: (s: Settings) => void) => c.settings.onChange(cb)
   },
   projects: {
     list: async () => unwrap(await c.projects.list()),
     get: async (id: ProjectId) => unwrap(await c.projects.get(id)),
-    create: async (draft: ProjectDraft) => unwrap(await c.projects.create(draft)),
-    open: async (request: ProjectOpenRequest) => unwrap(await c.projects.open(request)),
+    create: async (draft: ProjectDraft) => unwrap(await c.projects.create(toIpcPayload(draft))),
+    open: async (request: ProjectOpenRequest) => unwrap(await c.projects.open(toIpcPayload(request))),
     update: async (id: ProjectId, patch: ProjectUpdate) =>
-      unwrap(await c.projects.update(id, patch)),
+      unwrap(await c.projects.update(id, toIpcPayload(patch))),
     delete: async (id: ProjectId) => unwrap(await c.projects.delete(id)),
     touch: async (id: ProjectId) => unwrap(await c.projects.touch(id)),
     detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
@@ -105,23 +117,28 @@ export const ipc = {
     onChange: (cb: (projects: Project[]) => void) => c.projects.onChange(cb)
   },
   git: {
-    status: async (request: GitStatusRequest) => unwrap(await c.git.status(request)),
-    aheadBehind: async (request: GitRepoRequest) => unwrap(await c.git.aheadBehind(request)),
-    shortstat: async (request: GitRepoRequest) => unwrap(await c.git.shortstat(request)),
-    dirty: async (request: GitRepoRequest) => unwrap(await c.git.dirty(request)),
-    worktrees: async (request: GitRepoRequest) => unwrap(await c.git.worktrees(request)),
-    branches: async (request: GitRepoRequest) => unwrap(await c.git.branches(request)),
+    status: async (request: GitStatusRequest) => unwrap(await c.git.status(toIpcPayload(request))),
+    aheadBehind: async (request: GitRepoRequest) =>
+      unwrap(await c.git.aheadBehind(toIpcPayload(request))),
+    shortstat: async (request: GitRepoRequest) =>
+      unwrap(await c.git.shortstat(toIpcPayload(request))),
+    dirty: async (request: GitRepoRequest) => unwrap(await c.git.dirty(toIpcPayload(request))),
+    worktrees: async (request: GitRepoRequest) =>
+      unwrap(await c.git.worktrees(toIpcPayload(request))),
+    branches: async (request: GitRepoRequest) =>
+      unwrap(await c.git.branches(toIpcPayload(request))),
     recentCommits: async (request: GitRecentCommitsRequest) =>
-      unwrap(await c.git.recentCommits(request)),
-    checkout: async (request: GitCheckoutRequest) => unwrap(await c.git.checkout(request)),
+      unwrap(await c.git.recentCommits(toIpcPayload(request))),
+    checkout: async (request: GitCheckoutRequest) =>
+      unwrap(await c.git.checkout(toIpcPayload(request))),
     onChange: (cb: (event: GitChangeEvent) => void) => c.git.onChange(cb)
   },
   files: {
-    search: async (request: FileSearchRequest) => unwrap(await c.files.search(request)),
+    search: async (request: FileSearchRequest) => unwrap(await c.files.search(toIpcPayload(request))),
     openInEditor: async (request: FileOpenRequest) =>
-      unwrap(await c.files.openInEditor(request)),
+      unwrap(await c.files.openInEditor(toIpcPayload(request))),
     pasteIntoTerminal: async (request: FilePasteRequest) =>
-      unwrap(await c.files.pasteIntoTerminal(request))
+      unwrap(await c.files.pasteIntoTerminal(toIpcPayload(request)))
   },
   diagnostics: {
     list: async () => unwrap(await c.diagnostics.list()),
