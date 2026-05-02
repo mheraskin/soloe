@@ -28,27 +28,28 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(spec.file).toBe('wsl.exe');
     expect(spec.args.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', '/home/me/proj', 'bash']);
     expect(spec.args[5]).toBe('-lc');
-    expect(innerLine(spec.args)).toContain('exec bash --rcfile /proc/self/fd/3 -i');
-    expect(innerLine(spec.args)).toContain("<<'__SOLOE_BASHRC__'");
-    expect(innerLine(spec.args)).toContain('$(builtin pwd -P)');
-    expect(innerLine(spec.args)).toContain('633;P;Cwd=%s');
-    expect(innerLine(spec.args)).not.toContain('mkdir');
-    expect(innerLine(spec.args)).not.toContain('.soloe');
-    expect(innerLine(spec.args)).not.toContain('TMPDIR');
-    expect(innerLine(spec.args)).not.toContain('mktemp');
-    expect(innerLine(spec.args)).not.toContain('<(');
-    expect(innerLine(spec.args)).toContain('source ~/.bashrc');
-    expect(innerLine(spec.args)).toContain(
-      "if declare -p PROMPT_COMMAND 2>/dev/null | grep -q '^declare -[^ ]*a'; then"
-    );
-    expect(innerLine(spec.args)).toContain('PROMPT_COMMAND+=(__soloe_emit_cwd)');
-    expect(innerLine(spec.args)).toContain(
-      'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__soloe_emit_cwd"'
-    );
-    expect(innerLine(spec.args)).not.toContain('cd()');
-    expect(innerLine(spec.args)).not.toContain('pushd()');
-    expect(innerLine(spec.args)).not.toContain('popd()');
-    expect(innerLine(spec.args)).toContain('__soloe_emit_cwd');
+    const inner = innerLine(spec.args);
+    expect(inner).toMatch(/^exec bash --rcfile <\(printf %s [A-Za-z0-9+/=]+ \| base64 -d\) -i$/);
+    const m = inner.match(/printf %s ([A-Za-z0-9+/=]+) \| base64/);
+    expect(m).not.toBeNull();
+    const rc = Buffer.from(m![1]!, 'base64').toString('utf8');
+    expect(rc).toContain('source ~/.bashrc');
+    expect(rc).toContain("PROMPT_COMMAND='printf");
+    expect(rc).toContain('633;P;Cwd=%s');
+    expect(rc).toContain('"$PWD" "$PWD"');
+    expect(rc).toContain('eval "$PROMPT_COMMAND"');
+    expect(rc).not.toContain('mkdir');
+    expect(rc).not.toContain('.soloe');
+    expect(rc).not.toContain('TMPDIR');
+    expect(rc).not.toContain('mktemp');
+    expect(rc).not.toContain('SOLOE_BASHRC');
+    expect(rc).not.toContain('/proc/self/fd/3');
+    expect(rc).not.toContain('builtin pwd -P');
+    expect(rc).not.toContain('__soloe_cwd');
+    expect(rc).not.toContain('__soloe_emit_cwd');
+    expect(rc).not.toContain('cd()');
+    expect(rc).not.toContain('pushd()');
+    expect(rc).not.toContain('popd()');
     expect(spec.description).toContain('-d Ubuntu');
     expect(spec.description).toContain('--cd /home/me/proj');
   });

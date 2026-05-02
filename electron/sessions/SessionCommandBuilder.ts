@@ -163,9 +163,8 @@ export class SessionCommandBuilder {
 }
 
 const BASH_LOCATION_PROMPT =
-  '__soloe_cwd=$(builtin pwd -P) && ' +
   'printf \'\\033]7;file://%s%s\\007\\033]633;P;Cwd=%s\\007\' ' +
-  '"${HOSTNAME:-localhost}" "$__soloe_cwd" "$__soloe_cwd"';
+  '"${HOSTNAME:-localhost}" "$PWD" "$PWD"';
 
 const POWERSHELL_LOCATION_SCRIPT =
   '$global:__soloeOriginalPrompt = (Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue).ScriptBlock; ' +
@@ -200,19 +199,13 @@ function executableName(executable: string): string {
 }
 
 function buildWslBashLocationLine(): string {
+  const escaped = BASH_LOCATION_PROMPT.replace(/'/g, "'\\''");
   const rcLines = [
     'test -r ~/.bashrc && source ~/.bashrc',
-    `__soloe_emit_cwd() { ${BASH_LOCATION_PROMPT}; }`,
-    "if declare -p PROMPT_COMMAND 2>/dev/null | grep -q '^declare -[^ ]*a'; then",
-    '  PROMPT_COMMAND+=(__soloe_emit_cwd)',
-    'else',
-    '  PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__soloe_emit_cwd"',
-    'fi',
-    '__soloe_emit_cwd'
+    `PROMPT_COMMAND='${escaped}'`,
+    'eval "$PROMPT_COMMAND"'
   ];
-  return [
-    "exec bash --rcfile /proc/self/fd/3 -i 3<<'__SOLOE_BASHRC__'",
-    ...rcLines,
-    '__SOLOE_BASHRC__'
-  ].join('\n');
+  const rcContent = rcLines.join('\n');
+  const rcB64 = Buffer.from(rcContent, 'utf8').toString('base64');
+  return `exec bash --rcfile <(printf %s ${rcB64} | base64 -d) -i`;
 }
