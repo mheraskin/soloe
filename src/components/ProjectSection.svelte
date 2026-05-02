@@ -11,6 +11,7 @@
   import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
   import { rankMulti } from '../lib/fuzzy';
+  import { cn } from '$lib/utils';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import KbdHint from './KbdHint.svelte';
@@ -103,6 +104,7 @@
   let accent = $derived(project.accentColor ?? null);
   let hasWorktrees = $derived(gitWorktrees.some((wt) => !wt.isMain));
   let kbdIndex = $derived(nav.projectIndexHints[project.id] ?? null);
+  let isActiveProject = $derived(nav.activeProjectId === project.id);
   let visibleSessions = $derived.by(() => {
     const q = filter.trim();
     if (!q) return items;
@@ -138,7 +140,10 @@
       {#snippet child({ props })}
         <div {...props} class="flex items-center gap-1 px-1 pt-1.5 pb-1">
           <Collapsible.Trigger
-            class="group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground hover:bg-muted"
+            class={cn(
+              'group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground transition-colors',
+              isActiveProject ? 'bg-accent/60 border-border' : 'hover:bg-muted'
+            )}
             aria-label={`Toggle ${project.name} project`}
           >
             {#if expanded}
