@@ -190,8 +190,8 @@ async function setupServices(): Promise<AppServices> {
 
 async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: 1440,
+    height: 900,
     minWidth: 800,
     minHeight: 500,
     autoHideMenuBar: true,
