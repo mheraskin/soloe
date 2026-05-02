@@ -279,7 +279,8 @@ describe('SessionCommandBuilder — codex kind', () => {
     };
     const inner = innerLine(builder.build(s, ctx).args);
     expect(inner).toContain('test -r ~/.bashrc && source ~/.bashrc');
-    expect(inner).toContain('exec SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex codex');
+    expect(inner).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec codex');
+    expect(inner).not.toContain('exec SOLOE_SESSION_ID=');
   });
 });
 

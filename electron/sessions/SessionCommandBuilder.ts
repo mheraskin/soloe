@@ -174,7 +174,7 @@ function buildAgentCommand(
 function buildWslAgentLine(env: Record<string, string>, executable: string, args: string[]): string {
   return [
     'test -r ~/.bashrc && source ~/.bashrc',
-    `exec ${buildPosixCommandLine(env, executable, args)}`
+    buildPosixCommandLine(env, 'exec', [executable, ...args])
   ].join('; ');
 }
 
