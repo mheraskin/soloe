@@ -46,6 +46,7 @@ export interface ProjectSuggestOptions {
 export interface ProjectPathSuggestion {
   path: string;
   name: string;
+  displayPath?: string;
   source: 'known' | 'directory';
   scope: ProjectSearchScope;
   wslDistro?: string;

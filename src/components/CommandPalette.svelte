@@ -334,10 +334,11 @@
               {:else}
                 <Folder />
               {/if}
-              <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span class="text-sm">{suggestion.name}</span>
-                <span class="truncate font-mono text-[11px] text-muted-foreground">{suggestion.path}</span>
-              </div>
+              <span
+                class="block min-w-0 flex-1 truncate font-mono text-sm"
+                style="direction: rtl; text-align: left;"
+                title={suggestion.path}
+              >{'‎' + (suggestion.displayPath ?? suggestion.path)}</span>
               {#if suggestion.source === 'known'}
                 <Badge variant="outline" class="text-[10px]">known</Badge>
               {/if}

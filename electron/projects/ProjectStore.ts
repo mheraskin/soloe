@@ -216,16 +216,19 @@ export class ProjectStore {
           : await suggestWindowsDirectories(childParsed, limit);
       for (const suggestion of childResults) {
         const key = normalizePath(suggestion.path);
-        if (!byPath.has(key)) {
-          byPath.set(key, { ...suggestion, name: `${single.name}/${suggestion.name}` });
-        }
+        if (!byPath.has(key)) byPath.set(key, suggestion);
       }
     }
+
+    const home = scope === 'wsl' ? await this.resolveWslHome(wslDistro!) : os.homedir();
+    const suggestions = [...byPath.values()]
+      .slice(0, limit)
+      .map((s) => ({ ...s, displayPath: toDisplayPath(s.path, home, scope) }));
 
     return {
       scope,
       ...(wslDistro ? { wslDistro } : {}),
-      suggestions: [...byPath.values()].slice(0, limit)
+      suggestions
     };
   }
 
@@ -593,6 +596,14 @@ function posixToWslUnc(distro: string, posixPath: string): string {
   return winSubpath
     ? `\\\\wsl.localhost\\${distro}\\${winSubpath}`
     : `\\\\wsl.localhost\\${distro}\\`;
+}
+
+function toDisplayPath(p: string, home: string, scope: ProjectSearchScope): string {
+  if (!home) return p;
+  const sep = scope === 'wsl' ? '/' : path.sep;
+  if (p === home) return '~';
+  if (p.startsWith(home + sep)) return `~${p.slice(home.length)}`;
+  return p;
 }
 
 function pathScope(project: Project): ProjectSearchScope {
