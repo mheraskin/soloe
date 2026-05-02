@@ -24,21 +24,20 @@ describe('WslCommandBuilder — concrete cwd', () => {
 });
 
 describe('WslCommandBuilder — ~ home cwd', () => {
-  it('drops --cd and prepends `cd ~ && ` to the inner line for ~', () => {
+  it('passes ~ through --cd so WSL resolves the Linux home directory', () => {
     const builder = new WslCommandBuilder();
     const spec = builder.build(inner, { distro: 'Ubuntu', cwd: '~' });
-    expect(spec.args).not.toContain('--cd');
-    const innerLine = spec.args[spec.args.length - 1] ?? '';
-    expect(innerLine.startsWith('cd ~ && ')).toBe(true);
-    expect(spec.description).toContain('cd ~ &&');
-    expect(spec.description).not.toContain('--cd ~');
+    expect(spec.args.slice(0, 4)).toEqual(['-d', 'Ubuntu', '--cd', '~']);
+    expect(spec.args[4]).toBe('bash');
+    expect(spec.description).toContain('--cd ~');
+    expect(spec.description).not.toContain('cd ~ &&');
   });
 
-  it('drops --cd and prepends `cd ~/sub && ` for ~/sub', () => {
+  it('passes ~/sub through --cd so WSL resolves it relative to Linux home', () => {
     const builder = new WslCommandBuilder();
     const spec = builder.build(inner, { distro: 'Ubuntu', cwd: '~/projects/app' });
-    expect(spec.args).not.toContain('--cd');
-    const innerLine = spec.args[spec.args.length - 1] ?? '';
-    expect(innerLine.startsWith('cd ~/projects/app && ')).toBe(true);
+    expect(spec.args.slice(0, 4)).toEqual(['-d', 'Ubuntu', '--cd', '~/projects/app']);
+    expect(spec.description).toContain('--cd ~/projects/app');
+    expect(spec.description).not.toContain('cd ~/projects/app &&');
   });
 });
