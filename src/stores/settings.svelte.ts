@@ -41,6 +41,10 @@ class SettingsStore {
   closeDrawer(): void {
     this.drawerOpen = false;
   }
+
+  toggleDrawer(): void {
+    this.drawerOpen = !this.drawerOpen;
+  }
 }
 
 export const settings = new SettingsStore();

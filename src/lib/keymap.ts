@@ -30,6 +30,12 @@ export const Keymap = {
     keys: ['Ctrl', 'P'],
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'p'
   },
+  openSettings: {
+    id: 'settings.open',
+    description: 'Open settings',
+    keys: ['Ctrl', ','],
+    match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === ','
+  },
   newSession: {
     id: 'session.new',
     description: 'New session',

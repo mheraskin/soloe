@@ -36,7 +36,9 @@
     projects.load().catch(reportError);
     git.attachListeners();
     const detachKbdHints = kbdHints.attach();
+    window.addEventListener('keydown', onKey, true);
     return () => {
+      window.removeEventListener('keydown', onKey, true);
       detachKbdHints();
       sessions.detach();
       settings.detach();
@@ -52,24 +54,35 @@
     untrack(() => setMode(theme));
   });
 
+  function consume(e: KeyboardEvent): void {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+  }
+
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
-      e.preventDefault();
+      consume(e);
       commandPalette.toggle();
       return;
     }
     if (Keymap.filePalette.match(e)) {
-      e.preventDefault();
+      consume(e);
       filePalette.toggle();
       return;
     }
+    if (Keymap.openSettings.match(e)) {
+      consume(e);
+      settings.toggleDrawer();
+      return;
+    }
     if (Keymap.openProject.match(e)) {
-      e.preventDefault();
+      consume(e);
       commandPalette.open('open-project');
       return;
     }
     if (Keymap.newSession.match(e)) {
-      e.preventDefault();
+      consume(e);
       const sel = sessions.selected;
       void sessions
         .createWithDefaults({
@@ -80,52 +93,51 @@
       return;
     }
     if (Keymap.terminalFind.match(e)) {
-      e.preventDefault();
+      consume(e);
       window.dispatchEvent(new CustomEvent('soloe:terminal-find'));
       return;
     }
     if (Keymap.zoomIn.match(e)) {
-      e.preventDefault();
+      consume(e);
       void ipc.window.zoomIn().catch(reportError);
       return;
     }
     if (Keymap.zoomOut.match(e)) {
-      e.preventDefault();
+      consume(e);
       void ipc.window.zoomOut().catch(reportError);
       return;
     }
     if (commandPalette.isOpen || filePalette.open) return;
     const projectIdx = projectIndexFromEvent(e);
     if (projectIdx !== null) {
-      e.preventDefault();
+      consume(e);
       nav.selectProjectByIndex(projectIdx);
       return;
     }
     const idx = tabIndexFromEvent(e);
     if (idx !== null) {
-      e.preventDefault();
+      consume(e);
       nav.selectByIndex(idx);
       return;
     }
     if (Keymap.closeActiveTab.match(e)) {
-      e.preventDefault();
+      consume(e);
       void nav.closeActive();
       return;
     }
     if (Keymap.cycleNext.match(e)) {
-      e.preventDefault();
+      consume(e);
       nav.cycleNext();
       return;
     }
     if (Keymap.cyclePrev.match(e)) {
-      e.preventDefault();
+      consume(e);
       nav.cyclePrev();
       return;
     }
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
 <ModeWatcher defaultMode="dark" />
 
 <div class="flex h-full flex-col overflow-hidden">
@@ -141,7 +153,7 @@
         class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
         onclick={() => settings.openDrawer()}
         aria-label="Settings"
-        title="Settings"
+        title="Settings (Ctrl+,)"
       >
         <Settings class="size-3.5" />
       </Button>
