@@ -5,13 +5,11 @@
     Copy,
     Search,
     FileText,
-    Settings,
     MoreHorizontal,
     Code2
   } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
-  import { settings } from '../stores/settings.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
   import { Button } from '$lib/components/ui/button';
@@ -142,17 +140,6 @@
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Root>
-
-        <Tooltip.Root>
-          <Tooltip.Trigger>
-            {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-sm" onclick={() => settings.openDrawer()} aria-label="Settings">
-                <Settings />
-              </Button>
-            {/snippet}
-          </Tooltip.Trigger>
-          <Tooltip.Content>Settings</Tooltip.Content>
-        </Tooltip.Root>
       </div>
     </Tooltip.Provider>
   {:else}

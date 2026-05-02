@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { ModeWatcher, setMode } from 'mode-watcher';
-  import { Maximize2, Minus, X } from '@lucide/svelte';
+  import { Maximize2, Minus, Settings, X } from '@lucide/svelte';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
@@ -25,6 +25,8 @@
   import FilePalette from './components/FilePalette.svelte';
   import DiagnosticsPane from './components/DiagnosticsPane.svelte';
 
+  let appliedTheme: string | null = null;
+
   onMount(() => {
     sessions.attachListeners();
     sessions.load().catch(reportError);
@@ -42,7 +44,10 @@
   });
 
   $effect(() => {
-    setMode(settings.current.appearance.theme);
+    const theme = settings.current.appearance.theme;
+    if (theme === appliedTheme) return;
+    appliedTheme = theme;
+    untrack(() => setMode(theme));
   });
 
   function onKey(e: KeyboardEvent) {
@@ -107,6 +112,15 @@
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
     <div class="flex-1 self-stretch" aria-hidden="true"></div>
     <div class="flex self-stretch" style="-webkit-app-region: no-drag">
+      <Button
+        variant="ghost"
+        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+        onclick={() => settings.openDrawer()}
+        aria-label="Settings"
+        title="Settings"
+      >
+        <Settings class="size-3.5" />
+      </Button>
       <Button
         variant="ghost"
         class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
