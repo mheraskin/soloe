@@ -122,6 +122,28 @@
     t.loadAddon(links);
     t.open(host);
 
+    t.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true;
+      if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return true;
+      const k = e.key.toLowerCase();
+      if (k === 'c') {
+        if (!t.hasSelection()) return true;
+        void navigator.clipboard.writeText(t.getSelection()).catch(() => {});
+        t.clearSelection();
+        return false;
+      }
+      if (k === 'v') {
+        void navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) t.paste(text);
+          })
+          .catch(() => {});
+        return false;
+      }
+      return true;
+    });
+
     // Renderer: prefer WebGL, fall back to Canvas, then DOM.
     let renderer: WebglAddon | CanvasAddon | null = null;
     try {
