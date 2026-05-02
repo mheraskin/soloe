@@ -7,11 +7,20 @@
 
   let selected = $derived(sessions.selected);
   let selectedRuntime = $derived(selected ? sessions.runtime[selected.id] : null);
-  let selectedPane = $derived.by(() => {
-    if (!selectedRuntime?.terminalId) return null;
-    if (selectedRuntime.status !== 'running' && selectedRuntime.status !== 'starting') return null;
-    return { ...selectedRuntime, terminalId: selectedRuntime.terminalId };
+  let runningPanes = $derived.by(() => {
+    return Object.values(sessions.runtime)
+      .filter((runtime) => {
+        if (!runtime.terminalId) return false;
+        return runtime.status === 'running' || runtime.status === 'starting';
+      })
+      .map((runtime) => ({ ...runtime, terminalId: runtime.terminalId! }));
   });
+  let selectedPane = $derived(
+    selectedRuntime?.terminalId
+      && (selectedRuntime.status === 'running' || selectedRuntime.status === 'starting')
+      ? { ...selectedRuntime, terminalId: selectedRuntime.terminalId }
+      : null
+  );
   let showEmpty = $derived(!selected || !selectedPane);
 
   const autoStarted = new Set<string>();
@@ -35,17 +44,16 @@
 <section class="flex min-w-0 flex-1 flex-col bg-background">
   <SessionToolbar />
   <div class="relative min-h-0 flex-1">
-    {#if selectedPane}
-      {#key selectedPane.terminalId}
-        <div class="absolute inset-0">
-          <TerminalPane
-            terminalId={selectedPane.terminalId}
-            sessionId={selectedPane.sessionId}
-            active={true}
-          />
-        </div>
-      {/key}
-    {/if}
+    {#each runningPanes as pane (pane.terminalId)}
+      {@const active = pane.sessionId === selected?.id}
+      <div class={`absolute inset-0 ${active ? 'visible z-10' : 'invisible z-0 pointer-events-none'}`}>
+        <TerminalPane
+          terminalId={pane.terminalId}
+          sessionId={pane.sessionId}
+          {active}
+        />
+      </div>
+    {/each}
     {#if showEmpty}
       <div class="absolute inset-0">
         <EmptyState
