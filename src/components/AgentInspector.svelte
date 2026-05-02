@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { PanelRightClose, PanelRightOpen } from '@lucide/svelte';
   import type { AgentObservedState } from '@shared/types/sessions.js';
   import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
   import { sessions } from '../stores/sessions.svelte';
@@ -11,6 +12,7 @@
   let selected = $derived(sessions.selected);
   let observation = $derived(selected ? sessions.observationFor(selected.id) : null);
   let workers = $derived(selected ? sessions.childWorkersFor(selected.id) : []);
+  let open = $state(false);
 
   function stateLabel(state: AgentObservedState | undefined): string {
     if (!state) return 'unobserved';
@@ -38,10 +40,41 @@
   }
 </script>
 
-<aside class="flex w-[320px] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar" aria-label="Agent inspector">
+<aside
+  class={open
+    ? 'flex w-[320px] flex-shrink-0 flex-col overflow-hidden border-l border-border bg-sidebar'
+    : 'flex w-10 flex-shrink-0 flex-col items-center overflow-hidden border-l border-border bg-sidebar'}
+  aria-label="Session inspector"
+>
+  {#if !open}
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      class="mt-2 text-muted-foreground hover:text-foreground"
+      onclick={() => (open = true)}
+      aria-label="Open session inspector"
+      aria-expanded="false"
+      title="Open session inspector"
+    >
+      <PanelRightOpen />
+    </Button>
+  {:else}
   <ScrollArea class="flex-1">
     <section class="flex flex-col gap-2 p-3">
-      <div class="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Session</div>
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Session</div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          class="text-muted-foreground hover:text-foreground"
+          onclick={() => (open = false)}
+          aria-label="Collapse session inspector"
+          aria-expanded="true"
+          title="Collapse session inspector"
+        >
+          <PanelRightClose />
+        </Button>
+      </div>
       {#if selected}
         <div class="grid grid-cols-[80px_minmax(0,1fr)] items-baseline gap-2 text-xs">
           <span class="text-muted-foreground">State</span>
@@ -115,4 +148,5 @@
       {/if}
     </section>
   </ScrollArea>
+  {/if}
 </aside>
