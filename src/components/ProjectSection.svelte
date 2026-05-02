@@ -9,9 +9,11 @@
   import { reportError } from '../stores/toast.svelte';
   import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
+  import { rankMulti } from '../lib/fuzzy';
   import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import SessionItem from './SessionItem.svelte';
   import WorktreeGroup from './WorktreeGroup.svelte';
 
   let {
@@ -97,6 +99,12 @@
   });
 
   let accent = $derived(project.accentColor ?? null);
+  let hasWorktrees = $derived(gitWorktrees.some((wt) => !wt.isMain));
+  let visibleSessions = $derived.by(() => {
+    const q = filter.trim();
+    if (!q) return items;
+    return rankMulti(q, items, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
+  });
 
   function edit() {
     projectModal.openEdit(project);
@@ -154,15 +162,17 @@
               </span>
             </span>
           </Collapsible.Trigger>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onclick={addSession}
-            title="New terminal"
-            aria-label="New terminal"
-          >
-            <Plus />
-          </Button>
+          {#if !hasWorktrees}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onclick={addSession}
+              title="New terminal"
+              aria-label="New terminal"
+            >
+              <Plus />
+            </Button>
+          {/if}
         </div>
       {/snippet}
     </ContextMenu.Trigger>
@@ -177,15 +187,7 @@
   </ContextMenu.Root>
 
   <Collapsible.Content class="ml-3 flex flex-col gap-1.5 border-l border-border pl-2">
-    {#if worktrees.length === 0}
-      {#if loadingWorktrees}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">Loading worktrees...</p>
-      {:else if worktreeLoadFailed}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No worktrees found</p>
-      {:else}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No worktrees or terminals</p>
-      {/if}
-    {:else}
+    {#if hasWorktrees}
       {#each worktrees as wt (wt.cwd)}
         <WorktreeGroup
           title={wt.label}
@@ -196,6 +198,22 @@
           {filter}
         />
       {/each}
+    {:else if visibleSessions.length > 0}
+      <div class="flex flex-col gap-px">
+        {#each visibleSessions as session (session.id)}
+          <SessionItem {session} branch={session.lastBranch ?? null} />
+        {/each}
+      </div>
+    {:else}
+      {#if loadingWorktrees}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">Loading worktrees...</p>
+      {:else if worktreeLoadFailed}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No worktrees found</p>
+      {:else if filter.trim()}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No matching terminals</p>
+      {:else}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No terminals</p>
+      {/if}
     {/if}
   </Collapsible.Content>
 </Collapsible.Root>

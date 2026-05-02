@@ -70,7 +70,8 @@
       </Collapsible.Trigger>
       <Button
         variant="ghost"
-        size="icon-xs"
+        size="icon-sm"
+        class="shrink-0"
         onclick={addSession}
         title="New terminal in this worktree"
         aria-label="New terminal in this worktree"
