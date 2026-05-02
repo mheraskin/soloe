@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as pty from 'node-pty';
 import type { Session } from '@shared/types/sessions.js';
-import type { SpawnSpec } from '@shared/types/terminal.js';
+import type { SpawnSpec, TerminalStatusEvent } from '@shared/types/terminal.js';
 import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
 
 vi.mock('node-pty', () => ({
@@ -58,5 +58,39 @@ describe('PtyManager', () => {
     expect(pty.spawn).toHaveBeenCalledOnce();
     const options = vi.mocked(pty.spawn).mock.calls[0]?.[2] as Record<string, unknown>;
     expect(options).not.toHaveProperty('encoding');
+  });
+
+  it('does not expose a terminal id until spawn succeeds', async () => {
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+    const statuses: TerminalStatusEvent[] = [];
+    manager.on('status', (event) => statuses.push(event));
+
+    await manager.start({ sessionId: session.id });
+
+    expect(statuses[0]).toMatchObject({
+      sessionId: session.id,
+      status: 'starting',
+      terminalId: null
+    });
+    expect(statuses[1]).toMatchObject({
+      sessionId: session.id,
+      status: 'running'
+    });
+    expect(statuses[1]?.terminalId).toEqual(expect.any(String));
   });
 });

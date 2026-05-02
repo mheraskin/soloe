@@ -73,11 +73,19 @@ export class PtyManager extends EventEmitter {
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
     if (this.disposed) throw new Error('PtyManager disposed');
     const { sessionId } = options;
+    console.info('[DEBUG-terminal-start] pty start begin', { sessionId });
     if (this.sessionToTerminal.has(sessionId)) {
       throw new Error(`Session ${sessionId} is already running`);
     }
     const session = await this.opts.store.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
+    console.info('[DEBUG-terminal-start] pty session loaded', {
+      sessionId,
+      kind: session.kind,
+      runMode: session.runMode,
+      cwd: session.cwd,
+      wslDistro: session.wslDistro
+    });
 
     this.opts.observer?.registerTuiSession(session);
     const bridge = this.opts.bridgeInfo?.() ?? undefined;
@@ -87,14 +95,26 @@ export class PtyManager extends EventEmitter {
       bridge,
       ...(binaries ? { binaries } : {})
     });
+    console.info('[DEBUG-terminal-start] pty spawn spec built', {
+      sessionId,
+      file: spec.file,
+      args: spec.args.map(redactForLog),
+      cwd: spec.cwd
+    });
     const cols = options.cols ?? DEFAULT_COLS;
     const rows = options.rows ?? DEFAULT_ROWS;
     const terminalId = newTerminalId();
 
-    this.emitStatus(sessionId, terminalId, 'starting');
+    this.emitStatus(sessionId, null, 'starting');
 
     let proc: pty.IPty;
     try {
+      console.info('[DEBUG-terminal-start] pty before spawn', {
+        sessionId,
+        terminalId,
+        file: spec.file,
+        cwd: spec.cwd
+      });
       proc = pty.spawn(spec.file, spec.args, {
         name: 'xterm-256color',
         cols,
@@ -103,8 +123,14 @@ export class PtyManager extends EventEmitter {
         env: mergeEnv(this.baseEnv, spec.env),
         useConpty: process.platform === 'win32'
       } as pty.IPtyForkOptions);
+      console.info('[DEBUG-terminal-start] pty spawn returned', {
+        sessionId,
+        terminalId,
+        pid: proc.pid
+      });
     } catch (err) {
       const message = errorMessage(err);
+      console.info('[DEBUG-terminal-start] pty spawn threw', { sessionId, terminalId, message });
       this.emitStatus(sessionId, terminalId, 'error', message);
       throw new Error(`Failed to spawn terminal: ${message}`);
     }
@@ -122,17 +148,28 @@ export class PtyManager extends EventEmitter {
     this.terminals.set(terminalId, instance);
     this.sessionToTerminal.set(sessionId, terminalId);
 
+    let loggedFirstOutput = false;
     proc.onData((data) => {
+      if (!loggedFirstOutput) {
+        loggedFirstOutput = true;
+        console.info('[DEBUG-terminal-start] pty first output', {
+          sessionId,
+          terminalId,
+          bytes: data.length
+        });
+      }
       this.opts.batcher.push(terminalId, sessionId, data);
     });
 
     proc.onExit(({ exitCode, signal }) => {
+      console.info('[DEBUG-terminal-start] pty exit', { sessionId, terminalId, exitCode, signal });
       this.handleExit(terminalId, exitCode, signal ?? null);
     });
 
     void this.opts.store.touch(sessionId).catch(() => {});
 
     this.emitStatus(sessionId, terminalId, 'running');
+    console.info('[DEBUG-terminal-start] pty start done', { sessionId, terminalId, pid: proc.pid });
 
     return { terminalId, sessionId, pid: proc.pid, spec };
   }
@@ -285,4 +322,10 @@ function mergeEnv(
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function redactForLog(value: string): string {
+  return value
+    .replace(/SOLOE_BRIDGE_TOKEN='[^']*'/g, 'SOLOE_BRIDGE_TOKEN=<redacted>')
+    .replace(/SOLOE_BRIDGE_TOKEN=\S+/g, 'SOLOE_BRIDGE_TOKEN=<redacted>');
 }
