@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, ChevronDown, ChevronRight, GitBranch } from '@lucide/svelte';
+  import { Plus, ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
   import type { Session } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
@@ -59,7 +59,7 @@
         {:else}
           <ChevronRight class="size-2.5 shrink-0" />
         {/if}
-        <GitBranch class="size-2.5 shrink-0" />
+        <FolderGit2 class="size-2.5 shrink-0" />
         <span class="flex-1 truncate font-mono text-[11px]" title={cwd}>{title}</span>
         {#if isMain}
           <Badge variant="outline" class="h-4 rounded-full px-1.5 text-[9px] font-normal tracking-wider uppercase">main</Badge>
