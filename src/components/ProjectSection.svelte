@@ -167,8 +167,8 @@
               variant="ghost"
               size="icon-sm"
               onclick={addSession}
-              title="New terminal"
-              aria-label="New terminal"
+              title="New session"
+              aria-label="New session"
             >
               <Plus />
             </Button>
@@ -210,9 +210,9 @@
       {:else if worktreeLoadFailed}
         <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No worktrees found</p>
       {:else if filter.trim()}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No matching terminals</p>
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No matching sessions</p>
       {:else}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No terminals</p>
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No sessions</p>
       {/if}
     {/if}
   </Collapsible.Content>

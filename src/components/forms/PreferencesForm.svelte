@@ -107,7 +107,7 @@
   </div>
   <div class="flex items-center justify-between gap-3">
     <Label for="pref-confirm-delete-tabs" class="text-xs text-muted-foreground">
-      Confirm before deleting terminal tabs
+      Confirm before closing sessions
     </Label>
     <Switch
       id="pref-confirm-delete-tabs"

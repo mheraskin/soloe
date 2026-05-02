@@ -16,14 +16,13 @@
   import { Toaster } from '$lib/components/ui/sonner';
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
-  import AgentInspector from './components/AgentInspector.svelte';
+  import RightRail from './components/RightRail.svelte';
   import NewSessionModal from './components/NewSessionModal.svelte';
   import ConfirmDialog from './components/ConfirmDialog.svelte';
   import SettingsDrawer from './components/SettingsDrawer.svelte';
   import ProjectModal from './components/ProjectModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import FilePalette from './components/FilePalette.svelte';
-  import DiagnosticsPane from './components/DiagnosticsPane.svelte';
 
   let appliedTheme: string | null = null;
 
@@ -153,7 +152,7 @@
   <div class="flex min-h-0 flex-1">
     <Sidebar />
     <TerminalArea />
-    <AgentInspector />
+    <RightRail />
   </div>
   <NewSessionModal />
   <ProjectModal />
@@ -161,6 +160,5 @@
   <FilePalette />
   <ConfirmDialog />
   <SettingsDrawer />
-  <DiagnosticsPane />
   <Toaster richColors closeButton />
 </div>

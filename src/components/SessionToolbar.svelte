@@ -72,17 +72,6 @@
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-sm" onclick={edit} aria-label="Edit session">
-                <Pencil />
-              </Button>
-            {/snippet}
-          </Tooltip.Trigger>
-          <Tooltip.Content>Edit session</Tooltip.Content>
-        </Tooltip.Root>
-
-        <Tooltip.Root>
-          <Tooltip.Trigger>
-            {#snippet child({ props })}
               <Button {...props} variant="ghost" size="icon-sm" onclick={openCwd} aria-label="Open working directory">
                 <FolderOpen />
               </Button>
@@ -102,28 +91,25 @@
           <Tooltip.Content>Open in editor</Tooltip.Content>
         </Tooltip.Root>
 
-        <Tooltip.Root>
-          <Tooltip.Trigger>
-            {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-sm" onclick={copyCmd} aria-label="Copy command">
-                <Copy />
-              </Button>
-            {/snippet}
-          </Tooltip.Trigger>
-          <Tooltip.Content>Copy launch command</Tooltip.Content>
-        </Tooltip.Root>
-
         <Separator orientation="vertical" class="mx-1 h-5" />
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-sm" aria-label="Terminal actions">
+              <Button {...props} variant="ghost" size="icon-sm" aria-label="More actions">
                 <MoreHorizontal />
               </Button>
             {/snippet}
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="end" class="w-56">
+            <DropdownMenu.Label>Session</DropdownMenu.Label>
+            <DropdownMenu.Item onSelect={edit}>
+              <Pencil /> <span>Edit session…</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={copyCmd}>
+              <Copy /> <span>Copy launch command</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
             <DropdownMenu.Label>Terminal</DropdownMenu.Label>
             <DropdownMenu.Item disabled={!isRunning} onSelect={() => terminalAction('soloe:terminal-find')}>
               <Search /> <span>Find</span>

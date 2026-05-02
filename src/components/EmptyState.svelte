@@ -21,7 +21,7 @@
       {:else if status === 'exited'}
         Session exited. Right-click the session to start it again.
       {:else}
-        Launching terminal…
+        Launching session…
       {/if}
     </p>
   {/if}

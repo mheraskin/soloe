@@ -19,7 +19,7 @@
   import { projects } from '../stores/projects.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { settings } from '../stores/settings.svelte';
-  import { diagnosticsPane } from '../stores/diagnostics-pane.svelte';
+  import { rightRail } from '../stores/right-rail.svelte';
   import { nav } from '../stores/nav.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
@@ -102,8 +102,8 @@
     const list: Cmd[] = [];
 
     list.push({
-      id: 'action.new-terminal',
-      title: 'New terminal',
+      id: 'action.new-session',
+      title: 'New session',
       section: 'Actions',
       icon: Plus,
       run: () => {
@@ -135,7 +135,7 @@
       title: 'Open diagnostics',
       section: 'Actions',
       icon: Activity,
-      run: () => diagnosticsPane.show()
+      run: () => rightRail.openTab('diagnostics')
     });
 
     for (const session of sessions.sessions) {
@@ -159,8 +159,8 @@
         run: () => projectModal.openEdit(project)
       });
       list.push({
-        id: `project.add-terminal.${project.id}`,
-        title: `New terminal in ${project.name}`,
+        id: `project.add-session.${project.id}`,
+        title: `New session in ${project.name}`,
         hint: project.path,
         section: 'Projects',
         icon: FolderOpen,

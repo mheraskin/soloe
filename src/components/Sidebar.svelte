@@ -78,7 +78,7 @@
       class="w-full justify-center gap-1.5"
       onclick={() => void sessions.createWithDefaults({}).catch(reportError)}
     >
-      <Plus class="size-3.5" /> New terminal
+      <Plus class="size-3.5" /> New session
     </Button>
     <Button
       variant="ghost"

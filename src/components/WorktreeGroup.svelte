@@ -73,8 +73,8 @@
         size="icon-sm"
         class="shrink-0"
         onclick={addSession}
-        title="New terminal in this worktree"
-        aria-label="New terminal in this worktree"
+        title="New session in this worktree"
+        aria-label="New session in this worktree"
       >
         <Plus />
       </Button>
