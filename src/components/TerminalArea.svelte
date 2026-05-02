@@ -5,16 +5,14 @@
   import EmptyState from './EmptyState.svelte';
   import SessionToolbar from './SessionToolbar.svelte';
 
-  let panes = $derived(
-    Object.values(sessions.runtime).filter(
-      (rt): rt is typeof rt & { terminalId: string } =>
-        !!rt.terminalId && (rt.status === 'running' || rt.status === 'starting')
-    )
-  );
-
   let selected = $derived(sessions.selected);
   let selectedRuntime = $derived(selected ? sessions.runtime[selected.id] : null);
-  let showEmpty = $derived(!selected || !selectedRuntime?.terminalId);
+  let selectedPane = $derived.by(() => {
+    if (!selectedRuntime?.terminalId) return null;
+    if (selectedRuntime.status !== 'running' && selectedRuntime.status !== 'starting') return null;
+    return { ...selectedRuntime, terminalId: selectedRuntime.terminalId };
+  });
+  let showEmpty = $derived(!selected || !selectedPane);
 
   const autoStarted = new Set<string>();
 
@@ -37,15 +35,15 @@
 <section class="flex min-w-0 flex-1 flex-col bg-background">
   <SessionToolbar />
   <div class="relative min-h-0 flex-1">
-    {#each panes as rt (rt.terminalId)}
-      <div class="absolute inset-0 invisible data-[active=true]:visible" data-active={rt.sessionId === sessions.selectedId}>
+    {#if selectedPane}
+      <div class="absolute inset-0">
         <TerminalPane
-          terminalId={rt.terminalId}
-          sessionId={rt.sessionId}
-          active={rt.sessionId === sessions.selectedId}
+          terminalId={selectedPane.terminalId}
+          sessionId={selectedPane.sessionId}
+          active={true}
         />
       </div>
-    {/each}
+    {/if}
     {#if showEmpty}
       <div class="absolute inset-0">
         <EmptyState
