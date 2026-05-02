@@ -197,6 +197,7 @@ describe('SessionCommandBuilder — claude_code kind', () => {
       ...ctx,
       bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
     }).args);
+    expect(inner).toContain('source ~/.bashrc');
     expect(inner).toContain('SOLOE_SESSION_ID=test');
     expect(inner).toContain('SOLOE_AGENT_PROVIDER=claude_code');
     expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
@@ -261,10 +262,24 @@ describe('SessionCommandBuilder — codex kind', () => {
       ...ctx,
       bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
     }).args);
+    expect(inner).toContain('source ~/.bashrc');
     expect(inner).toContain('SOLOE_SESSION_ID=test');
     expect(inner).toContain('SOLOE_AGENT_PROVIDER=codex');
     expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
     expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
+  });
+
+  it('sources ~/.bashrc before launching bare codex in wsl sessions', () => {
+    const s: Session = {
+      ...baseFields(),
+      kind: 'codex',
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      resumeMode: 'new'
+    };
+    const inner = innerLine(builder.build(s, ctx).args);
+    expect(inner).toContain('test -r ~/.bashrc && source ~/.bashrc');
+    expect(inner).toContain('exec SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex codex');
   });
 });
 

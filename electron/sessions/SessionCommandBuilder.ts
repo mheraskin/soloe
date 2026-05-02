@@ -10,7 +10,7 @@ import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { InnerCommand } from '../runtime/InnerCommand.js';
 import { WindowsCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
-import { posixSingleQuote } from '../runtime/posix-quote.js';
+import { buildPosixCommandLine, posixSingleQuote } from '../runtime/posix-quote.js';
 import { ShellDetector } from '../terminal/ShellDetector.js';
 
 export interface SessionBuildContext {
@@ -121,7 +121,7 @@ export class SessionCommandBuilder {
     }
     const env: Record<string, string> = buildSoloeEnv(s.id, s.runMode, 'claude_code', ctx);
     if (s.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
-    return { executable: ctx.binaries?.claude ?? 'claude', args, env };
+    return buildAgentCommand(ctx.binaries?.claude ?? 'claude', args, env, s.runMode);
   }
 
   private buildCodex(s: CodexSession, ctx: SessionBuildContext): InnerCommand {
@@ -147,11 +147,35 @@ export class SessionCommandBuilder {
       args.push('-c', `model_reasoning_effort=${s.reasoningEffort}`);
     }
     return {
-      executable: ctx.binaries?.codex ?? 'codex',
-      args,
-      env: buildSoloeEnv(s.id, s.runMode, 'codex', ctx)
+      ...buildAgentCommand(
+        ctx.binaries?.codex ?? 'codex',
+        args,
+        buildSoloeEnv(s.id, s.runMode, 'codex', ctx),
+        s.runMode
+      )
     };
   }
+}
+
+function buildAgentCommand(
+  executable: string,
+  args: string[],
+  env: Record<string, string>,
+  runMode: 'windows' | 'wsl'
+): InnerCommand {
+  const inner: InnerCommand = { executable, args, env };
+  if (runMode !== 'wsl') return inner;
+  return {
+    ...inner,
+    rawLine: buildWslAgentLine(env, executable, args)
+  };
+}
+
+function buildWslAgentLine(env: Record<string, string>, executable: string, args: string[]): string {
+  return [
+    'test -r ~/.bashrc && source ~/.bashrc',
+    `exec ${buildPosixCommandLine(env, executable, args)}`
+  ].join('; ');
 }
 
 function buildSoloeEnv(
