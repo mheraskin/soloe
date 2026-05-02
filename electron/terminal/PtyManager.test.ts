@@ -134,4 +134,47 @@ describe('PtyManager', () => {
       }
     ]);
   });
+
+  it('emits cwd updates from common shell integration cwd sequences', async () => {
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+    const locations: TerminalLocationEvent[] = [];
+    manager.on('location', (event) => locations.push(event));
+
+    const started = await manager.start({ sessionId: session.id });
+    const proc = vi.mocked(pty.spawn).mock.results.at(-1)?.value as {
+      onData: { mock: { calls: Array<[(data: string) => void]> } };
+    };
+    const onData = proc.onData.mock.calls[0]?.[0];
+
+    onData?.('\x1b]633;P;Cwd=/home/me/vscode\x07');
+    onData?.('\x1b]1337;CurrentDir=file:///home/me/iterm\x1b\\');
+
+    expect(locations).toEqual([
+      {
+        terminalId: started.terminalId,
+        sessionId: session.id,
+        cwd: '/home/me/vscode'
+      },
+      {
+        terminalId: started.terminalId,
+        sessionId: session.id,
+        cwd: '/home/me/iterm'
+      }
+    ]);
+  });
 });

@@ -303,14 +303,14 @@ export class PtyManager extends EventEmitter {
 
   private handleLocationSequences(instance: TerminalInstance, data: string): void {
     const text = instance.locationBuffer + data;
-    const regex = /\x1b\]7;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    const regex = /\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text))) {
-      const cwd = cwdFromOsc7(match[1] ?? '', instance.runMode);
+      const cwd = cwdFromOsc(match[1] ?? '', instance.runMode);
       if (cwd) this.emitLocation(instance, cwd);
     }
 
-    const lastStart = text.lastIndexOf('\x1b]7;');
+    const lastStart = text.lastIndexOf('\x1b]');
     if (lastStart >= 0 && !hasOscTerminator(text, lastStart)) {
       instance.locationBuffer = text.slice(lastStart, lastStart + 4096);
     } else {
@@ -383,8 +383,25 @@ function hasOscTerminator(text: string, start: number): boolean {
   return bel >= 0 || st >= 0;
 }
 
-function cwdFromOsc7(payload: string, runMode: RunMode): string | null {
-  if (!payload.startsWith('file://')) return null;
+function cwdFromOsc(payload: string, runMode: RunMode): string | null {
+  if (payload.startsWith('7;')) {
+    return cwdFromLocationValue(payload.slice(2), runMode);
+  }
+  if (payload.startsWith('633;P;')) {
+    const cwd = propertyValue(payload.slice('633;P;'.length), 'Cwd');
+    return cwd ? cwdFromLocationValue(unescapeIntegrationValue(cwd), runMode) : null;
+  }
+  if (payload.startsWith('1337;CurrentDir=')) {
+    return cwdFromLocationValue(
+      unescapeIntegrationValue(payload.slice('1337;CurrentDir='.length)),
+      runMode
+    );
+  }
+  return null;
+}
+
+function cwdFromLocationValue(payload: string, runMode: RunMode): string | null {
+  if (!payload.startsWith('file://')) return normalizeOscPath(payload, runMode);
   try {
     const url = new URL(payload);
     if (url.protocol !== 'file:') return null;
@@ -393,6 +410,21 @@ function cwdFromOsc7(payload: string, runMode: RunMode): string | null {
   } catch {
     return null;
   }
+}
+
+function propertyValue(payload: string, name: string): string | null {
+  const prefix = `${name}=`;
+  if (payload.startsWith(prefix)) return payload.slice(prefix.length);
+  const marker = `;${prefix}`;
+  const index = payload.indexOf(marker);
+  if (index < 0) return null;
+  return payload.slice(index + marker.length);
+}
+
+function unescapeIntegrationValue(value: string): string {
+  return value.replace(/\\x([0-9a-fA-F]{2})/g, (_match, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16))
+  );
 }
 
 function normalizeOscPath(pathname: string, runMode: RunMode): string | null {

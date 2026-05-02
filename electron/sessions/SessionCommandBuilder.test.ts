@@ -37,7 +37,9 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(innerLine(spec.args)).not.toContain('<(');
     expect(innerLine(spec.args)).toContain('source ~/.bashrc');
     expect(innerLine(spec.args)).toContain('PROMPT_COMMAND=');
-    expect(innerLine(spec.args)).toContain('cd()');
+    expect(innerLine(spec.args)).not.toContain('cd()');
+    expect(innerLine(spec.args)).not.toContain('pushd()');
+    expect(innerLine(spec.args)).not.toContain('popd()');
     expect(innerLine(spec.args)).toContain('__soloe_emit_cwd');
     expect(spec.description).toContain('-d Ubuntu');
     expect(spec.description).toContain('--cd /home/me/proj');
