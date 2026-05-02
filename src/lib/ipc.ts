@@ -31,6 +31,7 @@ import type {
 import type {
   TerminalExitEvent,
   TerminalId,
+  TerminalLocationEvent,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStatusEvent
@@ -76,7 +77,8 @@ export const ipc = {
     listRunning: async () => unwrap(await c.terminal.listRunning()),
     onOutput: (cb: (event: TerminalOutputEvent) => void) => c.terminal.onOutput(cb),
     onExit: (cb: (event: TerminalExitEvent) => void) => c.terminal.onExit(cb),
-    onStatus: (cb: (event: TerminalStatusEvent) => void) => c.terminal.onStatus(cb)
+    onStatus: (cb: (event: TerminalStatusEvent) => void) => c.terminal.onStatus(cb),
+    onLocation: (cb: (event: TerminalLocationEvent) => void) => c.terminal.onLocation(cb)
   },
   observer: {
     list: async () => unwrap(await c.observer.list()),

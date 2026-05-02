@@ -36,6 +36,12 @@ export interface TerminalStatusEvent {
   message?: string;
 }
 
+export interface TerminalLocationEvent {
+  terminalId: TerminalId;
+  sessionId: SessionId;
+  cwd: string;
+}
+
 export interface TerminalStartResult {
   terminalId: TerminalId;
   sessionId: SessionId;

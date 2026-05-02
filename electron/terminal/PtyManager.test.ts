@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as pty from 'node-pty';
 import type { Session } from '@shared/types/sessions.js';
-import type { SpawnSpec, TerminalStatusEvent } from '@shared/types/terminal.js';
+import type {
+  SpawnSpec,
+  TerminalLocationEvent,
+  TerminalStatusEvent
+} from '@shared/types/terminal.js';
 import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
 
 vi.mock('node-pty', () => ({
@@ -92,5 +96,42 @@ describe('PtyManager', () => {
       status: 'running'
     });
     expect(statuses[1]?.terminalId).toEqual(expect.any(String));
+  });
+
+  it('emits cwd updates from OSC 7 location sequences', async () => {
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+    const locations: TerminalLocationEvent[] = [];
+    manager.on('location', (event) => locations.push(event));
+
+    const started = await manager.start({ sessionId: session.id });
+    const proc = vi.mocked(pty.spawn).mock.results.at(-1)?.value as {
+      onData: { mock: { calls: Array<[(data: string) => void]> } };
+    };
+    const onData = proc.onData.mock.calls[0]?.[0];
+
+    onData?.('\x1b]7;file:///home/me/project\x07');
+
+    expect(locations).toEqual([
+      {
+        terminalId: started.terminalId,
+        sessionId: session.id,
+        cwd: '/home/me/project'
+      }
+    ]);
   });
 });

@@ -29,6 +29,7 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(spec.args.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', '/home/me/proj', 'bash']);
     expect(spec.args[5]).toBe('-lc');
     expect(innerLine(spec.args)).toContain('bash');
+    expect(innerLine(spec.args)).toContain('PROMPT_COMMAND=');
     expect(spec.description).toContain('-d Ubuntu');
     expect(spec.description).toContain('--cd /home/me/proj');
   });
@@ -201,7 +202,8 @@ describe('SessionCommandBuilder — windows runMode', () => {
     };
     const spec = builder.build(s, ctx);
     expect(spec.file).toBe('pwsh.exe');
-    expect(spec.args).toEqual(['-NoLogo']);
+    expect(spec.args.slice(0, 3)).toEqual(['-NoLogo', '-NoExit', '-Command']);
+    expect(spec.args[3]).toContain('function global:prompt');
     expect(spec.cwd).toBe('/home/me/proj');
   });
 

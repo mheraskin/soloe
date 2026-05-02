@@ -94,6 +94,7 @@ class SessionsStore {
   lastSelectedByProject = $state<Record<string, SessionId>>(readLastSelectedMap());
 
   private detachers: Array<() => void> = [];
+  private locationVersions = new Map<SessionId, number>();
 
   statusFor(id: SessionId): SessionStatus {
     return this.runtime[id]?.status ?? 'stopped';
@@ -204,6 +205,11 @@ class SessionsStore {
       })
     );
     this.detachers.push(
+      ipc.terminal.onLocation((event) => {
+        void this.applyTerminalLocation(event.sessionId, event.cwd);
+      })
+    );
+    this.detachers.push(
       ipc.observer.onSnapshot((snapshot) => {
         this.observed = { ...this.observed, [snapshot.id]: snapshot };
       })
@@ -222,6 +228,23 @@ class SessionsStore {
   detach(): void {
     for (const off of this.detachers) off();
     this.detachers = [];
+  }
+
+  private async applyTerminalLocation(id: SessionId, cwd: string): Promise<void> {
+    const current = this.sessions.find((s) => s.id === id);
+    if (!current || current.cwd === cwd) return;
+    const version = (this.locationVersions.get(id) ?? 0) + 1;
+    this.locationVersions.set(id, version);
+    this.sessions = this.sessions.map((s) =>
+      s.id === id ? { ...s, cwd, lastBranch: undefined } : s
+    );
+
+    const status = await ipc.git.status({ cwd, force: true }).catch(() => null);
+    if (this.locationVersions.get(id) !== version) return;
+    const patch: SessionUpdate = { cwd, lastBranch: status?.branch ?? undefined };
+    const updated = await ipc.sessions.update(id, patch).catch(() => null);
+    if (!updated || this.locationVersions.get(id) !== version) return;
+    this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
   }
 
   async create(draft: SessionDraft): Promise<Session> {

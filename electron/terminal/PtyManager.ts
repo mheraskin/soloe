@@ -1,13 +1,19 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import * as pty from 'node-pty';
-import type { SessionId, SessionRuntimeState, SessionStatus } from '@shared/types/sessions.js';
+import type {
+  RunMode,
+  SessionId,
+  SessionRuntimeState,
+  SessionStatus
+} from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
   TerminalDimensions,
   TerminalExitEvent,
   TerminalId,
+  TerminalLocationEvent,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStartResult,
@@ -24,10 +30,13 @@ interface TerminalInstance {
   sessionId: SessionId;
   pty: pty.IPty;
   spec: SpawnSpec;
+  runMode: RunMode;
   cols: number;
   rows: number;
   status: SessionStatus;
   startedAt: string;
+  cwd: string;
+  locationBuffer: string;
   exitedAt?: string;
   exitCode?: number | null;
   signal?: number | null;
@@ -37,6 +46,7 @@ type PtyManagerEvents = {
   output: [TerminalOutputEvent];
   exit: [TerminalExitEvent];
   status: [TerminalStatusEvent];
+  location: [TerminalLocationEvent];
 };
 
 export interface PtyManagerOptions {
@@ -143,10 +153,13 @@ export class PtyManager extends EventEmitter {
       sessionId,
       pty: proc,
       spec,
+      runMode: session.runMode,
       cols,
       rows,
       status: 'running',
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
+      cwd: session.cwd,
+      locationBuffer: ''
     };
     this.terminals.set(terminalId, instance);
 
@@ -160,6 +173,7 @@ export class PtyManager extends EventEmitter {
           bytes: data.length
         });
       }
+      this.handleLocationSequences(instance, data);
       this.opts.batcher.push(terminalId, sessionId, data);
     });
 
@@ -287,6 +301,33 @@ export class PtyManager extends EventEmitter {
     this.emit('status', event);
   }
 
+  private handleLocationSequences(instance: TerminalInstance, data: string): void {
+    const text = instance.locationBuffer + data;
+    const regex = /\x1b\]7;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text))) {
+      const cwd = cwdFromOsc7(match[1] ?? '', instance.runMode);
+      if (cwd) this.emitLocation(instance, cwd);
+    }
+
+    const lastStart = text.lastIndexOf('\x1b]7;');
+    if (lastStart >= 0 && !hasOscTerminator(text, lastStart)) {
+      instance.locationBuffer = text.slice(lastStart, lastStart + 4096);
+    } else {
+      instance.locationBuffer = '';
+    }
+  }
+
+  private emitLocation(instance: TerminalInstance, cwd: string): void {
+    if (cwd === instance.cwd) return;
+    instance.cwd = cwd;
+    this.emit('location', {
+      terminalId: instance.terminalId,
+      sessionId: instance.sessionId,
+      cwd
+    });
+  }
+
   private toRuntimeState(instance: TerminalInstance): SessionRuntimeState {
     const state: SessionRuntimeState = {
       sessionId: instance.sessionId,
@@ -334,4 +375,36 @@ function redactForLog(value: string): string {
   return value
     .replace(/SOLOE_BRIDGE_TOKEN='[^']*'/g, 'SOLOE_BRIDGE_TOKEN=<redacted>')
     .replace(/SOLOE_BRIDGE_TOKEN=\S+/g, 'SOLOE_BRIDGE_TOKEN=<redacted>');
+}
+
+function hasOscTerminator(text: string, start: number): boolean {
+  const bel = text.indexOf('\x07', start);
+  const st = text.indexOf('\x1b\\', start);
+  return bel >= 0 || st >= 0;
+}
+
+function cwdFromOsc7(payload: string, runMode: RunMode): string | null {
+  if (!payload.startsWith('file://')) return null;
+  try {
+    const url = new URL(payload);
+    if (url.protocol !== 'file:') return null;
+    const pathname = decodeURIComponent(url.pathname);
+    return normalizeOscPath(pathname, runMode);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeOscPath(pathname: string, runMode: RunMode): string | null {
+  if (!pathname) return null;
+  if (/^\/[A-Za-z]:[\\/]/.test(pathname)) {
+    return pathname.slice(1).replace(/\//g, '\\');
+  }
+  if (runMode === 'windows' && /^[A-Za-z]:\//.test(pathname)) {
+    return pathname.replace(/\//g, '\\');
+  }
+  if (runMode === 'windows' && pathname.startsWith('//')) {
+    return pathname.replace(/\//g, '\\');
+  }
+  return pathname;
 }

@@ -40,6 +40,7 @@ import type {
 import type {
   TerminalExitEvent,
   TerminalId,
+  TerminalLocationEvent,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStatusEvent
@@ -78,7 +79,9 @@ const soloe: SoloeApi = {
     onExit: (cb: (event: TerminalExitEvent) => void) =>
       subscribe<TerminalExitEvent>(IpcChannels.terminal.exit, cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) =>
-      subscribe<TerminalStatusEvent>(IpcChannels.terminal.status, cb)
+      subscribe<TerminalStatusEvent>(IpcChannels.terminal.status, cb),
+    onLocation: (cb: (event: TerminalLocationEvent) => void) =>
+      subscribe<TerminalLocationEvent>(IpcChannels.terminal.location, cb)
   },
   observer: {
     list: () => ipcRenderer.invoke(IpcChannels.observer.list),

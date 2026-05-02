@@ -47,7 +47,7 @@ export class SessionCommandBuilder {
   private buildInner(session: Session, ctx: SessionBuildContext): InnerCommand {
     switch (session.kind) {
       case 'standard_terminal':
-        return this.buildStandard(session);
+        return this.buildStandard(session, ctx);
       case 'claude_code':
         return this.buildClaude(session, ctx);
       case 'codex':
@@ -55,7 +55,7 @@ export class SessionCommandBuilder {
     }
   }
 
-  private buildStandard(s: StandardTerminalSession): InnerCommand {
+  private buildStandard(s: StandardTerminalSession, ctx: SessionBuildContext): InnerCommand {
     if (s.shell === 'custom') {
       if (!s.command) throw new Error('Custom shell requires a command');
       return { executable: s.command, args: s.args ?? [], env: {} };
@@ -70,7 +70,18 @@ export class SessionCommandBuilder {
       };
     }
     const resolved = this.shellDetector.resolve(s.shell, s.runMode);
-    return { executable: resolved.executable, args: resolved.args, env: {} };
+    if (isPowerShell(resolved.executable)) {
+      return {
+        executable: resolved.executable,
+        args: [...resolved.args, '-NoExit', '-Command', POWERSHELL_LOCATION_SCRIPT],
+        env: {}
+      };
+    }
+    return {
+      executable: resolved.executable,
+      args: resolved.args,
+      env: shellLocationEnv(resolved.executable, ctx.baseEnv)
+    };
   }
 
   private buildClaude(s: ClaudeCodeSession, ctx: SessionBuildContext): InnerCommand {
@@ -136,4 +147,39 @@ export class SessionCommandBuilder {
     }
     return env;
   }
+}
+
+const BASH_LOCATION_PROMPT =
+  'printf \'\\033]7;file://%s%s\\007\' "${HOSTNAME:-localhost}" "$PWD"';
+
+const POWERSHELL_LOCATION_SCRIPT =
+  '$global:__soloeOriginalPrompt = (Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue).ScriptBlock; ' +
+  'function global:prompt { try { $path = (Get-Location).ProviderPath; if ($path) { ' +
+  '$uri = [System.Uri]::new($path).AbsoluteUri; [Console]::Write("`e]7;$uri`a") } ' +
+  '} catch {} if ($global:__soloeOriginalPrompt) { & $global:__soloeOriginalPrompt } ' +
+  'else { "PS $($executionContext.SessionState.Path.CurrentLocation)> " } }';
+
+function shellLocationEnv(
+  executable: string,
+  baseEnv: Record<string, string | undefined>
+): Record<string, string> {
+  if (!isBash(executable)) return {};
+  const previous = baseEnv['PROMPT_COMMAND'];
+  return {
+    PROMPT_COMMAND: previous ? `${BASH_LOCATION_PROMPT}; ${previous}` : BASH_LOCATION_PROMPT
+  };
+}
+
+function isBash(executable: string): boolean {
+  return executableName(executable) === 'bash';
+}
+
+function isPowerShell(executable: string): boolean {
+  const name = executableName(executable);
+  return name === 'pwsh' || name === 'pwsh.exe' || name === 'powershell.exe';
+}
+
+function executableName(executable: string): string {
+  const parts = executable.split(/[\\/]/);
+  return (parts[parts.length - 1] ?? executable).toLowerCase();
 }

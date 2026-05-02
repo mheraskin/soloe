@@ -8,6 +8,7 @@ import type { SessionId } from '@shared/types/sessions.js';
 import type {
   TerminalExitEvent,
   TerminalId,
+  TerminalLocationEvent,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStatusEvent
@@ -73,6 +74,8 @@ export class TerminalIpc {
 
     const onOutput = (event: TerminalOutputEvent) => this.broadcast(IpcChannels.terminal.output, event);
     const onExit = (event: TerminalExitEvent) => this.broadcast(IpcChannels.terminal.exit, event);
+    const onLocation = (event: TerminalLocationEvent) =>
+      this.broadcast(IpcChannels.terminal.location, event);
     const onStatus = (event: TerminalStatusEvent) => {
       console.info('[DEBUG-terminal-start] status broadcast', event);
       this.broadcast(IpcChannels.terminal.status, event);
@@ -80,11 +83,13 @@ export class TerminalIpc {
 
     this.opts.pty.on('output', onOutput);
     this.opts.pty.on('exit', onExit);
+    this.opts.pty.on('location', onLocation);
     this.opts.pty.on('status', onStatus);
 
     this.listeners.push(
       () => this.opts.pty.off('output', onOutput),
       () => this.opts.pty.off('exit', onExit),
+      () => this.opts.pty.off('location', onLocation),
       () => this.opts.pty.off('status', onStatus)
     );
   }

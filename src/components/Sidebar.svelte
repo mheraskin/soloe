@@ -66,7 +66,7 @@
       {#if standaloneVisible.length > 0}
         <div class="flex flex-col gap-px">
           {#each standaloneVisible as session (session.id)}
-            <SessionItem {session} />
+            <SessionItem {session} branch={session.lastBranch ?? null} />
           {/each}
         </div>
       {/if}

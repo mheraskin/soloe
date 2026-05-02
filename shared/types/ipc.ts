@@ -51,6 +51,7 @@ import type {
   TerminalDimensions,
   TerminalExitEvent,
   TerminalId,
+  TerminalLocationEvent,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStartResult,
@@ -75,7 +76,8 @@ export const IpcChannels = {
     listRunning: 'terminal:list-running',
     output: 'terminal:output',
     exit: 'terminal:exit',
-    status: 'terminal:status'
+    status: 'terminal:status',
+    location: 'terminal:location'
   },
   observer: {
     list: 'observer:list',
@@ -183,6 +185,7 @@ export interface TerminalApi {
   onOutput(listener: (event: TerminalOutputEvent) => void): () => void;
   onExit(listener: (event: TerminalExitEvent) => void): () => void;
   onStatus(listener: (event: TerminalStatusEvent) => void): () => void;
+  onLocation(listener: (event: TerminalLocationEvent) => void): () => void;
 }
 
 export interface ObserverApi {
