@@ -215,7 +215,6 @@
   open={commandPalette.isOpen}
   {onOpenChange}
   shouldFilter={commandPalette.mode === 'commands'}
-  bind:value={query}
   class="sm:max-w-xl"
 >
   <Command.Input
