@@ -124,11 +124,11 @@
       // Tokyo Night palette tuned to the #0f0f10 app shell.
       theme: {
         background: '#0f0f10',
-        foreground: '#c0caf5',
-        cursor: '#c0caf5',
+        foreground: '#e6e6e6',
+        cursor: '#e6e6e6',
         cursorAccent: '#0f0f10',
         selectionBackground: '#283457',
-        selectionForeground: '#c0caf5',
+        selectionForeground: '#e6e6e6',
         black: '#15161e',
         red: '#f7768e',
         green: '#9ece6a',
@@ -144,7 +144,7 @@
         brightBlue: '#8db0ff',
         brightMagenta: '#c7a9ff',
         brightCyan: '#a4daff',
-        brightWhite: '#c0caf5'
+        brightWhite: '#e6e6e6'
       },
       allowProposedApi: true,
       scrollback: 5000,
