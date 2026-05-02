@@ -42,6 +42,12 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setDefaultCwd(value: string) {
+    try {
+      await settings.update({ defaults: { cwd: value.trim() || '~' } });
+    } catch (e) { reportError(e); }
+  }
+
   async function setBinary(key: keyof SettingsBinaries, value: string) {
     try {
       await settings.update({ binaries: { [key]: value } as never });
@@ -118,6 +124,15 @@
         <option value={s}>{s}</option>
       {/each}
     </select>
+  </label>
+  <label>
+    Default working directory
+    <input
+      type="text"
+      placeholder="~"
+      value={settings.current.defaults.cwd}
+      onchange={(e) => setDefaultCwd((e.currentTarget as HTMLInputElement).value)}
+    />
   </label>
 </section>
 

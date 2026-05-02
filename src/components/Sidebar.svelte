@@ -1,32 +1,45 @@
 <script lang="ts">
   import { Plus, Search, FolderOpen } from 'lucide-svelte';
-  import { sessions, PROJECT_UNASSIGNED_KEY } from '../stores/sessions.svelte';
+  import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
-  import { modal } from '../stores/modal.svelte';
-  import { projectModal } from '../stores/project-modal.svelte';
+  import { commandPalette } from '../stores/command-palette.svelte';
+  import { reportError } from '../stores/toast.svelte';
+  import { rankMulti } from '../lib/fuzzy';
   import ProjectSection from './ProjectSection.svelte';
+  import SessionItem from './SessionItem.svelte';
 
   let query = $state('');
 
-  let orderedProjectKeys = $derived.by<string[]>(() => {
+  let orderedProjectIds = $derived.by<string[]>(() => {
     const present = new Set(sessions.projectIds);
     const ordered: string[] = [];
     for (const p of projects.recents) {
       if (present.has(p.id)) ordered.push(p.id);
     }
-    if (present.has(PROJECT_UNASSIGNED_KEY)) ordered.push(PROJECT_UNASSIGNED_KEY);
-    if (ordered.length === 0) ordered.push(PROJECT_UNASSIGNED_KEY);
+    for (const id of sessions.projectIds) {
+      if (!ordered.includes(id)) ordered.push(id);
+    }
     return ordered;
+  });
+
+  let standaloneVisible = $derived.by(() => {
+    const list = sessions.standalone;
+    const q = query.trim();
+    if (!q) return list;
+    return rankMulti(q, list, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
   });
 </script>
 
 <aside>
   <div class="head">
-    <button class="new" onclick={() => modal.openNew()}>
+    <button
+      class="new"
+      onclick={() => void sessions.createWithDefaults({}).catch(reportError)}
+    >
       <Plus size={14} />
       <span>New terminal</span>
     </button>
-    <button class="new project" onclick={() => projectModal.openNew()}>
+    <button class="new project" onclick={() => commandPalette.open('open-project')}>
       <FolderOpen size={14} />
       <span>Open project</span>
     </button>
@@ -41,12 +54,22 @@
     </div>
   </div>
   <div class="groups">
-    {#each orderedProjectKeys as key (key)}
-      <ProjectSection
-        project={key === PROJECT_UNASSIGNED_KEY ? null : projects.get(key)}
-        sessions={sessions.byProject[key] ?? []}
-        filter={query}
-      />
+    {#if standaloneVisible.length > 0}
+      <div class="standalone">
+        {#each standaloneVisible as session (session.id)}
+          <SessionItem {session} />
+        {/each}
+      </div>
+    {/if}
+    {#each orderedProjectIds as id (id)}
+      {@const project = projects.get(id)}
+      {#if project}
+        <ProjectSection
+          {project}
+          sessions={sessions.byProject[id] ?? []}
+          filter={query}
+        />
+      {/if}
     {/each}
   </div>
 </aside>
@@ -118,5 +141,10 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+  .standalone {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
 </style>

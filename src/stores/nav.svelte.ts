@@ -1,5 +1,5 @@
 import type { Session } from '@shared/types/sessions.js';
-import { sessions, PROJECT_UNASSIGNED_KEY } from './sessions.svelte';
+import { sessions } from './sessions.svelte';
 import { projects } from './projects.svelte';
 import { confirmStore } from './confirm.svelte';
 import { reportError } from './toast.svelte';
@@ -16,9 +16,11 @@ class NavStore {
     for (const p of projects.recents) {
       if (present.has(p.id)) projectOrder.push(p.id);
     }
-    if (present.has(PROJECT_UNASSIGNED_KEY)) projectOrder.push(PROJECT_UNASSIGNED_KEY);
+    for (const id of sessions.projectIds) {
+      if (!projectOrder.includes(id)) projectOrder.push(id);
+    }
 
-    const out: Session[] = [];
+    const out: Session[] = [...sessions.standalone];
     for (const projectKey of projectOrder) {
       const list = grouped[projectKey] ?? [];
       const cwdOrder: string[] = [];

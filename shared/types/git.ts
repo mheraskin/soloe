@@ -60,6 +60,7 @@ export interface GitWorktree {
   head: string | null;
   detached: boolean;
   bare: boolean;
+  isMain: boolean;
 }
 
 export interface GitBranch {

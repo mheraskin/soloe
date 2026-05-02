@@ -2,7 +2,8 @@
   import { Plus, ChevronDown, ChevronRight, GitBranch } from 'lucide-svelte';
   import type { Session } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
-  import { modal } from '../stores/modal.svelte';
+  import { sessions } from '../stores/sessions.svelte';
+  import { reportError } from '../stores/toast.svelte';
   import { rankMulti } from '../lib/fuzzy';
   import SessionItem from './SessionItem.svelte';
 
@@ -11,12 +12,14 @@
     cwd,
     projectId,
     items,
+    isMain = false,
     filter = ''
   }: {
     title: string;
     cwd: string;
     projectId: ProjectId | null;
     items: Session[];
+    isMain?: boolean;
     filter?: string;
   } = $props();
 
@@ -35,10 +38,13 @@
 
   function addSession(e: Event) {
     e.stopPropagation();
-    modal.openNew({
-      cwd,
-      projectId: projectId ?? undefined
-    });
+    void sessions
+      .createWithDefaults({
+        ...(projectId ? { projectId } : {}),
+        cwd,
+        ...(title ? { branch: title } : {})
+      })
+      .catch(reportError);
   }
 </script>
 
@@ -53,6 +59,9 @@
         {/if}
         <GitBranch size={11} />
         <span class="title" title={cwd}>{title}</span>
+        {#if isMain}
+          <span class="main-pill">main</span>
+        {/if}
         <span class="count">{items.length}</span>
       </button>
       <button class="add" onclick={addSession} title="New terminal in this worktree" aria-label="New terminal in this worktree">
@@ -62,7 +71,7 @@
     {#if expanded}
       <div class="list">
         {#each visible as session (session.id)}
-          <SessionItem {session} />
+          <SessionItem {session} branch={title} />
         {/each}
       </div>
     {/if}
@@ -113,6 +122,15 @@
     padding: 0 4px;
     border-radius: 8px;
     background: var(--bg-elev-2);
+  }
+  .main-pill {
+    color: var(--muted-2);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0 5px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
   }
   .add {
     background: transparent;

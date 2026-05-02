@@ -4,19 +4,22 @@
     Settings as SettingsIcon,
     Terminal,
     FolderOpen,
+    Folder,
     Trash2,
     Pencil,
     Activity
   } from 'lucide-svelte';
   import type { ComponentType, SvelteComponent } from 'svelte';
+  import type { ProjectPathSuggestion } from '@shared/types/projects.js';
   import { commandPalette } from '../stores/command-palette.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
-  import { modal } from '../stores/modal.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { settings } from '../stores/settings.svelte';
   import { diagnosticsPane } from '../stores/diagnostics-pane.svelte';
   import { nav } from '../stores/nav.svelte';
+  import { reportError } from '../stores/toast.svelte';
+  import { ipc } from '../lib/ipc';
   import { rank } from '../lib/fuzzy';
 
   interface Command {
@@ -31,13 +34,53 @@
   let query = $state('');
   let activeIndex = $state(0);
   let inputEl: HTMLInputElement | null = $state(null);
+  let pathSuggestions = $state<ProjectPathSuggestion[]>([]);
+  let suggestRequest = 0;
+  let debounceHandle = 0;
 
   $effect(() => {
-    if (commandPalette.open) {
+    if (commandPalette.isOpen) {
       query = '';
       activeIndex = 0;
       queueMicrotask(() => inputEl?.focus());
     }
+  });
+
+  $effect(() => {
+    void commandPalette.mode;
+    query = '';
+    activeIndex = 0;
+    pathSuggestions = [];
+  });
+
+  $effect(() => {
+    if (!commandPalette.isOpen) return;
+    if (commandPalette.mode !== 'open-project') return;
+    const q = query;
+    if (debounceHandle) {
+      window.clearTimeout(debounceHandle);
+      debounceHandle = 0;
+    }
+    debounceHandle = window.setTimeout(() => {
+      const requestId = ++suggestRequest;
+      void projects
+        .suggestPaths(q)
+        .then((next) => {
+          if (requestId !== suggestRequest) return;
+          pathSuggestions = next;
+          if (activeIndex >= next.length) activeIndex = Math.max(0, next.length - 1);
+        })
+        .catch(() => {
+          if (requestId !== suggestRequest) return;
+          pathSuggestions = [];
+        });
+    }, 80);
+    return () => {
+      if (debounceHandle) {
+        window.clearTimeout(debounceHandle);
+        debounceHandle = 0;
+      }
+    };
   });
 
   let commands = $derived.by<Command[]>(() => {
@@ -50,10 +93,12 @@
       icon: Plus,
       run: () => {
         const sel = sessions.selected;
-        modal.openNew({
-          ...(sel?.cwd ? { cwd: sel.cwd } : {}),
-          ...(sel?.projectId ? { projectId: sel.projectId } : {})
-        });
+        void sessions
+          .createWithDefaults({
+            ...(sel?.projectId ? { projectId: sel.projectId } : {}),
+            ...(sel?.cwd ? { cwd: sel.cwd } : {})
+          })
+          .catch(reportError);
       }
     });
     list.push({
@@ -61,7 +106,7 @@
       title: 'Open project',
       section: 'Actions',
       icon: FolderOpen,
-      run: () => projectModal.openNew()
+      run: () => commandPalette.open('open-project')
     });
     list.push({
       id: 'action.open-settings',
@@ -105,10 +150,9 @@
         section: 'Projects',
         icon: FolderOpen,
         run: () =>
-          modal.openNew({
-            cwd: project.path,
-            projectId: project.id
-          })
+          void sessions
+            .createWithDefaults({ projectId: project.id, cwd: project.path })
+            .catch(reportError)
       });
     }
 
@@ -132,7 +176,9 @@
   });
 
   $effect(() => {
-    if (activeIndex >= filtered.length) activeIndex = Math.max(0, filtered.length - 1);
+    if (commandPalette.mode === 'commands' && activeIndex >= filtered.length) {
+      activeIndex = Math.max(0, filtered.length - 1);
+    }
   });
 
   let groups = $derived.by<{ section: string; items: Command[] }[]>(() => {
@@ -148,23 +194,45 @@
     return order.map((section) => ({ section, items: buckets[section]! }));
   });
 
-  function runActive() {
+  function runCommand() {
     const cmd = filtered[activeIndex];
     if (!cmd) return;
     commandPalette.close();
     void cmd.run();
   }
 
+  async function openSuggestion(suggestion: ProjectPathSuggestion) {
+    try {
+      const opened = await projects.open({ path: suggestion.path });
+      try {
+        await ipc.git.worktrees({ repoPath: opened.path });
+      } catch {
+        // worktree priming is best-effort
+      }
+      commandPalette.close();
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  function runActiveSuggestion() {
+    const suggestion = pathSuggestions[activeIndex];
+    if (!suggestion) return;
+    void openSuggestion(suggestion);
+  }
+
   function onKey(e: KeyboardEvent) {
-    if (!commandPalette.open) return;
+    if (!commandPalette.isOpen) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       commandPalette.close();
       return;
     }
+    const listLength =
+      commandPalette.mode === 'open-project' ? pathSuggestions.length : filtered.length;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      activeIndex = Math.min(filtered.length - 1, activeIndex + 1);
+      activeIndex = Math.min(listLength - 1, activeIndex + 1);
       return;
     }
     if (e.key === 'ArrowUp') {
@@ -174,7 +242,16 @@
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      runActive();
+      if (commandPalette.mode === 'open-project') {
+        runActiveSuggestion();
+      } else {
+        runCommand();
+      }
+      return;
+    }
+    if (e.key === 'Backspace' && commandPalette.mode === 'open-project' && query === '') {
+      e.preventDefault();
+      commandPalette.open('commands');
       return;
     }
   }
@@ -182,19 +259,50 @@
 
 <svelte:window onkeydown={onKey} />
 
-{#if commandPalette.open}
+{#if commandPalette.isOpen}
   <div class="backdrop" onclick={() => commandPalette.close()} role="presentation"></div>
   <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
     <input
       bind:this={inputEl}
       bind:value={query}
       type="text"
-      placeholder="Type a command or session name…"
+      placeholder={commandPalette.mode === 'open-project'
+        ? 'Open project at path…'
+        : 'Type a command or session name…'}
       autocomplete="off"
       spellcheck="false"
     />
     <div class="results">
-      {#if filtered.length === 0}
+      {#if commandPalette.mode === 'open-project'}
+        {#if pathSuggestions.length === 0}
+          <p class="empty">{query.trim() ? 'No matches' : 'Start typing a path…'}</p>
+        {:else}
+          {#each pathSuggestions as suggestion, index (suggestion.path)}
+            <button
+              class="row suggestion"
+              class:active={index === activeIndex}
+              onmousemove={() => (activeIndex = index)}
+              onclick={() => {
+                activeIndex = index;
+                runActiveSuggestion();
+              }}
+            >
+              {#if suggestion.source === 'known'}
+                <FolderOpen size={14} />
+              {:else}
+                <Folder size={14} />
+              {/if}
+              <span class="suggestion-text">
+                <span class="suggestion-name">{suggestion.name}</span>
+                <span class="suggestion-path">{suggestion.path}</span>
+              </span>
+              {#if suggestion.source === 'known'}
+                <span class="tag">known</span>
+              {/if}
+            </button>
+          {/each}
+        {/if}
+      {:else if filtered.length === 0}
         <p class="empty">No matches</p>
       {:else}
         {#each groups as group (group.section)}
@@ -207,7 +315,7 @@
               onmousemove={() => (activeIndex = flatIdx)}
               onclick={() => {
                 activeIndex = flatIdx;
-                runActive();
+                runCommand();
               }}
             >
               <cmd.icon size={14} />
@@ -301,6 +409,32 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 180px;
+  }
+  .suggestion-text {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .suggestion-name {
+    color: var(--fg);
+    font-size: 13px;
+  }
+  .suggestion-path {
+    color: var(--muted-2);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tag {
+    color: var(--muted-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 1px 5px;
+    font-size: 10px;
   }
   .empty {
     margin: 0;

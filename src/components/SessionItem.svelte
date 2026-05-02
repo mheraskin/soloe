@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Play, Square, RotateCw, Pencil, FolderOpen, Copy, Trash2 } from 'lucide-svelte';
+  import { Play, Square, RotateCw, Pencil, FolderOpen, Copy, Trash2, GitBranch } from 'lucide-svelte';
   import type { Session } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -8,13 +8,15 @@
   import { ipc } from '../lib/ipc';
   import { shortCwd } from '../lib/sessions-helpers';
   import StatusDot from './StatusDot.svelte';
-  import SidebarBranchLine from './SidebarBranchLine.svelte';
 
-  let { session }: { session: Session } = $props();
+  let { session, branch = null }: { session: Session; branch?: string | null } = $props();
 
   let menuOpen = $state(false);
   let menuX = $state(0);
   let menuY = $state(0);
+  let editing = $state(false);
+  let editValue = $state('');
+  let nameInput: HTMLInputElement | null = $state(null);
 
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
@@ -24,7 +26,57 @@
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0) return;
+    if (editing) return;
     sessions.select(session.id);
+  }
+
+  function startEditing(e: MouseEvent) {
+    e.stopPropagation();
+    editValue = session.name;
+    editing = true;
+    queueMicrotask(() => {
+      nameInput?.focus();
+      nameInput?.select();
+    });
+  }
+
+  function cancelEditing() {
+    editing = false;
+    editValue = '';
+  }
+
+  async function commitEditing() {
+    const trimmed = editValue.trim();
+    if (!trimmed || trimmed === session.name) {
+      cancelEditing();
+      return;
+    }
+    const next = trimmed;
+    editing = false;
+    editValue = '';
+    try {
+      await sessions.update(session.id, { name: next });
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  function onNameKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void commitEditing();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelEditing();
+    }
+  }
+
+  function onRowKey(e: KeyboardEvent) {
+    if (editing) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      sessions.select(session.id);
+    }
   }
 
   function onContext(e: MouseEvent) {
@@ -83,25 +135,46 @@
 
 <svelte:window onclick={() => menuOpen && closeMenu()} />
 
-<button
+<div
   class="row"
   class:selected={isSelected}
   onclick={onClick}
   oncontextmenu={onContext}
+  onkeydown={onRowKey}
+  role="button"
+  tabindex="0"
   title={session.cwd}
 >
   <StatusDot {status} />
   <span class="main">
     <span class="top">
-      <span class="name">{session.name || '(unnamed)'}</span>
+      {#if editing}
+        <input
+          class="name-input"
+          bind:this={nameInput}
+          bind:value={editValue}
+          onkeydown={onNameKey}
+          onblur={() => void commitEditing()}
+          onclick={(e) => e.stopPropagation()}
+          spellcheck="false"
+          autocomplete="off"
+        />
+      {:else}
+        <span class="name" ondblclick={startEditing} role="presentation">{session.name || '(unnamed)'}</span>
+      {/if}
       {#if workerCount > 0}
         <span class="workers" title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}>{workerCount}</span>
       {/if}
       <span class="cwd">{shortCwd(session.cwd)}</span>
     </span>
-    <SidebarBranchLine cwd={session.cwd} />
+    {#if branch}
+      <span class="branch">
+        <GitBranch size={10} />
+        <span class="branch-name">{branch}</span>
+      </span>
+    {/if}
   </span>
-</button>
+</div>
 
 {#if menuOpen}
   <div class="menu" style="left: {menuX}px; top: {menuY}px" role="menu">
@@ -150,6 +223,35 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .name-input {
+    flex: 1;
+    background: var(--bg-elev-2);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 1px 4px;
+    font: inherit;
+    outline: none;
+    min-width: 0;
+  }
+  .name-input:focus {
+    border-color: var(--accent);
+  }
+  .branch {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    color: var(--muted-2);
+    font-size: 10px;
+    font-family: var(--font-mono);
+  }
+  .branch-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 110px;
   }
   .main {
     display: flex;

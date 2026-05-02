@@ -4,8 +4,6 @@
   import type { ProjectId } from '@shared/types/projects.js';
   import { modal } from '../stores/modal.svelte';
   import { sessions } from '../stores/sessions.svelte';
-  import { projects } from '../stores/projects.svelte';
-  import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { validateDraft } from '../lib/sessions-helpers';
   import StandardForm from './forms/StandardForm.svelte';
@@ -14,7 +12,6 @@
   import ProjectPicker from './ProjectPicker.svelte';
 
   let submitting = $state(false);
-  let lastDetectedCwd = $state('');
 
   function setBase<K extends 'name' | 'cwd' | 'runMode' | 'wslDistro' | 'projectId'>(
     key: K,
@@ -27,48 +24,14 @@
     modal.draft = next;
   }
 
-  async function onCwdInput(e: Event) {
-    const value = (e.currentTarget as HTMLInputElement).value;
-    setBase('cwd', value);
-    if (modal.mode !== 'new') return;
-    if (modal.draft.projectId) return;
-    if (!value.trim()) return;
-    if (value === lastDetectedCwd) return;
-    lastDetectedCwd = value;
-    try {
-      const result = await projects.detectFromPath(value);
-      if (result.matchedProjectId && !modal.draft.projectId) {
-        setBase('projectId', result.matchedProjectId);
-      }
-    } catch {
-      // detection is best-effort
-    }
-  }
-
   function setProjectId(id: ProjectId | null) {
     setBase('projectId', id ?? undefined);
-    if (id && modal.mode === 'new') {
-      const project = projects.get(id);
-      if (!project) return;
-      if (!modal.draft.cwd.trim()) setBase('cwd', project.path);
-      if (project.defaultRunMode) setBase('runMode', project.defaultRunMode);
-      if (project.defaultRunMode === 'wsl' && project.defaultWslDistro) {
-        setBase('wslDistro', project.defaultWslDistro);
-      }
-    }
-  }
-
-  function createProjectFromCwd() {
-    const cwd = modal.draft.cwd.trim();
-    projectModal.openNew(
-      cwd ? { path: cwd } : {},
-      (created) => setProjectId(created.id)
-    );
   }
 
   async function submit(e: Event) {
     e.preventDefault();
     if (submitting) return;
+    if (!modal.editingId) return;
     const err = validateDraft(modal.draft);
     if (err) {
       modal.error = err.message;
@@ -77,11 +40,7 @@
     submitting = true;
     modal.error = null;
     try {
-      if (modal.mode === 'new') {
-        await sessions.create(modal.draft);
-      } else if (modal.editingId) {
-        await sessions.update(modal.editingId, modal.draft);
-      }
+      await sessions.update(modal.editingId, modal.draft);
       modal.close();
     } catch (e2) {
       modal.error = e2 instanceof Error ? e2.message : String(e2);
@@ -102,7 +61,7 @@
   <div class="backdrop" onclick={() => modal.close()} role="presentation"></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Session details">
     <header>
-      <h2>{modal.mode === 'new' ? 'New terminal' : 'Edit session'}</h2>
+      <h2>Edit session</h2>
       <button class="close" onclick={() => modal.close()} aria-label="Close">
         <X size={16} />
       </button>
@@ -122,7 +81,6 @@
       <ProjectPicker
         value={modal.draft.projectId ?? null}
         onchange={setProjectId}
-        onCreateNew={createProjectFromCwd}
       />
 
       <label>
@@ -132,7 +90,7 @@
           required
           placeholder={modal.draft.runMode === 'wsl' ? '/home/you/project' : 'C:\\Users\\you\\project'}
           value={modal.draft.cwd}
-          oninput={onCwdInput}
+          oninput={(e) => setBase('cwd', (e.currentTarget as HTMLInputElement).value)}
         />
       </label>
 
@@ -162,18 +120,13 @@
         {/if}
       </div>
 
-      {#if modal.mode === 'new'}
-        <hr />
+      <hr />
+      {#if modal.draft.kind === 'standard_terminal'}
         <StandardForm />
-      {:else}
-        <hr />
-        {#if modal.draft.kind === 'standard_terminal'}
-          <StandardForm />
-        {:else if modal.draft.kind === 'claude_code'}
-          <ClaudeForm />
-        {:else if modal.draft.kind === 'codex'}
-          <CodexForm />
-        {/if}
+      {:else if modal.draft.kind === 'claude_code'}
+        <ClaudeForm />
+      {:else if modal.draft.kind === 'codex'}
+        <CodexForm />
       {/if}
 
       {#if modal.error}
@@ -182,9 +135,7 @@
 
       <footer>
         <button type="button" onclick={() => modal.close()}>Cancel</button>
-        <button type="submit" class="primary" disabled={submitting}>
-          {modal.mode === 'new' ? 'Create' : 'Save'}
-        </button>
+        <button type="submit" class="primary" disabled={submitting}>Save</button>
       </footer>
     </form>
   </div>

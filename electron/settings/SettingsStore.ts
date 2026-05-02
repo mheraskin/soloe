@@ -126,6 +126,7 @@ function parseSettings(raw: unknown): Settings {
     defaults: {
       runMode: pickEnum(defaults['runMode'], VALID_RUN_MODES, DEFAULT_SETTINGS.defaults.runMode) as Settings['defaults']['runMode'],
       shell: pickEnum(defaults['shell'], VALID_SHELLS, DEFAULT_SETTINGS.defaults.shell) as Settings['defaults']['shell'],
+      cwd: typeof defaults['cwd'] === 'string' && defaults['cwd'] ? defaults['cwd'] : DEFAULT_SETTINGS.defaults.cwd,
       ...(typeof defaults['wslDistro'] === 'string' && defaults['wslDistro'] ? { wslDistro: defaults['wslDistro'] } : {})
     },
     binaries: filterStringRecord(binaries)
@@ -161,6 +162,9 @@ function validateSettings(s: Settings): void {
   if (!VALID_FONT_SIZES.has(s.appearance.fontSize)) throw new Error(`Invalid fontSize: ${s.appearance.fontSize}`);
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
   if (!VALID_SHELLS.has(s.defaults.shell)) throw new Error(`Invalid shell: ${s.defaults.shell}`);
+  if (typeof s.defaults.cwd !== 'string' || !s.defaults.cwd) {
+    throw new Error('defaults.cwd must be a non-empty string');
+  }
   if (s.defaults.runMode === 'wsl' && s.defaults.wslDistro !== undefined && !s.defaults.wslDistro) {
     throw new Error('wslDistro must be a non-empty string when set');
   }

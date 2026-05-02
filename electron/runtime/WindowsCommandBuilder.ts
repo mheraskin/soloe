@@ -1,3 +1,5 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { InnerCommand } from './InnerCommand.js';
 
@@ -9,14 +11,23 @@ export interface WindowsRunOptions {
 export class WindowsCommandBuilder {
   build(inner: InnerCommand, opts: WindowsRunOptions): SpawnSpec {
     const env = mergeEnv(opts.baseEnv, inner.env);
+    const cwd = expandHome(opts.cwd);
     return {
       file: inner.executable,
       args: inner.args,
-      cwd: opts.cwd,
+      cwd,
       env,
-      description: describe(inner, opts.cwd)
+      description: describe(inner, cwd)
     };
   }
+}
+
+function expandHome(cwd: string): string {
+  if (cwd === '~') return os.homedir();
+  if (cwd.startsWith('~/') || cwd.startsWith('~\\')) {
+    return path.join(os.homedir(), cwd.slice(2));
+  }
+  return cwd;
 }
 
 function mergeEnv(

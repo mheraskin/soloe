@@ -2,7 +2,6 @@ import type {
   ObservedAgentSnapshot,
   ObserverEvent
 } from '@shared/types/agents.js';
-import type { ProjectId } from '@shared/types/projects.js';
 import type {
   Session,
   SessionDraft,
@@ -12,9 +11,12 @@ import type {
   SessionUpdate
 } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
+import { projects } from './projects.svelte';
+import { settings } from './settings.svelte';
+import { randomName } from '../lib/random-name';
 
 const LAST_SELECTED_KEY = 'soloe.lastSelectedByProject.v1';
-const UNASSIGNED_KEY = '__unassigned__';
+const STANDALONE_KEY = '__standalone__';
 
 function readLastSelectedMap(): Record<string, SessionId> {
   try {
@@ -67,21 +69,23 @@ class SessionsStore {
   byProject = $derived.by<Record<string, Session[]>>(() => {
     const out: Record<string, Session[]> = {};
     for (const session of this.sessions) {
-      const key = session.projectId ?? UNASSIGNED_KEY;
-      if (!out[key]) out[key] = [];
-      out[key]!.push(session);
+      if (!session.projectId) continue;
+      if (!out[session.projectId]) out[session.projectId] = [];
+      out[session.projectId]!.push(session);
     }
     return out;
   });
+
+  standalone = $derived.by<Session[]>(() => this.sessions.filter((s) => !s.projectId));
 
   projectIds = $derived.by<string[]>(() => {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const session of this.sessions) {
-      const key = session.projectId ?? UNASSIGNED_KEY;
-      if (!seen.has(key)) {
-        seen.add(key);
-        out.push(key);
+      if (!session.projectId) continue;
+      if (!seen.has(session.projectId)) {
+        seen.add(session.projectId);
+        out.push(session.projectId);
       }
     }
     return out;
@@ -226,6 +230,53 @@ class SessionsStore {
     return created;
   }
 
+  async createWithDefaults(opts: {
+    projectId?: string;
+    cwd?: string;
+    branch?: string;
+  } = {}): Promise<Session> {
+    const defaults = settings.current.defaults;
+    const project = opts.projectId ? projects.get(opts.projectId) : null;
+    const cwd = opts.cwd ?? project?.path ?? defaults.cwd;
+    const runMode = project?.defaultRunMode ?? defaults.runMode;
+    const wslDistro = (() => {
+      if (project?.defaultWslDistro) return project.defaultWslDistro;
+      return defaults.wslDistro ?? 'Ubuntu';
+    })();
+    const name = this.uniqueName(randomName(), opts.projectId);
+    const draft: SessionDraft = {
+      kind: 'standard_terminal',
+      name,
+      cwd,
+      runMode,
+      ...(runMode === 'wsl' ? { wslDistro } : {}),
+      shell: defaults.shell,
+      ...(opts.projectId ? { projectId: opts.projectId } : {}),
+      ...(opts.branch ? { lastBranch: opts.branch } : {})
+    };
+    const created = await this.create(draft);
+    try {
+      await this.start(created.id);
+    } catch {
+      // start failure is non-fatal; the session is created
+    }
+    return created;
+  }
+
+  private uniqueName(base: string, projectId: string | undefined): string {
+    const taken = new Set(
+      this.sessions
+        .filter((s) => (s.projectId ?? null) === (projectId ?? null))
+        .map((s) => s.name)
+    );
+    if (!taken.has(base)) return base;
+    for (let i = 2; i < 1000; i += 1) {
+      const candidate = `${base}-${i}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+    return `${base}-${Date.now()}`;
+  }
+
   async update(id: SessionId, patch: SessionUpdate): Promise<Session> {
     const updated = await ipc.sessions.update(id, patch);
     this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
@@ -295,7 +346,7 @@ class SessionsStore {
     if (id) {
       const session = this.sessions.find((s) => s.id === id);
       if (session) {
-        const key = session.projectId ?? UNASSIGNED_KEY;
+        const key = session.projectId ?? STANDALONE_KEY;
         const nextMap = { ...this.lastSelectedByProject, [key]: id };
         this.lastSelectedByProject = nextMap;
         writeLastSelectedMap(nextMap);
@@ -303,7 +354,5 @@ class SessionsStore {
     }
   }
 }
-
-export const PROJECT_UNASSIGNED_KEY = UNASSIGNED_KEY;
 
 export const sessions = new SessionsStore();

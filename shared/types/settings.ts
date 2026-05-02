@@ -14,6 +14,7 @@ export interface SettingsDefaults {
   runMode: RunMode;
   wslDistro?: string;
   shell: ShellKind;
+  cwd: string;
 }
 
 export interface SettingsBinaries {
@@ -42,6 +43,6 @@ export type SettingsUpdate = {
 export const DEFAULT_SETTINGS: Settings = {
   version: 1,
   appearance: { theme: 'dark', density: 'comfortable', fontSize: 13 },
-  defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto' },
+  defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
   binaries: {}
 };

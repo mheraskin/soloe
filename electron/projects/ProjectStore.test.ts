@@ -233,6 +233,39 @@ describe.runIf(hasGit)('ProjectStore — detectFromPath', () => {
     expect(result.suggestedName).toBe('');
     expect(result.matchedProjectId).toBeNull();
   });
+
+  it('resolves a linked worktree path back to the main repo', async () => {
+    const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-repo-'));
+    try {
+      const init = spawnSync('git', ['init', '-q'], { cwd: repoDir });
+      expect(init.status).toBe(0);
+      spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
+      spawnSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
+      await fs.writeFile(path.join(repoDir, 'README.md'), 'hi');
+      spawnSync('git', ['add', '.'], { cwd: repoDir });
+      const commit = spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoDir });
+      expect(commit.status).toBe(0);
+      const worktreePath = path.join(path.dirname(repoDir), `${path.basename(repoDir)}-wt`);
+      const wt = spawnSync(
+        'git',
+        ['worktree', 'add', '-q', '-b', 'feat', worktreePath],
+        { cwd: repoDir }
+      );
+      expect(wt.status).toBe(0);
+      try {
+        const realRepoDir = await fs.realpath(repoDir);
+        const store = new ProjectStore(storePath);
+        const result = await store.detectFromPath(worktreePath);
+        const realResultPath = await fs.realpath(result.path);
+        expect(realResultPath).toBe(realRepoDir);
+        expect(result.suggestedName).toBe(path.basename(realRepoDir));
+      } finally {
+        await fs.rm(worktreePath, { recursive: true, force: true });
+      }
+    } finally {
+      await fs.rm(repoDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('ProjectStore — suggestPaths', () => {

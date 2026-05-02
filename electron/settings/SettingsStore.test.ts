@@ -55,6 +55,21 @@ describe('SettingsStore — update', () => {
   });
 });
 
+describe('SettingsStore — migration', () => {
+  it('fills in defaults.cwd when missing from on-disk settings', async () => {
+    const onDisk = {
+      version: 1,
+      appearance: { theme: 'dark', density: 'comfortable', fontSize: 13 },
+      defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto' },
+      binaries: {}
+    };
+    await fs.writeFile(storePath, JSON.stringify(onDisk), 'utf8');
+    const store = new SettingsStore(storePath);
+    const s = await store.get();
+    expect(s.defaults.cwd).toBe('~');
+  });
+});
+
 describe('SettingsStore — disk round-trip', () => {
   it('persists across instances pointing at the same file', async () => {
     const a = new SettingsStore(storePath);

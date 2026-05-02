@@ -1,16 +1,29 @@
+export type CommandPaletteMode = 'commands' | 'open-project';
+
 class CommandPaletteStore {
-  open = $state(false);
+  isOpen = $state(false);
+  mode = $state<CommandPaletteMode>('commands');
+
+  open(mode: CommandPaletteMode = 'commands'): void {
+    this.mode = mode;
+    this.isOpen = true;
+  }
 
   show(): void {
-    this.open = true;
+    this.open();
   }
 
   close(): void {
-    this.open = false;
+    this.isOpen = false;
+    this.mode = 'commands';
   }
 
   toggle(): void {
-    this.open = !this.open;
+    if (this.isOpen) {
+      this.close();
+    } else {
+      this.open();
+    }
   }
 }
 

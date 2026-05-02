@@ -3,8 +3,9 @@
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
-  import { modal } from '../stores/modal.svelte';
+  import { sessions } from '../stores/sessions.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
+  import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
   import WorktreeGroup from './WorktreeGroup.svelte';
 
@@ -12,7 +13,7 @@
     project,
     sessions: items,
     filter = ''
-  }: { project: Project | null; sessions: Session[]; filter?: string } = $props();
+  }: { project: Project; sessions: Session[]; filter?: string } = $props();
 
   let expanded = $state(true);
   let gitWorktrees = $state<GitWorktree[]>([]);
@@ -22,10 +23,6 @@
   }
 
   function worktreeLabel(cwd: string): string {
-    if (!project) {
-      const parts = normPath(cwd).split(/[/\\]/);
-      return parts[parts.length - 1] || cwd;
-    }
     const projectPath = normPath(project.path);
     const sessionCwd = normPath(cwd);
     if (sessionCwd === projectPath) return 'main';
@@ -37,10 +34,6 @@
   }
 
   $effect(() => {
-    if (!project) {
-      gitWorktrees = [];
-      return;
-    }
     ipc.git.worktrees({ repoPath: project.path })
       .then((worktrees) => {
         gitWorktrees = worktrees;
@@ -50,7 +43,7 @@
       });
   });
 
-  let worktrees = $derived.by<{ cwd: string; label: string; items: Session[] }[]>(() => {
+  let worktrees = $derived.by<{ cwd: string; label: string; isMain: boolean; items: Session[] }[]>(() => {
     const order: string[] = [];
     const buckets: Record<string, Session[]> = {};
     for (const worktree of gitWorktrees) {
@@ -73,13 +66,14 @@
       return {
         cwd: key,
         label: gitWorktree?.branch ?? (gitWorktree?.detached ? 'detached' : worktreeLabel(key)),
+        isMain: gitWorktree?.isMain ?? false,
         items: buckets[key]!
       };
     });
   });
 
-  let title = $derived(project?.name ?? 'Unassigned');
-  let accent = $derived(project?.accentColor ?? null);
+  let title = $derived(project.name);
+  let accent = $derived(project.accentColor ?? null);
 
   function toggle() {
     expanded = !expanded;
@@ -87,15 +81,14 @@
 
   function edit(e: Event) {
     e.stopPropagation();
-    if (project) projectModal.openEdit(project);
+    projectModal.openEdit(project);
   }
 
   function addSession(e: Event) {
     e.stopPropagation();
-    modal.openNew({
-      cwd: project?.path ?? '',
-      projectId: project?.id ?? undefined
-    });
+    void sessions
+      .createWithDefaults({ projectId: project.id, cwd: project.path })
+      .catch(reportError);
   }
 </script>
 
@@ -113,18 +106,14 @@
         <Folder size={12} />
       {/if}
       <h3>{title}</h3>
-      {#if project}
-        <span class="path" title={project.path}>{project.path}</span>
-      {/if}
+      <span class="path" title={project.path}>{project.path}</span>
     </button>
     <button class="add" onclick={addSession} title="New terminal" aria-label="New terminal">
       <Plus size={12} />
     </button>
-    {#if project}
-      <button class="edit" onclick={edit} title="Edit project" aria-label="Edit project">
-        <Pencil size={11} />
-      </button>
-    {/if}
+    <button class="edit" onclick={edit} title="Edit project" aria-label="Edit project">
+      <Pencil size={11} />
+    </button>
   </header>
 
   {#if expanded}
@@ -136,8 +125,9 @@
           <WorktreeGroup
             title={wt.label}
             cwd={wt.cwd}
-            projectId={project?.id ?? null}
+            projectId={project.id}
             items={wt.items}
+            isMain={wt.isMain}
             {filter}
           />
         {/each}

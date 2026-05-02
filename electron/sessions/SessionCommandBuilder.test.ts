@@ -205,6 +205,19 @@ describe('SessionCommandBuilder — windows runMode', () => {
     expect(spec.cwd).toBe('/home/me/proj');
   });
 
+  it('expands ~ to the user home directory on windows', async () => {
+    const os = await import('node:os');
+    const s: Session = {
+      ...baseFields(),
+      kind: 'standard_terminal',
+      runMode: 'windows',
+      shell: 'pwsh',
+      cwd: '~'
+    };
+    const spec = builder.build(s, ctx);
+    expect(spec.cwd).toBe(os.homedir());
+  });
+
   it('merges baseEnv with inner env on windows', () => {
     const s: Session = {
       ...baseFields(),

@@ -1,24 +1,18 @@
 <script lang="ts">
-  import { Folder, FolderOpen } from 'lucide-svelte';
+  import { Folder } from 'lucide-svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import { projects } from '../stores/projects.svelte';
 
   let {
     value,
-    onchange,
-    onCreateNew
+    onchange
   }: {
     value: ProjectId | null;
     onchange: (id: ProjectId | null) => void;
-    onCreateNew?: () => void;
   } = $props();
 
   function handleChange(e: Event) {
     const v = (e.currentTarget as HTMLSelectElement).value;
-    if (v === '__create__') {
-      onCreateNew?.();
-      return;
-    }
     onchange(v === '' ? null : v);
   }
 </script>
@@ -32,15 +26,7 @@
       {#each projects.recents as p (p.id)}
         <option value={p.id}>{p.name}</option>
       {/each}
-      {#if onCreateNew}
-        <option value="__create__">Open project...</option>
-      {/if}
     </select>
-    {#if onCreateNew}
-      <button type="button" class="add" onclick={onCreateNew} title="Open project" aria-label="Open project">
-        <FolderOpen size={12} />
-      </button>
-    {/if}
   </div>
 </label>
 
@@ -68,20 +54,6 @@
   }
   select:focus {
     outline: none;
-    border-color: var(--accent);
-  }
-  .add {
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    border-radius: var(--radius-sm);
-    padding: 4px 6px;
-    display: inline-flex;
-    align-items: center;
-    cursor: pointer;
-  }
-  .add:hover {
-    color: var(--accent);
     border-color: var(--accent);
   }
 </style>

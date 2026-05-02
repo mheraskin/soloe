@@ -373,7 +373,8 @@ function parseWorktrees(output: string): GitWorktree[] {
         branch: null,
         head: null,
         detached: false,
-        bare: false
+        bare: false,
+        isMain: false
       };
       continue;
     }
@@ -386,6 +387,7 @@ function parseWorktrees(output: string): GitWorktree[] {
     if (line === 'bare') current.bare = true;
   }
   if (current) out.push(current);
+  if (out.length > 0) out[0]!.isMain = true;
   return out;
 }
 

@@ -9,7 +9,7 @@
 
   function validate(): string | null {
     const d = projectModal.draft;
-    if (projectModal.mode === 'edit' && !d.name.trim()) return 'Name is required';
+    if (!d.name.trim()) return 'Name is required';
     if (!d.path.trim()) return 'Path is required';
     if (d.defaultRunMode === 'wsl' && d.defaultWslDistro !== undefined && !d.defaultWslDistro.trim()) {
       return 'WSL distro must be non-empty when set';
@@ -20,6 +20,7 @@
   async function submit(e: Event) {
     e.preventDefault();
     if (submitting) return;
+    if (!projectModal.editingId) return;
     const err = validate();
     if (err) {
       projectModal.error = err;
@@ -28,17 +29,7 @@
     submitting = true;
     projectModal.error = null;
     try {
-      if (projectModal.mode === 'new') {
-        const opened = await projects.open({
-          path: projectModal.draft.path,
-          ...(projectModal.draft.defaultRunMode ? { defaultRunMode: projectModal.draft.defaultRunMode } : {}),
-          ...(projectModal.draft.defaultWslDistro ? { defaultWslDistro: projectModal.draft.defaultWslDistro } : {}),
-          ...(projectModal.draft.accentColor ? { accentColor: projectModal.draft.accentColor } : {})
-        });
-        projectModal.onCreated?.(opened);
-      } else if (projectModal.editingId) {
-        await projects.update(projectModal.editingId, projectModal.draft);
-      }
+      await projects.update(projectModal.editingId, projectModal.draft);
       projectModal.close();
     } catch (err2) {
       projectModal.error = err2 instanceof Error ? err2.message : String(err2);
@@ -59,7 +50,7 @@
   <div class="backdrop" onclick={() => projectModal.close()} role="presentation"></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Project details">
     <header>
-      <h2>{projectModal.mode === 'new' ? 'Open project' : 'Edit project'}</h2>
+      <h2>Edit project</h2>
       <button class="close" onclick={() => projectModal.close()} aria-label="Close">
         <X size={16} />
       </button>
@@ -74,9 +65,7 @@
 
       <footer>
         <button type="button" onclick={() => projectModal.close()}>Cancel</button>
-        <button type="submit" class="primary" disabled={submitting}>
-          {projectModal.mode === 'new' ? 'Open' : 'Save'}
-        </button>
+        <button type="submit" class="primary" disabled={submitting}>Save</button>
       </footer>
     </form>
   </div>

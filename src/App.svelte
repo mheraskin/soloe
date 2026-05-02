@@ -55,7 +55,7 @@
       window.dispatchEvent(new CustomEvent('soloe:terminal-find'));
       return;
     }
-    if (commandPalette.open || filePalette.open) return;
+    if (commandPalette.isOpen || filePalette.open) return;
     const idx = tabIndexFromEvent(e);
     if (idx !== null) {
       e.preventDefault();
