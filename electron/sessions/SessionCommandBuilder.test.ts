@@ -19,6 +19,12 @@ const baseFields = (id = 'test') => ({
 
 const innerLine = (args: readonly string[]): string => args[args.length - 1] ?? '';
 
+const decodeAgentScript = (inner: string): string => {
+  const m = inner.match(/\. <\(printf %s ([A-Za-z0-9+/=]+) \| base64 -d\)/);
+  if (!m) throw new Error(`expected base64-encoded agent line, got: ${inner}`);
+  return Buffer.from(m[1]!, 'base64').toString('utf8');
+};
+
 describe('SessionCommandBuilder — wsl wrapping', () => {
   it('wraps a standard bash session in wsl.exe with --cd and -lc', () => {
     const s: Session = {
@@ -141,16 +147,16 @@ describe('SessionCommandBuilder — claude_code kind', () => {
   });
 
   it('emits plain `claude` for resumeMode=new', () => {
-    const inner = innerLine(builder.build(claudeBase('new'), ctx).args);
-    expect(inner).toContain('claude');
-    expect(inner).not.toContain('--continue');
-    expect(inner).not.toContain('--resume');
+    const script = decodeAgentScript(innerLine(builder.build(claudeBase('new'), ctx).args));
+    expect(script).toContain('claude');
+    expect(script).not.toContain('--continue');
+    expect(script).not.toContain('--resume');
   });
 
   it('uses captured Claude session id for a persisted new session', () => {
     const s = { ...claudeBase('new'), claudeSessionId: 'claude-123' } as Session;
-    const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('--resume claude-123');
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('--resume claude-123');
   });
 
   it('does not resume the provider global last session for previously used managed sessions without an id', () => {
@@ -158,20 +164,21 @@ describe('SessionCommandBuilder — claude_code kind', () => {
       ...claudeBase('new'),
       lastUsedAt: '2026-01-01T00:01:00Z'
     } as Session;
-    const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).not.toContain('--continue');
-    expect(inner).not.toContain('--resume');
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).not.toContain('--continue');
+    expect(script).not.toContain('--resume');
   });
 
   it('emits `claude --continue` for resumeMode=resume_last', () => {
-    expect(innerLine(builder.build(claudeBase('resume_last'), ctx).args)).toContain('--continue');
+    const script = decodeAgentScript(innerLine(builder.build(claudeBase('resume_last'), ctx).args));
+    expect(script).toContain('--continue');
   });
 
   it('emits `claude --resume <name>` for resume_by_name', () => {
     const s = { ...claudeBase('resume_by_name'), claudeSessionName: 'my-sess' } as Session;
-    const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('--resume');
-    expect(inner).toContain('my-sess');
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('--resume');
+    expect(script).toContain('my-sess');
   });
 
   it('throws when resume_by_name has no claudeSessionName', () => {
@@ -188,20 +195,25 @@ describe('SessionCommandBuilder — claude_code kind', () => {
 
   it('exports CLAUDE_CODE_NO_FLICKER=1 when fullscreenTui is enabled', () => {
     const s = { ...claudeBase('new'), fullscreenTui: true } as Session;
-    expect(innerLine(builder.build(s, ctx).args)).toContain('CLAUDE_CODE_NO_FLICKER=1');
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('CLAUDE_CODE_NO_FLICKER=1');
   });
 
   it('rewrites the bridge host to host.wsl.internal for wsl claude sessions', () => {
     const s = claudeBase('new');
-    const inner = innerLine(builder.build(s, {
-      ...ctx,
-      bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
-    }).args);
-    expect(inner).toContain('command -v claude');
-    expect(inner).toContain('SOLOE_SESSION_ID=test');
-    expect(inner).toContain('SOLOE_AGENT_PROVIDER=claude_code');
-    expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
-    expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
+    const script = decodeAgentScript(
+      innerLine(
+        builder.build(s, {
+          ...ctx,
+          bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
+        }).args
+      )
+    );
+    expect(script).toContain('command -v claude');
+    expect(script).toContain('SOLOE_SESSION_ID=test');
+    expect(script).toContain('SOLOE_AGENT_PROVIDER=claude_code');
+    expect(script).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
+    expect(script).toContain('SOLOE_BRIDGE_TOKEN=secret');
   });
 });
 
@@ -216,10 +228,10 @@ describe('SessionCommandBuilder — codex kind', () => {
       model: 'gpt-5',
       reasoningEffort: 'high'
     };
-    const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('codex');
-    expect(inner).toContain('-m gpt-5');
-    expect(inner).toContain('model_reasoning_effort=high');
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('codex');
+    expect(script).toContain('-m gpt-5');
+    expect(script).toContain('model_reasoning_effort=high');
   });
 
   it('emits `codex resume <id>` for resume_by_id', () => {
@@ -231,9 +243,9 @@ describe('SessionCommandBuilder — codex kind', () => {
       resumeMode: 'resume_by_id',
       codexSessionId: 'cdx-123'
     };
-    const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('resume');
-    expect(inner).toContain('cdx-123');
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('resume');
+    expect(script).toContain('cdx-123');
   });
 
   it('uses captured Codex session id for a persisted new session', () => {
@@ -245,9 +257,9 @@ describe('SessionCommandBuilder — codex kind', () => {
       resumeMode: 'new',
       codexSessionId: 'cdx-123'
     };
-    const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('resume');
-    expect(inner).toContain('cdx-123');
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('resume');
+    expect(script).toContain('cdx-123');
   });
 
   it('rewrites the bridge host to host.wsl.internal for wsl codex sessions', () => {
@@ -258,15 +270,19 @@ describe('SessionCommandBuilder — codex kind', () => {
       wslDistro: 'Ubuntu',
       resumeMode: 'new'
     };
-    const inner = innerLine(builder.build(s, {
-      ...ctx,
-      bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
-    }).args);
-    expect(inner).toContain('command -v codex');
-    expect(inner).toContain('SOLOE_SESSION_ID=test');
-    expect(inner).toContain('SOLOE_AGENT_PROVIDER=codex');
-    expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
-    expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
+    const script = decodeAgentScript(
+      innerLine(
+        builder.build(s, {
+          ...ctx,
+          bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
+        }).args
+      )
+    );
+    expect(script).toContain('command -v codex');
+    expect(script).toContain('SOLOE_SESSION_ID=test');
+    expect(script).toContain('SOLOE_AGENT_PROVIDER=codex');
+    expect(script).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
+    expect(script).toContain('SOLOE_BRIDGE_TOKEN=secret');
   });
 
   it('bootstraps user bin paths before launching bare codex in wsl sessions', () => {
@@ -278,13 +294,17 @@ describe('SessionCommandBuilder — codex kind', () => {
       resumeMode: 'new'
     };
     const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"');
-    expect(inner).toContain('__soloe_agent_bin="$(command -v codex)"');
-    expect(inner).toContain('NVM_DIR');
-    expect(inner).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec "$__soloe_agent_bin"');
-    expect(inner).not.toContain('exec SOLOE_SESSION_ID=');
-    expect(inner).not.toContain('exec codex');
-    expect(inner).not.toContain('exec bash -ic');
+    expect(inner).toMatch(/^\. <\(printf %s [A-Za-z0-9+/=]+ \| base64 -d\)$/);
+    const script = decodeAgentScript(inner);
+    expect(script).toContain('export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"');
+    expect(script).toContain('__soloe_agent_bin="$(command -v codex)"');
+    expect(script).toContain('NVM_DIR');
+    expect(script).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec "$__soloe_agent_bin"');
+    expect(script).not.toContain('exec SOLOE_SESSION_ID=');
+    expect(script).not.toContain('exec codex');
+    expect(script).not.toContain('exec bash -ic');
+    expect(script).toContain('\n');
+    expect(script).not.toContain('done; fi');
   });
 });
 
