@@ -23,6 +23,11 @@
       </Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>
+      {#if confirmStore.dontAskAgainLabel}
+        <Button variant="ghost" onclick={() => confirmStore.dontAskAgain()}>
+          {confirmStore.dontAskAgainLabel}
+        </Button>
+      {/if}
       <Button variant="outline" onclick={() => confirmStore.cancel()}>
         {confirmStore.cancelLabel}
       </Button>

@@ -123,7 +123,11 @@ function parseSettings(raw: unknown): Settings {
       theme: pickEnum(appearance['theme'], VALID_THEMES, DEFAULT_SETTINGS.appearance.theme) as Settings['appearance']['theme']
     },
     terminal: {
-      fontSize: pickTerminalFontSize(terminal['fontSize'] ?? appearance['fontSize'])
+      fontSize: pickTerminalFontSize(terminal['fontSize'] ?? appearance['fontSize']),
+      confirmDeleteTabs: pickBoolean(
+        terminal['confirmDeleteTabs'],
+        DEFAULT_SETTINGS.terminal.confirmDeleteTabs
+      )
     },
     defaults: {
       runMode: pickEnum(defaults['runMode'], VALID_RUN_MODES, DEFAULT_SETTINGS.defaults.runMode) as Settings['defaults']['runMode'],
@@ -147,6 +151,10 @@ function pickTerminalFontSize(value: unknown): Settings['terminal']['fontSize'] 
     : DEFAULT_SETTINGS.terminal.fontSize;
 }
 
+function pickBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 function filterStringRecord(raw: Record<string, unknown>): Settings['binaries'] {
   const allowed: (keyof Settings['binaries'])[] = ['claude', 'codex', 'git', 'gh', 'fd', 'rg', 'editor'];
   const out: Settings['binaries'] = {};
@@ -162,6 +170,9 @@ function validateSettings(s: Settings): void {
   if (!VALID_THEMES.has(s.appearance.theme)) throw new Error(`Invalid theme: ${s.appearance.theme}`);
   if (!VALID_TERMINAL_FONT_SIZES.has(s.terminal.fontSize)) {
     throw new Error(`Invalid terminal.fontSize: ${s.terminal.fontSize}`);
+  }
+  if (typeof s.terminal.confirmDeleteTabs !== 'boolean') {
+    throw new Error('Invalid terminal.confirmDeleteTabs');
   }
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
   if (!VALID_SHELLS.has(s.defaults.shell)) throw new Error(`Invalid shell: ${s.defaults.shell}`);

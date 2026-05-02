@@ -16,6 +16,7 @@ describe('ConfirmStore — ask/confirm/cancel', () => {
       message: 'msg',
       confirmLabel: 'Yes',
       cancelLabel: 'No',
+      dontAskAgainLabel: "Don't ask again",
       tone: 'danger'
     });
     expect(confirmStore.open).toBe(true);
@@ -23,6 +24,7 @@ describe('ConfirmStore — ask/confirm/cancel', () => {
     expect(confirmStore.message).toBe('msg');
     expect(confirmStore.confirmLabel).toBe('Yes');
     expect(confirmStore.cancelLabel).toBe('No');
+    expect(confirmStore.dontAskAgainLabel).toBe("Don't ask again");
     expect(confirmStore.tone).toBe('danger');
     confirmStore.cancel();
     await p;
@@ -54,8 +56,24 @@ describe('ConfirmStore — ask/confirm/cancel', () => {
     const p = confirmStore.ask({ message: 'go?' });
     expect(confirmStore.confirmLabel).toBe('Confirm');
     expect(confirmStore.cancelLabel).toBe('Cancel');
+    expect(confirmStore.dontAskAgainLabel).toBe('');
     expect(confirmStore.tone).toBe('default');
     confirmStore.cancel();
     await p;
+  });
+
+  it("don't ask again: runs callback, resolves true, and closes", async () => {
+    let called = false;
+    const p = confirmStore.ask({
+      message: 'go?',
+      dontAskAgainLabel: "Don't ask again",
+      onDontAskAgain: () => {
+        called = true;
+      }
+    });
+    confirmStore.dontAskAgain();
+    await expect(p).resolves.toBe(true);
+    expect(called).toBe(true);
+    expect(confirmStore.open).toBe(false);
   });
 });

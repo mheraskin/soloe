@@ -9,6 +9,7 @@
   import { reportError } from '../../stores/toast.svelte';
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
+  import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
@@ -37,6 +38,12 @@
   async function setTerminalFontSize(value: TerminalFontSizePref) {
     try {
       await settings.update({ terminal: { fontSize: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setConfirmDeleteTabs(value: boolean) {
+    try {
+      await settings.update({ terminal: { confirmDeleteTabs: value } });
     } catch (e) { reportError(e); }
   }
 
@@ -97,6 +104,16 @@
         {/each}
       </Select.Content>
     </Select.Root>
+  </div>
+  <div class="flex items-center justify-between gap-3">
+    <Label for="pref-confirm-delete-tabs" class="text-xs text-muted-foreground">
+      Confirm before deleting terminal tabs
+    </Label>
+    <Switch
+      id="pref-confirm-delete-tabs"
+      checked={settings.current.terminal.confirmDeleteTabs}
+      onCheckedChange={setConfirmDeleteTabs}
+    />
   </div>
 </section>
 

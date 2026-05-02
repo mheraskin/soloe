@@ -44,7 +44,15 @@ describe('SettingsStore — update', () => {
     const store = new SettingsStore(storePath);
     const updated = await store.update({ terminal: { fontSize: 14 } });
     expect(updated.terminal.fontSize).toBe(14);
+    expect(updated.terminal.confirmDeleteTabs).toBe(true);
     expect(updated.appearance).toEqual(DEFAULT_SETTINGS.appearance);
+  });
+
+  it('merges terminal delete confirmation updates', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({ terminal: { confirmDeleteTabs: false } });
+    expect(updated.terminal.confirmDeleteTabs).toBe(false);
+    expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
   });
 
   it('removes a binary path when set to empty string', async () => {
@@ -67,6 +75,13 @@ describe('SettingsStore — update', () => {
       store.update({ terminal: { fontSize: 99 as never } })
     ).rejects.toThrow(/Invalid terminal\.fontSize/);
   });
+
+  it('rejects invalid terminal delete confirmation value', async () => {
+    const store = new SettingsStore(storePath);
+    await expect(
+      store.update({ terminal: { confirmDeleteTabs: 'no' as never } })
+    ).rejects.toThrow(/Invalid terminal\.confirmDeleteTabs/);
+  });
 });
 
 describe('SettingsStore — migration', () => {
@@ -84,6 +99,7 @@ describe('SettingsStore — migration', () => {
     expect('density' in s.appearance).toBe(false);
     expect('fontSize' in s.appearance).toBe(false);
     expect(s.terminal.fontSize).toBe(13);
+    expect(s.terminal.confirmDeleteTabs).toBe(true);
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

@@ -1,8 +1,8 @@
 import type { Session } from '@shared/types/sessions.js';
 import { sessions } from './sessions.svelte';
 import { projects } from './projects.svelte';
-import { confirmStore } from './confirm.svelte';
 import { reportError } from './toast.svelte';
+import { confirmDeleteSession } from '../lib/session-delete-confirmation';
 
 function normPath(p: string): string {
   return p.replace(/[/\\]+$/, '');
@@ -73,12 +73,7 @@ class NavStore {
     if (!id) return;
     const session = sessions.sessions.find((s) => s.id === id);
     if (!session) return;
-    const ok = await confirmStore.ask({
-      title: 'Delete session',
-      message: `Delete session "${session.name || '(unnamed)'}"?`,
-      confirmLabel: 'Delete',
-      tone: 'danger'
-    });
+    const ok = await confirmDeleteSession(session);
     if (!ok) return;
     try {
       await sessions.remove(id);

@@ -9,6 +9,7 @@ export interface SettingsAppearance {
 
 export interface SettingsTerminal {
   fontSize: TerminalFontSizePref;
+  confirmDeleteTabs: boolean;
 }
 
 export interface SettingsDefaults {
@@ -46,7 +47,7 @@ export type SettingsUpdate = {
 export const DEFAULT_SETTINGS: Settings = {
   version: 1,
   appearance: { theme: 'dark' },
-  terminal: { fontSize: 13 },
+  terminal: { fontSize: 13, confirmDeleteTabs: true },
   defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
   binaries: {}
 };

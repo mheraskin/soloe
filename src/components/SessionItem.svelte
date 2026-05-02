@@ -5,8 +5,8 @@
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
   import { reportError } from '../stores/toast.svelte';
-  import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
+  import { confirmDeleteSession } from '../lib/session-delete-confirmation';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
@@ -92,12 +92,7 @@
     modal.openEdit(session);
   }
   async function remove() {
-    const ok = await confirmStore.ask({
-      title: 'Delete session',
-      message: `Delete session "${session.name}"?`,
-      confirmLabel: 'Delete',
-      tone: 'danger'
-    });
+    const ok = await confirmDeleteSession(session);
     if (!ok) return;
     try { await sessions.remove(session.id); } catch (err) { reportError(err); }
   }
