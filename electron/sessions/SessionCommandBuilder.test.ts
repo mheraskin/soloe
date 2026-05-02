@@ -73,6 +73,7 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     };
     expect(() => builder.build(s, ctx)).toThrow(/wslDistro is required/);
   });
+
 });
 
 describe('SessionCommandBuilder — standard_terminal kind', () => {
@@ -297,7 +298,7 @@ describe('SessionCommandBuilder — codex kind', () => {
     expect(inner).toMatch(/^\. <\(printf %s [A-Za-z0-9+/=]+ \| base64 -d\)$/);
     const script = decodeAgentScript(inner);
     expect(script).toContain('export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"');
-    expect(script).toContain('__soloe_agent_bin="$(command -v codex)"');
+    expect(script).toContain('__soloe_agent_bin="$(command -v codex 2>/dev/null)"');
     expect(script).toContain('NVM_DIR');
     expect(script).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec "$__soloe_agent_bin"');
     expect(script).not.toContain('exec SOLOE_SESSION_ID=');
