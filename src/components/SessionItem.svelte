@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { Archive, ArchiveRestore, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
-  import type { AgentObservedState, Session } from '@shared/types/sessions.js';
+  import type { AgentObservedState, Session, SessionStatus } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -11,9 +11,17 @@
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
-  import StatusDot from './StatusDot.svelte';
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
+
+  type StatusTone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger';
+
+  interface StatusPill {
+    label: string;
+    title: string;
+    tone: StatusTone;
+    pulse?: boolean;
+  }
 
   let { session, branch = null }: { session: Session; branch?: string | null } = $props();
 
@@ -32,10 +40,7 @@
     !!observedState &&
       !(session.kind === 'standard_terminal' && observation?.provider === 'standard_terminal')
   );
-  let statusLabel = $derived(showAgentStatus && observedState ? observedStateLabel(observedState) : status);
-  let statusTitle = $derived(
-    observedSummary ? `${statusLabel} · ${observedSummary}` : statusLabel
-  );
+  let statusPill = $derived(buildStatusPill());
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
@@ -156,6 +161,73 @@
     } satisfies Record<AgentObservedState, string>;
     return labels[state] ?? state;
   }
+
+  function buildStatusPill(): StatusPill | null {
+    if (session.kind === 'standard_terminal') {
+      if (status === 'exited') return statusPillForStatus(status);
+      if (status === 'error') return statusPillForStatus(status);
+      return null;
+    }
+
+    if (showAgentStatus && observedState) {
+      const label = observedStateLabel(observedState);
+      return {
+        label,
+        title: observedSummary ? `${label} · ${observedSummary}` : label,
+        tone: toneForObservedState(observedState),
+        pulse: observedState === 'starting' || observedState === 'working'
+      };
+    }
+
+    return statusPillForStatus(status);
+  }
+
+  function statusPillForStatus(value: SessionStatus): StatusPill | null {
+    if (value === 'stopped') return null;
+    return {
+      label: value,
+      title: value,
+      tone: toneForStatus(value),
+      pulse: value === 'starting'
+    };
+  }
+
+  function toneForStatus(value: SessionStatus): StatusTone {
+    const tones = {
+      stopped: 'neutral',
+      starting: 'warning',
+      running: 'success',
+      exited: 'neutral',
+      error: 'danger'
+    } satisfies Record<SessionStatus, StatusTone>;
+    return tones[value];
+  }
+
+  function toneForObservedState(state: AgentObservedState): StatusTone {
+    const tones = {
+      starting: 'warning',
+      idle: 'neutral',
+      working: 'primary',
+      running_tool: 'primary',
+      waiting_for_input: 'warning',
+      waiting_for_approval: 'warning',
+      completed: 'success',
+      failed: 'danger',
+      exited: 'neutral'
+    } satisfies Record<AgentObservedState, StatusTone>;
+    return tones[state];
+  }
+
+  function pillClass(tone: StatusTone): string {
+    const classes = {
+      neutral: 'border-border bg-muted/40 text-muted-foreground',
+      primary: 'border-primary/40 bg-primary/10 text-primary',
+      success: 'border-success/40 bg-success/10 text-success',
+      warning: 'border-warning/40 bg-warning/10 text-warning',
+      danger: 'border-destructive/40 bg-destructive/10 text-destructive'
+    } satisfies Record<StatusTone, string>;
+    return classes[tone];
+  }
 </script>
 
 <ContextMenu.Root>
@@ -194,14 +266,24 @@
                 {session.name || '(unnamed)'}
               </span>
             {/if}
-            <span
-              class="inline-flex max-w-[92px] shrink-0 items-center gap-1 rounded-full border border-border bg-muted/35 px-1.5 py-px text-[10px] leading-none font-medium text-muted-foreground uppercase"
-              title={statusTitle}
-              aria-label={statusTitle}
-            >
-              <StatusDot {status} class="size-1.5" />
-              <span class="truncate">{statusLabel}</span>
-            </span>
+            {#if statusPill}
+              <span
+                class={cn(
+                  'inline-flex max-w-[92px] shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[10px] leading-none font-medium uppercase',
+                  pillClass(statusPill.tone)
+                )}
+                title={statusPill.title}
+                aria-label={statusPill.title}
+              >
+                <span
+                  class={cn(
+                    'size-1.5 shrink-0 rounded-full bg-current',
+                    statusPill.pulse && 'animate-pulse'
+                  )}
+                ></span>
+                <span class="truncate">{statusPill.label}</span>
+              </span>
+            {/if}
           </span>
           <span class="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-3.5 text-muted-foreground">
             <span class="min-w-0 truncate">{session.cwd}</span>
