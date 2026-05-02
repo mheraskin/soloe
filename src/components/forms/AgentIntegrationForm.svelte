@@ -6,7 +6,8 @@
   import { nav } from '../../stores/nav.svelte';
   import type {
     AgentIntegrationClaudeScope,
-    AgentIntegrationStatus
+    AgentIntegrationStatus,
+    AgentIntegrationTargetStatus
   } from '@shared/types/ipc.js';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
@@ -104,23 +105,48 @@
   );
 
   const claudeConnected = $derived.by(() => {
-    if (!status) return false;
+    return Boolean(claudeScopeStatus?.current);
+  });
+
+  const claudeScopeStatus = $derived.by<AgentIntegrationTargetStatus | null>(() => {
+    if (!status) return null;
     if (effectiveScope === 'user') return status.claude.user;
     if (effectiveScope === 'project') return status.claude.project;
     return status.claude.projectLocal;
   });
+
+  function statusLabel(item: AgentIntegrationTargetStatus | null | undefined): string {
+    if (!item?.installed) return 'Not connected';
+    if (!item.current) return 'Update needed';
+    return 'Connected';
+  }
+
+  function statusClass(item: AgentIntegrationTargetStatus | null | undefined): string {
+    if (item?.current) return 'text-emerald-500';
+    if (item?.installed) return 'text-amber-500';
+    return 'text-muted-foreground';
+  }
+
+  const needsSetup = $derived(
+    Boolean(status && (!status.claude.user.current || !status.codex.current))
+  );
 </script>
 
 <div class="flex flex-col gap-4">
+  {#if needsSetup}
+    <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+      Agent hooks are missing or out of date. Connect or update them so Soloe can bind Claude and
+      Codex sessions for correct resume.
+    </div>
+  {/if}
+
   <div class="flex flex-col gap-2.5 rounded-md border border-border p-3">
     <div class="flex items-baseline justify-between gap-2">
       <h4 class="m-0 text-xs font-medium">Claude Code</h4>
       <span
-        class="text-[10px] tracking-widest uppercase {claudeConnected
-          ? 'text-emerald-500'
-          : 'text-muted-foreground'}"
+        class="text-[10px] tracking-widest uppercase {statusClass(claudeScopeStatus)}"
       >
-        {claudeConnected ? 'Connected' : 'Not connected'}
+        {statusLabel(claudeScopeStatus)}
       </span>
     </div>
     <p class="m-0 text-[11px] text-muted-foreground">
@@ -162,7 +188,7 @@
       </RadioGroup>
     </div>
     <div class="flex gap-2">
-      {#if claudeConnected}
+      {#if claudeScopeStatus?.current}
         <Button
           size="sm"
           variant="outline"
@@ -173,7 +199,7 @@
         </Button>
       {:else}
         <Button size="sm" disabled={claudeBusy} onclick={installClaude}>
-          {claudeBusy ? 'Working…' : 'Connect'}
+          {claudeBusy ? 'Working…' : claudeScopeStatus?.installed ? 'Update' : 'Connect'}
         </Button>
       {/if}
     </div>
@@ -183,24 +209,22 @@
     <div class="flex items-baseline justify-between gap-2">
       <h4 class="m-0 text-xs font-medium">Codex CLI</h4>
       <span
-        class="text-[10px] tracking-widest uppercase {status?.codex
-          ? 'text-emerald-500'
-          : 'text-muted-foreground'}"
+        class="text-[10px] tracking-widest uppercase {statusClass(status?.codex)}"
       >
-        {status?.codex ? 'Connected' : 'Not connected'}
+        {statusLabel(status?.codex)}
       </span>
     </div>
     <p class="m-0 text-[11px] text-muted-foreground">
       Codex stores integration in <code class="text-foreground">~/.codex/config.toml</code> only — no per-project equivalent.
     </p>
     <div class="flex gap-2">
-      {#if status?.codex}
+      {#if status?.codex.current}
         <Button size="sm" variant="outline" disabled={codexBusy} onclick={uninstallCodex}>
           {codexBusy ? 'Working…' : 'Disconnect'}
         </Button>
       {:else}
         <Button size="sm" disabled={codexBusy} onclick={installCodex}>
-          {codexBusy ? 'Working…' : 'Connect'}
+          {codexBusy ? 'Working…' : status?.codex.installed ? 'Update' : 'Connect'}
         </Button>
       {/if}
     </div>

@@ -3,18 +3,19 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import type { AgentIntegrationTargetStatus } from '@shared/types/ipc.js';
 
 export type ClaudeScope = 'user' | 'project' | 'project_local';
 
 export interface ClaudeStatus {
-  user: boolean;
-  project: boolean;
-  projectLocal: boolean;
+  user: AgentIntegrationTargetStatus;
+  project: AgentIntegrationTargetStatus;
+  projectLocal: AgentIntegrationTargetStatus;
 }
 
 export interface HookInstallStatus {
   claude: ClaudeStatus;
-  codex: boolean;
+  codex: AgentIntegrationTargetStatus;
 }
 
 export interface HookInstallerOptions {
@@ -34,15 +35,17 @@ const CLAUDE_EVENTS = [
 ];
 
 const CODEX_EVENTS = [
-  'session_start',
-  'user_prompt_submit',
-  'pre_tool_use',
-  'post_tool_use',
-  'permission_request',
-  'stop'
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PermissionRequest',
+  'Stop'
 ];
 
 const SOLOE_MARKER = '_soloe';
+const SOLOE_VERSION_KEY = '_soloe_version';
+export const SOLOE_HOOK_VERSION = 2;
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 
@@ -69,10 +72,10 @@ export class HookInstaller {
 
   async status(projectPath?: string): Promise<HookInstallStatus> {
     const [user, project, projectLocal, codex] = await Promise.all([
-      this.claudeFileHasSoloe(this.claudeUserPath()),
-      projectPath ? this.claudeFileHasSoloe(this.claudeProjectPath(projectPath)) : Promise.resolve(false),
-      projectPath ? this.claudeFileHasSoloe(this.claudeProjectLocalPath(projectPath)) : Promise.resolve(false),
-      this.codexFileHasSoloe(this.codexConfigPath())
+      this.claudeFileSoloeStatus(this.claudeUserPath()),
+      projectPath ? this.claudeFileSoloeStatus(this.claudeProjectPath(projectPath)) : Promise.resolve(emptyStatus()),
+      projectPath ? this.claudeFileSoloeStatus(this.claudeProjectLocalPath(projectPath)) : Promise.resolve(emptyStatus()),
+      this.codexFileSoloeStatus(this.codexConfigPath())
     ]);
     return {
       claude: { user, project, projectLocal },
@@ -139,16 +142,16 @@ export class HookInstaller {
     return path.join(this.homeDir, '.codex', 'config.toml');
   }
 
-  private async claudeFileHasSoloe(filePath: string): Promise<boolean> {
+  private async claudeFileSoloeStatus(filePath: string): Promise<AgentIntegrationTargetStatus> {
     const data = await readJsonOrNull(filePath);
-    if (!data) return false;
-    return claudeHasSoloeEntry(data);
+    if (!data) return emptyStatus();
+    return claudeSoloeStatus(data);
   }
 
-  private async codexFileHasSoloe(filePath: string): Promise<boolean> {
+  private async codexFileSoloeStatus(filePath: string): Promise<AgentIntegrationTargetStatus> {
     const data = await readTomlOrNull(filePath);
-    if (!data) return false;
-    return codexHasSoloeEntry(data);
+    if (!data) return emptyStatus();
+    return codexSoloeStatus(data);
   }
 
   private async writeAtomic(filePath: string, content: string, backup: boolean): Promise<void> {
@@ -210,11 +213,13 @@ export function mergeClaudeHooks(
     const filtered = groups.filter((entry) => !isSoloeClaudeEntry(entry));
     filtered.push({
       [SOLOE_MARKER]: true,
+      [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
       hooks: [
         {
           type: 'command',
           command,
-          [SOLOE_MARKER]: true
+          [SOLOE_MARKER]: true,
+          [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION
         }
       ]
     });
@@ -255,7 +260,10 @@ export function mergeCodexHooks(
   command: string
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...original };
-  const hooksRoot = isObject(next['hooks']) ? { ...next['hooks'] } : {};
+  const features = isObject(next['features']) ? { ...next['features'] } : {};
+  features['codex_hooks'] = true;
+  next['features'] = features;
+  const hooksRoot = cleanSoloeCodexHooks(isObject(next['hooks']) ? { ...next['hooks'] } : {});
   for (const event of CODEX_EVENTS) {
     const entries = Array.isArray(hooksRoot[event])
       ? [...(hooksRoot[event] as unknown[])]
@@ -264,11 +272,27 @@ export function mergeCodexHooks(
     filtered.push({
       type: 'command',
       command,
-      [SOLOE_MARKER]: true
+      [SOLOE_MARKER]: true,
+      [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION
     });
     hooksRoot[event] = filtered;
   }
   next['hooks'] = hooksRoot;
+  return next;
+}
+
+function cleanSoloeCodexHooks(hooksRoot: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...hooksRoot };
+  for (const event of Object.keys(next)) {
+    const entries = next[event];
+    if (!Array.isArray(entries)) continue;
+    const cleaned = entries.filter((entry) => !isSoloeCodexEntry(entry));
+    if (cleaned.length === 0) {
+      delete next[event];
+    } else {
+      next[event] = cleaned;
+    }
+  }
   return next;
 }
 
@@ -296,36 +320,73 @@ export function removeSoloeFromCodex(
   return next;
 }
 
-function claudeHasSoloeEntry(data: Record<string, unknown>): boolean {
+function claudeSoloeStatus(data: Record<string, unknown>): AgentIntegrationTargetStatus {
   const hooks = data['hooks'];
-  if (!isObject(hooks)) return false;
+  if (!isObject(hooks)) return emptyStatus();
+  const versions: number[] = [];
   for (const groups of Object.values(hooks)) {
     if (!Array.isArray(groups)) continue;
-    if (groups.some(isSoloeClaudeEntry)) return true;
+    for (const group of groups) {
+      const version = soloeClaudeEntryVersion(group);
+      if (version !== null) versions.push(version);
+    }
   }
-  return false;
+  return statusFromVersions(versions);
 }
 
-function codexHasSoloeEntry(data: Record<string, unknown>): boolean {
+function codexSoloeStatus(data: Record<string, unknown>): AgentIntegrationTargetStatus {
   const hooks = data['hooks'];
-  if (!isObject(hooks)) return false;
+  if (!isObject(hooks)) return emptyStatus();
+  const versions: number[] = [];
   for (const entries of Object.values(hooks)) {
     if (!Array.isArray(entries)) continue;
-    if (entries.some(isSoloeCodexEntry)) return true;
+    for (const entry of entries) {
+      const version = soloeCodexEntryVersion(entry);
+      if (version !== null) versions.push(version);
+    }
   }
-  return false;
+  return statusFromVersions(versions);
 }
 
 function isSoloeClaudeEntry(entry: unknown): boolean {
-  if (!isObject(entry)) return false;
-  if (entry[SOLOE_MARKER] === true) return true;
+  return soloeClaudeEntryVersion(entry) !== null;
+}
+
+function soloeClaudeEntryVersion(entry: unknown): number | null {
+  if (!isObject(entry)) return null;
+  if (entry[SOLOE_MARKER] === true) return markerVersion(entry);
   const inner = entry['hooks'];
-  if (!Array.isArray(inner)) return false;
-  return inner.some((h) => isObject(h) && h[SOLOE_MARKER] === true);
+  if (!Array.isArray(inner)) return null;
+  for (const h of inner) {
+    if (isObject(h) && h[SOLOE_MARKER] === true) return markerVersion(h);
+  }
+  return null;
 }
 
 function isSoloeCodexEntry(entry: unknown): boolean {
-  return isObject(entry) && entry[SOLOE_MARKER] === true;
+  return soloeCodexEntryVersion(entry) !== null;
+}
+
+function soloeCodexEntryVersion(entry: unknown): number | null {
+  return isObject(entry) && entry[SOLOE_MARKER] === true ? markerVersion(entry) : null;
+}
+
+function markerVersion(entry: Record<string, unknown>): number {
+  return typeof entry[SOLOE_VERSION_KEY] === 'number' ? entry[SOLOE_VERSION_KEY] : 1;
+}
+
+function emptyStatus(): AgentIntegrationTargetStatus {
+  return { installed: false, current: false };
+}
+
+function statusFromVersions(versions: number[]): AgentIntegrationTargetStatus {
+  if (versions.length === 0) return emptyStatus();
+  const newest = Math.max(...versions);
+  return {
+    installed: true,
+    current: versions.some((version) => version === SOLOE_HOOK_VERSION),
+    version: newest
+  };
 }
 
 function stripSoloeFromGroup(group: unknown): unknown | null {

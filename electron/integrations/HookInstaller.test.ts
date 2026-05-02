@@ -9,7 +9,8 @@ import {
   mergeClaudeHooks,
   removeSoloeFromClaude,
   mergeCodexHooks,
-  removeSoloeFromCodex
+  removeSoloeFromCodex,
+  SOLOE_HOOK_VERSION
 } from './HookInstaller.js';
 
 describe('HookInstaller', () => {
@@ -70,6 +71,8 @@ describe('HookInstaller', () => {
       expect(groups).toHaveLength(2);
       expect(groups[0].hooks[0].command).toBe('user-script');
       expect(groups[1]._soloe).toBe(true);
+      expect(groups[1]._soloe_version).toBe(SOLOE_HOOK_VERSION);
+      expect(groups[1].hooks[0]._soloe_version).toBe(SOLOE_HOOK_VERSION);
     });
 
     it('install→uninstall is a no-op when no prior config existed', async () => {
@@ -153,14 +156,15 @@ describe('HookInstaller', () => {
       const parsed = parseToml(raw) as { hooks: Record<string, unknown[]> };
       expect(Object.keys(parsed.hooks)).toEqual(
         expect.arrayContaining([
-          'session_start',
-          'user_prompt_submit',
-          'pre_tool_use',
-          'post_tool_use',
-          'permission_request',
-          'stop'
+          'SessionStart',
+          'UserPromptSubmit',
+          'PreToolUse',
+          'PostToolUse',
+          'PermissionRequest',
+          'Stop'
         ])
       );
+      expect((parsed as { features?: { codex_hooks?: boolean } }).features?.codex_hooks).toBe(true);
     });
 
     it('preserves user keys when merging', async () => {
@@ -168,15 +172,16 @@ describe('HookInstaller', () => {
       await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
       await fs.writeFile(
         path,
-        ['model = "gpt-5"', '', '[[hooks.user_prompt_submit]]', 'type = "command"', 'command = "user-script"'].join(
+        ['model = "gpt-5"', '', '[[hooks.UserPromptSubmit]]', 'type = "command"', 'command = "user-script"'].join(
           '\n'
         )
       );
       await installer.installCodex();
       const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
       expect(parsed['model']).toBe('gpt-5');
-      const ups = (parsed['hooks'] as Record<string, unknown[]>)['user_prompt_submit'];
+      const ups = (parsed['hooks'] as Record<string, unknown[]>)['UserPromptSubmit']!;
       expect(ups).toHaveLength(2);
+      expect((ups[1] as { _soloe_version?: number })._soloe_version).toBe(SOLOE_HOOK_VERSION);
     });
 
     it('install→uninstall removes only Soloe entries', async () => {
@@ -184,7 +189,7 @@ describe('HookInstaller', () => {
       await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
       await fs.writeFile(
         path,
-        ['model = "gpt-5"', '', '[[hooks.user_prompt_submit]]', 'type = "command"', 'command = "user-script"'].join(
+        ['model = "gpt-5"', '', '[[hooks.UserPromptSubmit]]', 'type = "command"', 'command = "user-script"'].join(
           '\n'
         )
       );
@@ -192,7 +197,7 @@ describe('HookInstaller', () => {
       await installer.uninstallCodex();
       const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
       expect(parsed['model']).toBe('gpt-5');
-      const ups = (parsed['hooks'] as Record<string, unknown[]>)['user_prompt_submit']!;
+      const ups = (parsed['hooks'] as Record<string, unknown[]>)['UserPromptSubmit']!;
       expect(ups).toHaveLength(1);
       expect((ups[0] as { command: string }).command).toBe('user-script');
     });
@@ -203,7 +208,26 @@ describe('HookInstaller', () => {
       const parsed = parseToml(
         await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8')
       ) as Record<string, Record<string, unknown[]>>;
-      expect(parsed['hooks']?.['session_start']).toHaveLength(1);
+      expect(parsed['hooks']?.['SessionStart']).toHaveLength(1);
+    });
+
+    it('replaces legacy lowercase Soloe hook entries on install', async () => {
+      const path = join(homeDir, '.codex', 'config.toml');
+      await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
+      await fs.writeFile(
+        path,
+        [
+          '[[hooks.session_start]]',
+          'type = "command"',
+          'command = "old-soloe"',
+          '_soloe = true'
+        ].join('\n')
+      );
+      await installer.installCodex();
+      const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
+      const hooks = parsed['hooks'] as Record<string, unknown[]>;
+      expect(hooks['session_start']).toBeUndefined();
+      expect(hooks['SessionStart']).toHaveLength(1);
     });
   });
 
@@ -211,8 +235,12 @@ describe('HookInstaller', () => {
     it('reports nothing when no files exist', async () => {
       const s = await installer.status();
       expect(s).toEqual({
-        claude: { user: false, project: false, projectLocal: false },
-        codex: false
+        claude: {
+          user: { installed: false, current: false },
+          project: { installed: false, current: false },
+          projectLocal: { installed: false, current: false }
+        },
+        codex: { installed: false, current: false }
       });
     });
 
@@ -220,16 +248,44 @@ describe('HookInstaller', () => {
       await installer.installClaude('user');
       await installer.installCodex();
       const s = await installer.status();
-      expect(s.claude.user).toBe(true);
-      expect(s.codex).toBe(true);
+      expect(s.claude.user).toEqual({
+        installed: true,
+        current: true,
+        version: SOLOE_HOOK_VERSION
+      });
+      expect(s.codex).toEqual({
+        installed: true,
+        current: true,
+        version: SOLOE_HOOK_VERSION
+      });
     });
 
     it('reports project + project_local when projectPath provided', async () => {
       await installer.installClaude('project', projectDir);
       await installer.installClaude('project_local', projectDir);
       const s = await installer.status(projectDir);
-      expect(s.claude.project).toBe(true);
-      expect(s.claude.projectLocal).toBe(true);
+      expect(s.claude.project.current).toBe(true);
+      expect(s.claude.projectLocal.current).toBe(true);
+    });
+
+    it('reports old Soloe hook entries as installed but stale', async () => {
+      const claudePath = join(homeDir, '.claude', 'settings.json');
+      await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
+      await fs.writeFile(
+        claudePath,
+        JSON.stringify({ hooks: { Stop: [{ _soloe: true, hooks: [] }] } })
+      );
+      const codexPath = join(homeDir, '.codex', 'config.toml');
+      await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
+      await fs.writeFile(
+        codexPath,
+        ['[[hooks.session_start]]', 'type = "command"', 'command = "old"', '_soloe = true'].join(
+          '\n'
+        )
+      );
+      const s = await installer.status();
+      expect(s.claude.user).toEqual({ installed: true, current: false, version: 1 });
+      expect(s.codex).toEqual({ installed: true, current: false, version: 1 });
     });
   });
 });
@@ -273,11 +329,13 @@ describe('mergeCodexHooks / removeSoloeFromCodex (pure)', () => {
   it('roundtrip preserves user entries', () => {
     const original = {
       hooks: {
-        user_prompt_submit: [{ type: 'command', command: 'user' }]
+        UserPromptSubmit: [{ type: 'command', command: 'user' }]
       }
     };
     const installed = mergeCodexHooks(original, 'soloe');
     const cleaned = removeSoloeFromCodex(installed);
-    expect(cleaned).toEqual(original);
+    expect((cleaned.hooks as Record<string, unknown[]>)['UserPromptSubmit']).toEqual(
+      original.hooks.UserPromptSubmit
+    );
   });
 });

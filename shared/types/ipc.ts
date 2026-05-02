@@ -276,15 +276,21 @@ export interface WindowApi {
 
 export type AgentIntegrationClaudeScope = 'user' | 'project' | 'project_local';
 
+export interface AgentIntegrationTargetStatus {
+  installed: boolean;
+  current: boolean;
+  version?: number;
+}
+
 export interface AgentIntegrationClaudeStatus {
-  user: boolean;
-  project: boolean;
-  projectLocal: boolean;
+  user: AgentIntegrationTargetStatus;
+  project: AgentIntegrationTargetStatus;
+  projectLocal: AgentIntegrationTargetStatus;
 }
 
 export interface AgentIntegrationStatus {
   claude: AgentIntegrationClaudeStatus;
-  codex: boolean;
+  codex: AgentIntegrationTargetStatus;
 }
 
 export interface AgentIntegrationClaudeRequest {
