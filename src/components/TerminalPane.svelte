@@ -134,6 +134,11 @@
 
       const ctrlOrCmd = (e.ctrlKey || e.metaKey) && !e.altKey;
       if (ctrlOrCmd && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        void navigator.clipboard.readText().then((text) => {
+          if (!text) return;
+          void ipc.terminal.input(terminalId, text).catch(() => {});
+        }).catch(() => {});
         return false;
       }
       if (ctrlOrCmd && e.key.toLowerCase() === 'c') {
