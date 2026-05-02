@@ -36,13 +36,15 @@
   <SessionToolbar />
   <div class="relative min-h-0 flex-1">
     {#if selectedPane}
-      <div class="absolute inset-0">
-        <TerminalPane
-          terminalId={selectedPane.terminalId}
-          sessionId={selectedPane.sessionId}
-          active={true}
-        />
-      </div>
+      {#key selectedPane.terminalId}
+        <div class="absolute inset-0">
+          <TerminalPane
+            terminalId={selectedPane.terminalId}
+            sessionId={selectedPane.sessionId}
+            active={true}
+          />
+        </div>
+      {/key}
     {/if}
     {#if showEmpty}
       <div class="absolute inset-0">
