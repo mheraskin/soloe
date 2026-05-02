@@ -205,5 +205,5 @@ function buildWslBashLocationLine(): string {
     '__soloe_emit_cwd'
   ];
   const quotedLines = rcLines.map((line) => posixSingleQuote(line)).join(' ');
-  return `__soloe_tmp=\${TMPDIR:-/tmp} && mkdir -p "$__soloe_tmp" 2>/dev/null || __soloe_tmp="$HOME" && __soloe_rc="$__soloe_tmp/soloe-bashrc.$$" && export __soloe_rc && printf '%s\\n' ${quotedLines} > "$__soloe_rc" && exec bash --rcfile "$__soloe_rc" -i`;
+  return `__soloe_dir="\${HOME:-.}/.soloe" && mkdir -p "$__soloe_dir" && __soloe_rc="$__soloe_dir/bashrc.$$" && export __soloe_rc && printf '%s\\n' ${quotedLines} > "$__soloe_rc" && exec bash --rcfile "$__soloe_rc" -i`;
 }
