@@ -31,9 +31,11 @@ export class SessionStore {
 
   async list(): Promise<Session[]> {
     await this.ensureLoaded();
-    return [...this.cache!.values()].sort((a, b) =>
-      b.lastUsedAt.localeCompare(a.lastUsedAt)
-    );
+    return [...this.cache!.values()]
+      .filter((session) => !session.archivedAt)
+      .sort((a, b) =>
+        b.lastUsedAt.localeCompare(a.lastUsedAt)
+      );
   }
 
   async get(id: SessionId): Promise<Session | null> {
@@ -214,6 +216,9 @@ function validateSession(s: Session): void {
   }
   if (s.pinned !== undefined && typeof s.pinned !== 'boolean') {
     throw new Error('pinned must be a boolean when set');
+  }
+  if (s.archivedAt !== undefined && typeof s.archivedAt !== 'string') {
+    throw new Error('archivedAt must be a string when set');
   }
   if (s.lastBranch !== undefined && typeof s.lastBranch !== 'string') {
     throw new Error('lastBranch must be a string when set');

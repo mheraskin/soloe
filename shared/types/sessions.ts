@@ -38,6 +38,7 @@ export interface SessionBase {
   projectId?: string;
   tags?: string[];
   pinned?: boolean;
+  archivedAt?: string;
   lastBranch?: string;
 }
 

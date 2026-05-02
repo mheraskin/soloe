@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
+  import { Archive, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
   import type { Session } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -8,6 +8,7 @@
   import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
   import { cn } from '$lib/utils';
+  import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import StatusDot from './StatusDot.svelte';
 
@@ -100,6 +101,14 @@
     if (!ok) return;
     try { await sessions.remove(session.id); } catch (err) { reportError(err); }
   }
+  async function archive(e?: Event) {
+    e?.stopPropagation();
+    try { await sessions.archive(session.id); } catch (err) { reportError(err); }
+  }
+  function removeFromButton(e: Event) {
+    e.stopPropagation();
+    void remove();
+  }
   async function openCwd() {
     try { await ipc.system.openPath(session.id); } catch (err) { reportError(err); }
   }
@@ -165,6 +174,30 @@
               <span class="max-w-[110px] truncate">{branch}</span>
             </span>
           {/if}
+          <div class="ml-auto flex shrink-0 items-center gap-0.5">
+            {#if session.projectId}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                class="text-muted-foreground hover:text-foreground"
+                onclick={archive}
+                title="Archive session"
+                aria-label={`Archive ${session.name || 'session'}`}
+              >
+                <Archive />
+              </Button>
+            {/if}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              onclick={removeFromButton}
+              title="Delete session"
+              aria-label={`Delete ${session.name || 'session'}`}
+            >
+              <Trash2 />
+            </Button>
+          </div>
         </div>
         <div class="truncate pl-[18px] font-mono text-[11px] text-muted-foreground">
           {session.cwd}
@@ -197,6 +230,11 @@
       <Copy /> <span>Copy command</span>
     </ContextMenu.Item>
     <ContextMenu.Separator />
+    {#if session.projectId}
+      <ContextMenu.Item onSelect={() => void archive()}>
+        <Archive /> <span>Archive</span>
+      </ContextMenu.Item>
+    {/if}
     <ContextMenu.Item variant="destructive" onSelect={remove}>
       <Trash2 /> <span>Delete</span>
     </ContextMenu.Item>

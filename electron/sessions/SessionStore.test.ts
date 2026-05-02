@@ -116,6 +116,15 @@ describe('SessionStore — update/delete', () => {
     expect(await store.list()).toHaveLength(0);
     await expect(store.delete(created.id)).rejects.toThrow(/not found/);
   });
+
+  it('archives a session by hiding it from list while preserving it by id', async () => {
+    const store = new SessionStore(storePath);
+    const created = await store.create(standardDraft({ projectId: 'project-1' }));
+    const archivedAt = new Date().toISOString();
+    await store.update(created.id, { archivedAt });
+    expect(await store.list()).toEqual([]);
+    expect((await store.get(created.id))?.archivedAt).toBe(archivedAt);
+  });
 });
 
 describe('SessionStore — disk round-trip', () => {

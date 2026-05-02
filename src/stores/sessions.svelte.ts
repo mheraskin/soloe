@@ -321,6 +321,42 @@ class SessionsStore {
     }
   }
 
+  async archive(id: SessionId): Promise<void> {
+    const session = this.sessions.find((s) => s.id === id);
+    if (!session?.projectId) {
+      await this.remove(id);
+      return;
+    }
+    const rt = this.runtime[id];
+    if (rt && rt.terminalId && (rt.status === 'running' || rt.status === 'starting')) {
+      try {
+        await ipc.terminal.stop(rt.terminalId);
+      } catch {
+        // continue with archive even if stop fails
+      }
+    }
+    await ipc.sessions.update(id, { archivedAt: new Date().toISOString() });
+    this.sessions = this.sessions.filter((s) => s.id !== id);
+    const next = { ...this.runtime };
+    delete next[id];
+    this.runtime = next;
+    const lastMap = { ...this.lastSelectedByProject };
+    let changed = false;
+    for (const [projectKey, sid] of Object.entries(lastMap)) {
+      if (sid === id) {
+        delete lastMap[projectKey];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.lastSelectedByProject = lastMap;
+      writeLastSelectedMap(lastMap);
+    }
+    if (this.selectedId === id) {
+      this.selectedId = this.sessions[0]?.id ?? null;
+    }
+  }
+
   async start(id: SessionId): Promise<void> {
     this.select(id);
     console.info('[DEBUG-terminal-start] renderer start requested', { sessionId: id });
