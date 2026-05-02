@@ -29,6 +29,7 @@
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
   let search: SearchAddon | null = null;
+  let pendingOutput = '';
 
   function bufferText(): string {
     if (!term) return '';
@@ -73,6 +74,25 @@
   function onFindInput(): void {
     if (!findQuery) return;
     search?.findNext(findQuery);
+  }
+
+  function canRender(): boolean {
+    if (!active || !host) return false;
+    const rect = host.getBoundingClientRect();
+    return rect.width >= 4 && rect.height >= 4;
+  }
+
+  function writeOutput(data: string): void {
+    if (!term || !canRender()) {
+      pendingOutput += data;
+      return;
+    }
+    try {
+      term.write(data);
+    } catch (err) {
+      pendingOutput = data + pendingOutput;
+      console.warn('[terminal] write failed', err);
+    }
   }
 
   $effect(() => {
@@ -142,13 +162,7 @@
         console.warn('output seq gap', { terminalId, expected: nextSeq, got: e.seq });
       }
       nextSeq = e.seq + 1;
-      try {
-        t.write(e.data);
-      } catch (err) {
-        // Renderer may be temporarily unavailable (hidden pane, context loss).
-        // Drop the write rather than crash the renderer process.
-        console.warn('[terminal] write failed', err);
-      }
+      writeOutput(e.data);
     });
 
     const onInput = t.onData((data) => {
@@ -193,7 +207,15 @@
       term = null;
       fit = null;
       search = null;
+      pendingOutput = '';
     };
+  });
+
+  $effect(() => {
+    if (!active || !term || !pendingOutput || !canRender()) return;
+    const data = pendingOutput;
+    pendingOutput = '';
+    writeOutput(data);
   });
 
   $effect(() => {

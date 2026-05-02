@@ -196,7 +196,11 @@ function executableName(executable: string): string {
 function buildWslBashLocationLine(): string {
   const rcLines = [
     'test -r ~/.bashrc && source ~/.bashrc',
-    `PROMPT_COMMAND=${posixSingleQuote(BASH_LOCATION_PROMPT)}\${PROMPT_COMMAND:+; $PROMPT_COMMAND}`
+    `__soloe_emit_cwd() { ${BASH_LOCATION_PROMPT}; }`,
+    '__soloe_track_cwd() { case "$BASH_COMMAND" in cd|cd\\ *|pushd|pushd\\ *|popd|popd\\ *) __soloe_emit_cwd ;; esac; }',
+    "trap '__soloe_track_cwd' DEBUG",
+    'PROMPT_COMMAND=__soloe_emit_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}',
+    '__soloe_emit_cwd'
   ];
   const quotedLines = rcLines.map((line) => posixSingleQuote(line)).join(' ');
   return `exec bash --rcfile <(printf '%s\\n' ${quotedLines}) -i`;

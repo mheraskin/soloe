@@ -261,8 +261,8 @@ class SessionsStore {
   } = {}): Promise<Session> {
     const defaults = settings.current.defaults;
     const project = opts.projectId ? projects.get(opts.projectId) : null;
-    const cwd = opts.cwd ?? project?.path ?? defaults.cwd;
     const runMode = project?.defaultRunMode ?? defaults.runMode;
+    const cwd = opts.cwd ?? project?.path ?? normalizedDefaultCwd(defaults.cwd, runMode);
     const wslDistro = (() => {
       if (project?.defaultWslDistro) return project.defaultWslDistro;
       return defaults.wslDistro ?? 'Ubuntu';
@@ -442,3 +442,10 @@ class SessionsStore {
 }
 
 export const sessions = new SessionsStore();
+
+function normalizedDefaultCwd(cwd: string, runMode: 'windows' | 'wsl'): string {
+  if (runMode !== 'wsl') return cwd;
+  if (/^\/mnt\/[a-z]\/Users\/[^/\\]+\/?$/i.test(cwd)) return '~';
+  if (/^[a-z]:[\\/]+Users[\\/]+[^\\/]+[\\/]?$/i.test(cwd)) return '~';
+  return cwd;
+}
