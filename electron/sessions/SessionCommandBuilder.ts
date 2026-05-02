@@ -172,10 +172,8 @@ function buildAgentCommand(
 }
 
 function buildWslAgentLine(env: Record<string, string>, executable: string, args: string[]): string {
-  return [
-    'test -r ~/.bashrc && source ~/.bashrc',
-    buildPosixCommandLine(env, 'exec', [executable, ...args])
-  ].join('; ');
+  const command = buildPosixCommandLine(env, 'exec', [executable, ...args]);
+  return `exec bash -ic ${posixSingleQuote(command)}`;
 }
 
 function buildSoloeEnv(
