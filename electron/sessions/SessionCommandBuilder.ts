@@ -158,7 +158,9 @@ export class SessionCommandBuilder {
 }
 
 const BASH_LOCATION_PROMPT =
-  'printf \'\\033]7;file://%s%s\\007\' "${HOSTNAME:-localhost}" "$(pwd -P)"';
+  '__soloe_cwd=$(pwd -P) && ' +
+  'printf \'\\033]7;file://%s%s\\007\\033]633;P;Cwd=%s\\007\' ' +
+  '"${HOSTNAME:-localhost}" "$__soloe_cwd" "$__soloe_cwd"';
 
 const POWERSHELL_LOCATION_SCRIPT =
   '$global:__soloeOriginalPrompt = (Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue).ScriptBlock; ' +
@@ -196,7 +198,11 @@ function buildWslBashLocationLine(): string {
   const rcLines = [
     'test -r ~/.bashrc && source ~/.bashrc',
     `__soloe_emit_cwd() { ${BASH_LOCATION_PROMPT}; }`,
-    'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__soloe_emit_cwd"',
+    "if declare -p PROMPT_COMMAND 2>/dev/null | grep -q '^declare -[^ ]*a'; then",
+    '  PROMPT_COMMAND+=(__soloe_emit_cwd)',
+    'else',
+    '  PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__soloe_emit_cwd"',
+    'fi',
     '__soloe_emit_cwd'
   ];
   return [
