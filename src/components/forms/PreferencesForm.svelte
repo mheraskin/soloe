@@ -71,6 +71,11 @@
 </script>
 
 <section class="flex flex-col gap-2.5 border-b border-border py-3">
+  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Agent integration</h3>
+  <AgentIntegrationForm />
+</section>
+
+<section class="flex flex-col gap-2.5 border-b border-border py-3">
   <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Appearance</h3>
   <div class="flex flex-col gap-1.5">
     <Label class="text-xs text-muted-foreground">Theme</Label>
@@ -172,7 +177,7 @@
   </div>
 </section>
 
-<section class="flex flex-col gap-2.5 border-b border-border py-3">
+<section class="flex flex-col gap-2.5 py-3">
   <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Binaries</h3>
   <p class="m-0 text-[11px] text-muted-foreground">Leave blank to use the binary on PATH.</p>
   {#each binaryKeys as b (b.key)}
@@ -187,9 +192,4 @@
       />
     </div>
   {/each}
-</section>
-
-<section class="flex flex-col gap-2.5 py-3">
-  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Agent integration</h3>
-  <AgentIntegrationForm />
 </section>

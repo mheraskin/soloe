@@ -11,6 +11,7 @@
   import { filePalette } from './stores/file-palette.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
+  import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from './lib/keymap';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -24,17 +25,16 @@
   import ProjectModal from './components/ProjectModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import FilePalette from './components/FilePalette.svelte';
+  import AgentIntegrationSetupDialog from './components/AgentIntegrationSetupDialog.svelte';
 
   let appliedTheme: string | null = null;
 
   onMount(() => {
     sessions.attachListeners();
-    sessions.load().catch(reportError);
     settings.attachListeners();
-    settings.load().catch(reportError);
     projects.attachListeners();
-    projects.load().catch(reportError);
     git.attachListeners();
+    void loadInitialState();
     const detachKbdHints = kbdHints.attach();
     window.addEventListener('keydown', onKey, true);
     return () => {
@@ -46,6 +46,26 @@
       git.detach();
     };
   });
+
+  async function loadInitialState(): Promise<void> {
+    try {
+      await Promise.all([settings.load(), projects.load(), sessions.load()]);
+      await promptForAgentIntegrationSetup();
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  async function promptForAgentIntegrationSetup(): Promise<void> {
+    const projectPath = sessions.selected?.projectId
+      ? projects.get(sessions.selected.projectId)?.path
+      : undefined;
+    const status = await ipc.agentIntegration.status(projectPath);
+    const claudeNeedsSetup = !status.claude.user.current &&
+      (!projectPath || (!status.claude.project.current && !status.claude.projectLocal.current));
+    if (!claudeNeedsSetup && status.codex.current) return;
+    agentIntegrationSetup.show(status, projectPath);
+  }
 
   $effect(() => {
     const theme = settings.current.appearance.theme;
@@ -196,6 +216,7 @@
   <CommandPalette />
   <FilePalette />
   <ConfirmDialog />
+  <AgentIntegrationSetupDialog />
   <SettingsDrawer />
   <Toaster richColors closeButton />
 </div>
