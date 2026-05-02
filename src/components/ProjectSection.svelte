@@ -11,6 +11,7 @@
   import { ipc } from '../lib/ipc';
   import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
+  import * as ContextMenu from '$lib/components/ui/context-menu';
   import WorktreeGroup from './WorktreeGroup.svelte';
 
   let {
@@ -78,8 +79,7 @@
 
   let accent = $derived(project.accentColor ?? null);
 
-  function edit(e: Event) {
-    e.stopPropagation();
+  function edit() {
     projectModal.openEdit(project);
   }
 
@@ -90,8 +90,7 @@
       .catch(reportError);
   }
 
-  async function removeProject(e: Event) {
-    e.stopPropagation();
+  async function removeProject() {
     const ok = await confirmStore.ask({
       title: 'Delete project',
       message: `Delete project "${project.name}" and its ${items.length} session${items.length === 1 ? '' : 's'} from Soloe? Files on disk will not be touched.`,
@@ -111,55 +110,52 @@
 </script>
 
 <Collapsible.Root bind:open={expanded} class="flex flex-col gap-1">
-  <div class="flex items-center gap-px px-1 pt-1 pb-0.5">
-    <Collapsible.Trigger
-      class="group flex flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground hover:bg-muted"
-      aria-label={`Toggle ${project.name} project`}
-    >
-      {#if expanded}
-        <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
-      {:else}
-        <ChevronRight class="size-3 shrink-0 text-muted-foreground" />
-      {/if}
-      {#if accent}
-        <span class="size-2.5 shrink-0 rounded-full" style={`background: ${accent}`}></span>
-      {:else}
-        <Folder class="size-3 shrink-0 text-muted-foreground" />
-      {/if}
-      <span class="truncate text-xs font-medium">{project.name}</span>
-      <span class="truncate font-mono text-[10px] text-muted-foreground" title={project.path}>
-        {project.path}
-      </span>
-    </Collapsible.Trigger>
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      onclick={addSession}
-      title="New terminal"
-      aria-label="New terminal"
-    >
-      <Plus />
-    </Button>
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      onclick={edit}
-      title="Edit project"
-      aria-label="Edit project"
-    >
-      <Pencil />
-    </Button>
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-      onclick={removeProject}
-      title="Delete project"
-      aria-label={`Delete ${project.name}`}
-    >
-      <Trash2 />
-    </Button>
-  </div>
+  <ContextMenu.Root>
+    <ContextMenu.Trigger>
+      {#snippet child({ props })}
+        <div {...props} class="flex items-center gap-px px-1 pt-1 pb-0.5">
+          <Collapsible.Trigger
+            class="group flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground hover:bg-muted"
+            aria-label={`Toggle ${project.name} project`}
+          >
+            {#if expanded}
+              <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
+            {:else}
+              <ChevronRight class="size-3 shrink-0 text-muted-foreground" />
+            {/if}
+            {#if accent}
+              <span class="size-2.5 shrink-0 rounded-full" style={`background: ${accent}`}></span>
+            {:else}
+              <Folder class="size-3 shrink-0 text-muted-foreground" />
+            {/if}
+            <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span class="truncate text-xs font-medium">{project.name}</span>
+              <span class="truncate font-mono text-[10px] text-muted-foreground" title={project.path}>
+                {project.path}
+              </span>
+            </span>
+          </Collapsible.Trigger>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onclick={addSession}
+            title="New terminal"
+            aria-label="New terminal"
+          >
+            <Plus />
+          </Button>
+        </div>
+      {/snippet}
+    </ContextMenu.Trigger>
+    <ContextMenu.Content class="w-48">
+      <ContextMenu.Item onSelect={edit}>
+        <Pencil /> <span>Edit project</span>
+      </ContextMenu.Item>
+      <ContextMenu.Item variant="destructive" onSelect={removeProject}>
+        <Trash2 /> <span>Delete project</span>
+      </ContextMenu.Item>
+    </ContextMenu.Content>
+  </ContextMenu.Root>
 
   <Collapsible.Content class="ml-2.5 flex flex-col gap-1 border-l border-border pl-1.5">
     {#if worktrees.length === 0}

@@ -12,6 +12,15 @@ describe('WslCommandBuilder — concrete cwd', () => {
     expect(spec.description).toContain('--cd /home/me/proj');
     expect(spec.description).not.toContain('cd ~ &&');
   });
+
+  it('uses a raw inner shell line when provided', () => {
+    const builder = new WslCommandBuilder();
+    const spec = builder.build(
+      { executable: 'bash', args: [], env: {}, rawLine: 'exec bash --rcfile <(echo ok) -i' },
+      { distro: 'Ubuntu', cwd: '/home/me/proj' }
+    );
+    expect(spec.args[spec.args.length - 1]).toBe('exec bash --rcfile <(echo ok) -i');
+  });
 });
 
 describe('WslCommandBuilder — ~ home cwd', () => {

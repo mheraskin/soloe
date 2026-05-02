@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { Plus, Search, FolderOpen } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
@@ -11,7 +12,18 @@
   import ProjectSection from './ProjectSection.svelte';
   import SessionItem from './SessionItem.svelte';
 
+  const SIDEBAR_WIDTH_KEY = 'soloe.sidebarWidth.v1';
+  const MIN_WIDTH = 220;
+  const MAX_WIDTH = 460;
+
   let query = $state('');
+  let width = $state(260);
+  let resizing = $state(false);
+
+  onMount(() => {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    if (Number.isFinite(stored)) width = clampWidth(stored);
+  });
 
   let orderedProjectIds = $derived.by<string[]>(() => {
     const ordered: string[] = [];
@@ -30,9 +42,35 @@
     if (!q) return list;
     return rankMulti(q, list, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
   });
+
+  function clampWidth(value: number): number {
+    return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)));
+  }
+
+  function startResize(event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resizing = true;
+    window.addEventListener('pointermove', resize);
+    window.addEventListener('pointerup', stopResize, { once: true });
+  }
+
+  function resize(event: PointerEvent) {
+    width = clampWidth(event.clientX);
+  }
+
+  function stopResize() {
+    resizing = false;
+    window.removeEventListener('pointermove', resize);
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  }
 </script>
 
-<aside class="flex w-[260px] flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar">
+<aside
+  class="relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
+  class:select-none={resizing}
+  style={`width: ${width}px`}
+>
   <div class="flex flex-col gap-2 border-b border-border p-2.5">
     <Button
       variant="outline"
@@ -82,4 +120,12 @@
       {/each}
     </div>
   </ScrollArea>
+  <button
+    type="button"
+    class={`absolute top-0 right-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
+    aria-label="Resize sidebar"
+    onpointerdown={startResize}
+  >
+    <span class="absolute right-1 bottom-1 block size-2 border-r border-b border-muted-foreground/60"></span>
+  </button>
 </aside>

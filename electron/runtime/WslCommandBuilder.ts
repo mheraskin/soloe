@@ -14,7 +14,7 @@ export class WslCommandBuilder {
   static readonly WSL_EXE = 'wsl.exe';
 
   build(inner: InnerCommand, opts: WslWrapOptions): SpawnSpec {
-    const innerLine = buildPosixCommandLine(inner.env, inner.executable, inner.args);
+    const innerLine = inner.rawLine ?? buildPosixCommandLine(inner.env, inner.executable, inner.args);
     const bashFlag = opts.loginShell === false ? '-c' : '-lc';
     const usesHome = opts.cwd === '~' || opts.cwd.startsWith('~/');
     if (usesHome) {

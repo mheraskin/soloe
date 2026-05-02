@@ -10,6 +10,7 @@ import type { InnerCommand } from '../runtime/InnerCommand.js';
 import { WindowsCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
 import { ShellDetector } from '../terminal/ShellDetector.js';
+import { posixSingleQuote } from '../runtime/posix-quote.js';
 
 export interface SessionBuildContext {
   baseEnv: Record<string, string | undefined>;
@@ -70,6 +71,14 @@ export class SessionCommandBuilder {
       };
     }
     const resolved = this.shellDetector.resolve(s.shell, s.runMode);
+    if (s.runMode === 'wsl' && isBash(resolved.executable)) {
+      return {
+        executable: resolved.executable,
+        args: [],
+        env: {},
+        rawLine: buildWslBashLocationLine()
+      };
+    }
     if (isPowerShell(resolved.executable)) {
       return {
         executable: resolved.executable,
@@ -182,4 +191,13 @@ function isPowerShell(executable: string): boolean {
 function executableName(executable: string): string {
   const parts = executable.split(/[\\/]/);
   return (parts[parts.length - 1] ?? executable).toLowerCase();
+}
+
+function buildWslBashLocationLine(): string {
+  const rcLines = [
+    'test -r ~/.bashrc && source ~/.bashrc',
+    `PROMPT_COMMAND=${posixSingleQuote(BASH_LOCATION_PROMPT)}\${PROMPT_COMMAND:+; $PROMPT_COMMAND}`
+  ];
+  const quotedLines = rcLines.map((line) => posixSingleQuote(line)).join(' ');
+  return `exec bash --rcfile <(printf '%s\\n' ${quotedLines}) -i`;
 }
