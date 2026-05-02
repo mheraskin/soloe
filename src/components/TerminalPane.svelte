@@ -15,6 +15,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { X } from '@lucide/svelte';
+  import { Keymap, tabIndexFromEvent } from '../lib/keymap';
 
   let {
     terminalId,
@@ -124,23 +125,27 @@
 
     t.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
-      if (!e.ctrlKey || e.altKey || e.shiftKey || e.metaKey) return true;
-      const k = e.key.toLowerCase();
-      if (k === 'c') {
-        if (!t.hasSelection()) return true;
-        void navigator.clipboard.writeText(t.getSelection()).catch(() => {});
-        t.clearSelection();
+
+      if (tabIndexFromEvent(e) !== null) return false;
+      for (const binding of Object.values(Keymap)) {
+        if (binding.match(e)) return false;
+      }
+
+      const ctrlOrCmd = (e.ctrlKey || e.metaKey) && !e.altKey;
+      if (ctrlOrCmd && e.key.toLowerCase() === 'c') {
+        if (!e.shiftKey) {
+          if (!t.hasSelection()) return true;
+          void navigator.clipboard.writeText(t.getSelection()).catch(() => {});
+          t.clearSelection();
+          return false;
+        }
+        if (t.hasSelection()) {
+          void navigator.clipboard.writeText(t.getSelection()).catch(() => {});
+          t.clearSelection();
+        }
         return false;
       }
-      if (k === 'v') {
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) t.paste(text);
-          })
-          .catch(() => {});
-        return false;
-      }
+
       return true;
     });
 
