@@ -6,7 +6,11 @@ import type {
   TerminalLocationEvent,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
-import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
+import {
+  encodeClaudeProjectPath,
+  PtyManager,
+  type PtyManagerOptions
+} from './PtyManager.js';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => ({
@@ -176,5 +180,58 @@ describe('PtyManager', () => {
         cwd: '/home/me/iterm'
       }
     ]);
+  });
+
+  it('persists a discovered Claude session id for future resume', async () => {
+    const claudeSession: Session = {
+      ...session,
+      id: 'claude-1',
+      name: 'Claude',
+      kind: 'claude_code',
+      resumeMode: 'new',
+      fullscreenTui: true
+    };
+    const update = vi.fn(async () => ({
+      ...claudeSession,
+      resumeMode: 'resume_by_id',
+      claudeSessionId: 'claude-session-123'
+    }));
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => claudeSession),
+        touch: vi.fn(async () => {}),
+        update
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {},
+      claudeSessionCaptureDelaysMs: [0],
+      resolveClaudeSession: vi.fn(async () => ({
+        sessionId: 'claude-session-123',
+        transcriptPath: '/home/me/.claude/projects/-home-me-app/claude-session-123.jsonl'
+      }))
+    });
+
+    await manager.start({ sessionId: claudeSession.id });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(update).toHaveBeenCalledWith(claudeSession.id, {
+      resumeMode: 'resume_by_id',
+      claudeSessionId: 'claude-session-123',
+      providerThreadId: 'claude-session-123',
+      transcriptPath: '/home/me/.claude/projects/-home-me-app/claude-session-123.jsonl'
+    });
+  });
+
+  it('encodes Claude project transcript directories like Claude Code', () => {
+    expect(encodeClaudeProjectPath('/home/me/my-app')).toBe('-home-me-my-app');
+    expect(encodeClaudeProjectPath('C:\\Users\\me\\my-app')).toBe('C--Users-me-my-app');
   });
 });

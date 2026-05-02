@@ -120,6 +120,21 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     expect(inner).not.toContain('--resume');
   });
 
+  it('uses captured Claude session id for a persisted new session', () => {
+    const s = { ...claudeBase('new'), claudeSessionId: 'claude-123' } as Session;
+    const inner = innerLine(builder.build(s, ctx).args);
+    expect(inner).toContain('--resume claude-123');
+  });
+
+  it('falls back to `claude --continue` for previously used sessions without an id', () => {
+    const s = {
+      ...claudeBase('new'),
+      lastUsedAt: '2026-01-01T00:01:00Z'
+    } as Session;
+    const inner = innerLine(builder.build(s, ctx).args);
+    expect(inner).toContain('--continue');
+  });
+
   it('emits `claude --continue` for resumeMode=resume_last', () => {
     expect(innerLine(builder.build(claudeBase('resume_last'), ctx).args)).toContain('--continue');
   });

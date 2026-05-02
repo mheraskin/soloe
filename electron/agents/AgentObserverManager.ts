@@ -62,6 +62,9 @@ export class AgentObserverManager extends EventEmitter {
       provider: session.kind,
       state: 'idle',
       sessionId: session.id,
+      providerThreadId: session.providerThreadId,
+      transcriptPath: session.transcriptPath,
+      confidence: session.confidence,
       lastEventAt: new Date().toISOString()
     };
     return this.upsertSnapshot(snapshot, 'session registered');

@@ -32,6 +32,22 @@ describe('AgentObserverManager', () => {
     expect(observer.listEvents(session.id).map((e) => e.summary)).toContain('terminal running');
   });
 
+  it('carries provider thread metadata from TUI sessions', () => {
+    const observer = new AgentObserverManager();
+    observer.registerTuiSession({
+      ...session,
+      providerThreadId: 'claude-session-123',
+      transcriptPath: '/home/me/.claude/projects/-workspace/claude-session-123.jsonl',
+      confidence: 0.9
+    });
+
+    expect(observer.getSnapshot(session.id)).toMatchObject({
+      providerThreadId: 'claude-session-123',
+      transcriptPath: '/home/me/.claude/projects/-workspace/claude-session-123.jsonl',
+      confidence: 0.9
+    });
+  });
+
   it('tracks child workers by origin session', () => {
     const observer = new AgentObserverManager();
     observer.registerTuiSession(session);

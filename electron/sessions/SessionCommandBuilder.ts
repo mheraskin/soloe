@@ -96,6 +96,11 @@ export class SessionCommandBuilder {
     const args: string[] = [];
     switch (s.resumeMode) {
       case 'new':
+        if (s.claudeSessionId ?? s.providerThreadId) {
+          args.push('--resume', s.claudeSessionId ?? s.providerThreadId!);
+        } else if (s.lastUsedAt > s.createdAt) {
+          args.push('--continue');
+        }
         break;
       case 'resume_last':
         args.push('--continue');

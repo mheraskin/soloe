@@ -1,3 +1,16 @@
+<script lang="ts" module>
+  let closeActivePopover: (() => void) | null = null;
+
+  function setActivePopover(close: () => void): void {
+    if (closeActivePopover && closeActivePopover !== close) closeActivePopover();
+    closeActivePopover = close;
+  }
+
+  function clearActivePopover(close: () => void): void {
+    if (closeActivePopover === close) closeActivePopover = null;
+  }
+</script>
+
 <script lang="ts">
   import { Plus } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
@@ -28,9 +41,19 @@
 
   let open = $state(false);
 
+  function closeSelf(): void {
+    open = false;
+    clearActivePopover(closeSelf);
+  }
+
+  function requestOpen(): void {
+    setActivePopover(closeSelf);
+    open = true;
+  }
+
   function launchTerminal(e: Event): void {
     e.stopPropagation();
-    open = false;
+    closeSelf();
     void sessions
       .createWithDefaults({
         ...(projectId ? { projectId } : {}),
@@ -41,7 +64,7 @@
   }
 
   function launchAgent(kind: AgentKind): void {
-    open = false;
+    closeSelf();
     void sessions
       .createAgentWithDefaults(kind, {
         ...(projectId ? { projectId } : {}),
@@ -62,8 +85,8 @@
         class={`shrink-0 ${className}`}
         {title}
         aria-label={ariaLabel}
-        onpointerenter={() => (open = true)}
-        onfocus={() => (open = true)}
+        onpointerenter={requestOpen}
+        onfocus={requestOpen}
         onclick={launchTerminal}
       >
         <Plus />
@@ -74,31 +97,31 @@
     align="end"
     side="right"
     sideOffset={8}
-    class="w-56 gap-2 p-2"
+    class="w-40 rounded-md border-border bg-card p-1.5 shadow-md"
     onpointerdown={(e) => e.stopPropagation()}
     onclick={(e) => e.stopPropagation()}
   >
-    <Button
-      variant="outline"
-      class="h-14 w-full justify-start gap-3 px-3 text-left"
-      onclick={() => launchAgent('claude_code')}
-    >
-      <KindIcon kind="claude_code" size={24} />
-      <span class="flex min-w-0 flex-col leading-tight">
-        <span class="truncate text-sm font-semibold">Claude</span>
-        <span class="truncate text-[11px] text-muted-foreground">New Claude session</span>
-      </span>
-    </Button>
-    <Button
-      variant="outline"
-      class="h-14 w-full justify-start gap-3 px-3 text-left"
-      onclick={() => launchAgent('codex')}
-    >
-      <KindIcon kind="codex" size={24} />
-      <span class="flex min-w-0 flex-col leading-tight">
-        <span class="truncate text-sm font-semibold">Codex</span>
-        <span class="truncate text-[11px] text-muted-foreground">New Codex session</span>
-      </span>
-    </Button>
+    <div class="grid grid-cols-2 gap-1">
+      <Button
+        variant="ghost"
+        class="h-12 flex-col gap-1 px-1.5 text-xs"
+        title="New Claude session"
+        aria-label="New Claude session"
+        onclick={() => launchAgent('claude_code')}
+      >
+        <KindIcon kind="claude_code" size={20} />
+        <span class="truncate leading-none">Claude</span>
+      </Button>
+      <Button
+        variant="ghost"
+        class="h-12 flex-col gap-1 px-1.5 text-xs"
+        title="New Codex session"
+        aria-label="New Codex session"
+        onclick={() => launchAgent('codex')}
+      >
+        <KindIcon kind="codex" size={20} />
+        <span class="truncate leading-none">Codex</span>
+      </Button>
+    </div>
   </Popover.Content>
 </Popover.Root>
