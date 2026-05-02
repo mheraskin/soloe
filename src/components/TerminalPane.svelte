@@ -230,6 +230,11 @@
       if (!active) return;
       try {
         f.fit();
+        // Sync PTY immediately so the first output isn't wrapped at the
+        // default 80x24 and replayed at the actual geometry.
+        if (Number.isFinite(t.cols) && Number.isFinite(t.rows)) {
+          void ipc.terminal.resize(terminalId, t.cols, t.rows).catch(() => {});
+        }
       } catch (err) {
         console.warn('[DEBUG-xterm] initial fit failed', { terminalId, sessionId, err });
       }
