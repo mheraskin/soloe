@@ -46,7 +46,7 @@
   <div class="relative min-h-0 flex-1">
     {#each runningPanes as pane (pane.terminalId)}
       {@const active = pane.sessionId === selected?.id}
-      <div class={`absolute inset-0 ${active ? 'visible z-10' : 'invisible z-0 pointer-events-none'}`}>
+      <div class={`absolute inset-0 ${active ? 'z-10 opacity-100' : 'z-0 pointer-events-none opacity-0'}`}>
         <TerminalPane
           terminalId={pane.terminalId}
           sessionId={pane.sessionId}

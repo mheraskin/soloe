@@ -83,19 +83,11 @@ export class PtyManager extends EventEmitter {
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
     if (this.disposed) throw new Error('PtyManager disposed');
     const { sessionId } = options;
-    console.info('[DEBUG-terminal-start] pty start begin', { sessionId });
     if (this.sessionToTerminal.has(sessionId)) {
       throw new Error(`Session ${sessionId} is already running`);
     }
     const session = await this.opts.store.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
-    console.info('[DEBUG-terminal-start] pty session loaded', {
-      sessionId,
-      kind: session.kind,
-      runMode: session.runMode,
-      cwd: session.cwd,
-      wslDistro: session.wslDistro
-    });
 
     this.opts.observer?.registerTuiSession(session);
     const bridge = this.opts.bridgeInfo?.() ?? undefined;
@@ -104,12 +96,6 @@ export class PtyManager extends EventEmitter {
       baseEnv: this.baseEnv,
       bridge,
       ...(binaries ? { binaries } : {})
-    });
-    console.info('[DEBUG-terminal-start] pty spawn spec built', {
-      sessionId,
-      file: spec.file,
-      args: spec.args.map(redactForLog),
-      cwd: spec.cwd
     });
     const cols = options.cols ?? DEFAULT_COLS;
     const rows = options.rows ?? DEFAULT_ROWS;
@@ -121,12 +107,6 @@ export class PtyManager extends EventEmitter {
 
     let proc: pty.IPty;
     try {
-      console.info('[DEBUG-terminal-start] pty before spawn', {
-        sessionId,
-        terminalId,
-        file: spec.file,
-        cwd: spec.cwd
-      });
       proc = pty.spawn(spec.file, spec.args, {
         name: 'xterm-256color',
         cols,
@@ -135,14 +115,8 @@ export class PtyManager extends EventEmitter {
         env: mergeEnv(this.baseEnv, spec.env),
         useConpty: process.platform === 'win32'
       } as pty.IPtyForkOptions);
-      console.info('[DEBUG-terminal-start] pty spawn returned', {
-        sessionId,
-        terminalId,
-        pid: proc.pid
-      });
     } catch (err) {
       const message = errorMessage(err);
-      console.info('[DEBUG-terminal-start] pty spawn threw', { sessionId, terminalId, message });
       this.sessionToTerminal.delete(sessionId);
       this.emitStatus(sessionId, terminalId, 'error', message);
       throw new Error(`Failed to spawn terminal: ${message}`);
@@ -163,29 +137,18 @@ export class PtyManager extends EventEmitter {
     };
     this.terminals.set(terminalId, instance);
 
-    let loggedFirstOutput = false;
     proc.onData((data) => {
-      if (!loggedFirstOutput) {
-        loggedFirstOutput = true;
-        console.info('[DEBUG-terminal-start] pty first output', {
-          sessionId,
-          terminalId,
-          bytes: data.length
-        });
-      }
       this.handleLocationSequences(instance, data);
       this.opts.batcher.push(terminalId, sessionId, data);
     });
 
     proc.onExit(({ exitCode, signal }) => {
-      console.info('[DEBUG-terminal-start] pty exit', { sessionId, terminalId, exitCode, signal });
       this.handleExit(terminalId, exitCode, signal ?? null);
     });
 
     void this.opts.store.touch(sessionId).catch(() => {});
 
     this.emitStatus(sessionId, terminalId, 'running');
-    console.info('[DEBUG-terminal-start] pty start done', { sessionId, terminalId, pid: proc.pid });
 
     return { terminalId, sessionId, pid: proc.pid, spec };
   }
@@ -306,13 +269,26 @@ export class PtyManager extends EventEmitter {
     const regex = /\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text))) {
-      const cwd = cwdFromOsc(match[1] ?? '', instance.runMode);
+      const payload = match[1] ?? '';
+      const cwd = cwdFromOsc(payload, instance.runMode);
+      console.info('[DEBUG-cwd] osc payload parsed', {
+        sessionId: instance.sessionId,
+        terminalId: instance.terminalId,
+        kind: oscKind(payload),
+        cwd,
+        payload: previewOscPayload(payload)
+      });
       if (cwd) this.emitLocation(instance, cwd);
     }
 
     const lastStart = text.lastIndexOf('\x1b]');
     if (lastStart >= 0 && !hasOscTerminator(text, lastStart)) {
       instance.locationBuffer = text.slice(lastStart, lastStart + 4096);
+      console.info('[DEBUG-cwd] buffered partial osc payload', {
+        sessionId: instance.sessionId,
+        terminalId: instance.terminalId,
+        bytes: instance.locationBuffer.length
+      });
     } else {
       instance.locationBuffer = '';
     }
@@ -321,6 +297,11 @@ export class PtyManager extends EventEmitter {
   private emitLocation(instance: TerminalInstance, cwd: string): void {
     if (cwd === instance.cwd) return;
     instance.cwd = cwd;
+    console.info('[DEBUG-cwd] emitting terminal location', {
+      sessionId: instance.sessionId,
+      terminalId: instance.terminalId,
+      cwd
+    });
     this.emit('location', {
       terminalId: instance.terminalId,
       sessionId: instance.sessionId,
@@ -371,12 +352,6 @@ function nextTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function redactForLog(value: string): string {
-  return value
-    .replace(/SOLOE_BRIDGE_TOKEN='[^']*'/g, 'SOLOE_BRIDGE_TOKEN=<redacted>')
-    .replace(/SOLOE_BRIDGE_TOKEN=\S+/g, 'SOLOE_BRIDGE_TOKEN=<redacted>');
-}
-
 function hasOscTerminator(text: string, start: number): boolean {
   const bel = text.indexOf('\x07', start);
   const st = text.indexOf('\x1b\\', start);
@@ -398,6 +373,17 @@ function cwdFromOsc(payload: string, runMode: RunMode): string | null {
     );
   }
   return null;
+}
+
+function oscKind(payload: string): string {
+  if (payload.startsWith('7;')) return 'OSC 7';
+  if (payload.startsWith('633;P;')) return 'OSC 633 Cwd';
+  if (payload.startsWith('1337;CurrentDir=')) return 'OSC 1337 CurrentDir';
+  return 'other';
+}
+
+function previewOscPayload(payload: string): string {
+  return payload.replace(/[^\x20-\x7e]/g, '?').slice(0, 240);
 }
 
 function cwdFromLocationValue(payload: string, runMode: RunMode): string | null {

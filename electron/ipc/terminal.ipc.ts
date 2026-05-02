@@ -31,15 +31,9 @@ export class TerminalIpc {
     if (this.registered) return;
     this.registered = true;
 
-    ipcMain.handle(IpcChannels.terminal.start, async (_e, options: TerminalStartOptions) => {
-      console.info('[DEBUG-terminal-start] ipc terminal:start received', options);
-      const result = await ipcInvoke(() => this.opts.pty.start(options));
-      console.info('[DEBUG-terminal-start] ipc terminal:start completed', {
-        ok: result.ok,
-        error: result.ok ? undefined : result.error
-      });
-      return result;
-    });
+    ipcMain.handle(IpcChannels.terminal.start, (_e, options: TerminalStartOptions) =>
+      ipcInvoke(() => this.opts.pty.start(options))
+    );
 
     ipcMain.handle(IpcChannels.terminal.stop, (_e, terminalId: TerminalId) =>
       ipcInvoke(async () => {
@@ -76,10 +70,8 @@ export class TerminalIpc {
     const onExit = (event: TerminalExitEvent) => this.broadcast(IpcChannels.terminal.exit, event);
     const onLocation = (event: TerminalLocationEvent) =>
       this.broadcast(IpcChannels.terminal.location, event);
-    const onStatus = (event: TerminalStatusEvent) => {
-      console.info('[DEBUG-terminal-start] status broadcast', event);
+    const onStatus = (event: TerminalStatusEvent) =>
       this.broadcast(IpcChannels.terminal.status, event);
-    };
 
     this.opts.pty.on('output', onOutput);
     this.opts.pty.on('exit', onExit);

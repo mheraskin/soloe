@@ -91,7 +91,7 @@
       term.write(data);
     } catch (err) {
       pendingOutput = data + pendingOutput;
-      console.warn('[terminal] write failed', err);
+      console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
     }
   }
 
@@ -122,10 +122,7 @@
     t.loadAddon(links);
     t.open(host);
 
-    // Renderer: prefer WebGL, fall back to Canvas, then DOM. The DOM renderer
-    // breaks when written to while the host is hidden (we keep inactive panes
-    // mounted with visibility:hidden), surfacing as a "Cannot read properties
-    // of undefined (reading 'dimensions')" crash from Viewport.syncScrollArea.
+    // Renderer: prefer WebGL, fall back to Canvas, then DOM.
     let renderer: WebglAddon | CanvasAddon | null = null;
     try {
       const webgl = new WebglAddon();
@@ -133,27 +130,35 @@
       t.loadAddon(webgl);
       renderer = webgl;
     } catch (err) {
-      console.warn('[terminal] WebGL renderer unavailable, falling back to canvas', err);
+      console.warn('[DEBUG-xterm] WebGL renderer unavailable, falling back to canvas', {
+        terminalId,
+        sessionId,
+        err
+      });
       try {
         const canvas = new CanvasAddon();
         t.loadAddon(canvas);
         renderer = canvas;
       } catch (err2) {
-        console.warn('[terminal] Canvas renderer unavailable, using DOM', err2);
+        console.warn('[DEBUG-xterm] Canvas renderer unavailable, using DOM', {
+          terminalId,
+          sessionId,
+          err: err2
+        });
       }
     }
 
     requestAnimationFrame(() => {
-      try { f.fit(); } catch { /* container may be hidden */ }
+      if (!active) return;
+      try {
+        f.fit();
+      } catch (err) {
+        console.warn('[DEBUG-xterm] initial fit failed', { terminalId, sessionId, err });
+      }
     });
     term = t;
     fit = f;
     search = s;
-
-    console.info('[DEBUG-terminal-start] terminal pane mounted', {
-      sessionId,
-      terminalId
-    });
 
     let nextSeq = 1;
     const offOutput = ipc.terminal.onOutput((e) => {
@@ -174,13 +179,14 @@
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
+      if (!active) return;
       const { width, height } = entry.contentRect;
       if (width < 4 || height < 4) return; // hidden / collapsed
       try {
         f.fit();
         void ipc.terminal.resize(terminalId, t.cols, t.rows).catch(() => {});
-      } catch {
-        // renderer not ready
+      } catch (err) {
+        console.warn('[DEBUG-xterm] resize observer fit failed', { terminalId, sessionId, err });
       }
     });
     ro.observe(host);
@@ -230,8 +236,8 @@
         if (term) {
           void ipc.terminal.resize(terminalId, term.cols, term.rows).catch(() => {});
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn('[DEBUG-xterm] font-size fit failed', { terminalId, sessionId, err });
       }
     });
   });
@@ -249,8 +255,8 @@
         if (term) {
           void ipc.terminal.resize(terminalId, term.cols, term.rows).catch(() => {});
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn('[DEBUG-xterm] active fit failed', { terminalId, sessionId, err });
       }
     });
   });
