@@ -28,8 +28,11 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(spec.file).toBe('wsl.exe');
     expect(spec.args.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--cd', '/home/me/proj', 'bash']);
     expect(spec.args[5]).toBe('-lc');
-    expect(innerLine(spec.args)).toContain('mktemp');
+    expect(innerLine(spec.args)).toContain('__soloe_tmp=${TMPDIR:-/tmp}');
+    expect(innerLine(spec.args)).toContain('mkdir -p "$__soloe_tmp"');
+    expect(innerLine(spec.args)).toContain('__soloe_tmp="$HOME"');
     expect(innerLine(spec.args)).toContain('exec bash --rcfile "$__soloe_rc" -i');
+    expect(innerLine(spec.args)).not.toContain('mktemp');
     expect(innerLine(spec.args)).not.toContain('<(');
     expect(innerLine(spec.args)).toContain('source ~/.bashrc');
     expect(innerLine(spec.args)).toContain('PROMPT_COMMAND=');
