@@ -3,6 +3,8 @@
   import { FitAddon } from '@xterm/addon-fit';
   import { SearchAddon } from '@xterm/addon-search';
   import { WebLinksAddon } from '@xterm/addon-web-links';
+  import { WebglAddon } from '@xterm/addon-webgl';
+  import { CanvasAddon } from '@xterm/addon-canvas';
   import '@xterm/xterm/css/xterm.css';
   import { ipc } from '../lib/ipc';
   import type { TerminalId } from '@shared/types/terminal.js';
@@ -75,8 +77,10 @@
   $effect(() => {
     if (!host) return;
     const t = new Terminal({
-      fontFamily: 'var(--font-mono)',
+      fontFamily: 'JetBrains Mono, ui-monospace, monospace',
       fontSize: 13,
+      lineHeight: 1.2,
+      letterSpacing: 0,
       theme: {
         background: '#0f0f10',
         foreground: '#e6e6e6',
@@ -96,7 +100,31 @@
     t.loadAddon(s);
     t.loadAddon(links);
     t.open(host);
-    try { f.fit(); } catch { /* container may be hidden */ }
+
+    // Renderer: prefer WebGL, fall back to Canvas, then DOM. The DOM renderer
+    // breaks when written to while the host is hidden (we keep inactive panes
+    // mounted with visibility:hidden), surfacing as a "Cannot read properties
+    // of undefined (reading 'dimensions')" crash from Viewport.syncScrollArea.
+    let renderer: WebglAddon | CanvasAddon | null = null;
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      t.loadAddon(webgl);
+      renderer = webgl;
+    } catch (err) {
+      console.warn('[terminal] WebGL renderer unavailable, falling back to canvas', err);
+      try {
+        const canvas = new CanvasAddon();
+        t.loadAddon(canvas);
+        renderer = canvas;
+      } catch (err2) {
+        console.warn('[terminal] Canvas renderer unavailable, using DOM', err2);
+      }
+    }
+
+    requestAnimationFrame(() => {
+      try { f.fit(); } catch { /* container may be hidden */ }
+    });
     term = t;
     fit = f;
     search = s;
@@ -113,7 +141,13 @@
         console.warn('output seq gap', { terminalId, expected: nextSeq, got: e.seq });
       }
       nextSeq = e.seq + 1;
-      t.write(e.data);
+      try {
+        t.write(e.data);
+      } catch (err) {
+        // Renderer may be temporarily unavailable (hidden pane, context loss).
+        // Drop the write rather than crash the renderer process.
+        console.warn('[terminal] write failed', err);
+      }
     });
 
     const onInput = t.onData((data) => {
@@ -122,12 +156,16 @@
       });
     });
 
-    const ro = new ResizeObserver(() => {
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width < 4 || height < 4) return; // hidden / collapsed
       try {
         f.fit();
         void ipc.terminal.resize(terminalId, t.cols, t.rows).catch(() => {});
       } catch {
-        // hidden / zero size
+        // renderer not ready
       }
     });
     ro.observe(host);
@@ -149,6 +187,7 @@
       ro.disconnect();
       onInput.dispose();
       offOutput();
+      renderer?.dispose();
       t.dispose();
       term = null;
       fit = null;
@@ -158,8 +197,11 @@
 
   // When this pane becomes active, refit and focus on next frame.
   $effect(() => {
-    if (!active || !term || !fit) return;
+    if (!active || !term || !fit || !host) return;
     requestAnimationFrame(() => {
+      if (!host) return;
+      const rect = host.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) return;
       try {
         fit?.fit();
         term?.focus();
@@ -173,7 +215,7 @@
   });
 </script>
 
-<div class="relative h-full w-full">
+<div class="relative h-full w-full bg-[#0f0f10] p-2">
   {#if findOpen && active}
     <div class="absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
       <Input
@@ -195,7 +237,7 @@
       </Button>
     </div>
   {/if}
-  <div class="h-full w-full bg-[#0f0f10] p-2" bind:this={host}></div>
+  <div class="h-full w-full" bind:this={host}></div>
 </div>
 
 <style>
