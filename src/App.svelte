@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Maximize2, Minus, X } from 'lucide-svelte';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
@@ -8,6 +9,7 @@
   import { commandPalette } from './stores/command-palette.svelte';
   import { filePalette } from './stores/file-palette.svelte';
   import { reportError } from './stores/toast.svelte';
+  import { ipc } from './lib/ipc';
   import { Keymap, tabIndexFromEvent } from './lib/keymap';
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
@@ -83,6 +85,23 @@
 <div class="app">
   <header class="titlebar">
     <span class="title">Soloe</span>
+    <div class="drag-space" aria-hidden="true"></div>
+    <div class="window-controls">
+      <button type="button" onclick={() => ipc.window.minimize()} title="Minimize" aria-label="Minimize">
+        <Minus size={14} />
+      </button>
+      <button
+        type="button"
+        onclick={() => ipc.window.toggleMaximize()}
+        title="Maximize"
+        aria-label="Maximize"
+      >
+        <Maximize2 size={13} />
+      </button>
+      <button type="button" class="close" onclick={() => ipc.window.close()} title="Close" aria-label="Close">
+        <X size={14} />
+      </button>
+    </div>
   </header>
   <div class="body">
     <Sidebar />
@@ -113,13 +132,43 @@
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
-    padding: 0 12px;
+    padding: 0 0 0 12px;
     flex-shrink: 0;
+    user-select: none;
   }
   .title {
     color: var(--muted);
     font-size: 11px;
     letter-spacing: 0.04em;
+  }
+  .drag-space {
+    flex: 1;
+    align-self: stretch;
+  }
+  .window-controls {
+    -webkit-app-region: no-drag;
+    display: flex;
+    align-self: stretch;
+  }
+  .window-controls button {
+    width: 42px;
+    height: 100%;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .window-controls button:hover {
+    background: var(--bg-elev-3);
+    color: var(--fg);
+  }
+  .window-controls .close:hover {
+    background: var(--red);
+    color: var(--fg-strong);
   }
   .body {
     flex: 1;
