@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Check, GitBranch, RotateCw } from '@lucide/svelte';
+  import { untrack } from 'svelte';
   import type { GitBranch as GitBranchInfo, GitCommit } from '@shared/types/git.js';
   import { ipc } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
@@ -22,8 +23,13 @@
   }
 
   $effect(() => {
-    refresh();
-    const interval = window.setInterval(() => refresh(true), 1500);
+    const currentCwd = cwd;
+    untrack(() => {
+      void git.loadStatus(currentCwd);
+    });
+    const interval = window.setInterval(() => {
+      void git.loadStatus(currentCwd, true);
+    }, 1500);
     return () => window.clearInterval(interval);
   });
 
