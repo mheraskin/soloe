@@ -172,20 +172,38 @@ function buildAgentCommand(
 }
 
 function buildWslAgentLine(env: Record<string, string>, executable: string, args: string[]): string {
-  const command = buildPosixCommandLine(env, 'exec', [executable, ...args]);
-  const pathPrelude = buildWslAgentPathPrelude(executable);
-  return pathPrelude ? `${pathPrelude}; ${command}` : command;
+  if (executable.includes('/') || executable.includes('\\')) {
+    return buildPosixCommandLine(env, 'exec', [executable, ...args]);
+  }
+  return [
+    buildWslAgentPathPrelude(executable),
+    buildWslAgentExecLine(env, '"$__soloe_agent_bin"', args)
+  ].join('; ');
 }
 
 function buildWslAgentPathPrelude(executable: string): string {
-  if (executable.includes('/') || executable.includes('\\')) return '';
   return [
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
-    `if ! command -v ${posixSingleQuote(executable)} >/dev/null 2>&1; then ` +
+    `if ! __soloe_agent_bin="$(command -v ${posixSingleQuote(executable)})"; then ` +
       'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; ' +
       '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; ' +
-      'fi'
+      `__soloe_agent_bin="$(command -v ${posixSingleQuote(executable)})"; ` +
+      'fi',
+    `if [ -z "$__soloe_agent_bin" ]; then printf %s\\\\n ${posixSingleQuote(`${executable}: command not found`)} >&2; exit 127; fi`
   ].join('; ');
+}
+
+function buildWslAgentExecLine(
+  env: Record<string, string>,
+  executableExpr: string,
+  args: string[]
+): string {
+  return [
+    ...Object.entries(env).map(([key, value]) => `${key}=${posixSingleQuote(value)}`),
+    'exec',
+    executableExpr,
+    ...args.map(posixSingleQuote)
+  ].join(' ');
 }
 
 function buildSoloeEnv(

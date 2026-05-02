@@ -279,10 +279,11 @@ describe('SessionCommandBuilder — codex kind', () => {
     };
     const inner = innerLine(builder.build(s, ctx).args);
     expect(inner).toContain('export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"');
-    expect(inner).toContain('command -v codex');
+    expect(inner).toContain('__soloe_agent_bin="$(command -v codex)"');
     expect(inner).toContain('NVM_DIR');
-    expect(inner).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec codex');
+    expect(inner).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec "$__soloe_agent_bin"');
     expect(inner).not.toContain('exec SOLOE_SESSION_ID=');
+    expect(inner).not.toContain('exec codex');
     expect(inner).not.toContain('exec bash -ic');
   });
 });
