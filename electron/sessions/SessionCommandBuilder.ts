@@ -173,7 +173,19 @@ function buildAgentCommand(
 
 function buildWslAgentLine(env: Record<string, string>, executable: string, args: string[]): string {
   const command = buildPosixCommandLine(env, 'exec', [executable, ...args]);
-  return `exec bash -ic ${posixSingleQuote(command)}`;
+  const pathPrelude = buildWslAgentPathPrelude(executable);
+  return pathPrelude ? `${pathPrelude}; ${command}` : command;
+}
+
+function buildWslAgentPathPrelude(executable: string): string {
+  if (executable.includes('/') || executable.includes('\\')) return '';
+  return [
+    'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
+    `if ! command -v ${posixSingleQuote(executable)} >/dev/null 2>&1; then ` +
+      'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; ' +
+      '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; ' +
+      'fi'
+  ].join('; ');
 }
 
 function buildSoloeEnv(

@@ -197,7 +197,7 @@ describe('SessionCommandBuilder — claude_code kind', () => {
       ...ctx,
       bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
     }).args);
-    expect(inner).toContain('exec bash -ic');
+    expect(inner).toContain('command -v claude');
     expect(inner).toContain('SOLOE_SESSION_ID=test');
     expect(inner).toContain('SOLOE_AGENT_PROVIDER=claude_code');
     expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
@@ -262,14 +262,14 @@ describe('SessionCommandBuilder — codex kind', () => {
       ...ctx,
       bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
     }).args);
-    expect(inner).toContain('exec bash -ic');
+    expect(inner).toContain('command -v codex');
     expect(inner).toContain('SOLOE_SESSION_ID=test');
     expect(inner).toContain('SOLOE_AGENT_PROVIDER=codex');
     expect(inner).toContain('SOLOE_BRIDGE_URL=http://host.wsl.internal:1234');
     expect(inner).toContain('SOLOE_BRIDGE_TOKEN=secret');
   });
 
-  it('launches bare codex through interactive bash in wsl sessions', () => {
+  it('bootstraps user bin paths before launching bare codex in wsl sessions', () => {
     const s: Session = {
       ...baseFields(),
       kind: 'codex',
@@ -278,9 +278,12 @@ describe('SessionCommandBuilder — codex kind', () => {
       resumeMode: 'new'
     };
     const inner = innerLine(builder.build(s, ctx).args);
-    expect(inner).toContain('exec bash -ic');
+    expect(inner).toContain('export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"');
+    expect(inner).toContain('command -v codex');
+    expect(inner).toContain('NVM_DIR');
     expect(inner).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec codex');
     expect(inner).not.toContain('exec SOLOE_SESSION_ID=');
+    expect(inner).not.toContain('exec bash -ic');
   });
 });
 
