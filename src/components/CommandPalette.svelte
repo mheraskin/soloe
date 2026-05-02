@@ -40,6 +40,7 @@
   let pathSuggestions = $state<ProjectPathSuggestion[]>([]);
   let scope = $state<ProjectSearchScope>('windows');
   let wslDistro = $state<string>('Ubuntu');
+  let highlight = $state('');
   let suggestRequest = 0;
   let debounceHandle = 0;
 
@@ -229,11 +230,37 @@
     if (!next) commandPalette.close();
   }
 
+  function drillIntoHighlighted() {
+    const target = pathSuggestions.find((s) => s.path === highlight) ?? pathSuggestions[0];
+    if (!target) return;
+    const sep = target.scope === 'wsl' ? '/' : '\\';
+    const next = target.path.endsWith(sep) ? target.path : `${target.path}${sep}`;
+    query = next;
+    if (target.scope === 'wsl') {
+      scope = 'wsl';
+      if (target.wslDistro) wslDistro = target.wslDistro;
+    } else {
+      scope = 'windows';
+    }
+  }
+
   function onKey(e: KeyboardEvent) {
     if (!commandPalette.isOpen) return;
-    if (e.key === 'Backspace' && commandPalette.mode === 'open-project' && query === '') {
+    if (commandPalette.mode !== 'open-project') return;
+    if (e.key === 'Backspace' && query === '') {
       e.preventDefault();
       commandPalette.open('commands');
+      return;
+    }
+    if ((e.key === 'Tab' || e.key === 'ArrowRight') && pathSuggestions.length > 0) {
+      if (e.key === 'ArrowRight') {
+        const input = e.target as HTMLInputElement | null;
+        if (input && input.selectionStart !== null && input.selectionStart < query.length) {
+          return;
+        }
+      }
+      e.preventDefault();
+      drillIntoHighlighted();
     }
   }
 </script>
@@ -243,6 +270,7 @@
 <Command.Dialog
   open={commandPalette.isOpen}
   {onOpenChange}
+  bind:value={highlight}
   shouldFilter={commandPalette.mode === 'commands'}
   class="sm:max-w-xl"
 >
@@ -281,8 +309,12 @@
           WSL: {wslDistro}
         </button>
       </div>
-      <span class="ml-auto font-mono text-[10px] text-muted-foreground">
-        wsl: / win: / \\wsl$\…
+      <span class="ml-auto text-[10px] text-muted-foreground">
+        <kbd class="rounded border border-border bg-muted px-1 font-mono">Tab</kbd>
+        <span class="mx-0.5">enter folder</span>
+        <span class="opacity-50">·</span>
+        <kbd class="ml-1 rounded border border-border bg-muted px-1 font-mono">↵</kbd>
+        <span class="mx-0.5">open</span>
       </span>
     </div>
   {/if}
