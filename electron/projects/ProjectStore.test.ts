@@ -329,6 +329,33 @@ describe('ProjectStore — suggestPaths', () => {
     expect(result.scope).toBe('windows');
   });
 
+  it('treats non-absolute queries as home-relative in windows scope', async () => {
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-home-'));
+    const originalHome = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      const target = path.join(fakeHome, 'soloe-rel-target');
+      await fs.mkdir(target);
+      const store = new ProjectStore(storePath);
+      const fragmentResult = await store.suggestPaths('soloe-rel', { scope: 'windows' });
+      expect(fragmentResult.scope).toBe('windows');
+      expect(
+        fragmentResult.suggestions.some(
+          (s) => s.path === target && s.source === 'directory'
+        )
+      ).toBe(true);
+      const drilledResult = await store.suggestPaths('soloe-rel-target/', {
+        scope: 'windows'
+      });
+      expect(drilledResult.scope).toBe('windows');
+      expect(drilledResult.suggestions).toEqual([]);
+    } finally {
+      if (originalHome !== undefined) process.env.HOME = originalHome;
+      else delete process.env.HOME;
+      await fs.rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
   it('filters known projects by scope', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-suggest-'));
     try {

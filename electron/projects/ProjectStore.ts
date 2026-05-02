@@ -445,9 +445,10 @@ function buildWindowsParsed(query: string, original: string): ParsedProjectQuery
       queryForKnown: original
     };
   }
-  const expanded = expandWindowsHome(query);
-  const lastSeparator = Math.max(expanded.lastIndexOf('/'), expanded.lastIndexOf('\\'));
-  if (query.endsWith('/') || query.endsWith('\\')) {
+  const resolved = isWindowsAbsolute(query) ? query : joinWindowsHome(query);
+  const expanded = expandWindowsHome(resolved);
+  const endsWithSep = resolved.endsWith('/') || resolved.endsWith('\\');
+  if (endsWithSep) {
     return {
       scope: 'windows',
       baseDir: expanded,
@@ -456,6 +457,7 @@ function buildWindowsParsed(query: string, original: string): ParsedProjectQuery
       queryForKnown: original
     };
   }
+  const lastSeparator = Math.max(expanded.lastIndexOf('/'), expanded.lastIndexOf('\\'));
   if (lastSeparator >= 0) {
     return {
       scope: 'windows',
@@ -485,23 +487,24 @@ function buildWslParsed(query: string, distro: string, original: string): Parsed
       queryForKnown: original
     };
   }
-  if (query.endsWith('/')) {
+  const resolved = isWslAbsolute(query) ? query : `~/${query}`;
+  if (resolved.endsWith('/')) {
     return {
       scope: 'wsl',
       wslDistro: distro,
-      baseDir: query,
+      baseDir: resolved,
       fragment: '',
       original,
       queryForKnown: original
     };
   }
-  const lastSlash = query.lastIndexOf('/');
+  const lastSlash = resolved.lastIndexOf('/');
   if (lastSlash >= 0) {
     return {
       scope: 'wsl',
       wslDistro: distro,
-      baseDir: query.slice(0, lastSlash + 1),
-      fragment: query.slice(lastSlash + 1),
+      baseDir: resolved.slice(0, lastSlash + 1),
+      fragment: resolved.slice(lastSlash + 1),
       original,
       queryForKnown: original
     };
@@ -510,10 +513,27 @@ function buildWslParsed(query: string, distro: string, original: string): Parsed
     scope: 'wsl',
     wslDistro: distro,
     baseDir: '',
-    fragment: query,
+    fragment: resolved,
     original,
     queryForKnown: original
   };
+}
+
+function isWindowsAbsolute(query: string): boolean {
+  if (query.startsWith('/') || query.startsWith('\\')) return true;
+  if (/^[a-zA-Z]:[\\/]/.test(query)) return true;
+  if (query === '~' || query.startsWith('~/') || query.startsWith('~\\')) return true;
+  return false;
+}
+
+function isWslAbsolute(query: string): boolean {
+  if (query.startsWith('/')) return true;
+  if (query === '~' || query.startsWith('~/')) return true;
+  return false;
+}
+
+function joinWindowsHome(query: string): string {
+  return `${os.homedir()}${path.sep}${query}`;
 }
 
 function expandWindowsHome(input: string): string {
