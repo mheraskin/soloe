@@ -3,6 +3,8 @@ import type {
   ProjectDetectResult,
   ProjectDraft,
   ProjectId,
+  ProjectOpenRequest,
+  ProjectPathSuggestion,
   ProjectUpdate
 } from '@shared/types/projects.js';
 import { ipc } from '../lib/ipc';
@@ -54,6 +56,12 @@ class ProjectsStore {
     return created;
   }
 
+  async open(request: ProjectOpenRequest): Promise<Project> {
+    const opened = await ipc.projects.open(request);
+    this.projects = [opened, ...this.projects.filter((p) => p.id !== opened.id)];
+    return opened;
+  }
+
   async update(id: ProjectId, patch: ProjectUpdate): Promise<Project> {
     const updated = await ipc.projects.update(id, patch);
     this.projects = this.projects.map((p) => (p.id === id ? updated : p));
@@ -74,6 +82,10 @@ class ProjectsStore {
 
   async detectFromPath(path: string): Promise<ProjectDetectResult> {
     return ipc.projects.detectFromPath(path);
+  }
+
+  async suggestPaths(query: string): Promise<ProjectPathSuggestion[]> {
+    return ipc.projects.suggestPaths(query);
   }
 }
 

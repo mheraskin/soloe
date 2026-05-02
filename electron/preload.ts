@@ -100,7 +100,8 @@ const soloe: SoloeApi = {
     openPath: (sessionId: SessionId) => ipcRenderer.invoke(IpcChannels.system.openPath, sessionId),
     saveText: (request: { defaultPath?: string; content: string }) =>
       ipcRenderer.invoke(IpcChannels.system.saveText, request),
-    openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.system.openExternal, url)
+    openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.system.openExternal, url),
+    listWslDistros: () => ipcRenderer.invoke(IpcChannels.system.listWslDistros)
   },
   settings: {
     get: () => ipcRenderer.invoke(IpcChannels.settings.get),
@@ -112,11 +113,13 @@ const soloe: SoloeApi = {
     list: () => ipcRenderer.invoke(IpcChannels.projects.list),
     get: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.get, id),
     create: (draft: ProjectDraft) => ipcRenderer.invoke(IpcChannels.projects.create, draft),
+    open: (request) => ipcRenderer.invoke(IpcChannels.projects.open, request),
     update: (id: ProjectId, patch: ProjectUpdate) =>
       ipcRenderer.invoke(IpcChannels.projects.update, id, patch),
     delete: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.delete, id),
     touch: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.touch, id),
     detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
+    suggestPaths: (query: string) => ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query),
     onChange: (cb: (projects: Project[]) => void) =>
       subscribe<Project[]>(IpcChannels.projects.change, cb)
   },

@@ -9,7 +9,7 @@
 
   function validate(): string | null {
     const d = projectModal.draft;
-    if (!d.name.trim()) return 'Name is required';
+    if (projectModal.mode === 'edit' && !d.name.trim()) return 'Name is required';
     if (!d.path.trim()) return 'Path is required';
     if (d.defaultRunMode === 'wsl' && d.defaultWslDistro !== undefined && !d.defaultWslDistro.trim()) {
       return 'WSL distro must be non-empty when set';
@@ -29,8 +29,13 @@
     projectModal.error = null;
     try {
       if (projectModal.mode === 'new') {
-        const created = await projects.create(projectModal.draft);
-        projectModal.onCreated?.(created);
+        const opened = await projects.open({
+          path: projectModal.draft.path,
+          ...(projectModal.draft.defaultRunMode ? { defaultRunMode: projectModal.draft.defaultRunMode } : {}),
+          ...(projectModal.draft.defaultWslDistro ? { defaultWslDistro: projectModal.draft.defaultWslDistro } : {}),
+          ...(projectModal.draft.accentColor ? { accentColor: projectModal.draft.accentColor } : {})
+        });
+        projectModal.onCreated?.(opened);
       } else if (projectModal.editingId) {
         await projects.update(projectModal.editingId, projectModal.draft);
       }
@@ -54,7 +59,7 @@
   <div class="backdrop" onclick={() => projectModal.close()} role="presentation"></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Project details">
     <header>
-      <h2>{projectModal.mode === 'new' ? 'New project' : 'Edit project'}</h2>
+      <h2>{projectModal.mode === 'new' ? 'Open project' : 'Edit project'}</h2>
       <button class="close" onclick={() => projectModal.close()} aria-label="Close">
         <X size={16} />
       </button>
@@ -70,7 +75,7 @@
       <footer>
         <button type="button" onclick={() => projectModal.close()}>Cancel</button>
         <button type="submit" class="primary" disabled={submitting}>
-          {projectModal.mode === 'new' ? 'Create' : 'Save'}
+          {projectModal.mode === 'new' ? 'Open' : 'Save'}
         </button>
       </footer>
     </form>

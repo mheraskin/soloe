@@ -1,5 +1,7 @@
 import { promises as fs } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type {
@@ -7,6 +9,8 @@ import type {
   ProjectDetectResult,
   ProjectDraft,
   ProjectId,
+  ProjectOpenRequest,
+  ProjectPathSuggestion,
   ProjectUpdate
 } from '@shared/types/projects.js';
 
@@ -71,6 +75,22 @@ export class ProjectStore {
     return project;
   }
 
+  async open(request: ProjectOpenRequest): Promise<Project> {
+    const detected = await this.detectFromPath(request.path);
+    if (!detected.path.trim()) throw new Error('Project path is required');
+    if (detected.matchedProjectId) {
+      const touched = await this.touch(detected.matchedProjectId);
+      if (touched) return touched;
+    }
+    return this.create({
+      name: detected.suggestedName || inferNameFromPath(detected.path),
+      path: detected.path,
+      ...(request.defaultRunMode ? { defaultRunMode: request.defaultRunMode } : {}),
+      ...(request.defaultWslDistro ? { defaultWslDistro: request.defaultWslDistro } : {}),
+      ...(request.accentColor ? { accentColor: request.accentColor } : {})
+    });
+  }
+
   async update(id: ProjectId, patch: ProjectUpdate): Promise<Project> {
     await this.ensureLoaded();
     const existing = this.cache!.get(id);
@@ -119,6 +139,40 @@ export class ProjectStore {
     const suggestedName = path.basename(resolved.replace(/[/\\]+$/, '')) || resolved;
     const matchedProjectId = this.findByPath(resolved);
     return { path: resolved, suggestedName, matchedProjectId };
+  }
+
+  async suggestPaths(query: string, limit = 10): Promise<ProjectPathSuggestion[]> {
+    await this.ensureLoaded();
+    const trimmed = query.trim();
+    const byPath = new Map<string, ProjectPathSuggestion>();
+
+    const known = [...this.cache!.values()]
+      .map((project) => {
+        const score = Math.max(
+          fuzzyScore(trimmed, project.name) ?? -1,
+          fuzzyScore(trimmed, project.path) ?? -1
+        );
+        return { project, score };
+      })
+      .filter((entry) => !trimmed || entry.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    for (const { project } of known) {
+      byPath.set(normalizePath(project.path), {
+        path: project.path,
+        name: project.name,
+        source: 'known',
+        projectId: project.id
+      });
+    }
+
+    for (const suggestion of await suggestDirectories(trimmed, limit)) {
+      const key = normalizePath(suggestion.path);
+      if (!byPath.has(key)) byPath.set(key, suggestion);
+    }
+
+    return [...byPath.values()].slice(0, limit);
   }
 
   onChange(fn: (projects: Project[]) => void): () => void {
@@ -249,6 +303,101 @@ function slugify(input: string): string {
 
 function normalizePath(p: string): string {
   return p.replace(/[/\\]+$/, '').replace(/\\/g, '/').toLowerCase();
+}
+
+function inferNameFromPath(projectPath: string): string {
+  return path.basename(projectPath.replace(/[/\\]+$/, '')) || projectPath;
+}
+
+async function suggestDirectories(query: string, limit: number): Promise<ProjectPathSuggestion[]> {
+  const parsed = parsePathQuery(query);
+  if (!parsed) return [];
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(parsed.baseDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => parsed.fragment.startsWith('.') || !entry.name.startsWith('.'))
+    .map((entry) => {
+      const fullPath = path.join(parsed.baseDir, entry.name);
+      const score = Math.max(
+        fuzzyScore(parsed.fragment, entry.name) ?? -1,
+        fuzzyScore(query, fullPath) ?? -1
+      );
+      return {
+        suggestion: {
+          path: fullPath,
+          name: entry.name,
+          source: 'directory' as const
+        },
+        score
+      };
+    })
+    .filter((entry) => !parsed.fragment || entry.score >= 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((entry) => entry.suggestion);
+}
+
+function parsePathQuery(query: string): { baseDir: string; fragment: string } | null {
+  if (!query) return { baseDir: os.homedir(), fragment: '' };
+  const expanded = expandHome(query);
+  const lastSeparator = Math.max(expanded.lastIndexOf('/'), expanded.lastIndexOf('\\'));
+  if (query.endsWith('/') || query.endsWith('\\')) {
+    return { baseDir: expanded, fragment: '' };
+  }
+  if (lastSeparator >= 0) {
+    const baseDir = expanded.slice(0, lastSeparator + 1);
+    return { baseDir, fragment: expanded.slice(lastSeparator + 1) };
+  }
+  return { baseDir: os.homedir(), fragment: expanded };
+}
+
+function expandHome(input: string): string {
+  if (input === '~') return os.homedir();
+  if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
+
+function fuzzyScore(query: string, candidate: string): number | null {
+  if (!query) return 0;
+  const q = query.toLowerCase();
+  const c = candidate.toLowerCase();
+  let qi = 0;
+  let total = 0;
+  let lastIdx = -1;
+  let run = 0;
+  for (let i = 0; i < c.length && qi < q.length; i += 1) {
+    if (c[i] !== q[qi]) {
+      run = 0;
+      continue;
+    }
+    let score = 1;
+    if (i === 0) score += 5;
+    if (i === lastIdx + 1) {
+      run += 1;
+      score += run * 2;
+    } else {
+      run = 1;
+    }
+    const prev = i > 0 ? candidate[i - 1] : '';
+    const ch = candidate[i];
+    if (prev) {
+      const isWordBoundary = /[\s\-_./\\]/.test(prev);
+      const isCamelBoundary = ch && prev && prev === prev.toLowerCase() && ch === ch.toUpperCase() && ch !== ch.toLowerCase();
+      if (isWordBoundary || isCamelBoundary) score += 3;
+    }
+    total += score;
+    lastIdx = i;
+    qi += 1;
+  }
+  if (qi < q.length) return null;
+  return total + Math.max(0, 10 - candidate.length / 8);
 }
 
 function parseStorage(raw: unknown): Project[] {

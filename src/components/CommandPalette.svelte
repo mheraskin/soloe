@@ -1,7 +1,6 @@
 <script lang="ts">
   import {
     Plus,
-    FolderPlus,
     Settings as SettingsIcon,
     Terminal,
     FolderOpen,
@@ -58,10 +57,10 @@
       }
     });
     list.push({
-      id: 'action.new-project',
-      title: 'New project',
+      id: 'action.open-project',
+      title: 'Open project',
       section: 'Actions',
-      icon: FolderPlus,
+      icon: FolderOpen,
       run: () => projectModal.openNew()
     });
     list.push({

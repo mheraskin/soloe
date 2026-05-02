@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, Search, FolderPlus } from 'lucide-svelte';
+  import { Plus, Search, FolderOpen } from 'lucide-svelte';
   import { sessions, PROJECT_UNASSIGNED_KEY } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -27,8 +27,8 @@
       <span>New terminal</span>
     </button>
     <button class="new project" onclick={() => projectModal.openNew()}>
-      <FolderPlus size={14} />
-      <span>New project</span>
+      <FolderOpen size={14} />
+      <span>Open project</span>
     </button>
     <div class="search">
       <Search size={12} />

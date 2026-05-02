@@ -33,6 +33,8 @@ import type {
   ProjectDetectResult,
   ProjectDraft,
   ProjectId,
+  ProjectOpenRequest,
+  ProjectPathSuggestion,
   ProjectUpdate
 } from './projects.js';
 import type {
@@ -87,7 +89,8 @@ export const IpcChannels = {
   system: {
     openPath: 'system:open-path',
     saveText: 'system:save-text',
-    openExternal: 'system:open-external'
+    openExternal: 'system:open-external',
+    listWslDistros: 'system:list-wsl-distros'
   },
   settings: {
     get: 'settings:get',
@@ -98,10 +101,12 @@ export const IpcChannels = {
     list: 'projects:list',
     get: 'projects:get',
     create: 'projects:create',
+    open: 'projects:open',
     update: 'projects:update',
     delete: 'projects:delete',
     touch: 'projects:touch',
     detectFromPath: 'projects:detect-from-path',
+    suggestPaths: 'projects:suggest-paths',
     change: 'projects:change'
   },
   git: {
@@ -187,6 +192,7 @@ export interface SystemApi {
   openPath(sessionId: SessionId): Promise<IpcResult<true>>;
   saveText(request: { defaultPath?: string; content: string }): Promise<IpcResult<true>>;
   openExternal(url: string): Promise<IpcResult<true>>;
+  listWslDistros(): Promise<IpcResult<string[]>>;
 }
 
 export interface SettingsApi {
@@ -199,10 +205,12 @@ export interface ProjectsApi {
   list(): Promise<IpcResult<Project[]>>;
   get(id: ProjectId): Promise<IpcResult<Project | null>>;
   create(draft: ProjectDraft): Promise<IpcResult<Project>>;
+  open(request: ProjectOpenRequest): Promise<IpcResult<Project>>;
   update(id: ProjectId, patch: ProjectUpdate): Promise<IpcResult<Project>>;
   delete(id: ProjectId): Promise<IpcResult<true>>;
   touch(id: ProjectId): Promise<IpcResult<Project | null>>;
   detectFromPath(path: string): Promise<IpcResult<ProjectDetectResult>>;
+  suggestPaths(query: string): Promise<IpcResult<ProjectPathSuggestion[]>>;
   onChange(listener: (projects: Project[]) => void): () => void;
 }
 

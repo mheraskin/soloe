@@ -1,6 +1,12 @@
 import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
-import type { Project, ProjectDraft, ProjectId, ProjectUpdate } from '@shared/types/projects.js';
+import type {
+  Project,
+  ProjectDraft,
+  ProjectId,
+  ProjectOpenRequest,
+  ProjectUpdate
+} from '@shared/types/projects.js';
 import type { ProjectStore } from '../projects/ProjectStore.js';
 import { ipcInvoke } from './result.js';
 
@@ -31,6 +37,10 @@ export class ProjectsIpc {
       ipcInvoke(() => this.opts.store.create(d))
     );
 
+    ipcMain.handle(IpcChannels.projects.open, (_e, request: ProjectOpenRequest) =>
+      ipcInvoke(() => this.opts.store.open(request))
+    );
+
     ipcMain.handle(IpcChannels.projects.update, (_e, id: ProjectId, patch: ProjectUpdate) =>
       ipcInvoke(() => this.opts.store.update(id, patch))
     );
@@ -50,6 +60,10 @@ export class ProjectsIpc {
       ipcInvoke(() => this.opts.store.detectFromPath(p))
     );
 
+    ipcMain.handle(IpcChannels.projects.suggestPaths, (_e, query: string) =>
+      ipcInvoke(() => this.opts.store.suggestPaths(query))
+    );
+
     this.detachListener = this.opts.store.onChange((projects: Project[]) => {
       for (const win of this.opts.getWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IpcChannels.projects.change, projects);
@@ -62,10 +76,12 @@ export class ProjectsIpc {
     ipcMain.removeHandler(IpcChannels.projects.list);
     ipcMain.removeHandler(IpcChannels.projects.get);
     ipcMain.removeHandler(IpcChannels.projects.create);
+    ipcMain.removeHandler(IpcChannels.projects.open);
     ipcMain.removeHandler(IpcChannels.projects.update);
     ipcMain.removeHandler(IpcChannels.projects.delete);
     ipcMain.removeHandler(IpcChannels.projects.touch);
     ipcMain.removeHandler(IpcChannels.projects.detectFromPath);
+    ipcMain.removeHandler(IpcChannels.projects.suggestPaths);
     this.detachListener?.();
     this.detachListener = null;
     this.registered = false;

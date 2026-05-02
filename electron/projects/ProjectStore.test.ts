@@ -45,6 +45,35 @@ describe('ProjectStore — create/list', () => {
   });
 });
 
+describe('ProjectStore — open', () => {
+  it('infers the project name from the opened path', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-open-'));
+    try {
+      const store = new ProjectStore(storePath);
+      const opened = await store.open({ path: projectDir });
+      expect(opened.name).toBe(path.basename(projectDir));
+      expect(opened.path).toBe(projectDir);
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses an existing project record for the same path', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-open-'));
+    try {
+      const store = new ProjectStore(storePath);
+      const created = await store.create(draft({ name: 'Existing', path: projectDir }));
+      await new Promise((r) => setTimeout(r, 5));
+      const opened = await store.open({ path: projectDir });
+      expect(opened.id).toBe(created.id);
+      expect(opened.lastOpenedAt > created.lastOpenedAt).toBe(true);
+      expect(await store.list()).toHaveLength(1);
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('ProjectStore — validation', () => {
   it('rejects an empty name', async () => {
     const store = new ProjectStore(storePath);
@@ -203,5 +232,24 @@ describe.runIf(hasGit)('ProjectStore — detectFromPath', () => {
     expect(result.path).toBe('');
     expect(result.suggestedName).toBe('');
     expect(result.matchedProjectId).toBeNull();
+  });
+});
+
+describe('ProjectStore — suggestPaths', () => {
+  it('returns fuzzy known project matches and directory matches', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-suggest-'));
+    try {
+      const alpha = path.join(root, 'alpha-app');
+      const beta = path.join(root, 'beta-app');
+      await fs.mkdir(alpha);
+      await fs.mkdir(beta);
+      const store = new ProjectStore(storePath);
+      const known = await store.create(draft({ name: 'Beta App', path: beta }));
+      const suggestions = await store.suggestPaths(path.join(root, 'aa'));
+      expect(suggestions.some((s) => s.path === alpha && s.source === 'directory')).toBe(true);
+      expect(suggestions.some((s) => s.projectId === known.id && s.source === 'known')).toBe(true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });

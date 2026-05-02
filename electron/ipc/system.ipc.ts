@@ -54,6 +54,10 @@ export class SystemIpc {
         return true as const;
       })
     );
+
+    ipcMain.handle(IpcChannels.system.listWslDistros, () =>
+      ipcInvoke(() => listWslDistros())
+    );
   }
 
   dispose(): void {
@@ -61,8 +65,45 @@ export class SystemIpc {
     ipcMain.removeHandler(IpcChannels.system.openPath);
     ipcMain.removeHandler(IpcChannels.system.saveText);
     ipcMain.removeHandler(IpcChannels.system.openExternal);
+    ipcMain.removeHandler(IpcChannels.system.listWslDistros);
     this.registered = false;
   }
+}
+
+function listWslDistros(): Promise<string[]> {
+  return new Promise((resolve) => {
+    const child = spawn('wsl.exe', ['-l', '-q'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let stdout = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve([]);
+    }, 2500);
+    child.stdout.on('data', (b: Buffer) => {
+      stdout += b.toString('utf16le');
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve([]);
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        resolve([]);
+        return;
+      }
+      resolve(parseWslDistros(stdout));
+    });
+  });
+}
+
+function parseWslDistros(output: string): string[] {
+  return [...new Set(
+    output
+      .replace(/\0/g, '')
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/\s+\(Default\)$/i, ''))
+      .filter(Boolean)
+  )];
 }
 
 function openInWsl(distro: string, cwd: string): Promise<void> {

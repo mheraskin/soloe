@@ -12,6 +12,7 @@ import type {
   Project,
   ProjectDraft,
   ProjectId,
+  ProjectOpenRequest,
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type {
@@ -82,7 +83,8 @@ export const ipc = {
     openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId)),
     saveText: async (request: { defaultPath?: string; content: string }) =>
       unwrap(await c.system.saveText(request)),
-    openExternal: async (url: string) => unwrap(await c.system.openExternal(url))
+    openExternal: async (url: string) => unwrap(await c.system.openExternal(url)),
+    listWslDistros: async () => unwrap(await c.system.listWslDistros())
   },
   settings: {
     get: async () => unwrap(await c.settings.get()),
@@ -93,11 +95,13 @@ export const ipc = {
     list: async () => unwrap(await c.projects.list()),
     get: async (id: ProjectId) => unwrap(await c.projects.get(id)),
     create: async (draft: ProjectDraft) => unwrap(await c.projects.create(draft)),
+    open: async (request: ProjectOpenRequest) => unwrap(await c.projects.open(request)),
     update: async (id: ProjectId, patch: ProjectUpdate) =>
       unwrap(await c.projects.update(id, patch)),
     delete: async (id: ProjectId) => unwrap(await c.projects.delete(id)),
     touch: async (id: ProjectId) => unwrap(await c.projects.touch(id)),
     detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
+    suggestPaths: async (query: string) => unwrap(await c.projects.suggestPaths(query)),
     onChange: (cb: (projects: Project[]) => void) => c.projects.onChange(cb)
   },
   git: {

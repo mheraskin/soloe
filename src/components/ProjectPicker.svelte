@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Folder, FolderPlus } from 'lucide-svelte';
+  import { Folder, FolderOpen } from 'lucide-svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import { projects } from '../stores/projects.svelte';
 
@@ -33,12 +33,12 @@
         <option value={p.id}>{p.name}</option>
       {/each}
       {#if onCreateNew}
-        <option value="__create__">+ New project…</option>
+        <option value="__create__">Open project...</option>
       {/if}
     </select>
     {#if onCreateNew}
-      <button type="button" class="add" onclick={onCreateNew} title="New project" aria-label="New project">
-        <FolderPlus size={12} />
+      <button type="button" class="add" onclick={onCreateNew} title="Open project" aria-label="Open project">
+        <FolderOpen size={12} />
       </button>
     {/if}
   </div>
