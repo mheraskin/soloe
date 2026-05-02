@@ -1,8 +1,9 @@
-import { dialog, ipcMain, shell } from 'electron';
+import { app, dialog, ipcMain, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type { SessionId } from '@shared/types/sessions.js';
+import type { SystemUsageSnapshot } from '@shared/types/system.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import { ipcInvoke } from './result.js';
 
@@ -58,6 +59,10 @@ export class SystemIpc {
     ipcMain.handle(IpcChannels.system.listWslDistros, () =>
       ipcInvoke(() => listWslDistros())
     );
+
+    ipcMain.handle(IpcChannels.system.usage, () =>
+      ipcInvoke(() => collectUsage())
+    );
   }
 
   dispose(): void {
@@ -66,8 +71,124 @@ export class SystemIpc {
     ipcMain.removeHandler(IpcChannels.system.saveText);
     ipcMain.removeHandler(IpcChannels.system.openExternal);
     ipcMain.removeHandler(IpcChannels.system.listWslDistros);
+    ipcMain.removeHandler(IpcChannels.system.usage);
     this.registered = false;
   }
+}
+
+interface ProcessRow {
+  pid: number;
+  ppid: number;
+  rssKb: number;
+  cpuPercent: number;
+}
+
+async function collectUsage(): Promise<SystemUsageSnapshot> {
+  const electronMetrics = app.getAppMetrics();
+  const electronByPid = new Map(electronMetrics.map((metric) => [metric.pid, metric]));
+  const rows = await listProcessRows();
+  const rootPids = new Set([process.pid]);
+  const selectedPids = new Set([
+    ...electronByPid.keys(),
+    ...collectDescendantPids(rows, rootPids)
+  ]);
+
+  let cpuPercent = 0;
+  let memoryBytes = 0;
+
+  for (const pid of selectedPids) {
+    const electronMetric = electronByPid.get(pid);
+    if (electronMetric) {
+      cpuPercent += electronMetric.cpu.percentCPUUsage;
+      memoryBytes += electronMetric.memory.workingSetSize * 1024;
+      continue;
+    }
+
+    const row = rows.get(pid);
+    if (!row) continue;
+    cpuPercent += row.cpuPercent;
+    memoryBytes += row.rssKb * 1024;
+  }
+
+  const electronProcessCount = electronByPid.size;
+  const processCount = selectedPids.size;
+
+  return {
+    cpuPercent: round(cpuPercent, 1),
+    memoryBytes,
+    processCount,
+    electronProcessCount,
+    childProcessCount: Math.max(0, processCount - electronProcessCount),
+    sampledAt: new Date().toISOString()
+  };
+}
+
+function collectDescendantPids(rows: Map<number, ProcessRow>, rootPids: Set<number>): number[] {
+  const childrenByParent = new Map<number, number[]>();
+  for (const row of rows.values()) {
+    const children = childrenByParent.get(row.ppid) ?? [];
+    children.push(row.pid);
+    childrenByParent.set(row.ppid, children);
+  }
+
+  const selected = new Set<number>();
+  const queue = [...rootPids];
+  for (let i = 0; i < queue.length; i += 1) {
+    const pid = queue[i];
+    if (pid === undefined) continue;
+    if (selected.has(pid)) continue;
+    selected.add(pid);
+    for (const childPid of childrenByParent.get(pid) ?? []) {
+      queue.push(childPid);
+    }
+  }
+  return [...selected];
+}
+
+async function listProcessRows(): Promise<Map<number, ProcessRow>> {
+  if (process.platform === 'win32') return new Map();
+  return new Promise((resolve) => {
+    const child = spawn('ps', ['-axo', 'pid=,ppid=,rss=,pcpu='], {
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    let stdout = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(new Map());
+    }, 1500);
+    child.stdout.on('data', (b: Buffer) => {
+      stdout += b.toString('utf8');
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(new Map());
+    });
+    child.on('exit', () => {
+      clearTimeout(timer);
+      resolve(parsePsRows(stdout));
+    });
+  });
+}
+
+function parsePsRows(output: string): Map<number, ProcessRow> {
+  const rows = new Map<number, ProcessRow>();
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)$/);
+    if (!match) continue;
+    const [, pid, ppid, rssKb, cpuPercent] = match;
+    rows.set(Number(pid), {
+      pid: Number(pid),
+      ppid: Number(ppid),
+      rssKb: Number(rssKb),
+      cpuPercent: Number(cpuPercent)
+    });
+  }
+  return rows;
+}
+
+function round(value: number, digits: number): number {
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
 }
 
 function listWslDistros(): Promise<string[]> {

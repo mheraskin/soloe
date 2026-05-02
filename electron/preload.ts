@@ -108,7 +108,8 @@ const soloe: SoloeApi = {
     saveText: (request: { defaultPath?: string; content: string }) =>
       ipcRenderer.invoke(IpcChannels.system.saveText, request),
     openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.system.openExternal, url),
-    listWslDistros: () => ipcRenderer.invoke(IpcChannels.system.listWslDistros)
+    listWslDistros: () => ipcRenderer.invoke(IpcChannels.system.listWslDistros),
+    usage: () => ipcRenderer.invoke(IpcChannels.system.usage)
   },
   settings: {
     get: () => ipcRenderer.invoke(IpcChannels.settings.get),

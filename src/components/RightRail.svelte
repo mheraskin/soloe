@@ -4,6 +4,7 @@
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Tooltip from '$lib/components/ui/tooltip';
+  import ProcessUsageWidget from './ProcessUsageWidget.svelte';
   import RailInspectorTab from './rail/RailInspectorTab.svelte';
   import RailDiagnosticsTab from './rail/RailDiagnosticsTab.svelte';
 
@@ -55,12 +56,15 @@
   </Tooltip.Provider>
 
   {#if rightRail.open}
-    <ScrollArea class="flex-1 border-r border-border">
-      {#if rightRail.activeTab === 'inspector'}
-        <RailInspectorTab />
-      {:else if rightRail.activeTab === 'diagnostics'}
-        <RailDiagnosticsTab />
-      {/if}
-    </ScrollArea>
+    <div class="flex min-w-0 flex-1 flex-col border-r border-border">
+      <ScrollArea class="min-h-0 flex-1">
+        {#if rightRail.activeTab === 'inspector'}
+          <RailInspectorTab />
+        {:else if rightRail.activeTab === 'diagnostics'}
+          <RailDiagnosticsTab />
+        {/if}
+      </ScrollArea>
+      <ProcessUsageWidget />
+    </div>
   {/if}
 </aside>

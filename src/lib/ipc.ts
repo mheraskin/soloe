@@ -104,7 +104,8 @@ export const ipc = {
     saveText: async (request: { defaultPath?: string; content: string }) =>
       unwrap(await c.system.saveText(toIpcPayload(request))),
     openExternal: async (url: string) => unwrap(await c.system.openExternal(url)),
-    listWslDistros: async () => unwrap(await c.system.listWslDistros())
+    listWslDistros: async () => unwrap(await c.system.listWslDistros()),
+    usage: async () => unwrap(await c.system.usage())
   },
   settings: {
     get: async () => unwrap(await c.settings.get()),

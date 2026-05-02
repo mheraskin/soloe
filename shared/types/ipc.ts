@@ -57,6 +57,7 @@ import type {
   TerminalStartResult,
   TerminalStatusEvent
 } from './terminal.js';
+import type { SystemUsageSnapshot } from './system.js';
 
 export const IpcChannels = {
   sessions: {
@@ -94,7 +95,8 @@ export const IpcChannels = {
     openPath: 'system:open-path',
     saveText: 'system:save-text',
     openExternal: 'system:open-external',
-    listWslDistros: 'system:list-wsl-distros'
+    listWslDistros: 'system:list-wsl-distros',
+    usage: 'system:usage'
   },
   settings: {
     get: 'settings:get',
@@ -216,6 +218,7 @@ export interface SystemApi {
   saveText(request: { defaultPath?: string; content: string }): Promise<IpcResult<true>>;
   openExternal(url: string): Promise<IpcResult<true>>;
   listWslDistros(): Promise<IpcResult<string[]>>;
+  usage(): Promise<IpcResult<SystemUsageSnapshot>>;
 }
 
 export interface SettingsApi {
