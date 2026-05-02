@@ -5,6 +5,7 @@
   import type { Project } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
+  import { nav } from '../stores/nav.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { confirmStore } from '../stores/confirm.svelte';
@@ -12,6 +13,7 @@
   import { rankMulti } from '../lib/fuzzy';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import KbdHint from './KbdHint.svelte';
   import SessionItem from './SessionItem.svelte';
   import WorktreeGroup from './WorktreeGroup.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
@@ -100,6 +102,7 @@
 
   let accent = $derived(project.accentColor ?? null);
   let hasWorktrees = $derived(gitWorktrees.some((wt) => !wt.isMain));
+  let kbdIndex = $derived(nav.projectIndexHints[project.id] ?? null);
   let visibleSessions = $derived.by(() => {
     const q = filter.trim();
     if (!q) return items;
@@ -154,6 +157,9 @@
                 {project.path}
               </span>
             </span>
+            {#if kbdIndex !== null}
+              <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
+            {/if}
           </Collapsible.Trigger>
           {#if !hasWorktrees}
             <AgentLaunchPopover

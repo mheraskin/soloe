@@ -15,7 +15,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { X } from '@lucide/svelte';
-  import { Keymap, tabIndexFromEvent } from '../lib/keymap';
+  import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
 
   let {
     terminalId,
@@ -127,6 +127,7 @@
       if (e.type !== 'keydown') return true;
 
       if (tabIndexFromEvent(e) !== null) return false;
+      if (projectIndexFromEvent(e) !== null) return false;
       for (const binding of Object.values(Keymap)) {
         if (binding.match(e)) return false;
       }

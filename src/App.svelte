@@ -11,7 +11,8 @@
   import { filePalette } from './stores/file-palette.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
-  import { Keymap, tabIndexFromEvent } from './lib/keymap';
+  import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from './lib/keymap';
+  import { kbdHints } from './stores/kbd-hints.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Toaster } from '$lib/components/ui/sonner';
   import Sidebar from './components/Sidebar.svelte';
@@ -34,7 +35,9 @@
     projects.attachListeners();
     projects.load().catch(reportError);
     git.attachListeners();
+    const detachKbdHints = kbdHints.attach();
     return () => {
+      detachKbdHints();
       sessions.detach();
       settings.detach();
       projects.detach();
@@ -60,6 +63,22 @@
       filePalette.toggle();
       return;
     }
+    if (Keymap.openProject.match(e)) {
+      e.preventDefault();
+      commandPalette.open('open-project');
+      return;
+    }
+    if (Keymap.newSession.match(e)) {
+      e.preventDefault();
+      const sel = sessions.selected;
+      void sessions
+        .createWithDefaults({
+          ...(sel?.projectId ? { projectId: sel.projectId } : {}),
+          ...(sel?.cwd ? { cwd: sel.cwd } : {})
+        })
+        .catch(reportError);
+      return;
+    }
     if (Keymap.terminalFind.match(e)) {
       e.preventDefault();
       window.dispatchEvent(new CustomEvent('soloe:terminal-find'));
@@ -76,6 +95,12 @@
       return;
     }
     if (commandPalette.isOpen || filePalette.open) return;
+    const projectIdx = projectIndexFromEvent(e);
+    if (projectIdx !== null) {
+      e.preventDefault();
+      nav.selectProjectByIndex(projectIdx);
+      return;
+    }
     const idx = tabIndexFromEvent(e);
     if (idx !== null) {
       e.preventDefault();

@@ -1,13 +1,7 @@
-export interface ChordMatch {
-  ctrlOrCmd: boolean;
-  shift: boolean;
-  alt: boolean;
-  key: string;
-}
-
 export interface KeymapBinding {
   id: string;
   description: string;
+  keys: string[];
   match: (e: KeyboardEvent) => boolean;
 }
 
@@ -27,44 +21,65 @@ export const Keymap = {
   commandPalette: {
     id: 'command.palette',
     description: 'Open command palette',
+    keys: ['Ctrl', 'K'],
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'k'
   },
   filePalette: {
     id: 'command.file-palette',
     description: 'Open file palette',
+    keys: ['Ctrl', 'P'],
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'p'
+  },
+  newSession: {
+    id: 'session.new',
+    description: 'New session',
+    keys: ['Ctrl', 'T'],
+    match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 't'
+  },
+  openProject: {
+    id: 'project.open',
+    description: 'Open project',
+    keys: ['Ctrl', 'Shift', 'O'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'o'
   },
   terminalFind: {
     id: 'terminal.find',
     description: 'Find in terminal',
+    keys: ['Ctrl', 'F'],
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'f'
   },
   zoomIn: {
     id: 'window.zoom-in',
     description: 'Zoom in',
+    keys: ['Ctrl', '+'],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && !e.altKey && (key(e) === '+' || key(e) === '=')
   },
   zoomOut: {
     id: 'window.zoom-out',
     description: 'Zoom out',
+    keys: ['Ctrl', '-'],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && !e.altKey && (key(e) === '-' || key(e) === '_')
   },
   closeActiveTab: {
     id: 'tabs.close-active',
     description: 'Close active tab',
+    keys: ['Ctrl', 'W'],
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'w'
   },
   cycleNext: {
     id: 'tabs.cycle-next',
     description: 'Switch to next session',
+    keys: ['Ctrl', 'Shift', ']'],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === ']'
   },
   cyclePrev: {
     id: 'tabs.cycle-prev',
     description: 'Switch to previous session',
+    keys: ['Ctrl', 'Shift', '['],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === '['
   }
@@ -77,6 +92,13 @@ export function tabIndexFromEvent(e: KeyboardEvent): number | null {
     return Number(k) - 1;
   }
   return null;
+}
+
+export function projectIndexFromEvent(e: KeyboardEvent): number | null {
+  if (!isCtrlOrCmd(e) || e.altKey || !e.shiftKey) return null;
+  const m = e.code.match(/^Digit([1-9])$/);
+  if (!m) return null;
+  return Number(m[1]) - 1;
 }
 
 export function shouldIgnoreInTextInput(e: KeyboardEvent): boolean {

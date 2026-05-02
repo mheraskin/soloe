@@ -1,4 +1,5 @@
-import type { Session } from '@shared/types/sessions.js';
+import type { Session, SessionId } from '@shared/types/sessions.js';
+import type { ProjectId } from '@shared/types/projects.js';
 import { sessions } from './sessions.svelte';
 import { projects } from './projects.svelte';
 import { reportError } from './toast.svelte';
@@ -7,6 +8,9 @@ import { confirmDeleteSession } from '../lib/session-delete-confirmation';
 function normPath(p: string): string {
   return p.replace(/[/\\]+$/, '');
 }
+
+const STANDALONE_KEY = '__standalone__';
+const HINT_LIMIT = 9;
 
 class NavStore {
   flat = $derived.by<Session[]>(() => {
@@ -40,22 +44,65 @@ class NavStore {
     return out;
   });
 
+  activeProjectId = $derived<ProjectId | null>(sessions.selected?.projectId ?? null);
+
+  flatActiveProject = $derived.by<Session[]>(() => {
+    const projectId = this.activeProjectId;
+    const all = this.flat;
+    if (!projectId) return all.filter((s) => !s.projectId);
+    return all.filter((s) => s.projectId === projectId);
+  });
+
   activeIndex = $derived.by<number>(() => {
     const id = sessions.selectedId;
     if (!id) return -1;
-    return this.flat.findIndex((s) => s.id === id);
+    return this.flatActiveProject.findIndex((s) => s.id === id);
+  });
+
+  sessionIndexHints = $derived.by<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    const list = this.flatActiveProject;
+    for (let i = 0; i < Math.min(HINT_LIMIT, list.length); i += 1) {
+      out[list[i]!.id] = i + 1;
+    }
+    return out;
+  });
+
+  projectIndexHints = $derived.by<Record<string, number>>(() => {
+    const out: Record<string, number> = {};
+    const list = projects.recents;
+    for (let i = 0; i < Math.min(HINT_LIMIT, list.length); i += 1) {
+      out[list[i]!.id] = i + 1;
+    }
+    return out;
   });
 
   selectByIndex(n: number): void {
-    const list = this.flat;
+    const list = this.flatActiveProject;
     const target = list[n];
     if (target) sessions.select(target.id);
+  }
+
+  selectProjectByIndex(n: number): void {
+    const project = projects.recents[n];
+    if (!project) return;
+    this.focusProject(project.id);
+  }
+
+  focusProject(projectId: ProjectId): void {
+    const lastSelected = sessions.lastSelectedByProject[projectId];
+    if (lastSelected && sessions.sessions.some((s) => s.id === lastSelected)) {
+      sessions.select(lastSelected);
+      return;
+    }
+    const first = (sessions.byProject[projectId] ?? [])[0];
+    if (first) sessions.select(first.id);
   }
 
   cycleNext(): void {
     const list = this.flat;
     if (list.length === 0) return;
-    const idx = this.activeIndex;
+    const idx = list.findIndex((s) => s.id === sessions.selectedId);
     const next = idx < 0 ? 0 : (idx + 1) % list.length;
     sessions.select(list[next]!.id);
   }
@@ -63,7 +110,7 @@ class NavStore {
   cyclePrev(): void {
     const list = this.flat;
     if (list.length === 0) return;
-    const idx = this.activeIndex;
+    const idx = list.findIndex((s) => s.id === sessions.selectedId);
     const next = idx <= 0 ? list.length - 1 : idx - 1;
     sessions.select(list[next]!.id);
   }
@@ -84,3 +131,4 @@ class NavStore {
 }
 
 export const nav = new NavStore();
+export { STANDALONE_KEY };

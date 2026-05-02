@@ -3,6 +3,7 @@
   import { Archive, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
   import type { Session } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
@@ -12,6 +13,7 @@
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import StatusDot from './StatusDot.svelte';
   import KindIcon from './KindIcon.svelte';
+  import KbdHint from './KbdHint.svelte';
 
   let { session, branch = null }: { session: Session; branch?: string | null } = $props();
 
@@ -22,6 +24,7 @@
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
   let workerCount = $derived(sessions.childWorkersFor(session.id).length);
+  let kbdIndex = $derived(nav.sessionIndexHints[session.id] ?? null);
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
@@ -170,6 +173,9 @@
               <GitBranch class="size-2.5" />
               <span class="max-w-[110px] truncate">{branch}</span>
             </span>
+          {/if}
+          {#if kbdIndex !== null}
+            <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
           {/if}
           <div class="ml-auto flex shrink-0 items-center gap-0.5">
             {#if session.projectId}

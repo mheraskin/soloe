@@ -6,9 +6,11 @@
   import { commandPalette } from '../stores/command-palette.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { rankMulti } from '../lib/fuzzy';
+  import { Keymap } from '../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import KbdHint from './KbdHint.svelte';
   import ProjectSection from './ProjectSection.svelte';
   import SessionItem from './SessionItem.svelte';
 
@@ -79,6 +81,7 @@
       onclick={() => void sessions.createWithDefaults({}).catch(reportError)}
     >
       <Plus class="size-3.5" /> New session
+      <KbdHint keys={Keymap.newSession.keys} class="ml-1" />
     </Button>
     <Button
       variant="ghost"
@@ -87,6 +90,7 @@
       onclick={() => commandPalette.open('open-project')}
     >
       <FolderOpen class="size-3.5" /> Open project
+      <KbdHint keys={Keymap.openProject.keys} class="ml-1" />
     </Button>
     <div class="relative">
       <Search class="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
