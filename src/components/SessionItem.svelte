@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { Archive, ArchiveRestore, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
-  import type { Session } from '@shared/types/sessions.js';
+  import type { AgentObservedState, Session } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -14,7 +14,6 @@
   import StatusDot from './StatusDot.svelte';
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
-  import AgentStateBadge from './AgentStateBadge.svelte';
 
   let { session, branch = null }: { session: Session; branch?: string | null } = $props();
 
@@ -29,9 +28,13 @@
   let observation = $derived(sessions.observationFor(session.id));
   let observedState = $derived(observation?.state ?? null);
   let observedSummary = $derived(sessions.eventsFor(session.id)[0]?.summary ?? null);
-  let showAgentBadge = $derived(
+  let showAgentStatus = $derived(
     !!observedState &&
       !(session.kind === 'standard_terminal' && observation?.provider === 'standard_terminal')
+  );
+  let statusLabel = $derived(showAgentStatus && observedState ? observedStateLabel(observedState) : status);
+  let statusTitle = $derived(
+    observedSummary ? `${statusLabel} · ${observedSummary}` : statusLabel
   );
 
   function onClick(e: MouseEvent) {
@@ -138,6 +141,21 @@
 
   let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
+
+  function observedStateLabel(state: AgentObservedState): string {
+    const labels = {
+      starting: 'starting',
+      idle: 'idle',
+      working: 'thinking',
+      running_tool: observedSummary?.replace(/^tool:\s*/i, '') ?? 'tool',
+      waiting_for_input: 'input',
+      waiting_for_approval: 'approval',
+      completed: 'done',
+      failed: 'failed',
+      exited: 'exited'
+    } satisfies Record<AgentObservedState, string>;
+    return labels[state] ?? state;
+  }
 </script>
 
 <ContextMenu.Root>
@@ -157,30 +175,43 @@
         tabindex="0"
         title={session.cwd}
       >
-        <StatusDot {status} />
         <KindIcon kind={session.kind} size={14} />
-        {#if showAgentBadge && observedState}
-          <AgentStateBadge state={observedState} summary={observedSummary} />
-        {/if}
         <span class="flex min-w-0 flex-1 flex-col gap-1">
-          {#if editing}
-            <input
-              class="min-w-0 rounded border border-border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-ring"
-              bind:this={nameInput}
-              bind:value={editValue}
-              onkeydown={onNameKey}
-              onblur={() => void commitEditing()}
-              onclick={(e) => e.stopPropagation()}
-              spellcheck="false"
-              autocomplete="off"
-            />
-          {:else}
-            <span class="truncate text-sm leading-4 font-medium text-foreground">
-              {session.name || '(unnamed)'}
+          <span class="flex min-w-0 items-center gap-1.5">
+            {#if editing}
+              <input
+                class="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-ring"
+                bind:this={nameInput}
+                bind:value={editValue}
+                onkeydown={onNameKey}
+                onblur={() => void commitEditing()}
+                onclick={(e) => e.stopPropagation()}
+                spellcheck="false"
+                autocomplete="off"
+              />
+            {:else}
+              <span class="min-w-0 truncate text-sm leading-4 font-medium text-foreground">
+                {session.name || '(unnamed)'}
+              </span>
+            {/if}
+            <span
+              class="inline-flex max-w-[92px] shrink-0 items-center gap-1 rounded-full border border-border bg-muted/35 px-1.5 py-px text-[10px] leading-none font-medium text-muted-foreground uppercase"
+              title={statusTitle}
+              aria-label={statusTitle}
+            >
+              <StatusDot {status} class="size-1.5" />
+              <span class="truncate">{statusLabel}</span>
             </span>
-          {/if}
-          <span class="truncate font-mono text-[11px] leading-3.5 text-muted-foreground">
-            {session.cwd}
+          </span>
+          <span class="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-3.5 text-muted-foreground">
+            <span class="min-w-0 truncate">{session.cwd}</span>
+            {#if branch}
+              <span class="inline-flex min-w-0 shrink-0 items-center gap-0.5">
+                <span class="text-muted-foreground/55">·</span>
+                <GitBranch class="size-2.5" />
+                <span class="max-w-[90px] truncate">{branch}</span>
+              </span>
+            {/if}
           </span>
         </span>
         {#if workerCount > 0}
@@ -189,12 +220,6 @@
             title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}
           >
             {workerCount}
-          </span>
-        {/if}
-        {#if branch}
-          <span class="inline-flex shrink-0 items-center gap-0.5 font-mono text-[10px] text-muted-foreground">
-            <GitBranch class="size-2.5" />
-            <span class="max-w-[110px] truncate">{branch}</span>
           </span>
         {/if}
         {#if kbdIndex !== null}

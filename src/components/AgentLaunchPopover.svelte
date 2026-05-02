@@ -100,7 +100,7 @@
   function onTriggerClick(e: Event): void {
     e.stopPropagation();
     if (open) {
-      closeSelf();
+      launchTerminal();
     } else {
       openNow();
     }
@@ -171,16 +171,6 @@
       <Button
         variant="ghost"
         class="h-14 flex-col gap-1 px-1 text-xs"
-        title="New terminal"
-        aria-label="New terminal"
-        onclick={launchTerminal}
-      >
-        <KindIcon kind="standard_terminal" size={20} />
-        <span class="truncate leading-none">Terminal</span>
-      </Button>
-      <Button
-        variant="ghost"
-        class="h-14 flex-col gap-1 px-1 text-xs"
         title="New Claude session"
         aria-label="New Claude session"
         onclick={() => launchAgent('claude_code')}
@@ -197,6 +187,16 @@
       >
         <KindIcon kind="codex" size={20} />
         <span class="truncate leading-none">Codex</span>
+      </Button>
+      <Button
+        variant="ghost"
+        class="h-14 flex-col gap-1 px-1 text-xs"
+        title="New terminal"
+        aria-label="New terminal"
+        onclick={launchTerminal}
+      >
+        <KindIcon kind="standard_terminal" size={20} />
+        <span class="truncate leading-none">Terminal</span>
       </Button>
     </div>
   </Popover.Content>
