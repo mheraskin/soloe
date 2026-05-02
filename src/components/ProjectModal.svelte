@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { X } from 'lucide-svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { projects } from '../stores/projects.svelte';
   import { reportError } from '../stores/toast.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import * as Dialog from '$lib/components/ui/dialog';
   import ProjectForm from './forms/ProjectForm.svelte';
 
   let submitting = $state(false);
@@ -39,111 +40,29 @@
     }
   }
 
-  function onKey(e: KeyboardEvent) {
-    if (projectModal.open && e.key === 'Escape') projectModal.close();
+  function onOpenChange(next: boolean) {
+    if (!next) projectModal.close();
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<Dialog.Root open={projectModal.open} {onOpenChange}>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header>
+      <Dialog.Title>Edit project</Dialog.Title>
+      <Dialog.Description class="sr-only">Update the project's name, path, and defaults.</Dialog.Description>
+    </Dialog.Header>
 
-{#if projectModal.open}
-  <div class="backdrop" onclick={() => projectModal.close()} role="presentation"></div>
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Project details">
-    <header>
-      <h2>Edit project</h2>
-      <button class="close" onclick={() => projectModal.close()} aria-label="Close">
-        <X size={16} />
-      </button>
-    </header>
-
-    <form onsubmit={submit}>
+    <form class="flex flex-col gap-3" onsubmit={submit}>
       <ProjectForm />
 
       {#if projectModal.error}
-        <p class="error">{projectModal.error}</p>
+        <p class="m-0 text-xs text-destructive">{projectModal.error}</p>
       {/if}
 
-      <footer>
-        <button type="button" onclick={() => projectModal.close()}>Cancel</button>
-        <button type="submit" class="primary" disabled={submitting}>Save</button>
-      </footer>
+      <Dialog.Footer>
+        <Button type="button" variant="outline" onclick={() => projectModal.close()}>Cancel</Button>
+        <Button type="submit" disabled={submitting}>Save</Button>
+      </Dialog.Footer>
     </form>
-  </div>
-{/if}
-
-<style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 110;
-  }
-  .modal {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 111;
-    width: 440px;
-    max-width: 92vw;
-    max-height: 86vh;
-    background: var(--bg-elev-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  header h2 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 500;
-  }
-  .close {
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    line-height: 1;
-    padding: 4px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-  }
-  .close:hover { color: var(--fg); }
-
-  form {
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    overflow-y: auto;
-  }
-  .error {
-    color: var(--red);
-    margin: 0;
-    font-size: 12px;
-  }
-  footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: 4px;
-  }
-  .primary {
-    background: var(--accent-strong);
-    color: var(--bg);
-    border-color: var(--accent-strong);
-  }
-  .primary:hover:not(:disabled) {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-</style>
+  </Dialog.Content>
+</Dialog.Root>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight, Folder, Pencil, Plus } from 'lucide-svelte';
+  import { ChevronDown, ChevronRight, Folder, Pencil, Plus } from '@lucide/svelte';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
@@ -7,6 +7,8 @@
   import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
+  import { Button } from '$lib/components/ui/button';
+  import * as Collapsible from '$lib/components/ui/collapsible';
   import WorktreeGroup from './WorktreeGroup.svelte';
 
   let {
@@ -72,12 +74,7 @@
     });
   });
 
-  let title = $derived(project.name);
   let accent = $derived(project.accentColor ?? null);
-
-  function toggle() {
-    expanded = !expanded;
-  }
 
   function edit(e: Event) {
     e.stopPropagation();
@@ -92,129 +89,61 @@
   }
 </script>
 
-<section>
-  <header>
-    <button class="toggle" onclick={toggle} aria-label={`Toggle ${title} project`}>
+<Collapsible.Root bind:open={expanded} class="flex flex-col gap-1">
+  <div class="flex items-center gap-px px-1 pt-1 pb-0.5">
+    <Collapsible.Trigger
+      class="group flex flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground hover:bg-muted"
+      aria-label={`Toggle ${project.name} project`}
+    >
       {#if expanded}
-        <ChevronDown size={12} />
+        <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
       {:else}
-        <ChevronRight size={12} />
+        <ChevronRight class="size-3 shrink-0 text-muted-foreground" />
       {/if}
       {#if accent}
-        <span class="dot" style={`background: ${accent}`}></span>
+        <span class="size-2.5 shrink-0 rounded-full" style={`background: ${accent}`}></span>
       {:else}
-        <Folder size={12} />
+        <Folder class="size-3 shrink-0 text-muted-foreground" />
       {/if}
-      <h3>{title}</h3>
-      <span class="path" title={project.path}>{project.path}</span>
-    </button>
-    <button class="add" onclick={addSession} title="New terminal" aria-label="New terminal">
-      <Plus size={12} />
-    </button>
-    <button class="edit" onclick={edit} title="Edit project" aria-label="Edit project">
-      <Pencil size={11} />
-    </button>
-  </header>
+      <span class="truncate text-xs font-medium">{project.name}</span>
+      <span class="truncate font-mono text-[10px] text-muted-foreground" title={project.path}>
+        {project.path}
+      </span>
+    </Collapsible.Trigger>
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      onclick={addSession}
+      title="New terminal"
+      aria-label="New terminal"
+    >
+      <Plus />
+    </Button>
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      onclick={edit}
+      title="Edit project"
+      aria-label="Edit project"
+    >
+      <Pencil />
+    </Button>
+  </div>
 
-  {#if expanded}
-    <div class="worktrees">
-      {#if worktrees.length === 0}
-        <p class="empty">No terminals</p>
-      {:else}
-        {#each worktrees as wt (wt.cwd)}
-          <WorktreeGroup
-            title={wt.label}
-            cwd={wt.cwd}
-            projectId={project.id}
-            items={wt.items}
-            isMain={wt.isMain}
-            {filter}
-          />
-        {/each}
-      {/if}
-    </div>
-  {/if}
-</section>
-
-<style>
-  section {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 4px 4px 2px 4px;
-  }
-  .toggle {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: transparent;
-    border: none;
-    padding: 4px 6px;
-    border-radius: var(--radius-sm);
-    color: var(--fg-strong);
-    cursor: pointer;
-    text-align: left;
-    overflow: hidden;
-  }
-  .toggle:hover {
-    background: var(--bg-elev-2);
-  }
-  h3 {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--fg);
-    white-space: nowrap;
-  }
-  .path {
-    color: var(--muted-2);
-    font-size: 10px;
-    font-family: var(--font-mono);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-  }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .add, .edit {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--muted);
-    padding: 4px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-  }
-  .add:hover, .edit:hover {
-    color: var(--accent);
-    border-color: var(--border);
-    background: var(--bg-elev-2);
-  }
-  .worktrees {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding-left: 6px;
-    border-left: 1px solid var(--border);
-    margin-left: 10px;
-  }
-  .empty {
-    margin: 0;
-    padding: 4px 10px;
-    color: var(--muted-2);
-    font-size: 11px;
-    font-style: italic;
-  }
-</style>
+  <Collapsible.Content class="ml-2.5 flex flex-col gap-1 border-l border-border pl-1.5">
+    {#if worktrees.length === 0}
+      <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No terminals</p>
+    {:else}
+      {#each worktrees as wt (wt.cwd)}
+        <WorktreeGroup
+          title={wt.label}
+          cwd={wt.cwd}
+          projectId={project.id}
+          items={wt.items}
+          isMain={wt.isMain}
+          {filter}
+        />
+      {/each}
+    {/if}
+  </Collapsible.Content>
+</Collapsible.Root>

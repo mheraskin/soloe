@@ -18,7 +18,9 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["shared/*"],
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "$lib": ["src/lib"],
+      "$lib/*": ["src/lib/*"]
     }
   },
   "include": [
@@ -26,5 +28,8 @@
     "src/**/*.svelte",
     "src/**/*.svelte.ts",
     "shared/**/*.ts"
+  ],
+  "exclude": [
+    "src/lib/components/ui/**/*.ts"
   ]
 }

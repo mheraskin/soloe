@@ -1,10 +1,21 @@
 <script lang="ts">
-  import { GitBranch, RotateCw } from 'lucide-svelte';
+  import { Check, GitBranch, RotateCw } from '@lucide/svelte';
+  import type { GitBranch as GitBranchInfo, GitCommit } from '@shared/types/git.js';
+  import { ipc } from '../lib/ipc';
+  import { reportError } from '../stores/toast.svelte';
   import { git } from '../stores/git.svelte';
-  import BranchSwitcher from './BranchSwitcher.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
+  import * as Popover from '$lib/components/ui/popover';
+  import * as Command from '$lib/components/ui/command';
 
   let { cwd }: { cwd: string } = $props();
+
   let switcherOpen = $state(false);
+  let branches = $state<GitBranchInfo[]>([]);
+  let commits = $state<GitCommit[]>([]);
+  let switcherLoading = $state(false);
+  let checkingOut = $state<string | null>(null);
 
   function refresh(force = false): void {
     void git.loadStatus(cwd, force);
@@ -44,89 +55,117 @@
     if (status.behind > 0) parts.push(`behind ${status.behind}`);
     return parts.join(' · ');
   });
+
+  $effect(() => {
+    if (!switcherOpen || !status?.repoPath) return;
+    const repoPath = status.repoPath;
+    switcherLoading = true;
+    Promise.all([
+      ipc.git.branches({ repoPath }),
+      ipc.git.recentCommits({ repoPath, limit: 8 })
+    ])
+      .then(([nextBranches, nextCommits]) => {
+        branches = nextBranches;
+        commits = nextCommits;
+      })
+      .catch(reportError)
+      .finally(() => {
+        switcherLoading = false;
+      });
+  });
+
+  async function checkout(ref: string): Promise<void> {
+    if (!status?.repoPath || checkingOut) return;
+    checkingOut = ref;
+    try {
+      const next = await ipc.git.checkout({ repoPath: status.repoPath, ref });
+      git.setStatus(status.cwd, next);
+      switcherOpen = false;
+    } catch (err) {
+      reportError(err);
+    } finally {
+      checkingOut = null;
+    }
+  }
 </script>
 
 {#if label}
-  <span class="wrap">
-    <button
-      class="git"
-      class:dirty={status?.dirty}
-      onclick={() => (switcherOpen = !switcherOpen)}
-      disabled={loading}
-      {title}
-    >
-      <GitBranch size={12} />
-      <span class="branch">{label}</span>
-      {#if badge}<span class="badge">{badge}</span>{/if}
-    </button>
-    <button
-      class="refresh"
+  <div class="inline-flex items-center">
+    <Popover.Root bind:open={switcherOpen}>
+      <Popover.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            variant="outline"
+            size="xs"
+            class={`gap-1.5 rounded-r-none border-r-0 ${status?.dirty ? 'text-foreground' : ''}`}
+            disabled={loading}
+            {title}
+          >
+            <GitBranch />
+            <span class="max-w-[160px] truncate">{label}</span>
+            {#if badge}
+              <span class={`text-[10px] ${status?.dirty ? 'text-amber-500' : 'text-muted-foreground'}`}>{badge}</span>
+            {/if}
+          </Button>
+        {/snippet}
+      </Popover.Trigger>
+      <Popover.Content align="start" class="w-72 p-0">
+        <Command.Root>
+          <Command.Input placeholder="Switch branch…" />
+          <Command.List>
+            {#if switcherLoading}
+              <Command.Empty>Loading…</Command.Empty>
+            {:else}
+              <Command.Empty>No matches</Command.Empty>
+              {#if branches.length > 0}
+                <Command.Group heading="Branches">
+                  {#each branches as branch (branch.name)}
+                    <Command.Item
+                      value={branch.name}
+                      disabled={branch.current || checkingOut !== null}
+                      onSelect={() => checkout(branch.name)}
+                    >
+                      <span class="inline-flex w-3 shrink-0 items-center">
+                        {#if branch.current}<Check class="size-3 text-primary" />{/if}
+                      </span>
+                      <span class="flex-1 truncate">{branch.name}</span>
+                      {#if branch.upstream}
+                        <Badge variant="outline" class="font-mono text-[10px]">{branch.upstream}</Badge>
+                      {/if}
+                    </Command.Item>
+                  {/each}
+                </Command.Group>
+              {/if}
+              {#if commits.length > 0}
+                <Command.Group heading="Recent commits">
+                  {#each commits as commit (commit.hash)}
+                    <Command.Item
+                      value={commit.hash}
+                      disabled={checkingOut !== null}
+                      onSelect={() => checkout(commit.hash)}
+                    >
+                      <span class="w-12 shrink-0 truncate font-mono text-[10px] text-muted-foreground">{commit.shortHash}</span>
+                      <span class="flex-1 truncate">{commit.subject}</span>
+                    </Command.Item>
+                  {/each}
+                </Command.Group>
+              {/if}
+            {/if}
+          </Command.List>
+        </Command.Root>
+      </Popover.Content>
+    </Popover.Root>
+    <Button
+      variant="outline"
+      size="xs"
+      class="rounded-l-none border-l-0 px-1.5"
       onclick={() => refresh(true)}
       disabled={loading}
       title="Refresh git status"
       aria-label="Refresh git status"
     >
-      <RotateCw size={10} class={loading ? 'spin' : ''} />
-    </button>
-    {#if switcherOpen && status?.repoPath}
-      <BranchSwitcher {status} onclose={() => (switcherOpen = false)} />
-    {/if}
-  </span>
+      <RotateCw class={`size-2.5 ${loading ? 'animate-spin' : ''}`} />
+    </Button>
+  </div>
 {/if}
-
-<style>
-  .wrap {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-  .git {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 4px 0 0 4px;
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    color: var(--fg);
-    font-size: 12px;
-    cursor: pointer;
-  }
-  .git:hover:not(:disabled) {
-    border-color: var(--accent);
-  }
-  .refresh {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    padding: 2px 0;
-    border-radius: 0 4px 4px 0;
-    border-left: none;
-    background: var(--bg-elev-2);
-    color: var(--muted);
-  }
-  .refresh:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .branch {
-    max-width: 160px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .badge {
-    color: var(--muted);
-    font-size: 11px;
-  }
-  .dirty .badge {
-    color: var(--yellow, #d6a600);
-  }
-  :global(.spin) {
-    animation: spin 1s linear infinite;
-  }
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-</style>

@@ -6,6 +6,9 @@
     SessionDraft
   } from '@shared/types/sessions.js';
   import { modal } from '../../stores/modal.svelte';
+  import { Label } from '$lib/components/ui/label';
+  import { Input } from '$lib/components/ui/input';
+  import * as Select from '$lib/components/ui/select';
 
   let draft = $derived(modal.draft as Extract<SessionDraft, { kind: 'codex' }>);
 
@@ -20,35 +23,45 @@
   ];
 
   const efforts: CodexReasoningEffort[] = ['low', 'medium', 'high'];
+
+  let currentResumeLabel = $derived(
+    resumeModes.find((m) => m.value === draft.resumeMode)?.label ?? draft.resumeMode
+  );
+  let currentEffortLabel = $derived(draft.reasoningEffort ?? '(default)');
 </script>
 
-<label>
-  Resume mode
-  <select
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground">Resume mode</Label>
+  <Select.Root
+    type="single"
     value={draft.resumeMode}
-    onchange={(e) =>
-      update('resumeMode', (e.currentTarget as HTMLSelectElement).value as CodexResumeMode)}
+    onValueChange={(v) => update('resumeMode', v as CodexResumeMode)}
   >
-    {#each resumeModes as m}
-      <option value={m.value}>{m.label}</option>
-    {/each}
-  </select>
-</label>
+    <Select.Trigger class="w-full">{currentResumeLabel}</Select.Trigger>
+    <Select.Content>
+      {#each resumeModes as m (m.value)}
+        <Select.Item value={m.value} label={m.label}>{m.label}</Select.Item>
+      {/each}
+    </Select.Content>
+  </Select.Root>
+</div>
 
 {#if draft.resumeMode === 'resume_by_id'}
-  <label>
-    Session id
-    <input
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground" for="codex-session-id">Session id</Label>
+    <Input
+      id="codex-session-id"
       type="text"
       value={draft.codexSessionId ?? ''}
       oninput={(e) => update('codexSessionId', (e.currentTarget as HTMLInputElement).value)}
     />
-  </label>
+  </div>
 {/if}
 
-<label>
-  Model (optional)
-  <input
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground" for="codex-model">Model (optional)</Label>
+  <Input
+    id="codex-model"
     type="text"
     placeholder="gpt-5"
     value={draft.model ?? ''}
@@ -57,20 +70,21 @@
       update('model', v ? v : undefined);
     }}
   />
-</label>
+</div>
 
-<label>
-  Reasoning effort
-  <select
-    value={draft.reasoningEffort ?? ''}
-    onchange={(e) => {
-      const v = (e.currentTarget as HTMLSelectElement).value as CodexReasoningEffort | '';
-      update('reasoningEffort', v === '' ? undefined : v);
-    }}
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground">Reasoning effort</Label>
+  <Select.Root
+    type="single"
+    value={draft.reasoningEffort ?? '__default__'}
+    onValueChange={(v) => update('reasoningEffort', v === '__default__' ? undefined : (v as CodexReasoningEffort))}
   >
-    <option value="">(default)</option>
-    {#each efforts as eff}
-      <option value={eff}>{eff}</option>
-    {/each}
-  </select>
-</label>
+    <Select.Trigger class="w-full">{currentEffortLabel}</Select.Trigger>
+    <Select.Content>
+      <Select.Item value="__default__" label="(default)">(default)</Select.Item>
+      {#each efforts as eff (eff)}
+        <Select.Item value={eff} label={eff}>{eff}</Select.Item>
+      {/each}
+    </Select.Content>
+  </Select.Root>
+</div>

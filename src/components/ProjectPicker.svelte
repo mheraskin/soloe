@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Folder } from 'lucide-svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import { projects } from '../stores/projects.svelte';
+  import { Label } from '$lib/components/ui/label';
+  import * as Select from '$lib/components/ui/select';
 
   let {
     value,
@@ -11,49 +12,28 @@
     onchange: (id: ProjectId | null) => void;
   } = $props();
 
-  function handleChange(e: Event) {
-    const v = (e.currentTarget as HTMLSelectElement).value;
-    onchange(v === '' ? null : v);
+  let current = $derived(value ?? '__none__');
+  let triggerLabel = $derived.by(() => {
+    if (!value) return 'Unassigned';
+    return projects.get(value)?.name ?? 'Unassigned';
+  });
+
+  function handleChange(next: string): void {
+    onchange(next === '__none__' ? null : (next as ProjectId));
   }
 </script>
 
-<label class="picker">
-  Project
-  <div class="row">
-    <Folder size={12} />
-    <select value={value ?? ''} onchange={handleChange}>
-      <option value="">Unassigned</option>
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground">Project</Label>
+  <Select.Root type="single" value={current} onValueChange={handleChange}>
+    <Select.Trigger class="w-full">
+      {triggerLabel}
+    </Select.Trigger>
+    <Select.Content>
+      <Select.Item value="__none__" label="Unassigned">Unassigned</Select.Item>
       {#each projects.recents as p (p.id)}
-        <option value={p.id}>{p.name}</option>
+        <Select.Item value={p.id} label={p.name}>{p.name}</Select.Item>
       {/each}
-    </select>
-  </div>
-</label>
-
-<style>
-  .picker {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  select {
-    flex: 1;
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--fg);
-    padding: 6px 8px;
-    font: inherit;
-  }
-  select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-</style>
+    </Select.Content>
+  </Select.Root>
+</div>

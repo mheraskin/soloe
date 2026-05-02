@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Maximize2, Minus, X } from 'lucide-svelte';
+  import { Maximize2, Minus, X } from '@lucide/svelte';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
@@ -11,11 +11,12 @@
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { Keymap, tabIndexFromEvent } from './lib/keymap';
+  import { Button } from '$lib/components/ui/button';
+  import { Toaster } from '$lib/components/ui/sonner';
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
   import AgentInspector from './components/AgentInspector.svelte';
   import NewSessionModal from './components/NewSessionModal.svelte';
-  import Toast from './components/Toast.svelte';
   import ConfirmDialog from './components/ConfirmDialog.svelte';
   import SettingsDrawer from './components/SettingsDrawer.svelte';
   import ProjectModal from './components/ProjectModal.svelte';
@@ -82,28 +83,44 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="app">
-  <header class="titlebar">
-    <span class="title">Soloe</span>
-    <div class="drag-space" aria-hidden="true"></div>
-    <div class="window-controls">
-      <button type="button" onclick={() => ipc.window.minimize()} title="Minimize" aria-label="Minimize">
-        <Minus size={14} />
-      </button>
-      <button
-        type="button"
-        onclick={() => ipc.window.toggleMaximize()}
-        title="Maximize"
-        aria-label="Maximize"
+<div class="flex h-full flex-col overflow-hidden">
+  <header
+    class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card pl-3 select-none"
+    style="-webkit-app-region: drag"
+  >
+    <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
+    <div class="flex-1 self-stretch" aria-hidden="true"></div>
+    <div class="flex self-stretch" style="-webkit-app-region: no-drag">
+      <Button
+        variant="ghost"
+        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+        onclick={() => ipc.window.minimize()}
+        aria-label="Minimize"
+        title="Minimize"
       >
-        <Maximize2 size={13} />
-      </button>
-      <button type="button" class="close" onclick={() => ipc.window.close()} title="Close" aria-label="Close">
-        <X size={14} />
-      </button>
+        <Minus class="size-3.5" />
+      </Button>
+      <Button
+        variant="ghost"
+        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+        onclick={() => ipc.window.toggleMaximize()}
+        aria-label="Maximize"
+        title="Maximize"
+      >
+        <Maximize2 class="size-3" />
+      </Button>
+      <Button
+        variant="ghost"
+        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+        onclick={() => ipc.window.close()}
+        aria-label="Close"
+        title="Close"
+      >
+        <X class="size-3.5" />
+      </Button>
     </div>
   </header>
-  <div class="body">
+  <div class="flex min-h-0 flex-1">
     <Sidebar />
     <TerminalArea />
     <AgentInspector />
@@ -115,64 +132,5 @@
   <ConfirmDialog />
   <SettingsDrawer />
   <DiagnosticsPane />
-  <Toast />
+  <Toaster richColors closeButton />
 </div>
-
-<style>
-  .app {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    overflow: hidden;
-  }
-  .titlebar {
-    -webkit-app-region: drag;
-    height: 28px;
-    background: var(--bg-elev-1);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    padding: 0 0 0 12px;
-    flex-shrink: 0;
-    user-select: none;
-  }
-  .title {
-    color: var(--muted);
-    font-size: 11px;
-    letter-spacing: 0.04em;
-  }
-  .drag-space {
-    flex: 1;
-    align-self: stretch;
-  }
-  .window-controls {
-    -webkit-app-region: no-drag;
-    display: flex;
-    align-self: stretch;
-  }
-  .window-controls button {
-    width: 42px;
-    height: 100%;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    color: var(--muted);
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .window-controls button:hover {
-    background: var(--bg-elev-3);
-    color: var(--fg);
-  }
-  .window-controls .close:hover {
-    background: var(--red);
-    color: var(--fg-strong);
-  }
-  .body {
-    flex: 1;
-    display: flex;
-    min-height: 0;
-  }
-</style>

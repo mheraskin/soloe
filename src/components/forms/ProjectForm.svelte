@@ -3,6 +3,10 @@
   import { projectModal } from '../../stores/project-modal.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { ipc } from '../../lib/ipc';
+  import { Label } from '$lib/components/ui/label';
+  import { Input } from '$lib/components/ui/input';
+  import { Button } from '$lib/components/ui/button';
+  import * as Select from '$lib/components/ui/select';
 
   let wslDistros = $state<string[]>([]);
 
@@ -37,7 +41,7 @@
 
   function setRunMode(value: string) {
     const next = { ...projectModal.draft };
-    if (!value) {
+    if (!value || value === '__inherit__') {
       delete next.defaultRunMode;
       delete next.defaultWslDistro;
     } else {
@@ -63,122 +67,81 @@
       wslDistros = [];
     }
   }
+
+  let runModeLabel = $derived.by(() => {
+    if (!projectModal.draft.defaultRunMode) return 'Inherit from settings';
+    return projectModal.draft.defaultRunMode === 'wsl' ? 'WSL' : 'Windows / native';
+  });
 </script>
 
-<label>
-  Name
-  <input
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground" for="proj-name">Name</Label>
+  <Input
+    id="proj-name"
     type="text"
     required
     value={projectModal.draft.name}
     oninput={(e) => setField('name', (e.currentTarget as HTMLInputElement).value)}
   />
-</label>
+</div>
 
-<label>
-  Path
-  <input
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground" for="proj-path">Path</Label>
+  <Input
+    id="proj-path"
     type="text"
     readonly
+    class="text-muted-foreground"
     value={projectModal.draft.path}
   />
-</label>
+</div>
 
-<div class="row">
-  <label>
-    Default run mode
-    <select
-      value={projectModal.draft.defaultRunMode ?? ''}
-      onchange={(e) => setRunMode((e.currentTarget as HTMLSelectElement).value)}
+<div class="grid grid-cols-2 gap-3">
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground">Default run mode</Label>
+    <Select.Root
+      type="single"
+      value={projectModal.draft.defaultRunMode ?? '__inherit__'}
+      onValueChange={setRunMode}
     >
-      <option value="">Inherit from settings</option>
-      <option value="windows">Windows / native</option>
-      <option value="wsl">WSL</option>
-    </select>
-  </label>
+      <Select.Trigger class="w-full">{runModeLabel}</Select.Trigger>
+      <Select.Content>
+        <Select.Item value="__inherit__" label="Inherit from settings">Inherit from settings</Select.Item>
+        <Select.Item value="windows" label="Windows / native">Windows / native</Select.Item>
+        <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+      </Select.Content>
+    </Select.Root>
+  </div>
   {#if projectModal.draft.defaultRunMode === 'wsl'}
-    <label>
-      WSL distro
-      <select
-        required
+    <div class="flex flex-col gap-1.5">
+      <Label class="text-xs text-muted-foreground">WSL distro</Label>
+      <Select.Root
+        type="single"
         value={projectModal.draft.defaultWslDistro ?? wslOptions[0] ?? ''}
-        onchange={(e) => setField('defaultWslDistro', (e.currentTarget as HTMLSelectElement).value)}
+        onValueChange={(v) => setField('defaultWslDistro', v)}
       >
-        {#each wslOptions as distro (distro)}
-          <option value={distro}>{distro}</option>
-        {/each}
-      </select>
-    </label>
+        <Select.Trigger class="w-full">
+          {projectModal.draft.defaultWslDistro ?? wslOptions[0] ?? ''}
+        </Select.Trigger>
+        <Select.Content>
+          {#each wslOptions as distro (distro)}
+            <Select.Item value={distro} label={distro}>{distro}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
   {/if}
 </div>
 
-<label class="accent">
-  <span>Accent color (optional)</span>
-  <div class="accent-row">
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground">Accent color (optional)</Label>
+  <div class="flex items-center gap-2">
     <input
+      class="h-7 w-8 rounded-md border border-border bg-transparent p-0"
       type="color"
       value={projectModal.draft.accentColor ?? '#7aa2f7'}
       oninput={(e) => setField('accentColor', (e.currentTarget as HTMLInputElement).value)}
     />
-    <button type="button" class="clear" onclick={clearAccent}>Clear</button>
+    <Button type="button" variant="outline" size="sm" onclick={clearAccent}>Clear</Button>
   </div>
-</label>
-
-<style>
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  label input[type='text'],
-  label select {
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    color: var(--fg);
-    border-radius: var(--radius-sm);
-    padding: 6px 8px;
-    font: inherit;
-  }
-  label input[type='text']:focus,
-  label select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  label input[readonly] {
-    color: var(--muted);
-    cursor: default;
-  }
-  .row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  .accent-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .accent input[type='color'] {
-    background: transparent;
-    border: 1px solid var(--border);
-    padding: 0;
-    width: 32px;
-    height: 28px;
-    border-radius: var(--radius-sm);
-  }
-  .clear {
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    border-radius: var(--radius-sm);
-    padding: 4px 10px;
-    font: inherit;
-    cursor: pointer;
-  }
-  .clear:hover {
-    color: var(--fg);
-    border-color: var(--border-strong);
-  }
-</style>
+</div>

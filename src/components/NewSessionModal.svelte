@@ -1,11 +1,16 @@
 <script lang="ts">
-  import { X } from 'lucide-svelte';
   import type { RunMode, SessionDraft } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { modal } from '../stores/modal.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { validateDraft } from '../lib/sessions-helpers';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { Separator } from '$lib/components/ui/separator';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import * as Select from '$lib/components/ui/select';
   import StandardForm from './forms/StandardForm.svelte';
   import ClaudeForm from './forms/ClaudeForm.svelte';
   import CodexForm from './forms/CodexForm.svelte';
@@ -50,77 +55,81 @@
     }
   }
 
-  function onKey(e: KeyboardEvent) {
-    if (modal.open && e.key === 'Escape') modal.close();
+  function onOpenChange(next: boolean) {
+    if (!next) modal.close();
   }
+
+  let runModeLabel = $derived(modal.draft.runMode === 'wsl' ? 'WSL' : 'Windows / native');
 </script>
 
-<svelte:window onkeydown={onKey} />
+<Dialog.Root open={modal.open} {onOpenChange}>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header>
+      <Dialog.Title>Edit session</Dialog.Title>
+      <Dialog.Description class="sr-only">Update session name, working directory, and runtime.</Dialog.Description>
+    </Dialog.Header>
 
-{#if modal.open}
-  <div class="backdrop" onclick={() => modal.close()} role="presentation"></div>
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Session details">
-    <header>
-      <h2>Edit session</h2>
-      <button class="close" onclick={() => modal.close()} aria-label="Close">
-        <X size={16} />
-      </button>
-    </header>
-
-    <form onsubmit={submit}>
-      <label>
-        Name
-        <input
+    <form class="flex flex-col gap-3" onsubmit={submit}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="ses-name">Name</Label>
+        <Input
+          id="ses-name"
           type="text"
           required
           value={modal.draft.name}
           oninput={(e) => setBase('name', (e.currentTarget as HTMLInputElement).value)}
         />
-      </label>
+      </div>
 
       <ProjectPicker
         value={modal.draft.projectId ?? null}
         onchange={setProjectId}
       />
 
-      <label>
-        Working directory
-        <input
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="ses-cwd">Working directory</Label>
+        <Input
+          id="ses-cwd"
           type="text"
           required
           placeholder={modal.draft.runMode === 'wsl' ? '/home/you/project' : 'C:\\Users\\you\\project'}
           value={modal.draft.cwd}
           oninput={(e) => setBase('cwd', (e.currentTarget as HTMLInputElement).value)}
         />
-      </label>
+      </div>
 
-      <div class="row">
-        <label>
-          Run mode
-          <select
+      <div class="grid grid-cols-2 gap-3">
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-xs text-muted-foreground">Run mode</Label>
+          <Select.Root
+            type="single"
             value={modal.draft.runMode}
-            onchange={(e) =>
-              setBase('runMode', (e.currentTarget as HTMLSelectElement).value as RunMode)}
+            onValueChange={(v) => setBase('runMode', v as RunMode)}
           >
-            <option value="windows">Windows / native</option>
-            <option value="wsl">WSL</option>
-          </select>
-        </label>
+            <Select.Trigger class="w-full">{runModeLabel}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value="windows" label="Windows / native">Windows / native</Select.Item>
+              <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+            </Select.Content>
+          </Select.Root>
+        </div>
         {#if modal.draft.runMode === 'wsl'}
-          <label>
-            WSL distro
-            <input
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for="ses-wsl">WSL distro</Label>
+            <Input
+              id="ses-wsl"
               type="text"
               required
               placeholder="Ubuntu"
               value={modal.draft.wslDistro ?? ''}
               oninput={(e) => setBase('wslDistro', (e.currentTarget as HTMLInputElement).value)}
             />
-          </label>
+          </div>
         {/if}
       </div>
 
-      <hr />
+      <Separator class="my-1" />
+
       {#if modal.draft.kind === 'standard_terminal'}
         <StandardForm />
       {:else if modal.draft.kind === 'claude_code'}
@@ -130,101 +139,13 @@
       {/if}
 
       {#if modal.error}
-        <p class="error">{modal.error}</p>
+        <p class="m-0 text-xs text-destructive">{modal.error}</p>
       {/if}
 
-      <footer>
-        <button type="button" onclick={() => modal.close()}>Cancel</button>
-        <button type="submit" class="primary" disabled={submitting}>Save</button>
-      </footer>
+      <Dialog.Footer>
+        <Button type="button" variant="outline" onclick={() => modal.close()}>Cancel</Button>
+        <Button type="submit" disabled={submitting}>Save</Button>
+      </Dialog.Footer>
     </form>
-  </div>
-{/if}
-
-<style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 100;
-  }
-  .modal {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 101;
-    width: 480px;
-    max-width: 92vw;
-    max-height: 86vh;
-    background: var(--bg-elev-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  header h2 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 500;
-  }
-  .close {
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    line-height: 1;
-    padding: 4px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .close:hover { color: var(--fg); }
-
-  form {
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    overflow-y: auto;
-  }
-  hr {
-    border: none;
-    border-top: 1px solid var(--border);
-    margin: 4px 0;
-  }
-  .row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  .error {
-    color: var(--red);
-    margin: 0;
-    font-size: 12px;
-  }
-  footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding-top: 4px;
-  }
-  .primary {
-    background: var(--accent-strong);
-    color: var(--bg);
-    border-color: var(--accent-strong);
-  }
-  .primary:hover:not(:disabled) {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-</style>
+  </Dialog.Content>
+</Dialog.Root>

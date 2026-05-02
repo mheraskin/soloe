@@ -8,6 +8,9 @@
   } from '@shared/types/settings.js';
   import type { RunMode, ShellKind } from '@shared/types/sessions.js';
   import { reportError } from '../../stores/toast.svelte';
+  import { Label } from '$lib/components/ui/label';
+  import { Input } from '$lib/components/ui/input';
+  import * as Select from '$lib/components/ui/select';
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const densities: DensityPref[] = ['comfortable', 'compact'];
@@ -55,132 +58,122 @@
   }
 </script>
 
-<section>
-  <h3>Appearance</h3>
-  <label>
-    Theme
-    <select
+<section class="flex flex-col gap-2.5 border-b border-border py-3">
+  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Appearance</h3>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground">Theme</Label>
+    <Select.Root
+      type="single"
       value={settings.current.appearance.theme}
-      onchange={(e) => setAppearance('theme', (e.currentTarget as HTMLSelectElement).value as ThemePref)}
+      onValueChange={(v) => setAppearance('theme', v as ThemePref)}
     >
-      {#each themes as t (t)}
-        <option value={t}>{t}</option>
-      {/each}
-    </select>
-  </label>
-  <label>
-    Density
-    <select
+      <Select.Trigger class="w-full">{settings.current.appearance.theme}</Select.Trigger>
+      <Select.Content>
+        {#each themes as t (t)}
+          <Select.Item value={t} label={t}>{t}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground">Density</Label>
+    <Select.Root
+      type="single"
       value={settings.current.appearance.density}
-      onchange={(e) => setAppearance('density', (e.currentTarget as HTMLSelectElement).value as DensityPref)}
+      onValueChange={(v) => setAppearance('density', v as DensityPref)}
     >
-      {#each densities as d (d)}
-        <option value={d}>{d}</option>
-      {/each}
-    </select>
-  </label>
-  <label>
-    Font size
-    <select
-      value={settings.current.appearance.fontSize}
-      onchange={(e) => setAppearance('fontSize', Number((e.currentTarget as HTMLSelectElement).value) as FontSizePref)}
+      <Select.Trigger class="w-full">{settings.current.appearance.density}</Select.Trigger>
+      <Select.Content>
+        {#each densities as d (d)}
+          <Select.Item value={d} label={d}>{d}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground">Font size</Label>
+    <Select.Root
+      type="single"
+      value={String(settings.current.appearance.fontSize)}
+      onValueChange={(v) => setAppearance('fontSize', Number(v) as FontSizePref)}
     >
-      {#each fontSizes as f (f)}
-        <option value={f}>{f}px</option>
-      {/each}
-    </select>
-  </label>
+      <Select.Trigger class="w-full">{settings.current.appearance.fontSize}px</Select.Trigger>
+      <Select.Content>
+        {#each fontSizes as f (f)}
+          <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
 </section>
 
-<section>
-  <h3>Defaults</h3>
-  <label>
-    Run mode
-    <select
+<section class="flex flex-col gap-2.5 border-b border-border py-3">
+  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Defaults</h3>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground">Run mode</Label>
+    <Select.Root
+      type="single"
       value={settings.current.defaults.runMode}
-      onchange={(e) => setDefault('runMode', (e.currentTarget as HTMLSelectElement).value)}
+      onValueChange={(v) => setDefault('runMode', v)}
     >
-      {#each runModes as r (r)}
-        <option value={r}>{r}</option>
-      {/each}
-    </select>
-  </label>
-  <label>
-    WSL distro
-    <input
+      <Select.Trigger class="w-full">{settings.current.defaults.runMode}</Select.Trigger>
+      <Select.Content>
+        {#each runModes as r (r)}
+          <Select.Item value={r} label={r}>{r}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground" for="pref-wsl-distro">WSL distro</Label>
+    <Input
+      id="pref-wsl-distro"
       type="text"
       placeholder="Ubuntu"
       value={settings.current.defaults.wslDistro ?? ''}
       onchange={(e) => setDefault('wslDistro', (e.currentTarget as HTMLInputElement).value)}
     />
-  </label>
-  <label>
-    Shell
-    <select
+  </div>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground">Shell</Label>
+    <Select.Root
+      type="single"
       value={settings.current.defaults.shell}
-      onchange={(e) => setDefault('shell', (e.currentTarget as HTMLSelectElement).value)}
+      onValueChange={(v) => setDefault('shell', v)}
     >
-      {#each shells as s (s)}
-        <option value={s}>{s}</option>
-      {/each}
-    </select>
-  </label>
-  <label>
-    Default working directory
-    <input
+      <Select.Trigger class="w-full">{settings.current.defaults.shell}</Select.Trigger>
+      <Select.Content>
+        {#each shells as s (s)}
+          <Select.Item value={s} label={s}>{s}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground" for="pref-default-cwd">Default working directory</Label>
+    <Input
+      id="pref-default-cwd"
       type="text"
       placeholder="~"
       value={settings.current.defaults.cwd}
       onchange={(e) => setDefaultCwd((e.currentTarget as HTMLInputElement).value)}
     />
-  </label>
+  </div>
 </section>
 
-<section>
-  <h3>Binaries</h3>
-  <p class="hint">Leave blank to use the binary on PATH.</p>
+<section class="flex flex-col gap-2.5 py-3">
+  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Binaries</h3>
+  <p class="m-0 text-[11px] text-muted-foreground">Leave blank to use the binary on PATH.</p>
   {#each binaryKeys as b (b.key)}
-    <label>
-      {b.label}
-      <input
+    <div class="flex flex-col gap-1.5">
+      <Label class="text-xs text-muted-foreground" for={`bin-${b.key}`}>{b.label}</Label>
+      <Input
+        id={`bin-${b.key}`}
         type="text"
         placeholder={b.placeholder}
         value={settings.current.binaries[b.key] ?? ''}
         onchange={(e) => setBinary(b.key, (e.currentTarget as HTMLInputElement).value)}
       />
-    </label>
+    </div>
   {/each}
 </section>
-
-<style>
-  section {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  section:last-child {
-    border-bottom: none;
-  }
-  h3 {
-    margin: 0 0 4px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--muted);
-    font-weight: 500;
-  }
-  .hint {
-    margin: -4px 0 0;
-    color: var(--muted-2);
-    font-size: 11px;
-  }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-</style>

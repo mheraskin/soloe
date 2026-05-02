@@ -9,6 +9,9 @@
   import type { SessionId } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { X } from '@lucide/svelte';
 
   let {
     terminalId,
@@ -165,11 +168,11 @@
   });
 </script>
 
-<div class="wrap">
+<div class="relative h-full w-full">
   {#if findOpen && active}
-    <div class="find">
-      <input
-        bind:this={findInput}
+    <div class="absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
+      <Input
+        bind:ref={findInput}
         bind:value={findQuery}
         oninput={onFindInput}
         onkeydown={(e) => {
@@ -178,49 +181,19 @@
         }}
         placeholder="Find"
         aria-label="Find in terminal"
+        class="h-7 w-44 text-xs"
       />
-      <button onclick={() => findQuery && search?.findPrevious(findQuery)}>Prev</button>
-      <button onclick={() => findQuery && search?.findNext(findQuery)}>Next</button>
-      <button onclick={() => (findOpen = false)} aria-label="Close find">Close</button>
+      <Button variant="ghost" size="xs" onclick={() => findQuery && search?.findPrevious(findQuery)}>Prev</Button>
+      <Button variant="ghost" size="xs" onclick={() => findQuery && search?.findNext(findQuery)}>Next</Button>
+      <Button variant="ghost" size="icon-xs" onclick={() => (findOpen = false)} aria-label="Close find">
+        <X />
+      </Button>
     </div>
   {/if}
-  <div class="host" bind:this={host}></div>
+  <div class="h-full w-full bg-[#0f0f10] p-2" bind:this={host}></div>
 </div>
 
 <style>
-  .wrap {
-    position: relative;
-    width: 100%;
-    height: 100%;
-  }
-  .host {
-    width: 100%;
-    height: 100%;
-    padding: 8px;
-    background: #0f0f10;
-  }
-  .find {
-    position: absolute;
-    top: 10px;
-    right: 18px;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px;
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  }
-  .find input {
-    width: 180px;
-    padding: 4px 6px;
-  }
-  .find button {
-    padding: 4px 7px;
-    font-size: 11px;
-  }
   :global(.xterm) {
     height: 100%;
   }

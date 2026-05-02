@@ -5,6 +5,10 @@
     SessionDraft
   } from '@shared/types/sessions.js';
   import { modal } from '../../stores/modal.svelte';
+  import { Label } from '$lib/components/ui/label';
+  import { Input } from '$lib/components/ui/input';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import * as Select from '$lib/components/ui/select';
 
   let draft = $derived(modal.draft as Extract<SessionDraft, { kind: 'claude_code' }>);
 
@@ -18,57 +22,59 @@
     { value: 'resume_by_name', label: 'Resume by name' },
     { value: 'resume_by_id', label: 'Resume by id' }
   ];
+
+  let currentLabel = $derived(
+    resumeModes.find((m) => m.value === draft.resumeMode)?.label ?? draft.resumeMode
+  );
 </script>
 
-<label>
-  Resume mode
-  <select
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground">Resume mode</Label>
+  <Select.Root
+    type="single"
     value={draft.resumeMode}
-    onchange={(e) =>
-      update('resumeMode', (e.currentTarget as HTMLSelectElement).value as ClaudeResumeMode)}
+    onValueChange={(v) => update('resumeMode', v as ClaudeResumeMode)}
   >
-    {#each resumeModes as m}
-      <option value={m.value}>{m.label}</option>
-    {/each}
-  </select>
-</label>
+    <Select.Trigger class="w-full">{currentLabel}</Select.Trigger>
+    <Select.Content>
+      {#each resumeModes as m (m.value)}
+        <Select.Item value={m.value} label={m.label}>{m.label}</Select.Item>
+      {/each}
+    </Select.Content>
+  </Select.Root>
+</div>
 
 {#if draft.resumeMode === 'resume_by_name'}
-  <label>
-    Session name
-    <input
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground" for="claude-session-name">Session name</Label>
+    <Input
+      id="claude-session-name"
       type="text"
       value={draft.claudeSessionName ?? ''}
       oninput={(e) => update('claudeSessionName', (e.currentTarget as HTMLInputElement).value)}
     />
-  </label>
+  </div>
 {/if}
 
 {#if draft.resumeMode === 'resume_by_id'}
-  <label>
-    Session id
-    <input
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground" for="claude-session-id">Session id</Label>
+    <Input
+      id="claude-session-id"
       type="text"
       value={draft.claudeSessionId ?? ''}
       oninput={(e) => update('claudeSessionId', (e.currentTarget as HTMLInputElement).value)}
     />
-  </label>
+  </div>
 {/if}
 
-<label class="check">
-  <input
-    type="checkbox"
+<div class="flex items-center gap-2">
+  <Checkbox
+    id="claude-fullscreen"
     checked={draft.fullscreenTui ?? false}
-    onchange={(e) => update('fullscreenTui', (e.currentTarget as HTMLInputElement).checked)}
+    onCheckedChange={(v) => update('fullscreenTui', v === true)}
   />
-  Fullscreen TUI (sets CLAUDE_CODE_NO_FLICKER=1)
-</label>
-
-<style>
-  .check {
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    color: var(--fg);
-  }
-</style>
+  <Label for="claude-fullscreen" class="text-sm text-foreground">
+    Fullscreen TUI (sets CLAUDE_CODE_NO_FLICKER=1)
+  </Label>
+</div>

@@ -1,57 +1,45 @@
 <script lang="ts">
   import {
-    Play,
-    Square,
-    RotateCw,
     Pencil,
     FolderOpen,
     Copy,
-    Trash2,
-    Settings,
     Search,
-    FileText
-  } from 'lucide-svelte';
+    FileText,
+    Settings,
+    MoreHorizontal,
+    Code2
+  } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
   import { settings } from '../stores/settings.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
-  import { confirmStore } from '../stores/confirm.svelte';
   import { ipc } from '../lib/ipc';
-  import { kindLabel } from '../lib/sessions-helpers';
+  import { Button } from '$lib/components/ui/button';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import * as Tooltip from '$lib/components/ui/tooltip';
+  import { Separator } from '$lib/components/ui/separator';
   import StatusDot from './StatusDot.svelte';
   import GitBranchWidget from './GitBranchWidget.svelte';
 
   let selected = $derived(sessions.selected);
   let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
-  let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
-  async function start() {
-    if (!selected) return;
-    try { await sessions.start(selected.id); } catch (e) { reportError(e); }
-  }
-  async function stop() {
-    if (!selected) return;
-    try { await sessions.stop(selected.id); } catch (e) { reportError(e); }
-  }
-  async function restart() {
-    if (!selected) return;
-    try { await sessions.restart(selected.id); } catch (e) { reportError(e); }
-  }
-  async function remove() {
-    if (!selected) return;
-    const ok = await confirmStore.ask({
-      title: 'Delete session',
-      message: `Delete session "${selected.name}"?`,
-      confirmLabel: 'Delete',
-      tone: 'danger'
-    });
-    if (!ok) return;
-    try { await sessions.remove(selected.id); } catch (e) { reportError(e); }
+  function edit() {
+    if (selected) modal.openEdit(selected);
   }
   async function openCwd() {
     if (!selected) return;
     try { await ipc.system.openPath(selected.id); } catch (e) { reportError(e); }
+  }
+  async function openInEditor() {
+    if (!selected) return;
+    try {
+      await ipc.files.openInEditor({ absolutePath: selected.cwd });
+      toasts.push('Opened cwd in editor', 'info');
+    } catch (e) {
+      reportError(e);
+    }
   }
   async function copyCmd() {
     if (!selected) return;
@@ -63,124 +51,111 @@
       reportError(e);
     }
   }
-  function edit() {
-    if (selected) modal.openEdit(selected);
-  }
   function terminalAction(name: string) {
     window.dispatchEvent(new CustomEvent(name));
   }
-  async function openInEditor() {
-    if (!selected) return;
-    try {
-      await ipc.files.openInEditor({ absolutePath: selected.cwd });
-      toasts.push('Opened cwd in editor', 'info');
-    } catch (e) {
-      reportError(e);
-    }
-  }
 </script>
 
-<div class="bar">
+<div class="flex items-center justify-between gap-3 border-b border-border bg-card px-3 py-2 min-h-[48px]">
   {#if selected}
-    <div class="meta">
+    <div class="flex min-w-0 items-center gap-2.5">
       <StatusDot {status} />
-      <strong>{selected.name}</strong>
-      <span class="dim">· {kindLabel(selected.kind)} · {selected.runMode}</span>
+      <div class="flex min-w-0 flex-col leading-tight">
+        <span class="truncate text-sm font-medium text-foreground">{selected.name}</span>
+        <span class="truncate font-mono text-[11px] text-muted-foreground" title={selected.cwd}>
+          {selected.cwd}
+        </span>
+      </div>
       <GitBranchWidget cwd={selected.cwd} />
     </div>
-    <div class="actions">
-      <button onclick={start} disabled={!canStart}>
-        <Play size={12} /><span>Start</span>
-      </button>
-      <button onclick={stop} disabled={!isRunning}>
-        <Square size={12} /><span>Stop</span>
-      </button>
-      <button onclick={restart} disabled={status !== 'running'}>
-        <RotateCw size={12} /><span>Restart</span>
-      </button>
-      <span class="sep"></span>
-      <button onclick={edit}>
-        <Pencil size={12} /><span>Edit</span>
-      </button>
-      <button onclick={openCwd}>
-        <FolderOpen size={12} /><span>Open cwd</span>
-      </button>
-      <button onclick={copyCmd}>
-        <Copy size={12} /><span>Copy command</span>
-      </button>
-      <span class="sep"></span>
-      <button onclick={() => terminalAction('soloe:terminal-find')} disabled={!isRunning}>
-        <Search size={12} /><span>Find</span>
-      </button>
-      <button onclick={() => terminalAction('soloe:terminal-save-buffer')} disabled={!isRunning}>
-        <FileText size={12} /><span>Save buffer</span>
-      </button>
-      <button onclick={() => terminalAction('soloe:terminal-copy-buffer')} disabled={!isRunning}>
-        <Copy size={12} /><span>Copy buffer</span>
-      </button>
-      <span class="sep"></span>
-      <button onclick={() => terminalAction('soloe:terminal-copy-markdown')} disabled={!isRunning}>
-        <FileText size={12} /><span>Copy Markdown</span>
-      </button>
-      <button onclick={openInEditor}>
-        <FolderOpen size={12} /><span>Open editor</span>
-      </button>
-      <span class="sep"></span>
-      <button class="danger" onclick={remove}>
-        <Trash2 size={12} /><span>Delete</span>
-      </button>
-      <span class="sep"></span>
-      <button onclick={() => settings.openDrawer()} title="Settings" aria-label="Settings">
-        <Settings size={12} />
-      </button>
-    </div>
+
+    <Tooltip.Provider delayDuration={250}>
+      <div class="flex items-center gap-1">
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="icon-sm" onclick={edit} aria-label="Edit session">
+                <Pencil />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content>Edit session</Tooltip.Content>
+        </Tooltip.Root>
+
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="icon-sm" onclick={openCwd} aria-label="Open working directory">
+                <FolderOpen />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content>Open cwd</Tooltip.Content>
+        </Tooltip.Root>
+
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="icon-sm" onclick={openInEditor} aria-label="Open in editor">
+                <Code2 />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content>Open in editor</Tooltip.Content>
+        </Tooltip.Root>
+
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="icon-sm" onclick={copyCmd} aria-label="Copy command">
+                <Copy />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content>Copy launch command</Tooltip.Content>
+        </Tooltip.Root>
+
+        <Separator orientation="vertical" class="mx-1 h-5" />
+
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="icon-sm" aria-label="Terminal actions">
+                <MoreHorizontal />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" class="w-56">
+            <DropdownMenu.GroupHeading>Terminal</DropdownMenu.GroupHeading>
+            <DropdownMenu.Item disabled={!isRunning} onSelect={() => terminalAction('soloe:terminal-find')}>
+              <Search /> <span>Find</span>
+              <DropdownMenu.Shortcut>⌘F</DropdownMenu.Shortcut>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled={!isRunning} onSelect={() => terminalAction('soloe:terminal-copy-buffer')}>
+              <Copy /> <span>Copy buffer</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled={!isRunning} onSelect={() => terminalAction('soloe:terminal-save-buffer')}>
+              <FileText /> <span>Save buffer…</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled={!isRunning} onSelect={() => terminalAction('soloe:terminal-copy-markdown')}>
+              <FileText /> <span>Copy as Markdown</span>
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="icon-sm" onclick={() => settings.openDrawer()} aria-label="Settings">
+                <Settings />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content>Settings</Tooltip.Content>
+        </Tooltip.Root>
+      </div>
+    </Tooltip.Provider>
   {:else}
-    <div class="meta dim">No session selected</div>
+    <div class="text-sm text-muted-foreground">No session selected</div>
   {/if}
 </div>
-
-<style>
-  .bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 8px 12px;
-    background: var(--bg-elev-1);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    min-height: 44px;
-  }
-  .meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .dim { color: var(--muted); font-size: 12px; }
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-  .actions button {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .sep {
-    width: 1px;
-    height: 18px;
-    background: var(--border);
-    margin: 0 4px;
-  }
-  .danger {
-    color: var(--red);
-  }
-  .danger:hover:not(:disabled) {
-    border-color: var(--red);
-  }
-</style>

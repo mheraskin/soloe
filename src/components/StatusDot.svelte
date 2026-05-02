@@ -1,31 +1,20 @@
 <script lang="ts">
   import type { SessionStatus } from '@shared/types/sessions.js';
+  import { cn } from '$lib/utils';
 
-  let { status }: { status: SessionStatus } = $props();
+  let { status, class: className = '' }: { status: SessionStatus; class?: string } = $props();
+
+  const colorByStatus: Record<SessionStatus, string> = {
+    running: 'bg-success',
+    starting: 'bg-warning animate-pulse',
+    stopped: 'bg-muted-foreground/60',
+    exited: 'bg-muted-foreground/30',
+    error: 'bg-destructive'
+  };
 </script>
 
-<span class="dot {status}" title={status} aria-label={status}></span>
-
-<style>
-  .dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--muted-2);
-    flex-shrink: 0;
-  }
-  .running { background: var(--green); }
-  .starting {
-    background: var(--amber);
-    animation: pulse 1s ease-in-out infinite;
-  }
-  .stopped { background: var(--muted-2); }
-  .exited { background: var(--muted); opacity: 0.5; }
-  .error { background: var(--red); }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-</style>
+<span
+  class={cn('inline-block size-2 shrink-0 rounded-full', colorByStatus[status], className)}
+  title={status}
+  aria-label={status}
+></span>

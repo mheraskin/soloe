@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { TerminalSquare } from 'lucide-svelte';
+  import { TerminalSquare } from '@lucide/svelte';
   import type { SessionKind } from '@shared/types/sessions.js';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexUrl from '../lib/icons/codex.svg';

@@ -5,53 +5,24 @@
   let { session, status }: { session: Session | null; status: SessionStatus } = $props();
 </script>
 
-<div class="empty">
+<div class="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground">
   {#if !session}
-    <h2>No session selected</h2>
-    <p>Create or pick a session in the sidebar to get started.</p>
+    <h2 class="m-0 text-base font-medium text-foreground">No session selected</h2>
+    <p class="m-0">Create or pick a session in the sidebar to get started.</p>
   {:else}
-    <h2>{session.name}</h2>
-    <p class="meta">{kindLabel(session.kind)} · {session.runMode}{session.wslDistro ? ` (${session.wslDistro})` : ''}</p>
-    <p class="cwd">{session.cwd}</p>
-    <p class="hint">
-      {#if status === 'exited'}
-        Session exited. Use the Start button above to run it again.
+    <h2 class="m-0 text-base font-medium text-foreground">{session.name}</h2>
+    <p class="m-0 text-xs">{kindLabel(session.kind)} · {session.runMode}{session.wslDistro ? ` (${session.wslDistro})` : ''}</p>
+    <p class="m-0 font-mono text-xs">{session.cwd}</p>
+    <p class="mt-3 text-xs">
+      {#if status === 'starting'}
+        Starting…
       {:else if status === 'error'}
-        Failed to start. Check your settings and try again.
+        Failed to start. Right-click the session to retry.
+      {:else if status === 'exited'}
+        Session exited. Right-click the session to start it again.
       {:else}
-        Press <strong>Start</strong> in the toolbar above to launch this session.
+        Launching terminal…
       {/if}
     </p>
   {/if}
 </div>
-
-<style>
-  .empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--muted);
-    gap: 8px;
-    padding: 32px;
-    text-align: center;
-  }
-  h2 {
-    margin: 0;
-    color: var(--fg);
-    font-weight: 500;
-    font-size: 16px;
-  }
-  p { margin: 0; }
-  .meta { font-size: 12px; }
-  .cwd {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--muted-2);
-  }
-  .hint {
-    margin-top: 16px;
-    font-size: 12px;
-  }
-</style>
