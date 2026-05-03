@@ -300,7 +300,11 @@
     return true;
   }
 
-  let headerEl: HTMLElement | null = $state(null);
+  // Bound to the outermost wrapper so the entire section (header + expanded
+  // content) acts as the drop zone, and so before/after is computed from the
+  // section's full bounds — the indicator stays under the cursor as the user
+  // drags through an open project's children.
+  let wrapperEl: HTMLElement | null = $state(null);
   let dropPosition = $derived.by<DropPosition | null>(() => {
     if (!onProjectDrop) return null;
     const t = dnd.target;
@@ -318,11 +322,11 @@
   }
 
   function onProjectDragOver(e: DragEvent) {
-    if (!onProjectDrop || !headerEl) return;
+    if (!onProjectDrop || !wrapperEl) return;
     if (dnd.drag?.kind !== 'project') return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const position = dropPositionFromEvent(e, headerEl);
+    const position = dropPositionFromEvent(e, wrapperEl);
     if (
       dnd.target?.kind !== 'project'
       || dnd.target.id !== project.id
@@ -351,7 +355,13 @@
 </script>
 
 {#if !hidden}
-<div class="relative">
+<div
+  bind:this={wrapperEl}
+  role="group"
+  class="relative"
+  ondragover={onProjectDragOver}
+  ondrop={onProjectDropEvent}
+>
   {#if dropPosition === 'before'}
     <div class="pointer-events-none absolute -top-1.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
   {/if}
@@ -364,13 +374,10 @@
       {#snippet child({ props })}
         <div
           {...props}
-          bind:this={headerEl}
           data-project-id={project.id}
           class={cn('flex items-center gap-1 px-1 pt-1.5 pb-1', isDraggingSelf && 'opacity-40')}
           draggable={onProjectDrop ? 'true' : undefined}
           ondragstart={onProjectDragStart}
-          ondragover={onProjectDragOver}
-          ondrop={onProjectDropEvent}
           ondragend={onProjectDragEnd}
         >
           <Collapsible.Trigger

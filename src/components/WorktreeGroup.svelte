@@ -96,7 +96,9 @@
     return true;
   }
 
-  let headerEl: HTMLElement | null = $state(null);
+  // Wrapper covers the header AND the expanded session list, so the drop
+  // indicator keeps tracking the cursor when it moves into the open content.
+  let wrapperEl: HTMLElement | null = $state(null);
   let dropPosition = $derived.by<DropPosition | null>(() => {
     if (!onWorktreeDrop) return null;
     const t = dnd.target;
@@ -114,12 +116,12 @@
   }
 
   function onHeaderDragOver(e: DragEvent) {
-    if (!onWorktreeDrop || !headerEl) return;
+    if (!onWorktreeDrop || !wrapperEl) return;
     if (dnd.drag?.kind !== 'worktree') return;
     if (dnd.drag.projectId !== projectId) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const position = dropPositionFromEvent(e, headerEl);
+    const position = dropPositionFromEvent(e, wrapperEl);
     if (
       dnd.target?.kind !== 'worktree'
       || dnd.target.id !== cwd
@@ -149,7 +151,13 @@
 </script>
 
 {#if !hidden}
-  <div class="relative">
+  <div
+    bind:this={wrapperEl}
+    role="group"
+    class="relative"
+    ondragover={onHeaderDragOver}
+    ondrop={onHeaderDrop}
+  >
     {#if dropPosition === 'before'}
       <div class="pointer-events-none absolute -top-0.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
     {/if}
@@ -158,13 +166,10 @@
     {/if}
   <Collapsible.Root open={effectiveExpanded} onOpenChange={onGroupOpenChange} class="flex flex-col gap-1">
     <div
-      bind:this={headerEl}
       role="group"
       class={cn('flex items-center gap-1 px-0.5 py-0.5', isDraggingSelf && 'opacity-40')}
       draggable={onWorktreeDrop ? 'true' : undefined}
       ondragstart={onHeaderDragStart}
-      ondragover={onHeaderDragOver}
-      ondrop={onHeaderDrop}
       ondragend={onHeaderDragEnd}
     >
       <Collapsible.Trigger
