@@ -173,10 +173,15 @@
     return true;
   }
 
-  function onSidebarDragLeave() {
-    // Cursor left the sidebar entirely — clear any lingering drop target so
-    // the indicator doesn't stay stuck on the last hovered row.
-    if (dnd.drag) dnd.setTarget(null);
+  function onSidebarDragLeave(e: DragEvent) {
+    // dragleave bubbles up from every descendant — when the cursor moves
+    // between children inside the sidebar, the inner dragleave reaches us
+    // even though we never actually left. Only clear the target when the
+    // related target is outside the aside (or null = left the document).
+    if (!dnd.drag) return;
+    const related = e.relatedTarget;
+    if (asideEl && related instanceof Node && asideEl.contains(related)) return;
+    dnd.setTarget(null);
   }
 
   let orderedProjectIds = $derived.by<string[]>(() => {
