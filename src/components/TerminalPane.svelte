@@ -350,14 +350,23 @@
 </script>
 
 <div class="relative h-full w-full bg-[#0f0f10] p-2">
-  {#if !receivedOutput}
-    <div class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]">
-      <div class="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 class="size-4 animate-spin" />
-        <span>Connecting…</span>
-      </div>
+  <div
+    class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
+    class:opacity-0={receivedOutput}
+    aria-hidden={receivedOutput}
+  >
+    <div class="flex flex-col items-center gap-3">
+      <span class="relative flex size-9 items-center justify-center">
+        <span class="absolute inset-0 animate-ping rounded-full bg-foreground/5"></span>
+        <span class="relative flex size-9 items-center justify-center rounded-full bg-background/50 ring-1 ring-border/40">
+          <Loader2 class="size-4 animate-spin text-foreground/70" />
+        </span>
+      </span>
+      <span class="text-[10px] font-medium tracking-[0.18em] text-muted-foreground/80 uppercase">
+        Connecting
+      </span>
     </div>
-  {/if}
+  </div>
   {#if findOpen && active}
     <div class="absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
       <Input
