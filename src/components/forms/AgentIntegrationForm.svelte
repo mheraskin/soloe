@@ -33,8 +33,8 @@
 
 <div class="flex flex-col gap-3">
   <p class="m-0 text-[11px] text-muted-foreground">
-    Toggle a checkbox to install or remove hooks for that environment. Hooks let Soloe bind Claude
-    and Codex sessions to its tabs for correct resume.
+    Hooks let Soloe bind Claude and Codex sessions to its tabs for correct resume. Use the button
+    below to install everywhere, or manage each environment individually.
   </p>
 
   {#if needsSetup}
