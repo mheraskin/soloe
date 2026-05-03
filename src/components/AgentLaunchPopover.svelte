@@ -1,18 +1,4 @@
-<script lang="ts" module>
-  let closeActivePopover: (() => void) | null = null;
-
-  function setActivePopover(close: () => void): void {
-    if (closeActivePopover && closeActivePopover !== close) closeActivePopover();
-    closeActivePopover = close;
-  }
-
-  function clearActivePopover(close: () => void): void {
-    if (closeActivePopover === close) closeActivePopover = null;
-  }
-</script>
-
 <script lang="ts">
-  import { onDestroy } from 'svelte';
   import { Plus } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import type { SessionKind } from '@shared/types/sessions.js';
@@ -23,9 +9,6 @@
   import KindIcon from './KindIcon.svelte';
 
   type AgentKind = Extract<SessionKind, 'claude_code' | 'codex'>;
-
-  const HOVER_OPEN_DELAY_MS = 250;
-  const HOVER_CLOSE_DELAY_MS = 180;
 
   let {
     projectId = null,
@@ -44,70 +27,18 @@
   } = $props();
 
   let open = $state(false);
-  let openTimer: ReturnType<typeof setTimeout> | null = null;
-  let closeTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function clearTimers(): void {
-    if (openTimer) {
-      clearTimeout(openTimer);
-      openTimer = null;
-    }
-    if (closeTimer) {
-      clearTimeout(closeTimer);
-      closeTimer = null;
-    }
-  }
-
-  function closeSelf(): void {
-    clearTimers();
-    open = false;
-    clearActivePopover(closeSelf);
-  }
-
-  function openNow(): void {
-    clearTimers();
-    setActivePopover(closeSelf);
-    open = true;
-  }
-
-  function scheduleOpen(): void {
-    if (open) {
-      if (closeTimer) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
-      }
-      return;
-    }
-    if (openTimer) return;
-    openTimer = setTimeout(() => {
-      openTimer = null;
-      openNow();
-    }, HOVER_OPEN_DELAY_MS);
-  }
-
-  function scheduleClose(): void {
-    if (openTimer) {
-      clearTimeout(openTimer);
-      openTimer = null;
-    }
-    if (!open || closeTimer) return;
-    closeTimer = setTimeout(() => {
-      closeTimer = null;
-      closeSelf();
-    }, HOVER_CLOSE_DELAY_MS);
-  }
 
   function onTriggerClick(e: Event): void {
     e.stopPropagation();
     if (open) {
       launchTerminal();
     } else {
-      openNow();
+      open = true;
     }
   }
 
   function launchTerminal(): void {
-    closeSelf();
+    open = false;
     void sessions
       .createWithDefaults({
         ...(projectId ? { projectId } : {}),
@@ -118,7 +49,7 @@
   }
 
   function launchAgent(kind: AgentKind): void {
-    closeSelf();
+    open = false;
     void sessions
       .createAgentWithDefaults(kind, {
         ...(projectId ? { projectId } : {}),
@@ -127,10 +58,6 @@
       })
       .catch(reportError);
   }
-
-  onDestroy(() => {
-    clearTimers();
-  });
 </script>
 
 <Popover.Root bind:open>
@@ -143,9 +70,6 @@
         class={`shrink-0 ${className}`}
         {title}
         aria-label={ariaLabel}
-        onpointerenter={scheduleOpen}
-        onpointerleave={scheduleClose}
-        onfocus={openNow}
         onclick={onTriggerClick}
       >
         <Plus />
@@ -157,15 +81,6 @@
     side="right"
     sideOffset={8}
     class="w-44 rounded-md border-border bg-card p-1.5 shadow-md"
-    onpointerenter={() => {
-      if (closeTimer) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
-      }
-    }}
-    onpointerleave={scheduleClose}
-    onpointerdown={(e) => e.stopPropagation()}
-    onclick={(e) => e.stopPropagation()}
   >
     <div class="grid grid-cols-3 gap-1">
       <Button
