@@ -16,12 +16,14 @@
   import { confirmStore } from '../../stores/confirm.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
+  import { kbdHints } from '../../stores/kbd-hints.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import { Kbd } from '$lib/components/ui/kbd';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import * as Tooltip from '$lib/components/ui/tooltip';
+  import KbdHint from '../KbdHint.svelte';
 
   const PASTE_START = '\x1b[200~';
   const PASTE_END = '\x1b[201~';
@@ -35,6 +37,13 @@
   let dialogInput: HTMLInputElement | null = $state(null);
   let textareaEl: HTMLTextAreaElement | null = $state(null);
   let hasSelection = $state(false);
+
+  let addContextHover = $state(false);
+  let selectionHover = $state(false);
+  let saveHover = $state(false);
+  let addContextOpen = $derived(kbdHints.altHeld || addContextHover);
+  let selectionOpen = $derived(kbdHints.altHeld || selectionHover);
+  let saveOpen = $derived(kbdHints.altHeld || saveHover);
 
   let activeProjectId = $derived(notes.activeProjectId);
   let activeProject = $derived(activeProjectId ? projects.get(activeProjectId) : null);
@@ -366,6 +375,86 @@
           {statusLabel}
         </span>
       </div>
+      <Tooltip.Provider delayDuration={250}>
+        <div class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+          <div class="flex items-center gap-1">
+            <Tooltip.Root open={addContextOpen} onOpenChange={(v) => (addContextHover = v)}>
+              <Tooltip.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    variant="outline"
+                    size="xs"
+                    onclick={() => void sendAll()}
+                    disabled={!canSend || editorValue.trim().length === 0}
+                    aria-label="Add as context"
+                  >
+                    <ArrowLeftToLine class="size-3" />
+                    Add as context
+                  </Button>
+                {/snippet}
+              </Tooltip.Trigger>
+              <Tooltip.Content side="bottom" class="flex items-center gap-1.5">
+                <span>Add as context</span>
+                <KbdHint keys={['Ctrl', 'Shift', 'Enter']} />
+              </Tooltip.Content>
+            </Tooltip.Root>
+            {#if hasSelection}
+              <Tooltip.Root open={selectionOpen} onOpenChange={(v) => (selectionHover = v)}>
+                <Tooltip.Trigger>
+                  {#snippet child({ props })}
+                    <Button
+                      {...props}
+                      variant="ghost"
+                      size="xs"
+                      onclick={() => void sendSelection()}
+                      disabled={!canSend}
+                      aria-label="Add selection as context"
+                    >
+                      <TextSelect class="size-3" />
+                      Selection
+                    </Button>
+                  {/snippet}
+                </Tooltip.Trigger>
+                <Tooltip.Content side="bottom" class="flex items-center gap-1.5">
+                  <span>Add selection as context</span>
+                  <KbdHint keys={['Ctrl', 'Enter']} />
+                </Tooltip.Content>
+              </Tooltip.Root>
+            {/if}
+          </div>
+          {#if notes.isDraft}
+            <div class="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="xs"
+                onclick={onDiscardDraft}
+                disabled={notes.draftContent.length === 0}
+              >
+                Discard
+              </Button>
+              <Tooltip.Root open={saveOpen} onOpenChange={(v) => (saveHover = v)}>
+                <Tooltip.Trigger>
+                  {#snippet child({ props })}
+                    <Button
+                      {...props}
+                      size="xs"
+                      onclick={openSaveDialog}
+                      disabled={notes.draftContent.trim().length === 0}
+                    >
+                      Save
+                    </Button>
+                  {/snippet}
+                </Tooltip.Trigger>
+                <Tooltip.Content side="bottom" class="flex items-center gap-1.5">
+                  <span>Save draft</span>
+                  <KbdHint keys={['Ctrl', 'S']} />
+                </Tooltip.Content>
+              </Tooltip.Root>
+            </div>
+          {/if}
+        </div>
+      </Tooltip.Provider>
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           {#snippet child({ props })}
@@ -404,70 +493,6 @@
           {/if}
         </ContextMenu.Content>
       </ContextMenu.Root>
-      <div class="flex flex-col gap-2 border-t border-border px-4 pt-3 pb-5">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-1.5">
-            <Button
-              variant="outline"
-              size="xs"
-              onclick={() => void sendAll()}
-              disabled={!canSend || editorValue.trim().length === 0}
-              title="Add as context (Ctrl+Shift+Enter)"
-              aria-label="Add as context"
-            >
-              <ArrowLeftToLine class="size-3" />
-              Add as context
-            </Button>
-            {#if hasSelection}
-              <Button
-                variant="ghost"
-                size="xs"
-                onclick={() => void sendSelection()}
-                disabled={!canSend}
-                title="Add selection as context (Ctrl+Enter)"
-                aria-label="Add selection as context"
-              >
-                <TextSelect class="size-3" />
-                Selection
-              </Button>
-            {/if}
-          </div>
-          {#if notes.isDraft}
-            <div class="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="xs"
-                onclick={onDiscardDraft}
-                disabled={notes.draftContent.length === 0}
-              >
-                Discard
-              </Button>
-              <Button
-                size="xs"
-                onclick={openSaveDialog}
-                disabled={notes.draftContent.trim().length === 0}
-              >
-                Save
-              </Button>
-            </div>
-          {/if}
-        </div>
-        {#if editorValue.trim().length > 0}
-          <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-            <span class="inline-flex items-center gap-1">
-              <Kbd keys={['Ctrl', 'Enter']} /> selection
-            </span>
-            <span class="inline-flex items-center gap-1">
-              <Kbd keys={['Ctrl', 'Shift', 'Enter']} /> all
-            </span>
-            {#if notes.isDraft}
-              <span class="inline-flex items-center gap-1">
-                <Kbd keys={['Ctrl', 'S']} /> save
-              </span>
-            {/if}
-          </p>
-        {/if}
-      </div>
     </section>
   {/if}
 </div>
