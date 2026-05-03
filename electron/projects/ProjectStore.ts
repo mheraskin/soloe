@@ -138,8 +138,8 @@ export class ProjectStore {
     if (!trimmed) {
       return { path: '', suggestedName: '', matchedProjectId: null };
     }
-    const mainRepo = await runGitMainRepo(this.options.gitBinary ?? 'git', trimmed);
-    const resolved = mainRepo ?? trimmed;
+    const toplevel = await runGitToplevel(this.options.gitBinary ?? 'git', trimmed);
+    const resolved = toplevel ?? trimmed;
     const suggestedName = path.basename(resolved.replace(/[/\\]+$/, '')) || resolved;
     const matchedProjectId = this.findByPath(resolved);
     return { path: resolved, suggestedName, matchedProjectId };
@@ -372,21 +372,13 @@ export class ProjectStore {
   }
 }
 
-async function runGitMainRepo(gitBinary: string, cwd: string): Promise<string | null> {
+async function runGitToplevel(gitBinary: string, cwd: string): Promise<string | null> {
   try {
     const stat = await fs.stat(cwd);
     if (!stat.isDirectory()) return null;
   } catch {
     return null;
   }
-  const commonDir = await runGitRevParse(gitBinary, cwd, '--git-common-dir');
-  if (!commonDir) return null;
-  const absolute = path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir);
-  const normalized = absolute.replace(/[/\\]+$/, '');
-  if (path.basename(normalized) === '.git') {
-    return path.dirname(normalized);
-  }
-  // Bare or unusual layout: fall back to --show-toplevel
   return runGitRevParse(gitBinary, cwd, '--show-toplevel');
 }
 

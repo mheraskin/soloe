@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Folder, Pencil, Trash2 } from '@lucide/svelte';
+  import {
+    Archive,
+    ArchiveRestore,
+    ChevronDown,
+    ChevronRight,
+    Folder,
+    FolderOpen,
+    Pencil,
+    Trash2
+  } from '@lucide/svelte';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
@@ -12,6 +21,7 @@
   import { ipc } from '../lib/ipc';
   import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
+  import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import KbdHint from './KbdHint.svelte';
@@ -43,6 +53,15 @@
     }
     const parts = sessionCwd.split(/[/\\]/);
     return parts[parts.length - 1] || sessionCwd;
+  }
+
+  function basename(p: string): string {
+    const parts = normPath(p).split(/[/\\]/);
+    return parts[parts.length - 1] || p;
+  }
+
+  function gitWorktreeLabel(worktree: GitWorktree): string {
+    return worktree.branch ?? (worktree.detached ? 'detached' : worktreeLabel(worktree.path));
   }
 
   $effect(() => {
@@ -94,7 +113,7 @@
       const gitWorktree = gitWorktrees.find((wt) => normPath(wt.path) === key);
       return {
         cwd: key,
-        label: gitWorktree?.branch ?? (gitWorktree?.detached ? 'detached' : worktreeLabel(key)),
+        label: gitWorktree ? gitWorktreeLabel(gitWorktree) : worktreeLabel(key),
         isMain: gitWorktree?.isMain ?? false,
         items: buckets[key]!
       };
@@ -102,7 +121,21 @@
   });
 
   let accent = $derived(project.accentColor ?? null);
+  let mainWorktree = $derived(gitWorktrees.find((wt) => wt.isMain) ?? null);
   let hasWorktrees = $derived(gitWorktrees.some((wt) => !wt.isMain));
+  let isStandaloneWorktreeProject = $derived(
+    hasWorktrees
+      && mainWorktree !== null
+      && normPath(mainWorktree.path) !== normPath(project.path)
+  );
+  let showWorktreeGroups = $derived(hasWorktrees && !isStandaloneWorktreeProject);
+  let repoName = $derived(mainWorktree ? basename(mainWorktree.path) : project.name);
+  let otherWorktreeLabels = $derived.by(() =>
+    gitWorktrees
+      .filter((wt) => normPath(wt.path) !== normPath(project.path))
+      .map(gitWorktreeLabel)
+  );
+  let otherWorktreesText = $derived(otherWorktreeLabels.join(', '));
   let kbdIndex = $derived(nav.projectIndexHints[project.id] ?? null);
   let isActiveProject = $derived(nav.activeProjectId === project.id);
   let trimmedFilter = $derived(filter.trim());
@@ -166,6 +199,18 @@
       reportError(err);
     }
   }
+
+  async function openFullRepo() {
+    if (!mainWorktree) return;
+    try {
+      await projects.update(project.id, {
+        name: basename(mainWorktree.path),
+        path: mainWorktree.path
+      });
+    } catch (err) {
+      reportError(err);
+    }
+  }
 </script>
 
 {#if !hidden}
@@ -197,7 +242,7 @@
               <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
             {/if}
           </Collapsible.Trigger>
-          {#if !hasWorktrees}
+          {#if !showWorktreeGroups}
             <AgentLaunchPopover
               projectId={project.id}
               cwd={project.path}
@@ -232,7 +277,29 @@
     class={cn('ml-2 flex flex-col gap-1.5 border-l-[3px] pl-2', !accent && 'border-border')}
     style={accent ? `border-color: ${accent}` : undefined}
   >
-    {#if hasWorktrees}
+    {#if isStandaloneWorktreeProject && mainWorktree}
+      <div class="flex min-w-0 items-start gap-2 rounded-md px-2.5 py-2 text-[11px] leading-4 text-muted-foreground">
+        <FolderOpen class="mt-0.5 size-3.5 shrink-0" />
+        <div class="min-w-0 flex-1">
+          <p class="m-0 line-clamp-2">
+            Part of repo <span class="font-medium text-foreground">{repoName}</span>{otherWorktreesText
+              ? `. Other worktrees: ${otherWorktreesText}`
+              : ''}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="xs"
+          class="h-5 shrink-0 px-1.5 text-[10px]"
+          title={`Open ${repoName} as the full worktree group`}
+          onclick={openFullRepo}
+        >
+          Open repo
+        </Button>
+      </div>
+    {/if}
+
+    {#if showWorktreeGroups}
       {#each worktrees as wt (wt.cwd)}
         <WorktreeGroup
           title={wt.label}
