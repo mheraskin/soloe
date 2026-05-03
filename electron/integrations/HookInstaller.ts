@@ -4,22 +4,36 @@ import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { AgentIntegrationTargetStatus } from '@shared/types/ipc.js';
+import { WslHostDetector, type WslDistroInfo } from './WslHostDetector.js';
 
-export type ClaudeScope = 'user' | 'project' | 'project_local';
+export type HookHostKind = 'windows' | 'wsl';
 
-export interface ClaudeStatus {
-  user: AgentIntegrationTargetStatus;
-  project: AgentIntegrationTargetStatus;
-  projectLocal: AgentIntegrationTargetStatus;
+export interface HookHost {
+  kind: HookHostKind;
+  distro?: string;
+  label: string;
+  homeDir: string;
+  available: boolean;
+  reason?: string;
 }
 
-export interface HookInstallStatus {
-  claude: ClaudeStatus;
+export type HookHostKey =
+  | { kind: 'windows' }
+  | { kind: 'wsl'; distro: string };
+
+export interface HostInstallStatus {
+  host: HookHost;
+  claude: AgentIntegrationTargetStatus;
   codex: AgentIntegrationTargetStatus;
 }
 
+export interface HookInstallStatus {
+  hosts: HostInstallStatus[];
+}
+
 export interface HookInstallerOptions {
-  homeDir?: string;
+  hosts?: HookHost[];
+  detector?: WslHostDetector;
 }
 
 const CLAUDE_EVENTS = [
@@ -45,14 +59,13 @@ const CODEX_EVENTS = [
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 2;
+export const SOLOE_HOOK_VERSION = 3;
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 
 function buildHookCommand(provider: 'claude' | 'codex'): string {
   const endpoint = provider === 'claude' ? '/hook/claude' : '/hook/codex';
-  return [
-    '[ -z "$SOLOE_BRIDGE_URL" ] && exit 0',
+  const curl = [
     'curl -sS --max-time 1 -X POST',
     '-H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN"',
     '-H "X-Soloe-Session-Id: $SOLOE_SESSION_ID"',
@@ -61,85 +74,127 @@ function buildHookCommand(provider: 'claude' | 'codex'): string {
     `"$SOLOE_BRIDGE_URL${endpoint}"`,
     '>/dev/null 2>&1 || true'
   ].join(' ');
+  return `[ -z "$SOLOE_BRIDGE_URL" ] && exit 0; ${curl}`;
+}
+
+export function defaultLocalHost(): HookHost {
+  return {
+    kind: 'windows',
+    label: process.platform === 'win32' ? 'Windows' : 'Local',
+    homeDir: os.homedir(),
+    available: true
+  };
+}
+
+export function wslHostFrom(info: WslDistroInfo): HookHost {
+  if (!info.available || !info.homeUnc) {
+    return {
+      kind: 'wsl',
+      distro: info.distro,
+      label: `WSL: ${info.distro}`,
+      homeDir: '',
+      available: false,
+      reason: info.reason ?? 'distro unavailable'
+    };
+  }
+  return {
+    kind: 'wsl',
+    distro: info.distro,
+    label: `WSL: ${info.distro}`,
+    homeDir: info.homeUnc,
+    available: true
+  };
 }
 
 export class HookInstaller {
-  private readonly homeDir: string;
+  private hostsList: HookHost[];
+  private readonly detector: WslHostDetector;
 
   constructor(opts: HookInstallerOptions = {}) {
-    this.homeDir = opts.homeDir ?? os.homedir();
+    this.hostsList = opts.hosts ?? [defaultLocalHost()];
+    this.detector = opts.detector ?? new WslHostDetector();
   }
 
-  async status(projectPath?: string): Promise<HookInstallStatus> {
-    const [user, project, projectLocal, codex] = await Promise.all([
-      this.claudeFileSoloeStatus(this.claudeUserPath()),
-      projectPath ? this.claudeFileSoloeStatus(this.claudeProjectPath(projectPath)) : Promise.resolve(emptyStatus()),
-      projectPath ? this.claudeFileSoloeStatus(this.claudeProjectLocalPath(projectPath)) : Promise.resolve(emptyStatus()),
-      this.codexFileSoloeStatus(this.codexConfigPath())
-    ]);
-    return {
-      claude: { user, project, projectLocal },
-      codex
-    };
+  hosts(): HookHost[] {
+    return [...this.hostsList];
   }
 
-  async installClaude(scope: ClaudeScope, projectPath?: string): Promise<void> {
-    const filePath = this.claudeFilePath(scope, projectPath);
+  async refresh(): Promise<void> {
+    const wslInfos = await this.detector.detect();
+    this.hostsList = [defaultLocalHost(), ...wslInfos.map(wslHostFrom)];
+  }
+
+  async status(): Promise<HookInstallStatus> {
+    const hosts = await Promise.all(
+      this.hostsList.map(async (host) => {
+        if (!host.available) {
+          return {
+            host,
+            claude: emptyStatus(),
+            codex: emptyStatus()
+          };
+        }
+        const [claude, codex] = await Promise.all([
+          this.claudeFileSoloeStatus(this.claudeUserPath(host)),
+          this.codexFileSoloeStatus(this.codexConfigPath(host))
+        ]);
+        return { host, claude, codex };
+      })
+    );
+    return { hosts };
+  }
+
+  async installClaude(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    const filePath = this.claudeUserPath(target);
     const original = await readJsonOrNull(filePath);
     const updated = mergeClaudeHooks(original ?? {}, HOOK_COMMAND_CLAUDE);
     await this.writeAtomic(filePath, JSON.stringify(updated, null, 2) + '\n', original !== null);
   }
 
-  async uninstallClaude(scope: ClaudeScope, projectPath?: string): Promise<void> {
-    const filePath = this.claudeFilePath(scope, projectPath);
+  async uninstallClaude(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    const filePath = this.claudeUserPath(target);
     const original = await readJsonOrNull(filePath);
     if (!original) return;
     const cleaned = removeSoloeFromClaude(original);
     await this.writeAtomic(filePath, JSON.stringify(cleaned, null, 2) + '\n', false);
   }
 
-  async installCodex(): Promise<void> {
-    const filePath = this.codexConfigPath();
+  async installCodex(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    const filePath = this.codexConfigPath(target);
     const original = await readTomlOrNull(filePath);
     const updated = mergeCodexHooks(original ?? {}, HOOK_COMMAND_CODEX);
     await this.writeAtomic(filePath, stringifyToml(updated), original !== null);
   }
 
-  async uninstallCodex(): Promise<void> {
-    const filePath = this.codexConfigPath();
+  async uninstallCodex(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    const filePath = this.codexConfigPath(target);
     const original = await readTomlOrNull(filePath);
     if (!original) return;
     const cleaned = removeSoloeFromCodex(original);
     await this.writeAtomic(filePath, stringifyToml(cleaned), false);
   }
 
-  private claudeFilePath(scope: ClaudeScope, projectPath?: string): string {
-    switch (scope) {
-      case 'user':
-        return this.claudeUserPath();
-      case 'project':
-        if (!projectPath) throw new Error('projectPath is required for project scope');
-        return this.claudeProjectPath(projectPath);
-      case 'project_local':
-        if (!projectPath) throw new Error('projectPath is required for project_local scope');
-        return this.claudeProjectLocalPath(projectPath);
+  private requireHost(key: HookHostKey): HookHost {
+    const host = this.hostsList.find((h) =>
+      h.kind === key.kind && (key.kind === 'windows' || h.distro === key.distro)
+    );
+    if (!host) throw new Error(`Unknown host: ${describeHostKey(key)}`);
+    if (!host.available) {
+      throw new Error(`Host is unavailable: ${host.label}${host.reason ? ` (${host.reason})` : ''}`);
     }
+    return host;
   }
 
-  private claudeUserPath(): string {
-    return path.join(this.homeDir, '.claude', 'settings.json');
+  private claudeUserPath(host: HookHost): string {
+    return path.join(host.homeDir, '.claude', 'settings.json');
   }
 
-  private claudeProjectPath(projectPath: string): string {
-    return path.join(projectPath, '.claude', 'settings.json');
-  }
-
-  private claudeProjectLocalPath(projectPath: string): string {
-    return path.join(projectPath, '.claude', 'settings.local.json');
-  }
-
-  private codexConfigPath(): string {
-    return path.join(this.homeDir, '.codex', 'config.toml');
+  private codexConfigPath(host: HookHost): string {
+    return path.join(host.homeDir, '.codex', 'config.toml');
   }
 
   private async claudeFileSoloeStatus(filePath: string): Promise<AgentIntegrationTargetStatus> {
@@ -173,6 +228,10 @@ export class HookInstaller {
     await fs.writeFile(tmp, content, 'utf8');
     await fs.rename(tmp, filePath);
   }
+}
+
+function describeHostKey(key: HookHostKey): string {
+  return key.kind === 'wsl' ? `wsl:${key.distro}` : 'windows';
 }
 
 async function readJsonOrNull(filePath: string): Promise<Record<string, unknown> | null> {

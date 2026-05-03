@@ -2,28 +2,20 @@
   import { onMount } from 'svelte';
   import { ipc } from '../../lib/ipc';
   import { reportError } from '../../stores/toast.svelte';
-  import { projects } from '../../stores/projects.svelte';
-  import { nav } from '../../stores/nav.svelte';
   import type {
-    AgentIntegrationClaudeScope,
+    AgentIntegrationHost,
+    AgentIntegrationHostKey,
     AgentIntegrationStatus,
     AgentIntegrationTargetStatus
   } from '@shared/types/ipc.js';
   import { Button } from '$lib/components/ui/button';
-  import { Label } from '$lib/components/ui/label';
-  import { RadioGroup, RadioGroupItem } from '$lib/components/ui/radio-group';
 
   let status = $state<AgentIntegrationStatus | null>(null);
-  let scope = $state<AgentIntegrationClaudeScope>('user');
-  let claudeBusy = $state(false);
-  let codexBusy = $state(false);
-
-  const activeProject = $derived(projects.get(nav.activeProjectId));
-  const projectPath = $derived(activeProject?.path);
+  let busy = $state<Record<string, boolean>>({});
 
   async function refresh() {
     try {
-      status = await ipc.agentIntegration.status(projectPath);
+      status = await ipc.agentIntegration.status();
     } catch (e) {
       reportError(e);
     }
@@ -37,83 +29,14 @@
     return off;
   });
 
-  $effect(() => {
-    void projectPath;
-    void refresh();
-  });
-
-  async function installClaude() {
-    if (claudeBusy) return;
-    if ((effectiveScope === 'project' || effectiveScope === 'project_local') && !projectPath) {
-      reportError(new Error('Open a project first to install per-project hooks'));
-      return;
-    }
-    claudeBusy = true;
-    try {
-      status = await ipc.agentIntegration.installClaude({
-        scope: effectiveScope,
-        projectPath
-      });
-    } catch (e) {
-      reportError(e);
-    } finally {
-      claudeBusy = false;
-    }
+  function hostKey(host: AgentIntegrationHost): AgentIntegrationHostKey {
+    if (host.kind === 'wsl' && host.distro) return { kind: 'wsl', distro: host.distro };
+    return { kind: 'windows' };
   }
 
-  async function uninstallClaude() {
-    if (claudeBusy) return;
-    claudeBusy = true;
-    try {
-      status = await ipc.agentIntegration.uninstallClaude({
-        scope: effectiveScope,
-        projectPath
-      });
-    } catch (e) {
-      reportError(e);
-    } finally {
-      claudeBusy = false;
-    }
+  function busyKeyFor(host: AgentIntegrationHost, provider: 'claude' | 'codex'): string {
+    return `${host.kind}:${host.distro ?? ''}:${provider}`;
   }
-
-  async function installCodex() {
-    if (codexBusy) return;
-    codexBusy = true;
-    try {
-      status = await ipc.agentIntegration.installCodex();
-    } catch (e) {
-      reportError(e);
-    } finally {
-      codexBusy = false;
-    }
-  }
-
-  async function uninstallCodex() {
-    if (codexBusy) return;
-    codexBusy = true;
-    try {
-      status = await ipc.agentIntegration.uninstallCodex();
-    } catch (e) {
-      reportError(e);
-    } finally {
-      codexBusy = false;
-    }
-  }
-
-  const effectiveScope = $derived<AgentIntegrationClaudeScope>(
-    !projectPath && (scope === 'project' || scope === 'project_local') ? 'user' : scope
-  );
-
-  const claudeConnected = $derived.by(() => {
-    return Boolean(claudeScopeStatus?.current);
-  });
-
-  const claudeScopeStatus = $derived.by<AgentIntegrationTargetStatus | null>(() => {
-    if (!status) return null;
-    if (effectiveScope === 'user') return status.claude.user;
-    if (effectiveScope === 'project') return status.claude.project;
-    return status.claude.projectLocal;
-  });
 
   function statusLabel(item: AgentIntegrationTargetStatus | null | undefined): string {
     if (!item?.installed) return 'Not connected';
@@ -127,106 +50,151 @@
     return 'text-muted-foreground';
   }
 
-  const needsSetup = $derived(
-    Boolean(status && (!status.claude.user.current || !status.codex.current))
-  );
+  async function withBusy(
+    key: string,
+    action: () => Promise<AgentIntegrationStatus>
+  ): Promise<void> {
+    if (busy[key]) return;
+    busy = { ...busy, [key]: true };
+    try {
+      status = await action();
+    } catch (e) {
+      reportError(e);
+    } finally {
+      busy = { ...busy, [key]: false };
+    }
+  }
+
+  function installClaude(host: AgentIntegrationHost): Promise<void> {
+    return withBusy(busyKeyFor(host, 'claude'), () =>
+      ipc.agentIntegration.installClaude({ host: hostKey(host) })
+    );
+  }
+
+  function uninstallClaude(host: AgentIntegrationHost): Promise<void> {
+    return withBusy(busyKeyFor(host, 'claude'), () =>
+      ipc.agentIntegration.uninstallClaude({ host: hostKey(host) })
+    );
+  }
+
+  function installCodex(host: AgentIntegrationHost): Promise<void> {
+    return withBusy(busyKeyFor(host, 'codex'), () =>
+      ipc.agentIntegration.installCodex({ host: hostKey(host) })
+    );
+  }
+
+  function uninstallCodex(host: AgentIntegrationHost): Promise<void> {
+    return withBusy(busyKeyFor(host, 'codex'), () =>
+      ipc.agentIntegration.uninstallCodex({ host: hostKey(host) })
+    );
+  }
+
+  const needsSetup = $derived.by(() => {
+    if (!status) return false;
+    return status.hosts.some(
+      (h) => h.host.available && (!h.claude.current || !h.codex.current)
+    );
+  });
 </script>
 
 <div class="flex flex-col gap-4">
   {#if needsSetup}
     <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100">
-      Agent hooks are missing or out of date. Connect or update them so Soloe can bind Claude and
-      Codex sessions for correct resume.
+      Agent hooks are missing or out of date on at least one environment. Connect or update each
+      target so Soloe can bind Claude and Codex sessions for correct resume.
     </div>
   {/if}
 
-  <div class="flex flex-col gap-2.5 rounded-md border border-border p-3">
-    <div class="flex items-baseline justify-between gap-2">
-      <h4 class="m-0 text-xs font-medium">Claude Code</h4>
-      <span
-        class="text-[10px] tracking-widest uppercase {statusClass(claudeScopeStatus)}"
-      >
-        {statusLabel(claudeScopeStatus)}
-      </span>
-    </div>
-    <p class="m-0 text-[11px] text-muted-foreground">
-      Installs hook entries that POST event state to Soloe so session tabs can show live agent status.
-    </p>
-    <div class="flex flex-col gap-1.5">
-      <Label class="text-[11px] text-muted-foreground">Scope</Label>
-      <RadioGroup value={scope} onValueChange={(v) => (scope = v as AgentIntegrationClaudeScope)}>
-        <div class="flex items-center gap-2">
-          <RadioGroupItem id="claude-scope-user" value="user" />
-          <Label for="claude-scope-user" class="text-xs">
-            User <span class="text-muted-foreground">(~/.claude/settings.json)</span>
-          </Label>
-        </div>
-        <div class="flex items-center gap-2">
-          <RadioGroupItem id="claude-scope-project" value="project" disabled={!projectPath} />
-          <Label for="claude-scope-project" class="text-xs">
-            Project
-            <span class="text-muted-foreground">
-              {projectPath ? `(${projectPath}/.claude/settings.json)` : '(no project open)'}
+  {#if status}
+    {#each status.hosts as entry (entry.host.kind + ':' + (entry.host.distro ?? ''))}
+      {@const claudeBusy = busy[busyKeyFor(entry.host, 'claude')] === true}
+      {@const codexBusy = busy[busyKeyFor(entry.host, 'codex')] === true}
+      <div class="flex flex-col gap-2.5 rounded-md border border-border p-3">
+        <div class="flex items-baseline justify-between gap-2">
+          <h4 class="m-0 text-xs font-semibold">{entry.host.label}</h4>
+          {#if !entry.host.available}
+            <span class="text-[10px] tracking-widest text-muted-foreground uppercase">
+              Unavailable
             </span>
-          </Label>
+          {/if}
         </div>
-        <div class="flex items-center gap-2">
-          <RadioGroupItem
-            id="claude-scope-project-local"
-            value="project_local"
-            disabled={!projectPath}
-          />
-          <Label for="claude-scope-project-local" class="text-xs">
-            Project local
-            <span class="text-muted-foreground">
-              {projectPath
-                ? `(${projectPath}/.claude/settings.local.json)`
-                : '(no project open)'}
-            </span>
-          </Label>
-        </div>
-      </RadioGroup>
-    </div>
-    <div class="flex gap-2">
-      {#if claudeScopeStatus?.current}
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={claudeBusy}
-          onclick={uninstallClaude}
-        >
-          {claudeBusy ? 'Working…' : 'Disconnect'}
-        </Button>
-      {:else}
-        <Button size="sm" disabled={claudeBusy} onclick={installClaude}>
-          {claudeBusy ? 'Working…' : claudeScopeStatus?.installed ? 'Update' : 'Connect'}
-        </Button>
-      {/if}
-    </div>
-  </div>
 
-  <div class="flex flex-col gap-2.5 rounded-md border border-border p-3">
-    <div class="flex items-baseline justify-between gap-2">
-      <h4 class="m-0 text-xs font-medium">Codex CLI</h4>
-      <span
-        class="text-[10px] tracking-widest uppercase {statusClass(status?.codex)}"
-      >
-        {statusLabel(status?.codex)}
-      </span>
-    </div>
-    <p class="m-0 text-[11px] text-muted-foreground">
-      Codex stores integration in <code class="text-foreground">~/.codex/config.toml</code> only — no per-project equivalent.
-    </p>
-    <div class="flex gap-2">
-      {#if status?.codex.current}
-        <Button size="sm" variant="outline" disabled={codexBusy} onclick={uninstallCodex}>
-          {codexBusy ? 'Working…' : 'Disconnect'}
-        </Button>
-      {:else}
-        <Button size="sm" disabled={codexBusy} onclick={installCodex}>
-          {codexBusy ? 'Working…' : status?.codex.installed ? 'Update' : 'Connect'}
-        </Button>
-      {/if}
-    </div>
-  </div>
+        {#if !entry.host.available}
+          <p class="m-0 text-[11px] text-muted-foreground">
+            {entry.host.reason ?? 'Distro could not be detected.'}
+          </p>
+        {:else}
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-xs font-medium">Claude Code</div>
+              <div class="text-[10px] tracking-widest uppercase {statusClass(entry.claude)}">
+                {statusLabel(entry.claude)}
+              </div>
+              <div class="text-[11px] text-muted-foreground">
+                {entry.host.kind === 'wsl'
+                  ? `~/.claude/settings.json on ${entry.host.distro}`
+                  : '~/.claude/settings.json'}
+              </div>
+            </div>
+            {#if entry.claude.installed}
+              <div class="flex gap-2">
+                {#if !entry.claude.current}
+                  <Button size="sm" disabled={claudeBusy} onclick={() => installClaude(entry.host)}>
+                    {claudeBusy ? 'Working…' : 'Update'}
+                  </Button>
+                {/if}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={claudeBusy}
+                  onclick={() => uninstallClaude(entry.host)}
+                >
+                  {claudeBusy ? 'Working…' : 'Disconnect'}
+                </Button>
+              </div>
+            {:else}
+              <Button size="sm" disabled={claudeBusy} onclick={() => installClaude(entry.host)}>
+                {claudeBusy ? 'Working…' : 'Connect'}
+              </Button>
+            {/if}
+          </div>
+
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <div class="text-xs font-medium">Codex CLI</div>
+              <div class="text-[10px] tracking-widest uppercase {statusClass(entry.codex)}">
+                {statusLabel(entry.codex)}
+              </div>
+              <div class="text-[11px] text-muted-foreground">
+                {entry.host.kind === 'wsl'
+                  ? `~/.codex/config.toml on ${entry.host.distro}`
+                  : '~/.codex/config.toml'}
+              </div>
+            </div>
+            {#if entry.codex.installed}
+              <div class="flex gap-2">
+                {#if !entry.codex.current}
+                  <Button size="sm" disabled={codexBusy} onclick={() => installCodex(entry.host)}>
+                    {codexBusy ? 'Working…' : 'Update'}
+                  </Button>
+                {/if}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={codexBusy}
+                  onclick={() => uninstallCodex(entry.host)}
+                >
+                  {codexBusy ? 'Working…' : 'Disconnect'}
+                </Button>
+              </div>
+            {:else}
+              <Button size="sm" disabled={codexBusy} onclick={() => installCodex(entry.host)}>
+                {codexBusy ? 'Working…' : 'Connect'}
+              </Button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/each}
+  {/if}
 </div>

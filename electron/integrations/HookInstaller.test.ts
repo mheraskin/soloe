@@ -10,28 +10,36 @@ import {
   removeSoloeFromClaude,
   mergeCodexHooks,
   removeSoloeFromCodex,
-  SOLOE_HOOK_VERSION
+  SOLOE_HOOK_VERSION,
+  type HookHost
 } from './HookInstaller.js';
+
+function localHost(homeDir: string): HookHost {
+  return { kind: 'windows', label: 'Test Local', homeDir, available: true };
+}
+
+function wslHost(distro: string, homeDir: string): HookHost {
+  return { kind: 'wsl', distro, label: `WSL: ${distro}`, homeDir, available: true };
+}
+
+const LOCAL: { kind: 'windows' } = { kind: 'windows' };
 
 describe('HookInstaller', () => {
   let homeDir: string;
-  let projectDir: string;
   let installer: HookInstaller;
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'soloe-home-'));
-    projectDir = mkdtempSync(join(tmpdir(), 'soloe-proj-'));
-    installer = new HookInstaller({ homeDir });
+    installer = new HookInstaller({ hosts: [localHost(homeDir)] });
   });
 
   afterEach(() => {
     rmSync(homeDir, { recursive: true, force: true });
-    rmSync(projectDir, { recursive: true, force: true });
   });
 
   describe('claude install/uninstall', () => {
     it('writes hooks for all supported events on first install', async () => {
-      await installer.installClaude('user');
+      await installer.installClaude(LOCAL);
       const written = JSON.parse(
         await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
       );
@@ -50,6 +58,18 @@ describe('HookInstaller', () => {
       );
     });
 
+    it('writes a hook command that actually runs curl when SOLOE_BRIDGE_URL is set', async () => {
+      await installer.installClaude(LOCAL);
+      const written = JSON.parse(
+        await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
+      );
+      const cmd = written.hooks.SessionStart[0].hooks[0].command as string;
+      // Must use semicolon (or newline) to separate the sentinel from curl, NOT bare space.
+      // Otherwise bash parses `[ ... ] && exit 0 curl ...` as a single command and curl never runs.
+      expect(cmd).toMatch(/exit 0\s*;\s*curl /);
+      expect(cmd).toContain('"$SOLOE_BRIDGE_URL/hook/claude"');
+    });
+
     it('preserves user keys when merging', async () => {
       const path = join(homeDir, '.claude', 'settings.json');
       await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
@@ -64,7 +84,7 @@ describe('HookInstaller', () => {
           }
         })
       );
-      await installer.installClaude('user');
+      await installer.installClaude(LOCAL);
       const written = JSON.parse(await fs.readFile(path, 'utf8'));
       expect(written.env).toEqual({ FOO: 'bar' });
       const groups = written.hooks.UserPromptSubmit;
@@ -77,8 +97,8 @@ describe('HookInstaller', () => {
 
     it('install→uninstall is a no-op when no prior config existed', async () => {
       const path = join(homeDir, '.claude', 'settings.json');
-      await installer.installClaude('user');
-      await installer.uninstallClaude('user');
+      await installer.installClaude(LOCAL);
+      await installer.uninstallClaude(LOCAL);
       const written = JSON.parse(await fs.readFile(path, 'utf8'));
       expect(written).toEqual({});
     });
@@ -97,8 +117,8 @@ describe('HookInstaller', () => {
           }
         })
       );
-      await installer.installClaude('user');
-      await installer.uninstallClaude('user');
+      await installer.installClaude(LOCAL);
+      await installer.uninstallClaude(LOCAL);
       const written = JSON.parse(await fs.readFile(path, 'utf8'));
       expect(written.env).toEqual({ FOO: 'bar' });
       expect(written.hooks.UserPromptSubmit).toEqual([
@@ -110,48 +130,70 @@ describe('HookInstaller', () => {
       const settingsPath = join(homeDir, '.claude', 'settings.json');
       await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
       await fs.writeFile(settingsPath, JSON.stringify({ existing: true }));
-      await installer.installClaude('user');
+      await installer.installClaude(LOCAL);
       const entries = await fs.readdir(join(homeDir, '.claude'));
       expect(entries.some((e) => e.includes('soloe-backup'))).toBe(true);
     });
 
-    it('routes by scope for project-local files', async () => {
-      await installer.installClaude('project_local', projectDir);
-      const path = join(projectDir, '.claude', 'settings.local.json');
-      const exists = await fs
-        .stat(path)
-        .then(() => true)
-        .catch(() => false);
-      expect(exists).toBe(true);
-    });
-
-    it('routes by scope for project files', async () => {
-      await installer.installClaude('project', projectDir);
-      const path = join(projectDir, '.claude', 'settings.json');
-      const exists = await fs
-        .stat(path)
-        .then(() => true)
-        .catch(() => false);
-      expect(exists).toBe(true);
-    });
-
-    it('throws when project scope is missing projectPath', async () => {
-      await expect(installer.installClaude('project')).rejects.toThrow(/projectPath/);
-    });
-
     it('reinstalling does not stack duplicate entries', async () => {
-      await installer.installClaude('user');
-      await installer.installClaude('user');
+      await installer.installClaude(LOCAL);
+      await installer.installClaude(LOCAL);
       const written = JSON.parse(
         await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
       );
       expect(written.hooks.UserPromptSubmit).toHaveLength(1);
     });
+
+    it('routes user scope to the requested host', async () => {
+      const wslHomeDir = mkdtempSync(join(tmpdir(), 'soloe-wsl-'));
+      try {
+        const multi = new HookInstaller({
+          hosts: [localHost(homeDir), wslHost('Ubuntu', wslHomeDir)]
+        });
+        await multi.installClaude({ kind: 'wsl', distro: 'Ubuntu' });
+        const wslWritten = JSON.parse(
+          await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
+        );
+        expect(wslWritten.hooks.SessionStart).toHaveLength(1);
+        // Local host file should not be created
+        const localExists = await fs
+          .stat(join(homeDir, '.claude', 'settings.json'))
+          .then(() => true)
+          .catch(() => false);
+        expect(localExists).toBe(false);
+      } finally {
+        rmSync(wslHomeDir, { recursive: true, force: true });
+      }
+    });
+
+    it('throws when targeting an unknown host', async () => {
+      await expect(
+        installer.installClaude({ kind: 'wsl', distro: 'Nonexistent' })
+      ).rejects.toThrow(/Unknown host/);
+    });
+
+    it('throws when targeting an unavailable host', async () => {
+      const unavailable = new HookInstaller({
+        hosts: [
+          {
+            kind: 'wsl',
+            distro: 'Broken',
+            label: 'WSL: Broken',
+            homeDir: '',
+            available: false,
+            reason: 'no $HOME'
+          }
+        ]
+      });
+      await expect(
+        unavailable.installClaude({ kind: 'wsl', distro: 'Broken' })
+      ).rejects.toThrow(/unavailable/);
+    });
   });
 
   describe('codex install/uninstall', () => {
     it('writes hooks for all supported events on first install', async () => {
-      await installer.installCodex();
+      await installer.installCodex(LOCAL);
       const raw = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
       const parsed = parseToml(raw) as { hooks: Record<string, unknown[]> };
       expect(Object.keys(parsed.hooks)).toEqual(
@@ -167,6 +209,15 @@ describe('HookInstaller', () => {
       expect((parsed as { features?: { codex_hooks?: boolean } }).features?.codex_hooks).toBe(true);
     });
 
+    it('writes a hook command that actually runs curl', async () => {
+      await installer.installCodex(LOCAL);
+      const raw = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
+      const parsed = parseToml(raw) as { hooks: Record<string, Array<{ command: string }>> };
+      const cmd = parsed.hooks.SessionStart![0]!.command;
+      expect(cmd).toMatch(/exit 0\s*;\s*curl /);
+      expect(cmd).toContain('"$SOLOE_BRIDGE_URL/hook/codex"');
+    });
+
     it('preserves user keys when merging', async () => {
       const path = join(homeDir, '.codex', 'config.toml');
       await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
@@ -176,7 +227,7 @@ describe('HookInstaller', () => {
           '\n'
         )
       );
-      await installer.installCodex();
+      await installer.installCodex(LOCAL);
       const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
       expect(parsed['model']).toBe('gpt-5');
       const ups = (parsed['hooks'] as Record<string, unknown[]>)['UserPromptSubmit']!;
@@ -193,8 +244,8 @@ describe('HookInstaller', () => {
           '\n'
         )
       );
-      await installer.installCodex();
-      await installer.uninstallCodex();
+      await installer.installCodex(LOCAL);
+      await installer.uninstallCodex(LOCAL);
       const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
       expect(parsed['model']).toBe('gpt-5');
       const ups = (parsed['hooks'] as Record<string, unknown[]>)['UserPromptSubmit']!;
@@ -203,8 +254,8 @@ describe('HookInstaller', () => {
     });
 
     it('reinstalling does not stack duplicate entries', async () => {
-      await installer.installCodex();
-      await installer.installCodex();
+      await installer.installCodex(LOCAL);
+      await installer.installCodex(LOCAL);
       const parsed = parseToml(
         await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8')
       ) as Record<string, Record<string, unknown[]>>;
@@ -223,7 +274,7 @@ describe('HookInstaller', () => {
           '_soloe = true'
         ].join('\n')
       );
-      await installer.installCodex();
+      await installer.installCodex(LOCAL);
       const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
       const hooks = parsed['hooks'] as Record<string, unknown[]>;
       expect(hooks['session_start']).toBeUndefined();
@@ -234,38 +285,26 @@ describe('HookInstaller', () => {
   describe('status()', () => {
     it('reports nothing when no files exist', async () => {
       const s = await installer.status();
-      expect(s).toEqual({
-        claude: {
-          user: { installed: false, current: false },
-          project: { installed: false, current: false },
-          projectLocal: { installed: false, current: false }
-        },
-        codex: { installed: false, current: false }
-      });
+      expect(s.hosts).toHaveLength(1);
+      expect(s.hosts[0]!.host.kind).toBe('windows');
+      expect(s.hosts[0]!.claude).toEqual({ installed: false, current: false });
+      expect(s.hosts[0]!.codex).toEqual({ installed: false, current: false });
     });
 
     it('reports installed scopes after install', async () => {
-      await installer.installClaude('user');
-      await installer.installCodex();
+      await installer.installClaude(LOCAL);
+      await installer.installCodex(LOCAL);
       const s = await installer.status();
-      expect(s.claude.user).toEqual({
+      expect(s.hosts[0]!.claude).toEqual({
         installed: true,
         current: true,
         version: SOLOE_HOOK_VERSION
       });
-      expect(s.codex).toEqual({
+      expect(s.hosts[0]!.codex).toEqual({
         installed: true,
         current: true,
         version: SOLOE_HOOK_VERSION
       });
-    });
-
-    it('reports project + project_local when projectPath provided', async () => {
-      await installer.installClaude('project', projectDir);
-      await installer.installClaude('project_local', projectDir);
-      const s = await installer.status(projectDir);
-      expect(s.claude.project.current).toBe(true);
-      expect(s.claude.projectLocal.current).toBe(true);
     });
 
     it('reports old Soloe hook entries as installed but stale', async () => {
@@ -284,8 +323,29 @@ describe('HookInstaller', () => {
         )
       );
       const s = await installer.status();
-      expect(s.claude.user).toEqual({ installed: true, current: false, version: 1 });
-      expect(s.codex).toEqual({ installed: true, current: false, version: 1 });
+      expect(s.hosts[0]!.claude).toEqual({ installed: true, current: false, version: 1 });
+      expect(s.hosts[0]!.codex).toEqual({ installed: true, current: false, version: 1 });
+    });
+
+    it('returns empty status entries for unavailable hosts', async () => {
+      const multi = new HookInstaller({
+        hosts: [
+          localHost(homeDir),
+          {
+            kind: 'wsl',
+            distro: 'Broken',
+            label: 'WSL: Broken',
+            homeDir: '',
+            available: false,
+            reason: 'no $HOME'
+          }
+        ]
+      });
+      const s = await multi.status();
+      expect(s.hosts).toHaveLength(2);
+      expect(s.hosts[1]!.host.available).toBe(false);
+      expect(s.hosts[1]!.claude).toEqual({ installed: false, current: false });
+      expect(s.hosts[1]!.codex).toEqual({ installed: false, current: false });
     });
   });
 });

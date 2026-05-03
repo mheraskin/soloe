@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   AgentIntegrationClaudeRequest,
+  AgentIntegrationCodexRequest,
   AgentIntegrationStatus
 } from '@shared/types/ipc.js';
 import { ipcInvoke } from './result.js';
@@ -10,7 +11,6 @@ import { HookInstaller } from '../integrations/HookInstaller.js';
 export interface AgentIntegrationIpcOptions {
   installer: HookInstaller;
   getWindows: () => BrowserWindow[];
-  getActiveProjectPath?: () => string | undefined;
 }
 
 export class AgentIntegrationIpc {
@@ -23,18 +23,16 @@ export class AgentIntegrationIpc {
     this.registered = true;
     const { installer } = this.opts;
 
-    ipcMain.handle(
-      IpcChannels.agentIntegration.status,
-      (_e, projectPath?: string) =>
-        ipcInvoke(() => installer.status(projectPath ?? this.opts.getActiveProjectPath?.()))
+    ipcMain.handle(IpcChannels.agentIntegration.status, () =>
+      ipcInvoke(() => installer.status())
     );
 
     ipcMain.handle(
       IpcChannels.agentIntegration.installClaude,
       (_e, request: AgentIntegrationClaudeRequest) =>
         ipcInvoke(async () => {
-          await installer.installClaude(request.scope, request.projectPath);
-          return this.broadcastStatus(request.projectPath);
+          await installer.installClaude(request.host);
+          return this.broadcastStatus();
         })
     );
 
@@ -42,23 +40,27 @@ export class AgentIntegrationIpc {
       IpcChannels.agentIntegration.uninstallClaude,
       (_e, request: AgentIntegrationClaudeRequest) =>
         ipcInvoke(async () => {
-          await installer.uninstallClaude(request.scope, request.projectPath);
-          return this.broadcastStatus(request.projectPath);
+          await installer.uninstallClaude(request.host);
+          return this.broadcastStatus();
         })
     );
 
-    ipcMain.handle(IpcChannels.agentIntegration.installCodex, () =>
-      ipcInvoke(async () => {
-        await installer.installCodex();
-        return this.broadcastStatus();
-      })
+    ipcMain.handle(
+      IpcChannels.agentIntegration.installCodex,
+      (_e, request: AgentIntegrationCodexRequest) =>
+        ipcInvoke(async () => {
+          await installer.installCodex(request.host);
+          return this.broadcastStatus();
+        })
     );
 
-    ipcMain.handle(IpcChannels.agentIntegration.uninstallCodex, () =>
-      ipcInvoke(async () => {
-        await installer.uninstallCodex();
-        return this.broadcastStatus();
-      })
+    ipcMain.handle(
+      IpcChannels.agentIntegration.uninstallCodex,
+      (_e, request: AgentIntegrationCodexRequest) =>
+        ipcInvoke(async () => {
+          await installer.uninstallCodex(request.host);
+          return this.broadcastStatus();
+        })
     );
   }
 
@@ -72,10 +74,8 @@ export class AgentIntegrationIpc {
     this.registered = false;
   }
 
-  private async broadcastStatus(projectPath?: string): Promise<AgentIntegrationStatus> {
-    const status = await this.opts.installer.status(
-      projectPath ?? this.opts.getActiveProjectPath?.()
-    );
+  private async broadcastStatus(): Promise<AgentIntegrationStatus> {
+    const status = await this.opts.installer.status();
     for (const win of this.opts.getWindows()) {
       if (!win.isDestroyed()) {
         win.webContents.send(IpcChannels.agentIntegration.changed, status);

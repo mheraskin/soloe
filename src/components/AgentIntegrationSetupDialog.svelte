@@ -1,6 +1,10 @@
 <script lang="ts">
   import { PlugZap, Settings as SettingsIcon } from '@lucide/svelte';
-  import type { AgentIntegrationTargetStatus } from '@shared/types/ipc.js';
+  import type {
+    AgentIntegrationHost,
+    AgentIntegrationHostKey,
+    AgentIntegrationTargetStatus
+  } from '@shared/types/ipc.js';
   import { ipc } from '../lib/ipc';
   import { agentIntegrationSetup } from '../stores/agent-integration-setup.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -8,69 +12,67 @@
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
 
-  let claudeBusy = $state(false);
-  let codexBusy = $state(false);
+  let busy = $state<Record<string, boolean>>({});
 
   let status = $derived(agentIntegrationSetup.status);
-  let projectPath = $derived(agentIntegrationSetup.projectPath);
-  let claudeProjectStatus = $derived.by<AgentIntegrationTargetStatus | null>(() => {
-    if (!status || !projectPath) return null;
-    if (status.claude.projectLocal.current || status.claude.projectLocal.installed) {
-      return status.claude.projectLocal;
-    }
-    return status.claude.project;
+
+  let needsSetup = $derived.by(() => {
+    if (!status) return false;
+    return status.hosts.some(
+      (h) => h.host.available && (!h.claude.current || !h.codex.current)
+    );
   });
-  let claudeStatus = $derived<AgentIntegrationTargetStatus | null>(
-    claudeProjectStatus ?? status?.claude.user ?? null
-  );
-  let claudeNeedsSetup = $derived(
-    Boolean(status && !status.claude.user.current && !claudeProjectStatus?.current)
-  );
-  let codexNeedsSetup = $derived(Boolean(status && !status.codex.current));
-  let allCurrent = $derived(Boolean(status && !claudeNeedsSetup && !codexNeedsSetup));
+
+  function busyKey(host: AgentIntegrationHost, provider: 'claude' | 'codex'): string {
+    return `${host.kind}:${host.distro ?? ''}:${provider}`;
+  }
+
+  function hostKey(host: AgentIntegrationHost): AgentIntegrationHostKey {
+    if (host.kind === 'wsl' && host.distro) return { kind: 'wsl', distro: host.distro };
+    return { kind: 'windows' };
+  }
 
   function onOpenChange(next: boolean): void {
     if (!next) agentIntegrationSetup.close();
   }
 
-  function label(item: AgentIntegrationTargetStatus | null | undefined): string {
-    if (!item?.installed) return 'Missing';
+  function label(item: AgentIntegrationTargetStatus): string {
+    if (!item.installed) return 'Missing';
     if (!item.current) return 'Update needed';
     return 'Ready';
   }
 
-  function tone(item: AgentIntegrationTargetStatus | null | undefined): string {
-    if (item?.current) return 'text-emerald-500';
-    if (item?.installed) return 'text-amber-500';
+  function tone(item: AgentIntegrationTargetStatus): string {
+    if (item.current) return 'text-emerald-500';
+    if (item.installed) return 'text-amber-500';
     return 'text-destructive';
   }
 
-  async function installClaude(): Promise<void> {
-    if (claudeBusy) return;
-    claudeBusy = true;
+  async function installClaude(host: AgentIntegrationHost): Promise<void> {
+    const key = busyKey(host, 'claude');
+    if (busy[key]) return;
+    busy = { ...busy, [key]: true };
     try {
-      const next = await ipc.agentIntegration.installClaude({
-        scope: 'user',
-        projectPath
-      });
+      const next = await ipc.agentIntegration.installClaude({ host: hostKey(host) });
       agentIntegrationSetup.update(next);
     } catch (err) {
       reportError(err);
     } finally {
-      claudeBusy = false;
+      busy = { ...busy, [key]: false };
     }
   }
 
-  async function installCodex(): Promise<void> {
-    if (codexBusy) return;
-    codexBusy = true;
+  async function installCodex(host: AgentIntegrationHost): Promise<void> {
+    const key = busyKey(host, 'codex');
+    if (busy[key]) return;
+    busy = { ...busy, [key]: true };
     try {
-      const next = await ipc.agentIntegration.installCodex();
+      const next = await ipc.agentIntegration.installCodex({ host: hostKey(host) });
       agentIntegrationSetup.update(next);
     } catch (err) {
       reportError(err);
     } finally {
-      codexBusy = false;
+      busy = { ...busy, [key]: false };
     }
   }
 
@@ -88,32 +90,73 @@
         Agent setup needed
       </Dialog.Title>
       <Dialog.Description class="text-sm text-foreground">
-        Soloe needs Claude and Codex hooks to bind provider sessions to Soloe tabs. Without them,
-        new agent sessions can start, but Soloe cannot reliably save the provider session id for
-        resume.
+        Install hooks on every environment that runs Claude or Codex so Soloe can bind provider
+        sessions to its tabs. Hooks live in each environment's home directory and are not shared
+        between Windows and WSL.
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center justify-between gap-3 rounded-md border border-border p-3">
-        <div class="min-w-0">
-          <div class="text-sm font-medium">Claude Code</div>
-          <div class="text-xs {tone(claudeStatus)}">{label(claudeStatus)}</div>
-        </div>
-        <Button size="sm" disabled={!claudeNeedsSetup || claudeBusy} onclick={installClaude}>
-          {claudeBusy ? 'Working...' : claudeStatus?.installed ? 'Update' : 'Connect'}
-        </Button>
-      </div>
-
-      <div class="flex items-center justify-between gap-3 rounded-md border border-border p-3">
-        <div class="min-w-0">
-          <div class="text-sm font-medium">Codex CLI</div>
-          <div class="text-xs {tone(status?.codex)}">{label(status?.codex)}</div>
-        </div>
-        <Button size="sm" disabled={!codexNeedsSetup || codexBusy} onclick={installCodex}>
-          {codexBusy ? 'Working...' : status?.codex.installed ? 'Update' : 'Connect'}
-        </Button>
-      </div>
+    <div class="flex flex-col gap-3">
+      {#if status}
+        {#each status.hosts as entry (entry.host.kind + ':' + (entry.host.distro ?? ''))}
+          {@const claudeKey = busyKey(entry.host, 'claude')}
+          {@const codexKey = busyKey(entry.host, 'codex')}
+          <div class="flex flex-col gap-2 rounded-md border border-border p-3">
+            <div class="flex items-baseline justify-between gap-2">
+              <h4 class="m-0 text-xs font-semibold">{entry.host.label}</h4>
+              {#if !entry.host.available}
+                <span class="text-[10px] tracking-widest text-muted-foreground uppercase">
+                  Unavailable
+                </span>
+              {/if}
+            </div>
+            {#if !entry.host.available}
+              <p class="m-0 text-[11px] text-muted-foreground">
+                {entry.host.reason ?? 'Distro could not be detected.'}
+              </p>
+            {:else}
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm">Claude Code</div>
+                  <div class="text-xs {tone(entry.claude)}">{label(entry.claude)}</div>
+                </div>
+                <Button
+                  size="sm"
+                  disabled={busy[claudeKey] || entry.claude.current}
+                  onclick={() => installClaude(entry.host)}
+                >
+                  {busy[claudeKey]
+                    ? 'Working…'
+                    : entry.claude.current
+                      ? 'Connected'
+                      : entry.claude.installed
+                        ? 'Update'
+                        : 'Connect'}
+                </Button>
+              </div>
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm">Codex CLI</div>
+                  <div class="text-xs {tone(entry.codex)}">{label(entry.codex)}</div>
+                </div>
+                <Button
+                  size="sm"
+                  disabled={busy[codexKey] || entry.codex.current}
+                  onclick={() => installCodex(entry.host)}
+                >
+                  {busy[codexKey]
+                    ? 'Working…'
+                    : entry.codex.current
+                      ? 'Connected'
+                      : entry.codex.installed
+                        ? 'Update'
+                        : 'Connect'}
+                </Button>
+              </div>
+            {/if}
+          </div>
+        {/each}
+      {/if}
     </div>
 
     <Dialog.Footer>
@@ -122,7 +165,7 @@
         Settings
       </Button>
       <Button variant="outline" onclick={() => agentIntegrationSetup.close()}>
-        {allCurrent ? 'Done' : 'Later'}
+        {needsSetup ? 'Later' : 'Done'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

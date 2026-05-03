@@ -57,14 +57,12 @@
   }
 
   async function promptForAgentIntegrationSetup(): Promise<void> {
-    const projectPath = sessions.selected?.projectId
-      ? projects.get(sessions.selected.projectId)?.path
-      : undefined;
-    const status = await ipc.agentIntegration.status(projectPath);
-    const claudeNeedsSetup = !status.claude.user.current &&
-      (!projectPath || (!status.claude.project.current && !status.claude.projectLocal.current));
-    if (!claudeNeedsSetup && status.codex.current) return;
-    agentIntegrationSetup.show(status, projectPath);
+    const status = await ipc.agentIntegration.status();
+    const needsSetup = status.hosts.some(
+      (h) => h.host.available && (!h.claude.current || !h.codex.current)
+    );
+    if (!needsSetup) return;
+    agentIntegrationSetup.show(status);
   }
 
   $effect(() => {

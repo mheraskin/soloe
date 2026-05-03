@@ -3,11 +3,9 @@ import type { AgentIntegrationStatus } from '@shared/types/ipc.js';
 class AgentIntegrationSetupStore {
   open = $state(false);
   status = $state<AgentIntegrationStatus | null>(null);
-  projectPath = $state<string | undefined>(undefined);
 
-  show(status: AgentIntegrationStatus, projectPath?: string): void {
+  show(status: AgentIntegrationStatus): void {
     this.status = status;
-    this.projectPath = projectPath;
     this.open = true;
   }
 

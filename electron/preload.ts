@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   AgentIntegrationClaudeRequest,
+  AgentIntegrationCodexRequest,
   AgentIntegrationStatus,
   SoloeApi,
   TerminalInputPayload,
@@ -165,14 +166,15 @@ const soloe: SoloeApi = {
     close: () => ipcRenderer.invoke(IpcChannels.window.close)
   },
   agentIntegration: {
-    status: (projectPath?: string) =>
-      ipcRenderer.invoke(IpcChannels.agentIntegration.status, projectPath),
+    status: () => ipcRenderer.invoke(IpcChannels.agentIntegration.status),
     installClaude: (request: AgentIntegrationClaudeRequest) =>
       ipcRenderer.invoke(IpcChannels.agentIntegration.installClaude, request),
     uninstallClaude: (request: AgentIntegrationClaudeRequest) =>
       ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallClaude, request),
-    installCodex: () => ipcRenderer.invoke(IpcChannels.agentIntegration.installCodex),
-    uninstallCodex: () => ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallCodex),
+    installCodex: (request: AgentIntegrationCodexRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.installCodex, request),
+    uninstallCodex: (request: AgentIntegrationCodexRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallCodex, request),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       subscribe<AgentIntegrationStatus>(IpcChannels.agentIntegration.changed, cb)
   }

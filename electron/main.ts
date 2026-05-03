@@ -166,6 +166,9 @@ async function setupServices(): Promise<AppServices> {
   const diagnosticsIpc = new DiagnosticsIpc({ service: diagnostics });
   const windowIpc = new WindowIpc();
   const hookInstaller = new HookInstaller();
+  await hookInstaller.refresh().catch((err) => {
+    console.warn('failed to detect WSL hosts for hook installer:', err);
+  });
   const agentIntegrationIpc = new AgentIntegrationIpc({
     installer: hookInstaller,
     getWindows: () => BrowserWindow.getAllWindows()

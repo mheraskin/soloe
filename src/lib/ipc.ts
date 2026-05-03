@@ -30,6 +30,7 @@ import type {
 } from '@shared/types/files.js';
 import type {
   AgentIntegrationClaudeRequest,
+  AgentIntegrationCodexRequest,
   AgentIntegrationStatus
 } from '@shared/types/ipc.js';
 import type {
@@ -162,14 +163,15 @@ export const ipc = {
     close: async () => unwrap(await c.window.close())
   },
   agentIntegration: {
-    status: async (projectPath?: string) =>
-      unwrap(await c.agentIntegration.status(projectPath)),
+    status: async () => unwrap(await c.agentIntegration.status()),
     installClaude: async (request: AgentIntegrationClaudeRequest) =>
       unwrap(await c.agentIntegration.installClaude(toIpcPayload(request))),
     uninstallClaude: async (request: AgentIntegrationClaudeRequest) =>
       unwrap(await c.agentIntegration.uninstallClaude(toIpcPayload(request))),
-    installCodex: async () => unwrap(await c.agentIntegration.installCodex()),
-    uninstallCodex: async () => unwrap(await c.agentIntegration.uninstallCodex()),
+    installCodex: async (request: AgentIntegrationCodexRequest) =>
+      unwrap(await c.agentIntegration.installCodex(toIpcPayload(request))),
+    uninstallCodex: async (request: AgentIntegrationCodexRequest) =>
+      unwrap(await c.agentIntegration.uninstallCodex(toIpcPayload(request))),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       c.agentIntegration.onChange(cb)
   }

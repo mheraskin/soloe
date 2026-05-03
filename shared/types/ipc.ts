@@ -274,7 +274,19 @@ export interface WindowApi {
   close(): Promise<IpcResult<true>>;
 }
 
-export type AgentIntegrationClaudeScope = 'user' | 'project' | 'project_local';
+export type AgentIntegrationHostKind = 'windows' | 'wsl';
+
+export type AgentIntegrationHostKey =
+  | { kind: 'windows' }
+  | { kind: 'wsl'; distro: string };
+
+export interface AgentIntegrationHost {
+  kind: AgentIntegrationHostKind;
+  distro?: string;
+  label: string;
+  available: boolean;
+  reason?: string;
+}
 
 export interface AgentIntegrationTargetStatus {
   installed: boolean;
@@ -282,30 +294,34 @@ export interface AgentIntegrationTargetStatus {
   version?: number;
 }
 
-export interface AgentIntegrationClaudeStatus {
-  user: AgentIntegrationTargetStatus;
-  project: AgentIntegrationTargetStatus;
-  projectLocal: AgentIntegrationTargetStatus;
-}
-
-export interface AgentIntegrationStatus {
-  claude: AgentIntegrationClaudeStatus;
+export interface AgentIntegrationHostStatus {
+  host: AgentIntegrationHost;
+  claude: AgentIntegrationTargetStatus;
   codex: AgentIntegrationTargetStatus;
 }
 
+export interface AgentIntegrationStatus {
+  hosts: AgentIntegrationHostStatus[];
+}
+
 export interface AgentIntegrationClaudeRequest {
-  scope: AgentIntegrationClaudeScope;
-  projectPath?: string;
+  host: AgentIntegrationHostKey;
+}
+
+export interface AgentIntegrationCodexRequest {
+  host: AgentIntegrationHostKey;
 }
 
 export interface AgentIntegrationApi {
-  status(projectPath?: string): Promise<IpcResult<AgentIntegrationStatus>>;
+  status(): Promise<IpcResult<AgentIntegrationStatus>>;
   installClaude(request: AgentIntegrationClaudeRequest): Promise<IpcResult<AgentIntegrationStatus>>;
   uninstallClaude(
     request: AgentIntegrationClaudeRequest
   ): Promise<IpcResult<AgentIntegrationStatus>>;
-  installCodex(): Promise<IpcResult<AgentIntegrationStatus>>;
-  uninstallCodex(): Promise<IpcResult<AgentIntegrationStatus>>;
+  installCodex(request: AgentIntegrationCodexRequest): Promise<IpcResult<AgentIntegrationStatus>>;
+  uninstallCodex(
+    request: AgentIntegrationCodexRequest
+  ): Promise<IpcResult<AgentIntegrationStatus>>;
   onChange(listener: (status: AgentIntegrationStatus) => void): () => void;
 }
 
