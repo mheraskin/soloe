@@ -3,8 +3,10 @@
   import { Activity, AlertTriangle, NotebookPen } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
+  import { Keymap } from '../lib/keymap';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Tooltip from '$lib/components/ui/tooltip';
+  import KbdHint from './KbdHint.svelte';
   import ProcessUsageWidget from './ProcessUsageWidget.svelte';
   import RailInspectorTab from './rail/RailInspectorTab.svelte';
   import RailDiagnosticsTab from './rail/RailDiagnosticsTab.svelte';
@@ -14,12 +16,13 @@
     id: RailTabId;
     label: string;
     icon: Component<any, {}, ''>;
+    shortcut?: readonly string[];
   }
 
   const tabs: Tab[] = [
     { id: 'inspector', label: 'Inspector', icon: Activity },
     { id: 'diagnostics', label: 'Diagnostics', icon: AlertTriangle },
-    { id: 'notes', label: 'Notes', icon: NotebookPen }
+    { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
   const RAIL_WIDTH_KEY = 'soloe.rightRailWidth.v1';
@@ -87,7 +90,12 @@
               </button>
             {/snippet}
           </Tooltip.Trigger>
-          <Tooltip.Content side="left">{tab.label}</Tooltip.Content>
+          <Tooltip.Content side="left" class="flex items-center gap-1.5">
+            <span>{tab.label}</span>
+            {#if tab.shortcut}
+              <KbdHint keys={[...tab.shortcut]} />
+            {/if}
+          </Tooltip.Content>
         </Tooltip.Root>
       {/each}
     </nav>

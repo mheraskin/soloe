@@ -7,7 +7,7 @@
     AlertCircle,
     Trash2,
     PencilLine,
-    Send,
+    ArrowLeftToLine,
     TextSelect
   } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
@@ -18,6 +18,7 @@
   import { ipc } from '../../lib/ipc';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
+  import { Kbd } from '$lib/components/ui/kbd';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
@@ -154,7 +155,17 @@
     await sendText(sel || editorValue);
   }
 
-  function onNewDraft(): void {
+  async function onNewDraft(): Promise<void> {
+    if (notes.draftContent.trim().length > 0) {
+      const ok = await confirmStore.ask({
+        title: 'Discard current draft?',
+        message: 'Your unsaved draft will be lost.',
+        confirmLabel: 'Discard',
+        tone: 'danger'
+      });
+      if (!ok) return;
+      notes.discardDraft();
+    }
     notes.newDraft();
     void tick().then(() => textareaEl?.focus());
   }
@@ -276,7 +287,7 @@
     <Button
       variant="outline"
       size="xs"
-      onclick={onNewDraft}
+      onclick={() => void onNewDraft()}
       disabled={!activeProjectId}
       aria-label="New note"
       title="New note"
@@ -340,7 +351,7 @@
     </ScrollArea>
 
     <section class="flex min-h-0 flex-1 flex-col">
-      <div class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+      <div class="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
         <span class="truncate text-xs font-medium">
           {editorTitle || 'Pick a note or create a new one'}
         </span>
@@ -372,72 +383,89 @@
               onblur={updateSelection}
               disabled={editorDisabled}
               spellcheck="false"
-              class="flex-1 resize-none border-0 bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none placeholder:text-muted-foreground/70"
+              class="flex-1 resize-none border-0 bg-transparent px-4 py-3 font-mono text-xs leading-relaxed outline-none placeholder:text-muted-foreground/70"
               aria-label="Note editor"
             ></textarea>
           {/snippet}
         </ContextMenu.Trigger>
-        <ContextMenu.Content class="w-52">
+        <ContextMenu.Content class="w-56">
           <ContextMenu.Item
             disabled={!canSend || editorValue.trim().length === 0}
             onclick={() => void sendAll()}
           >
-            <Send class="size-3.5" />
-            Send to session
+            <ArrowLeftToLine class="size-3.5" />
+            Add as context
           </ContextMenu.Item>
           {#if hasSelection}
             <ContextMenu.Item disabled={!canSend} onclick={() => void sendSelection()}>
               <TextSelect class="size-3.5" />
-              Send selection
+              Add selection as context
             </ContextMenu.Item>
           {/if}
         </ContextMenu.Content>
       </ContextMenu.Root>
-      <div class="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
-        <div class="flex items-center gap-1.5">
-          <Button
-            variant="outline"
-            size="xs"
-            onclick={() => void sendAll()}
-            disabled={!canSend || editorValue.trim().length === 0}
-            title="Send to session (Ctrl+Shift+Enter)"
-            aria-label="Send to session"
-          >
-            <Send class="size-3" />
-            Send
-          </Button>
-          {#if hasSelection}
+      <div class="flex flex-col gap-2 border-t border-border px-4 pt-3 pb-5">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-1.5">
             <Button
-              variant="ghost"
+              variant="outline"
               size="xs"
-              onclick={() => void sendSelection()}
-              disabled={!canSend}
-              title="Send selection (Ctrl+Enter)"
-              aria-label="Send selection"
+              onclick={() => void sendAll()}
+              disabled={!canSend || editorValue.trim().length === 0}
+              title="Add as context (Ctrl+Shift+Enter)"
+              aria-label="Add as context"
             >
-              <TextSelect class="size-3" />
-              Selection
+              <ArrowLeftToLine class="size-3" />
+              Add as context
             </Button>
+            {#if hasSelection}
+              <Button
+                variant="ghost"
+                size="xs"
+                onclick={() => void sendSelection()}
+                disabled={!canSend}
+                title="Add selection as context (Ctrl+Enter)"
+                aria-label="Add selection as context"
+              >
+                <TextSelect class="size-3" />
+                Selection
+              </Button>
+            {/if}
+          </div>
+          {#if notes.isDraft}
+            <div class="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="xs"
+                onclick={onDiscardDraft}
+                disabled={notes.draftContent.length === 0}
+              >
+                Discard
+              </Button>
+              <Button
+                size="xs"
+                onclick={openSaveDialog}
+                disabled={notes.draftContent.trim().length === 0}
+              >
+                Save
+              </Button>
+            </div>
           {/if}
         </div>
-        {#if notes.isDraft}
-          <div class="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={onDiscardDraft}
-              disabled={notes.draftContent.length === 0}
-            >
-              Discard
-            </Button>
-            <Button
-              size="xs"
-              onclick={openSaveDialog}
-              disabled={notes.draftContent.trim().length === 0}
-            >
-              Save
-            </Button>
-          </div>
+        {#if editorValue.trim().length > 0}
+          <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+            <span class="inline-flex items-center gap-1">
+              <Kbd keys={['Ctrl', 'Enter']} /> selection
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <Kbd keys={['Ctrl', 'Shift', 'Enter']} /> all
+            </span>
+            {#if notes.isDraft}
+              <span class="inline-flex items-center gap-1">
+                <Kbd keys={['Ctrl', 'S']} /> save
+              </span>
+            {/if}
+          </p>
         {/if}
       </div>
     </section>
