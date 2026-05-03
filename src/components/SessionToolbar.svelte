@@ -55,7 +55,7 @@
   }
 </script>
 
-<div class="flex items-center justify-between gap-3 border-b border-border bg-card px-3 py-2 min-h-[48px] shadow-elevation-1">
+<div class="flex items-center justify-between gap-3 border-b border-border bg-card px-3 py-2 min-h-[48px]">
   {#if selected}
     <div class="flex min-w-0 items-center gap-2.5">
       <StatusDot {status} />

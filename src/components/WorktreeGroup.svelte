@@ -72,7 +72,7 @@
         ariaLabel="New session in this worktree"
       />
     </div>
-    <Collapsible.Content class="flex flex-col gap-px pl-3">
+    <Collapsible.Content class="flex flex-col gap-px pl-4">
       {#each visible as session (session.id)}
         <SessionItem {session} branch={title} />
       {/each}
