@@ -186,11 +186,7 @@
             {:else}
               <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" />
             {/if}
-            {#if accent}
-              <span class="size-3 shrink-0 rounded-full" style={`background: ${accent}`}></span>
-            {:else}
-              <Folder class="size-3.5 shrink-0 text-muted-foreground" />
-            {/if}
+            <Folder class="size-3.5 shrink-0 text-muted-foreground" />
             <span class="flex min-w-0 flex-1 flex-col gap-1">
               <span class="truncate text-sm leading-4 font-semibold">{project.name}</span>
               <span class="truncate font-mono text-[11px] leading-3.5 text-muted-foreground" title={project.path}>
@@ -232,7 +228,10 @@
     </ContextMenu.Content>
   </ContextMenu.Root>
 
-  <Collapsible.Content class="ml-3 flex flex-col gap-1.5 border-l border-border pl-2">
+  <Collapsible.Content
+    class={cn('ml-2 flex flex-col gap-1.5 border-l-[3px] pl-2', !accent && 'border-border')}
+    style={accent ? `border-color: ${accent}` : undefined}
+  >
     {#if hasWorktrees}
       {#each worktrees as wt (wt.cwd)}
         <WorktreeGroup

@@ -160,7 +160,7 @@
 
 <div class="flex h-full flex-col overflow-hidden">
   <header
-    class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card pl-3 select-none"
+    class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card pl-3 shadow-elevation-1 select-none"
     style="-webkit-app-region: drag"
   >
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
