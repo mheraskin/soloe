@@ -29,11 +29,44 @@
   let findInput: HTMLInputElement | null = $state(null);
   let findOpen = $state(false);
   let findQuery = $state('');
-  let receivedOutput = $state(false);
+  let ready = $state(false);
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
   let search: SearchAddon | null = null;
   let pendingOutput = '';
+  // Hide the loading overlay only once output has actually settled — the first
+  // byte alone is too early (shells stream a banner before the prompt; agents
+  // paint a TUI in stages). We wait for a quiet window after first output, with
+  // a cap so a perpetually-animated TUI can never get stuck behind the overlay.
+  const READY_QUIET_MS = 300;
+  const READY_HARD_CAP_MS = 5000;
+  let quietTimer: ReturnType<typeof setTimeout> | null = null;
+  let capTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearReadyTimers(): void {
+    if (quietTimer) {
+      clearTimeout(quietTimer);
+      quietTimer = null;
+    }
+    if (capTimer) {
+      clearTimeout(capTimer);
+      capTimer = null;
+    }
+  }
+
+  function markReady(): void {
+    ready = true;
+    clearReadyTimers();
+  }
+
+  function noteOutput(byteCount: number): void {
+    if (ready || byteCount === 0) return;
+    if (capTimer === null) {
+      capTimer = setTimeout(markReady, READY_HARD_CAP_MS);
+    }
+    if (quietTimer) clearTimeout(quietTimer);
+    quietTimer = setTimeout(markReady, READY_QUIET_MS);
+  }
 
   function bufferText(): string {
     if (!term) return '';
@@ -93,7 +126,7 @@
     }
     try {
       term.write(data);
-      if (!receivedOutput && data.length > 0) receivedOutput = true;
+      noteOutput(data.length);
     } catch (err) {
       pendingOutput = data + pendingOutput;
       console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
@@ -301,6 +334,7 @@
       fit = null;
       search = null;
       pendingOutput = '';
+      clearReadyTimers();
     };
   });
 
@@ -352,8 +386,8 @@
 <div class="relative h-full w-full bg-[#0f0f10] p-2">
   <div
     class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
-    class:opacity-0={receivedOutput}
-    aria-hidden={receivedOutput}
+    class:opacity-0={ready}
+    aria-hidden={ready}
   >
     <div class="flex flex-col items-center gap-3">
       <span class="relative flex size-9 items-center justify-center">
@@ -363,7 +397,7 @@
         </span>
       </span>
       <span class="text-[10px] font-medium tracking-[0.18em] text-muted-foreground/80 uppercase">
-        Connecting
+        Starting
       </span>
     </div>
   </div>
