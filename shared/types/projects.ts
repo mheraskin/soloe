@@ -11,6 +11,10 @@ export interface Project {
   accentColor?: string;
   createdAt: string;
   lastOpenedAt: string;
+  sortIndex?: number;
+  // Ordered worktree cwd paths (normalized) used to override the natural git
+  // worktree order in the sidebar. Entries not listed are appended naturally.
+  worktreeOrder?: string[];
 }
 
 export interface ProjectDraft {

@@ -286,7 +286,9 @@ class SessionsStore {
 
   async create(draft: SessionDraft): Promise<Session> {
     const created = await ipc.sessions.create(draft);
-    this.sessions = [created, ...this.sessions];
+    // New sessions get the highest sortIndex from the backend, so appending
+    // here matches the persisted order. Selection moves to the new session.
+    this.sessions = [...this.sessions, created];
     this.selectedId = created.id;
     return created;
   }
@@ -374,6 +376,13 @@ class SessionsStore {
     return updated;
   }
 
+  async reorder(orderedIds: SessionId[]): Promise<void> {
+    const list = await ipc.sessions.reorder(orderedIds);
+    // Backend returns active (non-archived) sessions only. Replace in-store
+    // state so the sidebar reflects the new order immediately.
+    this.sessions = list;
+  }
+
   async remove(id: SessionId): Promise<void> {
     const rt = this.runtime[id];
     if (rt && rt.terminalId && (rt.status === 'running' || rt.status === 'starting')) {
@@ -453,7 +462,9 @@ class SessionsStore {
     if (!session) return;
     const updated = await ipc.sessions.update(id, { archivedAt: undefined });
     this.archived = this.archived.filter((s) => s.id !== id);
-    this.sessions = [updated, ...this.sessions.filter((s) => s.id !== id)];
+    // Append so the restored row keeps its existing sortIndex position relative
+    // to siblings; insertion order matches what the backend will send next.
+    this.sessions = [...this.sessions.filter((s) => s.id !== id), updated];
   }
 
   async start(id: SessionId): Promise<void> {

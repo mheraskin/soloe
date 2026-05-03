@@ -24,6 +24,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import KbdHint from './KbdHint.svelte';
   import SessionItem from './SessionItem.svelte';
   import WorktreeGroup from './WorktreeGroup.svelte';
@@ -32,8 +33,16 @@
   let {
     project,
     sessions: items,
-    filter = ''
-  }: { project: Project; sessions: Session[]; filter?: string } = $props();
+    filter = '',
+    onProjectDrop = null
+  }: {
+    project: Project;
+    sessions: Session[];
+    filter?: string;
+    onProjectDrop?:
+      | ((args: { draggedId: string; targetId: string; position: DropPosition }) => void)
+      | null;
+  } = $props();
 
   let expanded = $state(true);
   let gitWorktrees = $state<GitWorktree[]>([]);
@@ -92,24 +101,42 @@
   });
 
   let worktrees = $derived.by<{ cwd: string; label: string; isMain: boolean; items: Session[] }[]>(() => {
-    const order: string[] = [];
+    const naturalOrder: string[] = [];
     const buckets: Record<string, Session[]> = {};
     for (const worktree of gitWorktrees) {
       const key = normPath(worktree.path);
       if (!buckets[key]) {
         buckets[key] = [];
-        order.push(key);
+        naturalOrder.push(key);
       }
     }
     for (const s of items) {
       const key = normPath(s.cwd);
       if (!buckets[key]) {
         buckets[key] = [];
-        order.push(key);
+        naturalOrder.push(key);
       }
       buckets[key].push(s);
     }
-    return order.map((key) => {
+    // Apply user-defined worktree order. Entries the user hasn't placed yet
+    // (newly-discovered git worktrees, sessions in unfamiliar cwds) keep their
+    // natural position relative to each other and slot in at the end.
+    const userOrder = (project.worktreeOrder ?? []).map(normPath);
+    const seen = new Set<string>();
+    const finalOrder: string[] = [];
+    for (const key of userOrder) {
+      if (buckets[key] && !seen.has(key)) {
+        seen.add(key);
+        finalOrder.push(key);
+      }
+    }
+    for (const key of naturalOrder) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        finalOrder.push(key);
+      }
+    }
+    return finalOrder.map((key) => {
       const gitWorktree = gitWorktrees.find((wt) => normPath(wt.path) === key);
       return {
         cwd: key,
@@ -234,6 +261,93 @@
       reportError(err);
     }
   }
+
+  function onInlineSessionDrop(args: { draggedId: string; targetId: string; position: DropPosition }) {
+    const { draggedId, targetId, position } = args;
+    const ids = items.map((s) => s.id);
+    if (!ids.includes(draggedId) || !ids.includes(targetId)) return;
+    const without = ids.filter((id) => id !== draggedId);
+    let insertAt = without.indexOf(targetId);
+    if (insertAt < 0) insertAt = without.length;
+    if (position === 'after') insertAt += 1;
+    const newSubset = [...without.slice(0, insertAt), draggedId, ...without.slice(insertAt)];
+    if (sameOrder(ids, newSubset)) return;
+    const subsetSet = new Set(ids);
+    const queue = [...newSubset];
+    const allIds = sessions.sessions.map((s) => {
+      if (subsetSet.has(s.id)) return queue.shift() ?? s.id;
+      return s.id;
+    });
+    void sessions.reorder(allIds).catch(reportError);
+  }
+
+  function onWorktreeDrop(args: { draggedCwd: string; targetCwd: string; position: DropPosition }) {
+    const { draggedCwd, targetCwd, position } = args;
+    const ids = worktrees.map((w) => w.cwd);
+    if (!ids.includes(draggedCwd) || !ids.includes(targetCwd)) return;
+    const without = ids.filter((id) => id !== draggedCwd);
+    let insertAt = without.indexOf(targetCwd);
+    if (insertAt < 0) insertAt = without.length;
+    if (position === 'after') insertAt += 1;
+    const next = [...without.slice(0, insertAt), draggedCwd, ...without.slice(insertAt)];
+    if (sameOrder(ids, next)) return;
+    void projects.update(project.id, { worktreeOrder: next }).catch(reportError);
+  }
+
+  function sameOrder(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  let headerEl: HTMLElement | null = $state(null);
+  let dropPosition = $derived.by<DropPosition | null>(() => {
+    if (!onProjectDrop) return null;
+    const t = dnd.target;
+    if (!t || t.kind !== 'project' || t.id !== project.id) return null;
+    if (dnd.drag?.id === project.id) return null;
+    return t.position;
+  });
+  let isDraggingSelf = $derived(dnd.drag?.kind === 'project' && dnd.drag.id === project.id);
+
+  function onProjectDragStart(e: DragEvent) {
+    if (!onProjectDrop || !e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DND_MIME.project, project.id);
+    dnd.begin({ kind: 'project', id: project.id, projectId: project.id, worktreeCwd: null });
+  }
+
+  function onProjectDragOver(e: DragEvent) {
+    if (!onProjectDrop || !headerEl) return;
+    if (dnd.drag?.kind !== 'project') return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const position = dropPositionFromEvent(e, headerEl);
+    if (
+      dnd.target?.kind !== 'project'
+      || dnd.target.id !== project.id
+      || dnd.target.position !== position
+    ) {
+      dnd.setTarget({ kind: 'project', id: project.id, position });
+    }
+  }
+
+  function onProjectDropEvent(e: DragEvent) {
+    if (!onProjectDrop) return;
+    if (dnd.drag?.kind !== 'project') return;
+    const draggedId = dnd.drag.id;
+    if (draggedId === project.id) return;
+    e.preventDefault();
+    const position = dnd.target?.kind === 'project' && dnd.target.id === project.id
+      ? dnd.target.position
+      : 'after';
+    onProjectDrop({ draggedId, targetId: project.id, position });
+    dnd.end();
+  }
+
+  function onProjectDragEnd() {
+    dnd.end();
+  }
 </script>
 
 {#if !hidden}
@@ -241,7 +355,23 @@
   <ContextMenu.Root>
     <ContextMenu.Trigger>
       {#snippet child({ props })}
-        <div {...props} class="flex items-center gap-1 px-1 pt-1.5 pb-1">
+        <div
+          {...props}
+          bind:this={headerEl}
+          data-project-id={project.id}
+          class={cn('relative flex items-center gap-1 px-1 pt-1.5 pb-1', isDraggingSelf && 'opacity-40')}
+          draggable={onProjectDrop ? 'true' : undefined}
+          ondragstart={onProjectDragStart}
+          ondragover={onProjectDragOver}
+          ondrop={onProjectDropEvent}
+          ondragend={onProjectDragEnd}
+        >
+          {#if dropPosition === 'before'}
+            <div class="pointer-events-none absolute -top-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+          {/if}
+          {#if dropPosition === 'after'}
+            <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+          {/if}
           <Collapsible.Trigger
             class={cn(
               'group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground transition-colors',
@@ -334,12 +464,17 @@
           isMain={wt.isMain}
           {filter}
           forceShow={projectNameMatches}
+          {onWorktreeDrop}
         />
       {/each}
     {:else if visibleSessions.length > 0}
       <div class="flex flex-col gap-px">
         {#each visibleSessions as session (session.id)}
-          <SessionItem {session} branch={session.lastBranch ?? null} />
+          <SessionItem
+            {session}
+            branch={session.lastBranch ?? null}
+            onSessionDrop={onInlineSessionDrop}
+          />
         {/each}
       </div>
     {:else}

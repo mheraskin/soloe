@@ -40,6 +40,7 @@ export interface SessionBase {
   pinned?: boolean;
   archivedAt?: string;
   lastBranch?: string;
+  sortIndex?: number;
 }
 
 export interface StandardTerminalSession extends SessionBase {

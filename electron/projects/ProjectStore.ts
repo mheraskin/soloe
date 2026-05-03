@@ -44,13 +44,14 @@ export class ProjectStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     if (this.cache) return;
     this.cache = await this.loadFromDisk();
+    if (this.assignMissingSortIndices()) {
+      await this.persist();
+    }
   }
 
   async list(): Promise<Project[]> {
     await this.ensureLoaded();
-    return [...this.cache!.values()].sort((a, b) =>
-      b.lastOpenedAt.localeCompare(a.lastOpenedAt)
-    );
+    return [...this.cache!.values()].sort(compareProjects);
   }
 
   async get(id: ProjectId): Promise<Project | null> {
@@ -70,7 +71,8 @@ export class ProjectStore {
       ...(draft.defaultWslDistro ? { defaultWslDistro: draft.defaultWslDistro } : {}),
       ...(draft.accentColor ? { accentColor: draft.accentColor } : {}),
       createdAt: now,
-      lastOpenedAt: now
+      lastOpenedAt: now,
+      sortIndex: this.nextSortIndex()
     };
     validateProject(project);
     this.cache!.set(id, project);
@@ -130,6 +132,30 @@ export class ProjectStore {
     await this.persist();
     this.broadcast();
     return updated;
+  }
+
+  async reorder(orderedIds: ProjectId[]): Promise<Project[]> {
+    await this.ensureLoaded();
+    const seen = new Set<ProjectId>();
+    let nextIndex = 0;
+    for (const id of orderedIds) {
+      if (seen.has(id)) continue;
+      const existing = this.cache!.get(id);
+      if (!existing) continue;
+      seen.add(id);
+      this.cache!.set(id, { ...existing, sortIndex: nextIndex });
+      nextIndex += 1;
+    }
+    // Append any unmentioned projects at the end so reorder calls that omit
+    // entries (e.g. stale renderer state) don't drop them off the list.
+    for (const project of [...this.cache!.values()].sort(compareProjects)) {
+      if (seen.has(project.id)) continue;
+      this.cache!.set(project.id, { ...project, sortIndex: nextIndex });
+      nextIndex += 1;
+    }
+    await this.persist();
+    this.broadcast();
+    return this.list();
   }
 
   async detectFromPath(input: string): Promise<ProjectDetectResult> {
@@ -314,6 +340,40 @@ export class ProjectStore {
 
   private async ensureLoaded(): Promise<void> {
     if (!this.cache) await this.init();
+  }
+
+  private nextSortIndex(): number {
+    let max = -1;
+    for (const project of this.cache!.values()) {
+      if (Number.isFinite(project.sortIndex) && (project.sortIndex as number) > max) {
+        max = project.sortIndex as number;
+      }
+    }
+    return max + 1;
+  }
+
+  // One-shot migration: when loading projects from disk that predate the
+  // sortIndex field, seed indices from the previous lastOpenedAt-desc order so
+  // the sidebar order doesn't visibly shuffle on first run.
+  private assignMissingSortIndices(): boolean {
+    if (!this.cache) return false;
+    const all = [...this.cache.values()];
+    const missing = all.filter((p) => !Number.isFinite(p.sortIndex));
+    if (missing.length === 0) return false;
+    const ordered = [...all].sort((a, b) => {
+      const aHas = Number.isFinite(a.sortIndex);
+      const bHas = Number.isFinite(b.sortIndex);
+      if (aHas && bHas) return (a.sortIndex as number) - (b.sortIndex as number);
+      if (aHas) return -1;
+      if (bHas) return 1;
+      return b.lastOpenedAt.localeCompare(a.lastOpenedAt);
+    });
+    let next = 0;
+    for (const project of ordered) {
+      this.cache.set(project.id, { ...project, sortIndex: next });
+      next += 1;
+    }
+    return true;
   }
 
   private async loadFromDisk(): Promise<Map<ProjectId, Project>> {
@@ -755,6 +815,25 @@ function validateProject(p: Project): void {
   if (p.accentColor !== undefined && !p.accentColor.trim()) {
     throw new Error('accentColor must be non-empty when set');
   }
+  if (p.sortIndex !== undefined && !Number.isFinite(p.sortIndex)) {
+    throw new Error('sortIndex must be a finite number when set');
+  }
+  if (p.worktreeOrder !== undefined) {
+    if (!Array.isArray(p.worktreeOrder) || p.worktreeOrder.some((s) => typeof s !== 'string')) {
+      throw new Error('worktreeOrder must be an array of strings when set');
+    }
+  }
+}
+
+function compareProjects(a: Project, b: Project): number {
+  const ai = sortKey(a);
+  const bi = sortKey(b);
+  if (ai !== bi) return ai - bi;
+  return a.createdAt.localeCompare(b.createdAt);
+}
+
+function sortKey(p: Project): number {
+  return Number.isFinite(p.sortIndex) ? (p.sortIndex as number) : Number.MAX_SAFE_INTEGER;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

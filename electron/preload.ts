@@ -66,6 +66,8 @@ const soloe: SoloeApi = {
     update: (id: SessionId, patch: SessionUpdate) =>
       ipcRenderer.invoke(IpcChannels.sessions.update, id, patch),
     delete: (id: SessionId) => ipcRenderer.invoke(IpcChannels.sessions.delete, id),
+    reorder: (orderedIds: SessionId[]) =>
+      ipcRenderer.invoke(IpcChannels.sessions.reorder, orderedIds),
     previewCommand: (id: SessionId) =>
       ipcRenderer.invoke(IpcChannels.sessions.previewCommand, id)
   },
@@ -127,6 +129,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.projects.update, id, patch),
     delete: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.delete, id),
     touch: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.touch, id),
+    reorder: (orderedIds: ProjectId[]) =>
+      ipcRenderer.invoke(IpcChannels.projects.reorder, orderedIds),
     detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
     suggestPaths: (query: string, options?: ProjectSuggestOptions) =>
       ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query, options),

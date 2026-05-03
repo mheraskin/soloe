@@ -27,17 +27,16 @@ export class SessionStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     if (this.cache) return;
     this.cache = await this.loadFromDisk();
+    if (this.assignMissingSortIndices()) {
+      await this.persist();
+    }
   }
 
   async list(): Promise<Session[]> {
     await this.ensureLoaded();
-    // Stable creation order keeps the sidebar from reshuffling on each
-    // start/reload — `touch` still bumps lastUsedAt but no longer drives order.
     return [...this.cache!.values()]
       .filter((session) => !session.archivedAt)
-      .sort((a, b) =>
-        a.createdAt.localeCompare(b.createdAt)
-      );
+      .sort(compareSessions);
   }
 
   async listArchived(): Promise<Session[]> {
@@ -62,7 +61,8 @@ export class SessionStore {
       ...draft,
       id,
       createdAt: now,
-      lastUsedAt: now
+      lastUsedAt: now,
+      sortIndex: this.nextSortIndex()
     } as Session;
     validateSession(session);
     this.cache!.set(id, session);
@@ -105,8 +105,63 @@ export class SessionStore {
     return updated;
   }
 
+  async reorder(orderedIds: SessionId[]): Promise<Session[]> {
+    await this.ensureLoaded();
+    const seen = new Set<SessionId>();
+    let nextIndex = 0;
+    for (const id of orderedIds) {
+      if (seen.has(id)) continue;
+      const existing = this.cache!.get(id);
+      if (!existing) continue;
+      seen.add(id);
+      this.cache!.set(id, { ...existing, sortIndex: nextIndex } as Session);
+      nextIndex += 1;
+    }
+    for (const session of [...this.cache!.values()].sort(compareSessions)) {
+      if (seen.has(session.id)) continue;
+      this.cache!.set(session.id, { ...session, sortIndex: nextIndex } as Session);
+      nextIndex += 1;
+    }
+    await this.persist();
+    return this.list();
+  }
+
   private async ensureLoaded(): Promise<void> {
     if (!this.cache) await this.init();
+  }
+
+  private nextSortIndex(): number {
+    let max = -1;
+    for (const session of this.cache!.values()) {
+      if (Number.isFinite(session.sortIndex) && (session.sortIndex as number) > max) {
+        max = session.sortIndex as number;
+      }
+    }
+    return max + 1;
+  }
+
+  // One-shot migration: seed sortIndex from the prior createdAt-asc order so
+  // pre-existing sessions don't reshuffle the first time the user runs a
+  // build that has reorder enabled.
+  private assignMissingSortIndices(): boolean {
+    if (!this.cache) return false;
+    const all = [...this.cache.values()];
+    const missing = all.filter((s) => !Number.isFinite(s.sortIndex));
+    if (missing.length === 0) return false;
+    const ordered = [...all].sort((a, b) => {
+      const aHas = Number.isFinite(a.sortIndex);
+      const bHas = Number.isFinite(b.sortIndex);
+      if (aHas && bHas) return (a.sortIndex as number) - (b.sortIndex as number);
+      if (aHas) return -1;
+      if (bHas) return 1;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+    let next = 0;
+    for (const session of ordered) {
+      this.cache.set(session.id, { ...session, sortIndex: next } as Session);
+      next += 1;
+    }
+    return true;
   }
 
   private async loadFromDisk(): Promise<Map<SessionId, Session>> {
@@ -234,6 +289,9 @@ function validateSession(s: Session): void {
   if (s.lastBranch !== undefined && typeof s.lastBranch !== 'string') {
     throw new Error('lastBranch must be a string when set');
   }
+  if (s.sortIndex !== undefined && !Number.isFinite(s.sortIndex)) {
+    throw new Error('sortIndex must be a finite number when set');
+  }
   switch (s.kind) {
     case 'standard_terminal':
       if (!s.shell) throw new Error('shell is required for standard_terminal');
@@ -259,4 +317,15 @@ function validateSession(s: Session): void {
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function compareSessions(a: Session, b: Session): number {
+  const ai = sortKey(a);
+  const bi = sortKey(b);
+  if (ai !== bi) return ai - bi;
+  return a.createdAt.localeCompare(b.createdAt);
+}
+
+function sortKey(s: Session): number {
+  return Number.isFinite(s.sortIndex) ? (s.sortIndex as number) : Number.MAX_SAFE_INTEGER;
 }

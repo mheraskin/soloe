@@ -67,6 +67,7 @@ export const IpcChannels = {
     create: 'sessions:create',
     update: 'sessions:update',
     delete: 'sessions:delete',
+    reorder: 'sessions:reorder',
     previewCommand: 'sessions:preview-command'
   },
   terminal: {
@@ -111,6 +112,7 @@ export const IpcChannels = {
     update: 'projects:update',
     delete: 'projects:delete',
     touch: 'projects:touch',
+    reorder: 'projects:reorder',
     detectFromPath: 'projects:detect-from-path',
     suggestPaths: 'projects:suggest-paths',
     change: 'projects:change'
@@ -174,6 +176,7 @@ export interface SessionsApi {
   create(draft: SessionDraft): Promise<IpcResult<Session>>;
   update(id: SessionId, patch: SessionUpdate): Promise<IpcResult<Session>>;
   delete(id: SessionId): Promise<IpcResult<true>>;
+  reorder(orderedIds: SessionId[]): Promise<IpcResult<Session[]>>;
   previewCommand(id: SessionId): Promise<IpcResult<SpawnSpec>>;
 }
 
@@ -235,6 +238,7 @@ export interface ProjectsApi {
   update(id: ProjectId, patch: ProjectUpdate): Promise<IpcResult<Project>>;
   delete(id: ProjectId): Promise<IpcResult<true>>;
   touch(id: ProjectId): Promise<IpcResult<Project | null>>;
+  reorder(orderedIds: ProjectId[]): Promise<IpcResult<Project[]>>;
   detectFromPath(path: string): Promise<IpcResult<ProjectDetectResult>>;
   suggestPaths(
     query: string,

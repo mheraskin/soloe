@@ -69,6 +69,8 @@ export const ipc = {
     update: async (id: SessionId, patch: SessionUpdate) =>
       unwrap(await c.sessions.update(id, toIpcPayload(patch))),
     delete: async (id: SessionId) => unwrap(await c.sessions.delete(id)),
+    reorder: async (orderedIds: SessionId[]) =>
+      unwrap(await c.sessions.reorder([...orderedIds])),
     previewCommand: async (id: SessionId) => unwrap(await c.sessions.previewCommand(id))
   },
   terminal: {
@@ -122,6 +124,8 @@ export const ipc = {
       unwrap(await c.projects.update(id, toIpcPayload(patch))),
     delete: async (id: ProjectId) => unwrap(await c.projects.delete(id)),
     touch: async (id: ProjectId) => unwrap(await c.projects.touch(id)),
+    reorder: async (orderedIds: ProjectId[]) =>
+      unwrap(await c.projects.reorder([...orderedIds])),
     detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
     suggestPaths: async (query: string, options?: ProjectSuggestOptions) =>
       unwrap(await c.projects.suggestPaths(query, options ? toIpcPayload(options) : undefined)),

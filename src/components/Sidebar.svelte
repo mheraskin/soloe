@@ -10,6 +10,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { scrollIntoViewCentered } from '../lib/scroll-into-view-center';
+  import { dnd, type DropPosition } from '../stores/dnd.svelte';
   import KbdHint from './KbdHint.svelte';
   import ProjectSection from './ProjectSection.svelte';
   import SessionItem from './SessionItem.svelte';
@@ -22,7 +24,9 @@
   let width = $state(260);
   let resizing = $state(false);
   let asideEl: HTMLElement | null = $state(null);
+  let scrollViewport: HTMLElement | null = $state(null);
   let lastScrolledId: string | null = null;
+  let lastScrolledNewProjectId: string | null = null;
 
   onMount(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
@@ -31,7 +35,7 @@
 
   // Keep the selected row visible. Runs on initial restore (when localStorage
   // brings back a selectedId) and whenever selection changes programmatically
-  // — clicking a row that's already visible is a no-op for scrollIntoView.
+  // — clicking a row that's already visible is a no-op for the centred scroll.
   $effect(() => {
     const id = sessions.selectedId;
     if (!id || !asideEl || id === lastScrolledId) return;
@@ -39,9 +43,26 @@
     void tick().then(() => {
       requestAnimationFrame(() => {
         const row = asideEl?.querySelector(`[data-session-id="${CSS.escape(id)}"]`);
-        if (row instanceof HTMLElement) {
-          row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        if (row instanceof HTMLElement && scrollViewport) {
+          scrollIntoViewCentered(row, scrollViewport);
         }
+      });
+    });
+  });
+
+  // Scroll a freshly added project to the centre so the user immediately sees
+  // where it landed at the bottom of the list.
+  $effect(() => {
+    const id = projects.newlyAddedId;
+    if (!id || !asideEl || id === lastScrolledNewProjectId) return;
+    lastScrolledNewProjectId = id;
+    void tick().then(() => {
+      requestAnimationFrame(() => {
+        const row = asideEl?.querySelector(`[data-project-id="${CSS.escape(id)}"]`);
+        if (row instanceof HTMLElement && scrollViewport) {
+          scrollIntoViewCentered(row, scrollViewport);
+        }
+        projects.consumeNewlyAdded(id);
       });
     });
   });
@@ -49,6 +70,31 @@
   $effect(() => {
     if (sessions.selectedId === null) lastScrolledId = null;
   });
+
+  function onProjectDrop(args: { draggedId: string; targetId: string; position: DropPosition }) {
+    const { draggedId, targetId, position } = args;
+    const ids = orderedProjectIds;
+    if (!ids.includes(draggedId) || !ids.includes(targetId)) return;
+    const without = ids.filter((id) => id !== draggedId);
+    let insertAt = without.indexOf(targetId);
+    if (insertAt < 0) insertAt = without.length;
+    if (position === 'after') insertAt += 1;
+    const next = [...without.slice(0, insertAt), draggedId, ...without.slice(insertAt)];
+    if (sameOrder(ids, next)) return;
+    void projects.reorder(next).catch(reportError);
+  }
+
+  function sameOrder(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function onSidebarDragLeave() {
+    // Cursor left the sidebar entirely — clear any lingering drop target so
+    // the indicator doesn't stay stuck on the last hovered row.
+    if (dnd.drag) dnd.setTarget(null);
+  }
 
   let orderedProjectIds = $derived.by<string[]>(() => {
     const ordered: string[] = [];
@@ -96,6 +142,7 @@
   class="relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
   class:select-none={resizing}
   style={`width: ${width}px`}
+  ondragleave={onSidebarDragLeave}
 >
   <div class="flex flex-col gap-2 border-b border-border p-2.5">
     <div class="grid grid-cols-2 gap-2">
@@ -142,7 +189,7 @@
       {/if}
     </div>
   </div>
-  <ScrollArea class="flex-1">
+  <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
     <div class="flex flex-col gap-3 p-2">
       {#if standaloneVisible.length > 0}
         <div class="flex flex-col gap-px">
@@ -158,6 +205,7 @@
             {project}
             sessions={sessions.byProject[id] ?? []}
             filter={query}
+            {onProjectDrop}
           />
         {/if}
       {/each}

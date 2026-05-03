@@ -65,6 +65,10 @@ export class SessionsIpc {
       })
     );
 
+    ipcMain.handle(IpcChannels.sessions.reorder, (_e, orderedIds: SessionId[]) =>
+      ipcInvoke(() => this.opts.store.reorder(orderedIds))
+    );
+
     ipcMain.handle(IpcChannels.sessions.previewCommand, (_e, id: SessionId) =>
       ipcInvoke(async () => {
         const session = await this.opts.store.get(id);
@@ -87,6 +91,7 @@ export class SessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.create);
     ipcMain.removeHandler(IpcChannels.sessions.update);
     ipcMain.removeHandler(IpcChannels.sessions.delete);
+    ipcMain.removeHandler(IpcChannels.sessions.reorder);
     ipcMain.removeHandler(IpcChannels.sessions.previewCommand);
     this.registered = false;
   }

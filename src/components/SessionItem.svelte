@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
-  import type { Session } from '@shared/types/sessions.js';
+  import type { Session, SessionId } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -11,6 +11,7 @@
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
 
@@ -22,7 +23,17 @@
     tone: StatusTone;
   }
 
-  let { session, branch = null }: { session: Session; branch?: string | null } = $props();
+  let {
+    session,
+    branch = null,
+    onSessionDrop = null
+  }: {
+    session: Session;
+    branch?: string | null;
+    onSessionDrop?:
+      | ((args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) => void)
+      | null;
+  } = $props();
 
   let editing = $state(false);
   let editValue = $state('');
@@ -170,19 +181,87 @@
     } satisfies Record<StatusTone, string>;
     return classes[tone];
   }
+
+  let rowEl: HTMLElement | null = $state(null);
+  let dropPosition = $derived.by<DropPosition | null>(() => {
+    if (!onSessionDrop) return null;
+    const t = dnd.target;
+    if (!t || t.kind !== 'session' || t.id !== session.id) return null;
+    if (dnd.drag?.id === session.id) return null;
+    return t.position;
+  });
+  let isDraggingSelf = $derived(dnd.drag?.kind === 'session' && dnd.drag.id === session.id);
+
+  function onDragStart(e: DragEvent) {
+    if (!onSessionDrop || !e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DND_MIME.session, session.id);
+    dnd.begin({
+      kind: 'session',
+      id: session.id,
+      projectId: session.projectId ?? null,
+      worktreeCwd: session.cwd
+    });
+  }
+
+  function onDragOver(e: DragEvent) {
+    if (!onSessionDrop || !rowEl) return;
+    if (dnd.drag?.kind !== 'session') return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const position = dropPositionFromEvent(e, rowEl);
+    if (
+      dnd.target?.kind !== 'session'
+      || dnd.target.id !== session.id
+      || dnd.target.position !== position
+    ) {
+      dnd.setTarget({ kind: 'session', id: session.id, position });
+    }
+  }
+
+  function onDrop(e: DragEvent) {
+    if (!onSessionDrop) return;
+    if (dnd.drag?.kind !== 'session') return;
+    const draggedId = dnd.drag.id;
+    if (draggedId === session.id) return;
+    e.preventDefault();
+    const position = dnd.target?.kind === 'session' && dnd.target.id === session.id
+      ? dnd.target.position
+      : 'after';
+    onSessionDrop({ draggedId, targetId: session.id, position });
+    dnd.end();
+  }
+
+  function onDragEnd() {
+    dnd.end();
+  }
 </script>
 
+<div class="relative">
+  {#if dropPosition === 'before'}
+    <div class="pointer-events-none absolute -top-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+  {/if}
+  {#if dropPosition === 'after'}
+    <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+  {/if}
 <ContextMenu.Root>
   <ContextMenu.Trigger>
     {#snippet child({ props })}
       <div
         {...props}
+        bind:this={rowEl}
         data-session-id={session.id}
         class={cn(
           'group flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
           'hover:bg-accent/40',
-          isSelected && 'bg-accent/60 border-border'
+          isSelected && 'bg-accent/60 border-border',
+          isDraggingSelf && 'opacity-40'
         )}
+        draggable={onSessionDrop ? 'true' : undefined}
+        ondragstart={onDragStart}
+        ondragover={onDragOver}
+        ondrop={onDrop}
+        ondragend={onDragEnd}
         onclick={onClick}
         ondblclick={startEditing}
         onkeydown={onRowKey}
@@ -332,3 +411,4 @@
     </ContextMenu.Item>
   </ContextMenu.Content>
 </ContextMenu.Root>
+</div>

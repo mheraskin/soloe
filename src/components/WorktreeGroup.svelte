@@ -1,12 +1,14 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
-  import type { Session } from '@shared/types/sessions.js';
+  import type { Session, SessionId } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { reportError } from '../stores/toast.svelte';
   import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import * as Collapsible from '$lib/components/ui/collapsible';
+  import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
 
@@ -17,7 +19,8 @@
     items,
     isMain = false,
     filter = '',
-    forceShow = false
+    forceShow = false,
+    onWorktreeDrop = null
   }: {
     title: string;
     cwd: string;
@@ -26,6 +29,9 @@
     isMain?: boolean;
     filter?: string;
     forceShow?: boolean;
+    onWorktreeDrop?:
+      | ((args: { draggedCwd: string; targetCwd: string; position: DropPosition }) => void)
+      | null;
   } = $props();
 
   let expanded = $state(true);
@@ -60,11 +66,106 @@
     if (isFiltering) return;
     expanded = open;
   }
+
+  function onSessionDrop(args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) {
+    const { draggedId, targetId, position } = args;
+    // Reorder is constrained to siblings inside this worktree group only.
+    // Sessions from other worktrees keep their relative position; only the
+    // members of this group get a new linear order.
+    const ids = items.map((s) => s.id);
+    if (!ids.includes(draggedId) || !ids.includes(targetId)) return;
+    const without = ids.filter((id) => id !== draggedId);
+    let insertAt = without.indexOf(targetId);
+    if (insertAt < 0) insertAt = without.length;
+    if (position === 'after') insertAt += 1;
+    const newSubset = [...without.slice(0, insertAt), draggedId, ...without.slice(insertAt)];
+    if (sameOrder(ids, newSubset)) return;
+
+    const subsetSet = new Set(ids);
+    const queue = [...newSubset];
+    const allIds = sessions.sessions.map((s) => {
+      if (subsetSet.has(s.id)) return queue.shift() ?? s.id;
+      return s.id;
+    });
+    void sessions.reorder(allIds).catch(reportError);
+  }
+
+  function sameOrder(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  let headerEl: HTMLElement | null = $state(null);
+  let dropPosition = $derived.by<DropPosition | null>(() => {
+    if (!onWorktreeDrop) return null;
+    const t = dnd.target;
+    if (!t || t.kind !== 'worktree' || t.id !== cwd) return null;
+    if (dnd.drag?.id === cwd) return null;
+    return t.position;
+  });
+  let isDraggingSelf = $derived(dnd.drag?.kind === 'worktree' && dnd.drag.id === cwd);
+
+  function onHeaderDragStart(e: DragEvent) {
+    if (!onWorktreeDrop || !e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DND_MIME.worktree, cwd);
+    dnd.begin({ kind: 'worktree', id: cwd, projectId, worktreeCwd: cwd });
+  }
+
+  function onHeaderDragOver(e: DragEvent) {
+    if (!onWorktreeDrop || !headerEl) return;
+    if (dnd.drag?.kind !== 'worktree') return;
+    if (dnd.drag.projectId !== projectId) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const position = dropPositionFromEvent(e, headerEl);
+    if (
+      dnd.target?.kind !== 'worktree'
+      || dnd.target.id !== cwd
+      || dnd.target.position !== position
+    ) {
+      dnd.setTarget({ kind: 'worktree', id: cwd, position });
+    }
+  }
+
+  function onHeaderDrop(e: DragEvent) {
+    if (!onWorktreeDrop) return;
+    if (dnd.drag?.kind !== 'worktree') return;
+    if (dnd.drag.projectId !== projectId) return;
+    const draggedCwd = dnd.drag.id;
+    if (draggedCwd === cwd) return;
+    e.preventDefault();
+    const position = dnd.target?.kind === 'worktree' && dnd.target.id === cwd
+      ? dnd.target.position
+      : 'after';
+    onWorktreeDrop({ draggedCwd, targetCwd: cwd, position });
+    dnd.end();
+  }
+
+  function onHeaderDragEnd() {
+    dnd.end();
+  }
 </script>
 
 {#if !hidden}
   <Collapsible.Root open={effectiveExpanded} onOpenChange={onGroupOpenChange} class="flex flex-col gap-1">
-    <div class="flex items-center gap-1 px-0.5 py-0.5">
+    <div
+      bind:this={headerEl}
+      role="group"
+      class={cn('relative flex items-center gap-1 px-0.5 py-0.5', isDraggingSelf && 'opacity-40')}
+      draggable={onWorktreeDrop ? 'true' : undefined}
+      ondragstart={onHeaderDragStart}
+      ondragover={onHeaderDragOver}
+      ondrop={onHeaderDrop}
+      ondragend={onHeaderDragEnd}
+    >
+      {#if dropPosition === 'before'}
+        <div class="pointer-events-none absolute -top-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+      {/if}
+      {#if dropPosition === 'after'}
+        <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+      {/if}
       <Collapsible.Trigger
         class={cn(
           'flex flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1 text-left transition-colors',
@@ -98,7 +199,7 @@
     </div>
     <Collapsible.Content class="flex flex-col gap-px pl-4">
       {#each visible as session (session.id)}
-        <SessionItem {session} branch={title} />
+        <SessionItem {session} branch={title} {onSessionDrop} />
       {/each}
     </Collapsible.Content>
   </Collapsible.Root>
