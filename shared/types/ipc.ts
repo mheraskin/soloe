@@ -46,6 +46,7 @@ import type {
   SessionUpdate
 } from './sessions.js';
 import type { Settings, SettingsUpdate } from './settings.js';
+import type { NoteContent, NoteSummary, NotesChangeEvent } from './notes.js';
 import type {
   SpawnSpec,
   TerminalDimensions,
@@ -117,6 +118,14 @@ export const IpcChannels = {
     suggestPaths: 'projects:suggest-paths',
     change: 'projects:change'
   },
+  notes: {
+    list: 'notes:list',
+    read: 'notes:read',
+    write: 'notes:write',
+    rename: 'notes:rename',
+    delete: 'notes:delete',
+    change: 'notes:change'
+  },
   git: {
     status: 'git:status',
     aheadBehind: 'git:ahead-behind',
@@ -161,6 +170,7 @@ export type IpcChannel =
   | (typeof IpcChannels.system)[keyof typeof IpcChannels.system]
   | (typeof IpcChannels.settings)[keyof typeof IpcChannels.settings]
   | (typeof IpcChannels.projects)[keyof typeof IpcChannels.projects]
+  | (typeof IpcChannels.notes)[keyof typeof IpcChannels.notes]
   | (typeof IpcChannels.git)[keyof typeof IpcChannels.git]
   | (typeof IpcChannels.files)[keyof typeof IpcChannels.files]
   | (typeof IpcChannels.diagnostics)[keyof typeof IpcChannels.diagnostics]
@@ -245,6 +255,23 @@ export interface ProjectsApi {
     options?: ProjectSuggestOptions
   ): Promise<IpcResult<ProjectSuggestResult>>;
   onChange(listener: (projects: Project[]) => void): () => void;
+}
+
+export interface NotesApi {
+  list(projectId: ProjectId): Promise<IpcResult<NoteSummary[]>>;
+  read(projectId: ProjectId, filename: string): Promise<IpcResult<NoteContent>>;
+  write(
+    projectId: ProjectId,
+    filename: string,
+    content: string
+  ): Promise<IpcResult<NoteContent>>;
+  rename(
+    projectId: ProjectId,
+    oldName: string,
+    newName: string
+  ): Promise<IpcResult<NoteSummary>>;
+  delete(projectId: ProjectId, filename: string): Promise<IpcResult<true>>;
+  onChange(listener: (event: NotesChangeEvent) => void): () => void;
 }
 
 export interface GitApi {
@@ -336,6 +363,7 @@ export interface SoloeApi {
   system: SystemApi;
   settings: SettingsApi;
   projects: ProjectsApi;
+  notes: NotesApi;
   git: GitApi;
   files: FilesApi;
   diagnostics: DiagnosticsApi;
