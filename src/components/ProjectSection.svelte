@@ -9,7 +9,6 @@
     Pencil,
     Trash2
   } from '@lucide/svelte';
-  import { Badge } from '$lib/components/ui/badge';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
@@ -216,8 +215,9 @@
   async function openFullRepo() {
     if (!mainWorktree) return;
     try {
+      // Promote to the full repo without renaming — the project is the same
+      // logical thing, just rooted at the parent so worktree groups show up.
       await projects.update(project.id, {
-        name: basename(mainWorktree.path),
         path: mainWorktree.path
       });
     } catch (err) {
@@ -292,36 +292,25 @@
 
   <Collapsible.Content class="ml-3 flex flex-col gap-1.5 border-l border-border pl-2">
     {#if isStandaloneWorktreeProject && mainWorktree}
-      <div class="flex flex-col gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1.5">
-        <div class="flex min-w-0 items-center gap-2">
-          <FolderTree class="size-3.5 shrink-0 text-muted-foreground" />
-          <div class="flex min-w-0 flex-1 flex-col leading-tight">
-            <span class="truncate text-xs font-medium text-foreground" title={mainWorktree.path}>
-              {repoName}
-            </span>
-            <span class="text-[10px] text-muted-foreground">
-              Parent repo · {gitWorktrees.length} worktree{gitWorktrees.length === 1 ? '' : 's'}
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            size="xs"
-            class="shrink-0 text-[10px]"
-            title={`Open ${repoName} as the full worktree group`}
-            onclick={openFullRepo}
-          >
-            Open repo
-          </Button>
-        </div>
-        {#if otherWorktreeLabels.length > 0}
-          <div class="flex flex-wrap items-center gap-1">
-            {#each otherWorktreeLabels as label (label)}
-              <Badge variant="outline" class="h-4 rounded-full px-1.5 font-mono text-[10px] font-normal">
-                {label}
-              </Badge>
-            {/each}
-          </div>
-        {/if}
+      <div class="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+        <FolderTree class="size-3 shrink-0" />
+        <span
+          class="min-w-0 flex-1 truncate"
+          title={otherWorktreeLabels.length > 0
+            ? `Other worktrees: ${otherWorktreeLabels.join(', ')}`
+            : mainWorktree.path}
+        >
+          Worktree of <span class="text-foreground">{repoName}</span>{#if otherWorktreeLabels.length > 0} · {otherWorktreeLabels.length} more{/if}
+        </span>
+        <Button
+          variant="ghost"
+          size="xs"
+          class="h-5 shrink-0 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+          title="Open full repo with all worktrees"
+          onclick={openFullRepo}
+        >
+          Open repo
+        </Button>
       </div>
     {/if}
 
