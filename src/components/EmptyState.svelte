@@ -1,10 +1,21 @@
 <script lang="ts">
-  import { Loader2, Play, Plus, AlertTriangle } from '@lucide/svelte';
+  import {
+    Loader2,
+    Play,
+    Plus,
+    AlertTriangle,
+    Terminal,
+    FolderOpen,
+    Command
+  } from '@lucide/svelte';
   import type { Session, SessionStatus, SessionKind } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { commandPalette } from '../stores/command-palette.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { kindLabel } from '../lib/sessions-helpers';
+  import { Keymap } from '../lib/keymap';
   import { Button } from '$lib/components/ui/button';
+  import KbdHint from './KbdHint.svelte';
 
   let { session, status }: { session: Session | null; status: SessionStatus } = $props();
 
@@ -45,12 +56,83 @@
       busy = false;
     }
   }
+
+  async function quickNewSession() {
+    if (busy) return;
+    busy = true;
+    try {
+      const created = await sessions.createWithDefaults({});
+      sessions.select(created.id);
+    } catch (err) {
+      reportError(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function quickOpenProject() {
+    commandPalette.open('open-project');
+  }
+
+  function quickCommandPalette() {
+    commandPalette.toggle();
+  }
 </script>
 
 <div class="flex h-full flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground">
   {#if !session}
-    <h2 class="m-0 text-base font-medium text-foreground">No session selected</h2>
-    <p class="m-0">Create or pick a session in the sidebar to get started.</p>
+    <div class="flex w-full max-w-xs flex-col items-center gap-6">
+      <span class="relative flex size-16 items-center justify-center">
+        <span class="absolute inset-0 rounded-2xl bg-foreground/[0.04]"></span>
+        <span class="absolute inset-0 rounded-2xl ring-1 ring-border/60"></span>
+        <Terminal class="relative size-7 text-muted-foreground/80" />
+      </span>
+      <div class="flex flex-col items-center gap-1.5">
+        <h2 class="m-0 text-base font-semibold text-foreground">Nothing selected</h2>
+        <p class="m-0 max-w-[24ch] text-xs leading-relaxed text-muted-foreground">
+          Pick a session from the sidebar, or jump in below.
+        </p>
+      </div>
+      <div class="flex w-full flex-col gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          class="w-full justify-between"
+          onclick={quickNewSession}
+          disabled={busy}
+        >
+          <span class="flex items-center gap-2">
+            <Plus class="size-3.5" />
+            <span>New session</span>
+          </span>
+          <KbdHint keys={Keymap.newSession.keys} />
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          class="w-full justify-between"
+          onclick={quickOpenProject}
+        >
+          <span class="flex items-center gap-2">
+            <FolderOpen class="size-3.5" />
+            <span>Open project</span>
+          </span>
+          <KbdHint keys={Keymap.openProject.keys} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="w-full justify-between text-muted-foreground"
+          onclick={quickCommandPalette}
+        >
+          <span class="flex items-center gap-2">
+            <Command class="size-3.5" />
+            <span>Command palette</span>
+          </span>
+          <KbdHint keys={Keymap.commandPalette.keys} />
+        </Button>
+      </div>
+    </div>
   {:else}
     <h2 class="m-0 text-base font-medium text-foreground">{session.name}</h2>
     <p class="m-0 text-xs">{kindLabel(session.kind)} · {session.runMode}{session.wslDistro ? ` (${session.wslDistro})` : ''}</p>
