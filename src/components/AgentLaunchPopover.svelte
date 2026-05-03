@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { Plus } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import type { SessionKind } from '@shared/types/sessions.js';
@@ -9,6 +10,9 @@
   import KindIcon from './KindIcon.svelte';
 
   type AgentKind = Extract<SessionKind, 'claude_code' | 'codex'>;
+
+  const HOVER_OPEN_DELAY_MS = 250;
+  const HOVER_CLOSE_DELAY_MS = 180;
 
   let {
     projectId = null,
@@ -27,14 +31,61 @@
   } = $props();
 
   let open = $state(false);
+  let openTimer: ReturnType<typeof setTimeout> | null = null;
+  let closeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearOpenTimer(): void {
+    if (openTimer) {
+      clearTimeout(openTimer);
+      openTimer = null;
+    }
+  }
+
+  function clearCloseTimer(): void {
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+  }
+
+  function clearTimers(): void {
+    clearOpenTimer();
+    clearCloseTimer();
+  }
+
+  function scheduleOpen(): void {
+    clearCloseTimer();
+    if (open || openTimer) return;
+    openTimer = setTimeout(() => {
+      openTimer = null;
+      open = true;
+    }, HOVER_OPEN_DELAY_MS);
+  }
+
+  function scheduleClose(): void {
+    if (openTimer) {
+      clearOpenTimer();
+      return;
+    }
+    if (!open || closeTimer) return;
+    closeTimer = setTimeout(() => {
+      closeTimer = null;
+      open = false;
+    }, HOVER_CLOSE_DELAY_MS);
+  }
 
   function onTriggerClick(e: Event): void {
     e.stopPropagation();
+    clearTimers();
     if (open) {
       launchTerminal();
     } else {
       open = true;
     }
+  }
+
+  function onOpenChange(next: boolean): void {
+    if (!next) clearTimers();
   }
 
   function launchTerminal(): void {
@@ -58,9 +109,11 @@
       })
       .catch(reportError);
   }
+
+  onDestroy(clearTimers);
 </script>
 
-<Popover.Root bind:open>
+<Popover.Root bind:open {onOpenChange}>
   <Popover.Trigger>
     {#snippet child({ props })}
       <Button
@@ -71,6 +124,8 @@
         {title}
         aria-label={ariaLabel}
         onclick={onTriggerClick}
+        onpointerenter={scheduleOpen}
+        onpointerleave={scheduleClose}
       >
         <Plus />
       </Button>
@@ -80,7 +135,9 @@
     align="end"
     side="right"
     sideOffset={8}
-    class="w-44 rounded-md border-border bg-card p-1.5 shadow-md"
+    class="z-40 w-44 rounded-md border-border bg-card p-1.5 shadow-md"
+    onpointerenter={clearCloseTimer}
+    onpointerleave={scheduleClose}
   >
     <div class="grid grid-cols-3 gap-1">
       <Button
