@@ -64,10 +64,14 @@ describe('HookInstaller', () => {
         await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
       );
       const cmd = written.hooks.SessionStart[0].hooks[0].command as string;
-      // Must use semicolon (or newline) to separate the sentinel from curl, NOT bare space.
-      // Otherwise bash parses `[ ... ] && exit 0 curl ...` as a single command and curl never runs.
-      expect(cmd).toMatch(/exit 0\s*;\s*curl /);
-      expect(cmd).toContain('"$SOLOE_BRIDGE_URL/hook/claude"');
+      // Must use semicolons (not bare space) to separate steps; otherwise bash parses
+      // `[ ... ] && exit 0 curl ...` as a single command and curl never runs.
+      expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && exit 0;\s/);
+      expect(cmd).toMatch(/;\s*curl /);
+      expect(cmd).toContain('"$u/hook/claude"');
+      // WSL host resolution: substitute host.wsl.internal when it doesn't resolve
+      expect(cmd).toContain('host.wsl.internal');
+      expect(cmd).toContain('getent hosts host.wsl.internal');
     });
 
     it('preserves user keys when merging', async () => {
@@ -216,8 +220,11 @@ describe('HookInstaller', () => {
         hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
       };
       const cmd = parsed.hooks.SessionStart![0]!.hooks[0]!.command;
-      expect(cmd).toMatch(/exit 0\s*;\s*curl /);
-      expect(cmd).toContain('"$SOLOE_BRIDGE_URL/hook/codex"');
+      expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && exit 0;\s/);
+      expect(cmd).toMatch(/;\s*curl /);
+      expect(cmd).toContain('"$u/hook/codex"');
+      expect(cmd).toContain('host.wsl.internal');
+      expect(cmd).toContain('getent hosts host.wsl.internal');
     });
 
     it('preserves user keys when merging', async () => {
@@ -306,7 +313,7 @@ describe('HookInstaller', () => {
         hooks: Array<{ command: string }>;
       };
       expect(group._soloe_version).toBe(SOLOE_HOOK_VERSION);
-      expect(group.hooks[0]!.command).toContain('"$SOLOE_BRIDGE_URL/hook/codex"');
+      expect(group.hooks[0]!.command).toContain('"$u/hook/codex"');
     });
   });
 

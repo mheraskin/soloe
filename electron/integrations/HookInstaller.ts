@@ -59,22 +59,30 @@ const CODEX_EVENTS = [
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 4;
+export const SOLOE_HOOK_VERSION = 5;
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 
 function buildHookCommand(provider: 'claude' | 'codex'): string {
   const endpoint = provider === 'claude' ? '/hook/claude' : '/hook/codex';
-  const curl = [
-    'curl -sS --max-time 1 -X POST',
-    '-H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN"',
-    '-H "X-Soloe-Session-Id: $SOLOE_SESSION_ID"',
-    '-H "Content-Type: application/json"',
-    '--data-binary @-',
-    `"$SOLOE_BRIDGE_URL${endpoint}"`,
-    '>/dev/null 2>&1 || true'
-  ].join(' ');
-  return `[ -z "$SOLOE_BRIDGE_URL" ] && exit 0; ${curl}`;
+  // POSIX sh: bail if no bridge URL; if URL points at host.wsl.internal and that
+  // doesn't resolve (NAT-mode WSL2), swap the host for the WSL→Windows gateway
+  // IP (or /etc/resolv.conf nameserver as fallback); then POST the payload.
+  const wslResolve =
+    'case "$u" in *host.wsl.internal*) ' +
+    'getent hosts host.wsl.internal >/dev/null 2>&1 || ' +
+    '{ ' +
+    "h=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}'); " +
+    "[ -z \"$h\" ] && h=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null); " +
+    '[ -n "$h" ] && u=$(printf \'%s\' "$u" | sed "s|host\\.wsl\\.internal|$h|"); ' +
+    '} ;; esac';
+  const curl =
+    'curl -sS --max-time 1 -X POST ' +
+    '-H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN" ' +
+    '-H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" ' +
+    '-H "Content-Type: application/json" ' +
+    `--data-binary @- "$u${endpoint}" >/dev/null 2>&1 || true`;
+  return `[ -z "$SOLOE_BRIDGE_URL" ] && exit 0; u="$SOLOE_BRIDGE_URL"; ${wslResolve}; ${curl}`;
 }
 
 export function defaultLocalHost(): HookHost {
