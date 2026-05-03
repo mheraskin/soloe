@@ -360,7 +360,7 @@
           <Button
             variant="ghost"
             size="icon-sm"
-            class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            class="text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
             onclick={removeFromButton}
             title="Delete session"
             aria-label={`Delete ${session.name || 'session'}`}
