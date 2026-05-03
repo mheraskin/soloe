@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Plus, Search, FolderOpen } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
@@ -21,10 +21,33 @@
   let query = $state('');
   let width = $state(260);
   let resizing = $state(false);
+  let asideEl: HTMLElement | null = $state(null);
+  let lastScrolledId: string | null = null;
 
   onMount(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     if (Number.isFinite(stored)) width = clampWidth(stored);
+  });
+
+  // Keep the selected row visible. Runs on initial restore (when localStorage
+  // brings back a selectedId) and whenever selection changes programmatically
+  // — clicking a row that's already visible is a no-op for scrollIntoView.
+  $effect(() => {
+    const id = sessions.selectedId;
+    if (!id || !asideEl || id === lastScrolledId) return;
+    lastScrolledId = id;
+    void tick().then(() => {
+      requestAnimationFrame(() => {
+        const row = asideEl?.querySelector(`[data-session-id="${CSS.escape(id)}"]`);
+        if (row instanceof HTMLElement) {
+          row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      });
+    });
+  });
+
+  $effect(() => {
+    if (sessions.selectedId === null) lastScrolledId = null;
   });
 
   let orderedProjectIds = $derived.by<string[]>(() => {
@@ -69,6 +92,7 @@
 </script>
 
 <aside
+  bind:this={asideEl}
   class="relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
   class:select-none={resizing}
   style={`width: ${width}px`}

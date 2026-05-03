@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { Archive, ArchiveRestore, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
-  import type { AgentObservedState, Session, SessionStatus } from '@shared/types/sessions.js';
+  import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
+  import type { Session } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -20,7 +20,6 @@
     label: string;
     title: string;
     tone: StatusTone;
-    pulse?: boolean;
   }
 
   let { session, branch = null }: { session: Session; branch?: string | null } = $props();
@@ -33,18 +32,18 @@
   let status = $derived(sessions.statusFor(session.id));
   let workerCount = $derived(sessions.childWorkersFor(session.id).length);
   let kbdIndex = $derived(nav.sessionIndexHints[session.id] ?? null);
-  let observation = $derived(sessions.observationFor(session.id));
-  let observedState = $derived(observation?.state ?? null);
-  let observedSummary = $derived(sessions.eventsFor(session.id)[0]?.summary ?? null);
-  let showAgentStatus = $derived(
-    !!observedState &&
-      !(session.kind === 'standard_terminal' && observation?.provider === 'standard_terminal')
-  );
+  // hasRuntime distinguishes "user has launched this at least once in this app
+  // session" from the cold pre-spawn state, where we want neither pill nor
+  // spinner.
+  let hasRuntime = $derived(sessions.runtime[session.id] !== undefined);
+  let isAgent = $derived(session.kind === 'claude_code' || session.kind === 'codex');
+  let showSpawnSpinner = $derived(hasRuntime && status === 'starting');
   let statusPill = $derived(buildStatusPill());
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
-    sessions.select(session.id);
+    if (isSelected) sessions.select(null);
+    else sessions.select(session.id);
   }
 
   async function startEditing(e?: Event) {
@@ -92,7 +91,8 @@
     if (editing) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      sessions.select(session.id);
+      if (isSelected) sessions.select(null);
+      else sessions.select(session.id);
     } else if (e.key === 'F2') {
       e.preventDefault();
       void startEditing();
@@ -147,75 +147,17 @@
   let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
-  function observedStateLabel(state: AgentObservedState): string {
-    const labels = {
-      starting: 'starting',
-      idle: 'idle',
-      working: 'thinking',
-      running_tool: observedSummary?.replace(/^tool:\s*/i, '') ?? 'tool',
-      waiting_for_input: 'input',
-      waiting_for_approval: 'approval',
-      completed: 'done',
-      failed: 'failed',
-      exited: 'exited'
-    } satisfies Record<AgentObservedState, string>;
-    return labels[state] ?? state;
-  }
-
+  // Pills are reserved for agents that have stopped — successful exit, error
+  // exit, or any other terminal state. Live agents and terminals stay clean;
+  // the spawn spinner covers the "starting" phase.
   function buildStatusPill(): StatusPill | null {
-    if (session.kind === 'standard_terminal') {
-      if (status === 'exited') return statusPillForStatus(status);
-      if (status === 'error') return statusPillForStatus(status);
-      return null;
-    }
-
-    if (showAgentStatus && observedState) {
-      const label = observedStateLabel(observedState);
-      return {
-        label,
-        title: observedSummary ? `${label} · ${observedSummary}` : label,
-        tone: toneForObservedState(observedState),
-        pulse: observedState === 'starting' || observedState === 'working'
-      };
-    }
-
-    return statusPillForStatus(status);
-  }
-
-  function statusPillForStatus(value: SessionStatus): StatusPill | null {
-    if (value === 'stopped') return null;
+    if (!hasRuntime || !isAgent) return null;
+    if (status !== 'exited' && status !== 'error') return null;
     return {
-      label: value,
-      title: value,
-      tone: toneForStatus(value),
-      pulse: value === 'starting'
+      label: status,
+      title: status,
+      tone: status === 'error' ? 'danger' : 'neutral'
     };
-  }
-
-  function toneForStatus(value: SessionStatus): StatusTone {
-    const tones = {
-      stopped: 'neutral',
-      starting: 'warning',
-      running: 'success',
-      exited: 'neutral',
-      error: 'danger'
-    } satisfies Record<SessionStatus, StatusTone>;
-    return tones[value];
-  }
-
-  function toneForObservedState(state: AgentObservedState): StatusTone {
-    const tones = {
-      starting: 'warning',
-      idle: 'neutral',
-      working: 'primary',
-      running_tool: 'primary',
-      waiting_for_input: 'warning',
-      waiting_for_approval: 'warning',
-      completed: 'success',
-      failed: 'danger',
-      exited: 'neutral'
-    } satisfies Record<AgentObservedState, StatusTone>;
-    return tones[state];
   }
 
   function pillClass(tone: StatusTone): string {
@@ -235,6 +177,7 @@
     {#snippet child({ props })}
       <div
         {...props}
+        data-session-id={session.id}
         class={cn(
           'group flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
           'hover:bg-accent/40',
@@ -266,7 +209,15 @@
                 {session.name || '(unnamed)'}
               </span>
             {/if}
-            {#if statusPill}
+            {#if showSpawnSpinner}
+              <span
+                class="inline-flex shrink-0 items-center text-muted-foreground"
+                title="Starting…"
+                aria-label="Starting"
+              >
+                <Loader2 class="size-3 animate-spin" />
+              </span>
+            {:else if statusPill}
               <span
                 class={cn(
                   'inline-flex max-w-[92px] shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[10px] leading-none font-medium uppercase',
@@ -275,12 +226,7 @@
                 title={statusPill.title}
                 aria-label={statusPill.title}
               >
-                <span
-                  class={cn(
-                    'size-1.5 shrink-0 rounded-full bg-current',
-                    statusPill.pulse && 'animate-pulse'
-                  )}
-                ></span>
+                <span class="size-1.5 shrink-0 rounded-full bg-current"></span>
                 <span class="truncate">{statusPill.label}</span>
               </span>
             {/if}
