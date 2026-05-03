@@ -2,7 +2,9 @@
   import { ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
   import type { Session } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
+  import { sessions } from '../stores/sessions.svelte';
   import { rankMulti, score } from '../lib/fuzzy';
+  import { cn } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import SessionItem from './SessionItem.svelte';
@@ -41,13 +43,26 @@
   let hidden = $derived(
     trimmedFilter.length > 0 && !forceShow && !labelMatches && visible.length === 0
   );
+  let containsSelected = $derived.by(() => {
+    const selId = sessions.selectedId;
+    if (!selId) return false;
+    return items.some((s) => s.id === selId);
+  });
+  // When the worktree group is collapsed but holds the selected session, the
+  // header takes on the selected look so the user keeps a visual anchor.
+  let highlightWhenCollapsed = $derived(containsSelected && !expanded);
 </script>
 
 {#if !hidden}
   <Collapsible.Root bind:open={expanded} class="flex flex-col gap-1">
     <div class="flex items-center gap-1 px-0.5 py-0.5">
       <Collapsible.Trigger
-        class="flex flex-1 items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-muted hover:text-foreground"
+        class={cn(
+          'flex flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1 text-left transition-colors',
+          highlightWhenCollapsed
+            ? 'bg-accent/60 border-border text-foreground'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+        )}
         aria-label={`Toggle worktree ${title}`}
       >
         {#if expanded}

@@ -137,7 +137,20 @@
       .map(gitWorktreeLabel)
   );
   let kbdIndex = $derived(nav.projectIndexHints[project.id] ?? null);
-  let isActiveProject = $derived(nav.activeProjectId === project.id);
+  let containsSelectedSession = $derived.by(() => {
+    const selId = sessions.selectedId;
+    if (!selId) return false;
+    if (items.some((s) => s.id === selId)) return true;
+    if (archivedItems.some((s) => s.id === selId)) return true;
+    return false;
+  });
+  // Highlight the project header as "selected" when its content is collapsed
+  // (so the actual session row is hidden) — keeps a visual anchor for the
+  // active session even when the user collapses its parents.
+  let isActiveProject = $derived(
+    nav.activeProjectId === project.id
+      || (containsSelectedSession && !expanded)
+  );
   let trimmedFilter = $derived(filter.trim());
   let showArchived = $derived(Boolean(sessions.showArchivedFor[project.id]));
   let archivedItems = $derived(sessions.archivedByProject[project.id] ?? []);
