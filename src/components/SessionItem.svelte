@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch } from '@lucide/svelte';
-  import type { Session, SessionId } from '@shared/types/sessions.js';
+  import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch, Palette, Check } from '@lucide/svelte';
+  import type { Session, SessionId, SessionColor } from '@shared/types/sessions.js';
+  import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -38,6 +39,19 @@
   let editing = $state(false);
   let editValue = $state('');
   let nameInput: HTMLInputElement | null = $state(null);
+
+  const COLOR_LABELS: Record<SessionColor, string> = {
+    red: 'Red',
+    orange: 'Orange',
+    amber: 'Amber',
+    yellow: 'Yellow',
+    green: 'Green',
+    teal: 'Teal',
+    cyan: 'Cyan',
+    blue: 'Blue',
+    violet: 'Violet',
+    pink: 'Pink'
+  };
 
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
@@ -155,6 +169,19 @@
     }
   }
 
+  async function setColor(color: SessionColor | null) {
+    if ((session.color ?? null) === color) return;
+    try {
+      await sessions.update(session.id, { color: color ?? undefined });
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  function colorVar(color: SessionColor): string {
+    return `var(--session-${color})`;
+  }
+
   let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
@@ -235,6 +262,10 @@
   function onDragEnd() {
     dnd.end();
   }
+
+  let rowStyle = $derived(
+    session.color ? `--row-color: var(--session-${session.color});` : undefined
+  );
 </script>
 
 <div class="relative">
@@ -251,12 +282,16 @@
         {...props}
         bind:this={rowEl}
         data-session-id={session.id}
+        data-row-color={session.color ?? undefined}
+        data-row-selected={isSelected ? 'true' : undefined}
         class={cn(
-          'group flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
-          'hover:bg-accent/40',
-          isSelected && 'bg-accent/60 border-border',
+          'session-row group relative flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
+          !session.color && 'hover:bg-accent/40',
+          !session.color && isSelected && 'bg-accent/60 border-border',
+          session.color && 'pl-2.5',
           isDraggingSelf && 'opacity-40'
         )}
+        style={rowStyle}
         draggable={onSessionDrop ? 'true' : undefined}
         ondragstart={onDragStart}
         ondragover={onDragOver}
@@ -269,6 +304,12 @@
         tabindex="0"
         title={session.cwd}
       >
+        {#if session.color}
+          <span
+            class="color-bar pointer-events-none absolute top-1 bottom-1 left-0 w-[3px] rounded-full"
+            aria-hidden="true"
+          ></span>
+        {/if}
         <KindIcon kind={session.kind} size={14} />
         <span class="flex min-w-0 flex-1 flex-col gap-1">
           <span class="flex min-w-0 items-center gap-1.5">
@@ -395,6 +436,38 @@
     <ContextMenu.Item onSelect={copyCmd}>
       <Copy /> <span>Copy command</span>
     </ContextMenu.Item>
+    <ContextMenu.Sub>
+      <ContextMenu.SubTrigger>
+        <Palette />
+        <span>Color</span>
+      </ContextMenu.SubTrigger>
+      <ContextMenu.SubContent class="w-44">
+        <ContextMenu.Item onSelect={() => void setColor(null)}>
+          <span
+            class="inline-block size-3.5 shrink-0 rounded-full border border-border bg-background"
+            aria-hidden="true"
+          ></span>
+          <span>None</span>
+          {#if !session.color}
+            <Check class="ml-auto size-3.5" />
+          {/if}
+        </ContextMenu.Item>
+        <ContextMenu.Separator />
+        {#each SESSION_COLOR_TOKENS as token (token)}
+          <ContextMenu.Item onSelect={() => void setColor(token)}>
+            <span
+              class="inline-block size-3.5 shrink-0 rounded-full border border-border/60"
+              style={`background-color: ${colorVar(token)}`}
+              aria-hidden="true"
+            ></span>
+            <span>{COLOR_LABELS[token]}</span>
+            {#if session.color === token}
+              <Check class="ml-auto size-3.5" />
+            {/if}
+          </ContextMenu.Item>
+        {/each}
+      </ContextMenu.SubContent>
+    </ContextMenu.Sub>
     <ContextMenu.Separator />
     {#if session.projectId && !session.archivedAt}
       <ContextMenu.Item onSelect={() => void archive()}>
@@ -412,3 +485,19 @@
   </ContextMenu.Content>
 </ContextMenu.Root>
 </div>
+
+<style>
+  .session-row[data-row-color] {
+    background-color: color-mix(in oklab, var(--row-color) 9%, transparent);
+  }
+  .session-row[data-row-color]:hover {
+    background-color: color-mix(in oklab, var(--row-color) 16%, transparent);
+  }
+  .session-row[data-row-color][data-row-selected='true'] {
+    background-color: color-mix(in oklab, var(--row-color) 24%, transparent);
+    border-color: color-mix(in oklab, var(--row-color) 50%, transparent);
+  }
+  .color-bar {
+    background-color: var(--row-color);
+  }
+</style>

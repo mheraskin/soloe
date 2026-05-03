@@ -8,6 +8,26 @@ export type SessionKind = 'standard_terminal' | 'claude_code' | 'codex';
 
 export type SessionRuntimeMode = 'tui' | 'sdk_worker';
 
+export const SESSION_COLOR_TOKENS = [
+  'red',
+  'orange',
+  'amber',
+  'yellow',
+  'green',
+  'teal',
+  'cyan',
+  'blue',
+  'violet',
+  'pink'
+] as const;
+
+export type SessionColor = (typeof SESSION_COLOR_TOKENS)[number];
+
+export function isSessionColor(value: unknown): value is SessionColor {
+  return typeof value === 'string'
+    && (SESSION_COLOR_TOKENS as readonly string[]).includes(value);
+}
+
 export type AgentObservedState =
   | 'starting'
   | 'idle'
@@ -41,6 +61,7 @@ export interface SessionBase {
   archivedAt?: string;
   lastBranch?: string;
   sortIndex?: number;
+  color?: SessionColor;
 }
 
 export interface StandardTerminalSession extends SessionBase {

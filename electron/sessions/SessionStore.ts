@@ -8,6 +8,7 @@ import type {
   SessionUpdate,
   SessionKind
 } from '@shared/types/sessions.js';
+import { isSessionColor } from '@shared/types/sessions.js';
 
 interface StorageShape {
   version: number;
@@ -291,6 +292,9 @@ function validateSession(s: Session): void {
   }
   if (s.sortIndex !== undefined && !Number.isFinite(s.sortIndex)) {
     throw new Error('sortIndex must be a finite number when set');
+  }
+  if (s.color !== undefined && !isSessionColor(s.color)) {
+    throw new Error('color must be a known SessionColor token when set');
   }
   switch (s.kind) {
     case 'standard_terminal':
