@@ -16,6 +16,7 @@ import type {
   ProjectSuggestOptions,
   ProjectUpdate
 } from '@shared/types/projects.js';
+import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
   GitCheckoutRequest,
   GitChangeEvent,
@@ -126,6 +127,18 @@ export const ipc = {
     suggestPaths: async (query: string, options?: ProjectSuggestOptions) =>
       unwrap(await c.projects.suggestPaths(query, options ? toIpcPayload(options) : undefined)),
     onChange: (cb: (projects: Project[]) => void) => c.projects.onChange(cb)
+  },
+  notes: {
+    list: async (projectId: ProjectId) => unwrap(await c.notes.list(projectId)),
+    read: async (projectId: ProjectId, filename: string) =>
+      unwrap(await c.notes.read(projectId, filename)),
+    write: async (projectId: ProjectId, filename: string, content: string) =>
+      unwrap(await c.notes.write(projectId, filename, content)),
+    rename: async (projectId: ProjectId, oldName: string, newName: string) =>
+      unwrap(await c.notes.rename(projectId, oldName, newName)),
+    delete: async (projectId: ProjectId, filename: string) =>
+      unwrap(await c.notes.delete(projectId, filename)),
+    onChange: (cb: (event: NotesChangeEvent) => void) => c.notes.onChange(cb)
   },
   git: {
     status: async (request: GitStatusRequest) => unwrap(await c.git.status(toIpcPayload(request))),

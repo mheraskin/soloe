@@ -5,6 +5,7 @@
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
+  import { notes } from './stores/notes.svelte';
   import { git } from './stores/git.svelte';
   import { nav } from './stores/nav.svelte';
   import { commandPalette } from './stores/command-palette.svelte';
@@ -33,6 +34,7 @@
     sessions.attachListeners();
     settings.attachListeners();
     projects.attachListeners();
+    notes.attachListeners();
     git.attachListeners();
     void loadInitialState();
     const detachKbdHints = kbdHints.attach();
@@ -43,6 +45,7 @@
       sessions.detach();
       settings.detach();
       projects.detach();
+      notes.detach();
       git.detach();
     };
   });

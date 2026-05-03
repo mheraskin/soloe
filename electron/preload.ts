@@ -28,6 +28,7 @@ import type {
   ProjectSuggestOptions,
   ProjectUpdate
 } from '@shared/types/projects.js';
+import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
   GitCheckoutRequest,
   GitChangeEvent,
@@ -132,6 +133,19 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query, options),
     onChange: (cb: (projects: Project[]) => void) =>
       subscribe<Project[]>(IpcChannels.projects.change, cb)
+  },
+  notes: {
+    list: (projectId: ProjectId) => ipcRenderer.invoke(IpcChannels.notes.list, projectId),
+    read: (projectId: ProjectId, filename: string) =>
+      ipcRenderer.invoke(IpcChannels.notes.read, projectId, filename),
+    write: (projectId: ProjectId, filename: string, content: string) =>
+      ipcRenderer.invoke(IpcChannels.notes.write, projectId, filename, content),
+    rename: (projectId: ProjectId, oldName: string, newName: string) =>
+      ipcRenderer.invoke(IpcChannels.notes.rename, projectId, oldName, newName),
+    delete: (projectId: ProjectId, filename: string) =>
+      ipcRenderer.invoke(IpcChannels.notes.delete, projectId, filename),
+    onChange: (cb: (event: NotesChangeEvent) => void) =>
+      subscribe<NotesChangeEvent>(IpcChannels.notes.change, cb)
   },
   git: {
     status: (request: GitStatusRequest) => ipcRenderer.invoke(IpcChannels.git.status, request),

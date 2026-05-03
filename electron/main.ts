@@ -9,6 +9,7 @@ import { TerminalOutputBatcher } from './terminal/TerminalOutputBatcher.js';
 import { PtyManager } from './terminal/PtyManager.js';
 import { SettingsStore } from './settings/SettingsStore.js';
 import { ProjectStore } from './projects/ProjectStore.js';
+import { NotesStore } from './notes/NotesStore.js';
 import { AgentObserverManager } from './agents/AgentObserverManager.js';
 import { AgentObserverStore } from './agents/AgentObserverStore.js';
 import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
@@ -25,6 +26,7 @@ import { ObserverIpc } from './ipc/observer.ipc.js';
 import { SystemIpc } from './ipc/system.ipc.js';
 import { SettingsIpc } from './ipc/settings.ipc.js';
 import { ProjectsIpc } from './ipc/projects.ipc.js';
+import { NotesIpc } from './ipc/notes.ipc.js';
 import { GitIpc } from './ipc/git.ipc.js';
 import { FilesIpc } from './ipc/files.ipc.js';
 import { DiagnosticsIpc } from './ipc/diagnostics.ipc.js';
@@ -36,6 +38,7 @@ interface AppServices {
   store: SessionStore;
   settings: SettingsStore;
   projects: ProjectStore;
+  notes: NotesStore;
   pty: PtyManager;
   observer: AgentObserverManager;
   observerStore: AgentObserverStore;
@@ -50,6 +53,7 @@ interface AppServices {
   systemIpc: SystemIpc;
   settingsIpc: SettingsIpc;
   projectsIpc: ProjectsIpc;
+  notesIpc: NotesIpc;
   gitIpc: GitIpc;
   filesIpc: FilesIpc;
   diagnosticsIpc: DiagnosticsIpc;
@@ -67,6 +71,7 @@ async function setupServices(): Promise<AppServices> {
   const observerFile = path.join(userDataPath, 'observer.json');
   const settingsFile = path.join(userDataPath, 'settings.json');
   const projectsFile = path.join(userDataPath, 'projects.json');
+  const notesDir = path.join(userDataPath, 'notes');
   const crashDir = path.join(userDataPath, 'crashes');
 
   const store = new SessionStore(sessionsFile);
@@ -78,6 +83,7 @@ async function setupServices(): Promise<AppServices> {
     gitBinary: (await settings.get()).binaries.git ?? 'git'
   });
   await projects.init();
+  const notes = new NotesStore(notesDir);
   const observerStore = new AgentObserverStore(observerFile);
   const persistedObserverState = await observerStore.load();
   const observer = new AgentObserverManager({
@@ -144,6 +150,10 @@ async function setupServices(): Promise<AppServices> {
     store: projects,
     getWindows: () => BrowserWindow.getAllWindows()
   });
+  const notesIpc = new NotesIpc({
+    store: notes,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
   const git = new GitService({
     getGitBinary: async () => (await settings.get()).binaries.git
   });
@@ -179,6 +189,7 @@ async function setupServices(): Promise<AppServices> {
   systemIpc.register();
   settingsIpc.register();
   projectsIpc.register();
+  notesIpc.register();
   gitIpc.register();
   filesIpc.register();
   diagnosticsIpc.register();
@@ -189,6 +200,7 @@ async function setupServices(): Promise<AppServices> {
     store,
     settings,
     projects,
+    notes,
     pty: manager,
     observer,
     observerStore,
@@ -203,6 +215,7 @@ async function setupServices(): Promise<AppServices> {
     systemIpc,
     settingsIpc,
     projectsIpc,
+    notesIpc,
     gitIpc,
     filesIpc,
     diagnosticsIpc,
@@ -270,6 +283,7 @@ async function cleanup(): Promise<void> {
     services.systemIpc.dispose();
     services.settingsIpc.dispose();
     services.projectsIpc.dispose();
+    services.notesIpc.dispose();
     services.gitIpc.dispose();
     services.filesIpc.dispose();
     services.diagnosticsIpc.dispose();
