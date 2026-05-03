@@ -43,6 +43,10 @@
   let hidden = $derived(
     trimmedFilter.length > 0 && !forceShow && !labelMatches && visible.length === 0
   );
+  let isFiltering = $derived(trimmedFilter.length > 0);
+  // While filtering we force the group open so matches stay reachable; the
+  // user's saved `expanded` is preserved and restored once the filter clears.
+  let effectiveExpanded = $derived(isFiltering ? true : expanded);
   let containsSelected = $derived.by(() => {
     const selId = sessions.selectedId;
     if (!selId) return false;
@@ -50,11 +54,16 @@
   });
   // When the worktree group is collapsed but holds the selected session, the
   // header takes on the selected look so the user keeps a visual anchor.
-  let highlightWhenCollapsed = $derived(containsSelected && !expanded);
+  let highlightWhenCollapsed = $derived(containsSelected && !effectiveExpanded);
+
+  function onGroupOpenChange(open: boolean) {
+    if (isFiltering) return;
+    expanded = open;
+  }
 </script>
 
 {#if !hidden}
-  <Collapsible.Root bind:open={expanded} class="flex flex-col gap-1">
+  <Collapsible.Root open={effectiveExpanded} onOpenChange={onGroupOpenChange} class="flex flex-col gap-1">
     <div class="flex items-center gap-1 px-0.5 py-0.5">
       <Collapsible.Trigger
         class={cn(
@@ -65,7 +74,7 @@
         )}
         aria-label={`Toggle worktree ${title}`}
       >
-        {#if expanded}
+        {#if effectiveExpanded}
           <ChevronDown class="size-3 shrink-0" />
         {:else}
           <ChevronRight class="size-3 shrink-0" />

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, Search, FolderOpen } from '@lucide/svelte';
+  import { Plus, Search, FolderOpen, X } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
@@ -126,9 +126,20 @@
         type="search"
         placeholder="Filter sessions"
         bind:value={query}
-        class="h-7 pl-7 text-xs"
+        class="h-7 pr-7 pl-7 text-xs [&::-webkit-search-cancel-button]:hidden"
         aria-label="Filter sessions"
       />
+      {#if query}
+        <button
+          type="button"
+          class="absolute top-1/2 right-1.5 flex size-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Clear filter"
+          title="Clear filter"
+          onclick={() => (query = '')}
+        >
+          <X class="size-3" />
+        </button>
+      {/if}
     </div>
   </div>
   <ScrollArea class="flex-1">

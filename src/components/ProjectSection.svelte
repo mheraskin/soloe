@@ -143,14 +143,24 @@
     if (archivedItems.some((s) => s.id === selId)) return true;
     return false;
   });
+  let trimmedFilter = $derived(filter.trim());
+  let isFiltering = $derived(trimmedFilter.length > 0);
+  // Force every project open while the user is filtering so matches are
+  // reachable. `expanded` keeps the user's saved preference untouched, so
+  // clearing the filter restores the original collapse state.
+  let effectiveExpanded = $derived(isFiltering ? true : expanded);
   // Highlight the project header as "selected" when its content is collapsed
   // (so the actual session row is hidden) — keeps a visual anchor for the
   // active session even when the user collapses its parents.
   let isActiveProject = $derived(
     nav.activeProjectId === project.id
-      || (containsSelectedSession && !expanded)
+      || (containsSelectedSession && !effectiveExpanded)
   );
-  let trimmedFilter = $derived(filter.trim());
+
+  function onProjectOpenChange(open: boolean) {
+    if (isFiltering) return;
+    expanded = open;
+  }
   let showArchived = $derived(Boolean(sessions.showArchivedFor[project.id]));
   let archivedItems = $derived(sessions.archivedByProject[project.id] ?? []);
   let projectNameMatches = $derived.by(() => {
@@ -227,7 +237,7 @@
 </script>
 
 {#if !hidden}
-<Collapsible.Root bind:open={expanded} class="flex flex-col gap-1.5">
+<Collapsible.Root open={effectiveExpanded} onOpenChange={onProjectOpenChange} class="flex flex-col gap-1.5">
   <ContextMenu.Root>
     <ContextMenu.Trigger>
       {#snippet child({ props })}
@@ -239,7 +249,7 @@
             )}
             aria-label={`Toggle ${project.name} project`}
           >
-            {#if expanded}
+            {#if effectiveExpanded}
               <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
             {:else}
               <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" />
