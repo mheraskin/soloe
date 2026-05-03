@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { PlugZap, Settings as SettingsIcon } from '@lucide/svelte';
+  import { PlugZap } from '@lucide/svelte';
   import { agentIntegrationSetup } from '../stores/agent-integration-setup.svelte';
-  import { settings } from '../stores/settings.svelte';
+  import { confirmStore } from '../stores/confirm.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import AgentIntegrationGrid from './AgentIntegrationGrid.svelte';
@@ -19,22 +19,38 @@
     if (!next) agentIntegrationSetup.close();
   }
 
-  function openSettings(): void {
-    agentIntegrationSetup.close();
-    settings.openDrawer();
+  async function attemptSkip(): Promise<void> {
+    if (!needsSetup) {
+      agentIntegrationSetup.close();
+      return;
+    }
+    const ok = await confirmStore.ask({
+      title: 'Skip agent setup?',
+      message:
+        'Without hooks Soloe cannot bind Claude and Codex sessions to its tabs, so resume and live status will not work correctly until you connect each environment.',
+      confirmLabel: 'Skip anyway',
+      cancelLabel: 'Continue setup',
+      tone: 'danger'
+    });
+    if (ok) agentIntegrationSetup.close();
   }
 </script>
 
 <Dialog.Root open={agentIntegrationSetup.open} {onOpenChange}>
-  <Dialog.Content class="sm:max-w-lg">
+  <Dialog.Content
+    class="sm:max-w-lg"
+    showCloseButton={!needsSetup}
+    escapeKeydownBehavior={needsSetup ? 'ignore' : 'close'}
+    interactOutsideBehavior={needsSetup ? 'ignore' : 'close'}
+  >
     <Dialog.Header>
       <Dialog.Title class="flex items-center gap-2">
         <PlugZap class="size-4 text-primary" />
         Agent setup
       </Dialog.Title>
       <Dialog.Description class="text-sm text-foreground">
-        Pick the environments where Soloe should install hooks for Claude and Codex. Hooks live in
-        each environment's home directory and are not shared between Windows and WSL.
+        Connect Claude and Codex on each environment Soloe should observe. Hooks live in each
+        environment's home directory and are not shared between Windows and WSL.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -42,13 +58,12 @@
       <AgentIntegrationGrid {status} onChange={(next) => agentIntegrationSetup.update(next)} />
     {/if}
 
-    <Dialog.Footer>
-      <Button variant="ghost" onclick={openSettings}>
-        <SettingsIcon />
-        Settings
-      </Button>
-      <Button variant="outline" onclick={() => agentIntegrationSetup.close()}>
-        {needsSetup ? 'Later' : 'Done'}
+    <Dialog.Footer class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <p class="m-0 text-[11px] text-muted-foreground">
+        Manage anytime in Settings → Agent integration.
+      </p>
+      <Button variant="outline" onclick={attemptSkip}>
+        {needsSetup ? 'Skip setup' : 'Done'}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

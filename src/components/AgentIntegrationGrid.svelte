@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { Loader2 } from '@lucide/svelte';
+  import { Check, Loader2, RefreshCw } from '@lucide/svelte';
   import type {
     AgentIntegrationHost,
     AgentIntegrationHostKey,
+    AgentIntegrationHostStatus,
     AgentIntegrationStatus,
     AgentIntegrationTargetStatus
   } from '@shared/types/ipc.js';
   import { ipc } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
-  import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Button } from '$lib/components/ui/button';
 
   type Provider = 'claude' | 'codex';
 
@@ -22,21 +23,24 @@
 
   let busy = $state<Record<string, boolean>>({});
 
-  const hasStale = $derived.by(() =>
-    status.hosts.some(
-      (h) =>
-        h.host.available &&
-        ((h.claude.installed && !h.claude.current) || (h.codex.installed && !h.codex.current))
-    )
-  );
+  const availableHosts = $derived(status.hosts.filter((h) => h.host.available));
+  const unavailableHosts = $derived(status.hosts.filter((h) => !h.host.available));
 
   function busyKey(host: AgentIntegrationHost, provider: Provider): string {
     return `${host.kind}:${host.distro ?? ''}:${provider}`;
   }
 
+  function entryKey(entry: AgentIntegrationHostStatus): string {
+    return entry.host.kind + ':' + (entry.host.distro ?? '');
+  }
+
   function hostKey(host: AgentIntegrationHost): AgentIntegrationHostKey {
     if (host.kind === 'wsl' && host.distro) return { kind: 'wsl', distro: host.distro };
     return { kind: 'windows' };
+  }
+
+  function providerLabel(provider: Provider): string {
+    return provider === 'claude' ? 'Claude' : 'Codex';
   }
 
   async function toggle(
@@ -65,101 +69,74 @@
   }
 </script>
 
-<div class="flex flex-col gap-2">
-  <div class="overflow-hidden rounded-md border border-border">
-    <table class="w-full border-collapse text-xs">
-      <thead>
-        <tr class="bg-muted/40">
-          <th
-            scope="col"
-            class="px-3 py-2 text-left text-[10px] font-medium tracking-widest text-muted-foreground uppercase"
-          >
-            Environment
-          </th>
-          <th
-            scope="col"
-            class="w-24 px-3 py-2 text-center text-[10px] font-medium tracking-widest text-muted-foreground uppercase"
-          >
-            Claude
-          </th>
-          <th
-            scope="col"
-            class="w-24 px-3 py-2 text-center text-[10px] font-medium tracking-widest text-muted-foreground uppercase"
-          >
-            Codex
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each status.hosts as entry (entry.host.kind + ':' + (entry.host.distro ?? ''))}
-          <tr class="border-t border-border">
-            <th scope="row" class="px-3 py-2.5 text-left align-middle font-normal">
-              <div class="text-xs font-medium">{entry.host.label}</div>
-              {#if !entry.host.available && entry.host.reason}
-                <div class="mt-0.5 text-[11px] text-muted-foreground">{entry.host.reason}</div>
-              {/if}
-            </th>
-            {#if !entry.host.available}
-              <td
-                colspan="2"
-                class="px-3 py-2.5 text-center text-[11px] text-muted-foreground"
-              >
-                unavailable
-              </td>
-            {:else}
-              {@const claudeBusy = busy[busyKey(entry.host, 'claude')] === true}
-              {@const codexBusy = busy[busyKey(entry.host, 'codex')] === true}
-              {@const claudeStale = entry.claude.installed && !entry.claude.current}
-              {@const codexStale = entry.codex.installed && !entry.codex.current}
-              <td class="px-3 py-2.5 text-center align-middle">
-                {#if claudeBusy}
-                  <Loader2 class="mx-auto size-4 animate-spin text-muted-foreground" />
-                {:else}
-                  <Checkbox
-                    checked={entry.claude.current}
-                    indeterminate={claudeStale}
-                    aria-label={claudeStale
-                      ? `Update Claude hooks on ${entry.host.label}`
-                      : entry.claude.current
-                        ? `Disconnect Claude from ${entry.host.label}`
-                        : `Connect Claude on ${entry.host.label}`}
-                    onCheckedChange={() => toggle(entry.host, 'claude', entry.claude)}
-                    class={claudeStale
-                      ? 'border-amber-500 data-[state=indeterminate]:bg-amber-500 data-[state=indeterminate]:text-white'
-                      : ''}
-                  />
-                {/if}
-              </td>
-              <td class="px-3 py-2.5 text-center align-middle">
-                {#if codexBusy}
-                  <Loader2 class="mx-auto size-4 animate-spin text-muted-foreground" />
-                {:else}
-                  <Checkbox
-                    checked={entry.codex.current}
-                    indeterminate={codexStale}
-                    aria-label={codexStale
-                      ? `Update Codex hooks on ${entry.host.label}`
-                      : entry.codex.current
-                        ? `Disconnect Codex from ${entry.host.label}`
-                        : `Connect Codex on ${entry.host.label}`}
-                    onCheckedChange={() => toggle(entry.host, 'codex', entry.codex)}
-                    class={codexStale
-                      ? 'border-amber-500 data-[state=indeterminate]:bg-amber-500 data-[state=indeterminate]:text-white'
-                      : ''}
-                  />
-                {/if}
-              </td>
-            {/if}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
+{#snippet providerButton(
+  host: AgentIntegrationHost,
+  provider: Provider,
+  target: AgentIntegrationTargetStatus
+)}
+  {@const isBusy = busy[busyKey(host, provider)] === true}
+  {@const label = providerLabel(provider)}
+  {#if isBusy}
+    <Button size="sm" variant="outline" disabled class="min-w-[7.25rem] gap-1.5">
+      <Loader2 class="size-3.5 animate-spin" />
+      Working…
+    </Button>
+  {:else if target.current}
+    <Button
+      size="sm"
+      variant="outline"
+      class="min-w-[7.25rem] gap-1.5"
+      title={`Click to disconnect ${label}`}
+      onclick={() => toggle(host, provider, target)}
+    >
+      <Check class="size-3.5 text-emerald-500" />
+      {label} connected
+    </Button>
+  {:else if target.installed}
+    <Button
+      size="sm"
+      variant="outline"
+      class="min-w-[7.25rem] gap-1.5 border-amber-500/60 bg-amber-500/15 text-amber-100 hover:bg-amber-500/25 hover:text-amber-50"
+      onclick={() => toggle(host, provider, target)}
+    >
+      <RefreshCw class="size-3.5" />
+      Update {label}
+    </Button>
+  {:else}
+    <Button
+      size="sm"
+      class="min-w-[7.25rem]"
+      onclick={() => toggle(host, provider, target)}
+    >
+      Connect {label}
+    </Button>
+  {/if}
+{/snippet}
 
-  {#if hasStale}
-    <p class="m-0 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span aria-hidden="true" class="inline-block size-2 rounded-[3px] bg-amber-500"></span>
-      Hooks installed but out of date — toggle to update.
-    </p>
+<div class="flex flex-col gap-2">
+  {#each availableHosts as entry (entryKey(entry))}
+    <div
+      class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+    >
+      <div class="text-xs font-medium">{entry.host.label}</div>
+      <div class="flex flex-wrap items-center gap-2">
+        {@render providerButton(entry.host, 'claude', entry.claude)}
+        {@render providerButton(entry.host, 'codex', entry.codex)}
+      </div>
+    </div>
+  {/each}
+
+  {#if unavailableHosts.length > 0}
+    <div class="flex flex-wrap items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
+      <span>Unavailable:</span>
+      {#each unavailableHosts as entry (entryKey(entry))}
+        <span
+          class="rounded-sm bg-muted px-1.5 py-0.5"
+          title={entry.host.reason ?? 'Not detected'}
+        >
+          {entry.host.label}
+        </span>
+      {/each}
+    </div>
   {/if}
 </div>
