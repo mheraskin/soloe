@@ -10,6 +10,7 @@
   import { nav } from './stores/nav.svelte';
   import { commandPalette } from './stores/command-palette.svelte';
   import { filePalette } from './stores/file-palette.svelte';
+  import { rightRail } from './stores/right-rail.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
@@ -126,6 +127,11 @@
     if (Keymap.zoomOut.match(e)) {
       consume(e);
       void ipc.window.zoomOut().catch(reportError);
+      return;
+    }
+    if (Keymap.toggleNotesRail.match(e)) {
+      consume(e);
+      rightRail.toggleTab('notes');
       return;
     }
     if (commandPalette.isOpen || filePalette.open) return;
