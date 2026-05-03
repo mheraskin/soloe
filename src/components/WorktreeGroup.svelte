@@ -149,23 +149,24 @@
 </script>
 
 {#if !hidden}
+  <div class="relative">
+    {#if dropPosition === 'before'}
+      <div class="pointer-events-none absolute -top-0.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+    {/if}
+    {#if dropPosition === 'after'}
+      <div class="pointer-events-none absolute -bottom-0.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+    {/if}
   <Collapsible.Root open={effectiveExpanded} onOpenChange={onGroupOpenChange} class="flex flex-col gap-1">
     <div
       bind:this={headerEl}
       role="group"
-      class={cn('relative flex items-center gap-1 px-0.5 py-0.5', isDraggingSelf && 'opacity-40')}
+      class={cn('flex items-center gap-1 px-0.5 py-0.5', isDraggingSelf && 'opacity-40')}
       draggable={onWorktreeDrop ? 'true' : undefined}
       ondragstart={onHeaderDragStart}
       ondragover={onHeaderDragOver}
       ondrop={onHeaderDrop}
       ondragend={onHeaderDragEnd}
     >
-      {#if dropPosition === 'before'}
-        <div class="pointer-events-none absolute -top-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
-      {/if}
-      {#if dropPosition === 'after'}
-        <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
-      {/if}
       <Collapsible.Trigger
         class={cn(
           'flex flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1 text-left transition-colors',
@@ -203,4 +204,5 @@
       {/each}
     </Collapsible.Content>
   </Collapsible.Root>
+  </div>
 {/if}

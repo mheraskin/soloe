@@ -351,6 +351,13 @@
 </script>
 
 {#if !hidden}
+<div class="relative">
+  {#if dropPosition === 'before'}
+    <div class="pointer-events-none absolute -top-1.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+  {/if}
+  {#if dropPosition === 'after'}
+    <div class="pointer-events-none absolute -bottom-1.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+  {/if}
 <Collapsible.Root open={effectiveExpanded} onOpenChange={onProjectOpenChange} class="flex flex-col gap-1.5">
   <ContextMenu.Root>
     <ContextMenu.Trigger>
@@ -359,19 +366,13 @@
           {...props}
           bind:this={headerEl}
           data-project-id={project.id}
-          class={cn('relative flex items-center gap-1 px-1 pt-1.5 pb-1', isDraggingSelf && 'opacity-40')}
+          class={cn('flex items-center gap-1 px-1 pt-1.5 pb-1', isDraggingSelf && 'opacity-40')}
           draggable={onProjectDrop ? 'true' : undefined}
           ondragstart={onProjectDragStart}
           ondragover={onProjectDragOver}
           ondrop={onProjectDropEvent}
           ondragend={onProjectDragEnd}
         >
-          {#if dropPosition === 'before'}
-            <div class="pointer-events-none absolute -top-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
-          {/if}
-          {#if dropPosition === 'after'}
-            <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
-          {/if}
           <Collapsible.Trigger
             class={cn(
               'group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground transition-colors',
@@ -516,4 +517,5 @@
     {/if}
   </Collapsible.Content>
 </Collapsible.Root>
+</div>
 {/if}

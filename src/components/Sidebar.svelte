@@ -19,6 +19,15 @@
   const SIDEBAR_WIDTH_KEY = 'soloe.sidebarWidth.v1';
   const MIN_WIDTH = 220;
   const MAX_WIDTH = 460;
+  // Re-centre the target row a few times after the initial scroll. Async
+  // content (git worktrees, project sections expanding) shifts heights for a
+  // few hundred ms after mount; without this the row appears off-screen on
+  // app open.
+  const SCROLL_SETTLE_DELAYS_MS = [150, 350, 600];
+  // Auto-scroll while a drag is hovering near the top/bottom of the sidebar.
+  const EDGE_SCROLL_THRESHOLD = 60;
+  const EDGE_SCROLL_MAX_SPEED = 18;
+  const EDGE_SCROLL_MIN_SPEED = 4;
 
   let query = $state('');
   let width = $state(260);
@@ -27,11 +36,47 @@
   let scrollViewport: HTMLElement | null = $state(null);
   let lastScrolledId: string | null = null;
   let lastScrolledNewProjectId: string | null = null;
+  let settleTimers: ReturnType<typeof setTimeout>[] = [];
+  let edgeScrollSpeed = 0;
+  let edgeScrollFrame: number | null = null;
 
   onMount(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     if (Number.isFinite(stored)) width = clampWidth(stored);
   });
+
+  function clearSettleTimers() {
+    for (const t of settleTimers) clearTimeout(t);
+    settleTimers = [];
+  }
+
+  function findRow(selector: string): HTMLElement | null {
+    if (!asideEl) return null;
+    const el = asideEl.querySelector(selector);
+    return el instanceof HTMLElement ? el : null;
+  }
+
+  // Centre the row now, then re-centre over the next ~600ms when it drifts
+  // far off-centre. Drift checks gate the re-centre so a stable layout never
+  // triggers a second scroll.
+  function scrollAndSettle(selector: string) {
+    if (!scrollViewport) return;
+    clearSettleTimers();
+    const initial = findRow(selector);
+    if (initial) scrollIntoViewCentered(initial, scrollViewport);
+    for (const delay of SCROLL_SETTLE_DELAYS_MS) {
+      settleTimers.push(setTimeout(() => {
+        const row = findRow(selector);
+        if (!row || !scrollViewport) return;
+        const rect = row.getBoundingClientRect();
+        const vp = scrollViewport.getBoundingClientRect();
+        const drift = Math.abs((rect.top + rect.height / 2) - (vp.top + vp.height / 2));
+        if (drift > vp.height / 4) {
+          scrollIntoViewCentered(row, scrollViewport, { behavior: 'auto' });
+        }
+      }, delay));
+    }
+  }
 
   // Keep the selected row visible. Runs on initial restore (when localStorage
   // brings back a selectedId) and whenever selection changes programmatically
@@ -42,10 +87,7 @@
     lastScrolledId = id;
     void tick().then(() => {
       requestAnimationFrame(() => {
-        const row = asideEl?.querySelector(`[data-session-id="${CSS.escape(id)}"]`);
-        if (row instanceof HTMLElement && scrollViewport) {
-          scrollIntoViewCentered(row, scrollViewport);
-        }
+        scrollAndSettle(`[data-session-id="${CSS.escape(id)}"]`);
       });
     });
   });
@@ -58,10 +100,7 @@
     lastScrolledNewProjectId = id;
     void tick().then(() => {
       requestAnimationFrame(() => {
-        const row = asideEl?.querySelector(`[data-project-id="${CSS.escape(id)}"]`);
-        if (row instanceof HTMLElement && scrollViewport) {
-          scrollIntoViewCentered(row, scrollViewport);
-        }
+        scrollAndSettle(`[data-project-id="${CSS.escape(id)}"]`);
         projects.consumeNewlyAdded(id);
       });
     });
@@ -69,6 +108,50 @@
 
   $effect(() => {
     if (sessions.selectedId === null) lastScrolledId = null;
+  });
+
+  // While dragging, auto-scroll the viewport when the cursor approaches its
+  // top or bottom edge so the user can reach off-screen drop targets.
+  function tickEdgeScroll() {
+    edgeScrollFrame = null;
+    if (!scrollViewport || edgeScrollSpeed === 0 || !dnd.drag) return;
+    const before = scrollViewport.scrollTop;
+    scrollViewport.scrollTop = before + edgeScrollSpeed;
+    if (scrollViewport.scrollTop !== before) {
+      edgeScrollFrame = requestAnimationFrame(tickEdgeScroll);
+    }
+  }
+
+  function onAsideDragOver(e: DragEvent) {
+    if (!dnd.drag || !scrollViewport) {
+      edgeScrollSpeed = 0;
+      return;
+    }
+    const rect = scrollViewport.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    if (offsetY < EDGE_SCROLL_THRESHOLD) {
+      const ratio = Math.max(0, Math.min(1, (EDGE_SCROLL_THRESHOLD - offsetY) / EDGE_SCROLL_THRESHOLD));
+      edgeScrollSpeed = -Math.max(EDGE_SCROLL_MIN_SPEED, Math.round(ratio * EDGE_SCROLL_MAX_SPEED));
+    } else if (offsetY > rect.height - EDGE_SCROLL_THRESHOLD) {
+      const ratio = Math.max(0, Math.min(1, (offsetY - (rect.height - EDGE_SCROLL_THRESHOLD)) / EDGE_SCROLL_THRESHOLD));
+      edgeScrollSpeed = Math.max(EDGE_SCROLL_MIN_SPEED, Math.round(ratio * EDGE_SCROLL_MAX_SPEED));
+    } else {
+      edgeScrollSpeed = 0;
+      return;
+    }
+    if (edgeScrollFrame === null) {
+      edgeScrollFrame = requestAnimationFrame(tickEdgeScroll);
+    }
+  }
+
+  $effect(() => {
+    if (dnd.drag === null) {
+      edgeScrollSpeed = 0;
+      if (edgeScrollFrame !== null) {
+        cancelAnimationFrame(edgeScrollFrame);
+        edgeScrollFrame = null;
+      }
+    }
   });
 
   function onProjectDrop(args: { draggedId: string; targetId: string; position: DropPosition }) {
@@ -142,6 +225,7 @@
   class="relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
   class:select-none={resizing}
   style={`width: ${width}px`}
+  ondragover={onAsideDragOver}
   ondragleave={onSidebarDragLeave}
 >
   <div class="flex flex-col gap-2 border-b border-border p-2.5">
