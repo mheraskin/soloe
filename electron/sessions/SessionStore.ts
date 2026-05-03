@@ -31,10 +31,12 @@ export class SessionStore {
 
   async list(): Promise<Session[]> {
     await this.ensureLoaded();
+    // Stable creation order keeps the sidebar from reshuffling on each
+    // start/reload — `touch` still bumps lastUsedAt but no longer drives order.
     return [...this.cache!.values()]
       .filter((session) => !session.archivedAt)
       .sort((a, b) =>
-        b.lastUsedAt.localeCompare(a.lastUsedAt)
+        a.createdAt.localeCompare(b.createdAt)
       );
   }
 
