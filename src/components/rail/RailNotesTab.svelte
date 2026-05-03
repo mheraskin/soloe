@@ -1,15 +1,29 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { Plus, Loader2, Check, AlertCircle, Trash2, PencilLine } from '@lucide/svelte';
+  import {
+    Plus,
+    Loader2,
+    Check,
+    AlertCircle,
+    Trash2,
+    PencilLine,
+    Send,
+    TextSelect
+  } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
   import { projects } from '../../stores/projects.svelte';
+  import { sessions } from '../../stores/sessions.svelte';
   import { confirmStore } from '../../stores/confirm.svelte';
   import { reportError } from '../../stores/toast.svelte';
+  import { ipc } from '../../lib/ipc';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+
+  const PASTE_START = '\x1b[200~';
+  const PASTE_END = '\x1b[201~';
 
   type DialogState =
     | { kind: 'save-draft'; name: string }
@@ -19,9 +33,17 @@
   let dialog = $state<DialogState>(null);
   let dialogInput: HTMLInputElement | null = $state(null);
   let textareaEl: HTMLTextAreaElement | null = $state(null);
+  let hasSelection = $state(false);
 
   let activeProjectId = $derived(notes.activeProjectId);
   let activeProject = $derived(activeProjectId ? projects.get(activeProjectId) : null);
+
+  let activeTerminalId = $derived.by<string | null>(() => {
+    const sel = sessions.selected;
+    if (!sel) return null;
+    return sessions.terminalIdFor(sel.id);
+  });
+  let canSend = $derived(activeTerminalId !== null);
 
   $effect(() => {
     const id = activeProjectId;
@@ -74,8 +96,18 @@
   }
 
   function onTextareaKeydown(event: KeyboardEvent): void {
+    const ctrlOrCmd = event.metaKey || event.ctrlKey;
+    if (ctrlOrCmd && !event.altKey && event.key === 'Enter') {
+      event.preventDefault();
+      if (event.shiftKey) {
+        void sendAll();
+      } else {
+        void sendSelectionOrAll();
+      }
+      return;
+    }
     if (
-      (event.metaKey || event.ctrlKey) &&
+      ctrlOrCmd &&
       !event.shiftKey &&
       !event.altKey &&
       event.key.toLowerCase() === 's'
@@ -85,6 +117,41 @@
         openSaveDialog();
       }
     }
+  }
+
+  function readSelection(): string {
+    if (!textareaEl) return '';
+    const s = textareaEl.selectionStart;
+    const e = textareaEl.selectionEnd;
+    return s === e ? '' : textareaEl.value.substring(s, e);
+  }
+
+  function updateSelection(): void {
+    hasSelection = readSelection().length > 0;
+  }
+
+  async function sendText(text: string): Promise<void> {
+    if (!text) return;
+    const id = activeTerminalId;
+    if (!id) return;
+    try {
+      await ipc.terminal.input(id, PASTE_START + text + PASTE_END);
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  async function sendAll(): Promise<void> {
+    await sendText(editorValue);
+  }
+
+  async function sendSelection(): Promise<void> {
+    await sendText(readSelection());
+  }
+
+  async function sendSelectionOrAll(): Promise<void> {
+    const sel = readSelection();
+    await sendText(sel || editorValue);
   }
 
   function onNewDraft(): void {
@@ -288,36 +355,91 @@
           {statusLabel}
         </span>
       </div>
-      <textarea
-        bind:this={textareaEl}
-        value={editorValue}
-        placeholder={editorPlaceholder}
-        oninput={onTextareaInput}
-        onkeydown={onTextareaKeydown}
-        disabled={editorDisabled}
-        spellcheck="false"
-        class="flex-1 resize-none border-0 bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none placeholder:text-muted-foreground/70"
-        aria-label="Note editor"
-      ></textarea>
-      {#if notes.isDraft}
-        <div class="flex items-center justify-end gap-2 border-t border-border px-3 py-2">
-          <Button
-            variant="ghost"
-            size="xs"
-            onclick={onDiscardDraft}
-            disabled={notes.draftContent.length === 0}
+      <ContextMenu.Root>
+        <ContextMenu.Trigger>
+          {#snippet child({ props })}
+            <textarea
+              {...props}
+              bind:this={textareaEl}
+              value={editorValue}
+              placeholder={editorPlaceholder}
+              oninput={onTextareaInput}
+              onkeydown={onTextareaKeydown}
+              onkeyup={updateSelection}
+              onmouseup={updateSelection}
+              onselect={updateSelection}
+              onfocus={updateSelection}
+              onblur={updateSelection}
+              disabled={editorDisabled}
+              spellcheck="false"
+              class="flex-1 resize-none border-0 bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none placeholder:text-muted-foreground/70"
+              aria-label="Note editor"
+            ></textarea>
+          {/snippet}
+        </ContextMenu.Trigger>
+        <ContextMenu.Content class="w-52">
+          <ContextMenu.Item
+            disabled={!canSend || editorValue.trim().length === 0}
+            onclick={() => void sendAll()}
           >
-            Discard
-          </Button>
+            <Send class="size-3.5" />
+            Send to session
+          </ContextMenu.Item>
+          {#if hasSelection}
+            <ContextMenu.Item disabled={!canSend} onclick={() => void sendSelection()}>
+              <TextSelect class="size-3.5" />
+              Send selection
+            </ContextMenu.Item>
+          {/if}
+        </ContextMenu.Content>
+      </ContextMenu.Root>
+      <div class="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
+        <div class="flex items-center gap-1.5">
           <Button
+            variant="outline"
             size="xs"
-            onclick={openSaveDialog}
-            disabled={notes.draftContent.trim().length === 0}
+            onclick={() => void sendAll()}
+            disabled={!canSend || editorValue.trim().length === 0}
+            title="Send to session (Ctrl+Shift+Enter)"
+            aria-label="Send to session"
           >
-            Save
+            <Send class="size-3" />
+            Send
           </Button>
+          {#if hasSelection}
+            <Button
+              variant="ghost"
+              size="xs"
+              onclick={() => void sendSelection()}
+              disabled={!canSend}
+              title="Send selection (Ctrl+Enter)"
+              aria-label="Send selection"
+            >
+              <TextSelect class="size-3" />
+              Selection
+            </Button>
+          {/if}
         </div>
-      {/if}
+        {#if notes.isDraft}
+          <div class="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="xs"
+              onclick={onDiscardDraft}
+              disabled={notes.draftContent.length === 0}
+            >
+              Discard
+            </Button>
+            <Button
+              size="xs"
+              onclick={openSaveDialog}
+              disabled={notes.draftContent.trim().length === 0}
+            >
+              Save
+            </Button>
+          </div>
+        {/if}
+      </div>
     </section>
   {/if}
 </div>

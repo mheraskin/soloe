@@ -88,6 +88,13 @@ export const Keymap = {
     keys: ['Ctrl', 'Shift', '['],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === '['
+  },
+  toggleNotesRail: {
+    id: 'rail.toggle-notes',
+    description: 'Toggle Notes pane',
+    keys: ['Ctrl', 'Shift', 'N'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'n'
   }
 } as const satisfies Record<string, KeymapBinding>;
 
