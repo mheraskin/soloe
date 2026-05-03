@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch, Palette, Check } from '@lucide/svelte';
+  import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch, ChevronRight } from '@lucide/svelte';
   import type { Session, SessionId, SessionColor } from '@shared/types/sessions.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
@@ -39,6 +39,8 @@
   let editing = $state(false);
   let editValue = $state('');
   let nameInput: HTMLInputElement | null = $state(null);
+  let menuOpen = $state(false);
+  let paletteExpanded = $state(false);
 
   const COLOR_LABELS: Record<SessionColor, string> = {
     red: 'Red',
@@ -275,7 +277,13 @@
   {#if dropPosition === 'after'}
     <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
   {/if}
-<ContextMenu.Root>
+<ContextMenu.Root
+  open={menuOpen}
+  onOpenChange={(v) => {
+    menuOpen = v;
+    if (!v) paletteExpanded = false;
+  }}
+>
   <ContextMenu.Trigger>
     {#snippet child({ props })}
       <div
@@ -412,7 +420,7 @@
       </div>
     {/snippet}
   </ContextMenu.Trigger>
-  <ContextMenu.Content class="w-52">
+  <ContextMenu.Content class="w-60">
     {#if canStart}
       <ContextMenu.Item onSelect={start}>Start</ContextMenu.Item>
     {/if}
@@ -436,38 +444,64 @@
     <ContextMenu.Item onSelect={copyCmd}>
       <Copy /> <span>Copy command</span>
     </ContextMenu.Item>
-    <ContextMenu.Sub>
-      <ContextMenu.SubTrigger>
-        <Palette />
-        <span>Color</span>
-      </ContextMenu.SubTrigger>
-      <ContextMenu.SubContent class="w-44">
-        <ContextMenu.Item onSelect={() => void setColor(null)}>
-          <span
-            class="inline-block size-3.5 shrink-0 rounded-full border border-border bg-background"
-            aria-hidden="true"
-          ></span>
-          <span>None</span>
-          {#if !session.color}
-            <Check class="ml-auto size-3.5" />
-          {/if}
-        </ContextMenu.Item>
-        <ContextMenu.Separator />
+    <ContextMenu.Separator />
+    <div class="flex items-center gap-1 px-1 py-1">
+      <div
+        class={cn(
+          'flex min-w-0 flex-1 items-center',
+          paletteExpanded ? 'flex-wrap gap-1.5' : 'gap-1'
+        )}
+      >
+        <button
+          type="button"
+          class={cn(
+            'shrink-0 rounded-full border border-border bg-background transition-transform hover:scale-110',
+            paletteExpanded ? 'size-5' : 'size-3.5',
+            !session.color && 'ring-2 ring-foreground ring-offset-1 ring-offset-popover'
+          )}
+          onclick={(e) => {
+            e.stopPropagation();
+            void setColor(null);
+            menuOpen = false;
+          }}
+          title="No color"
+          aria-label="Set no color"
+        ></button>
         {#each SESSION_COLOR_TOKENS as token (token)}
-          <ContextMenu.Item onSelect={() => void setColor(token)}>
-            <span
-              class="inline-block size-3.5 shrink-0 rounded-full border border-border/60"
-              style={`background-color: ${colorVar(token)}`}
-              aria-hidden="true"
-            ></span>
-            <span>{COLOR_LABELS[token]}</span>
-            {#if session.color === token}
-              <Check class="ml-auto size-3.5" />
-            {/if}
-          </ContextMenu.Item>
+          <button
+            type="button"
+            class={cn(
+              'shrink-0 rounded-full border border-border/60 transition-transform hover:scale-110',
+              paletteExpanded ? 'size-5' : 'size-3.5',
+              session.color === token && 'ring-2 ring-foreground ring-offset-1 ring-offset-popover'
+            )}
+            style={`background-color: ${colorVar(token)}`}
+            onclick={(e) => {
+              e.stopPropagation();
+              void setColor(token);
+              menuOpen = false;
+            }}
+            title={COLOR_LABELS[token]}
+            aria-label={`Set color ${COLOR_LABELS[token]}`}
+          ></button>
         {/each}
-      </ContextMenu.SubContent>
-    </ContextMenu.Sub>
+      </div>
+      <button
+        type="button"
+        class="shrink-0 self-start rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        onclick={(e) => {
+          e.stopPropagation();
+          paletteExpanded = !paletteExpanded;
+        }}
+        title={paletteExpanded ? 'Collapse palette' : 'Expand palette'}
+        aria-label={paletteExpanded ? 'Collapse palette' : 'Expand palette'}
+        aria-expanded={paletteExpanded}
+      >
+        <ChevronRight
+          class={cn('size-3.5 transition-transform', paletteExpanded && 'rotate-90')}
+        />
+      </button>
+    </div>
     <ContextMenu.Separator />
     {#if session.projectId && !session.archivedAt}
       <ContextMenu.Item onSelect={() => void archive()}>
