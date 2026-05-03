@@ -191,5 +191,46 @@ describe('AgentHookDispatcher', () => {
       });
       expect(observer.getSnapshot('does-not-exist')?.state).toBe('starting');
     });
+
+    it('persists distinct session ids when two SessionStart hooks fire concurrently', async () => {
+      const a = await sessionStore.create({
+        kind: 'codex',
+        name: 'a',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        resumeMode: 'new'
+      });
+      const b = await sessionStore.create({
+        kind: 'codex',
+        name: 'b',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        resumeMode: 'new'
+      });
+      await Promise.all([
+        dispatcher.dispatch({
+          provider: 'codex',
+          soloeSessionId: a.id,
+          payload: { hook_event_name: 'SessionStart', session_id: 'codex-uuid-a' }
+        }),
+        dispatcher.dispatch({
+          provider: 'codex',
+          soloeSessionId: b.id,
+          payload: { hook_event_name: 'SessionStart', session_id: 'codex-uuid-b' }
+        })
+      ]);
+      const updatedA = await sessionStore.get(a.id);
+      const updatedB = await sessionStore.get(b.id);
+      expect((updatedA as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-a');
+      expect((updatedB as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-b');
+      const reloaded = new SessionStore(join(tmp, 'sessions.json'));
+      await reloaded.init();
+      const onDiskA = await reloaded.get(a.id);
+      const onDiskB = await reloaded.get(b.id);
+      expect((onDiskA as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-a');
+      expect((onDiskB as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-b');
+    });
   });
 });

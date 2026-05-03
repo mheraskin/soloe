@@ -5,6 +5,7 @@ import type {
   RunMode,
   Session,
   SessionId,
+  SessionKind,
   SessionRuntimeState,
   SessionStatus
 } from '@shared/types/sessions.js';
@@ -66,10 +67,13 @@ export declare interface PtyManager {
   emit<K extends keyof PtyManagerEvents>(event: K, ...args: PtyManagerEvents[K]): boolean;
 }
 
+const AGENT_SPAWN_SETTLE_MS = 600;
+
 export class PtyManager extends EventEmitter {
   private readonly terminals = new Map<TerminalId, TerminalInstance>();
   private readonly sessionToTerminal = new Map<SessionId, TerminalId>();
   private readonly baseEnv: NodeJS.ProcessEnv;
+  private readonly agentSpawnQueues = new Map<string, Promise<void>>();
   private disposed = false;
 
   constructor(private readonly opts: PtyManagerOptions) {
@@ -106,6 +110,8 @@ export class PtyManager extends EventEmitter {
     this.emitStatus(sessionId, terminalId, 'starting');
     await nextTick();
 
+    const isAgent = session.kind === 'claude_code' || session.kind === 'codex';
+    const release = isAgent ? await this.acquireAgentSpawnSlot(session.kind) : noop;
     let proc: pty.IPty;
     try {
       proc = pty.spawn(spec.file, spec.args, {
@@ -117,10 +123,16 @@ export class PtyManager extends EventEmitter {
         useConpty: process.platform === 'win32'
       } as pty.IPtyForkOptions);
     } catch (err) {
+      release();
       const message = errorMessage(err);
       this.sessionToTerminal.delete(sessionId);
       this.emitStatus(sessionId, terminalId, 'error', message);
       throw new Error(`Failed to spawn terminal: ${message}`);
+    }
+    if (isAgent) {
+      // Codex and Claude lock their on-disk state during startup; let this one
+      // settle before the next agent spawn reads or writes the same files.
+      setTimeout(release, AGENT_SPAWN_SETTLE_MS);
     }
 
     const instance: TerminalInstance = {
@@ -205,6 +217,23 @@ export class PtyManager extends EventEmitter {
     await Promise.all(ids.map((id) => this.stopAndAwait(id, 1500)));
     this.opts.batcher.destroy();
     this.removeAllListeners();
+  }
+
+  private async acquireAgentSpawnSlot(kind: SessionKind): Promise<() => void> {
+    if (kind !== 'claude_code' && kind !== 'codex') return noop;
+    const previous = this.agentSpawnQueues.get(kind) ?? Promise.resolve();
+    let release: () => void = noop;
+    const next = new Promise<void>((resolve) => {
+      release = () => {
+        if (this.agentSpawnQueues.get(kind) === next) {
+          this.agentSpawnQueues.delete(kind);
+        }
+        resolve();
+      };
+    });
+    this.agentSpawnQueues.set(kind, previous.then(() => next));
+    await previous;
+    return release;
   }
 
   private async stopAndAwait(terminalId: TerminalId, timeoutMs = 2000): Promise<void> {
@@ -325,6 +354,8 @@ export class PtyManager extends EventEmitter {
     return state;
   }
 }
+
+const noop = (): void => {};
 
 function newTerminalId(): TerminalId {
   return `t-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;
