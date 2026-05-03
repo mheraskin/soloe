@@ -212,8 +212,10 @@ describe('HookInstaller', () => {
     it('writes a hook command that actually runs curl', async () => {
       await installer.installCodex(LOCAL);
       const raw = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
-      const parsed = parseToml(raw) as { hooks: Record<string, Array<{ command: string }>> };
-      const cmd = parsed.hooks.SessionStart![0]!.command;
+      const parsed = parseToml(raw) as {
+        hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+      };
+      const cmd = parsed.hooks.SessionStart![0]!.hooks[0]!.command;
       expect(cmd).toMatch(/exit 0\s*;\s*curl /);
       expect(cmd).toContain('"$SOLOE_BRIDGE_URL/hook/codex"');
     });
@@ -223,16 +225,28 @@ describe('HookInstaller', () => {
       await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
       await fs.writeFile(
         path,
-        ['model = "gpt-5"', '', '[[hooks.UserPromptSubmit]]', 'type = "command"', 'command = "user-script"'].join(
-          '\n'
-        )
+        [
+          'model = "gpt-5"',
+          '',
+          '[[hooks.UserPromptSubmit]]',
+          '',
+          '[[hooks.UserPromptSubmit.hooks]]',
+          'type = "command"',
+          'command = "user-script"'
+        ].join('\n')
       );
       await installer.installCodex(LOCAL);
       const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
       expect(parsed['model']).toBe('gpt-5');
       const ups = (parsed['hooks'] as Record<string, unknown[]>)['UserPromptSubmit']!;
       expect(ups).toHaveLength(2);
+      expect((ups[0] as { hooks: Array<{ command: string }> }).hooks[0]!.command).toBe(
+        'user-script'
+      );
       expect((ups[1] as { _soloe_version?: number })._soloe_version).toBe(SOLOE_HOOK_VERSION);
+      expect(
+        (ups[1] as { hooks: Array<{ _soloe_version?: number }> }).hooks[0]!._soloe_version
+      ).toBe(SOLOE_HOOK_VERSION);
     });
 
     it('install→uninstall removes only Soloe entries', async () => {
@@ -240,9 +254,15 @@ describe('HookInstaller', () => {
       await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
       await fs.writeFile(
         path,
-        ['model = "gpt-5"', '', '[[hooks.UserPromptSubmit]]', 'type = "command"', 'command = "user-script"'].join(
-          '\n'
-        )
+        [
+          'model = "gpt-5"',
+          '',
+          '[[hooks.UserPromptSubmit]]',
+          '',
+          '[[hooks.UserPromptSubmit.hooks]]',
+          'type = "command"',
+          'command = "user-script"'
+        ].join('\n')
       );
       await installer.installCodex(LOCAL);
       await installer.uninstallCodex(LOCAL);
@@ -250,7 +270,9 @@ describe('HookInstaller', () => {
       expect(parsed['model']).toBe('gpt-5');
       const ups = (parsed['hooks'] as Record<string, unknown[]>)['UserPromptSubmit']!;
       expect(ups).toHaveLength(1);
-      expect((ups[0] as { command: string }).command).toBe('user-script');
+      expect(
+        (ups[0] as { hooks: Array<{ command: string }> }).hooks[0]!.command
+      ).toBe('user-script');
     });
 
     it('reinstalling does not stack duplicate entries', async () => {
@@ -262,23 +284,29 @@ describe('HookInstaller', () => {
       expect(parsed['hooks']?.['SessionStart']).toHaveLength(1);
     });
 
-    it('replaces legacy lowercase Soloe hook entries on install', async () => {
+    it('replaces legacy flat Soloe hook entries on install', async () => {
       const path = join(homeDir, '.codex', 'config.toml');
       await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
       await fs.writeFile(
         path,
         [
-          '[[hooks.session_start]]',
+          '[[hooks.SessionStart]]',
           'type = "command"',
           'command = "old-soloe"',
-          '_soloe = true'
+          '_soloe = true',
+          '_soloe_version = 3'
         ].join('\n')
       );
       await installer.installCodex(LOCAL);
       const parsed = parseToml(await fs.readFile(path, 'utf8')) as Record<string, unknown>;
       const hooks = parsed['hooks'] as Record<string, unknown[]>;
-      expect(hooks['session_start']).toBeUndefined();
       expect(hooks['SessionStart']).toHaveLength(1);
+      const group = hooks['SessionStart']![0] as {
+        _soloe_version: number;
+        hooks: Array<{ command: string }>;
+      };
+      expect(group._soloe_version).toBe(SOLOE_HOOK_VERSION);
+      expect(group.hooks[0]!.command).toContain('"$SOLOE_BRIDGE_URL/hook/codex"');
     });
   });
 
@@ -318,7 +346,7 @@ describe('HookInstaller', () => {
       await fs.mkdir(join(homeDir, '.codex'), { recursive: true });
       await fs.writeFile(
         codexPath,
-        ['[[hooks.session_start]]', 'type = "command"', 'command = "old"', '_soloe = true'].join(
+        ['[[hooks.SessionStart]]', 'type = "command"', 'command = "old"', '_soloe = true'].join(
           '\n'
         )
       );
@@ -389,7 +417,7 @@ describe('mergeCodexHooks / removeSoloeFromCodex (pure)', () => {
   it('roundtrip preserves user entries', () => {
     const original = {
       hooks: {
-        UserPromptSubmit: [{ type: 'command', command: 'user' }]
+        UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'user' }] }]
       }
     };
     const installed = mergeCodexHooks(original, 'soloe');

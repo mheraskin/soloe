@@ -59,7 +59,7 @@ const CODEX_EVENTS = [
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 3;
+export const SOLOE_HOOK_VERSION = 4;
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 
@@ -322,36 +322,25 @@ export function mergeCodexHooks(
   const features = isObject(next['features']) ? { ...next['features'] } : {};
   features['codex_hooks'] = true;
   next['features'] = features;
-  const hooksRoot = cleanSoloeCodexHooks(isObject(next['hooks']) ? { ...next['hooks'] } : {});
+  const hooksRoot = isObject(next['hooks']) ? { ...next['hooks'] } : {};
   for (const event of CODEX_EVENTS) {
-    const entries = Array.isArray(hooksRoot[event])
-      ? [...(hooksRoot[event] as unknown[])]
-      : [];
-    const filtered = entries.filter((entry) => !isSoloeCodexEntry(entry));
+    const groups = Array.isArray(hooksRoot[event]) ? [...(hooksRoot[event] as unknown[])] : [];
+    const filtered = groups.filter((entry) => !isSoloeCodexEntry(entry));
     filtered.push({
-      type: 'command',
-      command,
       [SOLOE_MARKER]: true,
-      [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION
+      [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
+      hooks: [
+        {
+          type: 'command',
+          command,
+          [SOLOE_MARKER]: true,
+          [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION
+        }
+      ]
     });
     hooksRoot[event] = filtered;
   }
   next['hooks'] = hooksRoot;
-  return next;
-}
-
-function cleanSoloeCodexHooks(hooksRoot: Record<string, unknown>): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...hooksRoot };
-  for (const event of Object.keys(next)) {
-    const entries = next[event];
-    if (!Array.isArray(entries)) continue;
-    const cleaned = entries.filter((entry) => !isSoloeCodexEntry(entry));
-    if (cleaned.length === 0) {
-      delete next[event];
-    } else {
-      next[event] = cleaned;
-    }
-  }
   return next;
 }
 
@@ -362,9 +351,11 @@ export function removeSoloeFromCodex(
   if (!isObject(next['hooks'])) return next;
   const hooksRoot: Record<string, unknown> = { ...next['hooks'] };
   for (const event of Object.keys(hooksRoot)) {
-    const entries = hooksRoot[event];
-    if (!Array.isArray(entries)) continue;
-    const cleaned = entries.filter((entry) => !isSoloeCodexEntry(entry));
+    const groups = hooksRoot[event];
+    if (!Array.isArray(groups)) continue;
+    const cleaned = groups
+      .map((group) => stripSoloeFromGroup(group))
+      .filter((group) => group !== null);
     if (cleaned.length === 0) {
       delete hooksRoot[event];
     } else {
@@ -397,10 +388,10 @@ function codexSoloeStatus(data: Record<string, unknown>): AgentIntegrationTarget
   const hooks = data['hooks'];
   if (!isObject(hooks)) return emptyStatus();
   const versions: number[] = [];
-  for (const entries of Object.values(hooks)) {
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      const version = soloeCodexEntryVersion(entry);
+  for (const groups of Object.values(hooks)) {
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      const version = soloeCodexEntryVersion(group);
       if (version !== null) versions.push(version);
     }
   }
@@ -427,7 +418,14 @@ function isSoloeCodexEntry(entry: unknown): boolean {
 }
 
 function soloeCodexEntryVersion(entry: unknown): number | null {
-  return isObject(entry) && entry[SOLOE_MARKER] === true ? markerVersion(entry) : null;
+  if (!isObject(entry)) return null;
+  if (entry[SOLOE_MARKER] === true) return markerVersion(entry);
+  const inner = entry['hooks'];
+  if (!Array.isArray(inner)) return null;
+  for (const h of inner) {
+    if (isObject(h) && h[SOLOE_MARKER] === true) return markerVersion(h);
+  }
+  return null;
 }
 
 function markerVersion(entry: Record<string, unknown>): number {
