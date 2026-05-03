@@ -5,10 +5,11 @@
     ChevronDown,
     ChevronRight,
     Folder,
-    FolderOpen,
+    FolderTree,
     Pencil,
     Trash2
   } from '@lucide/svelte';
+  import { Badge } from '$lib/components/ui/badge';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project } from '@shared/types/projects.js';
@@ -135,7 +136,6 @@
       .filter((wt) => normPath(wt.path) !== normPath(project.path))
       .map(gitWorktreeLabel)
   );
-  let otherWorktreesText = $derived(otherWorktreeLabels.join(', '));
   let kbdIndex = $derived(nav.projectIndexHints[project.id] ?? null);
   let isActiveProject = $derived(nav.activeProjectId === project.id);
   let trimmedFilter = $derived(filter.trim());
@@ -278,24 +278,36 @@
     style={accent ? `border-color: ${accent}` : undefined}
   >
     {#if isStandaloneWorktreeProject && mainWorktree}
-      <div class="flex min-w-0 items-start gap-2 rounded-md px-2.5 py-2 text-[11px] leading-4 text-muted-foreground">
-        <FolderOpen class="mt-0.5 size-3.5 shrink-0" />
-        <div class="min-w-0 flex-1">
-          <p class="m-0 line-clamp-2">
-            Part of repo <span class="font-medium text-foreground">{repoName}</span>{otherWorktreesText
-              ? `. Other worktrees: ${otherWorktreesText}`
-              : ''}
-          </p>
+      <div class="flex flex-col gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1.5">
+        <div class="flex min-w-0 items-center gap-2">
+          <FolderTree class="size-3.5 shrink-0 text-muted-foreground" />
+          <div class="flex min-w-0 flex-1 flex-col leading-tight">
+            <span class="truncate text-xs font-medium text-foreground" title={mainWorktree.path}>
+              {repoName}
+            </span>
+            <span class="text-[10px] text-muted-foreground">
+              Parent repo · {gitWorktrees.length} worktree{gitWorktrees.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            size="xs"
+            class="shrink-0 text-[10px]"
+            title={`Open ${repoName} as the full worktree group`}
+            onclick={openFullRepo}
+          >
+            Open repo
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="xs"
-          class="h-5 shrink-0 px-1.5 text-[10px]"
-          title={`Open ${repoName} as the full worktree group`}
-          onclick={openFullRepo}
-        >
-          Open repo
-        </Button>
+        {#if otherWorktreeLabels.length > 0}
+          <div class="flex flex-wrap items-center gap-1">
+            {#each otherWorktreeLabels as label (label)}
+              <Badge variant="outline" class="h-4 rounded-full px-1.5 font-mono text-[10px] font-normal">
+                {label}
+              </Badge>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
 
