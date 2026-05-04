@@ -8,6 +8,7 @@ import type {
 } from '@shared/types/terminal.js';
 import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
+import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => ({
@@ -242,5 +243,79 @@ describe('PtyManager', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it('marks an agent as waiting for approval from terminal output', async () => {
+    const codexSession: Session = {
+      ...session,
+      id: 'codex-1',
+      name: 'Codex',
+      kind: 'codex',
+      resumeMode: 'new'
+    };
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => codexSession),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      observer,
+      baseEnv: {}
+    });
+
+    await manager.start({ sessionId: codexSession.id });
+    observer.setTuiObservedState(codexSession.id, 'working', 'thinking');
+    const proc = vi.mocked(pty.spawn).mock.results.at(-1)?.value as {
+      onData: { mock: { calls: Array<[(data: string) => void]> } };
+    };
+    const onData = proc.onData.mock.calls[0]?.[0];
+
+    onData?.('Do you want to allow this command to run?');
+
+    expect(observer.getSnapshot(codexSession.id)?.state).toBe('waiting_for_approval');
+  });
+
+  it('marks an agent idle when the terminal sends interrupt', async () => {
+    const codexSession: Session = {
+      ...session,
+      id: 'codex-2',
+      name: 'Codex',
+      kind: 'codex',
+      resumeMode: 'new'
+    };
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => codexSession),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      observer,
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: codexSession.id });
+    observer.setTuiObservedState(codexSession.id, 'working', 'thinking');
+
+    manager.write(started.terminalId, '\x03');
+
+    expect(observer.getSnapshot(codexSession.id)?.state).toBe('idle');
   });
 });

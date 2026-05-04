@@ -52,9 +52,17 @@ describe('agentNotifications', () => {
     expect(agentNotifications.toasts[0]?.sessionName).toBe('Codex');
   });
 
-  it('does not notify for the active session', () => {
+  it('still notifies the active session when it needs approval', () => {
     agentNotifications.observeSnapshot(snapshot('working'), session, session.id);
     agentNotifications.observeSnapshot(snapshot('waiting_for_approval'), session, session.id);
+
+    expect(agentNotifications.markerFor(session.id)?.state).toBe('waiting_for_approval');
+    expect(agentNotifications.toasts).toHaveLength(1);
+  });
+
+  it('does not notify the active session for completed states', () => {
+    agentNotifications.observeSnapshot(snapshot('working'), session, session.id);
+    agentNotifications.observeSnapshot(snapshot('completed'), session, session.id);
 
     expect(agentNotifications.markerFor(session.id)).toBeNull();
     expect(agentNotifications.toasts).toHaveLength(0);
