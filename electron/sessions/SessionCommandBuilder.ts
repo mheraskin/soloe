@@ -99,7 +99,7 @@ export class SessionCommandBuilder {
     const args: string[] = [];
     switch (s.resumeMode) {
       case 'new':
-        if (s.claudeSessionId ?? s.providerThreadId) {
+        if (!isKnownEmptyClaudeSession(s) && (s.claudeSessionId ?? s.providerThreadId)) {
           args.push('--resume', s.claudeSessionId ?? s.providerThreadId!);
         }
         break;
@@ -155,6 +155,10 @@ export class SessionCommandBuilder {
       )
     };
   }
+}
+
+function isKnownEmptyClaudeSession(session: ClaudeCodeSession): boolean {
+  return session.hasUserInput === false;
 }
 
 function buildAgentCommand(

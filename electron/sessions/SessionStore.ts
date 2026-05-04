@@ -28,7 +28,10 @@ export class SessionStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     if (this.cache) return;
     this.cache = await this.loadFromDisk();
-    if (this.assignMissingSortIndices()) {
+    const pruned = this.pruneKnownEmptyClaudeSessions();
+    const assignedSortIndices = this.assignMissingSortIndices();
+    const changed = pruned || assignedSortIndices;
+    if (changed) {
       await this.persist();
     }
   }
@@ -67,7 +70,8 @@ export class SessionStore {
       // New sessions are eligible for auto-rename until the user manually
       // edits the name (which sets autoNamed=false). Drafts may pre-set this
       // explicitly for tests or imports.
-      autoNamed: draft.autoNamed ?? true
+      autoNamed: draft.autoNamed ?? true,
+      hasUserInput: draft.hasUserInput ?? initialHasUserInput(draft)
     } as Session;
     validateSession(session);
     this.cache!.set(id, session);
@@ -169,6 +173,17 @@ export class SessionStore {
     return true;
   }
 
+  private pruneKnownEmptyClaudeSessions(): boolean {
+    if (!this.cache) return false;
+    let changed = false;
+    for (const session of this.cache.values()) {
+      if (session.kind !== 'claude_code' || session.hasUserInput !== false) continue;
+      this.cache.delete(session.id);
+      changed = true;
+    }
+    return changed;
+  }
+
   private async loadFromDisk(): Promise<Map<SessionId, Session>> {
     let raw: string;
     try {
@@ -202,7 +217,7 @@ export class SessionStore {
   private async persist(): Promise<void> {
     const snapshot: StorageShape = {
       version: STORAGE_VERSION,
-      sessions: [...this.cache!.values()]
+      sessions: [...this.cache!.values()].filter((session) => !isKnownEmptyClaudeSession(session))
     };
     const payload = JSON.stringify(snapshot, null, 2);
     this.writeQueue = this.writeQueue.then(() => atomicWrite(this.filePath, payload));
@@ -303,6 +318,9 @@ function validateSession(s: Session): void {
   if (s.autoNamed !== undefined && typeof s.autoNamed !== 'boolean') {
     throw new Error('autoNamed must be a boolean when set');
   }
+  if (s.hasUserInput !== undefined && typeof s.hasUserInput !== 'boolean') {
+    throw new Error('hasUserInput must be a boolean when set');
+  }
   switch (s.kind) {
     case 'standard_terminal':
       if (!s.shell) throw new Error('shell is required for standard_terminal');
@@ -324,6 +342,17 @@ function validateSession(s: Session): void {
       }
       break;
   }
+}
+
+function initialHasUserInput(draft: SessionDraft): boolean | undefined {
+  if (draft.kind !== 'claude_code') return undefined;
+  if (draft.resumeMode !== 'new') return undefined;
+  if (draft.claudeSessionId || draft.providerThreadId) return undefined;
+  return false;
+}
+
+function isKnownEmptyClaudeSession(session: Session): boolean {
+  return session.kind === 'claude_code' && session.hasUserInput === false;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

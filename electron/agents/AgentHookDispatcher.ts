@@ -41,6 +41,7 @@ export class AgentHookDispatcher {
     if (hookEvent === 'UserPromptSubmit') {
       const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'user_message');
       this.maybeTriggerAutoRename(soloeSessionId, prompt, 'claude');
+      await this.markClaudeHasUserInput(soloeSessionId);
     }
     const mapping = mapClaudeHook(hookEvent, payload);
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
@@ -145,6 +146,18 @@ export class AgentHookDispatcher {
       this.opts.log?.('failed to capture provider session id', err);
     }
   }
+
+  private async markClaudeHasUserInput(soloeSessionId: SessionId): Promise<void> {
+    try {
+      const existing = await this.opts.sessionStore.get(soloeSessionId);
+      if (!existing) return;
+      if (existing.kind !== 'claude_code') return;
+      if (existing.hasUserInput === true) return;
+      await this.opts.sessionStore.update(soloeSessionId, { hasUserInput: true });
+    } catch (err) {
+      this.opts.log?.('failed to mark session input', err);
+    }
+  }
 }
 
 function mapClaudeHook(
@@ -167,7 +180,13 @@ function mapClaudeHook(
       return { state: 'working', summary: 'thinking' };
     case 'Notification':
       return mapClaudeNotification(payload);
+    case 'Interrupt':
+    case 'UserInterrupt':
+      return { state: 'idle', summary: 'idle' };
     case 'Stop':
+      if (isInterruptedClaudeStop(payload)) {
+        return { state: 'idle', summary: 'idle' };
+      }
       return { state: 'completed', summary: 'completed' };
     case 'SessionEnd':
       return { state: 'exited', summary: 'session ended' };
@@ -178,6 +197,24 @@ function mapClaudeHook(
     default:
       return null;
   }
+}
+
+function isInterruptedClaudeStop(payload: Record<string, unknown>): boolean {
+  const candidates = [
+    stringField(payload, 'reason'),
+    stringField(payload, 'message'),
+    stringField(payload, 'stop_reason'),
+    stringField(payload, 'status'),
+    stringField(payload, 'result'),
+    nestedStringField(payload, ['stop', 'reason']),
+    nestedStringField(payload, ['event', 'reason'])
+  ];
+  return candidates.some((value) => {
+    const normalized = normalizeEventName(value);
+    return normalized.includes('interrupt')
+      || normalized.includes('cancel')
+      || normalized.includes('abort');
+  });
 }
 
 function mapClaudeNotification(payload: Record<string, unknown>): HookMapping {

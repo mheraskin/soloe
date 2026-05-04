@@ -149,4 +149,49 @@ describe('SessionStore — disk round-trip', () => {
     const entries = await fs.readdir(tmpDir);
     expect(entries.some((f) => f.startsWith('sessions.json.corrupt-'))).toBe(true);
   });
+
+  it('does not persist brand-new Claude sessions until user input is seen', async () => {
+    const store = new SessionStore(storePath);
+    const created = await store.create({
+      kind: 'claude_code',
+      name: 'Claude',
+      cwd: '/x',
+      runMode: 'windows',
+      resumeMode: 'new'
+    });
+    expect(created.hasUserInput).toBe(false);
+    expect(await store.list()).toHaveLength(1);
+
+    const reloadedEmpty = new SessionStore(storePath);
+    expect(await reloadedEmpty.list()).toEqual([]);
+
+    await store.update(created.id, { hasUserInput: true });
+    const reloadedWithInput = new SessionStore(storePath);
+    expect((await reloadedWithInput.list()).map((s) => s.id)).toEqual([created.id]);
+  });
+
+  it('prunes known-empty Claude sessions from older persisted storage', async () => {
+    await fs.writeFile(
+      storePath,
+      JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            kind: 'claude_code',
+            id: 'empty-claude',
+            name: 'Claude',
+            cwd: '/x',
+            runMode: 'windows',
+            createdAt: '2026-01-01T00:00:00Z',
+            lastUsedAt: '2026-01-01T00:00:00Z',
+            resumeMode: 'new',
+            hasUserInput: false
+          }
+        ]
+      }),
+      'utf8'
+    );
+    const store = new SessionStore(storePath);
+    expect(await store.list()).toEqual([]);
+  });
 });

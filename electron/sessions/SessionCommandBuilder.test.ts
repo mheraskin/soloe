@@ -160,6 +160,17 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     expect(script).toContain('--resume claude-123');
   });
 
+  it('does not resume a captured Claude id for a known-empty managed session', () => {
+    const s = {
+      ...claudeBase('new'),
+      claudeSessionId: 'claude-empty',
+      hasUserInput: false
+    } as Session;
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).not.toContain('--resume');
+    expect(script).not.toContain('claude-empty');
+  });
+
   it('does not resume the provider global last session for previously used managed sessions without an id', () => {
     const s = {
       ...claudeBase('new'),

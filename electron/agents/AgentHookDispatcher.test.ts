@@ -81,6 +81,16 @@ describe('AgentHookDispatcher', () => {
       expect(observer.getSnapshot('sess-1')?.state).toBe('idle');
     });
 
+    it('maps interrupted Claude stops back to idle', async () => {
+      observer.setTuiObservedState('sess-1', 'working', 'thinking');
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'Stop', reason: 'user_interrupt' }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('idle');
+    });
+
     it('SubagentStop appends an event but does not change state', async () => {
       observer.setTuiObservedState('sess-1', 'working', 'baseline');
       await dispatcher.dispatch({
@@ -197,6 +207,34 @@ describe('AgentHookDispatcher', () => {
         providerThreadId: 'claude-uuid-xyz',
         state: 'starting'
       });
+    });
+
+    it('marks Claude sessions as having user input on UserPromptSubmit', async () => {
+      const created = await sessionStore.create({
+        kind: 'claude_code',
+        name: 'work',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        resumeMode: 'new'
+      });
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'SessionStart', session_id: 'claude-uuid-xyz' }
+      });
+      expect((await sessionStore.get(created.id))?.hasUserInput).toBe(false);
+
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'hello' }
+      });
+      expect((await sessionStore.get(created.id))?.hasUserInput).toBe(true);
+
+      const reloaded = new SessionStore(join(tmp, 'sessions.json'));
+      await reloaded.init();
+      expect((await reloaded.get(created.id))?.hasUserInput).toBe(true);
     });
 
     it('stores codex session id on the matching session', async () => {

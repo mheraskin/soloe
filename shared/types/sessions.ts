@@ -67,6 +67,10 @@ export interface SessionBase {
   // the user has explicitly renamed and should be left alone. Undefined on
   // legacy sessions is treated as false to avoid surprise renames.
   autoNamed?: boolean;
+  // True once the provider reports a submitted user prompt. New managed
+  // Claude sessions use false until that hook arrives so empty provider ids
+  // are not restored after restart.
+  hasUserInput?: boolean;
 }
 
 export interface StandardTerminalSession extends SessionBase {
