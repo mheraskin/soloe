@@ -157,7 +157,6 @@
       // Off: rescales adjacent glyph widths every frame, which makes cells
       // breathe by ~1px during animation/typing on top of WebGL flicker.
       rescaleOverlappingGlyphs: false,
-      smoothScrollDuration: 125,
       cursorStyle: 'bar',
       cursorWidth: 2,
       cursorInactiveStyle: 'outline',
@@ -408,23 +407,23 @@
 </script>
 
 <div class="relative h-full w-full bg-[#0f0f10] p-2">
-  <div
-    class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
-    class:opacity-0={ready}
-    aria-hidden={ready}
-  >
-    <div class="flex flex-col items-center gap-3">
-      <span class="relative flex size-9 items-center justify-center">
-        <span class="absolute inset-0 animate-ping rounded-full bg-foreground/5"></span>
-        <span class="relative flex size-9 items-center justify-center rounded-full bg-background/50 ring-1 ring-border/40">
-          <Loader2 class="size-4 animate-spin text-foreground/70" />
+  {#if !ready}
+    <div
+      class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
+    >
+      <div class="flex flex-col items-center gap-3">
+        <span class="relative flex size-9 items-center justify-center">
+          <span class="absolute inset-0 animate-ping rounded-full bg-foreground/5"></span>
+          <span class="relative flex size-9 items-center justify-center rounded-full bg-background/50 ring-1 ring-border/40">
+            <Loader2 class="size-4 animate-spin text-foreground/70" />
+          </span>
         </span>
-      </span>
-      <span class="text-[10px] font-medium tracking-[0.18em] text-muted-foreground/80 uppercase">
-        Starting
-      </span>
+        <span class="text-[10px] font-medium tracking-[0.18em] text-muted-foreground/80 uppercase">
+          Starting
+        </span>
+      </div>
     </div>
-  </div>
+  {/if}
   {#if findOpen && active}
     <div class="absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
       <Input

@@ -32,8 +32,8 @@ interface RepoContext {
   wslDistro?: string;
 }
 
-const FAST_INTERVAL_MS = 1500;
-const SLOW_INTERVAL_MS = 15000;
+const FAST_INTERVAL_MS = 5000;
+const SLOW_INTERVAL_MS = 30000;
 
 interface PollEntry {
   cwd: string;
