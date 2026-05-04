@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Activity, AlertTriangle, NotebookPen } from '@lucide/svelte';
+  import { Activity, NotebookPen } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { Keymap } from '../lib/keymap';
@@ -10,7 +10,6 @@
   import KbdHint from './KbdHint.svelte';
   import ProcessUsageWidget from './ProcessUsageWidget.svelte';
   import RailInspectorTab from './rail/RailInspectorTab.svelte';
-  import RailDiagnosticsTab from './rail/RailDiagnosticsTab.svelte';
   import RailNotesTab from './rail/RailNotesTab.svelte';
 
   interface Tab {
@@ -22,7 +21,6 @@
 
   const tabs: Tab[] = [
     { id: 'inspector', label: 'Inspector', icon: Activity },
-    { id: 'diagnostics', label: 'Diagnostics', icon: AlertTriangle },
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
@@ -103,6 +101,8 @@
           </Tooltip.Content>
         </Tooltip.Root>
       {/each}
+      <div class="min-h-2 flex-1"></div>
+      <ProcessUsageWidget />
     </nav>
   </Tooltip.Provider>
 
@@ -114,11 +114,8 @@
         <ScrollArea class="min-h-0 flex-1">
           {#if rightRail.activeTab === 'inspector'}
             <RailInspectorTab />
-          {:else if rightRail.activeTab === 'diagnostics'}
-            <RailDiagnosticsTab />
           {/if}
         </ScrollArea>
-        <ProcessUsageWidget />
       {/if}
     </div>
     <button

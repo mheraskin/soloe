@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Cpu, MemoryStick, Workflow } from '@lucide/svelte';
+  import { Cpu, MemoryStick } from '@lucide/svelte';
   import type { SystemUsageSnapshot } from '@shared/types/system.js';
   import { ipc } from '../lib/ipc';
 
@@ -36,37 +36,38 @@
 
   let memoryLabel = $derived(usage ? formatBytes(usage.memoryBytes) : '--');
   let cpuLabel = $derived(usage ? `${usage.cpuPercent.toFixed(1)}%` : '--');
-  let processLabel = $derived(usage ? String(usage.processCount) : '--');
+  let title = $derived(
+    error
+      ? 'Usage unavailable'
+      : `CPU ${cpuLabel} · Memory ${memoryLabel}`
+  );
 
   function formatBytes(bytes: number): string {
     const mib = bytes / 1024 / 1024;
-    if (mib < 1024) return `${Math.round(mib)} MB`;
-    return `${(mib / 1024).toFixed(1)} GB`;
+    if (mib < 1024) return `${Math.round(mib)}M`;
+    return `${(mib / 1024).toFixed(1)}G`;
   }
 </script>
 
-<section class="border-t border-border bg-sidebar px-3 py-2" aria-label="Soloe resource usage">
-  <div class="mb-1.5 flex items-center justify-between gap-2">
-    <span class="text-[10px] font-medium text-muted-foreground uppercase">Usage</span>
-    {#if error}
-      <span class="truncate text-[10px] text-destructive">Unavailable</span>
-    {:else}
-      <span class="text-[10px] text-muted-foreground">Soloe</span>
-    {/if}
+<section
+  class="mb-2 flex w-full flex-col items-center gap-1 px-1"
+  aria-label="Soloe resource usage"
+  {title}
+>
+  <div
+    class={`flex w-8 flex-col items-center gap-0.5 rounded-md px-0.5 py-1 ${
+      error ? 'bg-destructive/10 text-destructive' : 'bg-muted/45 text-muted-foreground'
+    }`}
+  >
+    <Cpu class="size-3 shrink-0" />
+    <span class="max-w-full truncate text-[9px] leading-none tabular-nums">{cpuLabel}</span>
   </div>
-
-  <div class="grid grid-cols-3 gap-1.5">
-    <div class="flex min-w-0 items-center gap-1 rounded-md bg-muted/45 px-1.5 py-1">
-      <Cpu class="size-3 shrink-0 text-muted-foreground" />
-      <span class="truncate text-[11px] tabular-nums">{cpuLabel}</span>
-    </div>
-    <div class="flex min-w-0 items-center gap-1 rounded-md bg-muted/45 px-1.5 py-1">
-      <MemoryStick class="size-3 shrink-0 text-muted-foreground" />
-      <span class="truncate text-[11px] tabular-nums">{memoryLabel}</span>
-    </div>
-    <div class="flex min-w-0 items-center gap-1 rounded-md bg-muted/45 px-1.5 py-1">
-      <Workflow class="size-3 shrink-0 text-muted-foreground" />
-      <span class="truncate text-[11px] tabular-nums">{processLabel}</span>
-    </div>
+  <div
+    class={`flex w-8 flex-col items-center gap-0.5 rounded-md px-0.5 py-1 ${
+      error ? 'bg-destructive/10 text-destructive' : 'bg-muted/45 text-muted-foreground'
+    }`}
+  >
+    <MemoryStick class="size-3 shrink-0" />
+    <span class="max-w-full truncate text-[9px] leading-none tabular-nums">{memoryLabel}</span>
   </div>
 </section>

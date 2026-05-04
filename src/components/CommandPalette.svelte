@@ -6,8 +6,7 @@
     FolderOpen,
     Folder,
     Trash2,
-    Pencil,
-    Activity
+    Pencil
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import type {
@@ -19,7 +18,6 @@
   import { projects } from '../stores/projects.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { settings } from '../stores/settings.svelte';
-  import { rightRail } from '../stores/right-rail.svelte';
   import { nav } from '../stores/nav.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
@@ -130,14 +128,6 @@
       icon: SettingsIcon,
       run: () => settings.openDrawer()
     });
-    list.push({
-      id: 'action.open-diagnostics',
-      title: 'Open diagnostics',
-      section: 'Actions',
-      icon: Activity,
-      run: () => rightRail.openTab('diagnostics')
-    });
-
     for (const session of sessions.sessions) {
       list.push({
         id: `session.switch.${session.id}`,
