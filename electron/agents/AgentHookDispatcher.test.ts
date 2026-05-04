@@ -67,6 +67,22 @@ describe('AgentHookDispatcher', () => {
       expect(observer.getSnapshot('sess-1')?.state).toBe('waiting_for_approval');
     });
 
+    it('preserves Claude permission notification messages for approval summaries', async () => {
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: {
+          hook_event_name: 'Notification',
+          notification_type: 'permission_prompt',
+          message: 'Claude needs permission to use WebFetch'
+        }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('waiting_for_approval');
+      expect(observer.listEvents('sess-1')[0]?.summary).toBe(
+        'Claude needs permission to use WebFetch'
+      );
+    });
+
     it('maps Claude idle notifications back to idle instead of approval', async () => {
       observer.setTuiObservedState('sess-1', 'waiting_for_approval', 'waiting for approval');
       await dispatcher.dispatch({

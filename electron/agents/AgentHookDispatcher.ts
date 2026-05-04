@@ -261,16 +261,22 @@ function mapClaudeNotification(payload: Record<string, unknown>): HookMapping {
   const notificationType = stringField(payload, 'notification_type');
   const message = stringField(payload, 'message') ?? '';
   const lowerMessage = message.toLowerCase();
+  const summary = notificationSummary(message, 'waiting for approval');
 
   if (notificationType === 'idle_prompt' || lowerMessage.includes('waiting for your input')) {
     return { state: 'idle', summary: 'idle' };
   }
 
   if (notificationType === 'permission_prompt' || lowerMessage.includes('permission')) {
-    return { state: 'waiting_for_approval', summary: 'waiting for approval' };
+    return { state: 'waiting_for_approval', summary };
   }
 
-  return { state: 'waiting_for_approval', summary: 'waiting for approval' };
+  return { state: 'waiting_for_approval', summary };
+}
+
+function notificationSummary(message: string, fallback: string): string {
+  const normalized = message.trim().replace(/\s+/g, ' ');
+  return normalized || fallback;
 }
 
 function mapCodexHook(
