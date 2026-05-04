@@ -4,6 +4,7 @@
   import type { Session, SessionId, SessionColor } from '@shared/types/sessions.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -15,6 +16,7 @@
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
+  import AgentStateBadge from './AgentStateBadge.svelte';
 
   type StatusTone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger';
 
@@ -59,6 +61,15 @@
 
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
+  let observed = $derived(sessions.observationFor(session.id));
+  let latestEvent = $derived(sessions.eventsFor(session.id)[0] ?? null);
+  let observedSummary = $derived(
+    latestEvent?.state === observed?.state
+      ? latestEvent?.summary ?? null
+      : observed?.resultSummary ?? observed?.promptSummary ?? null
+  );
+  let marker = $derived(agentNotifications.markerFor(session.id));
+  let markerPulses = $derived(agentNotifications.pulsingSessionId === session.id);
   let workerCount = $derived(sessions.childWorkersFor(session.id).length);
   let kbdIndex = $derived(nav.sessionIndexHints[session.id] ?? null);
   // hasRuntime distinguishes "user has launched this at least once in this app
@@ -67,6 +78,7 @@
   let hasRuntime = $derived(sessions.runtime[session.id] !== undefined);
   let isAgent = $derived(session.kind === 'claude_code' || session.kind === 'codex');
   let showSpawnSpinner = $derived(hasRuntime && status === 'starting');
+  let showAgentBadge = $derived(isAgent && observed !== null);
   let statusPill = $derived(buildStatusPill());
 
   function onClick(e: MouseEvent) {
@@ -189,9 +201,8 @@
   let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
-  // Pills are reserved for agents that have stopped — successful exit, error
-  // exit, or any other terminal state. Live agents and terminals stay clean;
-  // the spawn spinner covers the "starting" phase.
+  // Fallback for agents that predate observer snapshots or failed before one
+  // was emitted. AgentStateBadge is the primary agent state pill.
   function buildStatusPill(): StatusPill | null {
     if (!hasRuntime || !isAgent) return null;
     if (status !== 'exited' && status !== 'error') return null;
@@ -328,6 +339,16 @@
             aria-hidden="true"
           ></span>
         {/if}
+        {#if marker}
+          <span
+            class={cn(
+              'pointer-events-none absolute top-1 right-0 bottom-1 w-0.5 rounded-l-full bg-primary',
+              markerPulses && 'animate-pulse'
+            )}
+            title={marker.reason}
+            aria-hidden="true"
+          ></span>
+        {/if}
         <KindIcon kind={session.kind} size={14} />
         <span class="flex min-w-0 flex-1 flex-col gap-1">
           <span class="flex min-w-0 items-center gap-1.5">
@@ -347,7 +368,12 @@
                 {session.name || '(unnamed)'}
               </span>
             {/if}
-            {#if showSpawnSpinner}
+            {#if showAgentBadge && observed}
+              <AgentStateBadge
+                state={observed.state}
+                summary={observedSummary}
+              />
+            {:else if showSpawnSpinner}
               <span
                 class="inline-flex shrink-0 items-center text-muted-foreground"
                 title="Starting…"

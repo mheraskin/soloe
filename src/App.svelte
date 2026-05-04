@@ -29,6 +29,7 @@
   import CommandPalette from './components/CommandPalette.svelte';
   import FilePalette from './components/FilePalette.svelte';
   import AgentIntegrationSetupDialog from './components/AgentIntegrationSetupDialog.svelte';
+  import AgentNotificationToasts from './components/AgentNotificationToasts.svelte';
 
   let appliedTheme: string | null = null;
 
@@ -265,5 +266,6 @@
   <ConfirmDialog />
   <AgentIntegrationSetupDialog />
   <SettingsDrawer />
+  <AgentNotificationToasts />
   <Toaster richColors closeButton />
 </div>
