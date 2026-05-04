@@ -136,6 +136,29 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     expect(rc).toContain('export SOLOE_BRIDGE_TOKEN=secret');
     expect(rc).not.toContain('SOLOE_AGENT_PROVIDER');
   });
+
+  it('wraps manual agent launches in WSL bash so terminals promote immediately', () => {
+    const s: Session = {
+      ...baseFields(),
+      kind: 'standard_terminal',
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      shell: 'bash'
+    };
+    const inner = innerLine(
+      builder.build(s, {
+        ...ctx,
+        bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
+      }).args
+    );
+    const m = inner.match(/printf %s ([A-Za-z0-9+/=]+) \| base64/);
+    const rc = Buffer.from(m![1]!, 'base64').toString('utf8');
+    expect(rc).toContain('claude() { __soloe_agent_launch claude "$@"; }');
+    expect(rc).toContain('codex() { __soloe_agent_launch codex "$@"; }');
+    expect(rc).toContain('"$__soloe_u/hook/$__soloe_provider"');
+    expect(rc).toContain('"hook_event_name":"SessionStart"');
+    expect(rc).toContain('command "$__soloe_provider" "$@"');
+  });
 });
 
 describe('SessionCommandBuilder — claude_code kind', () => {

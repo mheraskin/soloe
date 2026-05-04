@@ -300,10 +300,39 @@ function buildWslBashLocationLine(env: Record<string, string>): string {
   const rcLines = [
     'test -r ~/.bashrc && source ~/.bashrc',
     ...exportLines,
+    buildAgentLaunchFunctions(),
     `PROMPT_COMMAND='${escaped}'`,
     'eval "$PROMPT_COMMAND"'
   ];
   const rcContent = rcLines.join('\n');
   const rcB64 = Buffer.from(rcContent, 'utf8').toString('base64');
   return `exec bash --rcfile <(printf %s ${rcB64} | base64 -d) -i`;
+}
+
+function buildAgentLaunchFunctions(): string {
+  return [
+    '__soloe_agent_launch() {',
+    '  __soloe_provider="$1"',
+    '  shift',
+    '  if [ -n "$SOLOE_BRIDGE_URL" ] && [ -n "$SOLOE_BRIDGE_TOKEN" ] && [ -n "$SOLOE_SESSION_ID" ]; then',
+    '    __soloe_u="$SOLOE_BRIDGE_URL"',
+    '    case "$__soloe_u" in *host.wsl.internal*)',
+    '      getent hosts host.wsl.internal >/dev/null 2>&1 || {',
+    '        __soloe_h=$(ip route 2>/dev/null | awk \'/^default/ {print $3; exit}\')',
+    '        [ -z "$__soloe_h" ] && __soloe_h=$(awk \'/^nameserver/ {print $2; exit}\' /etc/resolv.conf 2>/dev/null)',
+    '        [ -n "$__soloe_h" ] && __soloe_u=$(printf \'%s\' "$__soloe_u" | sed "s|host\\.wsl\\.internal|$__soloe_h|")',
+    '      }',
+    '      ;;',
+    '    esac',
+    '    printf \'{"hook_event_name":"SessionStart","source":"shell_launch"}\' | curl -sS --max-time 1 -X POST \\',
+    '      -H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN" \\',
+    '      -H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" \\',
+    '      -H "Content-Type: application/json" \\',
+    '      --data-binary @- "$__soloe_u/hook/$__soloe_provider" >/dev/null 2>&1 || true',
+    '  fi',
+    '  command "$__soloe_provider" "$@"',
+    '}',
+    'claude() { __soloe_agent_launch claude "$@"; }',
+    'codex() { __soloe_agent_launch codex "$@"; }'
+  ].join('\n');
 }
