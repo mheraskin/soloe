@@ -15,6 +15,7 @@ import { ipc } from '../lib/ipc';
 import { projects } from './projects.svelte';
 import { settings } from './settings.svelte';
 import { randomName } from '../lib/random-name';
+import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelte';
 
 const LAST_SELECTED_KEY = 'soloe.lastSelectedByProject.v1';
 const STANDALONE_KEY = '__standalone__';
@@ -150,6 +151,13 @@ class SessionsStore {
       if (!this.selectedId && list.length > 0) {
         this.selectedId = this.pickInitialSelection(list);
       }
+      for (const snapshot of observed) {
+        const rowSessionId = rowSessionIdFor(snapshot);
+        const session = rowSessionId
+          ? this.sessions.find((s) => s.id === rowSessionId) ?? null
+          : null;
+        agentNotifications.primeSnapshot(snapshot, session, this.selectedId);
+      }
     } finally {
       this.loading = false;
     }
@@ -232,11 +240,21 @@ class SessionsStore {
     );
     this.detachers.push(
       ipc.observer.onSnapshot((snapshot) => {
+        const rowSessionId = rowSessionIdFor(snapshot);
+        const session = rowSessionId
+          ? this.sessions.find((s) => s.id === rowSessionId) ?? null
+          : null;
+        agentNotifications.observeSnapshot(snapshot, session, this.selectedId);
         this.observed = { ...this.observed, [snapshot.id]: snapshot };
       })
     );
     this.detachers.push(
       ipc.observer.onEvent((event) => {
+        const rowSessionId = this.rowSessionIdForEvent(event);
+        const session = rowSessionId
+          ? this.sessions.find((s) => s.id === rowSessionId) ?? null
+          : null;
+        agentNotifications.observeEvent(event, session, this.selectedId, rowSessionId);
         const current = this.observerEvents[event.subjectId] ?? [];
         this.observerEvents = {
           ...this.observerEvents,
@@ -244,6 +262,12 @@ class SessionsStore {
         };
       })
     );
+  }
+
+  private rowSessionIdForEvent(event: ObserverEvent): SessionId | null {
+    const snapshot = this.observed[event.subjectId];
+    if (snapshot) return rowSessionIdFor(snapshot);
+    return this.sessions.some((s) => s.id === event.subjectId) ? event.subjectId : null;
   }
 
   detach(): void {
@@ -385,6 +409,7 @@ class SessionsStore {
     }
     await ipc.sessions.delete(id);
     this.sessions = this.sessions.filter((s) => s.id !== id);
+    agentNotifications.removeSession(id);
     const next = { ...this.runtime };
     delete next[id];
     this.runtime = next;
@@ -428,6 +453,7 @@ class SessionsStore {
     const updated = await ipc.sessions.update(id, { archivedAt: new Date().toISOString() });
     this.sessions = this.sessions.filter((s) => s.id !== id);
     this.archived = [updated, ...this.archived.filter((s) => s.id !== id)];
+    agentNotifications.removeSession(id);
     const next = { ...this.runtime };
     delete next[id];
     this.runtime = next;
@@ -500,6 +526,7 @@ class SessionsStore {
   select(id: SessionId | null): void {
     this.selectedId = id;
     if (id) {
+      agentNotifications.acknowledge(id);
       const session = this.sessions.find((s) => s.id === id);
       if (session) {
         const key = session.projectId ?? STANDALONE_KEY;
