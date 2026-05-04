@@ -19,6 +19,7 @@
   import { Loader2, X } from '@lucide/svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
   import {
+    altWordEditSequence,
     isClipboardPasteShortcut,
     SHIFT_ENTER_SEQUENCE,
     shouldSendShiftEnterSequence
@@ -212,6 +213,18 @@
       if (projectIndexFromEvent(e) !== null) return false;
       for (const binding of Object.values(Keymap)) {
         if (binding.match(e)) return false;
+      }
+
+      // Readline word-edit and word-nav shortcuts. xterm.js's defaults don't
+      // reach the PTY reliably through electron on linux, so emit the escape
+      // sequences ourselves.
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        const seq = altWordEditSequence(e);
+        if (seq !== null) {
+          e.preventDefault();
+          void ipc.terminal.input(terminalId, seq).catch(() => {});
+          return false;
+        }
       }
 
       if (isClipboardPasteShortcut(e)) {

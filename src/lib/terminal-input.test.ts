@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  altWordEditSequence,
   isClipboardPasteShortcut,
   SHIFT_ENTER_SEQUENCE,
   shouldSendShiftEnterSequence
@@ -31,5 +32,13 @@ describe('terminal input helpers', () => {
 
   it('uses the CSI-u Shift+Enter sequence Codex-compatible terminals emit', () => {
     expect(SHIFT_ENTER_SEQUENCE).toBe('\x1b[13;2u');
+  });
+
+  it('emits readline word-edit and word-nav sequences for Alt-modified keys', () => {
+    expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }))).toBe('\x1b\x7f');
+    expect(altWordEditSequence(key({ altKey: true, key: 'Delete' }))).toBe('\x1b[3;3~');
+    expect(altWordEditSequence(key({ altKey: true, key: 'ArrowLeft' }))).toBe('\x1b[1;3D');
+    expect(altWordEditSequence(key({ altKey: true, key: 'ArrowRight' }))).toBe('\x1b[1;3C');
+    expect(altWordEditSequence(key({ altKey: true, key: 'a' }))).toBeNull();
   });
 });
