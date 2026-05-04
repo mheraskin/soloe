@@ -1,11 +1,13 @@
 import type { AgentObservedState, SessionId } from '@shared/types/sessions.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
+import type { AutoRenameService } from './AutoRenameService.js';
 import type { HookEvent, HookProvider } from './SoloeMcpServer.js';
 
 export interface AgentHookDispatcherOptions {
   observer: AgentObserverManager;
   sessionStore: SessionStore;
+  autoRename?: AutoRenameService;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -15,6 +17,11 @@ interface HookMapping {
 }
 
 export class AgentHookDispatcher {
+  // Sessions that should rename on the *next* UserPromptSubmit. Populated on
+  // SessionStart so we cover both fresh sessions and `/resume` restarts —
+  // matches the user spec of "first message in session and on /resume".
+  private readonly pendingAutoRename = new Set<SessionId>();
+
   constructor(private readonly opts: AgentHookDispatcherOptions) {}
 
   async dispatch(event: HookEvent): Promise<void> {
@@ -27,6 +34,14 @@ export class AgentHookDispatcher {
 
   async dispatchClaude(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
     const hookEvent = stringField(payload, 'hook_event_name');
+    if (hookEvent === 'SessionStart') {
+      this.pendingAutoRename.add(soloeSessionId);
+      console.log(`[soloe-rename] dispatcher: SessionStart armed for ${soloeSessionId} (claude)`);
+    }
+    if (hookEvent === 'UserPromptSubmit') {
+      const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'user_message');
+      this.maybeTriggerAutoRename(soloeSessionId, prompt, 'claude');
+    }
     const mapping = mapClaudeHook(hookEvent, payload);
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
     await this.captureProviderSessionId(soloeSessionId, payload, 'claude_code');
@@ -34,9 +49,49 @@ export class AgentHookDispatcher {
 
   async dispatchCodex(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
     const hookEvent = stringField(payload, 'hook_event_name');
+    if (hookEvent === 'SessionStart') {
+      this.pendingAutoRename.add(soloeSessionId);
+      console.log(`[soloe-rename] dispatcher: SessionStart armed for ${soloeSessionId} (codex)`);
+    }
+    if (hookEvent === 'UserPromptSubmit') {
+      const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'user_message');
+      this.maybeTriggerAutoRename(soloeSessionId, prompt, 'codex');
+    }
     const mapping = mapCodexHook(hookEvent, payload);
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
     await this.captureProviderSessionId(soloeSessionId, payload, 'codex');
+  }
+
+  private maybeTriggerAutoRename(
+    soloeSessionId: SessionId,
+    prompt: string | undefined,
+    providerLabel: 'claude' | 'codex'
+  ): void {
+    if (!this.opts.autoRename) {
+      console.log(
+        `[soloe-rename] dispatcher: UserPromptSubmit skipped — no autoRename service (${providerLabel} ${soloeSessionId})`
+      );
+      return;
+    }
+    if (!this.pendingAutoRename.has(soloeSessionId)) {
+      console.log(
+        `[soloe-rename] dispatcher: UserPromptSubmit skipped — not pending (no SessionStart seen yet for ${providerLabel} ${soloeSessionId})`
+      );
+      return;
+    }
+    this.pendingAutoRename.delete(soloeSessionId);
+    if (!prompt) {
+      console.log(
+        `[soloe-rename] dispatcher: UserPromptSubmit skipped — empty prompt field (${providerLabel} ${soloeSessionId})`
+      );
+      return;
+    }
+    console.log(
+      `[soloe-rename] dispatcher: firing maybeRename for ${providerLabel} ${soloeSessionId} promptLen=${prompt.length}`
+    );
+    void this.opts.autoRename
+      .maybeRename({ sessionId: soloeSessionId, firstPrompt: prompt })
+      .catch((err) => this.opts.log?.('auto-rename dispatch failed', err));
   }
 
   private applyMapping(

@@ -1,10 +1,13 @@
 <script lang="ts">
   import { settings } from '../../stores/settings.svelte';
   import type {
+    ModelSelection,
+    ModelTask,
     SettingsBinaries,
     TerminalFontSizePref,
     ThemePref
   } from '@shared/types/settings.js';
+  import { MODEL_CATALOG } from '@shared/types/settings.js';
   import type { RunMode, ShellKind } from '@shared/types/sessions.js';
   import { reportError } from '../../stores/toast.svelte';
   import { Label } from '$lib/components/ui/label';
@@ -26,6 +29,49 @@
     { key: 'rg', label: 'rg', placeholder: 'rg' },
     { key: 'editor', label: 'External editor', placeholder: 'code' }
   ];
+
+  const modelTasks: { key: ModelTask; label: string; hint: string }[] = [
+    {
+      key: 'textGeneration',
+      label: 'Session naming',
+      hint: 'Used to auto-rename a session from its first prompt.'
+    },
+    {
+      key: 'gitCommitGeneration',
+      label: 'Git commit messages',
+      hint: 'Used when suggesting commit messages from a diff.'
+    }
+  ];
+
+  function modelKey(value: ModelSelection | undefined): string {
+    return value ? `${value.provider}:${value.id}` : '';
+  }
+
+  function parseModelKey(value: string): ModelSelection | null {
+    const idx = value.indexOf(':');
+    if (idx <= 0) return null;
+    const provider = value.slice(0, idx);
+    const id = value.slice(idx + 1);
+    if (provider !== 'codex' && provider !== 'claude') return null;
+    if (!id) return null;
+    return { provider, id };
+  }
+
+  function modelLabel(value: ModelSelection | undefined): string {
+    if (!value) return 'Select a model';
+    const entry = MODEL_CATALOG.find(
+      (m) => m.provider === value.provider && m.id === value.id
+    );
+    return entry?.label ?? `${value.provider}: ${value.id}`;
+  }
+
+  async function setModel(task: ModelTask, value: string) {
+    const parsed = parseModelKey(value);
+    if (!parsed) return;
+    try {
+      await settings.update({ models: { [task]: parsed } });
+    } catch (e) { reportError(e); }
+  }
 
   async function setAppearance<K extends 'theme'>(
     key: K,
@@ -92,6 +138,36 @@
       </Select.Content>
     </Select.Root>
   </div>
+</section>
+
+<section class="flex flex-col gap-2.5 border-b border-border py-3">
+  <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Models</h3>
+  <p class="m-0 text-[11px] text-muted-foreground">
+    Pick which CLI handles each background LLM task. Connect a provider in Agent integration if it isn't listed.
+  </p>
+  {#each modelTasks as task (task.key)}
+    <div class="flex flex-col gap-1.5">
+      <Label class="text-xs text-muted-foreground">{task.label}</Label>
+      <Select.Root
+        type="single"
+        value={modelKey(settings.current.models[task.key])}
+        onValueChange={(v) => setModel(task.key, v)}
+      >
+        <Select.Trigger class="w-full">{modelLabel(settings.current.models[task.key])}</Select.Trigger>
+        <Select.Content>
+          {#each MODEL_CATALOG as entry (modelKey(entry))}
+            <Select.Item value={modelKey(entry)} label={entry.label}>
+              <span class="flex items-center gap-2">
+                <span class="text-muted-foreground text-[10px] uppercase tracking-wider">{entry.provider}</span>
+                <span>{entry.label}</span>
+              </span>
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+      <span class="text-[11px] text-muted-foreground">{task.hint}</span>
+    </div>
+  {/each}
 </section>
 
 <section class="flex flex-col gap-2.5 border-b border-border py-3">

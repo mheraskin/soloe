@@ -262,6 +262,18 @@ class SessionsStore {
         };
       })
     );
+    this.detachers.push(
+      ipc.sessions.onChange((session) => {
+        const idx = this.sessions.findIndex((s) => s.id === session.id);
+        if (idx === -1) {
+          this.sessions = [...this.sessions, session];
+        } else {
+          const next = [...this.sessions];
+          next[idx] = session;
+          this.sessions = next;
+        }
+      })
+    );
   }
 
   private rowSessionIdForEvent(event: ObserverEvent): SessionId | null {
@@ -277,11 +289,6 @@ class SessionsStore {
 
   private async applyTerminalLocation(id: SessionId, cwd: string): Promise<void> {
     const current = this.sessions.find((s) => s.id === id);
-    console.info('[DEBUG-cwd] renderer location event', {
-      sessionId: id,
-      previousCwd: current?.cwd ?? null,
-      cwd
-    });
     if (!current || current.cwd === cwd) return;
     const version = (this.locationVersions.get(id) ?? 0) + 1;
     this.locationVersions.set(id, version);
@@ -290,27 +297,18 @@ class SessionsStore {
     );
 
     const status = await ipc.git.status({ cwd, force: true }).catch(() => null);
-    console.info('[DEBUG-cwd] renderer git status for location', {
-      sessionId: id,
-      cwd,
-      branch: status?.branch ?? null,
-      isRepo: status?.isRepo ?? false
-    });
     if (this.locationVersions.get(id) !== version) return;
     const patch: SessionUpdate = { cwd, lastBranch: status?.branch ?? undefined };
     const updated = await ipc.sessions.update(id, patch).catch(() => null);
-    console.info('[DEBUG-cwd] renderer persisted location', {
-      sessionId: id,
-      cwd,
-      persisted: Boolean(updated)
-    });
     if (!updated || this.locationVersions.get(id) !== version) return;
     this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
   }
 
   async create(draft: SessionDraft): Promise<Session> {
     const created = await ipc.sessions.create(draft);
-    this.sessions = [created, ...this.sessions];
+    // New sessions get the highest sortIndex from the backend, so appending
+    // here matches the persisted order. Selection moves to the new session.
+    this.sessions = [...this.sessions, created];
     this.selectedId = created.id;
     return created;
   }
@@ -398,6 +396,13 @@ class SessionsStore {
     return updated;
   }
 
+  async reorder(orderedIds: SessionId[]): Promise<void> {
+    const list = await ipc.sessions.reorder(orderedIds);
+    // Backend returns active (non-archived) sessions only. Replace in-store
+    // state so the sidebar reflects the new order immediately.
+    this.sessions = list;
+  }
+
   async remove(id: SessionId): Promise<void> {
     const rt = this.runtime[id];
     if (rt && rt.terminalId && (rt.status === 'running' || rt.status === 'starting')) {
@@ -479,7 +484,9 @@ class SessionsStore {
     if (!session) return;
     const updated = await ipc.sessions.update(id, { archivedAt: undefined });
     this.archived = this.archived.filter((s) => s.id !== id);
-    this.sessions = [updated, ...this.sessions.filter((s) => s.id !== id)];
+    // Append so the restored row keeps its existing sortIndex position relative
+    // to siblings; insertion order matches what the backend will send next.
+    this.sessions = [...this.sessions.filter((s) => s.id !== id), updated];
   }
 
   async start(id: SessionId): Promise<void> {

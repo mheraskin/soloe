@@ -6,7 +6,8 @@ import type {
   AgentIntegrationStatus,
   SoloeApi,
   TerminalInputPayload,
-  TerminalResizePayload
+  TerminalResizePayload,
+  ToastNotification
 } from '@shared/types/ipc.js';
 import type {
   CreateWorkerSessionRequest,
@@ -16,6 +17,7 @@ import type {
   SendWorkerPromptRequest
 } from '@shared/types/agents.js';
 import type {
+  Session,
   SessionDraft,
   SessionId,
   SessionUpdate
@@ -67,8 +69,12 @@ const soloe: SoloeApi = {
     update: (id: SessionId, patch: SessionUpdate) =>
       ipcRenderer.invoke(IpcChannels.sessions.update, id, patch),
     delete: (id: SessionId) => ipcRenderer.invoke(IpcChannels.sessions.delete, id),
+    reorder: (orderedIds: SessionId[]) =>
+      ipcRenderer.invoke(IpcChannels.sessions.reorder, orderedIds),
     previewCommand: (id: SessionId) =>
-      ipcRenderer.invoke(IpcChannels.sessions.previewCommand, id)
+      ipcRenderer.invoke(IpcChannels.sessions.previewCommand, id),
+    onChange: (cb: (session: Session) => void) =>
+      subscribe<Session>(IpcChannels.sessions.changed, cb)
   },
   terminal: {
     start: (opts: TerminalStartOptions) => ipcRenderer.invoke(IpcChannels.terminal.start, opts),
@@ -128,6 +134,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.projects.update, id, patch),
     delete: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.delete, id),
     touch: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.touch, id),
+    reorder: (orderedIds: ProjectId[]) =>
+      ipcRenderer.invoke(IpcChannels.projects.reorder, orderedIds),
     detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
     suggestPaths: (query: string, options?: ProjectSuggestOptions) =>
       ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query, options),
@@ -191,6 +199,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallCodex, request),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       subscribe<AgentIntegrationStatus>(IpcChannels.agentIntegration.changed, cb)
+  },
+  notify: {
+    onToast: (cb: (toast: ToastNotification) => void) =>
+      subscribe<ToastNotification>(IpcChannels.notify.toast, cb)
   }
 };
 

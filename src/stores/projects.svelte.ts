@@ -13,6 +13,9 @@ import { ipc } from '../lib/ipc';
 class ProjectsStore {
   projects = $state<Project[]>([]);
   loaded = $state(false);
+  // Set when the renderer just added a project so the sidebar can center-scroll
+  // to it. Cleared after consumed.
+  newlyAddedId = $state<ProjectId | null>(null);
 
   byId = $derived.by<Record<ProjectId, Project>>(() => {
     const out: Record<ProjectId, Project> = {};
@@ -20,9 +23,10 @@ class ProjectsStore {
     return out;
   });
 
-  recents = $derived(
-    [...this.projects].sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt))
-  );
+  // User-controlled order: sortIndex ASC, with createdAt as tiebreaker. The
+  // legacy `recents` name is kept so existing callers (nav store) keep working
+  // — semantics changed from "most recently opened first" to "user order".
+  recents = $derived([...this.projects].sort(compareProjects));
 
   private detachers: Array<() => void> = [];
 
@@ -53,13 +57,18 @@ class ProjectsStore {
 
   async create(draft: ProjectDraft): Promise<Project> {
     const created = await ipc.projects.create(draft);
-    this.projects = [created, ...this.projects.filter((p) => p.id !== created.id)];
+    this.projects = [...this.projects.filter((p) => p.id !== created.id), created];
+    this.newlyAddedId = created.id;
     return created;
   }
 
   async open(request: ProjectOpenRequest): Promise<Project> {
     const opened = await ipc.projects.open(request);
-    this.projects = [opened, ...this.projects.filter((p) => p.id !== opened.id)];
+    const existed = this.projects.some((p) => p.id === opened.id);
+    this.projects = [...this.projects.filter((p) => p.id !== opened.id), opened];
+    // Only flag newly-added (not re-opened) projects so the sidebar doesn't
+    // jump every time the user revisits an existing project.
+    if (!existed) this.newlyAddedId = opened.id;
     return opened;
   }
 
@@ -81,6 +90,15 @@ class ProjectsStore {
     }
   }
 
+  async reorder(orderedIds: ProjectId[]): Promise<void> {
+    const list = await ipc.projects.reorder(orderedIds);
+    this.projects = list;
+  }
+
+  consumeNewlyAdded(id: ProjectId): void {
+    if (this.newlyAddedId === id) this.newlyAddedId = null;
+  }
+
   async detectFromPath(path: string): Promise<ProjectDetectResult> {
     return ipc.projects.detectFromPath(path);
   }
@@ -94,3 +112,14 @@ class ProjectsStore {
 }
 
 export const projects = new ProjectsStore();
+
+function compareProjects(a: Project, b: Project): number {
+  const ai = sortKey(a);
+  const bi = sortKey(b);
+  if (ai !== bi) return ai - bi;
+  return a.createdAt.localeCompare(b.createdAt);
+}
+
+function sortKey(p: Project): number {
+  return Number.isFinite(p.sortIndex) ? (p.sortIndex as number) : Number.MAX_SAFE_INTEGER;
+}

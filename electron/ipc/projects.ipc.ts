@@ -57,6 +57,10 @@ export class ProjectsIpc {
       ipcInvoke(() => this.opts.store.touch(id))
     );
 
+    ipcMain.handle(IpcChannels.projects.reorder, (_e, orderedIds: ProjectId[]) =>
+      ipcInvoke(() => this.opts.store.reorder(orderedIds))
+    );
+
     ipcMain.handle(IpcChannels.projects.detectFromPath, (_e, p: string) =>
       ipcInvoke(() => this.opts.store.detectFromPath(p))
     );
@@ -83,6 +87,7 @@ export class ProjectsIpc {
     ipcMain.removeHandler(IpcChannels.projects.update);
     ipcMain.removeHandler(IpcChannels.projects.delete);
     ipcMain.removeHandler(IpcChannels.projects.touch);
+    ipcMain.removeHandler(IpcChannels.projects.reorder);
     ipcMain.removeHandler(IpcChannels.projects.detectFromPath);
     ipcMain.removeHandler(IpcChannels.projects.suggestPaths);
     this.detachListener?.();

@@ -3,7 +3,10 @@ import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
   DEFAULT_SETTINGS,
+  MODEL_CATALOG,
+  type ModelSelection,
   type Settings,
+  type SettingsModels,
   type SettingsUpdate
 } from '@shared/types/settings.js';
 
@@ -11,6 +14,8 @@ const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
 const VALID_RUN_MODES = new Set(['windows', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
+const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
+const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration'];
 
 export class SettingsStore {
   private cache: Settings | null = null;
@@ -37,7 +42,8 @@ export class SettingsStore {
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
       terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
       defaults: { ...this.cache!.defaults, ...(patch.defaults ?? {}) },
-      binaries: mergeBinaries(this.cache!.binaries, patch.binaries)
+      binaries: mergeBinaries(this.cache!.binaries, patch.binaries),
+      models: mergeModels(this.cache!.models, patch.models)
     };
     validateSettings(next);
     this.cache = next;
@@ -110,6 +116,57 @@ function mergeBinaries(
   return out;
 }
 
+function mergeModels(
+  current: SettingsModels,
+  patch: Partial<SettingsModels> | undefined
+): SettingsModels {
+  const out: SettingsModels = { ...current };
+  if (!patch) return out;
+  for (const task of VALID_MODEL_TASKS) {
+    if (!(task in patch)) continue;
+    const value = patch[task];
+    if (!value) {
+      delete out[task];
+    } else if (parseModelSelection(value)) {
+      out[task] = parseModelSelection(value)!;
+    }
+  }
+  return out;
+}
+
+function parseModelSelection(raw: unknown): ModelSelection | null {
+  if (!isObject(raw)) return null;
+  const provider = raw['provider'];
+  const id = raw['id'];
+  if (typeof provider !== 'string' || !VALID_MODEL_PROVIDERS.has(provider)) return null;
+  if (typeof id !== 'string' || !id.trim()) return null;
+  const known = MODEL_CATALOG.find((m) => m.provider === provider && m.id === id);
+  if (!known) return null;
+  return { provider: provider as ModelSelection['provider'], id };
+}
+
+function parseModels(raw: unknown): SettingsModels {
+  if (!isObject(raw)) return cloneDefaultModels();
+  const out: SettingsModels = {};
+  for (const task of VALID_MODEL_TASKS) {
+    const parsed = parseModelSelection(raw[task]);
+    if (parsed) out[task] = parsed;
+  }
+  // If the persisted value is missing entries, fall back to defaults so the
+  // user always has something selected after upgrade or fresh install.
+  if (!out.textGeneration && DEFAULT_SETTINGS.models.textGeneration) {
+    out.textGeneration = { ...DEFAULT_SETTINGS.models.textGeneration };
+  }
+  if (!out.gitCommitGeneration && DEFAULT_SETTINGS.models.gitCommitGeneration) {
+    out.gitCommitGeneration = { ...DEFAULT_SETTINGS.models.gitCommitGeneration };
+  }
+  return out;
+}
+
+function cloneDefaultModels(): SettingsModels {
+  return clone(DEFAULT_SETTINGS.models);
+}
+
 function parseSettings(raw: unknown): Settings {
   if (!isObject(raw)) return clone(DEFAULT_SETTINGS);
   const appearance = isObject(raw['appearance']) ? raw['appearance'] : {};
@@ -135,7 +192,8 @@ function parseSettings(raw: unknown): Settings {
       cwd: typeof defaults['cwd'] === 'string' && defaults['cwd'] ? defaults['cwd'] : DEFAULT_SETTINGS.defaults.cwd,
       ...(typeof defaults['wslDistro'] === 'string' && defaults['wslDistro'] ? { wslDistro: defaults['wslDistro'] } : {})
     },
-    binaries: filterStringRecord(binaries)
+    binaries: filterStringRecord(binaries),
+    models: parseModels(raw['models'])
   };
   validateSettings(out);
   return out;
@@ -181,6 +239,16 @@ function validateSettings(s: Settings): void {
   }
   if (s.defaults.runMode === 'wsl' && s.defaults.wslDistro !== undefined && !s.defaults.wslDistro) {
     throw new Error('wslDistro must be a non-empty string when set');
+  }
+  if (!isObject(s.models as unknown)) {
+    throw new Error('models must be an object');
+  }
+  for (const task of VALID_MODEL_TASKS) {
+    const sel = s.models[task];
+    if (sel === undefined) continue;
+    if (!parseModelSelection(sel)) {
+      throw new Error(`Invalid models.${task}: ${JSON.stringify(sel)}`);
+    }
   }
 }
 

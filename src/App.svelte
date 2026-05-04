@@ -16,6 +16,7 @@
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from './lib/keymap';
   import { kbdHints } from './stores/kbd-hints.svelte';
+  import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Toaster } from '$lib/components/ui/sonner';
   import Sidebar from './components/Sidebar.svelte';
@@ -38,12 +39,20 @@
     projects.attachListeners();
     notes.attachListeners();
     git.attachListeners();
+    const detachToast = ipc.notify.onToast((t) => {
+      const opts = t.description ? { description: t.description } : undefined;
+      if (t.severity === 'error') toast.error(t.message, opts);
+      else if (t.severity === 'success') toast.success(t.message, opts);
+      else if (t.severity === 'warning') toast.warning(t.message, opts);
+      else toast(t.message, opts);
+    });
     void loadInitialState();
     const detachKbdHints = kbdHints.attach();
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
       detachKbdHints();
+      detachToast();
       sessions.detach();
       settings.detach();
       projects.detach();
@@ -75,6 +84,50 @@
     if (theme === appliedTheme) return;
     appliedTheme = theme;
     untrack(() => setMode(theme));
+  });
+
+  // Poll git status/diff for every worktree of every known project at the
+  // slow tier so sessionless worktrees still get a +N −N indicator. Sessions
+  // bump matching worktrees to the fast tier via the next effect.
+  $effect(() => {
+    const list = projects.projects;
+    const intents = list.map((p) => ({
+      repoPath: p.path,
+      ...(p.defaultRunMode ? { runMode: p.defaultRunMode } : {}),
+      ...(p.defaultWslDistro ? { wslDistro: p.defaultWslDistro } : {})
+    }));
+    void git.refreshProjectWorktrees(intents);
+  });
+
+  // Drive git status/diff polling for every worktree that has a session.
+  // Worktrees with at least one running/starting session (or holding the
+  // selected session) tick every 1.5s; idle ones fall back to 15s so we
+  // don't burn `git diff` on dozens of dormant projects.
+  $effect(() => {
+    const list = sessions.sessions;
+    const selectedId = sessions.selectedId;
+    type Intent = { fast: boolean; runMode?: 'windows' | 'wsl'; wslDistro?: string };
+    const intentByCwd = new Map<string, Intent>();
+    for (const s of list) {
+      const cwd = s.cwd?.trim();
+      if (!cwd) continue;
+      const status = sessions.statusFor(s.id);
+      const active = status === 'running' || status === 'starting' || s.id === selectedId;
+      const prev = intentByCwd.get(cwd);
+      const next: Intent = {
+        fast: (prev?.fast ?? false) || active,
+        runMode: prev?.runMode ?? s.runMode,
+        wslDistro: prev?.wslDistro ?? s.wslDistro
+      };
+      intentByCwd.set(cwd, next);
+    }
+    const intents = Array.from(intentByCwd, ([cwd, info]) => ({
+      cwd,
+      fast: info.fast,
+      ...(info.runMode ? { runMode: info.runMode } : {}),
+      ...(info.wslDistro ? { wslDistro: info.wslDistro } : {})
+    }));
+    git.setWorktreePolling(intents);
   });
 
   function consume(e: KeyboardEvent): void {

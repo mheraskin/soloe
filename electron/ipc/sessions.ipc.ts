@@ -1,6 +1,11 @@
-import { ipcMain } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
-import type { SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import type {
+  Session,
+  SessionDraft,
+  SessionId,
+  SessionUpdate
+} from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js';
@@ -14,12 +19,22 @@ export interface SessionsIpcOptions {
   observer?: AgentObserverManager;
   bridgeInfo?: () => { url: string; token: string } | null;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
+  getWindows?: () => BrowserWindow[];
 }
 
 export class SessionsIpc {
   private registered = false;
 
   constructor(private readonly opts: SessionsIpcOptions) {}
+
+  broadcastChange(session: Session): void {
+    const windows = this.opts.getWindows?.() ?? [];
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IpcChannels.sessions.changed, session);
+      }
+    }
+  }
 
   register(): void {
     if (this.registered) return;
@@ -65,6 +80,10 @@ export class SessionsIpc {
       })
     );
 
+    ipcMain.handle(IpcChannels.sessions.reorder, (_e, orderedIds: SessionId[]) =>
+      ipcInvoke(() => this.opts.store.reorder(orderedIds))
+    );
+
     ipcMain.handle(IpcChannels.sessions.previewCommand, (_e, id: SessionId) =>
       ipcInvoke(async () => {
         const session = await this.opts.store.get(id);
@@ -87,6 +106,7 @@ export class SessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.create);
     ipcMain.removeHandler(IpcChannels.sessions.update);
     ipcMain.removeHandler(IpcChannels.sessions.delete);
+    ipcMain.removeHandler(IpcChannels.sessions.reorder);
     ipcMain.removeHandler(IpcChannels.sessions.previewCommand);
     this.registered = false;
   }

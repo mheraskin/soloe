@@ -15,6 +15,8 @@ import { AgentObserverStore } from './agents/AgentObserverStore.js';
 import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
 import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
 import { AgentHookDispatcher } from './agents/AgentHookDispatcher.js';
+import { AutoRenameService } from './agents/AutoRenameService.js';
+import { Notifier } from './notify/Notifier.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
 import { GitService } from './git/GitService.js';
@@ -93,9 +95,37 @@ async function setupServices(): Promise<AppServices> {
   observerStore.attach(observer);
   for (const session of await store.list()) observer.registerTuiSession(session);
   const runtime = new AgentRuntimeManager({ observer });
+  const notifier = new Notifier({ getWindows: () => BrowserWindow.getAllWindows() });
+
+  const commandBuilder = new SessionCommandBuilder(
+    new ShellDetector(),
+    new WindowsCommandBuilder(),
+    new WslCommandBuilder()
+  );
+
+  let mcpInfo: SoloeMcpServerInfo | null = null;
+  const getBridgeInfo = () => mcpInfo;
+
+  const sessionsIpc = new SessionsIpc({
+    store,
+    commandBuilder,
+    observer,
+    bridgeInfo: getBridgeInfo,
+    getBinaries,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+
+  const autoRename = new AutoRenameService({
+    sessionStore: store,
+    settings,
+    notifier,
+    onSessionChange: (session) => sessionsIpc.broadcastChange(session),
+    log: (message, detail) => console.warn(`[auto-rename] ${message}`, detail)
+  });
   const hookDispatcher = new AgentHookDispatcher({
     observer,
     sessionStore: store,
+    autoRename,
     log: (message, detail) => console.warn(`[hook-dispatcher] ${message}`, detail)
   });
   const mcp = new SoloeMcpServer({
@@ -103,14 +133,7 @@ async function setupServices(): Promise<AppServices> {
     runtime,
     onHookEvent: (event) => hookDispatcher.dispatch(event)
   });
-  let mcpInfo: SoloeMcpServerInfo | null = await mcp.start();
-  const getBridgeInfo = () => mcpInfo;
-
-  const commandBuilder = new SessionCommandBuilder(
-    new ShellDetector(),
-    new WindowsCommandBuilder(),
-    new WslCommandBuilder()
-  );
+  mcpInfo = await mcp.start();
 
   let manager: PtyManager;
   const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
@@ -120,14 +143,6 @@ async function setupServices(): Promise<AppServices> {
     commandBuilder,
     store,
     batcher,
-    observer,
-    bridgeInfo: getBridgeInfo,
-    getBinaries
-  });
-
-  const sessionsIpc = new SessionsIpc({
-    store,
-    commandBuilder,
     observer,
     bridgeInfo: getBridgeInfo,
     getBinaries

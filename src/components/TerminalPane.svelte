@@ -18,6 +18,11 @@
   import { Input } from '$lib/components/ui/input';
   import { Loader2, X } from '@lucide/svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
+  import {
+    isClipboardPasteShortcut,
+    SHIFT_ENTER_SEQUENCE,
+    shouldSendShiftEnterSequence
+  } from '../lib/terminal-input';
 
   let {
     terminalId,
@@ -209,15 +214,21 @@
         if (binding.match(e)) return false;
       }
 
-      const ctrlOrCmd = (e.ctrlKey || e.metaKey) && !e.altKey;
-      if (ctrlOrCmd && e.key.toLowerCase() === 'v') {
+      if (isClipboardPasteShortcut(e)) {
         e.preventDefault();
         void navigator.clipboard.readText().then((text) => {
           if (!text) return;
-          void ipc.terminal.input(terminalId, text).catch(() => {});
+          t.paste(text);
         }).catch(() => {});
         return false;
       }
+      if (shouldSendShiftEnterSequence(e)) {
+        e.preventDefault();
+        void ipc.terminal.input(terminalId, SHIFT_ENTER_SEQUENCE).catch(() => {});
+        return false;
+      }
+
+      const ctrlOrCmd = (e.ctrlKey || e.metaKey) && !e.altKey;
       if (ctrlOrCmd && e.key.toLowerCase() === 'c') {
         if (!e.shiftKey) {
           if (!t.hasSelection()) return true;
@@ -427,9 +438,11 @@
 
 <style>
   :global(.xterm) {
+    background: #0f0f10 !important;
     height: 100%;
   }
+  :global(.xterm-screen),
   :global(.xterm-viewport) {
-    background: transparent !important;
+    background: #0f0f10 !important;
   }
 </style>

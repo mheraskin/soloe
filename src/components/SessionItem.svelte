@@ -8,9 +8,12 @@
     FolderOpen,
     Copy,
     Trash2,
-    GitBranch
+    GitBranch,
+    ChevronRight,
+    CircleSlash
   } from '@lucide/svelte';
-  import type { Session } from '@shared/types/sessions.js';
+  import type { Session, SessionId, SessionColor } from '@shared/types/sessions.js';
+  import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { nav } from '../stores/nav.svelte';
@@ -21,6 +24,7 @@
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
   import AgentStateBadge from './AgentStateBadge.svelte';
@@ -33,11 +37,38 @@
     tone: StatusTone;
   }
 
-  let { session, branch = null }: { session: Session; branch?: string | null } = $props();
+  let {
+    session,
+    branch = null,
+    onSessionDrop = null
+  }: {
+    session: Session;
+    branch?: string | null;
+    onSessionDrop?:
+      | ((args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) => void)
+      | null;
+  } = $props();
 
   let editing = $state(false);
   let editValue = $state('');
   let nameInput: HTMLInputElement | null = $state(null);
+  let menuOpen = $state(false);
+  let paletteExpanded = $state(false);
+
+  const COLOR_LABELS: Record<SessionColor, string> = {
+    red: 'Red',
+    orange: 'Orange',
+    amber: 'Amber',
+    yellow: 'Yellow',
+    green: 'Green',
+    teal: 'Teal',
+    cyan: 'Cyan',
+    blue: 'Blue',
+    violet: 'Violet',
+    pink: 'Pink'
+  };
+
+  const QUICK_COLORS: readonly SessionColor[] = ['red', 'amber', 'green', 'blue', 'violet'];
 
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
@@ -92,7 +123,7 @@
     editing = false;
     editValue = '';
     try {
-      await sessions.update(session.id, { name: next });
+      await sessions.update(session.id, { name: next, autoNamed: false });
     } catch (err) {
       reportError(err);
     }
@@ -165,6 +196,19 @@
     }
   }
 
+  async function setColor(color: SessionColor | null) {
+    if ((session.color ?? null) === color) return;
+    try {
+      await sessions.update(session.id, { color: color ?? undefined });
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  function colorVar(color: SessionColor): string {
+    return `var(--session-${color})`;
+  }
+
   let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
@@ -190,19 +234,109 @@
     } satisfies Record<StatusTone, string>;
     return classes[tone];
   }
+
+  let rowEl: HTMLElement | null = $state(null);
+  let dropPosition = $derived.by<DropPosition | null>(() => {
+    if (!onSessionDrop) return null;
+    const t = dnd.target;
+    if (!t || t.kind !== 'session' || t.id !== session.id) return null;
+    if (dnd.drag?.id === session.id) return null;
+    return t.position;
+  });
+  let isDraggingSelf = $derived(dnd.drag?.kind === 'session' && dnd.drag.id === session.id);
+
+  function onDragStart(e: DragEvent) {
+    if (!onSessionDrop || !e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DND_MIME.session, session.id);
+    dnd.begin({
+      kind: 'session',
+      id: session.id,
+      projectId: session.projectId ?? null,
+      worktreeCwd: session.cwd
+    });
+  }
+
+  function onDragOver(e: DragEvent) {
+    if (!onSessionDrop || !rowEl) return;
+    if (dnd.drag?.kind !== 'session') return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const position = dropPositionFromEvent(e, rowEl);
+    if (
+      dnd.target?.kind !== 'session'
+      || dnd.target.id !== session.id
+      || dnd.target.position !== position
+    ) {
+      dnd.setTarget({ kind: 'session', id: session.id, position });
+    }
+  }
+
+  function onDrop(e: DragEvent) {
+    if (!onSessionDrop) return;
+    if (dnd.drag?.kind !== 'session') return;
+    const draggedId = dnd.drag.id;
+    if (draggedId === session.id) return;
+    e.preventDefault();
+    const position = dnd.target?.kind === 'session' && dnd.target.id === session.id
+      ? dnd.target.position
+      : 'after';
+    onSessionDrop({ draggedId, targetId: session.id, position });
+    dnd.end();
+  }
+
+  function onDragEnd() {
+    dnd.end();
+  }
+
+  let rowStyle = $derived(
+    session.color ? `--row-color: var(--session-${session.color});` : undefined
+  );
+
+  let visibleColors = $derived(
+    paletteExpanded
+      ? [...SESSION_COLOR_TOKENS]
+      : SESSION_COLOR_TOKENS.filter(
+          (c) => QUICK_COLORS.includes(c) || c === session.color
+        )
+  );
 </script>
 
-<ContextMenu.Root>
+<div class="relative">
+  {#if dropPosition === 'before'}
+    <div class="pointer-events-none absolute -top-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+  {/if}
+  {#if dropPosition === 'after'}
+    <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+  {/if}
+<ContextMenu.Root
+  open={menuOpen}
+  onOpenChange={(v) => {
+    menuOpen = v;
+    if (!v) paletteExpanded = false;
+  }}
+>
   <ContextMenu.Trigger>
     {#snippet child({ props })}
       <div
         {...props}
+        bind:this={rowEl}
         data-session-id={session.id}
+        data-row-color={session.color ?? undefined}
+        data-row-selected={isSelected ? 'true' : undefined}
         class={cn(
-          'group relative flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
-          'hover:bg-accent/40',
-          isSelected && 'bg-accent/60 border-border'
+          'session-row group relative flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
+          !session.color && 'hover:bg-accent/40',
+          !session.color && isSelected && 'bg-accent/60 border-border',
+          session.color && 'pl-2.5',
+          isDraggingSelf && 'opacity-40'
         )}
+        style={rowStyle}
+        draggable={onSessionDrop ? 'true' : undefined}
+        ondragstart={onDragStart}
+        ondragover={onDragOver}
+        ondrop={onDrop}
+        ondragend={onDragEnd}
         onclick={onClick}
         ondblclick={startEditing}
         onkeydown={onRowKey}
@@ -210,6 +344,12 @@
         tabindex="0"
         title={session.cwd}
       >
+        {#if session.color}
+          <span
+            class="color-bar pointer-events-none absolute top-1 bottom-1 left-0 w-[3px] rounded-full"
+            aria-hidden="true"
+          ></span>
+        {/if}
         {#if marker}
           <span
             class={cn(
@@ -316,7 +456,7 @@
           <Button
             variant="ghost"
             size="icon-sm"
-            class="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            class="text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
             onclick={removeFromButton}
             title="Delete session"
             aria-label={`Delete ${session.name || 'session'}`}
@@ -327,7 +467,7 @@
       </div>
     {/snippet}
   </ContextMenu.Trigger>
-  <ContextMenu.Content class="w-52">
+  <ContextMenu.Content class="w-60">
     {#if canStart}
       <ContextMenu.Item onSelect={start}>Start</ContextMenu.Item>
     {/if}
@@ -352,6 +492,64 @@
       <Copy /> <span>Copy command</span>
     </ContextMenu.Item>
     <ContextMenu.Separator />
+    <div class="flex items-center gap-2 px-1 py-1">
+      <div
+        class={cn(
+          'flex min-w-0 flex-1 items-center',
+          paletteExpanded ? 'flex-wrap gap-1.5' : 'justify-between'
+        )}
+      >
+        <button
+          type="button"
+          class={cn(
+            'flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-transform hover:scale-110 hover:text-foreground',
+            !session.color && 'text-foreground ring-2 ring-foreground ring-offset-1 ring-offset-popover'
+          )}
+          onclick={(e) => {
+            e.stopPropagation();
+            void setColor(null);
+            menuOpen = false;
+          }}
+          title="No color"
+          aria-label="Set no color"
+        >
+          <CircleSlash class="size-5" />
+        </button>
+        {#each visibleColors as token (token)}
+          <button
+            type="button"
+            class={cn(
+              'size-5 shrink-0 rounded-full border border-border/60 transition-transform hover:scale-110',
+              session.color === token && 'ring-2 ring-foreground ring-offset-1 ring-offset-popover'
+            )}
+            style={`background-color: ${colorVar(token)}`}
+            onclick={(e) => {
+              e.stopPropagation();
+              void setColor(session.color === token ? null : token);
+              menuOpen = false;
+            }}
+            title={COLOR_LABELS[token]}
+            aria-label={session.color === token ? `Clear color ${COLOR_LABELS[token]}` : `Set color ${COLOR_LABELS[token]}`}
+          ></button>
+        {/each}
+      </div>
+      <button
+        type="button"
+        class="shrink-0 self-start rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        onclick={(e) => {
+          e.stopPropagation();
+          paletteExpanded = !paletteExpanded;
+        }}
+        title={paletteExpanded ? 'Collapse palette' : 'Expand palette'}
+        aria-label={paletteExpanded ? 'Collapse palette' : 'Expand palette'}
+        aria-expanded={paletteExpanded}
+      >
+        <ChevronRight
+          class={cn('size-3.5 transition-transform', paletteExpanded && 'rotate-90')}
+        />
+      </button>
+    </div>
+    <ContextMenu.Separator />
     {#if session.projectId && !session.archivedAt}
       <ContextMenu.Item onSelect={() => void archive()}>
         <Archive /> <span>Archive</span>
@@ -367,3 +565,20 @@
     </ContextMenu.Item>
   </ContextMenu.Content>
 </ContextMenu.Root>
+</div>
+
+<style>
+  .session-row[data-row-color] {
+    background-color: color-mix(in oklab, var(--row-color) 9%, transparent);
+  }
+  .session-row[data-row-color]:hover {
+    background-color: color-mix(in oklab, var(--row-color) 16%, transparent);
+  }
+  .session-row[data-row-color][data-row-selected='true'] {
+    background-color: color-mix(in oklab, var(--row-color) 24%, transparent);
+    border-color: color-mix(in oklab, var(--row-color) 50%, transparent);
+  }
+  .color-bar {
+    background-color: var(--row-color);
+  }
+</style>

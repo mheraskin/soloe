@@ -171,6 +171,7 @@ export class SoloeMcpServer {
     const sessionHeader = req.headers['x-soloe-session-id'];
     const soloeSessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
     if (!soloeSessionId) {
+      console.log('[soloe-rename] hook rejected — missing X-Soloe-Session-Id header', { provider });
       writeJson(res, 400, { error: 'X-Soloe-Session-Id header is required' });
       return;
     }
@@ -182,9 +183,15 @@ export class SoloeMcpServer {
         if (isRecord(parsed)) payload = parsed;
       }
     } catch {
+      console.log('[soloe-rename] hook rejected — invalid json', { provider, soloeSessionId });
       writeJson(res, 400, { error: 'invalid json' });
       return;
     }
+    const hookEventName =
+      typeof payload['hook_event_name'] === 'string' ? payload['hook_event_name'] : '(missing)';
+    console.log(
+      `[soloe-rename] hook arrived: provider=${provider} session=${soloeSessionId} event=${hookEventName}`
+    );
     try {
       await this.opts.onHookEvent?.({ provider, soloeSessionId, payload });
       writeJson(res, 200, { ok: true });
