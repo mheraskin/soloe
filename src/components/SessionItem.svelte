@@ -468,16 +468,19 @@
               <ArchiveRestore />
             </Button>
           {/if}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
-            onclick={removeFromButton}
-            title="Delete session"
-            aria-label={`Delete ${session.name || 'session'}`}
-          >
-            <Trash2 />
-          </Button>
+          <span class="relative flex size-7 shrink-0 items-center justify-center">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+              onclick={removeFromButton}
+              title="Delete session"
+              aria-label={`Delete ${session.name || 'session'}`}
+            >
+              <Trash2 />
+            </Button>
+            <KbdHint keys={['Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
+          </span>
         </div>
       </div>
     {/snippet}
