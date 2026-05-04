@@ -249,7 +249,7 @@
         variant="outline"
         size="sm"
         class="min-w-0 justify-center gap-1.5 px-2"
-        onclick={() => void sessions.createWithDefaults({}).catch(reportError)}
+        onclick={() => void sessions.createPreferredWithDefaults({}).catch(reportError)}
       >
         <Plus class="size-3.5" />
         <span class="min-w-0 truncate">New session</span>

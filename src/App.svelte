@@ -161,7 +161,7 @@
       consume(e);
       const sel = sessions.selected;
       void sessions
-        .createWithDefaults({
+        .createPreferredWithDefaults({
           ...(sel?.projectId ? { projectId: sel.projectId } : {}),
           ...(sel?.cwd ? { cwd: sel.cwd } : {})
         })

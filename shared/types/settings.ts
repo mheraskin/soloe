@@ -1,4 +1,4 @@
-import type { ShellKind, RunMode } from './sessions.js';
+import type { ShellKind, RunMode, SessionKind } from './sessions.js';
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type TerminalFontSizePref = 11 | 12 | 13 | 14;
@@ -17,6 +17,7 @@ export interface SettingsDefaults {
   wslDistro?: string;
   shell: ShellKind;
   cwd: string;
+  newSessionKind: SessionKind;
 }
 
 export interface SettingsBinaries {
@@ -86,7 +87,13 @@ export const DEFAULT_SETTINGS: Settings = {
   version: 1,
   appearance: { theme: 'dark' },
   terminal: { fontSize: 13, confirmDeleteTabs: true },
-  defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
+  defaults: {
+    runMode: 'wsl',
+    wslDistro: 'Ubuntu',
+    shell: 'auto',
+    cwd: '~',
+    newSessionKind: 'standard_terminal'
+  },
   binaries: {},
   models: {
     textGeneration: DEFAULT_MODEL_CODEX,

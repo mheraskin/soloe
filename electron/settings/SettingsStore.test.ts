@@ -55,6 +55,13 @@ describe('SettingsStore — update', () => {
     expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
   });
 
+  it('merges default new session kind updates', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({ defaults: { newSessionKind: 'claude_code' } });
+    expect(updated.defaults.newSessionKind).toBe('claude_code');
+    expect(updated.defaults.runMode).toBe(DEFAULT_SETTINGS.defaults.runMode);
+  });
+
   it('removes a binary path when set to empty string', async () => {
     const store = new SettingsStore(storePath);
     await store.update({ binaries: { claude: '/usr/bin/claude' } });
@@ -82,6 +89,13 @@ describe('SettingsStore — update', () => {
       store.update({ terminal: { confirmDeleteTabs: 'no' as never } })
     ).rejects.toThrow(/Invalid terminal\.confirmDeleteTabs/);
   });
+
+  it('rejects invalid default new session kind', async () => {
+    const store = new SettingsStore(storePath);
+    await expect(
+      store.update({ defaults: { newSessionKind: 'editor' as never } })
+    ).rejects.toThrow(/Invalid newSessionKind/);
+  });
 });
 
 describe('SettingsStore — migration', () => {
@@ -100,6 +114,7 @@ describe('SettingsStore — migration', () => {
     expect('fontSize' in s.appearance).toBe(false);
     expect(s.terminal.fontSize).toBe(13);
     expect(s.terminal.confirmDeleteTabs).toBe(true);
+    expect(s.defaults.newSessionKind).toBe('standard_terminal');
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

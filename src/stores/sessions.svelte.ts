@@ -321,6 +321,14 @@ class SessionsStore {
     return this.createTypedWithDefaults('standard_terminal', opts);
   }
 
+  async createPreferredWithDefaults(opts: {
+    projectId?: string;
+    cwd?: string;
+    branch?: string;
+  } = {}): Promise<Session> {
+    return this.createTypedWithDefaults(settings.current.defaults.newSessionKind, opts);
+  }
+
   async createAgentWithDefaults(
     kind: Extract<SessionKind, 'claude_code' | 'codex'>,
     opts: {

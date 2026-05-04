@@ -109,7 +109,7 @@
       run: () => {
         const sel = sessions.selected;
         void sessions
-          .createWithDefaults({
+          .createPreferredWithDefaults({
             ...(sel?.projectId ? { projectId: sel.projectId } : {}),
             ...(sel?.cwd ? { cwd: sel.cwd } : {})
           })
@@ -166,7 +166,7 @@
         icon: FolderOpen,
         run: () =>
           void sessions
-            .createWithDefaults({ projectId: project.id, cwd: project.path })
+            .createPreferredWithDefaults({ projectId: project.id, cwd: project.path })
             .catch(reportError)
       });
     }

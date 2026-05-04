@@ -77,11 +77,7 @@
   function onTriggerClick(e: Event): void {
     e.stopPropagation();
     clearTimers();
-    if (open) {
-      launchTerminal();
-    } else {
-      open = true;
-    }
+    launchPreferred();
   }
 
   function onOpenChange(next: boolean): void {
@@ -92,6 +88,17 @@
     open = false;
     void sessions
       .createWithDefaults({
+        ...(projectId ? { projectId } : {}),
+        cwd,
+        ...(branch ? { branch } : {})
+      })
+      .catch(reportError);
+  }
+
+  function launchPreferred(): void {
+    open = false;
+    void sessions
+      .createPreferredWithDefaults({
         ...(projectId ? { projectId } : {}),
         cwd,
         ...(branch ? { branch } : {})

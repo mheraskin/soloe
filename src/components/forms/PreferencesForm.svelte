@@ -8,7 +8,7 @@
     ThemePref
   } from '@shared/types/settings.js';
   import { MODEL_CATALOG } from '@shared/types/settings.js';
-  import type { RunMode, ShellKind } from '@shared/types/sessions.js';
+  import type { RunMode, SessionKind, ShellKind } from '@shared/types/sessions.js';
   import { reportError } from '../../stores/toast.svelte';
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
@@ -20,6 +20,11 @@
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
   const runModes: RunMode[] = ['windows', 'wsl'];
   const shells: ShellKind[] = ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom'];
+  const newSessionKinds: { value: SessionKind; label: string }[] = [
+    { value: 'standard_terminal', label: 'Terminal' },
+    { value: 'claude_code', label: 'Claude' },
+    { value: 'codex', label: 'Codex' }
+  ];
   const binaryKeys: { key: keyof SettingsBinaries; label: string; placeholder: string }[] = [
     { key: 'claude', label: 'Claude binary', placeholder: 'claude' },
     { key: 'codex', label: 'Codex binary', placeholder: 'codex' },
@@ -106,6 +111,12 @@
   async function setDefaultCwd(value: string) {
     try {
       await settings.update({ defaults: { cwd: value.trim() || '~' } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setDefaultNewSessionKind(value: SessionKind) {
+    try {
+      await settings.update({ defaults: { newSessionKind: value } });
     } catch (e) { reportError(e); }
   }
 
@@ -201,6 +212,23 @@
 
 <section class="flex flex-col gap-2.5 border-b border-border py-3">
   <h3 class="m-0 mb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">Defaults</h3>
+  <div class="flex flex-col gap-1.5">
+    <Label class="text-xs text-muted-foreground">New session button</Label>
+    <Select.Root
+      type="single"
+      value={settings.current.defaults.newSessionKind}
+      onValueChange={(v) => setDefaultNewSessionKind(v as SessionKind)}
+    >
+      <Select.Trigger class="w-full">
+        {newSessionKinds.find((k) => k.value === settings.current.defaults.newSessionKind)?.label ?? 'Terminal'}
+      </Select.Trigger>
+      <Select.Content>
+        {#each newSessionKinds as kind (kind.value)}
+          <Select.Item value={kind.value} label={kind.label}>{kind.label}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
   <div class="flex flex-col gap-1.5">
     <Label class="text-xs text-muted-foreground">Run mode</Label>
     <Select.Root

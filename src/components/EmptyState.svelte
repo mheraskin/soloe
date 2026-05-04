@@ -61,7 +61,7 @@
     if (busy) return;
     busy = true;
     try {
-      const created = await sessions.createWithDefaults({});
+      const created = await sessions.createPreferredWithDefaults({});
       sessions.select(created.id);
     } catch (err) {
       reportError(err);
