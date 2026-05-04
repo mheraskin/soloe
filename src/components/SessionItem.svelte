@@ -455,18 +455,17 @@
       <Copy /> <span>Copy command</span>
     </ContextMenu.Item>
     <ContextMenu.Separator />
-    <div class="flex items-center gap-1 px-1 py-1">
+    <div class="flex items-center gap-2 px-1 py-1">
       <div
         class={cn(
           'flex min-w-0 flex-1 items-center',
-          paletteExpanded ? 'flex-wrap gap-1.5' : 'gap-1'
+          paletteExpanded ? 'flex-wrap gap-1.5' : 'justify-between'
         )}
       >
         <button
           type="button"
           class={cn(
-            'flex shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-transform hover:scale-110 hover:text-foreground',
-            paletteExpanded ? 'size-5' : 'size-3.5',
+            'flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-transform hover:scale-110 hover:text-foreground',
             !session.color && 'text-foreground ring-2 ring-foreground ring-offset-1 ring-offset-popover'
           )}
           onclick={(e) => {
@@ -477,14 +476,13 @@
           title="No color"
           aria-label="Set no color"
         >
-          <CircleSlash class={paletteExpanded ? 'size-3.5' : 'size-2.5'} />
+          <CircleSlash class="size-3.5" />
         </button>
         {#each visibleColors as token (token)}
           <button
             type="button"
             class={cn(
-              'shrink-0 rounded-full border border-border/60 transition-transform hover:scale-110',
-              paletteExpanded ? 'size-5' : 'size-3.5',
+              'size-5 shrink-0 rounded-full border border-border/60 transition-transform hover:scale-110',
               session.color === token && 'ring-2 ring-foreground ring-offset-1 ring-offset-popover'
             )}
             style={`background-color: ${colorVar(token)}`}
