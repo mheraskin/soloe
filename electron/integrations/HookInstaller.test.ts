@@ -66,7 +66,7 @@ describe('HookInstaller', () => {
       const cmd = written.hooks.SessionStart[0].hooks[0].command as string;
       // Must use semicolons (not bare space) to separate steps; otherwise bash parses
       // `[ ... ] && exit 0 curl ...` as a single command and curl never runs.
-      expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && exit 0;\s/);
+      expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && \{ cat >\/dev\/null 2>&1; exit 0; \};\s/);
       expect(cmd).toMatch(/;\s*curl /);
       expect(cmd).toContain('"$u/hook/claude"');
       // WSL host resolution: substitute host.wsl.internal when it doesn't resolve
@@ -220,7 +220,7 @@ describe('HookInstaller', () => {
         hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
       };
       const cmd = parsed.hooks.SessionStart![0]!.hooks[0]!.command;
-      expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && exit 0;\s/);
+      expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && \{ cat >\/dev\/null 2>&1; exit 0; \};\s/);
       expect(cmd).toMatch(/;\s*curl /);
       expect(cmd).toContain('"$u/hook/codex"');
       expect(cmd).toContain('host.wsl.internal');

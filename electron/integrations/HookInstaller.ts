@@ -59,7 +59,7 @@ const CODEX_EVENTS = [
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 5;
+export const SOLOE_HOOK_VERSION = 6;
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 
@@ -82,7 +82,10 @@ function buildHookCommand(provider: 'claude' | 'codex'): string {
     '-H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" ' +
     '-H "Content-Type: application/json" ' +
     `--data-binary @- "$u${endpoint}" >/dev/null 2>&1 || true`;
-  return `[ -z "$SOLOE_BRIDGE_URL" ] && exit 0; u="$SOLOE_BRIDGE_URL"; ${wslResolve}; ${curl}`;
+  // When running outside Soloe (no bridge URL), drain stdin before exiting —
+  // otherwise codex/claude pipes the hook payload into a closed stdin and
+  // reports "failed to write hook stdin: Broken pipe (os error 32)".
+  return `[ -z "$SOLOE_BRIDGE_URL" ] && { cat >/dev/null 2>&1; exit 0; }; u="$SOLOE_BRIDGE_URL"; ${wslResolve}; ${curl}`;
 }
 
 export function defaultLocalHost(): HookHost {
