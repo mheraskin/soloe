@@ -44,41 +44,84 @@ export class AutoRenameService {
   constructor(private readonly opts: AutoRenameServiceOptions) {}
 
   async maybeRename(input: RenameInputs): Promise<void> {
+    console.log(`[soloe-rename] service: maybeRename entered for ${input.sessionId}`);
     const session = await this.opts.sessionStore.get(input.sessionId);
-    if (!session) return;
-    if (session.autoNamed === false) return;
-    if (session.kind === 'standard_terminal') return;
+    if (!session) {
+      console.log(`[soloe-rename] service: skip — session not found for ${input.sessionId}`);
+      return;
+    }
+    if (session.autoNamed === false) {
+      console.log(
+        `[soloe-rename] service: skip — autoNamed=false for ${input.sessionId} (manually renamed)`
+      );
+      return;
+    }
+    if (session.kind === 'standard_terminal') {
+      console.log(
+        `[soloe-rename] service: skip — kind=standard_terminal for ${input.sessionId}`
+      );
+      return;
+    }
     const trimmed = input.firstPrompt.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      console.log(`[soloe-rename] service: skip — empty trimmed prompt for ${input.sessionId}`);
+      return;
+    }
 
     const settings = await this.opts.settings.get();
     const target = await this.pickProvider(settings);
     if (!target) {
+      console.log(
+        `[soloe-rename] service: skip — no provider available for ${input.sessionId}`
+      );
       this.notifyMissingProvider();
       return;
     }
 
+    console.log(
+      `[soloe-rename] service: spawning ${target.provider}/${target.id} for ${input.sessionId} (runMode=${session.runMode}, distro=${session.wslDistro ?? '-'})`
+    );
     let raw: string;
     try {
       raw = await this.runOneShot(session, settings.binaries, target, trimmed);
     } catch (err) {
+      console.log(
+        `[soloe-rename] service: spawn FAILED for ${target.provider} on ${input.sessionId}:`,
+        err instanceof Error ? err.message : err
+      );
       this.opts.log?.(`auto-rename ${target.provider} failed`, err);
       return;
     }
+    console.log(
+      `[soloe-rename] service: spawn returned ${raw.length}b for ${input.sessionId}: ${JSON.stringify(raw.slice(0, 200))}`
+    );
     const name = sanitizeName(raw);
     if (!name) {
+      console.log(
+        `[soloe-rename] service: skip — sanitized output was empty for ${input.sessionId}`
+      );
       this.opts.log?.('auto-rename produced empty output', { sessionId: session.id });
       return;
     }
-    if (name === session.name) return;
+    if (name === session.name) {
+      console.log(
+        `[soloe-rename] service: skip — proposed name "${name}" matches existing for ${input.sessionId}`
+      );
+      return;
+    }
 
     try {
       const updated = await this.opts.sessionStore.update(session.id, {
         name,
         autoNamed: true
       });
+      console.log(`[soloe-rename] service: renamed ${input.sessionId} to "${name}"`);
       this.opts.onSessionChange?.(updated);
     } catch (err) {
+      console.log(
+        `[soloe-rename] service: persist failed for ${input.sessionId}:`,
+        err instanceof Error ? err.message : err
+      );
       this.opts.log?.('auto-rename persist failed', err);
     }
   }
