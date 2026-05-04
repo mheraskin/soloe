@@ -16,12 +16,13 @@
   import { confirmStore } from '../../stores/confirm.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
+  import { kbdHints } from '../../stores/kbd-hints.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { Kbd } from '$lib/components/ui/kbd';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
-  import KbdHint from '../KbdHint.svelte';
 
   const PASTE_START = '\x1b[200~';
   const PASTE_END = '\x1b[201~';
@@ -371,9 +372,12 @@
           disabled={!canSend || editorValue.trim().length === 0}
           aria-label="Add as context"
         >
-          <ArrowLeftToLine class="size-3 shrink-0" />
-          <span class="min-w-0 truncate">Add as context</span>
-          <KbdHint keys={['Ctrl', 'Shift', 'Enter']} class="ml-0.5 shrink-0 opacity-70" />
+          {#if kbdHints.altHeld}
+            <Kbd keys={['Ctrl', 'Shift', 'Enter']} />
+          {:else}
+            <ArrowLeftToLine class="size-3 shrink-0" />
+            <span class="min-w-0 truncate">Add as context</span>
+          {/if}
         </Button>
         {#if notes.isDraft}
           <Button
@@ -381,9 +385,13 @@
             class="min-w-0 shrink-0 gap-1.5 px-2"
             onclick={openSaveDialog}
             disabled={notes.draftContent.trim().length === 0}
+            aria-label="Save"
           >
-            <span class="min-w-0 truncate">Save</span>
-            <KbdHint keys={['Ctrl', 'S']} class="ml-0.5 shrink-0 opacity-70" />
+            {#if kbdHints.altHeld}
+              <Kbd keys={['Ctrl', 'S']} />
+            {:else}
+              <span class="min-w-0 truncate">Save</span>
+            {/if}
           </Button>
         {/if}
       </div>
