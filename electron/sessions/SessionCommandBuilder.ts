@@ -171,7 +171,7 @@ function buildAgentCommand(
   };
 }
 
-function buildWslAgentLine(env: Record<string, string>, executable: string, args: string[]): string {
+export function buildWslAgentLine(env: Record<string, string>, executable: string, args: string[]): string {
   if (executable.includes('/') || executable.includes('\\')) {
     return buildPosixCommandLine(env, 'exec', [executable, ...args]);
   }
