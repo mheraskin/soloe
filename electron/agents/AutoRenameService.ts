@@ -9,6 +9,7 @@ import type {
 import type { Session, SessionId } from '@shared/types/sessions.js';
 import { posixSingleQuote } from '../runtime/posix-quote.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
+import { buildWslAgentPathPrelude } from '../sessions/SessionCommandBuilder.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { SettingsStore } from '../settings/SettingsStore.js';
 import type { Notifier } from '../notify/Notifier.js';
@@ -209,18 +210,23 @@ async function runWslArgv(
   argv: { executable: string; args: string[] },
   spawnImpl: typeof spawn = spawn
 ): Promise<string> {
-  const inner = [
-    'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
-    'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"',
-    '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true',
-    [posixSingleQuote(argv.executable), ...argv.args.map(posixSingleQuote)].join(' ')
-  ].join('\n');
+  const inner = buildWslAgentInnerScript(argv.executable, argv.args);
   return runProcess(
     WslCommandBuilder.WSL_EXE,
     ['-d', distro, 'bash', '-lc', inner],
     process.env['USERPROFILE'] ?? process.env['HOME'] ?? os.homedir(),
     spawnImpl
   );
+}
+
+function buildWslAgentInnerScript(executable: string, args: string[]): string {
+  const quotedArgs = args.map(posixSingleQuote);
+  if (executable.includes('/') || executable.includes('\\')) {
+    return ['exec', posixSingleQuote(executable), ...quotedArgs].join(' ');
+  }
+  const prelude = buildWslAgentPathPrelude(executable);
+  const execLine = ['exec', '"$__soloe_agent_bin"', ...quotedArgs].join(' ');
+  return [prelude, execLine].join('\n');
 }
 
 function runProcess(

@@ -183,7 +183,7 @@ function buildWslAgentLine(env: Record<string, string>, executable: string, args
   return `. <(printf %s ${b64} | base64 -d)`;
 }
 
-function buildWslAgentPathPrelude(executable: string): string {
+export function buildWslAgentPathPrelude(executable: string): string {
   const exe = posixSingleQuote(executable);
   const notFoundMsg = posixSingleQuote(`${executable}: command not found`);
   return [
