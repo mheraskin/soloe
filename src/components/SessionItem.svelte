@@ -25,6 +25,7 @@
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
   import { confirmDeleteSession } from '../lib/session-delete-confirmation';
+  import { displaySessionKind } from '../lib/session-agent';
   import {
     displayedAgentState as resolveDisplayedAgentState,
     displayedAgentSummary
@@ -81,6 +82,7 @@
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
   let observed = $derived(sessions.observationFor(session.id));
+  let displayKind = $derived(displaySessionKind(session, observed));
   let latestEvent = $derived(sessions.eventsFor(session.id)[0] ?? null);
   let observedSummary = $derived(
     latestEvent?.state === observed?.state
@@ -95,7 +97,7 @@
   // session" from the cold pre-spawn state, where we want neither pill nor
   // spinner.
   let hasRuntime = $derived(sessions.runtime[session.id] !== undefined);
-  let isAgent = $derived(session.kind === 'claude_code' || session.kind === 'codex');
+  let isAgent = $derived(displayKind === 'claude_code' || displayKind === 'codex');
   let displayedAgentState = $derived(
     resolveDisplayedAgentState({
       observed,
@@ -379,7 +381,7 @@
             aria-hidden="true"
           ></span>
         {/if}
-        <KindIcon kind={session.kind} size={14} />
+        <KindIcon kind={displayKind} size={14} />
         <span class="flex min-w-0 flex-1 flex-col gap-1">
           <span class="flex min-w-0 items-center gap-1.5">
             {#if editing}

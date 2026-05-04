@@ -13,8 +13,10 @@ export function isClipboardPasteShortcut(event: KeyboardLike): boolean {
 export function shouldPasteImageViaSavedPath(session: {
   kind: string;
   runMode: string;
+  currentAgentRuntime?: { provider?: string };
 }): boolean {
-  return session.kind === 'claude_code' || session.runMode === 'wsl';
+  const provider = session.currentAgentRuntime?.provider ?? session.kind;
+  return provider === 'claude_code' || session.runMode === 'wsl';
 }
 
 export function shouldSendShiftEnterSequence(event: KeyboardLike): boolean {

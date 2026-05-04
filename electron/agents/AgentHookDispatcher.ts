@@ -1,4 +1,4 @@
-import type { AgentObservedState, SessionId } from '@shared/types/sessions.js';
+import type { AgentObservedState, Session, SessionId, SessionUpdate } from '@shared/types/sessions.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AutoRenameService } from './AutoRenameService.js';
@@ -8,6 +8,7 @@ export interface AgentHookDispatcherOptions {
   observer: AgentObserverManager;
   sessionStore: SessionStore;
   autoRename?: AutoRenameService;
+  onSessionChange?: (session: Session) => void;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -45,7 +46,7 @@ export class AgentHookDispatcher {
     }
     const mapping = mapClaudeHook(hookEvent, payload);
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
-    await this.captureProviderSessionId(soloeSessionId, payload, 'claude_code');
+    await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'claude_code', hookEvent);
   }
 
   async dispatchCodex(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
@@ -60,7 +61,7 @@ export class AgentHookDispatcher {
     }
     const mapping = mapCodexHook(hookEvent, payload);
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
-    await this.captureProviderSessionId(soloeSessionId, payload, 'codex');
+    await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'codex', hookEvent);
   }
 
   private maybeTriggerAutoRename(
@@ -119,31 +120,70 @@ export class AgentHookDispatcher {
     });
   }
 
-  private async captureProviderSessionId(
+  private async syncCurrentAgentRuntime(
     soloeSessionId: SessionId,
     payload: Record<string, unknown>,
-    provider: HookProvider
+    provider: HookProvider,
+    hookEvent: string | undefined
   ): Promise<void> {
     const sessionId = stringField(payload, 'session_id');
-    if (!sessionId) return;
     try {
       const existing = await this.opts.sessionStore.get(soloeSessionId);
       if (!existing) return;
-      if (provider === 'claude_code' && existing.kind !== 'claude_code') return;
-      if (provider === 'codex' && existing.kind !== 'codex') return;
-      const patch =
-        provider === 'claude_code'
-          ? { claudeSessionId: sessionId, providerThreadId: sessionId }
-          : { codexSessionId: sessionId, providerThreadId: sessionId };
-      const current =
-        provider === 'claude_code'
-          ? (existing as { claudeSessionId?: string }).claudeSessionId
-          : (existing as { codexSessionId?: string }).codexSessionId;
-      if (current === sessionId && existing.providerThreadId === sessionId) return;
-      await this.opts.sessionStore.update(soloeSessionId, patch);
-      this.opts.observer.updateTuiProviderThread(soloeSessionId, provider, sessionId);
+
+      const existingRuntime = existing.currentAgentRuntime;
+      const startsRuntime = hookEvent === 'SessionStart';
+      const canUpdateRuntime =
+        startsRuntime || !existingRuntime || existingRuntime.provider === provider;
+      if (!canUpdateRuntime) return;
+
+      const now = new Date().toISOString();
+      const source =
+        existing.kind === provider && existingRuntime?.source !== 'attached' ? 'managed' : 'attached';
+      const priorProviderThreadId =
+        existingRuntime?.provider === provider ? existingRuntime.providerThreadId : undefined;
+      const runtime = {
+        provider,
+        source,
+        status: hookEvent === 'SessionEnd' ? 'exited' as const : 'active' as const,
+        providerThreadId: sessionId ?? priorProviderThreadId,
+        startedAt: startsRuntime ? now : existingRuntime?.startedAt,
+        lastEventAt: now
+      };
+
+      const patch = {
+        currentAgentRuntime: runtime,
+        providerThreadId: runtime.providerThreadId
+      } as SessionUpdate;
+
+      if (sessionId && provider === 'claude_code' && existing.kind === 'claude_code') {
+        (patch as { claudeSessionId?: string }).claudeSessionId = sessionId;
+      }
+      if (sessionId && provider === 'codex' && existing.kind === 'codex') {
+        (patch as { codexSessionId?: string }).codexSessionId = sessionId;
+      }
+
+      const changed =
+        existing.currentAgentRuntime?.provider !== runtime.provider
+        || existing.currentAgentRuntime?.source !== runtime.source
+        || existing.currentAgentRuntime?.status !== runtime.status
+        || existing.currentAgentRuntime?.providerThreadId !== runtime.providerThreadId
+        || existing.providerThreadId !== patch.providerThreadId
+        || (sessionId && provider === 'claude_code' && existing.kind === 'claude_code'
+          && (existing as { claudeSessionId?: string }).claudeSessionId !== sessionId)
+        || (sessionId && provider === 'codex' && existing.kind === 'codex'
+          && (existing as { codexSessionId?: string }).codexSessionId !== sessionId);
+      if (!changed) return;
+
+      const updated = await this.opts.sessionStore.update(soloeSessionId, patch);
+      this.opts.onSessionChange?.(updated);
+      if (runtime.providerThreadId) {
+        this.opts.observer.updateTuiProviderThread(soloeSessionId, provider, runtime.providerThreadId);
+      } else {
+        this.opts.observer.updateTuiProviderThread(soloeSessionId, provider);
+      }
     } catch (err) {
-      this.opts.log?.('failed to capture provider session id', err);
+      this.opts.log?.('failed to sync current agent runtime', err);
     }
   }
 

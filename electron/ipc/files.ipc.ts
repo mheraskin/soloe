@@ -73,7 +73,7 @@ export class FilesIpc {
   private async pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult> {
     const session = await this.opts.store.get(request.sessionId);
     if (!session) throw new Error(`Session not found: ${request.sessionId}`);
-    if (session.kind !== 'claude_code' && session.kind !== 'codex') {
+    if (!isAgentSession(session)) {
       throw new Error('Image paste is only available for Claude and Codex sessions');
     }
 
@@ -129,6 +129,13 @@ function pasteTargetForSession(session: Session): { writeDir: string; providerDi
   }
   const providerDir = path.join(os.tmpdir(), 'soloe-images', safeSessionId);
   return { providerDir, writeDir: providerDir };
+}
+
+function isAgentSession(session: Session): boolean {
+  return session.kind === 'claude_code'
+    || session.kind === 'codex'
+    || session.currentAgentRuntime?.provider === 'claude_code'
+    || session.currentAgentRuntime?.provider === 'codex';
 }
 
 function wslUncPath(distro: string, linuxPath: string): string {

@@ -321,6 +321,27 @@ function validateSession(s: Session): void {
   if (s.hasUserInput !== undefined && typeof s.hasUserInput !== 'boolean') {
     throw new Error('hasUserInput must be a boolean when set');
   }
+  if (s.currentAgentRuntime !== undefined) {
+    const runtime = s.currentAgentRuntime;
+    if (runtime.provider !== 'claude_code' && runtime.provider !== 'codex') {
+      throw new Error('currentAgentRuntime.provider must be a known agent provider');
+    }
+    if (runtime.source !== 'managed' && runtime.source !== 'attached') {
+      throw new Error('currentAgentRuntime.source must be managed or attached');
+    }
+    if (runtime.status !== 'active' && runtime.status !== 'exited') {
+      throw new Error('currentAgentRuntime.status must be active or exited');
+    }
+    if (runtime.providerThreadId !== undefined && typeof runtime.providerThreadId !== 'string') {
+      throw new Error('currentAgentRuntime.providerThreadId must be a string when set');
+    }
+    if (runtime.startedAt !== undefined && typeof runtime.startedAt !== 'string') {
+      throw new Error('currentAgentRuntime.startedAt must be a string when set');
+    }
+    if (runtime.lastEventAt !== undefined && typeof runtime.lastEventAt !== 'string') {
+      throw new Error('currentAgentRuntime.lastEventAt must be a string when set');
+    }
+  }
   switch (s.kind) {
     case 'standard_terminal':
       if (!s.shell) throw new Error('shell is required for standard_terminal');

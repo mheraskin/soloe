@@ -8,6 +8,19 @@ export type SessionKind = 'standard_terminal' | 'claude_code' | 'codex';
 
 export type SessionRuntimeMode = 'tui' | 'sdk_worker';
 
+export type AgentRuntimeProvider = 'claude_code' | 'codex';
+export type AgentRuntimeSource = 'managed' | 'attached';
+export type AgentRuntimeStatus = 'active' | 'exited';
+
+export interface AgentRuntimeInfo {
+  provider: AgentRuntimeProvider;
+  source: AgentRuntimeSource;
+  status: AgentRuntimeStatus;
+  providerThreadId?: string;
+  startedAt?: string;
+  lastEventAt?: string;
+}
+
 export const SESSION_COLOR_TOKENS = [
   'red',
   'orange',
@@ -53,6 +66,7 @@ export interface SessionBase {
   workerId?: string;
   providerThreadId?: string;
   transcriptPath?: string;
+  currentAgentRuntime?: AgentRuntimeInfo;
   lastEventAt?: string;
   confidence?: number;
   projectId?: string;

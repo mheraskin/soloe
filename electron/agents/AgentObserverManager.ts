@@ -59,10 +59,10 @@ export class AgentObserverManager extends EventEmitter {
       id: session.id,
       runtimeMode: 'tui',
       subjectKind: 'session',
-      provider: session.kind,
+      provider: session.currentAgentRuntime?.provider ?? session.kind,
       state: 'idle',
       sessionId: session.id,
-      providerThreadId: session.providerThreadId,
+      providerThreadId: session.currentAgentRuntime?.providerThreadId ?? session.providerThreadId,
       transcriptPath: session.transcriptPath,
       confidence: session.confidence,
       lastEventAt: new Date().toISOString()
@@ -126,7 +126,7 @@ export class AgentObserverManager extends EventEmitter {
   updateTuiProviderThread(
     sessionId: SessionId,
     provider: 'claude_code' | 'codex',
-    providerThreadId: string
+    providerThreadId?: string
   ): ObservedAgentSnapshot {
     const existing = this.snapshots.get(sessionId);
     const snapshot: ObservedAgentSnapshot = {
@@ -139,7 +139,7 @@ export class AgentObserverManager extends EventEmitter {
         state: 'idle'
       }),
       provider,
-      providerThreadId,
+      ...(providerThreadId ? { providerThreadId } : {}),
       lastEventAt: new Date().toISOString()
     };
     return this.upsertSnapshot(snapshot, 'provider session bound');

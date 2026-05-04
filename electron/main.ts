@@ -138,6 +138,7 @@ async function setupServices(): Promise<AppServices> {
     observer,
     sessionStore: store,
     autoRename,
+    onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[hook-dispatcher] ${message}`, detail)
   });
   const mcp = new SoloeMcpServer({

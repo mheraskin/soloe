@@ -154,7 +154,12 @@
 
   async function pasteFromClipboard(t: Terminal): Promise<void> {
     const session = sessions.sessions.find((item) => item.id === sessionId);
-    if (session?.kind === 'claude_code' || session?.kind === 'codex') {
+    if (
+      session?.kind === 'claude_code'
+      || session?.kind === 'codex'
+      || session?.currentAgentRuntime?.provider === 'claude_code'
+      || session?.currentAgentRuntime?.provider === 'codex'
+    ) {
       const images = await clipboardImages().catch(() => []);
       if (images.length > 0) {
         if (shouldPasteImageViaSavedPath(session)) {

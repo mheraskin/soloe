@@ -42,6 +42,11 @@ describe('terminal input helpers', () => {
 
   it('falls back to saved image paths where clipboard image paste is unreliable', () => {
     expect(shouldPasteImageViaSavedPath({ kind: 'claude_code', runMode: 'windows' })).toBe(true);
+    expect(shouldPasteImageViaSavedPath({
+      kind: 'standard_terminal',
+      runMode: 'windows',
+      currentAgentRuntime: { provider: 'claude_code' }
+    })).toBe(true);
     expect(shouldPasteImageViaSavedPath({ kind: 'codex', runMode: 'wsl' })).toBe(true);
     expect(shouldPasteImageViaSavedPath({ kind: 'codex', runMode: 'windows' })).toBe(false);
   });

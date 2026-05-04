@@ -56,7 +56,7 @@ export class AutoRenameService {
       );
       return;
     }
-    if (session.kind === 'standard_terminal') {
+    if (session.kind === 'standard_terminal' && !session.currentAgentRuntime) {
       console.log(
         `[soloe-rename] service: skip — kind=standard_terminal for ${input.sessionId}`
       );

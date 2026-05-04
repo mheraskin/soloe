@@ -12,6 +12,7 @@
   import { modal } from '../stores/modal.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
+  import { displaySessionKind } from '../lib/session-agent';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -22,6 +23,8 @@
 
   let selected = $derived(sessions.selected);
   let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
+  let observed = $derived(selected ? sessions.observationFor(selected.id) : null);
+  let displayKind = $derived(selected ? displaySessionKind(selected, observed) : 'standard_terminal');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
   function edit() {
@@ -59,7 +62,7 @@
   {#if selected}
     <div class="flex min-w-0 items-center gap-2.5">
       <StatusDot {status} />
-      <KindIcon kind={selected.kind} size={16} />
+      <KindIcon kind={displayKind} size={16} />
       <div class="flex min-w-0 flex-col leading-tight">
         <span class="truncate text-sm font-medium text-foreground">{selected.name}</span>
         <span class="truncate font-mono text-[11px] text-muted-foreground" title={selected.cwd}>
