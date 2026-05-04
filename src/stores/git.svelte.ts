@@ -21,6 +21,12 @@ export interface WorktreePollIntent {
   wslDistro?: string;
 }
 
+export interface ProjectPollIntent {
+  repoPath: string;
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
 interface RepoContext {
   runMode?: RunMode;
   wslDistro?: string;
@@ -35,6 +41,11 @@ interface PollEntry {
   handle: ReturnType<typeof setInterval>;
 }
 
+interface SessionIntent {
+  fast: boolean;
+  ctx: RepoContext;
+}
+
 class GitStore {
   statuses = $state<Record<string, GitStatusEntry>>({});
   shortstats = $state<Record<string, GitShortstatEntry>>({});
@@ -43,6 +54,9 @@ class GitStore {
   private pollers = new Map<string, PollEntry>();
   private contextByCwd = new Map<string, RepoContext>();
   private contextByRepoPath = new Map<string, RepoContext>();
+  private sessionIntents = new Map<string, SessionIntent>();
+  private projectIntents = new Map<string, RepoContext>();
+  private projectIntentSeq = 0;
 
   statusFor(cwd: string): GitStatus | null {
     return this.statuses[cwd]?.status ?? null;
@@ -54,6 +68,10 @@ class GitStore {
 
   errorFor(cwd: string): string | null {
     return this.statuses[cwd]?.error ?? null;
+  }
+
+  contextFor(cwd: string): RepoContext {
+    return this.contextByCwd.get(cwd.trim()) ?? {};
   }
 
   shortstatFor(cwd: string): GitShortstat | null {
@@ -160,30 +178,79 @@ class GitStore {
     if (status?.repoPath) await this.loadShortstat(status.repoPath, true);
   }
 
-  // Update the set of worktrees being polled. `fast: true` polls every 1.5s
+  // Update session-driven polling intents. `fast: true` polls every 1.5s
   // (worktrees with active terminals), `fast: false` polls every 15s (idle).
-  // Cwds present in the previous call but missing from the new one stop being
-  // polled; cwds that change tier reset their timer.
+  // Caller passes the full list each call; missing entries are dropped.
   setWorktreePolling(intents: WorktreePollIntent[]): void {
-    const desired = new Map<string, boolean>();
-    const seenCwds = new Set<string>();
+    this.sessionIntents.clear();
     for (const intent of intents) {
       const cwd = intent.cwd.trim();
       if (!cwd) continue;
-      // If the same cwd appears twice (e.g. as both fast and slow), the fast
-      // wins — at least one session there is active.
-      desired.set(cwd, desired.get(cwd) || intent.fast);
-      seenCwds.add(cwd);
-      if (intent.runMode || intent.wslDistro) {
+      const ctx: RepoContext = {};
+      if (intent.runMode) ctx.runMode = intent.runMode;
+      if (intent.wslDistro) ctx.wslDistro = intent.wslDistro;
+      const prev = this.sessionIntents.get(cwd);
+      this.sessionIntents.set(cwd, {
+        fast: (prev?.fast ?? false) || intent.fast,
+        // Keep the first context seen for a cwd; sessions in the same worktree
+        // should agree on runMode/wslDistro.
+        ctx: prev?.ctx ?? ctx
+      });
+    }
+    this.applyPolling();
+  }
+
+  // Register every worktree of every known project for slow-tier polling so
+  // sessionless worktrees still display +N −N. Fetches `git worktree list`
+  // for each project; failures fall back to just the project root path.
+  async refreshProjectWorktrees(intents: ProjectPollIntent[]): Promise<void> {
+    const seq = ++this.projectIntentSeq;
+    const next = new Map<string, RepoContext>();
+    await Promise.all(
+      intents.map(async (intent) => {
+        const repoPath = intent.repoPath.trim();
+        if (!repoPath) return;
         const ctx: RepoContext = {};
         if (intent.runMode) ctx.runMode = intent.runMode;
         if (intent.wslDistro) ctx.wslDistro = intent.wslDistro;
-        this.contextByCwd.set(cwd, ctx);
-      }
+        try {
+          const worktrees = await ipc.git.worktrees({
+            repoPath,
+            force: false,
+            ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+            ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+          });
+          if (worktrees.length === 0) {
+            next.set(repoPath, ctx);
+            return;
+          }
+          for (const wt of worktrees) {
+            if (wt.path) next.set(wt.path, ctx);
+          }
+        } catch {
+          next.set(repoPath, ctx);
+        }
+      })
+    );
+    if (seq !== this.projectIntentSeq) return;
+    this.projectIntents = next;
+    this.applyPolling();
+  }
+
+  private applyPolling(): void {
+    // Merge: project worktrees seed slow-tier intents and supply context;
+    // session intents may bump tier to fast and override context.
+    const desired = new Map<string, boolean>();
+    const ctxByCwd = new Map<string, RepoContext>();
+    for (const [cwd, ctx] of this.projectIntents) {
+      desired.set(cwd, false);
+      ctxByCwd.set(cwd, ctx);
     }
-    for (const cwd of this.contextByCwd.keys()) {
-      if (!seenCwds.has(cwd)) this.contextByCwd.delete(cwd);
+    for (const [cwd, info] of this.sessionIntents) {
+      desired.set(cwd, (desired.get(cwd) ?? false) || info.fast);
+      if (info.ctx.runMode || info.ctx.wslDistro) ctxByCwd.set(cwd, info.ctx);
     }
+    this.contextByCwd = ctxByCwd;
 
     for (const [cwd, entry] of this.pollers) {
       const next = desired.get(cwd);

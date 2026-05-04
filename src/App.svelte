@@ -86,6 +86,19 @@
     untrack(() => setMode(theme));
   });
 
+  // Poll git status/diff for every worktree of every known project at the
+  // slow tier so sessionless worktrees still get a +N −N indicator. Sessions
+  // bump matching worktrees to the fast tier via the next effect.
+  $effect(() => {
+    const list = projects.projects;
+    const intents = list.map((p) => ({
+      repoPath: p.path,
+      ...(p.defaultRunMode ? { runMode: p.defaultRunMode } : {}),
+      ...(p.defaultWslDistro ? { wslDistro: p.defaultWslDistro } : {})
+    }));
+    void git.refreshProjectWorktrees(intents);
+  });
+
   // Drive git status/diff polling for every worktree that has a session.
   // Worktrees with at least one running/starting session (or holding the
   // selected session) tick every 1.5s; idle ones fall back to 15s so we

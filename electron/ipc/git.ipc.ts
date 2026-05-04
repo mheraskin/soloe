@@ -33,7 +33,12 @@ export class GitIpc {
       )
     );
     ipcMain.handle(IpcChannels.git.aheadBehind, (_e, request: GitRepoRequest) =>
-      ipcInvoke(() => this.opts.service.getAheadBehind(request.repoPath))
+      ipcInvoke(() =>
+        this.opts.service.getAheadBehind(request.repoPath, request.force, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
     );
     ipcMain.handle(IpcChannels.git.shortstat, (_e, request: GitRepoRequest) =>
       ipcInvoke(() =>
@@ -44,7 +49,12 @@ export class GitIpc {
       )
     );
     ipcMain.handle(IpcChannels.git.dirty, (_e, request: GitRepoRequest) =>
-      ipcInvoke(() => this.opts.service.getDirty(request.repoPath))
+      ipcInvoke(() =>
+        this.opts.service.getDirty(request.repoPath, request.force, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
     );
     ipcMain.handle(IpcChannels.git.worktrees, (_e, request: GitRepoRequest) =>
       ipcInvoke(() =>
@@ -55,13 +65,28 @@ export class GitIpc {
       )
     );
     ipcMain.handle(IpcChannels.git.branches, (_e, request: GitRepoRequest) =>
-      ipcInvoke(() => this.opts.service.listLocalBranches(request.repoPath))
+      ipcInvoke(() =>
+        this.opts.service.listLocalBranches(request.repoPath, request.force, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
     );
     ipcMain.handle(IpcChannels.git.recentCommits, (_e, request: GitRecentCommitsRequest) =>
-      ipcInvoke(() => this.opts.service.listRecentCommits(request.repoPath, request.limit))
+      ipcInvoke(() =>
+        this.opts.service.listRecentCommits(request.repoPath, request.limit, request.force, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
     );
     ipcMain.handle(IpcChannels.git.checkout, (_e, request: GitCheckoutRequest) =>
-      ipcInvoke(() => this.opts.service.checkout(request.repoPath, request.ref, request.force))
+      ipcInvoke(() =>
+        this.opts.service.checkout(request.repoPath, request.ref, request.force, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
     );
 
     this.detachListener = this.opts.service.onChange((repoPath) => {

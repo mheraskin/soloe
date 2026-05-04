@@ -102,8 +102,12 @@ export class GitService {
     return clone(cache.shortstat);
   }
 
-  async getAheadBehind(repoPath: string, force = false): Promise<GitAheadBehind> {
-    const status = await this.getStatus(repoPath, force);
+  async getAheadBehind(
+    repoPath: string,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitAheadBehind> {
+    const status = await this.getStatus(repoPath, force, context);
     return {
       repoPath: status.repoPath ?? repoPath,
       isRepo: status.isRepo,
@@ -112,8 +116,12 @@ export class GitService {
     };
   }
 
-  async getDirty(repoPath: string, force = false): Promise<GitDirty> {
-    const status = await this.getStatus(repoPath, force);
+  async getDirty(
+    repoPath: string,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitDirty> {
+    const status = await this.getStatus(repoPath, force, context);
     return {
       repoPath: status.repoPath ?? repoPath,
       isRepo: status.isRepo,
@@ -138,12 +146,16 @@ export class GitService {
     return clone(cache.worktrees);
   }
 
-  async listLocalBranches(repoPath: string, force = false): Promise<GitBranch[]> {
-    const info = await this.resolveRepo(repoPath);
+  async listLocalBranches(
+    repoPath: string,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitBranch[]> {
+    const info = await this.resolveRepo(repoPath, context);
     if (!info) return [];
     const cache = this.ensureCache(info);
     if (!force && cache.branches) return clone(cache.branches);
-    const output = await this.run(info.repoPath, [
+    const output = await this.runInRepo(info, [
       'branch',
       '--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(committerdate:iso8601)%00%(subject)'
     ]);
@@ -151,14 +163,19 @@ export class GitService {
     return clone(cache.branches);
   }
 
-  async listRecentCommits(repoPath: string, limit = 20, force = false): Promise<GitCommit[]> {
+  async listRecentCommits(
+    repoPath: string,
+    limit = 20,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitCommit[]> {
     const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
-    const info = await this.resolveRepo(repoPath);
+    const info = await this.resolveRepo(repoPath, context);
     if (!info) return [];
     const cache = this.ensureCache(info);
     const cached = cache.commitsByLimit.get(safeLimit);
     if (!force && cached) return clone(cached);
-    const output = await this.run(info.repoPath, [
+    const output = await this.runInRepo(info, [
       'log',
       `-${safeLimit}`,
       '--pretty=format:%H%x00%h%x00%an%x00%aI%x00%s'
@@ -168,24 +185,29 @@ export class GitService {
     return clone(commits);
   }
 
-  async checkout(repoPath: string, ref: string, force = false): Promise<GitStatus> {
+  async checkout(
+    repoPath: string,
+    ref: string,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitStatus> {
     const target = ref.trim();
     if (!target) throw new Error('Checkout ref is required');
-    const info = await this.resolveRepo(repoPath);
+    const info = await this.resolveRepo(repoPath, context);
     if (!info) throw new Error(`Not a git repository: ${repoPath}`);
     if (!force) {
-      const dirty = await this.getDirty(info.repoPath, true);
+      const dirty = await this.getDirty(info.repoPath, true, context);
       if (dirty.dirty) {
         throw new Error('Repository has uncommitted changes');
       }
     }
     const args = force ? ['checkout', '-f', target] : ['checkout', target];
-    const output = await this.run(info.repoPath, args);
+    const output = await this.runInRepo(info, args);
     if (output.code !== 0) {
       throw new Error(output.stderr.trim() || `Failed to check out ${target}`);
     }
     this.invalidate(info.repoPath);
-    return this.getStatus(info.repoPath, true);
+    return this.getStatus(info.repoPath, true, context);
   }
 
   onChange(listener: (repoPath: string) => void): () => void {
