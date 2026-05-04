@@ -57,6 +57,7 @@ class GitStore {
   private sessionIntents = new Map<string, SessionIntent>();
   private projectIntents = new Map<string, RepoContext>();
   private projectIntentSeq = 0;
+  private paused = false;
 
   statusFor(cwd: string): GitStatus | null {
     return this.statuses[cwd]?.status ?? null;
@@ -175,11 +176,33 @@ class GitStore {
   // Polls status + shortstat for the given worktree once.
   private async tick(cwd: string): Promise<void> {
     const status = await this.loadStatus(cwd, true);
-    if (status?.repoPath) await this.loadShortstat(status.repoPath, true);
+    if (!status?.repoPath) return;
+    // shortstat compares working tree against HEAD; if no files are
+    // staged or unstaged it is provably 0/0/0, so synthesize and skip
+    // the extra `git diff --shortstat` call. Untracked files don't show
+    // up in shortstat either way.
+    if (status.staged === 0 && status.unstaged === 0) {
+      this.shortstats = {
+        ...this.shortstats,
+        [status.repoPath]: {
+          shortstat: {
+            repoPath: status.repoPath,
+            isRepo: true,
+            filesChanged: 0,
+            insertions: 0,
+            deletions: 0
+          },
+          loading: false,
+          error: null
+        }
+      };
+      return;
+    }
+    await this.loadShortstat(status.repoPath, true);
   }
 
-  // Update session-driven polling intents. `fast: true` polls every 1.5s
-  // (worktrees with active terminals), `fast: false` polls every 15s (idle).
+  // Update session-driven polling intents. `fast: true` polls every 5s
+  // (worktrees with active terminals), `fast: false` polls every 30s (idle).
   // Caller passes the full list each call; missing entries are dropped.
   setWorktreePolling(intents: WorktreePollIntent[]): void {
     this.sessionIntents.clear();
@@ -237,6 +260,15 @@ class GitStore {
     this.applyPolling();
   }
 
+  // Pause/resume polling based on window visibility. While paused, all
+  // intervals are torn down; intents are still tracked so resume can
+  // recreate them and tick each worktree once to catch up.
+  setPaused(paused: boolean): void {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    this.applyPolling();
+  }
+
   private applyPolling(): void {
     // Merge: project worktrees seed slow-tier intents and supply context;
     // session intents may bump tier to fast and override context.
@@ -252,8 +284,13 @@ class GitStore {
     }
     this.contextByCwd = ctxByCwd;
 
+    // While paused (window hidden/minimized), tear down everything and
+    // create nothing. On resume, the second loop re-creates each poller
+    // and the immediate `void this.tick(cwd)` refreshes the UI.
+    const effective = this.paused ? new Map<string, boolean>() : desired;
+
     for (const [cwd, entry] of this.pollers) {
-      const next = desired.get(cwd);
+      const next = effective.get(cwd);
       if (next === undefined) {
         clearInterval(entry.handle);
         this.pollers.delete(cwd);
@@ -265,7 +302,7 @@ class GitStore {
       }
     }
 
-    for (const [cwd, fast] of desired) {
+    for (const [cwd, fast] of effective) {
       if (this.pollers.has(cwd)) continue;
       const interval = fast ? FAST_INTERVAL_MS : SLOW_INTERVAL_MS;
       void this.tick(cwd);
@@ -290,6 +327,14 @@ class GitStore {
         void this.loadShortstat(event.repoPath, true);
       })
     );
+
+    // Pause polling when the Electron window is hidden/minimized; resume
+    // on visibility restore. applyPolling() ticks each worktree once on
+    // resume so the UI catches up immediately.
+    const onVisibility = () => this.setPaused(document.visibilityState === 'hidden');
+    document.addEventListener('visibilitychange', onVisibility);
+    this.detachers.push(() => document.removeEventListener('visibilitychange', onVisibility));
+    this.setPaused(document.visibilityState === 'hidden');
   }
 
   detach(): void {
