@@ -244,6 +244,18 @@ class SessionsStore {
         };
       })
     );
+    this.detachers.push(
+      ipc.sessions.onChange((session) => {
+        const idx = this.sessions.findIndex((s) => s.id === session.id);
+        if (idx === -1) {
+          this.sessions = [...this.sessions, session];
+        } else {
+          const next = [...this.sessions];
+          next[idx] = session;
+          this.sessions = next;
+        }
+      })
+    );
   }
 
   detach(): void {

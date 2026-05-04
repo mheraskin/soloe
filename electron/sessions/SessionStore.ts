@@ -63,7 +63,11 @@ export class SessionStore {
       id,
       createdAt: now,
       lastUsedAt: now,
-      sortIndex: this.nextSortIndex()
+      sortIndex: this.nextSortIndex(),
+      // New sessions are eligible for auto-rename until the user manually
+      // edits the name (which sets autoNamed=false). Drafts may pre-set this
+      // explicitly for tests or imports.
+      autoNamed: draft.autoNamed ?? true
     } as Session;
     validateSession(session);
     this.cache!.set(id, session);
@@ -295,6 +299,9 @@ function validateSession(s: Session): void {
   }
   if (s.color !== undefined && !isSessionColor(s.color)) {
     throw new Error('color must be a known SessionColor token when set');
+  }
+  if (s.autoNamed !== undefined && typeof s.autoNamed !== 'boolean') {
+    throw new Error('autoNamed must be a boolean when set');
   }
   switch (s.kind) {
     case 'standard_terminal':

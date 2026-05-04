@@ -62,6 +62,11 @@ export interface SessionBase {
   lastBranch?: string;
   sortIndex?: number;
   color?: SessionColor;
+  // Auto-rename eligibility: true means the name was assigned (or never
+  // touched) by Soloe and may be replaced by the auto-renamer; false means
+  // the user has explicitly renamed and should be left alone. Undefined on
+  // legacy sessions is treated as false to avoid surprise renames.
+  autoNamed?: boolean;
 }
 
 export interface StandardTerminalSession extends SessionBase {

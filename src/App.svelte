@@ -16,6 +16,7 @@
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from './lib/keymap';
   import { kbdHints } from './stores/kbd-hints.svelte';
+  import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Toaster } from '$lib/components/ui/sonner';
   import Sidebar from './components/Sidebar.svelte';
@@ -37,12 +38,20 @@
     projects.attachListeners();
     notes.attachListeners();
     git.attachListeners();
+    const detachToast = ipc.notify.onToast((t) => {
+      const opts = t.description ? { description: t.description } : undefined;
+      if (t.severity === 'error') toast.error(t.message, opts);
+      else if (t.severity === 'success') toast.success(t.message, opts);
+      else if (t.severity === 'warning') toast.warning(t.message, opts);
+      else toast(t.message, opts);
+    });
     void loadInitialState();
     const detachKbdHints = kbdHints.attach();
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
       detachKbdHints();
+      detachToast();
       sessions.detach();
       settings.detach();
       projects.detach();

@@ -1,6 +1,11 @@
-import { ipcMain } from 'electron';
+import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
-import type { SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import type {
+  Session,
+  SessionDraft,
+  SessionId,
+  SessionUpdate
+} from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js';
@@ -14,12 +19,22 @@ export interface SessionsIpcOptions {
   observer?: AgentObserverManager;
   bridgeInfo?: () => { url: string; token: string } | null;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
+  getWindows?: () => BrowserWindow[];
 }
 
 export class SessionsIpc {
   private registered = false;
 
   constructor(private readonly opts: SessionsIpcOptions) {}
+
+  broadcastChange(session: Session): void {
+    const windows = this.opts.getWindows?.() ?? [];
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IpcChannels.sessions.changed, session);
+      }
+    }
+  }
 
   register(): void {
     if (this.registered) return;

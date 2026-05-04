@@ -69,7 +69,8 @@ export const IpcChannels = {
     update: 'sessions:update',
     delete: 'sessions:delete',
     reorder: 'sessions:reorder',
-    previewCommand: 'sessions:preview-command'
+    previewCommand: 'sessions:preview-command',
+    changed: 'sessions:changed'
   },
   terminal: {
     start: 'terminal:start',
@@ -160,6 +161,9 @@ export const IpcChannels = {
     installCodex: 'agent-integration:install-codex',
     uninstallCodex: 'agent-integration:uninstall-codex',
     changed: 'agent-integration:changed'
+  },
+  notify: {
+    toast: 'notify:toast'
   }
 } as const;
 
@@ -175,7 +179,8 @@ export type IpcChannel =
   | (typeof IpcChannels.files)[keyof typeof IpcChannels.files]
   | (typeof IpcChannels.diagnostics)[keyof typeof IpcChannels.diagnostics]
   | (typeof IpcChannels.window)[keyof typeof IpcChannels.window]
-  | (typeof IpcChannels.agentIntegration)[keyof typeof IpcChannels.agentIntegration];
+  | (typeof IpcChannels.agentIntegration)[keyof typeof IpcChannels.agentIntegration]
+  | (typeof IpcChannels.notify)[keyof typeof IpcChannels.notify];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -188,6 +193,8 @@ export interface SessionsApi {
   delete(id: SessionId): Promise<IpcResult<true>>;
   reorder(orderedIds: SessionId[]): Promise<IpcResult<Session[]>>;
   previewCommand(id: SessionId): Promise<IpcResult<SpawnSpec>>;
+
+  onChange(listener: (session: Session) => void): () => void;
 }
 
 export interface TerminalInputPayload {
@@ -356,6 +363,18 @@ export interface AgentIntegrationApi {
   onChange(listener: (status: AgentIntegrationStatus) => void): () => void;
 }
 
+export type ToastSeverity = 'info' | 'success' | 'warning' | 'error';
+
+export interface ToastNotification {
+  severity: ToastSeverity;
+  message: string;
+  description?: string;
+}
+
+export interface NotifyApi {
+  onToast(listener: (toast: ToastNotification) => void): () => void;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -369,6 +388,7 @@ export interface SoloeApi {
   diagnostics: DiagnosticsApi;
   window: WindowApi;
   agentIntegration: AgentIntegrationApi;
+  notify: NotifyApi;
 }
 
 declare global {

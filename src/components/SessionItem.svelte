@@ -100,7 +100,7 @@
     editing = false;
     editValue = '';
     try {
-      await sessions.update(session.id, { name: next });
+      await sessions.update(session.id, { name: next, autoNamed: false });
     } catch (err) {
       reportError(err);
     }

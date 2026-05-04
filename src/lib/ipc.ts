@@ -6,7 +6,7 @@ import type {
   ObserverEvent,
   SendWorkerPromptRequest
 } from '@shared/types/agents.js';
-import type { SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import type { Session, SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
 import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
 import type {
   Project,
@@ -32,7 +32,8 @@ import type {
 import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
-  AgentIntegrationStatus
+  AgentIntegrationStatus,
+  ToastNotification
 } from '@shared/types/ipc.js';
 import type {
   TerminalExitEvent,
@@ -72,7 +73,8 @@ export const ipc = {
     delete: async (id: SessionId) => unwrap(await c.sessions.delete(id)),
     reorder: async (orderedIds: SessionId[]) =>
       unwrap(await c.sessions.reorder([...orderedIds])),
-    previewCommand: async (id: SessionId) => unwrap(await c.sessions.previewCommand(id))
+    previewCommand: async (id: SessionId) => unwrap(await c.sessions.previewCommand(id)),
+    onChange: (cb: (session: Session) => void) => c.sessions.onChange(cb)
   },
   terminal: {
     start: async (opts: TerminalStartOptions) => unwrap(await c.terminal.start(toIpcPayload(opts))),
@@ -191,5 +193,8 @@ export const ipc = {
       unwrap(await c.agentIntegration.uninstallCodex(toIpcPayload(request))),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       c.agentIntegration.onChange(cb)
+  },
+  notify: {
+    onToast: (cb: (toast: ToastNotification) => void) => c.notify.onToast(cb)
   }
 };

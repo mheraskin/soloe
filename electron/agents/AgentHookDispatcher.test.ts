@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentHookDispatcher } from './AgentHookDispatcher.js';
 import { AgentObserverManager } from './AgentObserverManager.js';
 import { SessionStore } from '../sessions/SessionStore.js';
+import type { AutoRenameService } from './AutoRenameService.js';
 
 describe('AgentHookDispatcher', () => {
   let tmp: string;
@@ -231,6 +232,132 @@ describe('AgentHookDispatcher', () => {
       const onDiskB = await reloaded.get(b.id);
       expect((onDiskA as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-a');
       expect((onDiskB as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-b');
+    });
+  });
+
+  describe('auto-rename triggering', () => {
+    function makeAutoRename() {
+      const maybeRename = vi.fn().mockResolvedValue(undefined);
+      const stub = { maybeRename } as unknown as AutoRenameService;
+      return { stub, maybeRename };
+    }
+
+    it('fires auto-rename on UserPromptSubmit after SessionStart', async () => {
+      const { stub, maybeRename } = makeAutoRename();
+      const renamingDispatcher = new AgentHookDispatcher({
+        observer,
+        sessionStore,
+        autoRename: stub
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'SessionStart' }
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'fix the login bug please' }
+      });
+      expect(maybeRename).toHaveBeenCalledTimes(1);
+      expect(maybeRename).toHaveBeenCalledWith({
+        sessionId: 'sess-1',
+        firstPrompt: 'fix the login bug please'
+      });
+    });
+
+    it('only fires on the first UserPromptSubmit per SessionStart', async () => {
+      const { stub, maybeRename } = makeAutoRename();
+      const renamingDispatcher = new AgentHookDispatcher({
+        observer,
+        sessionStore,
+        autoRename: stub
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'SessionStart' }
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'one' }
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'two' }
+      });
+      expect(maybeRename).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-arms on a fresh SessionStart (covers /resume)', async () => {
+      const { stub, maybeRename } = makeAutoRename();
+      const renamingDispatcher = new AgentHookDispatcher({
+        observer,
+        sessionStore,
+        autoRename: stub
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'SessionStart' }
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'first' }
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'SessionStart' }
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'second' }
+      });
+      expect(maybeRename).toHaveBeenCalledTimes(2);
+      expect(maybeRename.mock.calls[1]?.[0]).toEqual({
+        sessionId: 'sess-1',
+        firstPrompt: 'second'
+      });
+    });
+
+    it('does not fire when UserPromptSubmit arrives without a prior SessionStart', async () => {
+      const { stub, maybeRename } = makeAutoRename();
+      const renamingDispatcher = new AgentHookDispatcher({
+        observer,
+        sessionStore,
+        autoRename: stub
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'hello' }
+      });
+      expect(maybeRename).not.toHaveBeenCalled();
+    });
+
+    it('skips when payload has no prompt text', async () => {
+      const { stub, maybeRename } = makeAutoRename();
+      const renamingDispatcher = new AgentHookDispatcher({
+        observer,
+        sessionStore,
+        autoRename: stub
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'SessionStart' }
+      });
+      await renamingDispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: { hook_event_name: 'UserPromptSubmit' }
+      });
+      expect(maybeRename).not.toHaveBeenCalled();
     });
   });
 });
