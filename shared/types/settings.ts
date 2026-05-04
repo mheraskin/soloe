@@ -49,18 +49,20 @@ export interface ModelCatalogEntry {
   label: string;
 }
 
-// Hard-coded catalog of models we support for auto-rename / commit suggestions.
-// Keep ids matching what the underlying CLI (`codex -m …`, `claude --model …`)
-// accepts; adding entries here is the only step needed to expose them in UI.
+// Catalog mirrors the visible/api-supported entries from `codex debug models`
+// plus the claude aliases we use. Codex models change over time — refresh by
+// running `codex debug models | jq '.models[] | select(.visibility == "list"
+// and .supported_in_api) | .slug'` and reconciling.
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
-  { provider: 'codex', id: 'gpt-5-mini', label: 'gpt-5-mini' },
-  { provider: 'codex', id: 'gpt-5', label: 'gpt-5' },
-  { provider: 'codex', id: 'gpt-5-codex', label: 'gpt-5-codex' },
+  { provider: 'codex', id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+  { provider: 'codex', id: 'gpt-5.4', label: 'GPT-5.4' },
+  { provider: 'codex', id: 'gpt-5.5', label: 'GPT-5.5' },
+  { provider: 'codex', id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   { provider: 'claude', id: 'haiku', label: 'Claude Haiku' },
   { provider: 'claude', id: 'sonnet', label: 'Claude Sonnet' }
 ];
 
-export const DEFAULT_MODEL_CODEX: ModelSelection = { provider: 'codex', id: 'gpt-5-mini' };
+export const DEFAULT_MODEL_CODEX: ModelSelection = { provider: 'codex', id: 'gpt-5.4-mini' };
 export const DEFAULT_MODEL_CLAUDE: ModelSelection = { provider: 'claude', id: 'haiku' };
 
 export interface Settings {

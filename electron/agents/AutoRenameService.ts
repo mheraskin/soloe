@@ -133,7 +133,7 @@ export class AutoRenameService {
     if (configured && isProviderAvailable(configured.provider, settings.binaries)) {
       return configured;
     }
-    if (codexAvailable) return settings.models.textGeneration ?? { provider: 'codex', id: 'gpt-5-mini' };
+    if (codexAvailable) return settings.models.textGeneration ?? { provider: 'codex', id: 'gpt-5.4-mini' };
     if (claudeAvailable) return { provider: 'claude', id: 'haiku' };
     return null;
   }
@@ -173,11 +173,12 @@ function buildAgentArgv(
 ): { executable: string; args: string[] } {
   if (target.provider === 'codex') {
     const exe = binaries.codex || 'codex';
-    // Omit -m: gpt-5-mini (our hardcoded default) is rejected on ChatGPT-auth
-    // codex accounts. Codex's own configured default works for both auth modes.
+    // Pin model from settings (cheap default = gpt-5.4-mini) instead of
+    // letting codex pick its own — codex's own default may be a frontier
+    // model, which is wasteful for naming a session.
     return {
       executable: exe,
-      args: ['exec', '--skip-git-repo-check', '--color', 'never', prompt]
+      args: ['exec', '--skip-git-repo-check', '--color', 'never', '-m', target.id, prompt]
     };
   }
   const exe = binaries.claude || 'claude';
