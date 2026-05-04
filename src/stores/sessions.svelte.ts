@@ -425,6 +425,7 @@ class SessionsStore {
         // continue with delete even if stop fails
       }
     }
+    const nextSelectedId = this.selectedId === id ? this.pickNextAfterRemoval(id) : null;
     await ipc.sessions.delete(id);
     this.sessions = this.sessions.filter((s) => s.id !== id);
     agentNotifications.removeSession(id);
@@ -450,7 +451,7 @@ class SessionsStore {
       writeLastSelectedMap(lastMap);
     }
     if (this.selectedId === id) {
-      this.selectedId = this.sessions[0]?.id ?? null;
+      this.selectedId = nextSelectedId;
     }
   }
 
@@ -468,6 +469,7 @@ class SessionsStore {
         // continue with archive even if stop fails
       }
     }
+    const nextSelectedId = this.selectedId === id ? this.pickNextAfterRemoval(id) : null;
     const updated = await ipc.sessions.update(id, { archivedAt: new Date().toISOString() });
     this.sessions = this.sessions.filter((s) => s.id !== id);
     this.archived = [updated, ...this.archived.filter((s) => s.id !== id)];
@@ -488,8 +490,23 @@ class SessionsStore {
       writeLastSelectedMap(lastMap);
     }
     if (this.selectedId === id) {
-      this.selectedId = this.sessions[0]?.id ?? null;
+      this.selectedId = nextSelectedId;
     }
+  }
+
+  private pickNextAfterRemoval(removedId: SessionId): SessionId | null {
+    const removedIndex = this.sessions.findIndex((s) => s.id === removedId);
+    if (removedIndex < 0) return null;
+    const projectKey = this.sessions[removedIndex]!.projectId ?? null;
+    for (let i = removedIndex + 1; i < this.sessions.length; i += 1) {
+      const s = this.sessions[i]!;
+      if ((s.projectId ?? null) === projectKey) return s.id;
+    }
+    for (let i = removedIndex - 1; i >= 0; i -= 1) {
+      const s = this.sessions[i]!;
+      if ((s.projectId ?? null) === projectKey) return s.id;
+    }
+    return null;
   }
 
   async restore(id: SessionId): Promise<void> {
