@@ -25,13 +25,23 @@ export class GitIpc {
     this.registered = true;
 
     ipcMain.handle(IpcChannels.git.status, (_e, request: GitStatusRequest) =>
-      ipcInvoke(() => this.opts.service.getStatus(request.cwd, request.force))
+      ipcInvoke(() =>
+        this.opts.service.getStatus(request.cwd, request.force, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
     );
     ipcMain.handle(IpcChannels.git.aheadBehind, (_e, request: GitRepoRequest) =>
       ipcInvoke(() => this.opts.service.getAheadBehind(request.repoPath))
     );
     ipcMain.handle(IpcChannels.git.shortstat, (_e, request: GitRepoRequest) =>
-      ipcInvoke(() => this.opts.service.getShortstat(request.repoPath))
+      ipcInvoke(() =>
+        this.opts.service.getShortstat(request.repoPath, request.force, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
     );
     ipcMain.handle(IpcChannels.git.dirty, (_e, request: GitRepoRequest) =>
       ipcInvoke(() => this.opts.service.getDirty(request.repoPath))

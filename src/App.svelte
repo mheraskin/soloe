@@ -92,21 +92,27 @@
   $effect(() => {
     const list = sessions.sessions;
     const selectedId = sessions.selectedId;
-    const intentByCwd = new Map<string, boolean>();
+    type Intent = { fast: boolean; runMode?: 'windows' | 'wsl'; wslDistro?: string };
+    const intentByCwd = new Map<string, Intent>();
     for (const s of list) {
       const cwd = s.cwd?.trim();
       if (!cwd) continue;
       const status = sessions.statusFor(s.id);
       const active = status === 'running' || status === 'starting' || s.id === selectedId;
-      const prev = intentByCwd.get(cwd) ?? false;
-      intentByCwd.set(cwd, prev || active);
+      const prev = intentByCwd.get(cwd);
+      const next: Intent = {
+        fast: (prev?.fast ?? false) || active,
+        runMode: prev?.runMode ?? s.runMode,
+        wslDistro: prev?.wslDistro ?? s.wslDistro
+      };
+      intentByCwd.set(cwd, next);
     }
-    const intents = Array.from(intentByCwd, ([cwd, fast]) => ({ cwd, fast }));
-    console.log('[soloe-git] App effect intents', {
-      sessionCount: list.length,
-      selectedId,
-      intents
-    });
+    const intents = Array.from(intentByCwd, ([cwd, info]) => ({
+      cwd,
+      fast: info.fast,
+      ...(info.runMode ? { runMode: info.runMode } : {}),
+      ...(info.wslDistro ? { wslDistro: info.wslDistro } : {})
+    }));
     git.setWorktreePolling(intents);
   });
 

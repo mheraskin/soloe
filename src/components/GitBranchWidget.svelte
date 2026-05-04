@@ -51,9 +51,6 @@
   let hasDiff = $derived(
     !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
   );
-  $effect(() => {
-    console.log('[soloe-git] GitBranchWidget', { cwd, status, shortstat, hasDiff });
-  });
 
   let title = $derived.by<string>(() => {
     if (!status || !status.isRepo) return 'Not a git repository';

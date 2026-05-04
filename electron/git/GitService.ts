@@ -62,22 +62,15 @@ export class GitService {
 
   constructor(private readonly options: GitServiceOptions = {}) {}
 
-  async getStatus(cwd: string, force = false): Promise<GitStatus> {
+  async getStatus(cwd: string, force = false, context: GitRepoContext = {}): Promise<GitStatus> {
     const empty = emptyStatus(cwd);
-    const info = await this.resolveRepo(cwd);
-    if (!info) {
-      console.log('[soloe-git/be] getStatus resolveRepo null', cwd);
-      return empty;
-    }
-    console.log('[soloe-git/be] getStatus resolved', cwd, '→', info.repoPath, info.runMode);
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return empty;
     const cache = this.ensureCache(info);
     if (!force && cache.status) return clone(cache.status);
 
-    const output = await this.run(info.repoPath, ['status', '--porcelain=v2', '--branch']);
-    if (output.code !== 0) {
-      console.log('[soloe-git/be] getStatus git status failed', cwd, output.code, output.stderr);
-      return empty;
-    }
+    const output = await this.runInRepo(info, ['status', '--porcelain=v2', '--branch']);
+    if (output.code !== 0) return empty;
     cache.status = parsePorcelainV2(cwd, info.repoPath, output.stdout);
     return clone(cache.status);
   }
@@ -87,15 +80,19 @@ export class GitService {
     return status.detached ? null : status.branch;
   }
 
-  async getShortstat(repoPath: string, force = false): Promise<GitShortstat> {
-    const info = await this.resolveRepo(repoPath);
+  async getShortstat(
+    repoPath: string,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitShortstat> {
+    const info = await this.resolveRepo(repoPath, context);
     if (!info) return emptyShortstat(repoPath, false);
     const cache = this.ensureCache(info);
     if (!force && cache.shortstat) return clone(cache.shortstat);
 
-    let output = await this.run(info.repoPath, ['diff', '--shortstat', 'HEAD', '--']);
+    let output = await this.runInRepo(info, ['diff', '--shortstat', 'HEAD', '--']);
     if (output.code !== 0) {
-      output = await this.run(info.repoPath, ['diff', '--shortstat', '--']);
+      output = await this.runInRepo(info, ['diff', '--shortstat', '--']);
     }
     cache.shortstat = {
       repoPath: info.repoPath,
@@ -217,33 +214,16 @@ export class GitService {
   private async resolveNativeRepo(cwd: string): Promise<RepoInfo | null> {
     try {
       const stat = await fs.stat(cwd);
-      if (!stat.isDirectory()) {
-        console.log('[soloe-git/be] resolveNativeRepo not a directory', cwd);
-        return null;
-      }
-    } catch (err) {
-      console.log('[soloe-git/be] resolveNativeRepo fs.stat failed', cwd, String(err));
+      if (!stat.isDirectory()) return null;
+    } catch {
       return null;
     }
     const toplevel = await this.run(cwd, ['rev-parse', '--show-toplevel']);
-    if (toplevel.code !== 0) {
-      console.log('[soloe-git/be] resolveNativeRepo rev-parse --show-toplevel failed', cwd, {
-        code: toplevel.code,
-        stdout: toplevel.stdout,
-        stderr: toplevel.stderr
-      });
-      return null;
-    }
+    if (toplevel.code !== 0) return null;
     const repoPath = toplevel.stdout.trim();
-    if (!repoPath) {
-      console.log('[soloe-git/be] resolveNativeRepo empty toplevel', cwd);
-      return null;
-    }
+    if (!repoPath) return null;
     const gitDirResult = await this.run(repoPath, ['rev-parse', '--git-dir']);
-    if (gitDirResult.code !== 0) {
-      console.log('[soloe-git/be] resolveNativeRepo rev-parse --git-dir failed', repoPath, gitDirResult.stderr);
-      return null;
-    }
+    if (gitDirResult.code !== 0) return null;
     const rawGitDir = gitDirResult.stdout.trim();
     const gitDir = path.isAbsolute(rawGitDir) ? rawGitDir : path.resolve(repoPath, rawGitDir);
     return { repoPath, gitDir, runMode: 'native' };

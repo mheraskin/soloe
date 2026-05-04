@@ -17,6 +17,8 @@ export interface GitStatus {
 export interface GitStatusRequest {
   cwd: string;
   force?: boolean;
+  runMode?: RunMode;
+  wslDistro?: string;
 }
 
 export interface GitRepoRequest {

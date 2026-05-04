@@ -67,9 +67,6 @@
   let hasDiff = $derived(
     !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
   );
-  $effect(() => {
-    console.log('[soloe-git] WorktreeGroup', { cwd, shortstat, hasDiff });
-  });
   let diffTitle = $derived.by<string>(() => {
     if (!shortstat || !shortstat.isRepo) return '';
     if (shortstat.insertions === 0 && shortstat.deletions === 0) return 'no changes';
