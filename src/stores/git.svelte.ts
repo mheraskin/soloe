@@ -48,10 +48,21 @@ class GitStore {
 
   shortstatFor(cwd: string): GitShortstat | null {
     const direct = this.shortstats[cwd]?.shortstat;
-    if (direct) return direct;
+    if (direct) {
+      console.log('[soloe-git] shortstatFor direct hit', cwd, direct);
+      return direct;
+    }
     const repoPath = this.statuses[cwd]?.status?.repoPath ?? null;
-    if (!repoPath) return null;
-    return this.shortstats[repoPath]?.shortstat ?? null;
+    if (!repoPath) {
+      console.log('[soloe-git] shortstatFor miss (no repoPath)', cwd, {
+        hasStatus: !!this.statuses[cwd],
+        status: this.statuses[cwd]?.status
+      });
+      return null;
+    }
+    const viaRepo = this.shortstats[repoPath]?.shortstat ?? null;
+    console.log('[soloe-git] shortstatFor via repoPath', cwd, '→', repoPath, viaRepo);
+    return viaRepo;
   }
 
   setStatus(cwd: string, status: GitStatus): void {
@@ -129,8 +140,15 @@ class GitStore {
 
   // Polls status + shortstat for the given worktree once.
   private async tick(cwd: string): Promise<void> {
+    console.log('[soloe-git] tick start', cwd);
     const status = await this.loadStatus(cwd, true);
-    if (status?.repoPath) await this.loadShortstat(status.repoPath, true);
+    console.log('[soloe-git] tick status', cwd, { repoPath: status?.repoPath, status });
+    if (status?.repoPath) {
+      const ss = await this.loadShortstat(status.repoPath, true);
+      console.log('[soloe-git] tick shortstat', cwd, '→', status.repoPath, ss);
+    } else {
+      console.log('[soloe-git] tick skipped shortstat (no repoPath)', cwd);
+    }
   }
 
   // Update the set of worktrees being polled. `fast: true` polls every 1.5s
@@ -138,6 +156,7 @@ class GitStore {
   // Cwds present in the previous call but missing from the new one stop being
   // polled; cwds that change tier reset their timer.
   setWorktreePolling(intents: WorktreePollIntent[]): void {
+    console.log('[soloe-git] setWorktreePolling intents', intents);
     const desired = new Map<string, boolean>();
     for (const intent of intents) {
       const cwd = intent.cwd.trim();
@@ -146,6 +165,7 @@ class GitStore {
       // wins — at least one session there is active.
       desired.set(cwd, desired.get(cwd) || intent.fast);
     }
+    console.log('[soloe-git] setWorktreePolling desired', Array.from(desired.entries()));
 
     for (const [cwd, entry] of this.pollers) {
       const next = desired.get(cwd);

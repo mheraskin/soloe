@@ -102,6 +102,11 @@
       intentByCwd.set(cwd, prev || active);
     }
     const intents = Array.from(intentByCwd, ([cwd, fast]) => ({ cwd, fast }));
+    console.log('[soloe-git] App effect intents', {
+      sessionCount: list.length,
+      selectedId,
+      intents
+    });
     git.setWorktreePolling(intents);
   });
 
