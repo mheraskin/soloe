@@ -465,7 +465,7 @@
         <button
           type="button"
           class={cn(
-            'flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-transform hover:scale-110 hover:text-foreground',
+            'flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-transform hover:scale-110 hover:text-foreground',
             !session.color && 'text-foreground ring-2 ring-foreground ring-offset-1 ring-offset-popover'
           )}
           onclick={(e) => {
@@ -476,7 +476,7 @@
           title="No color"
           aria-label="Set no color"
         >
-          <CircleSlash class="size-3.5" />
+          <CircleSlash class="size-5" />
         </button>
         {#each visibleColors as token (token)}
           <button
@@ -488,11 +488,11 @@
             style={`background-color: ${colorVar(token)}`}
             onclick={(e) => {
               e.stopPropagation();
-              void setColor(token);
+              void setColor(session.color === token ? null : token);
               menuOpen = false;
             }}
             title={COLOR_LABELS[token]}
-            aria-label={`Set color ${COLOR_LABELS[token]}`}
+            aria-label={session.color === token ? `Clear color ${COLOR_LABELS[token]}` : `Set color ${COLOR_LABELS[token]}`}
           ></button>
         {/each}
       </div>
