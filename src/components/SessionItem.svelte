@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch, ChevronRight } from '@lucide/svelte';
+  import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch, ChevronRight, CircleSlash } from '@lucide/svelte';
   import type { Session, SessionId, SessionColor } from '@shared/types/sessions.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
@@ -54,6 +54,8 @@
     violet: 'Violet',
     pink: 'Pink'
   };
+
+  const QUICK_COLORS: readonly SessionColor[] = ['red', 'amber', 'green', 'blue', 'violet'];
 
   let isSelected = $derived(sessions.selectedId === session.id);
   let status = $derived(sessions.statusFor(session.id));
@@ -268,6 +270,14 @@
   let rowStyle = $derived(
     session.color ? `--row-color: var(--session-${session.color});` : undefined
   );
+
+  let visibleColors = $derived(
+    paletteExpanded
+      ? [...SESSION_COLOR_TOKENS]
+      : SESSION_COLOR_TOKENS.filter(
+          (c) => QUICK_COLORS.includes(c) || c === session.color
+        )
+  );
 </script>
 
 <div class="relative">
@@ -455,9 +465,9 @@
         <button
           type="button"
           class={cn(
-            'shrink-0 rounded-full border border-border bg-background transition-transform hover:scale-110',
+            'flex shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground transition-transform hover:scale-110 hover:text-foreground',
             paletteExpanded ? 'size-5' : 'size-3.5',
-            !session.color && 'ring-2 ring-foreground ring-offset-1 ring-offset-popover'
+            !session.color && 'text-foreground ring-2 ring-foreground ring-offset-1 ring-offset-popover'
           )}
           onclick={(e) => {
             e.stopPropagation();
@@ -466,8 +476,10 @@
           }}
           title="No color"
           aria-label="Set no color"
-        ></button>
-        {#each SESSION_COLOR_TOKENS as token (token)}
+        >
+          <CircleSlash class={paletteExpanded ? 'size-3.5' : 'size-2.5'} />
+        </button>
+        {#each visibleColors as token (token)}
           <button
             type="button"
             class={cn(
