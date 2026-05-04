@@ -3,6 +3,7 @@
   import type { Session, SessionId } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { git } from '../stores/git.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
@@ -61,6 +62,16 @@
   // When the worktree group is collapsed but holds the selected session, the
   // header takes on the selected look so the user keeps a visual anchor.
   let highlightWhenCollapsed = $derived(containsSelected && !effectiveExpanded);
+
+  let shortstat = $derived(git.shortstatFor(cwd));
+  let hasDiff = $derived(
+    !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
+  );
+  let diffTitle = $derived.by<string>(() => {
+    if (!shortstat || !shortstat.isRepo) return '';
+    if (shortstat.insertions === 0 && shortstat.deletions === 0) return 'no changes';
+    return `${shortstat.filesChanged} file${shortstat.filesChanged === 1 ? '' : 's'} changed · +${shortstat.insertions} −${shortstat.deletions}`;
+  });
 
   function onGroupOpenChange(open: boolean) {
     if (isFiltering) return;
@@ -188,6 +199,20 @@
         {/if}
         <FolderGit2 class="size-3.5 shrink-0" />
         <span class="flex-1 truncate font-mono text-xs leading-4" title={cwd}>{title}</span>
+        {#if hasDiff && shortstat}
+          <span
+            class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums"
+            title={diffTitle}
+            aria-label={diffTitle}
+          >
+            {#if shortstat.insertions > 0}
+              <span class="text-emerald-500">+{shortstat.insertions}</span>
+            {/if}
+            {#if shortstat.deletions > 0}
+              <span class="text-rose-500">−{shortstat.deletions}</span>
+            {/if}
+          </span>
+        {/if}
         {#if isMain}
           <Badge variant="outline" class="h-4 rounded-full px-1.5 text-[9px] font-medium tracking-wider uppercase">main</Badge>
         {/if}

@@ -18,22 +18,20 @@
   let switcherLoading = $state(false);
   let checkingOut = $state<string | null>(null);
 
-  function refresh(force = false): void {
-    void git.loadStatus(cwd, force);
+  async function refresh(force = false): Promise<void> {
+    const status = await git.loadStatus(cwd, force);
+    if (status?.repoPath) void git.loadShortstat(status.repoPath, force);
   }
 
   $effect(() => {
-    const currentCwd = cwd;
+    void cwd;
     untrack(() => {
-      void git.loadStatus(currentCwd);
+      void refresh(false);
     });
-    const interval = window.setInterval(() => {
-      void git.loadStatus(currentCwd, true);
-    }, 1500);
-    return () => window.clearInterval(interval);
   });
 
   let status = $derived(git.statusFor(cwd));
+  let shortstat = $derived(git.shortstatFor(cwd));
   let loading = $derived(git.loadingFor(cwd));
 
   let label = $derived.by<string | null>(() => {
@@ -50,6 +48,10 @@
     return [dirty, ahead, behind].filter(Boolean).join(' ');
   });
 
+  let hasDiff = $derived(
+    !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
+  );
+
   let title = $derived.by<string>(() => {
     if (!status || !status.isRepo) return 'Not a git repository';
     const parts: string[] = [];
@@ -59,6 +61,9 @@
     if (parts.length === 0) parts.push('clean');
     if (status.ahead > 0) parts.push(`ahead ${status.ahead}`);
     if (status.behind > 0) parts.push(`behind ${status.behind}`);
+    if (shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)) {
+      parts.push(`${shortstat.filesChanged} files +${shortstat.insertions} −${shortstat.deletions}`);
+    }
     return parts.join(' · ');
   });
 
@@ -112,6 +117,16 @@
             <span class="max-w-[160px] truncate">{label}</span>
             {#if badge}
               <span class={`text-[10px] ${status?.dirty ? 'text-amber-500' : 'text-muted-foreground'}`}>{badge}</span>
+            {/if}
+            {#if hasDiff && shortstat}
+              <span class="inline-flex items-center gap-1 font-mono text-[10px] tabular-nums">
+                {#if shortstat.insertions > 0}
+                  <span class="text-emerald-500">+{shortstat.insertions}</span>
+                {/if}
+                {#if shortstat.deletions > 0}
+                  <span class="text-rose-500">−{shortstat.deletions}</span>
+                {/if}
+              </span>
             {/if}
           </Button>
         {/snippet}

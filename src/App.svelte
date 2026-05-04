@@ -76,6 +76,26 @@
     untrack(() => setMode(theme));
   });
 
+  // Drive git status/diff polling for every worktree that has a session.
+  // Worktrees with at least one running/starting session (or holding the
+  // selected session) tick every 1.5s; idle ones fall back to 15s so we
+  // don't burn `git diff` on dozens of dormant projects.
+  $effect(() => {
+    const list = sessions.sessions;
+    const selectedId = sessions.selectedId;
+    const intentByCwd = new Map<string, boolean>();
+    for (const s of list) {
+      const cwd = s.cwd?.trim();
+      if (!cwd) continue;
+      const status = sessions.statusFor(s.id);
+      const active = status === 'running' || status === 'starting' || s.id === selectedId;
+      const prev = intentByCwd.get(cwd) ?? false;
+      intentByCwd.set(cwd, prev || active);
+    }
+    const intents = Array.from(intentByCwd, ([cwd, fast]) => ({ cwd, fast }));
+    git.setWorktreePolling(intents);
+  });
+
   function consume(e: KeyboardEvent): void {
     e.preventDefault();
     e.stopPropagation();
