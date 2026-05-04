@@ -37,7 +37,23 @@ class NavStore {
         }
         buckets[k].push(s);
       }
-      for (const k of cwdOrder) {
+      const project = projects.get(projectKey as ProjectId);
+      const userOrder = (project?.worktreeOrder ?? []).map(normPath);
+      const seen = new Set<string>();
+      const finalOrder: string[] = [];
+      for (const key of userOrder) {
+        if (buckets[key] && !seen.has(key)) {
+          seen.add(key);
+          finalOrder.push(key);
+        }
+      }
+      for (const key of cwdOrder) {
+        if (!seen.has(key)) {
+          seen.add(key);
+          finalOrder.push(key);
+        }
+      }
+      for (const k of finalOrder) {
         for (const s of buckets[k]!) out.push(s);
       }
     }
