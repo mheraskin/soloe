@@ -381,6 +381,14 @@
             aria-hidden="true"
           ></span>
         {/if}
+        {#if kbdIndex !== null}
+          <span
+            class="pointer-events-none absolute top-0.5 left-0.5 font-mono text-[9px] leading-none text-muted-foreground/55"
+            aria-hidden="true"
+          >
+            {kbdIndex}
+          </span>
+        {/if}
         <KindIcon kind={displayKind} size={14} />
         <span class="flex min-w-0 flex-1 flex-col gap-1">
           <span class="flex min-w-0 items-center gap-1.5">
