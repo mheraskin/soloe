@@ -166,9 +166,9 @@ function mapClaudeHook(
     case 'PostToolUse':
       return { state: 'working', summary: 'thinking' };
     case 'Notification':
-      return { state: 'waiting_for_approval', summary: 'waiting for approval' };
+      return mapClaudeNotification(payload);
     case 'Stop':
-      return { state: 'idle', summary: 'idle' };
+      return { state: 'completed', summary: 'completed' };
     case 'SessionEnd':
       return { state: 'exited', summary: 'session ended' };
     case 'PreCompact':
@@ -178,6 +178,22 @@ function mapClaudeHook(
     default:
       return null;
   }
+}
+
+function mapClaudeNotification(payload: Record<string, unknown>): HookMapping {
+  const notificationType = stringField(payload, 'notification_type');
+  const message = stringField(payload, 'message') ?? '';
+  const lowerMessage = message.toLowerCase();
+
+  if (notificationType === 'idle_prompt' || lowerMessage.includes('waiting for your input')) {
+    return { state: 'idle', summary: 'idle' };
+  }
+
+  if (notificationType === 'permission_prompt' || lowerMessage.includes('permission')) {
+    return { state: 'waiting_for_approval', summary: 'waiting for approval' };
+  }
+
+  return { state: 'waiting_for_approval', summary: 'waiting for approval' };
 }
 
 function mapCodexHook(
@@ -201,7 +217,7 @@ function mapCodexHook(
     case 'PermissionRequest':
       return { state: 'waiting_for_approval', summary: 'waiting for approval' };
     case 'Stop':
-      return { state: 'idle', summary: 'idle' };
+      return { state: 'completed', summary: 'completed' };
     default:
       return null;
   }

@@ -32,7 +32,7 @@ describe('AgentHookDispatcher', () => {
       ['PreToolUse', 'running_tool'],
       ['PostToolUse', 'working'],
       ['Notification', 'waiting_for_approval'],
-      ['Stop', 'idle'],
+      ['Stop', 'completed'],
       ['SessionEnd', 'exited'],
       ['PreCompact', 'working']
     ] as const)('%s → %s', async (hookEvent, expectedState) => {
@@ -52,6 +52,33 @@ describe('AgentHookDispatcher', () => {
       });
       const events = observer.listEvents('sess-1');
       expect(events[0]?.summary).toBe('tool: Bash');
+    });
+
+    it('maps Claude permission notifications to approval', async () => {
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: {
+          hook_event_name: 'Notification',
+          notification_type: 'permission_prompt',
+          message: 'Claude needs your permission to use Bash'
+        }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('waiting_for_approval');
+    });
+
+    it('maps Claude idle notifications back to idle instead of approval', async () => {
+      observer.setTuiObservedState('sess-1', 'waiting_for_approval', 'waiting for approval');
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: {
+          hook_event_name: 'Notification',
+          notification_type: 'idle_prompt',
+          message: 'Claude is waiting for your input'
+        }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('idle');
     });
 
     it('SubagentStop appends an event but does not change state', async () => {
@@ -83,7 +110,7 @@ describe('AgentHookDispatcher', () => {
       ['PreToolUse', 'running_tool'],
       ['PostToolUse', 'working'],
       ['PermissionRequest', 'waiting_for_approval'],
-      ['Stop', 'idle']
+      ['Stop', 'completed']
     ] as const)('%s → %s', async (hookEvent, expectedState) => {
       await dispatcher.dispatch({
         provider: 'codex',
