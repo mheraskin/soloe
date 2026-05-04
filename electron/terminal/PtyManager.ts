@@ -181,7 +181,19 @@ export class PtyManager extends EventEmitter {
   write(terminalId: TerminalId, data: string): void {
     const instance = this.terminals.get(terminalId);
     if (!instance || instance.status !== 'running') return;
+    this.clearApprovalStateOnInput(instance.sessionId, data);
     instance.pty.write(data);
+  }
+
+  private clearApprovalStateOnInput(sessionId: SessionId, data: string): void {
+    if (!data) return;
+    const snapshot = this.opts.observer?.getSnapshot(sessionId);
+    if (snapshot?.state !== 'waiting_for_approval') return;
+    this.opts.observer?.setTuiObservedState(
+      sessionId,
+      'working',
+      'approval answered'
+    );
   }
 
   resize(terminalId: TerminalId, dimensions: TerminalDimensions): void {

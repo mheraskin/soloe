@@ -6,6 +6,7 @@ import type {
   TerminalLocationEvent,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
+import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
 
 vi.mock('node-pty', () => ({
@@ -176,6 +177,35 @@ describe('PtyManager', () => {
         cwd: '/home/me/iterm'
       }
     ]);
+  });
+
+  it('clears approval state when the user answers a terminal approval prompt', async () => {
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      observer,
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: session.id });
+    observer.setTuiObservedState(session.id, 'waiting_for_approval', 'waiting for approval');
+
+    manager.write(started.terminalId, '\r');
+
+    expect(observer.getSnapshot(session.id)?.state).toBe('working');
+    expect(observer.listEvents(session.id).map((e) => e.summary)).toContain('approval answered');
   });
 
   it('does not infer Claude session ids from transcript files', async () => {
