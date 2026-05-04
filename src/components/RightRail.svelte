@@ -4,6 +4,7 @@
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { Keymap } from '../lib/keymap';
+  import { kbdHints } from '../stores/kbd-hints.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import KbdHint from './KbdHint.svelte';
@@ -32,6 +33,7 @@
 
   let width = $state(DEFAULT_WIDTH);
   let resizing = $state(false);
+  let hoveredTab = $state<Record<string, boolean>>({});
 
   onMount(() => {
     const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY));
@@ -71,7 +73,8 @@
     <nav class="flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = rightRail.open && rightRail.activeTab === tab.id}
-        <Tooltip.Root>
+        {@const tooltipOpen = kbdHints.altHeld || hoveredTab[tab.id] === true}
+        <Tooltip.Root open={tooltipOpen} onOpenChange={(v) => (hoveredTab[tab.id] = v)}>
           <Tooltip.Trigger>
             {#snippet child({ props })}
               <button
