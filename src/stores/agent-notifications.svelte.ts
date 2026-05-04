@@ -117,6 +117,10 @@ class AgentNotificationsStore {
     this.dismissToast(sessionId);
   }
 
+  markSessionOpened(sessionId: SessionId): void {
+    this.acknowledge(sessionId);
+  }
+
   removeSession(sessionId: SessionId): void {
     this.acknowledge(sessionId);
   }

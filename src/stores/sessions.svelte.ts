@@ -563,7 +563,7 @@ class SessionsStore {
   select(id: SessionId | null): void {
     this.selectedId = id;
     if (id) {
-      agentNotifications.acknowledge(id);
+      agentNotifications.markSessionOpened(id);
       const session = this.sessions.find((s) => s.id === id);
       if (session) {
         const key = session.projectId ?? STANDALONE_KEY;

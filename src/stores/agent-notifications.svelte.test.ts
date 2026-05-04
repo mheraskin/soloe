@@ -81,6 +81,40 @@ describe('agentNotifications', () => {
     expect(agentNotifications.toasts).toHaveLength(0);
   });
 
+  it('clears an approval marker when the session is opened', () => {
+    agentNotifications.observeSnapshot(snapshot('working'), session, null);
+    agentNotifications.observeSnapshot(snapshot('waiting_for_approval'), session, null);
+
+    agentNotifications.markSessionOpened(session.id);
+
+    expect(agentNotifications.markerFor(session.id)).toBeNull();
+    expect(agentNotifications.toasts).toHaveLength(0);
+  });
+
+  it('clears existing approval notifications during active session refreshes', () => {
+    agentNotifications.observeSnapshot(snapshot('working'), session, null);
+    agentNotifications.observeSnapshot(snapshot('waiting_for_approval'), session, null);
+
+    agentNotifications.observeSnapshot(
+      snapshot('waiting_for_approval', { promptSummary: 'approve file write' }),
+      session,
+      session.id
+    );
+
+    expect(agentNotifications.markerFor(session.id)).toBeNull();
+    expect(agentNotifications.toasts).toHaveLength(0);
+  });
+
+  it('clears completed markers when the session is opened', () => {
+    agentNotifications.observeSnapshot(snapshot('working'), session, null);
+    agentNotifications.observeSnapshot(snapshot('completed'), session, null);
+
+    agentNotifications.markSessionOpened(session.id);
+
+    expect(agentNotifications.markerFor(session.id)).toBeNull();
+    expect(agentNotifications.toasts).toHaveLength(0);
+  });
+
   it('auto-dismisses completed toasts', () => {
     agentNotifications.observeSnapshot(snapshot('working'), session, null);
     agentNotifications.observeSnapshot(snapshot('completed', { resultSummary: 'done' }), session, null);

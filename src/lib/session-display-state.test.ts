@@ -35,6 +35,50 @@ describe('session display state', () => {
     ).toBe('idle');
   });
 
+  it('keeps approval visible after its notification marker is cleared', () => {
+    expect(
+      displayedAgentState({
+        observed: { state: 'waiting_for_approval' },
+        status: 'running',
+        hasRuntime: true,
+        hasNotificationMarker: false
+      })
+    ).toBe('waiting_for_approval');
+  });
+
+  it('keeps approval visible for attached agents without a renderer runtime row', () => {
+    expect(
+      displayedAgentState({
+        observed: { state: 'waiting_for_approval' },
+        status: 'stopped',
+        hasRuntime: false,
+        hasNotificationMarker: false
+      })
+    ).toBe('waiting_for_approval');
+  });
+
+  it('keeps input visible after its notification marker is cleared', () => {
+    expect(
+      displayedAgentState({
+        observed: { state: 'waiting_for_input' },
+        status: 'running',
+        hasRuntime: true,
+        hasNotificationMarker: false
+      })
+    ).toBe('waiting_for_input');
+  });
+
+  it('keeps input visible for attached agents without a renderer runtime row', () => {
+    expect(
+      displayedAgentState({
+        observed: { state: 'waiting_for_input' },
+        status: 'stopped',
+        hasRuntime: false,
+        hasNotificationMarker: false
+      })
+    ).toBe('waiting_for_input');
+  });
+
   it('uses an idle summary when a transient state is displayed as idle', () => {
     expect(displayedAgentSummary({ state: 'completed' }, 'idle', 'done')).toBe('idle');
   });
