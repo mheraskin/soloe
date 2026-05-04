@@ -104,6 +104,7 @@ async function setupServices(): Promise<AppServices> {
     nativeFactory: (notification) => new Notification(notification),
     isNativeSupported: () => Notification.isSupported(),
     shouldShowNative: () => !BrowserWindow.getAllWindows().some((win) => win.isFocused()),
+    focusApp: () => app.focus({ steal: true }),
     log: (message, detail) => console.warn(`[notifier] ${message}`, detail)
   });
   notifier.attachAgentObserver(observer, store);

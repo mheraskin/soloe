@@ -5,7 +5,11 @@ import type { BrowserWindow } from 'electron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import { SessionStore } from '../sessions/SessionStore.js';
-import { Notifier, type NativeNotificationOptions } from './Notifier.js';
+import {
+  Notifier,
+  type NativeNotificationHandle,
+  type NativeNotificationOptions
+} from './Notifier.js';
 
 describe('Notifier', () => {
   let tmp: string;
@@ -106,6 +110,7 @@ describe('Notifier', () => {
   it('focuses Soloe and activates the session when a native notification is clicked', async () => {
     const sent: unknown[][] = [];
     const clickHandlers: Array<() => void> = [];
+    const focusApp = vi.fn();
     const win = {
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -119,10 +124,13 @@ describe('Notifier', () => {
       getWindows: () => [win],
       nativeFactory: (notification) => ({
         show: () => shown.push(notification),
-        on: (_event, listener) => clickHandlers.push(listener)
+        on: (event, listener) => {
+          if (event === 'click') clickHandlers.push(listener);
+        }
       }),
       isNativeSupported: () => true,
-      shouldShowNative: () => true
+      shouldShowNative: () => true,
+      focusApp
     });
     const session = await sessions.create({
       kind: 'codex',
@@ -143,6 +151,33 @@ describe('Notifier', () => {
 
     expect(win.show).toHaveBeenCalled();
     expect(win.focus).toHaveBeenCalled();
+    expect(focusApp).toHaveBeenCalled();
     expect(sent).toEqual([['notify:activate-session', session.id]]);
+  });
+
+  it('retains native notification handles until the notification closes', () => {
+    const closeHandlers: Array<() => void> = [];
+    notifier = new Notifier({
+      getWindows: () => [],
+      nativeFactory: (notification): NativeNotificationHandle => ({
+        show: () => shown.push(notification),
+        on: (event, listener) => {
+          if (event === 'close') closeHandlers.push(listener);
+        }
+      }),
+      isNativeSupported: () => true,
+      shouldShowNative: () => true
+    });
+
+    notifier.native({ title: 'Codex: input needed' });
+
+    const active = (
+      notifier as unknown as { activeNativeNotifications: Set<NativeNotificationHandle> }
+    ).activeNativeNotifications;
+    expect(active.size).toBe(1);
+
+    closeHandlers[0]?.();
+
+    expect(active.size).toBe(0);
   });
 });

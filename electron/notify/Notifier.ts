@@ -10,6 +10,7 @@ export interface NotifierOptions {
   nativeFactory?: (notification: NativeNotificationOptions) => NativeNotificationHandle;
   isNativeSupported?: () => boolean;
   shouldShowNative?: () => boolean;
+  focusApp?: () => void;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -21,7 +22,7 @@ export interface NativeNotificationOptions {
 
 export interface NativeNotificationHandle {
   show(): void;
-  on?(event: 'click', listener: () => void): unknown;
+  on?(event: 'click' | 'close' | 'failed', listener: () => void): unknown;
 }
 
 type NativeNotifyState = Extract<
@@ -31,6 +32,7 @@ type NativeNotifyState = Extract<
 
 export class Notifier {
   private readonly lastObservedStates = new Map<string, AgentObservedState>();
+  private readonly activeNativeNotifications = new Set<NativeNotificationHandle>();
 
   constructor(private readonly opts: NotifierOptions) {}
 
@@ -46,14 +48,22 @@ export class Notifier {
     if (!this.opts.nativeFactory) return;
     if (this.opts.isNativeSupported && !this.opts.isNativeSupported()) return;
     if (this.opts.shouldShowNative && !this.opts.shouldShowNative()) return;
+    let native: NativeNotificationHandle | null = null;
     try {
-      const native = this.opts.nativeFactory(notification);
+      native = this.opts.nativeFactory(notification);
+      const retained = native;
+      this.activeNativeNotifications.add(retained);
+      const release = () => this.activeNativeNotifications.delete(retained);
       native.on?.('click', () => {
+        release();
         this.focusFirstWindow();
         onClick?.();
       });
+      native.on?.('close', release);
+      native.on?.('failed', release);
       native.show();
     } catch (err) {
+      if (native) this.activeNativeNotifications.delete(native);
       this.opts.log?.('failed to show native notification', err);
     }
   }
@@ -93,6 +103,7 @@ export class Notifier {
     const win = this.opts.getWindows().find((candidate) => !candidate.isDestroyed());
     if (!win) return;
     if (win.isMinimized()) win.restore();
+    this.opts.focusApp?.();
     win.show();
     win.focus();
   }
