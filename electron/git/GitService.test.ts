@@ -67,6 +67,26 @@ describe.skipIf(!hasGit)('GitService', () => {
     expect(stat.insertions).toBe(1);
   });
 
+  it('shortstat: counts untracked file lines as insertions', async () => {
+    await initRepo(tmpRoot);
+    await fs.writeFile(path.join(tmpRoot, 'new.txt'), 'one\ntwo\nthree\n', 'utf8');
+
+    const stat = await svc.getShortstat(tmpRoot);
+    expect(stat.filesChanged).toBe(1);
+    expect(stat.insertions).toBe(3);
+    expect(stat.deletions).toBe(0);
+  });
+
+  it('shortstat: combines tracked and untracked changes', async () => {
+    await initRepo(tmpRoot);
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'a\nb\n', 'utf8');
+    await fs.writeFile(path.join(tmpRoot, 'new.txt'), 'x\ny\n', 'utf8');
+
+    const stat = await svc.getShortstat(tmpRoot, true);
+    expect(stat.filesChanged).toBe(2);
+    expect(stat.insertions).toBe(3);
+  });
+
   it('branch and aheadBehind: read current branch counts', async () => {
     await initRepo(tmpRoot);
 

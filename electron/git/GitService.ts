@@ -94,12 +94,48 @@ export class GitService {
     if (output.code !== 0) {
       output = await this.runInRepo(info, ['diff', '--shortstat', '--']);
     }
+    const tracked = parseShortstat(output.code === 0 ? output.stdout : '');
+    const untracked = await this.countUntracked(info);
     cache.shortstat = {
       repoPath: info.repoPath,
       isRepo: true,
-      ...parseShortstat(output.code === 0 ? output.stdout : '')
+      filesChanged: tracked.filesChanged + untracked.filesChanged,
+      insertions: tracked.insertions + untracked.insertions,
+      deletions: tracked.deletions
     };
     return clone(cache.shortstat);
+  }
+
+  private async countUntracked(
+    info: RepoInfo
+  ): Promise<{ filesChanged: number; insertions: number }> {
+    // git diff --shortstat HEAD only counts tracked files; new files would
+    // never show up in the +N -N counter. Run ls-files to enumerate them
+    // and treat each one as additions, so the user sees their new code.
+    const list = await this.runInRepo(info, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z'
+    ]);
+    if (list.code !== 0 || !list.stdout) return { filesChanged: 0, insertions: 0 };
+    const files = list.stdout.split('\0').filter(Boolean);
+    if (files.length === 0) return { filesChanged: 0, insertions: 0 };
+    let insertions = 0;
+    for (const file of files) {
+      // git diff --no-index returns code 1 when files differ (always here),
+      // so we read stdout regardless of exit status.
+      const result = await this.runInRepo(info, [
+        'diff',
+        '--no-index',
+        '--shortstat',
+        '--',
+        '/dev/null',
+        file
+      ]);
+      insertions += parseShortstat(result.stdout).insertions;
+    }
+    return { filesChanged: files.length, insertions };
   }
 
   async getAheadBehind(

@@ -177,11 +177,11 @@ class GitStore {
   private async tick(cwd: string): Promise<void> {
     const status = await this.loadStatus(cwd, true);
     if (!status?.repoPath) return;
-    // shortstat compares working tree against HEAD; if no files are
-    // staged or unstaged it is provably 0/0/0, so synthesize and skip
-    // the extra `git diff --shortstat` call. Untracked files don't show
-    // up in shortstat either way.
-    if (status.staged === 0 && status.unstaged === 0) {
+    // When the worktree is fully clean, shortstat is provably 0/0/0;
+    // synthesize it locally and skip the extra git invocation. Otherwise
+    // (any staged, unstaged, or untracked entry) fetch the real numbers
+    // since untracked files now contribute insertions too.
+    if (!status.dirty) {
       this.shortstats = {
         ...this.shortstats,
         [status.repoPath]: {
