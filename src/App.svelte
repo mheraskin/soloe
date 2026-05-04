@@ -201,8 +201,7 @@
     if (commandPalette.isOpen || filePalette.open) return;
     if (
       Keymap.deleteSelectedSession.match(e)
-      && !shouldIgnoreInTextInput(e)
-      && !isTerminalKeyTarget(e)
+      && (!shouldIgnoreInTextInput(e) || isTerminalKeyTarget(e))
     ) {
       consume(e);
       void nav.closeActive();

@@ -13,7 +13,6 @@
     CircleSlash
   } from '@lucide/svelte';
   import type {
-    AgentObservedState,
     Session,
     SessionId,
     SessionColor
@@ -26,6 +25,10 @@
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
   import { confirmDeleteSession } from '../lib/session-delete-confirmation';
+  import {
+    displayedAgentState as resolveDisplayedAgentState,
+    displayedAgentSummary
+  } from '../lib/session-display-state';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
@@ -93,15 +96,16 @@
   // spinner.
   let hasRuntime = $derived(sessions.runtime[session.id] !== undefined);
   let isAgent = $derived(session.kind === 'claude_code' || session.kind === 'codex');
-  let displayedAgentState = $derived.by<AgentObservedState | null>(() => {
-    if (!observed) return null;
-    if (observed.state === 'starting') {
-      return status === 'running' ? 'idle' : null;
-    }
-    return observed.state;
-  });
+  let displayedAgentState = $derived(
+    resolveDisplayedAgentState({
+      observed,
+      status,
+      hasRuntime,
+      hasNotificationMarker: marker !== null
+    })
+  );
   let displayedObservedSummary = $derived(
-    observed?.state === 'starting' && displayedAgentState === 'idle' ? 'idle' : observedSummary
+    displayedAgentSummary(observed, displayedAgentState, observedSummary)
   );
   let showSpawnSpinner = $derived(hasRuntime && status === 'starting');
   let showAgentBadge = $derived(isAgent && displayedAgentState !== null);

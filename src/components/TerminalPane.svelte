@@ -13,6 +13,8 @@
   import type { SessionId } from '@shared/types/sessions.js';
   import { settings } from '../stores/settings.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { nav } from '../stores/nav.svelte';
+  import { rightRail } from '../stores/right-rail.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -210,8 +212,19 @@
 
       if (tabIndexFromEvent(e) !== null) return false;
       if (projectIndexFromEvent(e) !== null) return false;
+      if (Keymap.deleteSelectedSession.match(e)) {
+        e.preventDefault();
+        void nav.closeActive();
+        return false;
+      }
+      if (Keymap.toggleNotesRail.match(e)) {
+        e.preventDefault();
+        rightRail.toggleTab('notes');
+        return false;
+      }
       for (const binding of Object.values(Keymap)) {
         if (binding.id === Keymap.deleteSelectedSession.id) continue;
+        if (binding.id === Keymap.toggleNotesRail.id) continue;
         if (binding.match(e)) return false;
       }
 
