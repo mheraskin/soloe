@@ -33,7 +33,7 @@ export class AgentHookDispatcher {
   }
 
   async dispatchClaude(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
-    const hookEvent = stringField(payload, 'hook_event_name');
+    const hookEvent = hookEventName(payload);
     if (hookEvent === 'SessionStart') {
       this.pendingAutoRename.add(soloeSessionId);
       console.log(`[soloe-rename] dispatcher: SessionStart armed for ${soloeSessionId} (claude)`);
@@ -48,7 +48,7 @@ export class AgentHookDispatcher {
   }
 
   async dispatchCodex(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
-    const hookEvent = stringField(payload, 'hook_event_name');
+    const hookEvent = hookEventName(payload);
     if (hookEvent === 'SessionStart') {
       this.pendingAutoRename.add(soloeSessionId);
       console.log(`[soloe-rename] dispatcher: SessionStart armed for ${soloeSessionId} (codex)`);
@@ -200,6 +200,13 @@ function mapCodexHook(
   hookEvent: string | undefined,
   payload: Record<string, unknown>
 ): HookMapping | null {
+  if (isCodexPermissionRequest(hookEvent, payload)) {
+    return {
+      state: 'waiting_for_approval',
+      summary: codexPermissionSummary(payload)
+    };
+  }
+
   switch (hookEvent) {
     case 'SessionStart':
       return { state: 'starting', summary: 'session started' };
@@ -214,8 +221,6 @@ function mapCodexHook(
     }
     case 'PostToolUse':
       return { state: 'working', summary: 'thinking' };
-    case 'PermissionRequest':
-      return { state: 'waiting_for_approval', summary: 'waiting for approval' };
     case 'Stop':
       return { state: 'completed', summary: 'completed' };
     default:
@@ -223,7 +228,115 @@ function mapCodexHook(
   }
 }
 
+function hookEventName(payload: Record<string, unknown>): string | undefined {
+  return (
+    stringField(payload, 'hook_event_name')
+    ?? stringField(payload, 'hook_event')
+    ?? stringField(payload, 'event')
+    ?? stringField(payload, 'type')
+    ?? stringField(payload, 'name')
+  );
+}
+
+function isCodexPermissionRequest(
+  hookEvent: string | undefined,
+  payload: Record<string, unknown>
+): boolean {
+  const normalizedEvent = normalizeEventName(hookEvent);
+  if (
+    normalizedEvent === 'permissionrequest'
+    || normalizedEvent === 'permissionrequested'
+    || normalizedEvent === 'approvalrequest'
+    || normalizedEvent === 'approvalrequested'
+  ) {
+    return true;
+  }
+
+  return booleanField(payload, 'approval_required')
+    || booleanField(payload, 'requires_approval')
+    || booleanField(payload, 'permission_required')
+    || booleanField(payload, 'requires_permission')
+    || statusStringIndicatesRequest(payload, 'approval')
+    || statusStringIndicatesRequest(payload, 'permission')
+    || nestedBooleanField(payload, ['tool', 'approval_required'])
+    || nestedBooleanField(payload, ['tool', 'requires_approval'])
+    || nestedBooleanField(payload, ['tool_input', 'approval_required'])
+    || nestedBooleanField(payload, ['tool_input', 'requires_approval'])
+    || nestedBooleanField(payload, ['input', 'approval_required'])
+    || nestedBooleanField(payload, ['input', 'requires_approval'])
+    || nestedBooleanField(payload, ['arguments', 'approval_required'])
+    || nestedBooleanField(payload, ['arguments', 'requires_approval']);
+}
+
+function codexPermissionSummary(payload: Record<string, unknown>): string {
+  const command =
+    stringField(payload, 'command')
+    ?? nestedStringField(payload, ['tool_input', 'command'])
+    ?? nestedStringField(payload, ['input', 'command'])
+    ?? nestedStringField(payload, ['arguments', 'command']);
+  if (command) return `approval: ${shortText(command, 72)}`;
+
+  const toolName =
+    stringField(payload, 'tool_name')
+    ?? stringField(payload, 'tool')
+    ?? nestedStringField(payload, ['tool', 'name']);
+  if (toolName) return `approval: ${toolName}`;
+
+  return 'waiting for approval';
+}
+
+function normalizeEventName(value: string | undefined): string {
+  return (value ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
 function stringField(payload: Record<string, unknown>, key: string): string | undefined {
   const value = payload[key];
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function booleanField(payload: Record<string, unknown>, key: string): boolean {
+  return payload[key] === true;
+}
+
+function statusStringIndicatesRequest(payload: Record<string, unknown>, key: string): boolean {
+  const value = stringField(payload, key);
+  if (!value) return false;
+  const normalized = normalizeEventName(value);
+  return normalized === 'request'
+    || normalized === 'requested'
+    || normalized === 'required'
+    || normalized === 'pending'
+    || normalized === 'waiting'
+    || normalized === 'prompt'
+    || normalized === 'ask'
+    || normalized === 'approvalrequired'
+    || normalized === 'permissionrequired';
+}
+
+function nestedStringField(payload: Record<string, unknown>, path: string[]): string | undefined {
+  const value = nestedField(payload, path);
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function nestedBooleanField(payload: Record<string, unknown>, path: string[]): boolean {
+  return nestedField(payload, path) === true;
+}
+
+function nestedField(payload: Record<string, unknown>, path: string[]): unknown {
+  let current: unknown = payload;
+  for (const segment of path) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function shortText(value: string, maxLength: number): string {
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3)}...`;
 }

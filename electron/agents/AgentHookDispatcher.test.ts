@@ -119,6 +119,57 @@ describe('AgentHookDispatcher', () => {
       });
       expect(observer.getSnapshot('sess-2')?.state).toBe(expectedState);
     });
+
+    it('recognizes Codex permission requests from alternate event fields', async () => {
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-2',
+        payload: {
+          type: 'permission_request',
+          tool_name: 'shell',
+          command: 'docker compose up'
+        }
+      });
+
+      expect(observer.getSnapshot('sess-2')?.state).toBe('waiting_for_approval');
+      expect(observer.listEvents('sess-2').map((e) => e.summary)).toContain(
+        'approval: docker compose up'
+      );
+    });
+
+    it('treats approval-required Codex tool hooks as approval instead of running tool', async () => {
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-2',
+        payload: {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'shell',
+          tool_input: {
+            command: 'docker ps',
+            requires_approval: true
+          }
+        }
+      });
+
+      expect(observer.getSnapshot('sess-2')?.state).toBe('waiting_for_approval');
+      expect(observer.listEvents('sess-2').map((e) => e.summary)).toContain(
+        'approval: docker ps'
+      );
+    });
+
+    it('does not treat non-required Codex approval metadata as approval', async () => {
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-2',
+        payload: {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'shell',
+          approval: 'not_required'
+        }
+      });
+
+      expect(observer.getSnapshot('sess-2')?.state).toBe('running_tool');
+    });
   });
 
   describe('captures provider session id', () => {
