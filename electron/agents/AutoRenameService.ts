@@ -160,7 +160,7 @@ export class AutoRenameService {
     const fullPrompt = `${NAMING_INSTRUCTION}\n${truncated}`;
     const argv = buildAgentArgv(target, binaries, fullPrompt);
     if (session.runMode === 'wsl') {
-      return runWslArgv(session.wslDistro ?? 'Ubuntu', argv, this.opts.spawnImpl);
+      return runWslArgv(session.wslDistro ?? 'Ubuntu', session.cwd, argv, this.opts.spawnImpl);
     }
     return runDirect(argv, this.opts.spawnImpl);
   }
@@ -173,9 +173,11 @@ function buildAgentArgv(
 ): { executable: string; args: string[] } {
   if (target.provider === 'codex') {
     const exe = binaries.codex || 'codex';
+    // Omit -m: gpt-5-mini (our hardcoded default) is rejected on ChatGPT-auth
+    // codex accounts. Codex's own configured default works for both auth modes.
     return {
       executable: exe,
-      args: ['exec', '--skip-git-repo-check', '--color', 'never', '-m', target.id, prompt]
+      args: ['exec', '--skip-git-repo-check', '--color', 'never', prompt]
     };
   }
   const exe = binaries.claude || 'claude';
@@ -206,13 +208,14 @@ async function runDirect(
 
 async function runWslArgv(
   distro: string,
+  cwd: string,
   argv: { executable: string; args: string[] },
   spawnImpl: typeof spawn = spawn
 ): Promise<string> {
   const inner = buildWslAgentLine({}, argv.executable, argv.args);
   return runProcess(
     WslCommandBuilder.WSL_EXE,
-    ['-d', distro, 'bash', '-lc', inner],
+    ['-d', distro, '--cd', cwd, 'bash', '-lc', inner],
     process.env['USERPROFILE'] ?? process.env['HOME'] ?? os.homedir(),
     spawnImpl
   );

@@ -1,7 +1,12 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { Archive, ArchiveRestore, Loader2, Pencil, FolderOpen, Copy, Trash2, GitBranch, ChevronRight, CircleSlash } from '@lucide/svelte';
-  import type { Session, SessionId, SessionColor } from '@shared/types/sessions.js';
+  import type {
+    AgentObservedState,
+    Session,
+    SessionId,
+    SessionColor
+  } from '@shared/types/sessions.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
@@ -77,8 +82,18 @@
   // spinner.
   let hasRuntime = $derived(sessions.runtime[session.id] !== undefined);
   let isAgent = $derived(session.kind === 'claude_code' || session.kind === 'codex');
+  let displayedAgentState = $derived.by<AgentObservedState | null>(() => {
+    if (!observed) return null;
+    if (observed.state === 'starting') {
+      return status === 'running' ? 'idle' : null;
+    }
+    return observed.state;
+  });
+  let displayedObservedSummary = $derived(
+    observed?.state === 'starting' && displayedAgentState === 'idle' ? 'idle' : observedSummary
+  );
   let showSpawnSpinner = $derived(hasRuntime && status === 'starting');
-  let showAgentBadge = $derived(isAgent && observed !== null);
+  let showAgentBadge = $derived(isAgent && displayedAgentState !== null);
   let statusPill = $derived(buildStatusPill());
 
   function onClick(e: MouseEvent) {
@@ -368,10 +383,10 @@
                 {session.name || '(unnamed)'}
               </span>
             {/if}
-            {#if showAgentBadge && observed}
+            {#if showAgentBadge && displayedAgentState}
               <AgentStateBadge
-                state={observed.state}
-                summary={observedSummary}
+                state={displayedAgentState}
+                summary={displayedObservedSummary}
               />
             {:else if showSpawnSpinner}
               <span
