@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, shell } from 'electron';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
@@ -67,6 +67,10 @@ let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
 
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.soloe.app');
+}
+
 async function setupServices(): Promise<AppServices> {
   const userDataPath = app.getPath('userData');
   const sessionsFile = path.join(userDataPath, 'sessions.json');
@@ -95,7 +99,14 @@ async function setupServices(): Promise<AppServices> {
   observerStore.attach(observer);
   for (const session of await store.list()) observer.registerTuiSession(session);
   const runtime = new AgentRuntimeManager({ observer });
-  const notifier = new Notifier({ getWindows: () => BrowserWindow.getAllWindows() });
+  const notifier = new Notifier({
+    getWindows: () => BrowserWindow.getAllWindows(),
+    nativeFactory: (notification) => new Notification(notification),
+    isNativeSupported: () => Notification.isSupported(),
+    shouldShowNative: () => !BrowserWindow.getAllWindows().some((win) => win.isFocused()),
+    log: (message, detail) => console.warn(`[notifier] ${message}`, detail)
+  });
+  notifier.attachAgentObserver(observer, store);
 
   const commandBuilder = new SessionCommandBuilder(
     new ShellDetector(),

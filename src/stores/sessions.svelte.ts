@@ -263,6 +263,11 @@ class SessionsStore {
       })
     );
     this.detachers.push(
+      ipc.notify.onActivateSession((sessionId) => {
+        if (this.sessions.some((s) => s.id === sessionId)) this.select(sessionId);
+      })
+    );
+    this.detachers.push(
       ipc.sessions.onChange((session) => {
         const idx = this.sessions.findIndex((s) => s.id === session.id);
         if (idx === -1) {

@@ -195,6 +195,8 @@ export const ipc = {
       c.agentIntegration.onChange(cb)
   },
   notify: {
-    onToast: (cb: (toast: ToastNotification) => void) => c.notify.onToast(cb)
+    onToast: (cb: (toast: ToastNotification) => void) => c.notify.onToast(cb),
+    onActivateSession: (cb: (sessionId: SessionId) => void) =>
+      c.notify.onActivateSession(cb)
   }
 };

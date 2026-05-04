@@ -202,7 +202,9 @@ const soloe: SoloeApi = {
   },
   notify: {
     onToast: (cb: (toast: ToastNotification) => void) =>
-      subscribe<ToastNotification>(IpcChannels.notify.toast, cb)
+      subscribe<ToastNotification>(IpcChannels.notify.toast, cb),
+    onActivateSession: (cb: (sessionId: SessionId) => void) =>
+      subscribe<SessionId>(IpcChannels.notify.activateSession, cb)
   }
 };
 

@@ -163,7 +163,8 @@ export const IpcChannels = {
     changed: 'agent-integration:changed'
   },
   notify: {
-    toast: 'notify:toast'
+    toast: 'notify:toast',
+    activateSession: 'notify:activate-session'
   }
 } as const;
 
@@ -373,6 +374,7 @@ export interface ToastNotification {
 
 export interface NotifyApi {
   onToast(listener: (toast: ToastNotification) => void): () => void;
+  onActivateSession(listener: (sessionId: SessionId) => void): () => void;
 }
 
 export interface SoloeApi {
