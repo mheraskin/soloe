@@ -10,6 +10,7 @@
   import { nav } from './stores/nav.svelte';
   import { commandPalette } from './stores/command-palette.svelte';
   import { filePalette } from './stores/file-palette.svelte';
+  import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
@@ -33,6 +34,7 @@
   import ProjectModal from './components/ProjectModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import FilePalette from './components/FilePalette.svelte';
+  import NewSessionPickerDialog from './components/NewSessionPickerDialog.svelte';
   import AgentIntegrationSetupDialog from './components/AgentIntegrationSetupDialog.svelte';
   import AgentNotificationToasts from './components/AgentNotificationToasts.svelte';
 
@@ -178,6 +180,15 @@
         .catch(reportError);
       return;
     }
+    if (Keymap.newSessionPicker.match(e)) {
+      consume(e);
+      const sel = sessions.selected;
+      newSessionPicker.open({
+        ...(sel?.projectId ? { projectId: sel.projectId } : {}),
+        ...(sel?.cwd ? { cwd: sel.cwd } : {})
+      });
+      return;
+    }
     if (Keymap.terminalFind.match(e)) {
       consume(e);
       window.dispatchEvent(new CustomEvent('soloe:terminal-find'));
@@ -289,6 +300,7 @@
   <ProjectModal />
   <CommandPalette />
   <FilePalette />
+  <NewSessionPickerDialog />
   <ConfirmDialog />
   <AgentIntegrationSetupDialog />
   <SettingsDrawer />

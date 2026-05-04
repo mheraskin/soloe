@@ -42,6 +42,13 @@ export const Keymap = {
     keys: ['Ctrl', 'T'],
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 't'
   },
+  newSessionPicker: {
+    id: 'session.new-pick-kind',
+    description: 'New session (pick kind)',
+    keys: ['Ctrl', 'Shift', 'T'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 't'
+  },
   openProject: {
     id: 'project.open',
     description: 'Open project',
