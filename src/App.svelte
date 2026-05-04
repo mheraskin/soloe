@@ -14,7 +14,12 @@
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
-  import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from './lib/keymap';
+  import {
+    Keymap,
+    projectIndexFromEvent,
+    shouldIgnoreInTextInput,
+    tabIndexFromEvent
+  } from './lib/keymap';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
@@ -136,6 +141,11 @@
     e.stopImmediatePropagation();
   }
 
+  function isTerminalKeyTarget(e: KeyboardEvent): boolean {
+    const target = e.target as HTMLElement | null;
+    return Boolean(target?.closest('.xterm'));
+  }
+
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
       consume(e);
@@ -189,6 +199,15 @@
       return;
     }
     if (commandPalette.isOpen || filePalette.open) return;
+    if (
+      Keymap.deleteSelectedSession.match(e)
+      && !shouldIgnoreInTextInput(e)
+      && !isTerminalKeyTarget(e)
+    ) {
+      consume(e);
+      void nav.closeActive();
+      return;
+    }
     const projectIdx = projectIndexFromEvent(e);
     if (projectIdx !== null) {
       consume(e);
@@ -199,11 +218,6 @@
     if (idx !== null) {
       consume(e);
       nav.selectByIndex(idx);
-      return;
-    }
-    if (Keymap.closeActiveTab.match(e)) {
-      consume(e);
-      void nav.closeActive();
       return;
     }
     if (Keymap.cycleNext.match(e)) {

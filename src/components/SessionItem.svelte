@@ -577,6 +577,7 @@
     {/if}
     <ContextMenu.Item variant="destructive" onSelect={remove}>
       <Trash2 /> <span>Delete</span>
+      <ContextMenu.Shortcut>Del</ContextMenu.Shortcut>
     </ContextMenu.Item>
   </ContextMenu.Content>
 </ContextMenu.Root>

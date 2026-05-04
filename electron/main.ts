@@ -270,6 +270,15 @@ async function createWindow(): Promise<BrowserWindow> {
     if (isF12 || isToggleCombo) {
       event.preventDefault();
       win.webContents.toggleDevTools();
+      return;
+    }
+    const isCloseWindowCombo =
+      (input.key === 'W' || input.key === 'w') &&
+      !input.alt &&
+      !input.shift &&
+      (process.platform === 'darwin' ? input.meta : input.control);
+    if (isCloseWindowCombo) {
+      event.preventDefault();
     }
   });
 

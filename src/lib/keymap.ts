@@ -69,11 +69,12 @@ export const Keymap = {
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && !e.altKey && (key(e) === '-' || key(e) === '_')
   },
-  closeActiveTab: {
-    id: 'tabs.close-active',
-    description: 'Close active tab',
-    keys: ['Ctrl', 'W'],
-    match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'w'
+  deleteSelectedSession: {
+    id: 'session.delete-selected',
+    description: 'Delete selected session',
+    keys: ['Del'],
+    match: (e: KeyboardEvent) =>
+      !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'Delete'
   },
   cycleNext: {
     id: 'tabs.cycle-next',

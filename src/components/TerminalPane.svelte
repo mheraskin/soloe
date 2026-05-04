@@ -211,6 +211,7 @@
       if (tabIndexFromEvent(e) !== null) return false;
       if (projectIndexFromEvent(e) !== null) return false;
       for (const binding of Object.values(Keymap)) {
+        if (binding.id === Keymap.deleteSelectedSession.id) continue;
         if (binding.match(e)) return false;
       }
 
