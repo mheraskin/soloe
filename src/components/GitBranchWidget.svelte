@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, GitBranch } from '@lucide/svelte';
+  import { Check, GitBranch, GitCommitHorizontal } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import type { GitBranch as GitBranchInfo, GitCommit } from '@shared/types/git.js';
   import { ipc } from '../lib/ipc';
@@ -12,9 +12,12 @@
 
   let { cwd }: { cwd: string } = $props();
 
+  const INITIAL_COMMIT_LIMIT = 10;
+
   let switcherOpen = $state(false);
   let branches = $state<GitBranchInfo[]>([]);
   let commits = $state<GitCommit[]>([]);
+  let commitLimit = $state<number | null>(INITIAL_COMMIT_LIMIT);
   let checkingOut = $state<string | null>(null);
 
   async function refresh(force = false): Promise<void> {
@@ -32,9 +35,11 @@
   let status = $derived(git.statusFor(cwd));
   let shortstat = $derived(git.shortstatFor(cwd));
 
+  let shortHead = $derived(status?.head ? status.head.slice(0, 7) : null);
+
   let label = $derived.by<string | null>(() => {
     if (!status || !status.isRepo) return null;
-    if (status.detached) return 'detached';
+    if (status.detached) return shortHead ?? 'detached';
     return status.branch ?? null;
   });
 
@@ -66,12 +71,24 @@
   });
 
   $effect(() => {
-    if (!switcherOpen || !status?.repoPath) return;
+    if (!switcherOpen) {
+      untrack(() => {
+        commitLimit = INITIAL_COMMIT_LIMIT;
+      });
+      return;
+    }
+    if (!status?.repoPath) return;
     const repoPath = status.repoPath;
     const ctx = git.contextFor(cwd);
+    const limit = commitLimit;
     Promise.all([
-      ipc.git.branches({ repoPath, ...ctx }),
-      ipc.git.recentCommits({ repoPath, limit: 8, ...ctx })
+      ipc.git.branches({ repoPath, force: true, ...ctx }),
+      ipc.git.recentCommits({
+        repoPath,
+        force: true,
+        ...(limit === null ? {} : { limit }),
+        ...ctx
+      })
     ])
       .then(([nextBranches, nextCommits]) => {
         branches = nextBranches;
@@ -79,6 +96,10 @@
       })
       .catch(reportError);
   });
+
+  function loadAllCommits() {
+    commitLimit = null;
+  }
 
   async function checkout(ref: string): Promise<void> {
     if (!status?.repoPath || checkingOut) return;
@@ -111,8 +132,12 @@
             class={`gap-1.5 ${status?.dirty ? 'text-foreground' : ''}`}
             {title}
           >
-            <GitBranch />
-            <span class="max-w-[160px] truncate">{label}</span>
+            {#if status?.detached}
+              <GitCommitHorizontal />
+            {:else}
+              <GitBranch />
+            {/if}
+            <span class={`max-w-[160px] truncate ${status?.detached ? 'font-mono' : ''}`}>{label}</span>
             {#if badge}
               <span class={`text-[10px] ${status?.dirty ? 'text-amber-500' : 'text-muted-foreground'}`}>{badge}</span>
             {/if}
@@ -131,7 +156,7 @@
       </Popover.Trigger>
       <Popover.Content align="start" class="w-72 p-0">
         <Command.Root>
-          <Command.Input placeholder="Switch branch…" />
+          <Command.Input placeholder="Switch branch or commit…" />
           <Command.List>
             <Command.Empty>No matches</Command.Empty>
             {#if branches.length > 0}
@@ -156,15 +181,30 @@
             {#if commits.length > 0}
               <Command.Group heading="Recent commits">
                 {#each commits as commit (commit.hash)}
+                  {@const isCurrent = status?.detached && status.head === commit.hash}
                   <Command.Item
                     value={commit.hash}
-                    disabled={checkingOut !== null}
+                    disabled={isCurrent || checkingOut !== null}
                     onSelect={() => checkout(commit.hash)}
                   >
+                    <span class="inline-flex w-3 shrink-0 items-center">
+                      {#if isCurrent}<Check class="size-3 text-primary" />{/if}
+                    </span>
                     <span class="w-12 shrink-0 truncate font-mono text-[10px] text-muted-foreground">{commit.shortHash}</span>
                     <span class="flex-1 truncate">{commit.subject}</span>
                   </Command.Item>
                 {/each}
+                {#if commitLimit !== null && commits.length >= commitLimit}
+                  <Command.Item
+                    value="__load_all_commits__"
+                    forceMount
+                    disabled={checkingOut !== null}
+                    onSelect={loadAllCommits}
+                  >
+                    <span class="w-3 shrink-0"></span>
+                    <span class="flex-1 truncate text-xs text-muted-foreground">Load all commits…</span>
+                  </Command.Item>
+                {/if}
               </Command.Group>
             {/if}
           </Command.List>

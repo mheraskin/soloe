@@ -154,7 +154,7 @@ export class GitService {
     const info = await this.resolveRepo(repoPath, context);
     if (!info) return [];
     const cache = this.ensureCache(info);
-    if (!force && cache.branches) return clone(cache.branches);
+    if (!force && cache.branches && cache.branches.length > 0) return clone(cache.branches);
     const output = await this.runInRepo(info, [
       'branch',
       '--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(committerdate:iso8601)%00%(subject)'
@@ -165,23 +165,23 @@ export class GitService {
 
   async listRecentCommits(
     repoPath: string,
-    limit = 20,
+    limit?: number,
     force = false,
     context: GitRepoContext = {}
   ): Promise<GitCommit[]> {
-    const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const safeLimit =
+      limit === undefined ? null : Math.max(1, Math.trunc(limit));
     const info = await this.resolveRepo(repoPath, context);
     if (!info) return [];
     const cache = this.ensureCache(info);
-    const cached = cache.commitsByLimit.get(safeLimit);
+    const cacheKey = safeLimit ?? 0;
+    const cached = cache.commitsByLimit.get(cacheKey);
     if (!force && cached) return clone(cached);
-    const output = await this.runInRepo(info, [
-      'log',
-      `-${safeLimit}`,
-      '--pretty=format:%H%x00%h%x00%an%x00%aI%x00%s'
-    ]);
+    const args = ['log', '--pretty=format:%H%x00%h%x00%an%x00%aI%x00%s'];
+    if (safeLimit !== null) args.splice(1, 0, `-${safeLimit}`);
+    const output = await this.runInRepo(info, args);
     const commits = output.code === 0 ? parseCommits(output.stdout) : [];
-    cache.commitsByLimit.set(safeLimit, commits);
+    cache.commitsByLimit.set(cacheKey, commits);
     return clone(commits);
   }
 
@@ -367,6 +367,7 @@ function emptyStatus(cwd: string): GitStatus {
     repoPath: null,
     isRepo: false,
     branch: null,
+    head: null,
     detached: false,
     dirty: false,
     ...EMPTY_COUNTS
@@ -383,12 +384,18 @@ function parsePorcelainV2(cwd: string, repoPath: string, output: string): GitSta
     repoPath,
     isRepo: true,
     branch: null,
+    head: null,
     detached: false,
     dirty: false,
     ...EMPTY_COUNTS
   };
   for (const line of output.split('\n')) {
     if (!line) continue;
+    if (line.startsWith('# branch.oid ')) {
+      const oid = line.slice('# branch.oid '.length).trim();
+      if (oid && oid !== '(initial)') status.head = oid;
+      continue;
+    }
     if (line.startsWith('# branch.head ')) {
       const head = line.slice('# branch.head '.length).trim();
       if (head === '(detached)') {

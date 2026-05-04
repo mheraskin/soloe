@@ -5,6 +5,7 @@ export interface GitStatus {
   repoPath: string | null;
   isRepo: boolean;
   branch: string | null;
+  head: string | null;
   detached: boolean;
   ahead: number;
   behind: number;
