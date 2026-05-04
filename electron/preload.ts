@@ -40,6 +40,7 @@ import type {
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
+  ImagePasteRequest,
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
@@ -174,7 +175,9 @@ const soloe: SoloeApi = {
     openInEditor: (request: FileOpenRequest) =>
       ipcRenderer.invoke(IpcChannels.files.openInEditor, request),
     pasteIntoTerminal: (request: FilePasteRequest) =>
-      ipcRenderer.invoke(IpcChannels.files.pasteIntoTerminal, request)
+      ipcRenderer.invoke(IpcChannels.files.pasteIntoTerminal, request),
+    pasteImagesIntoTerminal: (request: ImagePasteRequest) =>
+      ipcRenderer.invoke(IpcChannels.files.pasteImagesIntoTerminal, request)
   },
   diagnostics: {
     list: () => ipcRenderer.invoke(IpcChannels.diagnostics.list),

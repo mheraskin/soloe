@@ -190,6 +190,7 @@ async function setupServices(): Promise<AppServices> {
   const files = new FileSearchService({ getBinaries });
   const filesIpc = new FilesIpc({
     service: files,
+    store,
     pty: manager,
     getBinaries
   });

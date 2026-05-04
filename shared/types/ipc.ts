@@ -23,6 +23,8 @@ import type {
 } from './git.js';
 import type {
   FileOpenRequest,
+  ImagePasteRequest,
+  ImagePasteResult,
   FilePasteRequest,
   FileSearchRequest,
   FileSearchResult
@@ -141,7 +143,8 @@ export const IpcChannels = {
   files: {
     search: 'files:search',
     openInEditor: 'files:open-in-editor',
-    pasteIntoTerminal: 'files:paste-into-terminal'
+    pasteIntoTerminal: 'files:paste-into-terminal',
+    pasteImagesIntoTerminal: 'files:paste-images-into-terminal'
   },
   diagnostics: {
     list: 'diagnostics:list',
@@ -298,6 +301,7 @@ export interface FilesApi {
   search(request: FileSearchRequest): Promise<IpcResult<FileSearchResult[]>>;
   openInEditor(request: FileOpenRequest): Promise<IpcResult<true>>;
   pasteIntoTerminal(request: FilePasteRequest): Promise<IpcResult<true>>;
+  pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<IpcResult<ImagePasteResult>>;
 }
 
 export interface DiagnosticsApi {

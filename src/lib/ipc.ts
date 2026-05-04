@@ -26,6 +26,7 @@ import type {
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
+  ImagePasteRequest,
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
@@ -168,7 +169,9 @@ export const ipc = {
     openInEditor: async (request: FileOpenRequest) =>
       unwrap(await c.files.openInEditor(toIpcPayload(request))),
     pasteIntoTerminal: async (request: FilePasteRequest) =>
-      unwrap(await c.files.pasteIntoTerminal(toIpcPayload(request)))
+      unwrap(await c.files.pasteIntoTerminal(toIpcPayload(request))),
+    pasteImagesIntoTerminal: async (request: ImagePasteRequest) =>
+      unwrap(await c.files.pasteImagesIntoTerminal(toIpcPayload(request)))
   },
   diagnostics: {
     list: async () => unwrap(await c.diagnostics.list()),

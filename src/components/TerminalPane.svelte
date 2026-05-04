@@ -21,11 +21,14 @@
   import { Loader2, X } from '@lucide/svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
   import {
+    AGENT_IMAGE_PASTE_SEQUENCE,
     altWordEditSequence,
     isClipboardPasteShortcut,
     SHIFT_ENTER_SEQUENCE,
+    shouldPasteImageViaSavedPath,
     shouldSendShiftEnterSequence
   } from '../lib/terminal-input';
+  import type { ClipboardImagePayload } from '@shared/types/files.js';
 
   let {
     terminalId,
@@ -119,6 +122,61 @@
   function onFindInput(): void {
     if (!findQuery) return;
     search?.findNext(findQuery);
+  }
+
+  async function clipboardImages(): Promise<ClipboardImagePayload[]> {
+    if (!navigator.clipboard?.read) return [];
+    const items = await navigator.clipboard.read();
+    const images: ClipboardImagePayload[] = [];
+    for (const item of items) {
+      const imageType = item.types.find((type) => type.startsWith('image/'));
+      if (!imageType) continue;
+      const blob = await item.getType(imageType);
+      images.push({
+        mimeType: imageType,
+        dataBase64: await blobToBase64(blob)
+      });
+    }
+    return images;
+  }
+
+  function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error('Failed to read clipboard image'));
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        resolve(result.replace(/^data:[^,]*,/u, ''));
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function pasteFromClipboard(t: Terminal): Promise<void> {
+    const session = sessions.sessions.find((item) => item.id === sessionId);
+    if (session?.kind === 'claude_code' || session?.kind === 'codex') {
+      const images = await clipboardImages().catch(() => []);
+      if (images.length > 0) {
+        if (shouldPasteImageViaSavedPath(session)) {
+          const result = await ipc.files.pasteImagesIntoTerminal({
+            terminalId,
+            sessionId,
+            images
+          });
+          toasts.push(
+            result.paths.length === 1 ? 'Pasted image into agent' : `Pasted ${result.paths.length} images into agent`,
+            'info'
+          );
+          return;
+        }
+        await ipc.terminal.input(terminalId, AGENT_IMAGE_PASTE_SEQUENCE);
+        return;
+      }
+    }
+
+    const text = await navigator.clipboard.readText().catch(() => '');
+    if (!text) return;
+    t.paste(text);
   }
 
   function canRender(): boolean {
@@ -242,10 +300,7 @@
 
       if (isClipboardPasteShortcut(e)) {
         e.preventDefault();
-        void navigator.clipboard.readText().then((text) => {
-          if (!text) return;
-          t.paste(text);
-        }).catch(() => {});
+        void pasteFromClipboard(t).catch(reportError);
         return false;
       }
       if (shouldSendShiftEnterSequence(e)) {
