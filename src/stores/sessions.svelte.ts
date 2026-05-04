@@ -289,11 +289,6 @@ class SessionsStore {
 
   private async applyTerminalLocation(id: SessionId, cwd: string): Promise<void> {
     const current = this.sessions.find((s) => s.id === id);
-    console.info('[DEBUG-cwd] renderer location event', {
-      sessionId: id,
-      previousCwd: current?.cwd ?? null,
-      cwd
-    });
     if (!current || current.cwd === cwd) return;
     const version = (this.locationVersions.get(id) ?? 0) + 1;
     this.locationVersions.set(id, version);
@@ -302,20 +297,9 @@ class SessionsStore {
     );
 
     const status = await ipc.git.status({ cwd, force: true }).catch(() => null);
-    console.info('[DEBUG-cwd] renderer git status for location', {
-      sessionId: id,
-      cwd,
-      branch: status?.branch ?? null,
-      isRepo: status?.isRepo ?? false
-    });
     if (this.locationVersions.get(id) !== version) return;
     const patch: SessionUpdate = { cwd, lastBranch: status?.branch ?? undefined };
     const updated = await ipc.sessions.update(id, patch).catch(() => null);
-    console.info('[DEBUG-cwd] renderer persisted location', {
-      sessionId: id,
-      cwd,
-      persisted: Boolean(updated)
-    });
     if (!updated || this.locationVersions.get(id) !== version) return;
     this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
   }

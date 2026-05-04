@@ -301,24 +301,12 @@ export class PtyManager extends EventEmitter {
     while ((match = regex.exec(text))) {
       const payload = match[1] ?? '';
       const cwd = cwdFromOsc(payload, instance.runMode);
-      console.info('[DEBUG-cwd] osc payload parsed', {
-        sessionId: instance.sessionId,
-        terminalId: instance.terminalId,
-        kind: oscKind(payload),
-        cwd,
-        payload: previewOscPayload(payload)
-      });
       if (cwd) this.emitLocation(instance, cwd);
     }
 
     const lastStart = text.lastIndexOf('\x1b]');
     if (lastStart >= 0 && !hasOscTerminator(text, lastStart)) {
       instance.locationBuffer = text.slice(lastStart, lastStart + 4096);
-      console.info('[DEBUG-cwd] buffered partial osc payload', {
-        sessionId: instance.sessionId,
-        terminalId: instance.terminalId,
-        bytes: instance.locationBuffer.length
-      });
     } else {
       instance.locationBuffer = '';
     }
@@ -327,11 +315,6 @@ export class PtyManager extends EventEmitter {
   private emitLocation(instance: TerminalInstance, cwd: string): void {
     if (cwd === instance.cwd) return;
     instance.cwd = cwd;
-    console.info('[DEBUG-cwd] emitting terminal location', {
-      sessionId: instance.sessionId,
-      terminalId: instance.terminalId,
-      cwd
-    });
     this.emit('location', {
       terminalId: instance.terminalId,
       sessionId: instance.sessionId,
@@ -405,17 +388,6 @@ function cwdFromOsc(payload: string, runMode: RunMode): string | null {
     );
   }
   return null;
-}
-
-function oscKind(payload: string): string {
-  if (payload.startsWith('7;')) return 'OSC 7';
-  if (payload.startsWith('633;P;')) return 'OSC 633 Cwd';
-  if (payload.startsWith('1337;CurrentDir=')) return 'OSC 1337 CurrentDir';
-  return 'other';
-}
-
-function previewOscPayload(payload: string): string {
-  return payload.replace(/[^\x20-\x7e]/g, '?').slice(0, 240);
 }
 
 function cwdFromLocationValue(payload: string, runMode: RunMode): string | null {
