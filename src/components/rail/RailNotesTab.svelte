@@ -362,26 +362,28 @@
           {statusLabel}
         </span>
       </div>
-      <div class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+      <div class="flex items-center gap-2 border-b border-border px-3 py-1.5">
         <Button
           variant="outline"
           size="xs"
+          class="min-w-0 flex-1 justify-center gap-1.5 px-2"
           onclick={() => void sendAll()}
           disabled={!canSend || editorValue.trim().length === 0}
           aria-label="Add as context"
         >
-          <ArrowLeftToLine class="size-3" />
-          <span>Add as context</span>
-          <KbdHint keys={['Ctrl', 'Shift', 'Enter']} class="ml-1 opacity-70" />
+          <ArrowLeftToLine class="size-3 shrink-0" />
+          <span class="min-w-0 truncate">Add as context</span>
+          <KbdHint keys={['Ctrl', 'Shift', 'Enter']} class="ml-0.5 shrink-0 opacity-70" />
         </Button>
         {#if notes.isDraft}
           <Button
             size="xs"
+            class="min-w-0 shrink-0 gap-1.5 px-2"
             onclick={openSaveDialog}
             disabled={notes.draftContent.trim().length === 0}
           >
-            <span>Save</span>
-            <KbdHint keys={['Ctrl', 'S']} class="ml-1 opacity-70" />
+            <span class="min-w-0 truncate">Save</span>
+            <KbdHint keys={['Ctrl', 'S']} class="ml-0.5 shrink-0 opacity-70" />
           </Button>
         {/if}
       </div>

@@ -73,7 +73,9 @@
     <nav class="flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = rightRail.open && rightRail.activeTab === tab.id}
-        {@const tooltipOpen = kbdHints.altHeld || hoveredTab[tab.id] === true}
+        {@const tooltipOpen =
+          (kbdHints.altHeld && tab.shortcut !== undefined && !isActive) ||
+          hoveredTab[tab.id] === true}
         <Tooltip.Root open={tooltipOpen} onOpenChange={(v) => (hoveredTab[tab.id] = v)}>
           <Tooltip.Trigger>
             {#snippet child({ props })}
