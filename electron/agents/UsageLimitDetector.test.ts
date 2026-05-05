@@ -22,4 +22,12 @@ describe('detectUsageLimit', () => {
       resetAtLabel: 'Apr 13th, 2026 12:46 AM'
     });
   });
+
+  it('does not classify documentation or summary prose about usage limits', () => {
+    expect(
+      detectUsageLimit(
+        'Only hard-stop phrases like usage/rate limit reached/exceeded are accepted; never quota status lines.'
+      )
+    ).toBeNull();
+  });
 });

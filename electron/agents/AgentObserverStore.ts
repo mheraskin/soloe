@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { ObservedAgentSnapshot, ObserverEvent } from '@shared/types/agents.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
+import { USAGE_LIMIT_DETECTOR_VERSION } from './UsageLimitDetector.js';
 
 interface ObserverStorageShape {
   version: number;
@@ -91,7 +92,8 @@ function isSnapshot(value: unknown): value is ObservedAgentSnapshot {
   if (value['runtimeMode'] === 'sdk_worker' && value['subjectKind'] === 'worker') return true;
   return value['runtimeMode'] === 'tui'
     && value['subjectKind'] === 'session'
-    && value['state'] === 'usage_limited';
+    && value['state'] === 'usage_limited'
+    && hasCurrentUsageLimit(value);
 }
 
 function normalizeRestoredSnapshot(snapshot: ObservedAgentSnapshot): ObservedAgentSnapshot {
@@ -123,7 +125,11 @@ function isEvent(value: unknown): value is ObserverEvent {
 
 function shouldPersistSnapshot(snapshot: ObservedAgentSnapshot): boolean {
   return snapshot.runtimeMode === 'sdk_worker'
-    || (snapshot.runtimeMode === 'tui' && snapshot.state === 'usage_limited');
+    || (
+      snapshot.runtimeMode === 'tui'
+      && snapshot.state === 'usage_limited'
+      && hasCurrentUsageLimit(snapshot)
+    );
 }
 
 function shouldPersistEvent(event: ObserverEvent): boolean {
@@ -132,4 +138,13 @@ function shouldPersistEvent(event: ObserverEvent): boolean {
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function hasCurrentUsageLimit(snapshot: unknown): boolean {
+  if (!isRecord(snapshot)) return false;
+  const usageLimit = snapshot['usageLimit'];
+  if (!isRecord(usageLimit)) return false;
+  return usageLimit['detectorVersion'] === USAGE_LIMIT_DETECTOR_VERSION
+    && typeof usageLimit['message'] === 'string'
+    && typeof usageLimit['detectedAt'] === 'string';
 }

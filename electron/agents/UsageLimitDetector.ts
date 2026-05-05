@@ -1,7 +1,10 @@
 export interface UsageLimitInfo {
   message: string;
   resetAtLabel?: string;
+  detectorVersion: number;
 }
+
+export const USAGE_LIMIT_DETECTOR_VERSION = 2;
 
 const RESET_PATTERNS = [
   /\b(?:resets?|reset)\s+(?:at\s+)?([^.\n\r]+)/i,
@@ -16,9 +19,10 @@ export function detectUsageLimit(input: unknown): UsageLimitInfo | null {
   if (lower.includes('not your usage limit')) return null;
   const hardLimitPhrase =
     lower.includes('usage_limit_exceeded')
+    || lower.includes('rate_limit_exceeded')
     || /\byou(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
-    || /\b(?:usage|session|weekly|opus|rate)\s+limit\s+(?:reached|exceeded)\b/.test(lower)
-    || /\blimit reached\b/.test(lower);
+    || /\b(?:api error|error|failed|blocked):?\s+(?:usage|rate)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
+    || /\b(?:5-hour|5h|session|weekly|opus)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower);
   const isQuotaStatus = /\b\d{1,3}%\s+left\b/.test(lower);
   const isUsageLimit = hardLimitPhrase || lower.includes('credit balance is too low');
   if (!isUsageLimit || (isQuotaStatus && !hardLimitPhrase)) return null;
@@ -27,6 +31,7 @@ export function detectUsageLimit(input: unknown): UsageLimitInfo | null {
   const resetAtLabel = resetLabelFrom(text);
   return {
     message,
+    detectorVersion: USAGE_LIMIT_DETECTOR_VERSION,
     ...(resetAtLabel ? { resetAtLabel } : {})
   };
 }
@@ -91,9 +96,10 @@ function usefulFallbackMessage(text: string): string {
 function detectUsageLimitLine(line: string): boolean {
   const lower = line.toLowerCase();
   return lower.includes('usage_limit_exceeded')
+    || lower.includes('rate_limit_exceeded')
     || /\byou(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
-    || /\b(?:usage|session|weekly|opus|rate)\s+limit\s+(?:reached|exceeded)\b/.test(lower)
-    || lower.includes('limit reached')
+    || /\b(?:api error|error|failed|blocked):?\s+(?:usage|rate)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
+    || /\b(?:5-hour|5h|session|weekly|opus)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
     || lower.includes('credit balance is too low');
 }
 

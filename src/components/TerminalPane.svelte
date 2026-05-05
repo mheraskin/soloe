@@ -23,7 +23,6 @@
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
   import {
     AGENT_IMAGE_PASTE_SEQUENCE,
-    altWordEditSequence,
     isClipboardPasteShortcut,
     SHIFT_ENTER_SEQUENCE,
     shouldPasteImageViaSavedPath,
@@ -281,19 +280,6 @@
         if (binding.id === Keymap.deleteSelectedSession.id) continue;
         if (binding.id === Keymap.toggleNotesRail.id) continue;
         if (binding.match(e)) return false;
-      }
-
-      // Alt-modified word edit and nav. We emit explicit escape sequences
-      // tuned to whatever's reading the PTY (plain shell vs. agent TUI) —
-      // see altWordEditSequence for the exact mapping.
-      if (e.altKey && !e.ctrlKey && !e.metaKey) {
-        const session = sessions.sessions.find((item) => item.id === sessionId);
-        const seq = altWordEditSequence(e, session ?? null);
-        if (seq !== null) {
-          e.preventDefault();
-          void ipc.terminal.input(terminalId, seq).catch(() => {});
-          return false;
-        }
       }
 
       if (isClipboardPasteShortcut(e)) {
