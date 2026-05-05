@@ -14,20 +14,16 @@ export function detectUsageLimit(input: unknown): UsageLimitInfo | null {
 
   const lower = text.toLowerCase();
   if (lower.includes('not your usage limit')) return null;
-  const isUsageLimit =
+  const hardLimitPhrase =
     lower.includes('usage_limit_exceeded')
-    || lower.includes("you've hit your usage limit")
-    || lower.includes('you have hit your usage limit')
-    || lower.includes("you've hit your session limit")
-    || lower.includes('you have hit your session limit')
-    || lower.includes("you've hit your weekly limit")
-    || lower.includes('you have hit your weekly limit')
-    || lower.includes("you've hit your opus limit")
-    || lower.includes('you have hit your opus limit')
-    || lower.includes('credit balance is too low');
-  if (!isUsageLimit) return null;
+    || /\byou(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
+    || /\b(?:usage|session|weekly|opus|rate)\s+limit\s+(?:reached|exceeded)\b/.test(lower)
+    || /\blimit reached\b/.test(lower);
+  const isQuotaStatus = /\b\d{1,3}%\s+left\b/.test(lower);
+  const isUsageLimit = hardLimitPhrase || lower.includes('credit balance is too low');
+  if (!isUsageLimit || (isQuotaStatus && !hardLimitPhrase)) return null;
 
-  const message = shortenMessage(extractRelevantLine(text) ?? text);
+  const message = shortenMessage(extractRelevantLine(text) ?? usefulFallbackMessage(text));
   const resetAtLabel = resetLabelFrom(text);
   return {
     message,
@@ -67,16 +63,37 @@ function extractRelevantLine(text: string): string | null {
     .split(/(?<=\.)\s+|\n|\r/)
     .map((part) => part.trim())
     .filter(Boolean);
-  return parts.find((part) => detectUsageLimitLine(part)) ?? null;
+  const match = parts.find((part) => detectUsageLimitLine(part));
+  return match ? cleanRelevantLine(match) : null;
+}
+
+function cleanRelevantLine(line: string): string {
+  const lower = line.toLowerCase();
+  const starts = [
+    'usage_limit_exceeded',
+    "you've hit",
+    'you have hit',
+    'limit reached',
+    'credit balance is too low'
+  ]
+    .map((needle) => lower.indexOf(needle))
+    .filter((index) => index >= 0);
+  if (starts.length === 0) return line;
+  return line.slice(Math.min(...starts)).trim();
+}
+
+function usefulFallbackMessage(text: string): string {
+  const reset = resetLabelFrom(text);
+  if (reset) return `Usage limit reached. Resets ${reset}`;
+  return 'Usage limit reached';
 }
 
 function detectUsageLimitLine(line: string): boolean {
   const lower = line.toLowerCase();
   return lower.includes('usage_limit_exceeded')
-    || lower.includes('usage limit')
-    || lower.includes('session limit')
-    || lower.includes('weekly limit')
-    || lower.includes('opus limit')
+    || /\byou(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
+    || /\b(?:usage|session|weekly|opus|rate)\s+limit\s+(?:reached|exceeded)\b/.test(lower)
+    || lower.includes('limit reached')
     || lower.includes('credit balance is too low');
 }
 

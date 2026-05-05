@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Gauge, Loader2 } from '@lucide/svelte';
+  import { Gauge, Loader2, X } from '@lucide/svelte';
   import type { AgentRuntimeProvider, Session } from '@shared/types/sessions.js';
+  import { launchProvider } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { displaySessionKind } from '../lib/session-agent';
@@ -8,22 +9,35 @@
   import { cn } from '$lib/utils';
   import KindIcon from './KindIcon.svelte';
 
-  let { session }: { session: Session } = $props();
+  let {
+    session,
+    onClose
+  }: {
+    session: Session;
+    onClose?: () => void;
+  } = $props();
 
   let busyProvider = $state<AgentRuntimeProvider | null>(null);
+  const providers: AgentRuntimeProvider[] = ['claude_code', 'codex'];
 
   let observed = $derived(sessions.observationFor(session.id));
   let usageLimit = $derived(sessions.usageLimitFor(session.id));
   let currentKind = $derived(displaySessionKind(session, observed));
+  let currentProvider = $derived(agentProviderFor(session, observed?.provider));
   let resetLabel = $derived(usageLimit?.resetAtLabel ?? null);
   let isUsageLimited = $derived(observed?.state === 'usage_limited');
-  let title = $derived(isUsageLimited ? 'Usage limit reached' : 'Agent stopped');
-  let detail = $derived(
-    resetLabel
-      ? `Resets ${resetLabel}`
-      : usageLimit?.message ?? 'Continue this tab in another agent.'
+  let title = $derived(
+    isUsageLimited
+      ? `${providerName(currentProvider)} usage limit reached`
+      : `${providerName(currentProvider)} stopped`
   );
+  let detail = $derived(overlayDetail(resetLabel, usageLimit?.message, currentProvider));
   let currentLabel = $derived(isUsageLimited ? 'Limited' : 'Stopped');
+  let providerOptions = $derived(
+    currentProvider
+      ? providers.filter((provider) => provider !== currentProvider)
+      : providers.filter((provider) => provider !== currentKind)
+  );
 
   async function continueWith(provider: AgentRuntimeProvider): Promise<void> {
     if (busyProvider) return;
@@ -43,11 +57,58 @@
       busyProvider === provider && 'opacity-80'
     );
   }
+
+  function providerLabel(provider: AgentRuntimeProvider): string {
+    return provider === 'claude_code' ? 'Claude' : 'Codex';
+  }
+
+  function providerName(provider: AgentRuntimeProvider | null): string {
+    return provider ? providerLabel(provider) : 'Agent';
+  }
+
+  function agentProviderFor(
+    value: Session,
+    observedProvider: string | undefined
+  ): AgentRuntimeProvider | null {
+    if (observedProvider === 'claude_code' || observedProvider === 'codex') return observedProvider;
+    return value.currentAgentRuntime?.provider ?? launchProvider(value);
+  }
+
+  function overlayDetail(
+    reset: string | null,
+    message: string | undefined,
+    provider: AgentRuntimeProvider | null
+  ): string {
+    if (reset) return `Resets ${reset}`;
+    if (message && isUsefulLimitMessage(message)) return message;
+    const label = provider ? providerLabel(provider) : 'Agent';
+    return `${label} cannot continue this tab right now. Choose another agent to carry the context forward.`;
+  }
+
+  function isUsefulLimitMessage(message: string): boolean {
+    const trimmed = message.trim();
+    if (!trimmed) return false;
+    if (/^[a-f0-9-]{16,}$/i.test(trimmed)) return false;
+    if (trimmed.length < 12 && !/limit|reset|try again/i.test(trimmed)) return false;
+    return true;
+  }
 </script>
 
 <div class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/35 p-6 backdrop-blur-[1px]">
-  <div class="pointer-events-auto w-[min(460px,100%)] rounded-md border border-border bg-popover/95 p-4 text-popover-foreground shadow-xl">
-    <div class="mb-3 flex items-center gap-2">
+  <div class="pointer-events-auto relative w-[min(380px,100%)] rounded-md border border-border bg-popover/95 p-4 text-popover-foreground shadow-xl">
+    {#if onClose}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        class="absolute top-2 right-2 text-muted-foreground hover:text-foreground"
+        onclick={onClose}
+        title="Dismiss handoff"
+        aria-label="Dismiss handoff"
+      >
+        <X />
+      </Button>
+    {/if}
+    <div class="mb-3 flex items-center gap-2 pr-7">
       <span class="flex size-8 shrink-0 items-center justify-center rounded-md border border-warning/40 bg-warning/10 text-warning">
         <Gauge class="size-4" />
       </span>
@@ -59,37 +120,26 @@
       </span>
     </div>
 
-    <div class="grid grid-cols-3 gap-2">
+    <div class="grid grid-cols-2 gap-2">
       <div class="flex h-20 flex-col items-center justify-center gap-1.5 rounded-md border border-warning/45 bg-warning/10 px-3 text-xs text-warning">
         <KindIcon kind={currentKind} size={24} />
         <span class="max-w-full truncate font-medium">{currentLabel}</span>
       </div>
-      <Button
-        variant="ghost"
-        class={optionClass('claude_code')}
-        onclick={() => void continueWith('claude_code')}
-        disabled={busyProvider !== null}
-      >
-        {#if busyProvider === 'claude_code'}
-          <Loader2 class="size-6 animate-spin" />
-        {:else}
-          <KindIcon kind="claude_code" size={24} />
-        {/if}
-        <span class="leading-none">Claude</span>
-      </Button>
-      <Button
-        variant="ghost"
-        class={optionClass('codex')}
-        onclick={() => void continueWith('codex')}
-        disabled={busyProvider !== null}
-      >
-        {#if busyProvider === 'codex'}
-          <Loader2 class="size-6 animate-spin" />
-        {:else}
-          <KindIcon kind="codex" size={24} />
-        {/if}
-        <span class="leading-none">Codex</span>
-      </Button>
+      {#each providerOptions as provider (provider)}
+        <Button
+          variant="ghost"
+          class={optionClass(provider)}
+          onclick={() => void continueWith(provider)}
+          disabled={busyProvider !== null}
+        >
+          {#if busyProvider === provider}
+            <Loader2 class="size-6 animate-spin" />
+          {:else}
+            <KindIcon kind={provider} size={24} />
+          {/if}
+          <span class="leading-none">{providerLabel(provider)}</span>
+        </Button>
+      {/each}
     </div>
   </div>
 </div>

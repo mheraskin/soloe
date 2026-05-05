@@ -11,8 +11,16 @@
   let selectedObserved = $derived(selected ? sessions.observationFor(selected.id) : null);
   let selectedRuntime = $derived(selected ? sessions.runtime[selected.id] : null);
   let selectedKind = $derived(selected ? displaySessionKind(selected, selectedObserved) : 'terminal');
+  let dismissedHandoffKeys = $state<Record<string, true>>({});
+  let handoffKey = $derived(
+    selected && selectedObserved
+      ? `${selected.id}:${selectedObserved.state}:${selectedObserved.lastEventAt ?? ''}`
+      : null
+  );
   let showAgentHandoffOverlay = $derived(
     selected !== null
+      && handoffKey !== null
+      && !dismissedHandoffKeys[handoffKey]
       && (selectedKind === 'claude_code' || selectedKind === 'codex')
       && (selectedObserved?.state === 'usage_limited' || selectedObserved?.state === 'failed')
   );
@@ -48,6 +56,11 @@
       reportError(err);
     });
   });
+
+  function dismissHandoffOverlay(): void {
+    if (!handoffKey) return;
+    dismissedHandoffKeys = { ...dismissedHandoffKeys, [handoffKey]: true };
+  }
 </script>
 
 <section class="flex min-w-0 flex-1 flex-col bg-background">
@@ -72,7 +85,7 @@
       </div>
     {/if}
     {#if selected && showAgentHandoffOverlay}
-      <UsageLimitOverlay session={selected} />
+      <UsageLimitOverlay session={selected} onClose={dismissHandoffOverlay} />
     {/if}
   </div>
 </section>
