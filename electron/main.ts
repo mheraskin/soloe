@@ -66,6 +66,7 @@ interface AppServices {
 let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
+const APP_ICON = path.join(app.getAppPath(), 'build/icon.png');
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.soloe.app');
@@ -263,6 +264,7 @@ async function createWindow(): Promise<BrowserWindow> {
     frame: false,
     show: false,
     title: 'Soloe',
+    icon: APP_ICON,
     backgroundColor: '#0f0f10',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),

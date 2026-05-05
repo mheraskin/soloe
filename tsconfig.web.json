@@ -12,6 +12,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "ignoreDeprecations": "6.0",
     "allowJs": true,
     "checkJs": false,
     "noEmit": true,

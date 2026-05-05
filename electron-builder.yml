@@ -1,10 +1,13 @@
 appId: com.soloe.app
 productName: Soloe
+icon: build/icon.png
 directories:
   output: release
   buildResources: build
 files:
   - out/**/*
+  - build/icon.png
+  - build/icon.svg
   - package.json
 asarUnpack:
   - node_modules/node-pty/**/*
@@ -15,7 +18,7 @@ win:
         - x64
 nsis:
   oneClick: false
-  allowToChangeInstallationDir: true
+  allowToChangeInstallationDirectory: true
 linux:
   target:
     - AppImage
