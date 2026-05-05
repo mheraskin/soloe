@@ -163,15 +163,11 @@
       const images = await clipboardImages().catch(() => []);
       if (images.length > 0) {
         if (shouldPasteImageViaSavedPath(session)) {
-          const result = await ipc.files.pasteImagesIntoTerminal({
+          await ipc.files.pasteImagesIntoTerminal({
             terminalId,
             sessionId,
             images
           });
-          toasts.push(
-            result.paths.length === 1 ? 'Pasted image into agent' : `Pasted ${result.paths.length} images into agent`,
-            'info'
-          );
           return;
         }
         await ipc.terminal.input(terminalId, AGENT_IMAGE_PASTE_SEQUENCE);
