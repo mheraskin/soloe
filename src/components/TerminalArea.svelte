@@ -5,12 +5,16 @@
   import EmptyState from './EmptyState.svelte';
   import SessionToolbar from './SessionToolbar.svelte';
   import UsageLimitOverlay from './UsageLimitOverlay.svelte';
+  import { displaySessionKind } from '../lib/session-agent';
 
   let selected = $derived(sessions.selected);
   let selectedObserved = $derived(selected ? sessions.observationFor(selected.id) : null);
   let selectedRuntime = $derived(selected ? sessions.runtime[selected.id] : null);
-  let showUsageLimitOverlay = $derived(
-    selected !== null && selectedObserved?.state === 'usage_limited'
+  let selectedKind = $derived(selected ? displaySessionKind(selected, selectedObserved) : 'terminal');
+  let showAgentHandoffOverlay = $derived(
+    selected !== null
+      && (selectedKind === 'claude_code' || selectedKind === 'codex')
+      && (selectedObserved?.state === 'usage_limited' || selectedObserved?.state === 'failed')
   );
   let runningPanes = $derived.by(() => {
     return Object.values(sessions.runtime)
@@ -67,7 +71,7 @@
         />
       </div>
     {/if}
-    {#if selected && showUsageLimitOverlay}
+    {#if selected && showAgentHandoffOverlay}
       <UsageLimitOverlay session={selected} />
     {/if}
   </div>

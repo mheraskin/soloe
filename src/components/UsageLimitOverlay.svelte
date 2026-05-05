@@ -16,6 +16,14 @@
   let usageLimit = $derived(sessions.usageLimitFor(session.id));
   let currentKind = $derived(displaySessionKind(session, observed));
   let resetLabel = $derived(usageLimit?.resetAtLabel ?? null);
+  let isUsageLimited = $derived(observed?.state === 'usage_limited');
+  let title = $derived(isUsageLimited ? 'Usage limit reached' : 'Agent stopped');
+  let detail = $derived(
+    resetLabel
+      ? `Resets ${resetLabel}`
+      : usageLimit?.message ?? 'Continue this tab in another agent.'
+  );
+  let currentLabel = $derived(isUsageLimited ? 'Limited' : 'Stopped');
 
   async function continueWith(provider: AgentRuntimeProvider): Promise<void> {
     if (busyProvider) return;
@@ -44,9 +52,9 @@
         <Gauge class="size-4" />
       </span>
       <span class="grid min-w-0 gap-0.5">
-        <span class="text-sm leading-5 font-semibold">Usage limit reached</span>
+        <span class="text-sm leading-5 font-semibold">{title}</span>
         <span class="truncate text-xs leading-4 text-muted-foreground">
-          {resetLabel ? `Resets ${resetLabel}` : usageLimit?.message ?? session.name}
+          {detail}
         </span>
       </span>
     </div>
@@ -54,7 +62,7 @@
     <div class="grid grid-cols-3 gap-2">
       <div class="flex h-20 flex-col items-center justify-center gap-1.5 rounded-md border border-warning/45 bg-warning/10 px-3 text-xs text-warning">
         <KindIcon kind={currentKind} size={24} />
-        <span class="max-w-full truncate font-medium">Limited</span>
+        <span class="max-w-full truncate font-medium">{currentLabel}</span>
       </div>
       <Button
         variant="ghost"
