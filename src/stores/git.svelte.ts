@@ -1,4 +1,4 @@
-import type { GitShortstat, GitStatus } from '@shared/types/git.js';
+import type { GitShortstat, GitStatus, GitWorktree } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
 
@@ -10,6 +10,12 @@ interface GitStatusEntry {
 
 interface GitShortstatEntry {
   shortstat: GitShortstat | null;
+  loading: boolean;
+  error: string | null;
+}
+
+interface GitWorktreesEntry {
+  worktrees: GitWorktree[] | null;
   loading: boolean;
   error: string | null;
 }
@@ -49,6 +55,7 @@ interface SessionIntent {
 class GitStore {
   statuses = $state<Record<string, GitStatusEntry>>({});
   shortstats = $state<Record<string, GitShortstatEntry>>({});
+  worktrees = $state<Record<string, GitWorktreesEntry>>({});
 
   private detachers: Array<() => void> = [];
   private pollers = new Map<string, PollEntry>();
@@ -57,6 +64,7 @@ class GitStore {
   private sessionIntents = new Map<string, SessionIntent>();
   private projectIntents = new Map<string, RepoContext>();
   private projectIntentSeq = 0;
+  private worktreeRequests = new Map<string, Promise<GitWorktree[]>>();
   private paused = false;
 
   statusFor(cwd: string): GitStatus | null {
@@ -81,6 +89,24 @@ class GitStore {
     const repoPath = this.statuses[cwd]?.status?.repoPath ?? null;
     if (!repoPath) return null;
     return this.shortstats[repoPath]?.shortstat ?? null;
+  }
+
+  worktreesFor(repoPath: string): GitWorktree[] | null {
+    const target = repoPath.trim();
+    if (!target) return null;
+    return this.worktrees[target]?.worktrees ?? null;
+  }
+
+  worktreesLoadingFor(repoPath: string): boolean {
+    const target = repoPath.trim();
+    if (!target) return false;
+    return this.worktrees[target]?.loading ?? false;
+  }
+
+  worktreesErrorFor(repoPath: string): string | null {
+    const target = repoPath.trim();
+    if (!target) return null;
+    return this.worktrees[target]?.error ?? null;
   }
 
   setStatus(cwd: string, status: GitStatus): void {
@@ -173,6 +199,59 @@ class GitStore {
     }
   }
 
+  async loadWorktrees(
+    repoPath: string,
+    force = false,
+    context?: RepoContext
+  ): Promise<GitWorktree[]> {
+    const target = repoPath.trim();
+    if (!target) return [];
+    const existing = this.worktrees[target];
+    if (!force && existing?.worktrees) return existing.worktrees;
+    const currentRequest = this.worktreeRequests.get(target);
+    if (currentRequest) return currentRequest;
+
+    const ctx = context ?? this.contextByRepoPath.get(target) ?? {};
+    this.worktrees = {
+      ...this.worktrees,
+      [target]: {
+        worktrees: existing?.worktrees ?? null,
+        loading: true,
+        error: null
+      }
+    };
+
+    const request = ipc.git.worktrees({
+      repoPath: target,
+      force,
+      ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+      ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+    });
+    this.worktreeRequests.set(target, request);
+    try {
+      const worktrees = await request;
+      this.worktrees = {
+        ...this.worktrees,
+        [target]: { worktrees, loading: false, error: null }
+      };
+      return worktrees;
+    } catch (err) {
+      this.worktrees = {
+        ...this.worktrees,
+        [target]: {
+          worktrees: existing?.worktrees ?? null,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      };
+      return [];
+    } finally {
+      if (this.worktreeRequests.get(target) === request) {
+        this.worktreeRequests.delete(target);
+      }
+    }
+  }
+
   // Polls status + shortstat for the given worktree once.
   private async tick(cwd: string): Promise<void> {
     const status = await this.loadStatus(cwd, true);
@@ -236,22 +315,13 @@ class GitStore {
         const ctx: RepoContext = {};
         if (intent.runMode) ctx.runMode = intent.runMode;
         if (intent.wslDistro) ctx.wslDistro = intent.wslDistro;
-        try {
-          const worktrees = await ipc.git.worktrees({
-            repoPath,
-            force: false,
-            ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-            ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
-          });
-          if (worktrees.length === 0) {
-            next.set(repoPath, ctx);
-            return;
-          }
-          for (const wt of worktrees) {
-            if (wt.path) next.set(wt.path, ctx);
-          }
-        } catch {
+        const worktrees = await this.loadWorktrees(repoPath, false, ctx);
+        if (worktrees.length === 0) {
           next.set(repoPath, ctx);
+          return;
+        }
+        for (const wt of worktrees) {
+          if (wt.path) next.set(wt.path, ctx);
         }
       })
     );

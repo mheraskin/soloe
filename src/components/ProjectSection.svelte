@@ -16,6 +16,7 @@
   import type { Project, ProjectFavicon } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
+  import { git } from '../stores/git.svelte';
   import { nav } from '../stores/nav.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -50,9 +51,9 @@
   let expanded = $state(true);
   let faviconsLoading = $state(false);
   let faviconsRequested = $state(false);
-  let gitWorktrees = $state<GitWorktree[]>([]);
-  let loadingWorktrees = $state(false);
-  let worktreeLoadFailed = $state(false);
+  let gitWorktrees = $derived(git.worktreesFor(project.path) ?? []);
+  let loadingWorktrees = $derived(git.worktreesLoadingFor(project.path));
+  let worktreeLoadFailed = $derived(git.worktreesErrorFor(project.path) !== null);
 
   function normPath(p: string): string {
     return p.replace(/[/\\]+$/, '');
@@ -79,30 +80,10 @@
   }
 
   $effect(() => {
-    let cancelled = false;
-    loadingWorktrees = true;
-    worktreeLoadFailed = false;
-    ipc.git.worktrees({
-      repoPath: project.path,
-      force: true,
+    void git.loadWorktrees(project.path, false, {
       ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
       ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
-    })
-      .then((worktrees) => {
-        if (cancelled) return;
-        gitWorktrees = worktrees;
-      })
-      .catch(() => {
-        if (cancelled) return;
-        gitWorktrees = [];
-        worktreeLoadFailed = true;
-      })
-      .finally(() => {
-        if (!cancelled) loadingWorktrees = false;
-      });
-    return () => {
-      cancelled = true;
-    };
+    });
   });
 
   $effect(() => {
@@ -170,7 +151,9 @@
       && mainWorktree !== null
       && normPath(mainWorktree.path) !== normPath(project.path)
   );
-  let showWorktreeGroups = $derived(hasWorktrees && !isStandaloneWorktreeProject);
+  let showWorktreeGroups = $derived(
+    (hasWorktrees || worktrees.length > 1) && !isStandaloneWorktreeProject
+  );
   let repoName = $derived(mainWorktree ? basename(mainWorktree.path) : project.name);
   let otherWorktreeLabels = $derived.by(() =>
     gitWorktrees
