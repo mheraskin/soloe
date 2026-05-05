@@ -30,7 +30,7 @@
   import RightRail from './components/RightRail.svelte';
   import NewSessionModal from './components/NewSessionModal.svelte';
   import ConfirmDialog from './components/ConfirmDialog.svelte';
-  import SettingsDrawer from './components/SettingsDrawer.svelte';
+  import SettingsDialog from './components/SettingsDialog.svelte';
   import ProjectModal from './components/ProjectModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import FilePalette from './components/FilePalette.svelte';
@@ -170,7 +170,7 @@
     }
     if (Keymap.openSettings.match(e)) {
       consume(e);
-      settings.toggleDrawer();
+      settings.toggleDialog();
       return;
     }
     if (Keymap.openProject.match(e)) {
@@ -257,7 +257,7 @@
       <Button
         variant="ghost"
         class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
-        onclick={() => settings.openDrawer()}
+        onclick={() => settings.openDialog()}
         aria-label="Settings"
         title="Settings (Ctrl+,)"
       >
@@ -304,7 +304,7 @@
   <NewSessionPickerDialog />
   <ConfirmDialog />
   <AgentIntegrationSetupDialog />
-  <SettingsDrawer />
+  <SettingsDialog />
   <AgentNotificationToasts />
   <Toaster richColors closeButton />
 </div>

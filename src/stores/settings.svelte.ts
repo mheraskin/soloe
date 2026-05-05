@@ -5,7 +5,7 @@ import { ipc } from '../lib/ipc';
 class SettingsStore {
   current = $state<Settings>(structuredClone(DEFAULT_SETTINGS));
   loaded = $state(false);
-  drawerOpen = $state(false);
+  dialogOpen = $state(false);
 
   private detachers: Array<() => void> = [];
 
@@ -34,16 +34,16 @@ class SettingsStore {
     this.current = next;
   }
 
-  openDrawer(): void {
-    this.drawerOpen = true;
+  openDialog(): void {
+    this.dialogOpen = true;
   }
 
-  closeDrawer(): void {
-    this.drawerOpen = false;
+  closeDialog(): void {
+    this.dialogOpen = false;
   }
 
-  toggleDrawer(): void {
-    this.drawerOpen = !this.drawerOpen;
+  toggleDialog(): void {
+    this.dialogOpen = !this.dialogOpen;
   }
 }
 

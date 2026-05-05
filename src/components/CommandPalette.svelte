@@ -126,7 +126,7 @@
       title: 'Open settings',
       section: 'Actions',
       icon: SettingsIcon,
-      run: () => settings.openDrawer()
+      run: () => settings.openDialog()
     });
     for (const session of sessions.sessions) {
       list.push({
