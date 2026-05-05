@@ -33,7 +33,6 @@ const FAVICON_SKIP_DIRS = new Set([
   'node_modules',
   'vendor',
   'dist',
-  'build',
   'out',
   '.next',
   '.svelte-kit',

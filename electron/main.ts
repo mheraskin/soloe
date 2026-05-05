@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, Notification, shell } from 'electron';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
 import { SessionStore } from './sessions/SessionStore.js';
 import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
@@ -66,7 +67,20 @@ interface AppServices {
 let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
-const APP_ICON = path.join(app.getAppPath(), 'build/icon.png');
+
+function resolveAppIcon(): string {
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, 'build/icon.png'),
+        path.join(app.getAppPath(), 'build/icon.png')
+      ]
+    : [
+        path.join(process.cwd(), 'build/icon.png'),
+        path.join(app.getAppPath(), 'build/icon.png'),
+        path.join(__dirname, '../../build/icon.png')
+      ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.soloe.app');
@@ -264,7 +278,7 @@ async function createWindow(): Promise<BrowserWindow> {
     frame: false,
     show: false,
     title: 'Soloe',
-    icon: APP_ICON,
+    icon: resolveAppIcon(),
     backgroundColor: '#0f0f10',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
