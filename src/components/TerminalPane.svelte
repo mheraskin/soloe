@@ -198,7 +198,9 @@
   $effect(() => {
     if (!host) return;
     const t = new Terminal({
-      fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+      // Cascadia Code is a fallback for codepoints @fontsource's JetBrains Mono
+      // subsets don't cover (notably box-drawing U+2500-259F used by TUI rules).
+      fontFamily: 'JetBrains Mono, Cascadia Code, ui-monospace, monospace',
       fontSize: settings.current.terminal.fontSize,
       fontWeight: 400,
       fontWeightBold: 700,
@@ -337,20 +339,31 @@
       }
     }
 
-    // @fontsource fonts use font-display: swap, so the WebGL/Canvas glyph
-    // atlas is built with the system fallback before JetBrains Mono finishes
-    // loading — leaving bold text in a mismatched typeface. Once the fonts
-    // are ready, drop the atlas and repaint so bold renders in JetBrains Mono.
+    // fontsource splits each weight into unicode-range subsets the browser
+    // fetches lazily when a glyph in that range first renders. xterm-addon-webgl
+    // caches measured glyphs in a texture atlas, so cells that fell back to the
+    // system font stay cached after the matching subset finishes loading — the
+    // TUI looks garbled until a scroll or refresh evicts those entries. Repaint
+    // on every batch of font loads (initial preload plus lazy subsets fetched
+    // on demand) so no stale fallback glyphs survive.
     const fontPx = settings.current.terminal.fontSize;
-    void Promise.all([
-      document.fonts.load(`400 ${fontPx}px "JetBrains Mono"`),
-      document.fonts.load(`700 ${fontPx}px "JetBrains Mono"`)
-    ]).then(() => {
+    let fontsDisposed = false;
+    const dropAtlasAndRepaint = () => {
+      if (fontsDisposed) return;
       if (renderer && 'clearTextureAtlas' in renderer) {
         renderer.clearTextureAtlas();
       }
       t.refresh(0, t.rows - 1);
-    }).catch(() => {});
+    };
+    void Promise.all([
+      document.fonts.load(`400 ${fontPx}px "JetBrains Mono"`),
+      document.fonts.load(`700 ${fontPx}px "JetBrains Mono"`),
+      // Force the symbol subset to fetch up front so TUI rules don't flash
+      // as system-fallback dashes before loadingdone evicts the atlas.
+      document.fonts.load(`400 ${fontPx}px "Cascadia Code"`, '─'),
+      document.fonts.load(`700 ${fontPx}px "Cascadia Code"`, '─')
+    ]).then(dropAtlasAndRepaint).catch(() => {});
+    document.fonts.addEventListener('loadingdone', dropAtlasAndRepaint);
 
     requestAnimationFrame(() => {
       if (!active) return;
@@ -410,6 +423,8 @@
     window.addEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
 
     return () => {
+      fontsDisposed = true;
+      document.fonts.removeEventListener('loadingdone', dropAtlasAndRepaint);
       window.removeEventListener('soloe:terminal-find', onFind);
       window.removeEventListener('soloe:terminal-save-buffer', onSave);
       window.removeEventListener('soloe:terminal-copy-buffer', onCopy);
