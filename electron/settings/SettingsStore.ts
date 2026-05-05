@@ -14,7 +14,7 @@ const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
 const VALID_RUN_MODES = new Set(['windows', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
-const VALID_SESSION_KINDS = new Set(['standard_terminal', 'claude_code', 'codex']);
+const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
 const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
 const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration'];
 
@@ -191,11 +191,7 @@ function parseSettings(raw: unknown): Settings {
       runMode: pickEnum(defaults['runMode'], VALID_RUN_MODES, DEFAULT_SETTINGS.defaults.runMode) as Settings['defaults']['runMode'],
       shell: pickEnum(defaults['shell'], VALID_SHELLS, DEFAULT_SETTINGS.defaults.shell) as Settings['defaults']['shell'],
       cwd: typeof defaults['cwd'] === 'string' && defaults['cwd'] ? defaults['cwd'] : DEFAULT_SETTINGS.defaults.cwd,
-      newSessionKind: pickEnum(
-        defaults['newSessionKind'],
-        VALID_SESSION_KINDS,
-        DEFAULT_SETTINGS.defaults.newSessionKind
-      ) as Settings['defaults']['newSessionKind'],
+      newSessionKind: pickSessionLaunchKind(defaults['newSessionKind']),
       ...(typeof defaults['wslDistro'] === 'string' && defaults['wslDistro'] ? { wslDistro: defaults['wslDistro'] } : {})
     },
     binaries: filterStringRecord(binaries),
@@ -219,6 +215,15 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function pickSessionLaunchKind(value: unknown): Settings['defaults']['newSessionKind'] {
+  if (value === 'standard_terminal') return 'terminal';
+  return pickEnum(
+    value,
+    VALID_SESSION_LAUNCH_KINDS,
+    DEFAULT_SETTINGS.defaults.newSessionKind
+  ) as Settings['defaults']['newSessionKind'];
+}
+
 function filterStringRecord(raw: Record<string, unknown>): Settings['binaries'] {
   const allowed: (keyof Settings['binaries'])[] = ['claude', 'codex', 'git', 'gh', 'fd', 'rg', 'editor'];
   const out: Settings['binaries'] = {};
@@ -240,7 +245,7 @@ function validateSettings(s: Settings): void {
   }
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
   if (!VALID_SHELLS.has(s.defaults.shell)) throw new Error(`Invalid shell: ${s.defaults.shell}`);
-  if (!VALID_SESSION_KINDS.has(s.defaults.newSessionKind)) {
+  if (!VALID_SESSION_LAUNCH_KINDS.has(s.defaults.newSessionKind)) {
     throw new Error(`Invalid newSessionKind: ${s.defaults.newSessionKind}`);
   }
   if (typeof s.defaults.cwd !== 'string' || !s.defaults.cwd) {

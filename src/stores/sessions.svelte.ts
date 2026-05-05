@@ -7,7 +7,7 @@ import type {
   SessionDraft,
   SessionId,
   SessionRuntimeState,
-  SessionKind,
+  SessionLaunchKind,
   SessionStatus,
   SessionUpdate
 } from '@shared/types/sessions.js';
@@ -65,9 +65,9 @@ class SessionsStore {
   );
 
   groups = $derived({
-    claude: this.sessions.filter((s) => s.kind === 'claude_code'),
-    codex: this.sessions.filter((s) => s.kind === 'codex'),
-    terminal: this.sessions.filter((s) => s.kind === 'standard_terminal')
+    claude: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'claude_code'),
+    codex: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'codex'),
+    terminal: this.sessions.filter((s) => s.launch.type === 'terminal')
   });
 
   byProject = $derived.by<Record<string, Session[]>>(() => {
@@ -323,7 +323,7 @@ class SessionsStore {
     cwd?: string;
     branch?: string;
   } = {}): Promise<Session> {
-    return this.createTypedWithDefaults('standard_terminal', opts);
+    return this.createTypedWithDefaults('terminal', opts);
   }
 
   async createPreferredWithDefaults(opts: {
@@ -335,7 +335,7 @@ class SessionsStore {
   }
 
   async createAgentWithDefaults(
-    kind: Extract<SessionKind, 'claude_code' | 'codex'>,
+    kind: Extract<SessionLaunchKind, 'claude_code' | 'codex'>,
     opts: {
       projectId?: string;
       cwd?: string;
@@ -346,7 +346,7 @@ class SessionsStore {
   }
 
   private async createTypedWithDefaults(
-    kind: SessionKind,
+    kind: SessionLaunchKind,
     opts: {
       projectId?: string;
       cwd?: string;
@@ -372,12 +372,20 @@ class SessionsStore {
     };
     const draft: SessionDraft = (() => {
       switch (kind) {
-        case 'standard_terminal':
-          return { ...base, kind, shell: defaults.shell };
+        case 'terminal':
+          return { ...base, launch: { type: 'terminal', shell: defaults.shell } };
         case 'claude_code':
-          return { ...base, kind, resumeMode: 'new', fullscreenTui: true };
+          return {
+            ...base,
+            launch: {
+              type: 'agent',
+              provider: 'claude_code',
+              resumeMode: 'new',
+              fullscreenTui: true
+            }
+          };
         case 'codex':
-          return { ...base, kind, resumeMode: 'new' };
+          return { ...base, launch: { type: 'agent', provider: 'codex', resumeMode: 'new' } };
       }
     })();
     const created = await this.create(draft);
@@ -584,9 +592,9 @@ function normalizedDefaultCwd(cwd: string, runMode: 'windows' | 'wsl'): string {
   return cwd;
 }
 
-function defaultSessionName(kind: SessionKind): string {
+function defaultSessionName(kind: SessionLaunchKind): string {
   switch (kind) {
-    case 'standard_terminal':
+    case 'terminal':
       return randomName();
     case 'claude_code':
       return 'Claude';

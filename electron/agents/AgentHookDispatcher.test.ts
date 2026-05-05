@@ -201,12 +201,11 @@ describe('AgentHookDispatcher', () => {
   describe('captures provider session id', () => {
     it('stores claude session id on the matching session', async () => {
       const created = await sessionStore.create({
-        kind: 'claude_code',
         name: 'work',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        resumeMode: 'new'
+        launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
       });
       await dispatcher.dispatch({
         provider: 'claude_code',
@@ -214,9 +213,7 @@ describe('AgentHookDispatcher', () => {
         payload: { hook_event_name: 'SessionStart', session_id: 'claude-uuid-xyz' }
       });
       const updated = await sessionStore.get(created.id);
-      expect(updated && 'claudeSessionId' in updated && updated.claudeSessionId).toBe(
-        'claude-uuid-xyz'
-      );
+      expect(updated?.launch.type === 'agent' && updated.launch.claudeSessionId).toBe('claude-uuid-xyz');
       expect(updated?.providerThreadId).toBe('claude-uuid-xyz');
       expect(observer.getSnapshot(created.id)).toMatchObject({
         provider: 'claude_code',
@@ -227,12 +224,11 @@ describe('AgentHookDispatcher', () => {
 
     it('marks Claude sessions as having user input on UserPromptSubmit', async () => {
       const created = await sessionStore.create({
-        kind: 'claude_code',
         name: 'work',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        resumeMode: 'new'
+        launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
       });
       await dispatcher.dispatch({
         provider: 'claude_code',
@@ -255,12 +251,11 @@ describe('AgentHookDispatcher', () => {
 
     it('stores codex session id on the matching session', async () => {
       const created = await sessionStore.create({
-        kind: 'codex',
         name: 'work',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        resumeMode: 'new'
+        launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
       });
       await dispatcher.dispatch({
         provider: 'codex',
@@ -268,9 +263,7 @@ describe('AgentHookDispatcher', () => {
         payload: { hook_event_name: 'SessionStart', session_id: 'codex-uuid-abc' }
       });
       const updated = await sessionStore.get(created.id);
-      expect(updated && 'codexSessionId' in updated && updated.codexSessionId).toBe(
-        'codex-uuid-abc'
-      );
+      expect(updated?.launch.type === 'agent' && updated.launch.codexSessionId).toBe('codex-uuid-abc');
       expect(updated?.providerThreadId).toBe('codex-uuid-abc');
       expect(observer.getSnapshot(created.id)).toMatchObject({
         provider: 'codex',
@@ -281,12 +274,11 @@ describe('AgentHookDispatcher', () => {
 
     it('skips capture when payload has no session_id', async () => {
       const created = await sessionStore.create({
-        kind: 'claude_code',
         name: 'work',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        resumeMode: 'new'
+        launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
       });
       await dispatcher.dispatch({
         provider: 'claude_code',
@@ -294,17 +286,16 @@ describe('AgentHookDispatcher', () => {
         payload: { hook_event_name: 'SessionStart' }
       });
       const updated = await sessionStore.get(created.id);
-      expect((updated as { claudeSessionId?: string } | null)?.claudeSessionId).toBeUndefined();
+      expect(updated?.launch.type === 'agent' ? updated.launch.claudeSessionId : undefined).toBeUndefined();
     });
 
     it('promotes the current runtime when the hook provider does not match the stored kind', async () => {
       const created = await sessionStore.create({
-        kind: 'claude_code',
         name: 'work',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        resumeMode: 'new'
+        launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
       });
       await dispatcher.dispatch({
         provider: 'codex',
@@ -312,11 +303,10 @@ describe('AgentHookDispatcher', () => {
         payload: { hook_event_name: 'SessionStart', session_id: 'codex-uuid-abc' }
       });
       const updated = await sessionStore.get(created.id);
-      expect((updated as { codexSessionId?: string } | null)?.codexSessionId).toBeUndefined();
+      expect(updated?.launch.type === 'agent' ? updated.launch.codexSessionId : undefined).toBeUndefined();
       expect(updated?.providerThreadId).toBe('codex-uuid-abc');
       expect(updated?.currentAgentRuntime).toMatchObject({
         provider: 'codex',
-        source: 'attached',
         status: 'active',
         providerThreadId: 'codex-uuid-abc'
       });
@@ -328,12 +318,11 @@ describe('AgentHookDispatcher', () => {
 
     it('promotes a standard terminal when an agent hook arrives', async () => {
       const created = await sessionStore.create({
-        kind: 'standard_terminal',
         name: 'shell',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        shell: 'bash'
+        launch: { type: 'terminal', shell: 'bash' }
       });
       await dispatcher.dispatch({
         provider: 'claude_code',
@@ -341,11 +330,10 @@ describe('AgentHookDispatcher', () => {
         payload: { hook_event_name: 'SessionStart', session_id: 'claude-uuid-attached' }
       });
       const updated = await sessionStore.get(created.id);
-      expect(updated?.kind).toBe('standard_terminal');
+      expect(updated?.launch.type).toBe('terminal');
       expect(updated?.providerThreadId).toBe('claude-uuid-attached');
       expect(updated?.currentAgentRuntime).toMatchObject({
         provider: 'claude_code',
-        source: 'attached',
         status: 'active',
         providerThreadId: 'claude-uuid-attached'
       });
@@ -367,20 +355,18 @@ describe('AgentHookDispatcher', () => {
 
     it('persists distinct session ids when two SessionStart hooks fire concurrently', async () => {
       const a = await sessionStore.create({
-        kind: 'codex',
         name: 'a',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        resumeMode: 'new'
+        launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
       });
       const b = await sessionStore.create({
-        kind: 'codex',
         name: 'b',
         cwd: '/tmp',
         runMode: 'wsl',
         wslDistro: 'Ubuntu',
-        resumeMode: 'new'
+        launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
       });
       await Promise.all([
         dispatcher.dispatch({
@@ -396,14 +382,14 @@ describe('AgentHookDispatcher', () => {
       ]);
       const updatedA = await sessionStore.get(a.id);
       const updatedB = await sessionStore.get(b.id);
-      expect((updatedA as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-a');
-      expect((updatedB as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-b');
+      expect(updatedA?.launch.type === 'agent' && updatedA.launch.codexSessionId).toBe('codex-uuid-a');
+      expect(updatedB?.launch.type === 'agent' && updatedB.launch.codexSessionId).toBe('codex-uuid-b');
       const reloaded = new SessionStore(join(tmp, 'sessions.json'));
       await reloaded.init();
       const onDiskA = await reloaded.get(a.id);
       const onDiskB = await reloaded.get(b.id);
-      expect((onDiskA as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-a');
-      expect((onDiskB as { codexSessionId?: string } | null)?.codexSessionId).toBe('codex-uuid-b');
+      expect(onDiskA?.launch.type === 'agent' && onDiskA.launch.codexSessionId).toBe('codex-uuid-a');
+      expect(onDiskB?.launch.type === 'agent' && onDiskB.launch.codexSessionId).toBe('codex-uuid-b');
     });
   });
 

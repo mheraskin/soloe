@@ -40,11 +40,10 @@ describe('Notifier', () => {
 
   it('shows a native notification when a session enters an approval state', async () => {
     const session = await sessions.create({
-      kind: 'codex',
       name: 'Codex',
       cwd: '/workspace',
       runMode: 'windows',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
     });
     observer.registerTuiSession(session);
     notifier.attachAgentObserver(observer, sessions);
@@ -64,11 +63,10 @@ describe('Notifier', () => {
 
   it('dedupes repeated native notifications for the same state', async () => {
     const session = await sessions.create({
-      kind: 'claude_code',
       name: 'Claude',
       cwd: '/workspace',
       runMode: 'windows',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
     });
     observer.registerTuiSession(session);
     notifier.attachAgentObserver(observer, sessions);
@@ -92,11 +90,10 @@ describe('Notifier', () => {
       shouldShowNative: () => false
     });
     const session = await sessions.create({
-      kind: 'codex',
       name: 'Codex',
       cwd: '/workspace',
       runMode: 'windows',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
     });
     observer.registerTuiSession(session);
     notifier.attachAgentObserver(observer, sessions);
@@ -133,11 +130,10 @@ describe('Notifier', () => {
       focusApp
     });
     const session = await sessions.create({
-      kind: 'codex',
       name: 'Codex',
       cwd: '/workspace',
       runMode: 'windows',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
     });
     observer.registerTuiSession(session);
     notifier.attachAgentObserver(observer, sessions);

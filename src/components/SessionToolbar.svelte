@@ -24,7 +24,7 @@
   let selected = $derived(sessions.selected);
   let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
   let observed = $derived(selected ? sessions.observationFor(selected.id) : null);
-  let displayKind = $derived(selected ? displaySessionKind(selected, observed) : 'standard_terminal');
+  let displayKind = $derived(selected ? displaySessionKind(selected, observed) : 'terminal');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
   function edit() {

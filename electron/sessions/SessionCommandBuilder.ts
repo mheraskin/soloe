@@ -1,9 +1,9 @@
 import type {
-  ClaudeCodeSession,
-  CodexSession,
+  AgentLaunch,
+  AgentRuntimeInfo,
   Session,
   SessionId,
-  StandardTerminalSession
+  TerminalLaunch
 } from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
@@ -47,32 +47,62 @@ export class SessionCommandBuilder {
   }
 
   private buildInner(session: Session, ctx: SessionBuildContext): InnerCommand {
-    switch (session.kind) {
-      case 'standard_terminal':
-        return this.buildStandard(session, ctx);
-      case 'claude_code':
-        return this.buildClaude(session, ctx);
-      case 'codex':
-        return this.buildCodex(session, ctx);
+    const currentRuntime = session.currentAgentRuntime;
+    if (currentRuntime) {
+      return this.buildCurrentAgent(session, currentRuntime, ctx);
+    }
+    switch (session.launch.type) {
+      case 'terminal':
+        return this.buildStandard(session, session.launch, ctx);
+      case 'agent':
+        return session.launch.provider === 'claude_code'
+          ? this.buildClaude(session, session.launch, ctx)
+          : this.buildCodex(session, session.launch, ctx);
     }
   }
 
-  private buildStandard(s: StandardTerminalSession, ctx: SessionBuildContext): InnerCommand {
-    const bridgeEnv = buildSoloeEnv(s.id, s.runMode, undefined, ctx);
-    if (s.shell === 'custom') {
-      if (!s.command) throw new Error('Custom shell requires a command');
-      return { executable: s.command, args: s.args ?? [], env: bridgeEnv };
+  private buildCurrentAgent(
+    s: Session,
+    runtime: AgentRuntimeInfo,
+    ctx: SessionBuildContext
+  ): InnerCommand {
+    if (runtime.provider === 'claude_code') {
+      const threadId = runtime.providerThreadId ?? s.providerThreadId;
+      const args = threadId ? ['--resume', threadId] : ['--continue'];
+      return buildAgentCommand(
+        ctx.binaries?.claude ?? 'claude',
+        args,
+        buildSoloeEnv(s.id, s.runMode, 'claude_code', ctx),
+        s.runMode
+      );
     }
-    if (s.command) {
-      const resolved = this.shellDetector.resolve(s.shell, s.runMode);
-      const cmdLine = [s.command, ...(s.args ?? [])].join(' ');
+
+    const threadId = runtime.providerThreadId ?? s.providerThreadId;
+    const args = threadId ? ['resume', threadId] : ['resume'];
+    return buildAgentCommand(
+      ctx.binaries?.codex ?? 'codex',
+      args,
+      buildSoloeEnv(s.id, s.runMode, 'codex', ctx),
+      s.runMode
+    );
+  }
+
+  private buildStandard(s: Session, launch: TerminalLaunch, ctx: SessionBuildContext): InnerCommand {
+    const bridgeEnv = buildSoloeEnv(s.id, s.runMode, undefined, ctx);
+    if (launch.shell === 'custom') {
+      if (!launch.command) throw new Error('Custom shell requires a command');
+      return { executable: launch.command, args: launch.args ?? [], env: bridgeEnv };
+    }
+    if (launch.command) {
+      const resolved = this.shellDetector.resolve(launch.shell, s.runMode);
+      const cmdLine = [launch.command, ...(launch.args ?? [])].join(' ');
       return {
         executable: resolved.executable,
         args: [...resolved.args, '-c', cmdLine],
         env: bridgeEnv
       };
     }
-    const resolved = this.shellDetector.resolve(s.shell, s.runMode);
+    const resolved = this.shellDetector.resolve(launch.shell, s.runMode);
     if (s.runMode === 'wsl' && isBash(resolved.executable)) {
       return {
         executable: resolved.executable,
@@ -95,56 +125,56 @@ export class SessionCommandBuilder {
     };
   }
 
-  private buildClaude(s: ClaudeCodeSession, ctx: SessionBuildContext): InnerCommand {
+  private buildClaude(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
     const args: string[] = [];
-    switch (s.resumeMode) {
+    switch (launch.resumeMode) {
       case 'new':
-        if (!isKnownEmptyClaudeSession(s) && (s.claudeSessionId ?? s.providerThreadId)) {
-          args.push('--resume', s.claudeSessionId ?? s.providerThreadId!);
+        if (!isKnownEmptyClaudeSession(s) && (launch.claudeSessionId ?? s.providerThreadId)) {
+          args.push('--resume', launch.claudeSessionId ?? s.providerThreadId!);
         }
         break;
       case 'resume_last':
         args.push('--continue');
         break;
       case 'resume_by_name':
-        if (!s.claudeSessionName) {
+        if (!launch.claudeSessionName) {
           throw new Error('claudeSessionName is required for resume_by_name');
         }
-        args.push('--resume', s.claudeSessionName);
+        args.push('--resume', launch.claudeSessionName);
         break;
       case 'resume_by_id':
-        if (!s.claudeSessionId) {
+        if (!launch.claudeSessionId) {
           throw new Error('claudeSessionId is required for resume_by_id');
         }
-        args.push('--resume', s.claudeSessionId);
+        args.push('--resume', launch.claudeSessionId);
         break;
     }
     const env: Record<string, string> = buildSoloeEnv(s.id, s.runMode, 'claude_code', ctx);
-    if (s.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
+    if (launch.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
     return buildAgentCommand(ctx.binaries?.claude ?? 'claude', args, env, s.runMode);
   }
 
-  private buildCodex(s: CodexSession, ctx: SessionBuildContext): InnerCommand {
+  private buildCodex(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
     const args: string[] = [];
-    switch (s.resumeMode) {
+    switch (launch.resumeMode) {
       case 'new':
-        if (s.codexSessionId ?? s.providerThreadId) {
-          args.push('resume', s.codexSessionId ?? s.providerThreadId!);
+        if (launch.codexSessionId ?? s.providerThreadId) {
+          args.push('resume', launch.codexSessionId ?? s.providerThreadId!);
         }
         break;
       case 'resume_last':
         args.push('resume');
         break;
       case 'resume_by_id':
-        if (!s.codexSessionId) {
+        if (!launch.codexSessionId) {
           throw new Error('codexSessionId is required for resume_by_id');
         }
-        args.push('resume', s.codexSessionId);
+        args.push('resume', launch.codexSessionId);
         break;
     }
-    if (s.model) args.push('-m', s.model);
-    if (s.reasoningEffort) {
-      args.push('-c', `model_reasoning_effort=${s.reasoningEffort}`);
+    if (launch.model) args.push('-m', launch.model);
+    if (launch.reasoningEffort) {
+      args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
     }
     return {
       ...buildAgentCommand(
@@ -157,7 +187,7 @@ export class SessionCommandBuilder {
   }
 }
 
-function isKnownEmptyClaudeSession(session: ClaudeCodeSession): boolean {
+function isKnownEmptyClaudeSession(session: Session): boolean {
   return session.hasUserInput === false;
 }
 

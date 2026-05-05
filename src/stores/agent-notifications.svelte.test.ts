@@ -8,13 +8,12 @@ import { agentNotifications } from './agent-notifications.svelte';
 
 const session = {
   id: 's-1',
-  kind: 'codex',
+  launch: { type: 'agent', provider: 'codex', resumeMode: 'new' },
   name: 'Codex',
   cwd: '/repo',
   runMode: 'wsl',
   createdAt: '2026-05-04T00:00:00.000Z',
-  lastUsedAt: '2026-05-04T00:00:00.000Z',
-  resumeMode: 'new'
+  lastUsedAt: '2026-05-04T00:00:00.000Z'
 } satisfies Session;
 
 function snapshot(

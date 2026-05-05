@@ -11,11 +11,12 @@ export function isClipboardPasteShortcut(event: KeyboardLike): boolean {
 }
 
 export function shouldPasteImageViaSavedPath(session: {
-  kind: string;
+  launch?: { type: string; provider?: string };
   runMode: string;
   currentAgentRuntime?: { provider?: string };
 }): boolean {
-  const provider = session.currentAgentRuntime?.provider ?? session.kind;
+  const provider = session.currentAgentRuntime?.provider
+    ?? (session.launch?.type === 'agent' ? session.launch.provider : undefined);
   return provider === 'claude_code' || session.runMode === 'wsl';
 }
 
@@ -38,13 +39,13 @@ export function shouldSendShiftEnterSequence(event: KeyboardLike): boolean {
 // the readline mnemonics every line discipline understands: Ctrl+W
 // (backward-kill-word / werase) and Meta+d (forward kill-word).
 type AltEditSession = {
-  kind?: string;
+  launch?: { type?: string; provider?: string } | null;
   currentAgentRuntime?: { provider?: string } | null;
 } | null;
 
 function isAgentSession(session: AltEditSession): boolean {
   if (!session) return false;
-  if (session.kind === 'claude_code' || session.kind === 'codex') return true;
+  if (session.launch?.type === 'agent') return true;
   const provider = session.currentAgentRuntime?.provider;
   return provider === 'claude_code' || provider === 'codex';
 }

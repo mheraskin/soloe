@@ -5,10 +5,11 @@ import type {
   RunMode,
   Session,
   SessionId,
-  SessionKind,
+  AgentRuntimeProvider,
   SessionRuntimeState,
   SessionStatus
 } from '@shared/types/sessions.js';
+import { effectiveAgentProvider } from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
@@ -110,8 +111,8 @@ export class PtyManager extends EventEmitter {
     this.emitStatus(sessionId, terminalId, 'starting');
     await nextTick();
 
-    const isAgent = session.kind === 'claude_code' || session.kind === 'codex';
-    const release = isAgent ? await this.acquireAgentSpawnSlot(session.kind) : noop;
+    const agentProvider = effectiveAgentProvider(session);
+    const release = agentProvider ? await this.acquireAgentSpawnSlot(agentProvider) : noop;
     let proc: pty.IPty;
     try {
       proc = pty.spawn(spec.file, spec.args, {
@@ -129,7 +130,7 @@ export class PtyManager extends EventEmitter {
       this.emitStatus(sessionId, terminalId, 'error', message);
       throw new Error(`Failed to spawn terminal: ${message}`);
     }
-    if (isAgent) {
+    if (agentProvider) {
       // Codex and Claude lock their on-disk state during startup; let this one
       // settle before the next agent spawn reads or writes the same files.
       setTimeout(release, AGENT_SPAWN_SETTLE_MS);
@@ -231,8 +232,7 @@ export class PtyManager extends EventEmitter {
     this.removeAllListeners();
   }
 
-  private async acquireAgentSpawnSlot(kind: SessionKind): Promise<() => void> {
-    if (kind !== 'claude_code' && kind !== 'codex') return noop;
+  private async acquireAgentSpawnSlot(kind: AgentRuntimeProvider): Promise<() => void> {
     const previous = this.agentSpawnQueues.get(kind) ?? Promise.resolve();
     let release: () => void = noop;
     const next = new Promise<void>((resolve) => {

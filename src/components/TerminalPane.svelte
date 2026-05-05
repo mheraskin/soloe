@@ -11,6 +11,7 @@
   import { ipc } from '../lib/ipc';
   import type { TerminalId } from '@shared/types/terminal.js';
   import type { SessionId } from '@shared/types/sessions.js';
+  import { effectiveAgentProvider, launchKind } from '@shared/types/sessions.js';
   import { settings } from '../stores/settings.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
@@ -113,7 +114,7 @@
     if (!active) return;
     const session = sessions.sessions.find((item) => item.id === sessionId);
     const header = session
-      ? `# ${session.name || session.id}\n\n- cwd: ${session.cwd}\n- kind: ${session.kind}\n- run mode: ${session.runMode}\n\n`
+      ? `# ${session.name || session.id}\n\n- cwd: ${session.cwd}\n- launch: ${launchKind(session)}\n- run mode: ${session.runMode}\n\n`
       : `# ${sessionId}\n\n`;
     await navigator.clipboard.writeText(`${header}\`\`\`text\n${bufferText()}\`\`\`\n`);
     toasts.push('Copied session as Markdown', 'info');
@@ -154,12 +155,7 @@
 
   async function pasteFromClipboard(t: Terminal): Promise<void> {
     const session = sessions.sessions.find((item) => item.id === sessionId);
-    if (
-      session?.kind === 'claude_code'
-      || session?.kind === 'codex'
-      || session?.currentAgentRuntime?.provider === 'claude_code'
-      || session?.currentAgentRuntime?.provider === 'codex'
-    ) {
+    if (session && effectiveAgentProvider(session)) {
       const images = await clipboardImages().catch(() => []);
       if (images.length > 0) {
         if (shouldPasteImageViaSavedPath(session)) {

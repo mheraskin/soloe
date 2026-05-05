@@ -2,13 +2,16 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
+  AgentLaunch,
+  AgentRuntimeInfo,
   Session,
   SessionDraft,
   SessionId,
   SessionUpdate,
-  SessionKind
+  ShellKind,
+  TerminalLaunch
 } from '@shared/types/sessions.js';
-import { isSessionColor } from '@shared/types/sessions.js';
+import { isSessionColor, launchProvider } from '@shared/types/sessions.js';
 
 interface StorageShape {
   version: number;
@@ -16,7 +19,6 @@ interface StorageShape {
 }
 
 const STORAGE_VERSION = 1;
-const VALID_KINDS: SessionKind[] = ['standard_terminal', 'claude_code', 'codex'];
 
 export class SessionStore {
   private cache: Map<SessionId, Session> | null = null;
@@ -87,7 +89,6 @@ export class SessionStore {
       ...existing,
       ...patch,
       id: existing.id,
-      kind: existing.kind,
       createdAt: existing.createdAt
     } as Session;
     validateSession(merged);
@@ -177,7 +178,7 @@ export class SessionStore {
     if (!this.cache) return false;
     let changed = false;
     for (const session of this.cache.values()) {
-      if (session.kind !== 'claude_code' || session.hasUserInput !== false) continue;
+      if (launchProvider(session) !== 'claude_code' || session.hasUserInput !== false) continue;
       this.cache.delete(session.id);
       changed = true;
     }
@@ -268,8 +269,6 @@ function parseStorage(raw: unknown): Session[] {
 
 function parseSession(raw: unknown): Session | null {
   if (!isObject(raw)) return null;
-  const kind = raw['kind'];
-  if (typeof kind !== 'string' || !VALID_KINDS.includes(kind as SessionKind)) return null;
   if (typeof raw['id'] !== 'string') return null;
   if (typeof raw['name'] !== 'string') return null;
   if (typeof raw['cwd'] !== 'string') return null;
@@ -277,7 +276,8 @@ function parseSession(raw: unknown): Session | null {
   if (runMode !== 'windows' && runMode !== 'wsl') return null;
   if (typeof raw['createdAt'] !== 'string') return null;
   if (typeof raw['lastUsedAt'] !== 'string') return null;
-  const session = raw as unknown as Session;
+  const session = migrateRawSession(raw);
+  if (!session) return null;
   try {
     validateSession(session);
     return session;
@@ -326,9 +326,6 @@ function validateSession(s: Session): void {
     if (runtime.provider !== 'claude_code' && runtime.provider !== 'codex') {
       throw new Error('currentAgentRuntime.provider must be a known agent provider');
     }
-    if (runtime.source !== 'managed' && runtime.source !== 'attached') {
-      throw new Error('currentAgentRuntime.source must be managed or attached');
-    }
     if (runtime.status !== 'active' && runtime.status !== 'exited') {
       throw new Error('currentAgentRuntime.status must be active or exited');
     }
@@ -342,38 +339,180 @@ function validateSession(s: Session): void {
       throw new Error('currentAgentRuntime.lastEventAt must be a string when set');
     }
   }
-  switch (s.kind) {
-    case 'standard_terminal':
-      if (!s.shell) throw new Error('shell is required for standard_terminal');
-      if (s.shell === 'custom' && !s.command) {
+  if (!s.launch || typeof s.launch !== 'object') {
+    throw new Error('launch is required');
+  }
+  switch (s.launch.type) {
+    case 'terminal':
+      if (!s.launch.shell) throw new Error('shell is required for terminal launch');
+      if (s.launch.shell === 'custom' && !s.launch.command) {
         throw new Error('command is required when shell is custom');
       }
       break;
-    case 'claude_code':
-      if (s.resumeMode === 'resume_by_name' && !s.claudeSessionName) {
+    case 'agent':
+      if (s.launch.provider !== 'claude_code' && s.launch.provider !== 'codex') {
+        throw new Error('launch.provider must be a known agent provider');
+      }
+      if (s.launch.provider === 'claude_code' && !isClaudeResumeMode(s.launch.resumeMode)) {
+        throw new Error('resumeMode must be a known Claude resume mode');
+      }
+      if (s.launch.provider === 'codex' && !isCodexResumeMode(s.launch.resumeMode)) {
+        throw new Error('resumeMode must be a known Codex resume mode');
+      }
+      if (s.launch.provider === 'claude_code' && s.launch.resumeMode === 'resume_by_name' && !s.launch.claudeSessionName) {
         throw new Error('claudeSessionName is required for resume_by_name');
       }
-      if (s.resumeMode === 'resume_by_id' && !s.claudeSessionId) {
+      if (s.launch.provider === 'claude_code' && s.launch.resumeMode === 'resume_by_id' && !s.launch.claudeSessionId) {
         throw new Error('claudeSessionId is required for resume_by_id');
       }
-      break;
-    case 'codex':
-      if (s.resumeMode === 'resume_by_id' && !s.codexSessionId) {
+      if (s.launch.provider === 'codex' && s.launch.resumeMode === 'resume_by_id' && !s.launch.codexSessionId) {
         throw new Error('codexSessionId is required for resume_by_id');
       }
       break;
+    default:
+      throw new Error('launch.type must be terminal or agent');
   }
 }
 
 function initialHasUserInput(draft: SessionDraft): boolean | undefined {
-  if (draft.kind !== 'claude_code') return undefined;
-  if (draft.resumeMode !== 'new') return undefined;
-  if (draft.claudeSessionId || draft.providerThreadId) return undefined;
+  if (draft.launch.type !== 'agent' || draft.launch.provider !== 'claude_code') return undefined;
+  if (draft.launch.resumeMode !== 'new') return undefined;
+  if (draft.launch.claudeSessionId || draft.providerThreadId) return undefined;
   return false;
 }
 
 function isKnownEmptyClaudeSession(session: Session): boolean {
-  return session.kind === 'claude_code' && session.hasUserInput === false;
+  return launchProvider(session) === 'claude_code' && session.hasUserInput === false;
+}
+
+function migrateRawSession(raw: Record<string, unknown>): Session | null {
+  const launch = parseLaunch(raw);
+  if (!launch) return null;
+  const {
+    kind: _kind,
+    shell: _shell,
+    command: _command,
+    args: _args,
+    resumeMode: _resumeMode,
+    claudeSessionName: _claudeSessionName,
+    claudeSessionId: _claudeSessionId,
+    codexSessionId: _codexSessionId,
+    fullscreenTui: _fullscreenTui,
+    model: _model,
+    reasoningEffort: _reasoningEffort,
+    currentAgentRuntime: rawRuntime,
+    ...rest
+  } = raw;
+  const runtime = parseCurrentAgentRuntime(rawRuntime);
+  return {
+    ...rest,
+    launch,
+    ...(runtime ? { currentAgentRuntime: runtime } : {})
+  } as unknown as Session;
+}
+
+function parseCurrentAgentRuntime(raw: unknown): AgentRuntimeInfo | null {
+  if (!isObject(raw)) return null;
+  const provider = raw['provider'];
+  const status = raw['status'];
+  if (provider !== 'claude_code' && provider !== 'codex') return null;
+  if (status !== 'active' && status !== 'exited') return null;
+  return {
+    provider,
+    status,
+    ...(typeof raw['providerThreadId'] === 'string' ? { providerThreadId: raw['providerThreadId'] } : {}),
+    ...(typeof raw['startedAt'] === 'string' ? { startedAt: raw['startedAt'] } : {}),
+    ...(typeof raw['lastEventAt'] === 'string' ? { lastEventAt: raw['lastEventAt'] } : {})
+  };
+}
+
+function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch | null {
+  const existing = raw['launch'];
+  if (isObject(existing)) {
+    const type = existing['type'];
+    if (type === 'terminal') {
+      const shell = existing['shell'];
+      if (!isShell(shell)) return null;
+      return {
+        type: 'terminal',
+        shell,
+        ...(typeof existing['command'] === 'string' ? { command: existing['command'] } : {}),
+        ...(Array.isArray(existing['args']) && existing['args'].every((arg) => typeof arg === 'string')
+          ? { args: existing['args'] as string[] }
+          : {})
+      };
+    }
+    if (type === 'agent') {
+      const provider = existing['provider'];
+      if (provider !== 'claude_code' && provider !== 'codex') return null;
+      return {
+        type: 'agent',
+        provider,
+        resumeMode: typeof existing['resumeMode'] === 'string' ? existing['resumeMode'] as AgentLaunch['resumeMode'] : 'new',
+        ...(typeof existing['claudeSessionName'] === 'string' ? { claudeSessionName: existing['claudeSessionName'] } : {}),
+        ...(typeof existing['claudeSessionId'] === 'string' ? { claudeSessionId: existing['claudeSessionId'] } : {}),
+        ...(typeof existing['codexSessionId'] === 'string' ? { codexSessionId: existing['codexSessionId'] } : {}),
+        ...(typeof existing['fullscreenTui'] === 'boolean' ? { fullscreenTui: existing['fullscreenTui'] } : {}),
+        ...(typeof existing['model'] === 'string' ? { model: existing['model'] } : {}),
+        ...(isCodexReasoningEffort(existing['reasoningEffort']) ? { reasoningEffort: existing['reasoningEffort'] } : {})
+      };
+    }
+  }
+
+  // TODO: remove after a few releases once stored sessions have been rewritten
+  // with launch metadata instead of the legacy top-level kind/shell fields.
+  switch (raw['kind']) {
+    case 'standard_terminal': {
+      const shell = raw['shell'];
+      if (!isShell(shell)) return null;
+      return {
+        type: 'terminal',
+        shell,
+        ...(typeof raw['command'] === 'string' ? { command: raw['command'] } : {}),
+        ...(Array.isArray(raw['args']) && raw['args'].every((arg) => typeof arg === 'string')
+          ? { args: raw['args'] as string[] }
+          : {})
+      };
+    }
+    case 'claude_code':
+      return {
+        type: 'agent',
+        provider: 'claude_code',
+        resumeMode: typeof raw['resumeMode'] === 'string' ? raw['resumeMode'] as AgentLaunch['resumeMode'] : 'new',
+        ...(typeof raw['claudeSessionName'] === 'string' ? { claudeSessionName: raw['claudeSessionName'] } : {}),
+        ...(typeof raw['claudeSessionId'] === 'string' ? { claudeSessionId: raw['claudeSessionId'] } : {}),
+        ...(typeof raw['fullscreenTui'] === 'boolean' ? { fullscreenTui: raw['fullscreenTui'] } : {})
+      };
+    case 'codex':
+      return {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: typeof raw['resumeMode'] === 'string' ? raw['resumeMode'] as AgentLaunch['resumeMode'] : 'new',
+        ...(typeof raw['codexSessionId'] === 'string' ? { codexSessionId: raw['codexSessionId'] } : {}),
+        ...(typeof raw['model'] === 'string' ? { model: raw['model'] } : {}),
+        ...(isCodexReasoningEffort(raw['reasoningEffort']) ? { reasoningEffort: raw['reasoningEffort'] } : {})
+      };
+    default:
+      return null;
+  }
+}
+
+function isShell(value: unknown): value is ShellKind {
+  return value === 'auto' || value === 'bash' || value === 'zsh'
+    || value === 'pwsh' || value === 'cmd' || value === 'custom';
+}
+
+function isClaudeResumeMode(value: unknown): boolean {
+  return value === 'new' || value === 'resume_by_name'
+    || value === 'resume_by_id' || value === 'resume_last';
+}
+
+function isCodexResumeMode(value: unknown): boolean {
+  return value === 'new' || value === 'resume_by_id' || value === 'resume_last';
+}
+
+function isCodexReasoningEffort(value: unknown): value is 'low' | 'medium' | 'high' {
+  return value === 'low' || value === 'medium' || value === 'high';
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

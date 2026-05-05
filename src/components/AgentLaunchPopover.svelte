@@ -2,14 +2,12 @@
   import { onDestroy } from 'svelte';
   import { Plus } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
-  import type { SessionKind } from '@shared/types/sessions.js';
+  import type { AgentRuntimeProvider } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Popover from '$lib/components/ui/popover';
   import KindIcon from './KindIcon.svelte';
-
-  type AgentKind = Extract<SessionKind, 'claude_code' | 'codex'>;
 
   const HOVER_OPEN_DELAY_MS = 250;
   const HOVER_CLOSE_DELAY_MS = 180;
@@ -106,7 +104,7 @@
       .catch(reportError);
   }
 
-  function launchAgent(kind: AgentKind): void {
+  function launchAgent(kind: AgentRuntimeProvider): void {
     open = false;
     void sessions
       .createAgentWithDefaults(kind, {
@@ -174,7 +172,7 @@
         aria-label="New terminal"
         onclick={launchTerminal}
       >
-        <KindIcon kind="standard_terminal" size={20} />
+        <KindIcon kind="terminal" size={20} />
         <span class="truncate leading-none">Terminal</span>
       </Button>
     </div>

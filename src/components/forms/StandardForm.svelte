@@ -1,14 +1,17 @@
 <script lang="ts">
-  import type { ShellKind, StandardTerminalSession, SessionDraft } from '@shared/types/sessions.js';
+  import type { ShellKind, SessionDraft, TerminalLaunch } from '@shared/types/sessions.js';
   import { modal } from '../../stores/modal.svelte';
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
 
-  let draft = $derived(modal.draft as Extract<SessionDraft, { kind: 'standard_terminal' }>);
+  let draft = $derived(modal.draft.launch as TerminalLaunch);
 
-  function update<K extends keyof StandardTerminalSession>(key: K, value: StandardTerminalSession[K]) {
-    modal.draft = { ...draft, [key]: value } as SessionDraft;
+  function update<K extends keyof TerminalLaunch>(key: K, value: TerminalLaunch[K]) {
+    modal.draft = {
+      ...modal.draft,
+      launch: { ...draft, [key]: value }
+    } as SessionDraft;
   }
 
   const shells: ShellKind[] = ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom'];

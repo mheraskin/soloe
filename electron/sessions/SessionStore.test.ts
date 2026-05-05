@@ -19,11 +19,10 @@ afterEach(async () => {
 
 const standardDraft = (overrides: Record<string, unknown> = {}): SessionDraft =>
   ({
-    kind: 'standard_terminal',
     name: 'My Session',
     cwd: '/home/me/proj',
     runMode: 'windows',
-    shell: 'bash',
+    launch: { type: 'terminal', shell: 'bash' },
     ...overrides
   }) as SessionDraft;
 
@@ -70,18 +69,17 @@ describe('SessionStore — validation', () => {
   it('rejects standard_terminal with shell=custom but no command', async () => {
     const store = new SessionStore(storePath);
     await expect(
-      store.create(standardDraft({ shell: 'custom' }))
+      store.create(standardDraft({ launch: { type: 'terminal', shell: 'custom' } }))
     ).rejects.toThrow(/command is required/);
   });
 
   it('rejects claude resume_by_name without claudeSessionName', async () => {
     const store = new SessionStore(storePath);
     const draft: SessionDraft = {
-      kind: 'claude_code',
       name: 'Claude',
       cwd: '/x',
       runMode: 'windows',
-      resumeMode: 'resume_by_name'
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'resume_by_name' }
     };
     await expect(store.create(draft)).rejects.toThrow(/claudeSessionName is required/);
   });
@@ -89,11 +87,10 @@ describe('SessionStore — validation', () => {
   it('rejects codex resume_by_id without codexSessionId', async () => {
     const store = new SessionStore(storePath);
     const draft: SessionDraft = {
-      kind: 'codex',
       name: 'Codex',
       cwd: '/x',
       runMode: 'windows',
-      resumeMode: 'resume_by_id'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'resume_by_id' }
     };
     await expect(store.create(draft)).rejects.toThrow(/codexSessionId is required/);
   });
@@ -153,11 +150,10 @@ describe('SessionStore — disk round-trip', () => {
   it('does not persist brand-new Claude sessions until user input is seen', async () => {
     const store = new SessionStore(storePath);
     const created = await store.create({
-      kind: 'claude_code',
       name: 'Claude',
       cwd: '/x',
       runMode: 'windows',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
     });
     expect(created.hasUserInput).toBe(false);
     expect(await store.list()).toHaveLength(1);

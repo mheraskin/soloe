@@ -130,11 +130,11 @@
 
       <Separator class="my-1" />
 
-      {#if modal.draft.kind === 'standard_terminal'}
+      {#if modal.draft.launch.type === 'terminal'}
         <StandardForm />
-      {:else if modal.draft.kind === 'claude_code'}
+      {:else if modal.draft.launch.provider === 'claude_code'}
         <ClaudeForm />
-      {:else if modal.draft.kind === 'codex'}
+      {:else}
         <CodexForm />
       {/if}
 

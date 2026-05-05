@@ -29,10 +29,9 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
   it('wraps a standard bash session in wsl.exe with --cd and -lc', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      shell: 'bash'
+      launch: { type: 'terminal', shell: 'bash' }
     };
     const spec = builder.build(s, ctx);
     expect(spec.file).toBe('wsl.exe');
@@ -67,9 +66,8 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
   it('throws when wsl runMode is set without a wslDistro', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'wsl',
-      shell: 'bash'
+      launch: { type: 'terminal', shell: 'bash' }
     };
     expect(() => builder.build(s, ctx)).toThrow(/wslDistro is required/);
   });
@@ -80,11 +78,9 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
   it('runs an inline command via shell -c when command is set', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      shell: 'bash',
-      command: 'echo hi'
+      launch: { type: 'terminal', shell: 'bash', command: 'echo hi' }
     };
     const inner = innerLine(builder.build(s, ctx).args);
     expect(inner).toContain('bash');
@@ -95,11 +91,9 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
   it('runs a custom executable directly when shell=custom', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      shell: 'custom',
-      command: '/usr/bin/htop'
+      launch: { type: 'terminal', shell: 'custom', command: '/usr/bin/htop' }
     };
     expect(innerLine(builder.build(s, ctx).args)).toContain('/usr/bin/htop');
   });
@@ -107,10 +101,9 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
   it('throws when shell=custom is missing a command', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      shell: 'custom'
+      launch: { type: 'terminal', shell: 'custom' }
     };
     expect(() => builder.build(s, ctx)).toThrow(/Custom shell requires a command/);
   });
@@ -118,10 +111,9 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
   it('exports SOLOE_SESSION_ID and bridge env into a wsl bash rcfile when ctx.bridge is set', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      shell: 'bash'
+      launch: { type: 'terminal', shell: 'bash' }
     };
     const inner = innerLine(
       builder.build(s, {
@@ -140,10 +132,9 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
   it('wraps manual agent launches in WSL bash so terminals promote immediately', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      shell: 'bash'
+      launch: { type: 'terminal', shell: 'bash' }
     };
     const inner = innerLine(
       builder.build(s, {
@@ -159,15 +150,78 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     expect(rc).toContain('"hook_event_name":"SessionStart"');
     expect(rc).toContain('command "$__soloe_provider" "$@"');
   });
+
+  it('resumes an attached Claude runtime instead of reopening the shell', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'terminal', shell: 'bash' },
+      currentAgentRuntime: {
+        provider: 'claude_code',
+        status: 'active',
+        providerThreadId: 'claude-attached-123'
+      },
+      providerThreadId: 'claude-attached-123'
+    };
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('command -v claude');
+    expect(script).toContain('--resume claude-attached-123');
+  });
+
+  it('resumes an attached Codex runtime instead of reopening the shell', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'terminal', shell: 'bash' },
+      currentAgentRuntime: {
+        provider: 'codex',
+        status: 'active',
+        providerThreadId: 'codex-attached-123'
+      },
+      providerThreadId: 'codex-attached-123'
+    };
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('command -v codex');
+    expect(script).toContain('resume codex-attached-123');
+  });
+
+  it('falls back to provider resume-last commands for attached runtimes without a captured id', () => {
+    const claude: Session = {
+      ...baseFields('attached-claude'),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'terminal', shell: 'bash' },
+      currentAgentRuntime: {
+        provider: 'claude_code',
+        status: 'active'
+      }
+    };
+    const codex: Session = {
+      ...baseFields('attached-codex'),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'terminal', shell: 'bash' },
+      currentAgentRuntime: {
+        provider: 'codex',
+        status: 'active'
+      }
+    };
+
+    expect(decodeAgentScript(innerLine(builder.build(claude, ctx).args))).toContain('--continue');
+    expect(decodeAgentScript(innerLine(builder.build(codex, ctx).args))).toContain(
+      'exec "$__soloe_agent_bin" resume'
+    );
+  });
 });
 
 describe('SessionCommandBuilder — claude_code kind', () => {
   const claudeBase = (mode: 'new' | 'resume_last' | 'resume_by_name' | 'resume_by_id'): Session => ({
     ...baseFields(),
-    kind: 'claude_code',
     runMode: 'wsl',
     wslDistro: 'Ubuntu',
-    resumeMode: mode
+    launch: { type: 'agent', provider: 'claude_code', resumeMode: mode }
   });
 
   it('emits plain `claude` for resumeMode=new', () => {
@@ -178,15 +232,18 @@ describe('SessionCommandBuilder — claude_code kind', () => {
   });
 
   it('uses captured Claude session id for a persisted new session', () => {
-    const s = { ...claudeBase('new'), claudeSessionId: 'claude-123' } as Session;
+    const s = {
+      ...claudeBase('new'),
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new', claudeSessionId: 'claude-123' }
+    } as Session;
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('--resume claude-123');
   });
 
-  it('does not resume a captured Claude id for a known-empty managed session', () => {
+  it('does not resume a captured Claude id for a known-empty Claude launch', () => {
     const s = {
       ...claudeBase('new'),
-      claudeSessionId: 'claude-empty',
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new', claudeSessionId: 'claude-empty' },
       hasUserInput: false
     } as Session;
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
@@ -194,7 +251,7 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     expect(script).not.toContain('claude-empty');
   });
 
-  it('does not resume the provider global last session for previously used managed sessions without an id', () => {
+  it('does not resume the provider global last session for previously used Claude launches without an id', () => {
     const s = {
       ...claudeBase('new'),
       lastUsedAt: '2026-01-01T00:01:00Z'
@@ -210,7 +267,10 @@ describe('SessionCommandBuilder — claude_code kind', () => {
   });
 
   it('emits `claude --resume <name>` for resume_by_name', () => {
-    const s = { ...claudeBase('resume_by_name'), claudeSessionName: 'my-sess' } as Session;
+    const s = {
+      ...claudeBase('resume_by_name'),
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'resume_by_name', claudeSessionName: 'my-sess' }
+    } as Session;
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('--resume');
     expect(script).toContain('my-sess');
@@ -229,7 +289,10 @@ describe('SessionCommandBuilder — claude_code kind', () => {
   });
 
   it('exports CLAUDE_CODE_NO_FLICKER=1 when fullscreenTui is enabled', () => {
-    const s = { ...claudeBase('new'), fullscreenTui: true } as Session;
+    const s = {
+      ...claudeBase('new'),
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new', fullscreenTui: true }
+    } as Session;
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('CLAUDE_CODE_NO_FLICKER=1');
   });
@@ -256,12 +319,15 @@ describe('SessionCommandBuilder — codex kind', () => {
   it('appends -m and model_reasoning_effort to the codex argv', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'codex',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      resumeMode: 'new',
-      model: 'gpt-5',
-      reasoningEffort: 'high'
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        model: 'gpt-5',
+        reasoningEffort: 'high'
+      }
     };
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('codex');
@@ -272,11 +338,9 @@ describe('SessionCommandBuilder — codex kind', () => {
   it('emits `codex resume <id>` for resume_by_id', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'codex',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      resumeMode: 'resume_by_id',
-      codexSessionId: 'cdx-123'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'resume_by_id', codexSessionId: 'cdx-123' }
     };
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('resume');
@@ -286,11 +350,9 @@ describe('SessionCommandBuilder — codex kind', () => {
   it('uses captured Codex session id for a persisted new session', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'codex',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      resumeMode: 'new',
-      codexSessionId: 'cdx-123'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new', codexSessionId: 'cdx-123' }
     };
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('resume');
@@ -300,10 +362,9 @@ describe('SessionCommandBuilder — codex kind', () => {
   it('rewrites the bridge host to host.wsl.internal for wsl codex sessions', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'codex',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
     };
     const script = decodeAgentScript(
       innerLine(
@@ -323,10 +384,9 @@ describe('SessionCommandBuilder — codex kind', () => {
   it('bootstraps user bin paths before launching bare codex in wsl sessions', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'codex',
       runMode: 'wsl',
       wslDistro: 'Ubuntu',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
     };
     const inner = innerLine(builder.build(s, ctx).args);
     expect(inner).toMatch(/^\. <\(printf %s [A-Za-z0-9+/=]+ \| base64 -d\)$/);
@@ -347,9 +407,8 @@ describe('SessionCommandBuilder — windows runMode', () => {
   it('uses the inner executable directly without wsl wrapping', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'windows',
-      shell: 'pwsh'
+      launch: { type: 'terminal', shell: 'pwsh' }
     };
     const spec = builder.build(s, ctx);
     expect(spec.file).toBe('pwsh.exe');
@@ -362,10 +421,9 @@ describe('SessionCommandBuilder — windows runMode', () => {
     const os = await import('node:os');
     const s: Session = {
       ...baseFields(),
-      kind: 'standard_terminal',
       runMode: 'windows',
-      shell: 'pwsh',
-      cwd: '~'
+      cwd: '~',
+      launch: { type: 'terminal', shell: 'pwsh' }
     };
     const spec = builder.build(s, ctx);
     expect(spec.cwd).toBe(os.homedir());
@@ -374,10 +432,8 @@ describe('SessionCommandBuilder — windows runMode', () => {
   it('merges baseEnv with inner env on windows', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'claude_code',
       runMode: 'windows',
-      resumeMode: 'new',
-      fullscreenTui: true
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new', fullscreenTui: true }
     };
     const spec = builder.build(s, { baseEnv: { PATH: '/usr/bin', HOME: '/h' } });
     expect(spec.env['PATH']).toBe('/usr/bin');
@@ -388,9 +444,8 @@ describe('SessionCommandBuilder — windows runMode', () => {
   it('does not rewrite bridge host for windows runMode', () => {
     const s: Session = {
       ...baseFields(),
-      kind: 'claude_code',
       runMode: 'windows',
-      resumeMode: 'new'
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
     };
     const spec = builder.build(s, {
       baseEnv: {},

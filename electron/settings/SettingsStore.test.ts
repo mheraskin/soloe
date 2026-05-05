@@ -114,7 +114,7 @@ describe('SettingsStore — migration', () => {
     expect('fontSize' in s.appearance).toBe(false);
     expect(s.terminal.fontSize).toBe(13);
     expect(s.terminal.confirmDeleteTabs).toBe(true);
-    expect(s.defaults.newSessionKind).toBe('standard_terminal');
+    expect(s.defaults.newSessionKind).toBe('terminal');
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

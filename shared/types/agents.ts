@@ -1,11 +1,11 @@
 import type {
   AgentObservedState,
+  AgentRuntimeProvider,
   SessionId,
-  SessionKind,
   SessionRuntimeMode
 } from './sessions.js';
 
-export type AgentProvider = Extract<SessionKind, 'claude_code' | 'codex'>;
+export type AgentProvider = AgentRuntimeProvider;
 export type ObserverSubjectKind = 'session' | 'worker';
 
 export interface ObserverEvent {
@@ -22,7 +22,7 @@ export interface ObservedAgentSnapshot {
   id: string;
   runtimeMode: SessionRuntimeMode;
   subjectKind: ObserverSubjectKind;
-  provider: AgentProvider | 'standard_terminal';
+  provider: AgentProvider | 'terminal';
   state: AgentObservedState;
   sessionId?: SessionId;
   originSessionId?: SessionId;

@@ -4,11 +4,10 @@ import type { Session } from '@shared/types/sessions.js';
 
 const session: Session = {
   id: 'claude-main',
-  kind: 'claude_code',
+  launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' },
   name: 'Claude',
   cwd: '/workspace',
   runMode: 'windows',
-  resumeMode: 'new',
   createdAt: '2026-01-01T00:00:00Z',
   lastUsedAt: '2026-01-01T00:00:00Z'
 };

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type {
-    CodexSession,
+    AgentLaunch,
     CodexResumeMode,
     CodexReasoningEffort,
     SessionDraft
@@ -10,10 +10,13 @@
   import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
 
-  let draft = $derived(modal.draft as Extract<SessionDraft, { kind: 'codex' }>);
+  let draft = $derived(modal.draft.launch as AgentLaunch);
 
-  function update<K extends keyof CodexSession>(key: K, value: CodexSession[K]) {
-    modal.draft = { ...draft, [key]: value } as SessionDraft;
+  function update<K extends keyof AgentLaunch>(key: K, value: AgentLaunch[K]) {
+    modal.draft = {
+      ...modal.draft,
+      launch: { ...draft, [key]: value }
+    } as SessionDraft;
   }
 
   const resumeModes: { value: CodexResumeMode; label: string }[] = [

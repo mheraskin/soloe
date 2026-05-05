@@ -4,22 +4,45 @@ export type RunMode = 'windows' | 'wsl';
 
 export type ShellKind = 'auto' | 'bash' | 'zsh' | 'pwsh' | 'cmd' | 'custom';
 
-export type SessionKind = 'standard_terminal' | 'claude_code' | 'codex';
+export type AgentRuntimeProvider = 'claude_code' | 'codex';
+export type SessionLaunchKind = 'terminal' | AgentRuntimeProvider;
 
 export type SessionRuntimeMode = 'tui' | 'sdk_worker';
 
-export type AgentRuntimeProvider = 'claude_code' | 'codex';
-export type AgentRuntimeSource = 'managed' | 'attached';
 export type AgentRuntimeStatus = 'active' | 'exited';
 
 export interface AgentRuntimeInfo {
   provider: AgentRuntimeProvider;
-  source: AgentRuntimeSource;
   status: AgentRuntimeStatus;
   providerThreadId?: string;
   startedAt?: string;
   lastEventAt?: string;
 }
+
+export interface TerminalLaunch {
+  type: 'terminal';
+  shell: ShellKind;
+  command?: string;
+  args?: string[];
+}
+
+export type ClaudeResumeMode = 'new' | 'resume_by_name' | 'resume_by_id' | 'resume_last';
+export type CodexResumeMode = 'new' | 'resume_last' | 'resume_by_id';
+export type CodexReasoningEffort = 'low' | 'medium' | 'high';
+
+export interface AgentLaunch {
+  type: 'agent';
+  provider: AgentRuntimeProvider;
+  resumeMode: ClaudeResumeMode | CodexResumeMode;
+  claudeSessionName?: string;
+  claudeSessionId?: string;
+  codexSessionId?: string;
+  fullscreenTui?: boolean;
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
+}
+
+export type SessionLaunch = TerminalLaunch | AgentLaunch;
 
 export const SESSION_COLOR_TOKENS = [
   'red',
@@ -52,9 +75,9 @@ export type AgentObservedState =
   | 'failed'
   | 'exited';
 
-export interface SessionBase {
+export interface Session {
   id: SessionId;
-  kind: SessionKind;
+  launch: SessionLaunch;
   runtimeMode?: SessionRuntimeMode;
   name: string;
   cwd: string;
@@ -81,47 +104,15 @@ export interface SessionBase {
   // the user has explicitly renamed and should be left alone. Undefined on
   // legacy sessions is treated as false to avoid surprise renames.
   autoNamed?: boolean;
-  // True once the provider reports a submitted user prompt. New managed
-  // Claude sessions use false until that hook arrives so empty provider ids
+  // True once the provider reports a submitted user prompt. New Claude
+  // launches use false until that hook arrives so empty provider ids
   // are not restored after restart.
   hasUserInput?: boolean;
 }
 
-export interface StandardTerminalSession extends SessionBase {
-  kind: 'standard_terminal';
-  shell: ShellKind;
-  command?: string;
-  args?: string[];
-}
+export type SessionDraft = Omit<Session, 'id' | 'createdAt' | 'lastUsedAt'>;
 
-export type ClaudeResumeMode = 'new' | 'resume_by_name' | 'resume_by_id' | 'resume_last';
-
-export interface ClaudeCodeSession extends SessionBase {
-  kind: 'claude_code';
-  resumeMode: ClaudeResumeMode;
-  claudeSessionName?: string;
-  claudeSessionId?: string;
-  fullscreenTui?: boolean;
-}
-
-export type CodexResumeMode = 'new' | 'resume_last' | 'resume_by_id';
-export type CodexReasoningEffort = 'low' | 'medium' | 'high';
-
-export interface CodexSession extends SessionBase {
-  kind: 'codex';
-  resumeMode: CodexResumeMode;
-  codexSessionId?: string;
-  model?: string;
-  reasoningEffort?: CodexReasoningEffort;
-}
-
-export type Session = StandardTerminalSession | ClaudeCodeSession | CodexSession;
-
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-
-export type SessionDraft = DistributiveOmit<Session, 'id' | 'createdAt' | 'lastUsedAt'>;
-
-export type SessionUpdate = DistributiveOmit<Partial<Session>, 'id' | 'kind' | 'createdAt'>;
+export type SessionUpdate = Partial<Omit<Session, 'id' | 'createdAt'>>;
 
 export type SessionStatus = 'stopped' | 'starting' | 'running' | 'exited' | 'error';
 
@@ -138,14 +129,18 @@ export interface SessionRuntimeState {
   error?: string;
 }
 
-export function isStandardTerminalSession(s: Session): s is StandardTerminalSession {
-  return s.kind === 'standard_terminal';
+export function isAgentProvider(value: unknown): value is AgentRuntimeProvider {
+  return value === 'claude_code' || value === 'codex';
 }
 
-export function isClaudeCodeSession(s: Session): s is ClaudeCodeSession {
-  return s.kind === 'claude_code';
+export function launchKind(session: Session | SessionDraft): SessionLaunchKind {
+  return session.launch.type === 'terminal' ? 'terminal' : session.launch.provider;
 }
 
-export function isCodexSession(s: Session): s is CodexSession {
-  return s.kind === 'codex';
+export function launchProvider(session: Session | SessionDraft): AgentRuntimeProvider | null {
+  return session.launch.type === 'agent' ? session.launch.provider : null;
+}
+
+export function effectiveAgentProvider(session: Session): AgentRuntimeProvider | null {
+  return session.currentAgentRuntime?.provider ?? launchProvider(session);
 }

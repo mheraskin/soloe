@@ -11,6 +11,7 @@ import type {
   SessionId,
   SessionStatus
 } from '@shared/types/sessions.js';
+import { effectiveAgentProvider } from '@shared/types/sessions.js';
 import type { TerminalStatusEvent } from '@shared/types/terminal.js';
 
 type AgentObserverEvents = {
@@ -59,7 +60,7 @@ export class AgentObserverManager extends EventEmitter {
       id: session.id,
       runtimeMode: 'tui',
       subjectKind: 'session',
-      provider: session.currentAgentRuntime?.provider ?? session.kind,
+      provider: effectiveAgentProvider(session) ?? 'terminal',
       state: 'idle',
       sessionId: session.id,
       providerThreadId: session.currentAgentRuntime?.providerThreadId ?? session.providerThreadId,
@@ -83,7 +84,7 @@ export class AgentObserverManager extends EventEmitter {
         id: event.sessionId,
         runtimeMode: 'tui',
         subjectKind: 'session',
-        provider: 'standard_terminal',
+        provider: 'terminal',
         sessionId: event.sessionId
       }),
       state,
@@ -105,7 +106,7 @@ export class AgentObserverManager extends EventEmitter {
         id: sessionId,
         runtimeMode: 'tui',
         subjectKind: 'session',
-        provider: 'standard_terminal',
+        provider: 'terminal',
         sessionId
       }),
       state,

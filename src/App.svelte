@@ -148,6 +148,15 @@
     return Boolean(target?.closest('.xterm'));
   }
 
+  function selectedSessionContext(): { projectId?: string; cwd?: string; branch?: string } {
+    const sel = sessions.selected;
+    return {
+      ...(sel?.projectId ? { projectId: sel.projectId } : {}),
+      ...(sel?.cwd ? { cwd: sel.cwd } : {}),
+      ...(sel?.lastBranch ? { branch: sel.lastBranch } : {})
+    };
+  }
+
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
       consume(e);
@@ -171,22 +180,14 @@
     }
     if (Keymap.newSession.match(e)) {
       consume(e);
-      const sel = sessions.selected;
       void sessions
-        .createPreferredWithDefaults({
-          ...(sel?.projectId ? { projectId: sel.projectId } : {}),
-          ...(sel?.cwd ? { cwd: sel.cwd } : {})
-        })
+        .createPreferredWithDefaults(selectedSessionContext())
         .catch(reportError);
       return;
     }
     if (Keymap.newSessionPicker.match(e)) {
       consume(e);
-      const sel = sessions.selected;
-      newSessionPicker.open({
-        ...(sel?.projectId ? { projectId: sel.projectId } : {}),
-        ...(sel?.cwd ? { cwd: sel.cwd } : {})
-      });
+      newSessionPicker.open(selectedSessionContext());
       return;
     }
     if (Keymap.terminalFind.match(e)) {

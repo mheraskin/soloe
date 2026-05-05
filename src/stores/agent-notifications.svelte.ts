@@ -3,8 +3,9 @@ import type {
   AgentObservedState,
   Session,
   SessionId,
-  SessionKind
+  SessionLaunchKind
 } from '@shared/types/sessions.js';
+import { launchKind } from '@shared/types/sessions.js';
 
 export type NotifyState = Extract<
   AgentObservedState,
@@ -22,7 +23,7 @@ export interface AgentEdgeMarker {
 
 export interface AgentToastNotice extends AgentEdgeMarker {
   sessionName: string;
-  sessionKind: SessionKind;
+  sessionKind: SessionLaunchKind;
 }
 
 const COMPLETED_DISMISS_MS = 4000;
@@ -178,7 +179,7 @@ class AgentNotificationsStore {
     this.upsertToast({
       ...marker,
       sessionName: opts.session.name || '(unnamed)',
-      sessionKind: opts.session.kind
+      sessionKind: launchKind(opts.session)
     });
   }
 

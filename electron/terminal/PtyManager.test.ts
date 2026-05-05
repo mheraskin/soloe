@@ -23,10 +23,9 @@ vi.mock('node-pty', () => ({
 const session: Session = {
   id: 's-1',
   name: 'terminal',
-  kind: 'standard_terminal',
   cwd: '~',
   runMode: 'windows',
-  shell: 'auto',
+  launch: { type: 'terminal', shell: 'auto' },
   createdAt: '2026-01-01T00:00:00Z',
   lastUsedAt: '2026-01-01T00:00:00Z'
 };
@@ -213,9 +212,12 @@ describe('PtyManager', () => {
       ...session,
       id: 'claude-1',
       name: 'Claude',
-      kind: 'claude_code',
-      resumeMode: 'new',
-      fullscreenTui: true
+      launch: {
+        type: 'agent',
+        provider: 'claude_code',
+        resumeMode: 'new',
+        fullscreenTui: true
+      }
     };
     const update = vi.fn();
     const manager = new PtyManager({

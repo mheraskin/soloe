@@ -3,7 +3,7 @@ import { defaultDraft, toDraft } from '../lib/sessions-helpers';
 
 class ModalStore {
   open = $state(false);
-  draft = $state<SessionDraft>(defaultDraft('standard_terminal'));
+  draft = $state<SessionDraft>(defaultDraft('terminal'));
   editingId = $state<string | null>(null);
   error = $state<string | null>(null);
 

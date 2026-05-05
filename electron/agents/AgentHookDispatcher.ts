@@ -1,4 +1,5 @@
 import type { AgentObservedState, Session, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import { launchProvider } from '@shared/types/sessions.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AutoRenameService } from './AutoRenameService.js';
@@ -138,13 +139,11 @@ export class AgentHookDispatcher {
       if (!canUpdateRuntime) return;
 
       const now = new Date().toISOString();
-      const source =
-        existing.kind === provider && existingRuntime?.source !== 'attached' ? 'managed' : 'attached';
+      const matchingLaunch = launchProvider(existing) === provider;
       const priorProviderThreadId =
         existingRuntime?.provider === provider ? existingRuntime.providerThreadId : undefined;
       const runtime = {
         provider,
-        source,
         status: hookEvent === 'SessionEnd' ? 'exited' as const : 'active' as const,
         providerThreadId: sessionId ?? priorProviderThreadId,
         startedAt: startsRuntime ? now : existingRuntime?.startedAt,
@@ -156,23 +155,22 @@ export class AgentHookDispatcher {
         providerThreadId: runtime.providerThreadId
       } as SessionUpdate;
 
-      if (sessionId && provider === 'claude_code' && existing.kind === 'claude_code') {
-        (patch as { claudeSessionId?: string }).claudeSessionId = sessionId;
+      if (sessionId && provider === 'claude_code' && matchingLaunch && existing.launch.type === 'agent') {
+        patch.launch = { ...existing.launch, claudeSessionId: sessionId };
       }
-      if (sessionId && provider === 'codex' && existing.kind === 'codex') {
-        (patch as { codexSessionId?: string }).codexSessionId = sessionId;
+      if (sessionId && provider === 'codex' && matchingLaunch && existing.launch.type === 'agent') {
+        patch.launch = { ...existing.launch, codexSessionId: sessionId };
       }
 
       const changed =
         existing.currentAgentRuntime?.provider !== runtime.provider
-        || existing.currentAgentRuntime?.source !== runtime.source
         || existing.currentAgentRuntime?.status !== runtime.status
         || existing.currentAgentRuntime?.providerThreadId !== runtime.providerThreadId
         || existing.providerThreadId !== patch.providerThreadId
-        || (sessionId && provider === 'claude_code' && existing.kind === 'claude_code'
-          && (existing as { claudeSessionId?: string }).claudeSessionId !== sessionId)
-        || (sessionId && provider === 'codex' && existing.kind === 'codex'
-          && (existing as { codexSessionId?: string }).codexSessionId !== sessionId);
+        || (sessionId && provider === 'claude_code' && matchingLaunch && existing.launch.type === 'agent'
+          && existing.launch.claudeSessionId !== sessionId)
+        || (sessionId && provider === 'codex' && matchingLaunch && existing.launch.type === 'agent'
+          && existing.launch.codexSessionId !== sessionId);
       if (!changed) return;
 
       const updated = await this.opts.sessionStore.update(soloeSessionId, patch);
@@ -191,7 +189,7 @@ export class AgentHookDispatcher {
     try {
       const existing = await this.opts.sessionStore.get(soloeSessionId);
       if (!existing) return;
-      if (existing.kind !== 'claude_code') return;
+      if (launchProvider(existing) !== 'claude_code') return;
       if (existing.hasUserInput === true) return;
       await this.opts.sessionStore.update(soloeSessionId, { hasUserInput: true });
     } catch (err) {

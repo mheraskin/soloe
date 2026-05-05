@@ -1,12 +1,12 @@
 <script lang="ts">
   import { TerminalSquare } from '@lucide/svelte';
-  import type { SessionKind } from '@shared/types/sessions.js';
+  import type { SessionLaunchKind } from '@shared/types/sessions.js';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexUrl from '../lib/icons/codex.svg';
 
-  let { kind, size = 14 }: { kind: SessionKind; size?: number } = $props();
+  let { kind, size = 14 }: { kind: SessionLaunchKind; size?: number } = $props();
 
-  const sources: Partial<Record<SessionKind, { src: string; alt: string }>> = {
+  const sources: Partial<Record<SessionLaunchKind, { src: string; alt: string }>> = {
     claude_code: { src: claudeUrl, alt: 'Claude' },
     codex: { src: codexUrl, alt: 'Codex' }
   };
@@ -16,7 +16,7 @@
 
 {#if entry}
   <img class="icon" src={entry.src} alt={entry.alt} width={size} height={size} />
-{:else if kind === 'standard_terminal'}
+{:else if kind === 'terminal'}
   <TerminalSquare class="icon" size={size} aria-label="Terminal" />
 {/if}
 

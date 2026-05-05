@@ -8,7 +8,7 @@
     ThemePref
   } from '@shared/types/settings.js';
   import { MODEL_CATALOG } from '@shared/types/settings.js';
-  import type { RunMode, SessionKind, ShellKind } from '@shared/types/sessions.js';
+  import type { RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
   import { reportError } from '../../stores/toast.svelte';
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
@@ -20,8 +20,8 @@
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
   const runModes: RunMode[] = ['windows', 'wsl'];
   const shells: ShellKind[] = ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom'];
-  const newSessionKinds: { value: SessionKind; label: string }[] = [
-    { value: 'standard_terminal', label: 'Terminal' },
+  const newSessionKinds: { value: SessionLaunchKind; label: string }[] = [
+    { value: 'terminal', label: 'Terminal' },
     { value: 'claude_code', label: 'Claude' },
     { value: 'codex', label: 'Codex' }
   ];
@@ -114,7 +114,7 @@
     } catch (e) { reportError(e); }
   }
 
-  async function setDefaultNewSessionKind(value: SessionKind) {
+  async function setDefaultNewSessionKind(value: SessionLaunchKind) {
     try {
       await settings.update({ defaults: { newSessionKind: value } });
     } catch (e) { reportError(e); }
@@ -217,7 +217,7 @@
     <Select.Root
       type="single"
       value={settings.current.defaults.newSessionKind}
-      onValueChange={(v) => setDefaultNewSessionKind(v as SessionKind)}
+      onValueChange={(v) => setDefaultNewSessionKind(v as SessionLaunchKind)}
     >
       <Select.Trigger class="w-full">
         {newSessionKinds.find((k) => k.value === settings.current.defaults.newSessionKind)?.label ?? 'Terminal'}

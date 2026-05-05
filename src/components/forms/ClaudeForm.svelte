@@ -1,6 +1,6 @@
 <script lang="ts">
   import type {
-    ClaudeCodeSession,
+    AgentLaunch,
     ClaudeResumeMode,
     SessionDraft
   } from '@shared/types/sessions.js';
@@ -10,10 +10,13 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Select from '$lib/components/ui/select';
 
-  let draft = $derived(modal.draft as Extract<SessionDraft, { kind: 'claude_code' }>);
+  let draft = $derived(modal.draft.launch as AgentLaunch);
 
-  function update<K extends keyof ClaudeCodeSession>(key: K, value: ClaudeCodeSession[K]) {
-    modal.draft = { ...draft, [key]: value } as SessionDraft;
+  function update<K extends keyof AgentLaunch>(key: K, value: AgentLaunch[K]) {
+    modal.draft = {
+      ...modal.draft,
+      launch: { ...draft, [key]: value }
+    } as SessionDraft;
   }
 
   const resumeModes: { value: ClaudeResumeMode; label: string }[] = [

@@ -1,4 +1,5 @@
-import type { Session, SessionDraft, SessionKind } from '@shared/types/sessions.js';
+import type { Session, SessionDraft, SessionLaunchKind } from '@shared/types/sessions.js';
+import { launchKind } from '@shared/types/sessions.js';
 import type { SettingsDefaults } from '@shared/types/settings.js';
 
 export function shortCwd(cwd: string): string {
@@ -8,23 +9,23 @@ export function shortCwd(cwd: string): string {
   return parts[parts.length - 1] || trimmed;
 }
 
-export function kindLabel(kind: SessionKind): string {
+export function kindLabel(kind: SessionLaunchKind): string {
   switch (kind) {
-    case 'standard_terminal': return 'Terminal';
+    case 'terminal': return 'Terminal';
     case 'claude_code': return 'Claude';
     case 'codex': return 'Codex';
   }
 }
 
-export function kindGlyph(kind: SessionKind): string {
+export function kindGlyph(kind: SessionLaunchKind): string {
   switch (kind) {
-    case 'standard_terminal': return '$_';
+    case 'terminal': return '$_';
     case 'claude_code': return 'C';
     case 'codex': return 'X';
   }
 }
 
-export function defaultDraft(kind: SessionKind, defaults?: SettingsDefaults): SessionDraft {
+export function defaultDraft(kind: SessionLaunchKind, defaults?: SettingsDefaults): SessionDraft {
   const runMode = defaults?.runMode ?? 'wsl';
   const base = {
     name: '',
@@ -34,12 +35,20 @@ export function defaultDraft(kind: SessionKind, defaults?: SettingsDefaults): Se
   } as { name: string; cwd: string; runMode: 'windows' | 'wsl'; wslDistro?: string };
   const standardShell = defaults?.shell ?? 'auto';
   switch (kind) {
-    case 'standard_terminal':
-      return { ...base, kind: 'standard_terminal', shell: standardShell };
+    case 'terminal':
+      return { ...base, launch: { type: 'terminal', shell: standardShell } };
     case 'claude_code':
-      return { ...base, kind: 'claude_code', resumeMode: 'new', fullscreenTui: true };
+      return {
+        ...base,
+        launch: {
+          type: 'agent',
+          provider: 'claude_code',
+          resumeMode: 'new',
+          fullscreenTui: true
+        }
+      };
     case 'codex':
-      return { ...base, kind: 'codex', resumeMode: 'new' };
+      return { ...base, launch: { type: 'agent', provider: 'codex', resumeMode: 'new' } };
   }
 }
 
@@ -59,26 +68,30 @@ export function validateDraft(d: SessionDraft): ValidationError | null {
   if (d.runMode === 'wsl' && !d.wslDistro?.trim()) {
     return { field: 'wslDistro', message: 'WSL distro is required' };
   }
-  switch (d.kind) {
-    case 'standard_terminal':
-      if (!d.shell) return { field: 'shell', message: 'Shell is required' };
-      if (d.shell === 'custom' && !d.command?.trim()) {
+  switch (d.launch.type) {
+    case 'terminal':
+      if (!d.launch.shell) return { field: 'shell', message: 'Shell is required' };
+      if (d.launch.shell === 'custom' && !d.launch.command?.trim()) {
         return { field: 'command', message: 'Command is required for custom shell' };
       }
       break;
-    case 'claude_code':
-      if (d.resumeMode === 'resume_by_name' && !d.claudeSessionName?.trim()) {
-        return { field: 'claudeSessionName', message: 'Session name required' };
+    case 'agent':
+      if (d.launch.provider === 'claude_code') {
+        if (d.launch.resumeMode === 'resume_by_name' && !d.launch.claudeSessionName?.trim()) {
+          return { field: 'claudeSessionName', message: 'Session name required' };
+        }
+        if (d.launch.resumeMode === 'resume_by_id' && !d.launch.claudeSessionId?.trim()) {
+          return { field: 'claudeSessionId', message: 'Session id required' };
+        }
       }
-      if (d.resumeMode === 'resume_by_id' && !d.claudeSessionId?.trim()) {
-        return { field: 'claudeSessionId', message: 'Session id required' };
-      }
-      break;
-    case 'codex':
-      if (d.resumeMode === 'resume_by_id' && !d.codexSessionId?.trim()) {
+      if (d.launch.provider === 'codex' && d.launch.resumeMode === 'resume_by_id' && !d.launch.codexSessionId?.trim()) {
         return { field: 'codexSessionId', message: 'Session id required' };
       }
       break;
   }
   return null;
+}
+
+export function draftLaunchKind(d: SessionDraft): SessionLaunchKind {
+  return launchKind(d);
 }

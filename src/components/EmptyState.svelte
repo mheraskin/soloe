@@ -8,7 +8,8 @@
     FolderOpen,
     Command
   } from '@lucide/svelte';
-  import type { Session, SessionStatus, SessionKind } from '@shared/types/sessions.js';
+  import type { Session, SessionStatus } from '@shared/types/sessions.js';
+  import { launchKind, launchProvider } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -20,10 +21,6 @@
   let { session, status }: { session: Session | null; status: SessionStatus } = $props();
 
   let busy = $state(false);
-
-  function isAgentKind(kind: SessionKind): kind is Extract<SessionKind, 'claude_code' | 'codex'> {
-    return kind === 'claude_code' || kind === 'codex';
-  }
 
   async function resume() {
     if (!session || busy) return;
@@ -46,8 +43,9 @@
         cwd: session.cwd,
         ...(session.lastBranch ? { branch: session.lastBranch } : {})
       };
-      const created = isAgentKind(session.kind)
-        ? await sessions.createAgentWithDefaults(session.kind, opts)
+      const provider = launchProvider(session);
+      const created = provider
+        ? await sessions.createAgentWithDefaults(provider, opts)
         : await sessions.createWithDefaults(opts);
       sessions.select(created.id);
     } catch (err) {
@@ -135,7 +133,7 @@
     </div>
   {:else}
     <h2 class="m-0 text-base font-medium text-foreground">{session.name}</h2>
-    <p class="m-0 text-xs">{kindLabel(session.kind)} · {session.runMode}{session.wslDistro ? ` (${session.wslDistro})` : ''}</p>
+    <p class="m-0 text-xs">{kindLabel(launchKind(session))} · {session.runMode}{session.wslDistro ? ` (${session.wslDistro})` : ''}</p>
     <p class="m-0 font-mono text-xs">{session.cwd}</p>
     {#if status === 'starting'}
       <div class="mt-3 flex items-center gap-2 text-xs">

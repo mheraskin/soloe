@@ -13,6 +13,7 @@ import type {
   FileSearchRequest
 } from '@shared/types/files.js';
 import type { Session } from '@shared/types/sessions.js';
+import { effectiveAgentProvider } from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { FileSearchService } from '../files/FileSearchService.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
@@ -132,10 +133,7 @@ function pasteTargetForSession(session: Session): { writeDir: string; providerDi
 }
 
 function isAgentSession(session: Session): boolean {
-  return session.kind === 'claude_code'
-    || session.kind === 'codex'
-    || session.currentAgentRuntime?.provider === 'claude_code'
-    || session.currentAgentRuntime?.provider === 'codex';
+  return effectiveAgentProvider(session) !== null;
 }
 
 function wslUncPath(distro: string, linuxPath: string): string {

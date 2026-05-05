@@ -1,4 +1,4 @@
-import type { ShellKind, RunMode, SessionKind } from './sessions.js';
+import type { ShellKind, RunMode, SessionLaunchKind } from './sessions.js';
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type TerminalFontSizePref = 11 | 12 | 13 | 14;
@@ -17,7 +17,7 @@ export interface SettingsDefaults {
   wslDistro?: string;
   shell: ShellKind;
   cwd: string;
-  newSessionKind: SessionKind;
+  newSessionKind: SessionLaunchKind;
 }
 
 export interface SettingsBinaries {
@@ -92,7 +92,7 @@ export const DEFAULT_SETTINGS: Settings = {
     wslDistro: 'Ubuntu',
     shell: 'auto',
     cwd: '~',
-    newSessionKind: 'standard_terminal'
+    newSessionKind: 'terminal'
   },
   binaries: {},
   models: {
