@@ -154,61 +154,69 @@
           </Button>
         {/snippet}
       </Popover.Trigger>
-      <Popover.Content align="start" class="w-72 p-0">
-        <Command.Root>
-          <Command.Input placeholder="Switch branch or commit…" />
-          <Command.List>
-            <Command.Empty>No matches</Command.Empty>
-            {#if branches.length > 0}
-              <Command.Group heading="Branches">
-                {#each branches as branch (branch.name)}
-                  <Command.Item
-                    value={branch.name}
-                    disabled={branch.current || checkingOut !== null}
-                    onSelect={() => checkout(branch.name)}
-                  >
-                    <span class="inline-flex w-3 shrink-0 items-center">
-                      {#if branch.current}<Check class="size-3 text-primary" />{/if}
-                    </span>
-                    <span class="flex-1 truncate">{branch.name}</span>
-                    {#if branch.upstream}
-                      <Badge variant="outline" class="font-mono text-[10px]">{branch.upstream}</Badge>
-                    {/if}
-                  </Command.Item>
-                {/each}
-              </Command.Group>
-            {/if}
-            {#if commits.length > 0}
-              <Command.Group heading="Recent commits">
-                {#each commits as commit (commit.hash)}
-                  {@const isCurrent = status?.detached && status.head === commit.hash}
-                  <Command.Item
-                    value={commit.hash}
-                    disabled={isCurrent || checkingOut !== null}
-                    onSelect={() => checkout(commit.hash)}
-                  >
-                    <span class="inline-flex w-3 shrink-0 items-center">
-                      {#if isCurrent}<Check class="size-3 text-primary" />{/if}
-                    </span>
-                    <span class="w-12 shrink-0 truncate font-mono text-[10px] text-muted-foreground">{commit.shortHash}</span>
-                    <span class="flex-1 truncate">{commit.subject}</span>
-                  </Command.Item>
-                {/each}
-                {#if commitLimit !== null && commits.length >= commitLimit}
-                  <Command.Item
-                    value="__load_all_commits__"
-                    forceMount
-                    disabled={checkingOut !== null}
-                    onSelect={loadAllCommits}
-                  >
-                    <span class="w-3 shrink-0"></span>
-                    <span class="flex-1 truncate text-xs text-muted-foreground">Load all commits…</span>
-                  </Command.Item>
-                {/if}
-              </Command.Group>
-            {/if}
-          </Command.List>
-        </Command.Root>
+      <Popover.Content align="start" class="w-[36rem] p-0">
+        <div class="flex divide-x divide-border">
+          <Command.Root class="flex-1 rounded-none!">
+            <Command.Input placeholder="Filter branches…" />
+            <Command.List>
+              <Command.Empty>No branches</Command.Empty>
+              {#if branches.length > 0}
+                <Command.Group heading="Branches">
+                  {#each branches as branch (branch.name)}
+                    <Command.Item
+                      value={branch.name}
+                      disabled={branch.current || checkingOut !== null}
+                      onSelect={() => checkout(branch.name)}
+                    >
+                      <span class="inline-flex w-3 shrink-0 items-center">
+                        {#if branch.current}<Check class="size-3 text-primary" />{/if}
+                      </span>
+                      <span class="flex-1 truncate">{branch.name}</span>
+                      {#if branch.upstream}
+                        <Badge variant="outline" class="font-mono text-[10px]">{branch.upstream}</Badge>
+                      {/if}
+                    </Command.Item>
+                  {/each}
+                </Command.Group>
+              {/if}
+            </Command.List>
+          </Command.Root>
+          <Command.Root class="flex-1 rounded-none!">
+            <Command.Input placeholder="Filter commits…" />
+            <Command.List>
+              <Command.Empty>No commits</Command.Empty>
+              {#if commits.length > 0}
+                <Command.Group heading="Recent commits">
+                  {#each commits as commit (commit.hash)}
+                    {@const isCurrent = status?.detached && status.head === commit.hash}
+                    <Command.Item
+                      value={commit.hash}
+                      disabled={isCurrent || checkingOut !== null}
+                      onSelect={() => checkout(commit.hash)}
+                    >
+                      <span class="inline-flex w-3 shrink-0 items-center">
+                        {#if isCurrent}<Check class="size-3 text-primary" />{/if}
+                      </span>
+                      <span class="w-12 shrink-0 truncate font-mono text-[10px] text-muted-foreground">{commit.shortHash}</span>
+                      <span class="flex-1 truncate">{commit.subject}</span>
+                    </Command.Item>
+                  {/each}
+                  {#if commitLimit !== null && commits.length >= commitLimit}
+                    <Command.Item
+                      value="__load_all_commits__"
+                      forceMount
+                      disabled={checkingOut !== null}
+                      onSelect={loadAllCommits}
+                    >
+                      <span class="w-3 shrink-0"></span>
+                      <span class="flex-1 truncate text-xs text-muted-foreground">Load all commits…</span>
+                    </Command.Item>
+                  {/if}
+                </Command.Group>
+              {/if}
+            </Command.List>
+          </Command.Root>
+        </div>
       </Popover.Content>
     </Popover.Root>
   </div>
