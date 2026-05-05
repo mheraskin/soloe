@@ -51,11 +51,23 @@ describe('terminal input helpers', () => {
     expect(shouldPasteImageViaSavedPath({ kind: 'codex', runMode: 'windows' })).toBe(false);
   });
 
-  it('emits readline word-edit and word-nav sequences for Alt-modified keys', () => {
+  it('emits readline mnemonics in plain shells for Alt-modified word keys', () => {
     expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }))).toBe('\x17');
     expect(altWordEditSequence(key({ altKey: true, key: 'Delete' }))).toBe('\x1bd');
     expect(altWordEditSequence(key({ altKey: true, key: 'ArrowLeft' }))).toBe('\x1b[1;3D');
     expect(altWordEditSequence(key({ altKey: true, key: 'ArrowRight' }))).toBe('\x1b[1;3C');
     expect(altWordEditSequence(key({ altKey: true, key: 'a' }))).toBeNull();
+  });
+
+  it('emits xterm-native sequences in agent TUI sessions for Alt+Backspace/Delete', () => {
+    const claude = { kind: 'claude_code' };
+    const codex = { kind: 'codex' };
+    const promoted = { kind: 'standard_terminal', currentAgentRuntime: { provider: 'claude_code' } };
+    expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }), claude)).toBe('\x1b\x7f');
+    expect(altWordEditSequence(key({ altKey: true, key: 'Delete' }), claude)).toBe('\x1b[3;3~');
+    expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }), codex)).toBe('\x1b\x7f');
+    expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }), promoted)).toBe('\x1b\x7f');
+    // Word nav stays the same in either context.
+    expect(altWordEditSequence(key({ altKey: true, key: 'ArrowLeft' }), claude)).toBe('\x1b[1;3D');
   });
 });

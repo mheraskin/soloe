@@ -287,11 +287,12 @@
         if (binding.match(e)) return false;
       }
 
-      // Readline word-edit and word-nav shortcuts. xterm.js's defaults don't
-      // reach the PTY reliably through electron on linux, so emit the escape
-      // sequences ourselves.
+      // Alt-modified word edit and nav. We emit explicit escape sequences
+      // tuned to whatever's reading the PTY (plain shell vs. agent TUI) —
+      // see altWordEditSequence for the exact mapping.
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
-        const seq = altWordEditSequence(e);
+        const session = sessions.sessions.find((item) => item.id === sessionId);
+        const seq = altWordEditSequence(e, session ?? null);
         if (seq !== null) {
           e.preventDefault();
           void ipc.terminal.input(terminalId, seq).catch(() => {});
@@ -353,6 +354,21 @@
         });
       }
     }
+
+    // @fontsource fonts use font-display: swap, so the WebGL/Canvas glyph
+    // atlas is built with the system fallback before JetBrains Mono finishes
+    // loading — leaving bold text in a mismatched typeface. Once the fonts
+    // are ready, drop the atlas and repaint so bold renders in JetBrains Mono.
+    const fontPx = settings.current.terminal.fontSize;
+    void Promise.all([
+      document.fonts.load(`400 ${fontPx}px "JetBrains Mono"`),
+      document.fonts.load(`700 ${fontPx}px "JetBrains Mono"`)
+    ]).then(() => {
+      if (renderer && 'clearTextureAtlas' in renderer) {
+        renderer.clearTextureAtlas();
+      }
+      t.refresh(0, t.rows - 1);
+    }).catch(() => {});
 
     requestAnimationFrame(() => {
       if (!active) return;
