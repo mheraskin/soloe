@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Tabs } from 'bits-ui';
-  import { Box, Cpu, Palette, PlugZap, SlidersHorizontal, TerminalSquare } from '@lucide/svelte';
+  import { Box, Cpu, Palette, PlugZap, TerminalSquare } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import type {
     ModelSelection,
@@ -57,7 +57,6 @@
     { value: 'appearance', label: 'Appearance', icon: Palette },
     { value: 'models', label: 'Models', icon: Cpu },
     { value: 'terminal', label: 'Terminal', icon: TerminalSquare },
-    { value: 'defaults', label: 'Defaults', icon: SlidersHorizontal },
     { value: 'binaries', label: 'Binaries', icon: Box }
   ] as const;
 
@@ -228,34 +227,6 @@
 
     <Tabs.Content value="terminal" class={contentClass}>
       <div class="flex flex-col gap-1.5">
-        <Label class="text-xs text-muted-foreground">Font size</Label>
-        <Select.Root
-          type="single"
-          value={String(settings.current.terminal.fontSize)}
-          onValueChange={(v) => setTerminalFontSize(Number(v) as TerminalFontSizePref)}
-        >
-          <Select.Trigger class="w-full">{settings.current.terminal.fontSize}px</Select.Trigger>
-          <Select.Content>
-            {#each terminalFontSizes as f (f)}
-              <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </div>
-      <div class="flex items-center justify-between gap-3">
-        <Label for="pref-confirm-delete-tabs" class="text-xs text-muted-foreground">
-          Confirm before closing sessions
-        </Label>
-        <Switch
-          id="pref-confirm-delete-tabs"
-          checked={settings.current.terminal.confirmDeleteTabs}
-          onCheckedChange={setConfirmDeleteTabs}
-        />
-      </div>
-    </Tabs.Content>
-
-    <Tabs.Content value="defaults" class={contentClass}>
-      <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground">New session button</Label>
         <Select.Root
           type="single"
@@ -323,6 +294,31 @@
           placeholder="~"
           value={settings.current.defaults.cwd}
           onchange={(e) => setDefaultCwd((e.currentTarget as HTMLInputElement).value)}
+        />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Font size</Label>
+        <Select.Root
+          type="single"
+          value={String(settings.current.terminal.fontSize)}
+          onValueChange={(v) => setTerminalFontSize(Number(v) as TerminalFontSizePref)}
+        >
+          <Select.Trigger class="w-full">{settings.current.terminal.fontSize}px</Select.Trigger>
+          <Select.Content>
+            {#each terminalFontSizes as f (f)}
+              <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <Label for="pref-confirm-delete-tabs" class="text-xs text-muted-foreground">
+          Confirm before closing sessions
+        </Label>
+        <Switch
+          id="pref-confirm-delete-tabs"
+          checked={settings.current.terminal.confirmDeleteTabs}
+          onCheckedChange={setConfirmDeleteTabs}
         />
       </div>
     </Tabs.Content>
