@@ -68,7 +68,12 @@ let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
 
-const APP_ID = 'com.soloe.app';
+const PACKAGED_APP_ID = 'com.soloe.app';
+const DEV_APP_ID = `${PACKAGED_APP_ID}.dev`;
+
+function resolveAppId(): string {
+  return app.isPackaged ? PACKAGED_APP_ID : DEV_APP_ID;
+}
 
 function resolveAppIcon(): string {
   const iconFilenames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png', 'icon.ico'];
@@ -86,7 +91,7 @@ function resolveAppIcon(): string {
 }
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId(APP_ID);
+  app.setAppUserModelId(resolveAppId());
 }
 
 async function setupServices(): Promise<AppServices> {
@@ -273,6 +278,7 @@ async function setupServices(): Promise<AppServices> {
 
 async function createWindow(): Promise<BrowserWindow> {
   const appIcon = resolveAppIcon();
+  const appId = resolveAppId();
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -295,7 +301,7 @@ async function createWindow(): Promise<BrowserWindow> {
   if (process.platform === 'win32') {
     win.setIcon(appIcon);
     win.setAppDetails({
-      appId: APP_ID,
+      appId,
       appIconPath: appIcon,
       appIconIndex: 0
     });
