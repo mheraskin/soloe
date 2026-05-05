@@ -8,7 +8,7 @@
     FolderOpen,
     Command
   } from '@lucide/svelte';
-  import type { Session, SessionStatus } from '@shared/types/sessions.js';
+  import type { AgentRuntimeProvider, Session, SessionStatus } from '@shared/types/sessions.js';
   import { launchKind, launchProvider } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
@@ -16,11 +16,19 @@
   import { kindLabel } from '../lib/sessions-helpers';
   import { Keymap } from '../lib/keymap';
   import { Button } from '$lib/components/ui/button';
+  import { displaySessionKind } from '../lib/session-agent';
+  import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
 
   let { session, status }: { session: Session | null; status: SessionStatus } = $props();
 
   let busy = $state(false);
+  let busyProvider = $state<AgentRuntimeProvider | null>(null);
+  let observed = $derived(session ? sessions.observationFor(session.id) : null);
+  let displayKind = $derived(session ? displaySessionKind(session, observed) : 'terminal');
+  let canContinueAcrossAgents = $derived(
+    session !== null && (displayKind === 'claude_code' || displayKind === 'codex')
+  );
 
   async function resume() {
     if (!session || busy) return;
@@ -52,6 +60,19 @@
       reportError(err);
     } finally {
       busy = false;
+    }
+  }
+
+  async function continueWith(provider: AgentRuntimeProvider) {
+    if (!session || busyProvider) return;
+    busyProvider = provider;
+    try {
+      const created = await sessions.continueWithAgent(session.id, provider);
+      sessions.select(created.id);
+    } catch (err) {
+      reportError(err);
+    } finally {
+      busyProvider = null;
     }
   }
 
@@ -157,6 +178,41 @@
           <Plus /> <span>New session</span>
         </Button>
       </div>
+      {#if canContinueAcrossAgents}
+        <div class="mt-2 flex flex-col items-center gap-1.5">
+          <span class="text-[11px] leading-4 text-muted-foreground">Continue in another agent</span>
+          <div class="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              class="gap-2"
+              onclick={() => void continueWith('claude_code')}
+              disabled={busyProvider !== null}
+            >
+              {#if busyProvider === 'claude_code'}
+                <Loader2 class="size-3.5 animate-spin" />
+              {:else}
+                <KindIcon kind="claude_code" size={14} />
+              {/if}
+              <span>Claude</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              class="gap-2"
+              onclick={() => void continueWith('codex')}
+              disabled={busyProvider !== null}
+            >
+              {#if busyProvider === 'codex'}
+                <Loader2 class="size-3.5 animate-spin" />
+              {:else}
+                <KindIcon kind="codex" size={14} />
+              {/if}
+              <span>Codex</span>
+            </Button>
+          </div>
+        </div>
+      {/if}
     {:else}
       <div class="mt-3 flex items-center gap-2 text-xs">
         <Loader2 class="size-4 animate-spin" />
