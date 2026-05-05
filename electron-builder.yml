@@ -6,12 +6,20 @@ directories:
   buildResources: build
 files:
   - out/**/*
+  - build/favicon.svg
+  - build/icon.ico
   - build/icon.png
   - build/icon.svg
   - package.json
+extraResources:
+  - from: build/icon.ico
+    to: build/icon.ico
+  - from: build/icon.png
+    to: build/icon.png
 asarUnpack:
   - node_modules/node-pty/**/*
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:

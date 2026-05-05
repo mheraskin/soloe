@@ -68,22 +68,25 @@ let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
 
+const APP_ID = 'com.soloe.app';
+
 function resolveAppIcon(): string {
+  const iconFilenames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png', 'icon.ico'];
   const candidates = app.isPackaged
-    ? [
-        path.join(process.resourcesPath, 'build/icon.png'),
-        path.join(app.getAppPath(), 'build/icon.png')
-      ]
-    : [
-        path.join(process.cwd(), 'build/icon.png'),
-        path.join(app.getAppPath(), 'build/icon.png'),
-        path.join(__dirname, '../../build/icon.png')
-      ];
+    ? iconFilenames.flatMap((filename) => [
+        path.join(process.resourcesPath, 'build', filename),
+        path.join(app.getAppPath(), 'build', filename)
+      ])
+    : iconFilenames.flatMap((filename) => [
+        path.join(process.cwd(), 'build', filename),
+        path.join(app.getAppPath(), 'build', filename),
+        path.join(__dirname, '../../build', filename)
+      ]);
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId('com.soloe.app');
+  app.setAppUserModelId(APP_ID);
 }
 
 async function setupServices(): Promise<AppServices> {
@@ -269,6 +272,7 @@ async function setupServices(): Promise<AppServices> {
 }
 
 async function createWindow(): Promise<BrowserWindow> {
+  const appIcon = resolveAppIcon();
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -278,7 +282,7 @@ async function createWindow(): Promise<BrowserWindow> {
     frame: false,
     show: false,
     title: 'Soloe',
-    icon: resolveAppIcon(),
+    icon: appIcon,
     backgroundColor: '#0f0f10',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
@@ -287,6 +291,15 @@ async function createWindow(): Promise<BrowserWindow> {
       sandbox: false
     }
   });
+
+  if (process.platform === 'win32') {
+    win.setIcon(appIcon);
+    win.setAppDetails({
+      appId: APP_ID,
+      appIconPath: appIcon,
+      appIconIndex: 0
+    });
+  }
 
   win.on('ready-to-show', () => win.show());
 
