@@ -94,8 +94,17 @@
   }
 </script>
 
-<div class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/35 p-6 backdrop-blur-[1px]">
-  <div class="pointer-events-auto relative w-[min(380px,100%)] rounded-md border border-border bg-popover/95 p-4 text-popover-foreground shadow-xl">
+<button
+  type="button"
+  class="absolute inset-0 z-20 flex cursor-default items-center justify-center bg-background/35 p-6 text-left backdrop-blur-[1px]"
+  onclick={onClose}
+  aria-label="Dismiss handoff overlay"
+>
+  <div
+    class="relative w-[min(380px,100%)] rounded-md border border-border bg-popover/95 p-4 text-popover-foreground shadow-xl"
+    role="presentation"
+    onclick={(event) => event.stopPropagation()}
+  >
     {#if onClose}
       <Button
         variant="ghost"
@@ -142,4 +151,4 @@
       {/each}
     </div>
   </div>
-</div>
+</button>
