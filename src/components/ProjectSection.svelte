@@ -4,14 +4,16 @@
     ArchiveRestore,
     ChevronDown,
     ChevronRight,
+    Check,
     Folder,
     FolderTree,
     Pencil,
+    RefreshCcw,
     Trash2
   } from '@lucide/svelte';
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
-  import type { Project } from '@shared/types/projects.js';
+  import type { Project, ProjectFavicon } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { nav } from '../stores/nav.svelte';
@@ -24,6 +26,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import KbdHint from './KbdHint.svelte';
   import SessionItem from './SessionItem.svelte';
@@ -45,6 +48,8 @@
   } = $props();
 
   let expanded = $state(true);
+  let faviconsLoading = $state(false);
+  let faviconsRequested = $state(false);
   let gitWorktrees = $state<GitWorktree[]>([]);
   let loadingWorktrees = $state(false);
   let worktreeLoadFailed = $state(false);
@@ -100,6 +105,12 @@
     };
   });
 
+  $effect(() => {
+    if (faviconsRequested || project.favicons !== undefined) return;
+    faviconsRequested = true;
+    void refreshFavicons();
+  });
+
   let worktrees = $derived.by<{ cwd: string; label: string; isMain: boolean; items: Session[] }[]>(() => {
     const naturalOrder: string[] = [];
     const buckets: Record<string, Session[]> = {};
@@ -148,6 +159,10 @@
   });
 
   let accent = $derived(project.accentColor ?? null);
+  let selectedFaviconPath = $derived(project.selectedFaviconPath ?? project.favicons?.[0]?.path ?? null);
+  let selectedFavicon = $derived(
+    project.favicons?.find((f) => f.path === selectedFaviconPath) ?? project.favicons?.[0] ?? null
+  );
   let mainWorktree = $derived(gitWorktrees.find((wt) => wt.isMain) ?? null);
   let hasWorktrees = $derived(gitWorktrees.some((wt) => !wt.isMain));
   let isStandaloneWorktreeProject = $derived(
@@ -229,6 +244,28 @@
 
   function edit() {
     projectModal.openEdit(project);
+  }
+
+  async function refreshFavicons() {
+    if (faviconsLoading) return;
+    faviconsLoading = true;
+    try {
+      await projects.refreshFavicons(project.id);
+    } catch (err) {
+      reportError(err);
+    } finally {
+      faviconsLoading = false;
+    }
+  }
+
+  function onFaviconMenuOpenChange(open: boolean) {
+    if (open && project.favicons === undefined) {
+      void refreshFavicons();
+    }
+  }
+
+  function selectFavicon(favicon: ProjectFavicon) {
+    void projects.update(project.id, { selectedFaviconPath: favicon.path }).catch(reportError);
   }
 
   async function removeProject() {
@@ -380,6 +417,67 @@
           ondragstart={onProjectDragStart}
           ondragend={onProjectDragEnd}
         >
+          <DropdownMenu.Root onOpenChange={onFaviconMenuOpenChange}>
+            <DropdownMenu.Trigger>
+              {#snippet child({ props })}
+                <button
+                  {...props}
+                  type="button"
+                  class={cn(
+                    'flex size-7 shrink-0 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
+                    isActiveProject && 'border-border bg-accent/60 text-foreground'
+                  )}
+                  title="Project icon"
+                  aria-label={`Choose icon for ${project.name}`}
+                >
+                  {#if selectedFavicon}
+                    <img
+                      src={selectedFavicon.dataUrl}
+                      alt=""
+                      class="size-4 rounded-sm object-contain"
+                    />
+                  {:else if accent}
+                    <span class="size-3 shrink-0 rounded-full" style={`background: ${accent}`}></span>
+                  {:else}
+                    <Folder class="size-3.5 shrink-0" />
+                  {/if}
+                </button>
+              {/snippet}
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="start" side="bottom" class="w-64">
+              <DropdownMenu.Label>Project icon</DropdownMenu.Label>
+              {#if faviconsLoading}
+                <DropdownMenu.Item disabled>
+                  <RefreshCcw class="animate-spin" />
+                  <span>Scanning...</span>
+                </DropdownMenu.Item>
+              {:else if project.favicons && project.favicons.length > 0}
+                {#each project.favicons as favicon (favicon.path)}
+                  <DropdownMenu.Item onSelect={() => selectFavicon(favicon)}>
+                    <img
+                      src={favicon.dataUrl}
+                      alt=""
+                      class="size-4 rounded-sm object-contain"
+                    />
+                    <span class="min-w-0 flex-1 truncate" title={favicon.path}>{favicon.label}</span>
+                    {#if favicon.path === selectedFaviconPath}
+                      <Check class="ml-auto size-3" />
+                    {/if}
+                  </DropdownMenu.Item>
+                {/each}
+              {:else}
+                <DropdownMenu.Item disabled>
+                  <Folder />
+                  <span>No favicons found</span>
+                </DropdownMenu.Item>
+              {/if}
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item onSelect={() => void refreshFavicons()}>
+                <RefreshCcw />
+                <span>Refresh favicons</span>
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
           <Collapsible.Trigger
             class={cn(
               'group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground transition-colors',
@@ -391,11 +489,6 @@
               <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
             {:else}
               <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" />
-            {/if}
-            {#if accent}
-              <span class="size-3 shrink-0 rounded-full" style={`background: ${accent}`}></span>
-            {:else}
-              <Folder class="size-3.5 shrink-0 text-muted-foreground" />
             {/if}
             <span class="flex min-w-0 flex-1 flex-col gap-1">
               <span class="truncate text-sm leading-4 font-semibold">{project.name}</span>

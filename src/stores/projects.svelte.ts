@@ -2,6 +2,7 @@ import type {
   Project,
   ProjectDetectResult,
   ProjectDraft,
+  ProjectFavicon,
   ProjectId,
   ProjectOpenRequest,
   ProjectSuggestOptions,
@@ -93,6 +94,21 @@ class ProjectsStore {
   async reorder(orderedIds: ProjectId[]): Promise<void> {
     const list = await ipc.projects.reorder(orderedIds);
     this.projects = list;
+  }
+
+  async refreshFavicons(id: ProjectId): Promise<ProjectFavicon[]> {
+    const favicons = await ipc.projects.refreshFavicons(id);
+    this.projects = this.projects.map((p) => {
+      if (p.id !== id) return p;
+      const selectedFaviconPath = favicons.some((f) => f.path === p.selectedFaviconPath)
+        ? p.selectedFaviconPath
+        : favicons[0]?.path;
+      const next: Project = { ...p, favicons };
+      if (selectedFaviconPath) next.selectedFaviconPath = selectedFaviconPath;
+      else delete next.selectedFaviconPath;
+      return next;
+    });
+    return favicons;
   }
 
   consumeNewlyAdded(id: ProjectId): void {

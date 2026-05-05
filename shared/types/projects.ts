@@ -9,6 +9,8 @@ export interface Project {
   defaultRunMode?: RunMode;
   defaultWslDistro?: string;
   accentColor?: string;
+  favicons?: ProjectFavicon[];
+  selectedFaviconPath?: string;
   createdAt: string;
   lastOpenedAt: string;
   sortIndex?: number;
@@ -23,6 +25,13 @@ export interface ProjectDraft {
   defaultRunMode?: RunMode;
   defaultWslDistro?: string;
   accentColor?: string;
+}
+
+export interface ProjectFavicon {
+  path: string;
+  label: string;
+  mediaType: string;
+  dataUrl: string;
 }
 
 export interface ProjectOpenRequest {

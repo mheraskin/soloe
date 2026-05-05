@@ -34,6 +34,7 @@ import type {
   Project,
   ProjectDetectResult,
   ProjectDraft,
+  ProjectFavicon,
   ProjectId,
   ProjectOpenRequest,
   ProjectSuggestOptions,
@@ -117,6 +118,7 @@ export const IpcChannels = {
     delete: 'projects:delete',
     touch: 'projects:touch',
     reorder: 'projects:reorder',
+    refreshFavicons: 'projects:refresh-favicons',
     detectFromPath: 'projects:detect-from-path',
     suggestPaths: 'projects:suggest-paths',
     change: 'projects:change'
@@ -260,6 +262,7 @@ export interface ProjectsApi {
   delete(id: ProjectId): Promise<IpcResult<true>>;
   touch(id: ProjectId): Promise<IpcResult<Project | null>>;
   reorder(orderedIds: ProjectId[]): Promise<IpcResult<Project[]>>;
+  refreshFavicons(id: ProjectId): Promise<IpcResult<ProjectFavicon[]>>;
   detectFromPath(path: string): Promise<IpcResult<ProjectDetectResult>>;
   suggestPaths(
     query: string,

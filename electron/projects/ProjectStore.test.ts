@@ -131,6 +131,56 @@ describe('ProjectStore — update/delete/touch', () => {
   });
 });
 
+describe('ProjectStore — favicons', () => {
+  it('discovers favicon files and picks a default', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-favicons-'));
+    try {
+      await fs.mkdir(path.join(projectDir, 'public'), { recursive: true });
+      await fs.mkdir(path.join(projectDir, 'src', 'assets'), { recursive: true });
+      await fs.writeFile(path.join(projectDir, 'public', 'favicon.ico'), Buffer.from([0, 0, 1, 0]));
+      await fs.writeFile(
+        path.join(projectDir, 'src', 'assets', 'apple-touch-icon.png'),
+        Buffer.from([137, 80, 78, 71])
+      );
+      await fs.writeFile(path.join(projectDir, 'src', 'assets', 'logo.svg'), '<svg></svg>');
+
+      const store = new ProjectStore(storePath);
+      const created = await store.create(draft({ path: projectDir }));
+      const favicons = await store.refreshFavicons(created.id);
+      const updated = await store.get(created.id);
+
+      expect(favicons.map((f) => f.path)).toEqual([
+        'public/favicon.ico',
+        'src/assets/apple-touch-icon.png'
+      ]);
+      expect(updated?.selectedFaviconPath).toBe('public/favicon.ico');
+      expect(updated?.favicons?.[0]?.dataUrl).toMatch(/^data:image\/x-icon;base64,/);
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the selected favicon when rescanning', async () => {
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-favicons-'));
+    try {
+      await fs.mkdir(path.join(projectDir, 'public'), { recursive: true });
+      await fs.writeFile(path.join(projectDir, 'public', 'favicon.ico'), Buffer.from([0, 0, 1, 0]));
+      await fs.writeFile(path.join(projectDir, 'public', 'favicon.svg'), '<svg></svg>');
+
+      const store = new ProjectStore(storePath);
+      const created = await store.create(draft({ path: projectDir }));
+      await store.refreshFavicons(created.id);
+      await store.update(created.id, { selectedFaviconPath: 'public/favicon.svg' });
+      await store.refreshFavicons(created.id);
+
+      const updated = await store.get(created.id);
+      expect(updated?.selectedFaviconPath).toBe('public/favicon.svg');
+    } finally {
+      await fs.rm(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('ProjectStore — disk round-trip', () => {
   it('persists across instances pointing at the same file', async () => {
     const a = new ProjectStore(storePath);

@@ -137,6 +137,8 @@ const soloe: SoloeApi = {
     touch: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.touch, id),
     reorder: (orderedIds: ProjectId[]) =>
       ipcRenderer.invoke(IpcChannels.projects.reorder, orderedIds),
+    refreshFavicons: (id: ProjectId) =>
+      ipcRenderer.invoke(IpcChannels.projects.refreshFavicons, id),
     detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
     suggestPaths: (query: string, options?: ProjectSuggestOptions) =>
       ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query, options),

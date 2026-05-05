@@ -130,6 +130,7 @@ export const ipc = {
     touch: async (id: ProjectId) => unwrap(await c.projects.touch(id)),
     reorder: async (orderedIds: ProjectId[]) =>
       unwrap(await c.projects.reorder([...orderedIds])),
+    refreshFavicons: async (id: ProjectId) => unwrap(await c.projects.refreshFavicons(id)),
     detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
     suggestPaths: async (query: string, options?: ProjectSuggestOptions) =>
       unwrap(await c.projects.suggestPaths(query, options ? toIpcPayload(options) : undefined)),
