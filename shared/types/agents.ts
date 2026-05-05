@@ -34,6 +34,13 @@ export interface ObservedAgentSnapshot {
   lastEventAt?: string;
   confidence?: number;
   error?: string;
+  usageLimit?: AgentUsageLimit;
+}
+
+export interface AgentUsageLimit {
+  message: string;
+  resetAtLabel?: string;
+  detectedAt: string;
 }
 
 export interface CreateWorkerSessionRequest {

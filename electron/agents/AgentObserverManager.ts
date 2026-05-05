@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import type {
+  AgentUsageLimit,
   ObservedAgentSnapshot,
   ObserverEvent,
   ObserverSubjectKind
@@ -56,15 +57,17 @@ export class AgentObserverManager extends EventEmitter {
   }
 
   registerTuiSession(session: Session): ObservedAgentSnapshot {
+    const existing = this.snapshots.get(session.id);
     const snapshot: ObservedAgentSnapshot = {
+      ...(existing?.state === 'usage_limited' ? existing : {}),
       id: session.id,
       runtimeMode: 'tui',
       subjectKind: 'session',
       provider: effectiveAgentProvider(session) ?? 'terminal',
-      state: 'idle',
+      state: existing?.state === 'usage_limited' ? 'usage_limited' : 'idle',
       sessionId: session.id,
       providerThreadId: session.currentAgentRuntime?.providerThreadId ?? session.providerThreadId,
-      transcriptPath: session.transcriptPath,
+      transcriptPath: session.transcriptPath ?? existing?.transcriptPath,
       confidence: session.confidence,
       lastEventAt: new Date().toISOString()
     };
@@ -78,7 +81,10 @@ export class AgentObserverManager extends EventEmitter {
 
   updateTuiStatus(event: TerminalStatusEvent): ObservedAgentSnapshot {
     const existing = this.snapshots.get(event.sessionId);
-    const state = terminalStatusToObservedState(event.status);
+    const state =
+      existing?.state === 'usage_limited' && event.status !== 'starting'
+        ? 'usage_limited'
+        : terminalStatusToObservedState(event.status);
     const snapshot: ObservedAgentSnapshot = {
       ...(existing ?? {
         id: event.sessionId,
@@ -91,6 +97,7 @@ export class AgentObserverManager extends EventEmitter {
       lastEventAt: new Date().toISOString(),
       ...(event.message ? { error: event.message } : {})
     };
+    if (state !== 'usage_limited') delete snapshot.usageLimit;
     return this.upsertSnapshot(snapshot, event.message ?? `terminal ${event.status}`);
   }
 
@@ -112,6 +119,7 @@ export class AgentObserverManager extends EventEmitter {
       state,
       lastEventAt: new Date().toISOString()
     };
+    if (state !== 'usage_limited') delete snapshot.usageLimit;
     this.snapshots.set(sessionId, snapshot);
     this.appendEvent({
       subjectId: sessionId,
@@ -119,6 +127,34 @@ export class AgentObserverManager extends EventEmitter {
       state,
       summary,
       detail
+    });
+    this.emit('snapshot', snapshot);
+    return snapshot;
+  }
+
+  setTuiUsageLimit(sessionId: SessionId, usageLimit: AgentUsageLimit): ObservedAgentSnapshot {
+    const existing = this.snapshots.get(sessionId);
+    const snapshot: ObservedAgentSnapshot = {
+      ...(existing ?? {
+        id: sessionId,
+        runtimeMode: 'tui',
+        subjectKind: 'session',
+        provider: 'terminal',
+        sessionId
+      }),
+      state: 'usage_limited',
+      usageLimit,
+      lastEventAt: usageLimit.detectedAt
+    };
+    this.snapshots.set(sessionId, snapshot);
+    this.appendEvent({
+      subjectId: sessionId,
+      subjectKind: snapshot.subjectKind,
+      state: 'usage_limited',
+      summary: usageLimit.resetAtLabel
+        ? `usage limit until ${usageLimit.resetAtLabel}`
+        : 'usage limit reached',
+      detail: usageLimit.message
     });
     this.emit('snapshot', snapshot);
     return snapshot;

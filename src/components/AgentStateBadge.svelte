@@ -4,6 +4,7 @@
     Wrench,
     AlertTriangle,
     CheckCircle2,
+    Gauge,
     XCircle,
     Hourglass,
     Loader2,
@@ -66,6 +67,12 @@
       icon: AlertTriangle,
       iconClass: '',
       pillClass: 'border-destructive/40 bg-destructive/10 text-destructive'
+    },
+    usage_limited: {
+      label: 'limit',
+      icon: Gauge,
+      iconClass: '',
+      pillClass: 'border-warning/50 bg-warning/10 text-warning'
     },
     completed: {
       label: 'done',

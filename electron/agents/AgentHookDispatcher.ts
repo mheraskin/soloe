@@ -4,6 +4,7 @@ import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AutoRenameService } from './AutoRenameService.js';
 import type { HookEvent, HookProvider } from './SoloeMcpServer.js';
+import { detectUsageLimit } from './UsageLimitDetector.js';
 
 export interface AgentHookDispatcherOptions {
   observer: AgentObserverManager;
@@ -45,6 +46,15 @@ export class AgentHookDispatcher {
       this.maybeTriggerAutoRename(soloeSessionId, prompt, 'claude');
       await this.markClaudeHasUserInput(soloeSessionId);
     }
+    const usageLimit = detectUsageLimit(payload);
+    if (usageLimit) {
+      this.opts.observer.setTuiUsageLimit(soloeSessionId, {
+        ...usageLimit,
+        detectedAt: new Date().toISOString()
+      });
+      await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'claude_code', hookEvent);
+      return;
+    }
     const mapping = mapClaudeHook(hookEvent, payload);
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'claude_code', hookEvent);
@@ -59,6 +69,15 @@ export class AgentHookDispatcher {
     if (hookEvent === 'UserPromptSubmit') {
       const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'user_message');
       this.maybeTriggerAutoRename(soloeSessionId, prompt, 'codex');
+    }
+    const usageLimit = detectUsageLimit(payload);
+    if (usageLimit) {
+      this.opts.observer.setTuiUsageLimit(soloeSessionId, {
+        ...usageLimit,
+        detectedAt: new Date().toISOString()
+      });
+      await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'codex', hookEvent);
+      return;
     }
     const mapping = mapCodexHook(hookEvent, payload);
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
@@ -154,6 +173,8 @@ export class AgentHookDispatcher {
         currentAgentRuntime: runtime,
         providerThreadId: runtime.providerThreadId
       } as SessionUpdate;
+      const transcriptPath = stringField(payload, 'transcript_path');
+      if (transcriptPath) patch.transcriptPath = transcriptPath;
 
       if (sessionId && provider === 'claude_code' && matchingLaunch && existing.launch.type === 'agent') {
         patch.launch = { ...existing.launch, claudeSessionId: sessionId };
@@ -167,6 +188,7 @@ export class AgentHookDispatcher {
         || existing.currentAgentRuntime?.status !== runtime.status
         || existing.currentAgentRuntime?.providerThreadId !== runtime.providerThreadId
         || existing.providerThreadId !== patch.providerThreadId
+        || (transcriptPath !== undefined && existing.transcriptPath !== transcriptPath)
         || (sessionId && provider === 'claude_code' && matchingLaunch && existing.launch.type === 'agent'
           && existing.launch.claudeSessionId !== sessionId)
         || (sessionId && provider === 'codex' && matchingLaunch && existing.launch.type === 'agent'
@@ -228,6 +250,11 @@ function mapClaudeHook(
       return { state: 'completed', summary: 'completed' };
     case 'SessionEnd':
       return { state: 'exited', summary: 'session ended' };
+    case 'StopFailure': {
+      const usageLimit = detectUsageLimit(payload);
+      if (usageLimit) return { state: 'usage_limited', summary: usageLimit.message };
+      return { state: 'failed', summary: 'failed' };
+    }
     case 'PreCompact':
       return { state: 'working', summary: 'compacting context' };
     case 'SubagentStop':

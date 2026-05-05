@@ -9,7 +9,7 @@ import { launchKind } from '@shared/types/sessions.js';
 
 export type NotifyState = Extract<
   AgentObservedState,
-  'waiting_for_input' | 'waiting_for_approval' | 'completed' | 'failed'
+  'waiting_for_input' | 'waiting_for_approval' | 'usage_limited' | 'completed' | 'failed'
 >;
 
 export interface AgentEdgeMarker {
@@ -30,6 +30,7 @@ const COMPLETED_DISMISS_MS = 4000;
 
 const stateUrgency = {
   waiting_for_approval: 4,
+  usage_limited: 5,
   waiting_for_input: 3,
   failed: 2,
   completed: 1
@@ -229,6 +230,7 @@ export function isNotifyState(state: AgentObservedState): state is NotifyState {
   return (
     state === 'waiting_for_input'
     || state === 'waiting_for_approval'
+    || state === 'usage_limited'
     || state === 'completed'
     || state === 'failed'
   );
@@ -244,6 +246,11 @@ export function rowSessionIdFor(snapshot: ObservedAgentSnapshot): SessionId | nu
 function reasonFor(snapshot: ObservedAgentSnapshot, event: ObserverEvent | null): string {
   if (event?.state === snapshot.state && event.summary) return event.summary;
   if (snapshot.state === 'failed' && snapshot.error) return snapshot.error;
+  if (snapshot.state === 'usage_limited' && snapshot.usageLimit?.message) {
+    return snapshot.usageLimit.resetAtLabel
+      ? `usage limit until ${snapshot.usageLimit.resetAtLabel}`
+      : snapshot.usageLimit.message;
+  }
   if (snapshot.resultSummary) return snapshot.resultSummary;
   if (snapshot.promptSummary) return snapshot.promptSummary;
   return defaultReason(snapshot.state);
@@ -255,6 +262,8 @@ function defaultReason(state: AgentObservedState): string {
       return 'waiting for input';
     case 'waiting_for_approval':
       return 'waiting for approval';
+    case 'usage_limited':
+      return 'usage limit reached';
     case 'completed':
       return 'completed';
     case 'failed':

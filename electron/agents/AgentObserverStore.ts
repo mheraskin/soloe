@@ -57,8 +57,8 @@ export class AgentObserverStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     const snapshot: ObserverStorageShape = {
       version: STORAGE_VERSION,
-      snapshots: observer.listSnapshots().filter((s) => s.runtimeMode === 'sdk_worker'),
-      events: observer.listEvents(undefined, 200).filter((e) => e.subjectKind === 'worker')
+      snapshots: observer.listSnapshots().filter(shouldPersistSnapshot),
+      events: observer.listEvents(undefined, 200).filter(shouldPersistEvent)
     };
     const payload = JSON.stringify(snapshot, null, 2);
     this.writeQueue = this.writeQueue.then(() => atomicWrite(this.filePath, payload));
@@ -86,14 +86,16 @@ async function atomicWrite(filePath: string, content: string): Promise<void> {
 }
 
 function isSnapshot(value: unknown): value is ObservedAgentSnapshot {
-  return isRecord(value)
-    && typeof value['id'] === 'string'
-    && value['runtimeMode'] === 'sdk_worker'
-    && value['subjectKind'] === 'worker'
-    && typeof value['state'] === 'string';
+  if (!isRecord(value)) return false;
+  if (typeof value['id'] !== 'string' || typeof value['state'] !== 'string') return false;
+  if (value['runtimeMode'] === 'sdk_worker' && value['subjectKind'] === 'worker') return true;
+  return value['runtimeMode'] === 'tui'
+    && value['subjectKind'] === 'session'
+    && value['state'] === 'usage_limited';
 }
 
 function normalizeRestoredSnapshot(snapshot: ObservedAgentSnapshot): ObservedAgentSnapshot {
+  if (snapshot.state === 'usage_limited') return snapshot;
   if (
     snapshot.state === 'starting'
     || snapshot.state === 'working'
@@ -114,9 +116,18 @@ function isEvent(value: unknown): value is ObserverEvent {
   return isRecord(value)
     && typeof value['id'] === 'string'
     && typeof value['subjectId'] === 'string'
-    && value['subjectKind'] === 'worker'
+    && (value['subjectKind'] === 'worker' || value['subjectKind'] === 'session')
     && typeof value['timestamp'] === 'string'
     && typeof value['summary'] === 'string';
+}
+
+function shouldPersistSnapshot(snapshot: ObservedAgentSnapshot): boolean {
+  return snapshot.runtimeMode === 'sdk_worker'
+    || (snapshot.runtimeMode === 'tui' && snapshot.state === 'usage_limited');
+}
+
+function shouldPersistEvent(event: ObserverEvent): boolean {
+  return event.subjectKind === 'worker' || event.state === 'usage_limited';
 }
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {

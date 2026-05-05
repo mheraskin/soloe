@@ -4,9 +4,14 @@
   import TerminalPane from './TerminalPane.svelte';
   import EmptyState from './EmptyState.svelte';
   import SessionToolbar from './SessionToolbar.svelte';
+  import UsageLimitOverlay from './UsageLimitOverlay.svelte';
 
   let selected = $derived(sessions.selected);
+  let selectedObserved = $derived(selected ? sessions.observationFor(selected.id) : null);
   let selectedRuntime = $derived(selected ? sessions.runtime[selected.id] : null);
+  let showUsageLimitOverlay = $derived(
+    selected !== null && selectedObserved?.state === 'usage_limited'
+  );
   let runningPanes = $derived.by(() => {
     return Object.values(sessions.runtime)
       .filter((runtime) => {
@@ -61,6 +66,9 @@
           status={selected ? sessions.statusFor(selected.id) : 'stopped'}
         />
       </div>
+    {/if}
+    {#if selected && showUsageLimitOverlay}
+      <UsageLimitOverlay session={selected} />
     {/if}
   </div>
 </section>

@@ -33,6 +33,7 @@ describe('AgentHookDispatcher', () => {
       ['PostToolUse', 'working'],
       ['Notification', 'waiting_for_approval'],
       ['Stop', 'completed'],
+      ['StopFailure', 'failed'],
       ['SessionEnd', 'exited'],
       ['PreCompact', 'working']
     ] as const)('%s → %s', async (hookEvent, expectedState) => {
@@ -105,6 +106,20 @@ describe('AgentHookDispatcher', () => {
         payload: { hook_event_name: 'Stop', reason: 'user_interrupt' }
       });
       expect(observer.getSnapshot('sess-1')?.state).toBe('idle');
+    });
+
+    it('maps Claude usage-limit failures to a limit badge with reset text', async () => {
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: {
+          hook_event_name: 'StopFailure',
+          error: "You've hit your session limit · resets 3:45pm"
+        }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('usage_limited');
+      expect(observer.getSnapshot('sess-1')?.usageLimit?.resetAtLabel).toBe('3:45pm');
+      expect(observer.listEvents('sess-1')[0]?.summary).toBe('usage limit until 3:45pm');
     });
 
     it('SubagentStop appends an event but does not change state', async () => {
@@ -195,6 +210,22 @@ describe('AgentHookDispatcher', () => {
       });
 
       expect(observer.getSnapshot('sess-2')?.state).toBe('running_tool');
+    });
+
+    it('maps Codex usage-limit payloads to a limit badge', async () => {
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: 'sess-2',
+        payload: {
+          hook_event_name: 'Stop',
+          error: "You've hit your usage limit. To get more access now, try again at Apr 13th, 2026 12:46 AM."
+        }
+      });
+
+      expect(observer.getSnapshot('sess-2')?.state).toBe('usage_limited');
+      expect(observer.getSnapshot('sess-2')?.usageLimit?.resetAtLabel).toBe(
+        'Apr 13th, 2026 12:46 AM'
+      );
     });
   });
 

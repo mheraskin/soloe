@@ -47,6 +47,29 @@ describe('AgentObserverManager', () => {
     });
   });
 
+  it('keeps usage-limited sessions visible across registration and terminal exit', () => {
+    const observer = new AgentObserverManager();
+    observer.registerTuiSession(session);
+    observer.setTuiUsageLimit(session.id, {
+      message: "You've hit your session limit · resets 3:45pm",
+      resetAtLabel: '3:45pm',
+      detectedAt: '2026-01-01T01:00:00Z'
+    });
+
+    observer.registerTuiSession(session);
+    expect(observer.getSnapshot(session.id)).toMatchObject({
+      state: 'usage_limited',
+      usageLimit: { resetAtLabel: '3:45pm' }
+    });
+
+    observer.updateTuiStatus({ sessionId: session.id, terminalId: 't-1', status: 'exited' });
+    expect(observer.getSnapshot(session.id)?.state).toBe('usage_limited');
+
+    observer.updateTuiStatus({ sessionId: session.id, terminalId: 't-2', status: 'starting' });
+    expect(observer.getSnapshot(session.id)?.state).toBe('starting');
+    expect(observer.getSnapshot(session.id)?.usageLimit).toBeUndefined();
+  });
+
   it('tracks child workers by origin session', () => {
     const observer = new AgentObserverManager();
     observer.registerTuiSession(session);

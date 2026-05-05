@@ -51,6 +51,7 @@ describe('HookInstaller', () => {
           'PostToolUse',
           'Notification',
           'Stop',
+          'StopFailure',
           'SessionEnd',
           'PreCompact',
           'SubagentStop'

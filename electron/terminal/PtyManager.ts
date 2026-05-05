@@ -27,6 +27,7 @@ import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
+import { detectUsageLimit, stripAnsi } from '../agents/UsageLimitDetector.js';
 
 interface TerminalInstance {
   terminalId: TerminalId;
@@ -40,6 +41,8 @@ interface TerminalInstance {
   startedAt: string;
   cwd: string;
   locationBuffer: string;
+  usageLimitBuffer: string;
+  usageLimitDetected: boolean;
   exitedAt?: string;
   exitCode?: number | null;
   signal?: number | null;
@@ -147,12 +150,15 @@ export class PtyManager extends EventEmitter {
       status: 'running',
       startedAt: new Date().toISOString(),
       cwd: session.cwd,
-      locationBuffer: ''
+      locationBuffer: '',
+      usageLimitBuffer: '',
+      usageLimitDetected: false
     };
     this.terminals.set(terminalId, instance);
 
     proc.onData((data) => {
       this.handleLocationSequences(instance, data);
+      this.handleUsageLimitOutput(instance, data);
       this.opts.batcher.push(terminalId, sessionId, data);
     });
 
@@ -331,6 +337,20 @@ export class PtyManager extends EventEmitter {
       terminalId: instance.terminalId,
       sessionId: instance.sessionId,
       cwd
+    });
+  }
+
+  private handleUsageLimitOutput(instance: TerminalInstance, data: string): void {
+    if (instance.usageLimitDetected) return;
+    const text = stripAnsi(data);
+    if (!text.trim()) return;
+    instance.usageLimitBuffer = `${instance.usageLimitBuffer}${text}`.slice(-4096);
+    const usageLimit = detectUsageLimit(instance.usageLimitBuffer);
+    if (!usageLimit) return;
+    instance.usageLimitDetected = true;
+    this.opts.observer?.setTuiUsageLimit(instance.sessionId, {
+      ...usageLimit,
+      detectedAt: new Date().toISOString()
     });
   }
 

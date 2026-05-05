@@ -3,7 +3,7 @@
   import type { NotifyState } from '../stores/agent-notifications.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { sessions } from '../stores/sessions.svelte';
-  import { CheckCircle2, MessageSquareText, ShieldAlert, XCircle } from '@lucide/svelte';
+  import { CheckCircle2, Gauge, MessageSquareText, ShieldAlert, XCircle } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import KindIcon from './KindIcon.svelte';
 
@@ -15,6 +15,10 @@
     waiting_for_approval: {
       icon: ShieldAlert,
       class: 'text-destructive'
+    },
+    usage_limited: {
+      icon: Gauge,
+      class: 'text-warning'
     },
     completed: {
       icon: CheckCircle2,

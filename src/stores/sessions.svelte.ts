@@ -8,9 +8,11 @@ import type {
   SessionId,
   SessionRuntimeState,
   SessionLaunchKind,
+  AgentRuntimeProvider,
   SessionStatus,
   SessionUpdate
 } from '@shared/types/sessions.js';
+import { launchProvider } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
 import { projects } from './projects.svelte';
 import { settings } from './settings.svelte';
@@ -120,6 +122,10 @@ class SessionsStore {
 
   observationFor(id: string): ObservedAgentSnapshot | null {
     return this.observed[id] ?? null;
+  }
+
+  usageLimitFor(id: SessionId): ObservedAgentSnapshot['usageLimit'] | null {
+    return this.observed[id]?.usageLimit ?? null;
   }
 
   childWorkersFor(id: SessionId): ObservedAgentSnapshot[] {
@@ -345,6 +351,27 @@ class SessionsStore {
     return this.createTypedWithDefaults(kind, opts);
   }
 
+  async continueWithAgent(
+    originId: SessionId,
+    provider: AgentRuntimeProvider
+  ): Promise<Session> {
+    const origin = this.sessions.find((s) => s.id === originId);
+    if (!origin) throw new Error(`Session not found: ${originId}`);
+    const created = await this.createAgentWithDefaults(provider, {
+      ...(origin.projectId ? { projectId: origin.projectId } : {}),
+      cwd: origin.cwd,
+      ...(origin.lastBranch ? { branch: origin.lastBranch } : {})
+    });
+    const terminalId = await this.waitForTerminalId(created.id, 5000);
+    if (terminalId) {
+      await ipc.terminal.input(
+        terminalId,
+        bracketedPaste(continuationPrompt(origin, this.observationFor(origin.id)))
+      );
+    }
+    return created;
+  }
+
   private async createTypedWithDefaults(
     kind: SessionLaunchKind,
     opts: {
@@ -561,6 +588,16 @@ class SessionsStore {
     await ipc.terminal.restart(id);
   }
 
+  private async waitForTerminalId(id: SessionId, timeoutMs: number): Promise<string | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const terminalId = this.terminalIdFor(id);
+      if (terminalId) return terminalId;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return this.terminalIdFor(id);
+  }
+
   async stopWorker(workerId: string): Promise<void> {
     const status = await ipc.observer.stopWorkerSession(workerId);
     if (status.snapshot) {
@@ -584,6 +621,37 @@ class SessionsStore {
 }
 
 export const sessions = new SessionsStore();
+
+function bracketedPaste(text: string): string {
+  return `\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~\r`;
+}
+
+function continuationPrompt(
+  origin: Session,
+  observed: ObservedAgentSnapshot | null
+): string {
+  const provider = launchProvider(origin) ?? origin.currentAgentRuntime?.provider ?? 'terminal';
+  const lines = [
+    'We are continuing from a Soloe tab that hit a hard usage limit.',
+    '',
+    'Continue the same task from that session. Preserve the user intent and current course of work.',
+    'First inspect the raw session artifact if it is available, then continue from the latest useful state.',
+    '',
+    `Previous Soloe tab: ${origin.name || origin.id}`,
+    `Previous provider: ${provider}`,
+    `Working directory: ${origin.cwd}`,
+    `Run mode: ${origin.runMode}${origin.wslDistro ? ` (${origin.wslDistro})` : ''}`,
+    ...(origin.providerThreadId ? [`Provider session id: ${origin.providerThreadId}`] : []),
+    ...(origin.transcriptPath ? [`Transcript/session JSON path: ${origin.transcriptPath}`] : []),
+    ...(observed?.transcriptPath && observed.transcriptPath !== origin.transcriptPath
+      ? [`Observed transcript path: ${observed.transcriptPath}`]
+      : []),
+    ...(observed?.usageLimit?.message ? [`Usage limit message: ${observed.usageLimit.message}`] : []),
+    '',
+    'If the raw artifact path is inaccessible, say what context is missing and ask for the smallest useful handoff instead of starting over.'
+  ];
+  return lines.join('\n');
+}
 
 function normalizedDefaultCwd(cwd: string, runMode: 'windows' | 'wsl'): string {
   if (runMode !== 'wsl') return cwd;

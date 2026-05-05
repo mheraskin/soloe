@@ -71,6 +71,7 @@ export type AgentObservedState =
   | 'running_tool'
   | 'waiting_for_input'
   | 'waiting_for_approval'
+  | 'usage_limited'
   | 'completed'
   | 'failed'
   | 'exited';

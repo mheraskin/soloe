@@ -27,7 +27,7 @@ export interface NativeNotificationHandle {
 
 type NativeNotifyState = Extract<
   AgentObservedState,
-  'waiting_for_input' | 'waiting_for_approval' | 'completed' | 'failed'
+  'waiting_for_input' | 'waiting_for_approval' | 'usage_limited' | 'completed' | 'failed'
 >;
 
 export class Notifier {
@@ -121,6 +121,7 @@ function isNativeNotifyState(state: AgentObservedState): state is NativeNotifySt
   return (
     state === 'waiting_for_input'
     || state === 'waiting_for_approval'
+    || state === 'usage_limited'
     || state === 'completed'
     || state === 'failed'
   );
@@ -149,6 +150,8 @@ function nativeAgentNotification(
       return { title: `${sessionName}: approval needed`, body };
     case 'waiting_for_input':
       return { title: `${sessionName}: input needed`, body };
+    case 'usage_limited':
+      return { title: `${sessionName}: usage limit reached`, body };
     case 'completed':
       return { title: `${sessionName}: done`, body };
     case 'failed':
