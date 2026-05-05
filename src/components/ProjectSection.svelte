@@ -242,7 +242,7 @@
   }
 
   function onFaviconMenuOpenChange(open: boolean) {
-    if (open && project.favicons === undefined) {
+    if (open && (project.favicons === undefined || project.favicons.length === 0)) {
       void refreshFavicons();
     }
   }
@@ -400,89 +400,89 @@
           ondragstart={onProjectDragStart}
           ondragend={onProjectDragEnd}
         >
-          <DropdownMenu.Root onOpenChange={onFaviconMenuOpenChange}>
-            <DropdownMenu.Trigger>
-              {#snippet child({ props })}
-                <button
-                  {...props}
-                  type="button"
-                  class={cn(
-                    'flex size-7 shrink-0 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
-                    isActiveProject && 'border-border bg-accent/60 text-foreground'
-                  )}
-                  title="Project icon"
-                  aria-label={`Choose icon for ${project.name}`}
-                >
-                  {#if selectedFavicon}
-                    <img
-                      src={selectedFavicon.dataUrl}
-                      alt=""
-                      class="size-4 rounded-sm object-contain"
-                    />
-                  {:else if accent}
-                    <span class="size-3 shrink-0 rounded-full" style={`background: ${accent}`}></span>
-                  {:else}
-                    <Folder class="size-3.5 shrink-0" />
-                  {/if}
-                </button>
-              {/snippet}
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="start" side="bottom" class="w-64">
-              <DropdownMenu.Label>Project icon</DropdownMenu.Label>
-              {#if faviconsLoading}
-                <DropdownMenu.Item disabled>
-                  <RefreshCcw class="animate-spin" />
-                  <span>Scanning...</span>
-                </DropdownMenu.Item>
-              {:else if project.favicons && project.favicons.length > 0}
-                {#each project.favicons as favicon (favicon.path)}
-                  <DropdownMenu.Item onSelect={() => selectFavicon(favicon)}>
-                    <img
-                      src={favicon.dataUrl}
-                      alt=""
-                      class="size-4 rounded-sm object-contain"
-                    />
-                    <span class="min-w-0 flex-1 truncate" title={favicon.path}>{favicon.label}</span>
-                    {#if favicon.path === selectedFaviconPath}
-                      <Check class="ml-auto size-3" />
-                    {/if}
-                  </DropdownMenu.Item>
-                {/each}
+          <span class="relative flex min-w-0 flex-1">
+            <Collapsible.Trigger
+              class={cn(
+                'group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground transition-colors',
+                isActiveProject ? 'bg-accent/60 border-border' : 'hover:bg-muted'
+              )}
+              aria-label={`Toggle ${project.name} project`}
+            >
+              {#if effectiveExpanded}
+                <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
               {:else}
-                <DropdownMenu.Item disabled>
-                  <Folder />
-                  <span>No favicons found</span>
-                </DropdownMenu.Item>
+                <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" />
               {/if}
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item onSelect={() => void refreshFavicons()}>
-                <RefreshCcw />
-                <span>Refresh favicons</span>
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Root>
-          <Collapsible.Trigger
-            class={cn(
-              'group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground transition-colors',
-              isActiveProject ? 'bg-accent/60 border-border' : 'hover:bg-muted'
-            )}
-            aria-label={`Toggle ${project.name} project`}
-          >
-            {#if effectiveExpanded}
-              <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
-            {:else}
-              <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" />
-            {/if}
-            <span class="flex min-w-0 flex-1 flex-col gap-1">
-              <span class="truncate text-sm leading-4 font-semibold">{project.name}</span>
-              <span class="truncate font-mono text-[11px] leading-3.5 text-muted-foreground" title={project.path}>
-                {project.path}
+              {#if selectedFavicon}
+                <img
+                  src={selectedFavicon.dataUrl}
+                  alt=""
+                  class="size-3.5 shrink-0 rounded-sm object-contain"
+                />
+              {:else if accent}
+                <span class="size-3 shrink-0 rounded-full" style={`background: ${accent}`}></span>
+              {:else}
+                <Folder class="size-3.5 shrink-0 text-muted-foreground" />
+              {/if}
+              <span class="flex min-w-0 flex-1 flex-col gap-1">
+                <span class="truncate text-sm leading-4 font-semibold">{project.name}</span>
+                <span class="truncate font-mono text-[11px] leading-3.5 text-muted-foreground" title={project.path}>
+                  {project.path}
+                </span>
               </span>
-            </span>
-            {#if kbdIndex !== null}
-              <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
-            {/if}
-          </Collapsible.Trigger>
+              {#if kbdIndex !== null}
+                <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
+              {/if}
+            </Collapsible.Trigger>
+            <DropdownMenu.Root onOpenChange={onFaviconMenuOpenChange}>
+              <DropdownMenu.Trigger>
+                {#snippet child({ props })}
+                  <button
+                    {...props}
+                    type="button"
+                    class="absolute top-1/2 left-[30px] z-10 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm bg-transparent text-transparent outline-none transition-colors hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring/50"
+                    title="Project icon"
+                    aria-label={`Choose icon for ${project.name}`}
+                  >
+                    <span class="sr-only">Choose project icon</span>
+                  </button>
+                {/snippet}
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content align="start" side="bottom" class="w-64">
+                <DropdownMenu.Label>Project icon</DropdownMenu.Label>
+                {#if faviconsLoading}
+                  <DropdownMenu.Item disabled>
+                    <RefreshCcw class="animate-spin" />
+                    <span>Scanning...</span>
+                  </DropdownMenu.Item>
+                {:else if project.favicons && project.favicons.length > 0}
+                  {#each project.favicons as favicon (favicon.path)}
+                    <DropdownMenu.Item onSelect={() => selectFavicon(favicon)}>
+                      <img
+                        src={favicon.dataUrl}
+                        alt=""
+                        class="size-4 rounded-sm object-contain"
+                      />
+                      <span class="min-w-0 flex-1 truncate" title={favicon.path}>{favicon.label}</span>
+                      {#if favicon.path === selectedFaviconPath}
+                        <Check class="ml-auto size-3" />
+                      {/if}
+                    </DropdownMenu.Item>
+                  {/each}
+                {:else}
+                  <DropdownMenu.Item disabled>
+                    <Folder />
+                    <span>No favicons found</span>
+                  </DropdownMenu.Item>
+                {/if}
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item onSelect={() => void refreshFavicons()}>
+                  <RefreshCcw />
+                  <span>Refresh favicons</span>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
+          </span>
           {#if !showWorktreeGroups}
             <AgentLaunchPopover
               projectId={project.id}
