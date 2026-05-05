@@ -37,6 +37,7 @@
   import NewSessionPickerDialog from './components/NewSessionPickerDialog.svelte';
   import AgentIntegrationSetupDialog from './components/AgentIntegrationSetupDialog.svelte';
   import AgentNotificationToasts from './components/AgentNotificationToasts.svelte';
+  import appIconUrl from '../build/favicon.svg';
 
   let appliedTheme: string | null = null;
 
@@ -251,6 +252,7 @@
     class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card pl-3 select-none"
     style="-webkit-app-region: drag"
   >
+    <img src={appIconUrl} alt="" class="mr-1.5 size-3.5 flex-none" draggable="false" />
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
     <div class="flex-1 self-stretch" aria-hidden="true"></div>
     <div class="flex self-stretch" style="-webkit-app-region: no-drag">

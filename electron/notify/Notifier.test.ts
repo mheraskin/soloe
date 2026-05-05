@@ -104,6 +104,49 @@ describe('Notifier', () => {
     expect(shown).toEqual([]);
   });
 
+  it('adds the default native icon to notifications', () => {
+    notifier = new Notifier({
+      getWindows: () => [],
+      nativeFactory: (notification) => ({
+        show: () => shown.push(notification)
+      }),
+      defaultNativeIcon: '/workspace/build/icon.png',
+      isNativeSupported: () => true,
+      shouldShowNative: () => true
+    });
+
+    notifier.native({ title: 'Codex: input needed', body: 'waiting' });
+
+    expect(shown).toEqual([
+      {
+        title: 'Codex: input needed',
+        body: 'waiting',
+        icon: '/workspace/build/icon.png'
+      }
+    ]);
+  });
+
+  it('allows callers to override the default native icon', () => {
+    notifier = new Notifier({
+      getWindows: () => [],
+      nativeFactory: (notification) => ({
+        show: () => shown.push(notification)
+      }),
+      defaultNativeIcon: '/workspace/build/icon.png',
+      isNativeSupported: () => true,
+      shouldShowNative: () => true
+    });
+
+    notifier.native({ title: 'Codex: input needed', icon: '/workspace/custom.png' });
+
+    expect(shown).toEqual([
+      {
+        title: 'Codex: input needed',
+        icon: '/workspace/custom.png'
+      }
+    ]);
+  });
+
   it('focuses Soloe and activates the session when a native notification is clicked', async () => {
     const sent: unknown[][] = [];
     const clickHandlers: Array<() => void> = [];

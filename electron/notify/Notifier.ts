@@ -8,6 +8,7 @@ import type { SessionStore } from '../sessions/SessionStore.js';
 export interface NotifierOptions {
   getWindows: () => BrowserWindow[];
   nativeFactory?: (notification: NativeNotificationOptions) => NativeNotificationHandle;
+  defaultNativeIcon?: string;
   isNativeSupported?: () => boolean;
   shouldShowNative?: () => boolean;
   focusApp?: () => void;
@@ -18,6 +19,7 @@ export interface NativeNotificationOptions {
   title: string;
   body?: string;
   silent?: boolean;
+  icon?: string;
 }
 
 export interface NativeNotificationHandle {
@@ -50,7 +52,10 @@ export class Notifier {
     if (this.opts.shouldShowNative && !this.opts.shouldShowNative()) return;
     let native: NativeNotificationHandle | null = null;
     try {
-      native = this.opts.nativeFactory(notification);
+      native = this.opts.nativeFactory({
+        icon: this.opts.defaultNativeIcon,
+        ...notification
+      });
       const retained = native;
       this.activeNativeNotifications.add(retained);
       const release = () => this.activeNativeNotifications.delete(retained);

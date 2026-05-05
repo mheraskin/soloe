@@ -75,8 +75,7 @@ function resolveAppId(): string {
   return app.isPackaged ? PACKAGED_APP_ID : DEV_APP_ID;
 }
 
-function resolveAppIcon(): string {
-  const iconFilenames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png', 'icon.ico'];
+function resolveIconPath(iconFilenames: string[]): string {
   const candidates = app.isPackaged
     ? iconFilenames.flatMap((filename) => [
         path.join(process.resourcesPath, 'build', filename),
@@ -88,6 +87,14 @@ function resolveAppIcon(): string {
         path.join(__dirname, '../../build', filename)
       ]);
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
+function resolveAppIcon(): string {
+  return resolveIconPath(process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png', 'icon.ico']);
+}
+
+function resolveNotificationIcon(): string {
+  return resolveIconPath(['icon.png', 'icon.ico']);
 }
 
 if (process.platform === 'win32') {
@@ -125,6 +132,7 @@ async function setupServices(): Promise<AppServices> {
   const notifier = new Notifier({
     getWindows: () => BrowserWindow.getAllWindows(),
     nativeFactory: (notification) => new Notification(notification),
+    defaultNativeIcon: resolveNotificationIcon(),
     isNativeSupported: () => Notification.isSupported(),
     shouldShowNative: () => !BrowserWindow.getAllWindows().some((win) => win.isFocused()),
     focusApp: () => app.focus({ steal: true }),
