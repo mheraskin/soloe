@@ -280,6 +280,7 @@ export function mergeClaudeHooks(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...original };
   const hooksRoot = isObject(next['hooks']) ? { ...next['hooks'] } : {};
+  removeSoloeEntriesFromHooksRoot(hooksRoot, isSoloeClaudeEntry);
   for (const event of CLAUDE_EVENTS) {
     const groups = Array.isArray(hooksRoot[event]) ? [...(hooksRoot[event] as unknown[])] : [];
     const filtered = groups.filter((entry) => !isSoloeClaudeEntry(entry));
@@ -299,6 +300,22 @@ export function mergeClaudeHooks(
   }
   next['hooks'] = hooksRoot;
   return next;
+}
+
+function removeSoloeEntriesFromHooksRoot(
+  hooksRoot: Record<string, unknown>,
+  isSoloeEntry: (entry: unknown) => boolean
+): void {
+  for (const event of Object.keys(hooksRoot)) {
+    const groups = hooksRoot[event];
+    if (!Array.isArray(groups)) continue;
+    const filtered = groups.filter((entry) => !isSoloeEntry(entry));
+    if (filtered.length === 0) {
+      delete hooksRoot[event];
+    } else {
+      hooksRoot[event] = filtered;
+    }
+  }
 }
 
 export function removeSoloeFromClaude(

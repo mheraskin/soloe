@@ -413,6 +413,34 @@ describe('mergeClaudeHooks (pure)', () => {
     expect(hooks.Interrupt).toBeUndefined();
     expect(hooks.UserInterrupt).toBeUndefined();
   });
+
+  it('removes old Soloe entries from unsupported Claude events on re-merge', () => {
+    const merged = mergeClaudeHooks(
+      {
+        hooks: {
+          Interrupt: [
+            {
+              _soloe: true,
+              _soloe_version: 8,
+              hooks: [{ type: 'command', command: 'old', _soloe: true, _soloe_version: 8 }]
+            },
+            { hooks: [{ type: 'command', command: 'mine' }] }
+          ],
+          UserInterrupt: [
+            {
+              _soloe: true,
+              _soloe_version: 8,
+              hooks: [{ type: 'command', command: 'old', _soloe: true, _soloe_version: 8 }]
+            }
+          ]
+        }
+      },
+      'soloe'
+    );
+    const hooks = merged.hooks as Record<string, unknown[]>;
+    expect(hooks.Interrupt).toEqual([{ hooks: [{ type: 'command', command: 'mine' }] }]);
+    expect(hooks.UserInterrupt).toBeUndefined();
+  });
 });
 
 describe('removeSoloeFromClaude (pure)', () => {
