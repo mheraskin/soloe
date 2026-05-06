@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, Notification, shell } from 'electron';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
 import { SessionStore } from './sessions/SessionStore.js';
 import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
@@ -95,6 +95,47 @@ function resolveAppIcon(): string {
 
 function resolveNotificationIcon(): string {
   return resolveIconPath(['icon.png', 'icon.ico']);
+}
+
+function quoteWindowsShortcutArg(value: string): string {
+  if (!/[ \t"]/u.test(value)) return value;
+  return `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/\\+$/u, '$&$&')}"`;
+}
+
+function windowsRelaunchCommand(): string {
+  return [process.execPath, ...process.argv.slice(1)].map(quoteWindowsShortcutArg).join(' ');
+}
+
+function ensureWindowsDevShellShortcut(appIcon: string): void {
+  if (process.platform !== 'win32' || app.isPackaged) return;
+
+  const shortcutPath = path.join(
+    app.getPath('appData'),
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs',
+    'Soloe Dev.lnk'
+  );
+  const args = process.argv.slice(1).map(quoteWindowsShortcutArg).join(' ');
+
+  try {
+    mkdirSync(path.dirname(shortcutPath), { recursive: true });
+    const written = shell.writeShortcutLink(shortcutPath, 'create', {
+      target: process.execPath,
+      args,
+      cwd: process.cwd(),
+      description: 'Soloe development preview',
+      icon: appIcon,
+      iconIndex: 0,
+      appUserModelId: DEV_APP_ID
+    });
+    if (!written) {
+      console.warn(`[windows-shell] failed to create ${shortcutPath}`);
+    }
+  } catch (err) {
+    console.warn('[windows-shell] failed to create development shortcut', err);
+  }
 }
 
 if (process.platform === 'win32') {
@@ -311,7 +352,9 @@ async function createWindow(): Promise<BrowserWindow> {
     win.setAppDetails({
       appId,
       appIconPath: appIcon,
-      appIconIndex: 0
+      appIconIndex: 0,
+      relaunchCommand: windowsRelaunchCommand(),
+      relaunchDisplayName: app.isPackaged ? 'Soloe' : 'Soloe Dev'
     });
   }
 
@@ -397,6 +440,7 @@ function ensureSingleInstance(): boolean {
 if (ensureSingleInstance()) {
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    ensureWindowsDevShellShortcut(resolveAppIcon());
     services = await setupServices();
     mainWindow = await createWindow();
 
