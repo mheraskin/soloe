@@ -69,10 +69,10 @@ let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
 
 const PACKAGED_APP_ID = 'com.soloe.app';
-const DEV_APP_ID = `${PACKAGED_APP_ID}.dev`;
 
 function resolveAppId(): string {
-  return app.isPackaged ? PACKAGED_APP_ID : DEV_APP_ID;
+  if (app.isPackaged) return PACKAGED_APP_ID;
+  return process.platform === 'win32' ? process.execPath : `${PACKAGED_APP_ID}.dev`;
 }
 
 function resolveIconPath(iconFilenames: string[]): string {
@@ -128,7 +128,7 @@ function ensureWindowsDevShellShortcut(appIcon: string): void {
       description: 'Soloe development preview',
       icon: appIcon,
       iconIndex: 0,
-      appUserModelId: DEV_APP_ID
+      appUserModelId: resolveAppId()
     });
     if (!written) {
       console.warn(`[windows-shell] failed to create ${shortcutPath}`);
