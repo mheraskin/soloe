@@ -138,6 +138,7 @@
     if (!id) return;
     try {
       await ipc.terminal.input(id, PASTE_START + text + PASTE_END);
+      window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
     } catch (err) {
       reportError(err);
     }
