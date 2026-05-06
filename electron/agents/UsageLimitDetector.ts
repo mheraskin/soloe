@@ -11,6 +11,49 @@ const RESET_PATTERNS = [
   /\btry again (?:at|in)\s+([^.\n\r]+)/i
 ];
 
+const HARD_LIMIT_SUBSTRINGS = [
+  'usage_limit_exceeded',
+  'rate_limit_exceeded',
+  "you've hit your usage limit",
+  'you have hit your usage limit',
+  "you've hit your session limit",
+  'you have hit your session limit',
+  "you've hit your weekly limit",
+  'you have hit your weekly limit',
+  "you've hit your opus limit",
+  'you have hit your opus limit',
+  'credit balance is too low'
+];
+
+const HARD_LIMIT_PREFIXES = [
+  'error: usage limit reached',
+  'error: usage limit exceeded',
+  'error: rate limit reached',
+  'error: rate limit exceeded',
+  'api error: usage limit reached',
+  'api error: usage limit exceeded',
+  'api error: rate limit reached',
+  'api error: rate limit exceeded',
+  'failed: usage limit reached',
+  'failed: usage limit exceeded',
+  'failed: rate limit reached',
+  'failed: rate limit exceeded',
+  'blocked: usage limit reached',
+  'blocked: usage limit exceeded',
+  'blocked: rate limit reached',
+  'blocked: rate limit exceeded',
+  '5-hour limit reached',
+  '5-hour limit exceeded',
+  '5h limit reached',
+  '5h limit exceeded',
+  'session limit reached',
+  'session limit exceeded',
+  'weekly limit reached',
+  'weekly limit exceeded',
+  'opus limit reached',
+  'opus limit exceeded'
+];
+
 export function detectUsageLimit(input: unknown): UsageLimitInfo | null {
   const text = normalizeText(collectText(input).join('\n'));
   if (!text) return null;
@@ -48,7 +91,10 @@ function collectText(input: unknown, depth = 0): string[] {
     if (typeof value === 'string' && /error|message|limit|reason|status|detail/i.test(key)) {
       return [value];
     }
-    return collectText(value, depth + 1);
+    if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+      return collectText(value, depth + 1);
+    }
+    return [];
   });
 }
 
@@ -100,11 +146,8 @@ function usefulFallbackMessage(text: string): string {
 function detectUsageLimitLine(line: string): boolean {
   const lower = line.trim().toLowerCase();
   if (!lower || lower.includes('`')) return false;
-  return /\b(?:usage_limit_exceeded|rate_limit_exceeded)\b/.test(lower)
-    || /^(?:error|api error|failed|blocked):?\s*(?:usage|rate)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
-    || /^you(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
-    || /^(?:5-hour|5h|session|weekly|opus)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
-    || lower.includes('credit balance is too low');
+  return HARD_LIMIT_SUBSTRINGS.some((phrase) => lower.includes(phrase))
+    || HARD_LIMIT_PREFIXES.some((phrase) => lower.startsWith(phrase));
 }
 
 function resetLabelFrom(message: string): string | undefined {

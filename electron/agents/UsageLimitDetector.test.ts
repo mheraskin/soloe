@@ -23,6 +23,27 @@ describe('detectUsageLimit', () => {
     });
   });
 
+  it('classifies the exact Codex usage-limit phrase', () => {
+    expect(detectUsageLimit("You've hit your usage limit")).toMatchObject({
+      message: "You've hit your usage limit"
+    });
+  });
+
+  it('does not classify loose usage limit words as a hard limit', () => {
+    for (const text of [
+      'session',
+      'usage',
+      'limit',
+      'session usage limit',
+      'usage limit',
+      'limit reached',
+      'Starting MCP servers (0/2): code-index',
+      '[soloe-hook] hook arrived: provider=codex session=codex-3da1d4 event=SessionStart'
+    ]) {
+      expect(detectUsageLimit(text), text).toBeNull();
+    }
+  });
+
   it('does not classify documentation or summary prose about usage limits', () => {
     expect(
       detectUsageLimit(
