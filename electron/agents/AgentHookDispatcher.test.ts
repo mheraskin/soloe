@@ -31,7 +31,7 @@ describe('AgentHookDispatcher', () => {
       ['UserPromptSubmit', 'working'],
       ['PreToolUse', 'running_tool'],
       ['PostToolUse', 'working'],
-      ['Notification', 'waiting_for_approval'],
+      ['Notification', 'waiting_for_input'],
       ['Stop', 'completed'],
       ['StopFailure', 'failed'],
       ['SessionEnd', 'exited'],
@@ -96,6 +96,34 @@ describe('AgentHookDispatcher', () => {
         }
       });
       expect(observer.getSnapshot('sess-1')?.state).toBe('idle');
+    });
+
+    it('maps declined Claude update notifications back to idle', async () => {
+      observer.setTuiObservedState('sess-1', 'working', 'thinking');
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: {
+          hook_event_name: 'Notification',
+          message: 'Update declined'
+        }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('idle');
+      expect(observer.listEvents('sess-1').at(-1)?.summary).toBe('idle');
+    });
+
+    it('maps Claude update prompt notifications to input instead of approval', async () => {
+      observer.setTuiObservedState('sess-1', 'working', 'thinking');
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: {
+          hook_event_name: 'Notification',
+          message: 'Update available. Install now?'
+        }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('waiting_for_input');
+      expect(observer.listEvents('sess-1').at(-1)?.summary).toBe('Update available. Install now?');
     });
 
     it('maps interrupted Claude stops back to idle', async () => {

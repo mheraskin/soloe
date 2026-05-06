@@ -342,16 +342,41 @@ function mapClaudeNotification(payload: Record<string, unknown>): HookMapping {
     return { state: 'idle', summary: 'idle' };
   }
 
+  if (isDismissedUpdateNotification(lowerMessage)) {
+    return { state: 'idle', summary: 'idle' };
+  }
+
   if (notificationType === 'permission_prompt' || lowerMessage.includes('permission')) {
     return { state: 'waiting_for_approval', summary };
   }
 
-  return { state: 'waiting_for_approval', summary };
+  if (isCompletedNotification(lowerMessage)) {
+    return { state: 'completed', summary };
+  }
+
+  return { state: 'waiting_for_input', summary: notificationSummary(message, 'waiting for input') };
 }
 
 function notificationSummary(message: string, fallback: string): string {
   const normalized = message.trim().replace(/\s+/g, ' ');
   return normalized || fallback;
+}
+
+function isDismissedUpdateNotification(lowerMessage: string): boolean {
+  if (!lowerMessage.includes('update')) return false;
+  return lowerMessage.includes('declined')
+    || lowerMessage.includes('denied')
+    || lowerMessage.includes('rejected')
+    || lowerMessage.includes('cancelled')
+    || lowerMessage.includes('canceled')
+    || lowerMessage.includes('skipped')
+    || lowerMessage.includes('not now');
+}
+
+function isCompletedNotification(lowerMessage: string): boolean {
+  return lowerMessage.includes('task completed')
+    || lowerMessage.includes('completed successfully')
+    || lowerMessage.includes('response complete');
 }
 
 function mapCodexHook(

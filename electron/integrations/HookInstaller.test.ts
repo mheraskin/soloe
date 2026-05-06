@@ -406,6 +406,13 @@ describe('mergeClaudeHooks (pure)', () => {
     expect(stop).toHaveLength(1);
     expect(stop[0]!.hooks[0]!.command).toBe('new');
   });
+
+  it('installs Claude interrupt hooks', () => {
+    const merged = mergeClaudeHooks({}, 'soloe');
+    const hooks = merged.hooks as Record<string, unknown[]>;
+    expect(hooks.Interrupt).toHaveLength(1);
+    expect(hooks.UserInterrupt).toHaveLength(1);
+  });
 });
 
 describe('removeSoloeFromClaude (pure)', () => {

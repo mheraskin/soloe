@@ -42,6 +42,8 @@ const CLAUDE_EVENTS = [
   'PreToolUse',
   'PostToolUse',
   'Notification',
+  'Interrupt',
+  'UserInterrupt',
   'Stop',
   'StopFailure',
   'SessionEnd',
@@ -60,7 +62,7 @@ const CODEX_EVENTS = [
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 7;
+export const SOLOE_HOOK_VERSION = 8;
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 
