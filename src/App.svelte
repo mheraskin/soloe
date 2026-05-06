@@ -188,7 +188,9 @@
     }
     if (Keymap.newSessionPicker.match(e)) {
       consume(e);
-      newSessionPicker.open(selectedSessionContext());
+      void sessions
+        .createPreferredWithDefaults(selectedSessionContext())
+        .catch(reportError);
       return;
     }
     if (Keymap.terminalFind.match(e)) {
