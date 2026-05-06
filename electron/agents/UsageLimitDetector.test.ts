@@ -30,4 +30,31 @@ describe('detectUsageLimit', () => {
       )
     ).toBeNull();
   });
+
+  it('does not classify Codex hook arrival or MCP startup text as a hard limit', () => {
+    expect(
+      detectUsageLimit(`
+        [soloe-hook] hook arrived: provider=codex session=codex-3da1d4 event=SessionStart
+        [time] Starting MCP servers (0/2): code-index, playwright
+      `)
+    ).toBeNull();
+  });
+
+  it('does not fuse prose about limits with later reset or startup text', () => {
+    expect(
+      detectUsageLimit(`
+        Current behavior: Codex usage limit reached is shown in the overlay.
+        reset the terminal and continue.
+        [time] Starting MCP servers (0/2): code-index, playwright
+      `)
+    ).toBeNull();
+  });
+
+  it('classifies provider-shaped usage-limit error lines', () => {
+    expect(
+      detectUsageLimit('Error: usage limit reached. Try again at Apr 13th, 2026 12:46 AM.')
+    ).toMatchObject({
+      resetAtLabel: 'Apr 13th, 2026 12:46 AM'
+    });
+  });
 });

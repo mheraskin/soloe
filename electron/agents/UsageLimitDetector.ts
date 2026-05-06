@@ -17,18 +17,14 @@ export function detectUsageLimit(input: unknown): UsageLimitInfo | null {
 
   const lower = text.toLowerCase();
   if (lower.includes('not your usage limit')) return null;
-  const hardLimitPhrase =
-    lower.includes('usage_limit_exceeded')
-    || lower.includes('rate_limit_exceeded')
-    || /\byou(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
-    || /\b(?:api error|error|failed|blocked):?\s+(?:usage|rate)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
-    || /\b(?:5-hour|5h|session|weekly|opus)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower);
+  const relevantLine = extractRelevantLine(text);
+  const hardLimitPhrase = relevantLine !== null;
   const isQuotaStatus = /\b\d{1,3}%\s+left\b/.test(lower);
   const isUsageLimit = hardLimitPhrase || lower.includes('credit balance is too low');
   if (!isUsageLimit || (isQuotaStatus && !hardLimitPhrase)) return null;
 
-  const message = shortenMessage(extractRelevantLine(text) ?? usefulFallbackMessage(text));
-  const resetAtLabel = resetLabelFrom(text);
+  const message = shortenMessage(relevantLine ?? usefulFallbackMessage(text));
+  const resetAtLabel = resetLabelFrom(relevantLine ?? text);
   return {
     message,
     detectorVersion: USAGE_LIMIT_DETECTOR_VERSION,
@@ -59,13 +55,16 @@ function collectText(input: unknown, depth = 0): string[] {
 function normalizeText(input: string): string {
   return stripAnsi(input)
     .replace(/[•·]/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t\f\v]+/g, ' ').trim())
+    .join('\n')
     .trim();
 }
 
 function extractRelevantLine(text: string): string | null {
   const parts = text
-    .split(/(?<=\.)\s+|\n|\r/)
+    .split(/\n|\r/)
     .map((part) => part.trim())
     .filter(Boolean);
   const match = parts.find((part) => detectUsageLimitLine(part));
@@ -76,6 +75,11 @@ function cleanRelevantLine(line: string): string {
   const lower = line.toLowerCase();
   const starts = [
     'usage_limit_exceeded',
+    'rate_limit_exceeded',
+    'api error:',
+    'error:',
+    'failed:',
+    'blocked:',
     "you've hit",
     'you have hit',
     'limit reached',
@@ -94,12 +98,12 @@ function usefulFallbackMessage(text: string): string {
 }
 
 function detectUsageLimitLine(line: string): boolean {
-  const lower = line.toLowerCase();
-  return lower.includes('usage_limit_exceeded')
-    || lower.includes('rate_limit_exceeded')
-    || /\byou(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
-    || /\b(?:api error|error|failed|blocked):?\s+(?:usage|rate)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
-    || /\b(?:5-hour|5h|session|weekly|opus)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
+  const lower = line.trim().toLowerCase();
+  if (!lower || lower.includes('`')) return false;
+  return /\b(?:usage_limit_exceeded|rate_limit_exceeded)\b/.test(lower)
+    || /^(?:error|api error|failed|blocked):?\s*(?:usage|rate)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
+    || /^you(?:'ve| have)\s+hit\s+(?:your\s+)?(?:usage|session|weekly|opus)\s+limit\b/.test(lower)
+    || /^(?:5-hour|5h|session|weekly|opus)\s+limit\s+(?:reached|exceeded)\b(?!\/)/.test(lower)
     || lower.includes('credit balance is too low');
 }
 
