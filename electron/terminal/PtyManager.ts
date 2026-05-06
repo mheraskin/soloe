@@ -28,6 +28,7 @@ import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
 import { detectUsageLimit, stripAnsi } from '../agents/UsageLimitDetector.js';
+import type { UsageLimitInfo } from '../agents/UsageLimitDetector.js';
 
 interface TerminalInstance {
   terminalId: TerminalId;
@@ -348,9 +349,43 @@ export class PtyManager extends EventEmitter {
     const usageLimit = detectUsageLimit(instance.usageLimitBuffer);
     if (!usageLimit) return;
     instance.usageLimitDetected = true;
+    void this.logUsageLimitDetection(instance, usageLimit, text);
     this.opts.observer?.setTuiUsageLimit(instance.sessionId, {
       ...usageLimit,
       detectedAt: new Date().toISOString()
+    });
+  }
+
+  private async logUsageLimitDetection(
+    instance: TerminalInstance,
+    usageLimit: UsageLimitInfo,
+    latestOutput: string
+  ): Promise<void> {
+    const session = await this.opts.store.get(instance.sessionId).catch(() => null);
+    console.log('[soloe-limit] usage limit detected from terminal output', {
+      source: 'pty',
+      provider: session ? effectiveAgentProvider(session) : null,
+      terminalId: instance.terminalId,
+      sessionId: instance.sessionId,
+      sessionName: session?.name ?? null,
+      cwd: session?.cwd ?? instance.cwd,
+      runMode: session?.runMode ?? instance.runMode,
+      launchProvider: session ? effectiveAgentProvider(session) : null,
+      currentAgentRuntime: session?.currentAgentRuntime ?? null,
+      providerThreadId: session?.providerThreadId ?? null,
+      transcriptPath: session?.transcriptPath ?? null,
+      command: {
+        file: instance.spec.file,
+        args: instance.spec.args
+      },
+      usageLimit: {
+        message: usageLimit.message,
+        resetAtLabel: usageLimit.resetAtLabel ?? null,
+        detectorVersion: usageLimit.detectorVersion,
+        matchedText: usageLimit.matchedText ?? null
+      },
+      latestOutputSnippet: shortLogText(latestOutput, 1200),
+      detectionBufferSnippet: shortLogText(instance.usageLimitBuffer, 2400)
     });
   }
 
@@ -374,6 +409,12 @@ const noop = (): void => {};
 
 function newTerminalId(): TerminalId {
   return `t-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;
+}
+
+function shortLogText(value: string, maxLength: number): string {
+  const normalized = stripAnsi(value).replace(/\r\n?/g, '\n').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(-maxLength + 3)}...`;
 }
 
 function mergeEnv(

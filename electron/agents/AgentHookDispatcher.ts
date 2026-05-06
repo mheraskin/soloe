@@ -5,6 +5,7 @@ import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AutoRenameService } from './AutoRenameService.js';
 import type { HookEvent, HookProvider } from './SoloeMcpServer.js';
 import { detectUsageLimit } from './UsageLimitDetector.js';
+import type { UsageLimitInfo } from './UsageLimitDetector.js';
 
 export interface AgentHookDispatcherOptions {
   observer: AgentObserverManager;
@@ -48,6 +49,14 @@ export class AgentHookDispatcher {
     }
     const usageLimit = detectUsageLimit(payload);
     if (usageLimit) {
+      await this.logUsageLimitDetection({
+        provider: 'claude_code',
+        soloeSessionId,
+        hookEvent,
+        source: 'hook',
+        usageLimit,
+        payload
+      });
       this.opts.observer.setTuiUsageLimit(soloeSessionId, {
         ...usageLimit,
         detectedAt: new Date().toISOString()
@@ -72,6 +81,14 @@ export class AgentHookDispatcher {
     }
     const usageLimit = detectUsageLimit(payload);
     if (usageLimit) {
+      await this.logUsageLimitDetection({
+        provider: 'codex',
+        soloeSessionId,
+        hookEvent,
+        source: 'hook',
+        usageLimit,
+        payload
+      });
       this.opts.observer.setTuiUsageLimit(soloeSessionId, {
         ...usageLimit,
         detectedAt: new Date().toISOString()
@@ -114,6 +131,39 @@ export class AgentHookDispatcher {
     void this.opts.autoRename
       .maybeRename({ sessionId: soloeSessionId, firstPrompt: prompt })
       .catch((err) => this.opts.log?.('auto-rename dispatch failed', err));
+  }
+
+  private async logUsageLimitDetection(input: {
+    provider: HookProvider;
+    soloeSessionId: SessionId;
+    hookEvent: string | undefined;
+    source: 'hook';
+    usageLimit: UsageLimitInfo;
+    payload: Record<string, unknown>;
+  }): Promise<void> {
+    const session = await this.opts.sessionStore.get(input.soloeSessionId).catch(() => null);
+    console.log('[soloe-limit] usage limit detected by hook dispatcher', {
+      source: input.source,
+      provider: input.provider,
+      hookEvent: input.hookEvent ?? null,
+      sessionId: input.soloeSessionId,
+      sessionName: session?.name ?? null,
+      cwd: session?.cwd ?? null,
+      runMode: session?.runMode ?? null,
+      launchProvider: session ? launchProvider(session) : null,
+      currentAgentRuntime: session?.currentAgentRuntime ?? null,
+      providerThreadId: session?.providerThreadId ?? null,
+      transcriptPath: session?.transcriptPath ?? null,
+      usageLimit: {
+        message: input.usageLimit.message,
+        resetAtLabel: input.usageLimit.resetAtLabel ?? null,
+        detectorVersion: input.usageLimit.detectorVersion,
+        matchedText: input.usageLimit.matchedText ?? null
+      },
+      payloadKeys: Object.keys(input.payload),
+      payloadTextFields: textFieldsForLog(input.payload),
+      payloadSnippet: shortJson(input.payload, 2400)
+    });
   }
 
   private applyMapping(
@@ -447,4 +497,45 @@ function shortText(value: string, maxLength: number): string {
   const normalized = value.trim().replace(/\s+/g, ' ');
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function textFieldsForLog(payload: Record<string, unknown>, prefix = '', depth = 0): Record<string, string> {
+  if (depth > 4) return {};
+  const output: Record<string, string> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (isSensitiveKey(key)) {
+      output[path] = '[redacted]';
+      continue;
+    }
+    if (typeof value === 'string') {
+      if (/error|message|limit|reason|status|detail|event|type|name|session|transcript/i.test(path)) {
+        output[path] = shortText(value, 500);
+      }
+      continue;
+    }
+    if (isRecord(value)) {
+      Object.assign(output, textFieldsForLog(value, path, depth + 1));
+    }
+  }
+  return output;
+}
+
+function shortJson(value: unknown, maxLength: number): string {
+  const seen = new WeakSet<object>();
+  const json = JSON.stringify(value, (key, inner) => {
+    if (isSensitiveKey(key)) return '[redacted]';
+    if (typeof inner === 'string') return shortText(inner, 1000);
+    if (inner && typeof inner === 'object') {
+      if (seen.has(inner)) return '[circular]';
+      seen.add(inner);
+    }
+    return inner;
+  });
+  if (!json || json.length <= maxLength) return json ?? '';
+  return `${json.slice(0, maxLength - 3)}...`;
+}
+
+function isSensitiveKey(key: string): boolean {
+  return /token|secret|password|authorization|cookie|api[_-]?key/i.test(key);
 }

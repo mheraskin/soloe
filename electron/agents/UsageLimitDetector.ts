@@ -2,6 +2,7 @@ export interface UsageLimitInfo {
   message: string;
   resetAtLabel?: string;
   detectorVersion: number;
+  matchedText?: string;
 }
 
 export const USAGE_LIMIT_DETECTOR_VERSION = 2;
@@ -71,6 +72,7 @@ export function detectUsageLimit(input: unknown): UsageLimitInfo | null {
   return {
     message,
     detectorVersion: USAGE_LIMIT_DETECTOR_VERSION,
+    ...(relevantLine ? { matchedText: shortenMessage(relevantLine) } : {}),
     ...(resetAtLabel ? { resetAtLabel } : {})
   };
 }

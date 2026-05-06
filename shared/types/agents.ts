@@ -42,6 +42,7 @@ export interface AgentUsageLimit {
   resetAtLabel?: string;
   detectedAt: string;
   detectorVersion?: number;
+  matchedText?: string;
 }
 
 export interface CreateWorkerSessionRequest {
