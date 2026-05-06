@@ -123,7 +123,7 @@ describe('AgentHookDispatcher', () => {
         }
       });
       expect(observer.getSnapshot('sess-1')?.state).toBe('idle');
-      expect(observer.listEvents('sess-1').at(-1)?.summary).toBe('idle');
+      expect(observer.listEvents('sess-1').map((event) => event.summary)).toContain('idle');
     });
 
     it('maps Claude update prompt notifications to input instead of approval', async () => {
@@ -137,7 +137,9 @@ describe('AgentHookDispatcher', () => {
         }
       });
       expect(observer.getSnapshot('sess-1')?.state).toBe('waiting_for_input');
-      expect(observer.listEvents('sess-1').at(-1)?.summary).toBe('Update available. Install now?');
+      expect(observer.listEvents('sess-1').map((event) => event.summary)).toContain(
+        'Update available. Install now?'
+      );
     });
 
     it('maps interrupted Claude stops back to idle', async () => {

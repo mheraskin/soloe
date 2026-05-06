@@ -40,11 +40,27 @@ const NAMING_INSTRUCTION =
 
 export class AutoRenameService {
   private readonly notifiedNoProvider = new Set<string>();
+  private readonly runningRenames = new Set<SessionId>();
 
   constructor(private readonly opts: AutoRenameServiceOptions) {}
 
   async maybeRename(input: RenameInputs): Promise<void> {
     console.log(`[soloe-rename] service: maybeRename entered for ${input.sessionId}`);
+    if (this.runningRenames.has(input.sessionId)) {
+      console.log(
+        `[soloe-rename] service: skip — rename already running for ${input.sessionId}`
+      );
+      return;
+    }
+    this.runningRenames.add(input.sessionId);
+    try {
+      await this.runMaybeRename(input);
+    } finally {
+      this.runningRenames.delete(input.sessionId);
+    }
+  }
+
+  private async runMaybeRename(input: RenameInputs): Promise<void> {
     const session = await this.opts.sessionStore.get(input.sessionId);
     if (!session) {
       console.log(`[soloe-rename] service: skip — session not found for ${input.sessionId}`);
