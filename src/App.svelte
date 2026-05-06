@@ -21,6 +21,7 @@
     shouldIgnoreInTextInput,
     tabIndexFromEvent
   } from './lib/keymap';
+  import { kbdHints } from './stores/kbd-hints.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Toaster } from '$lib/components/ui/sonner';
@@ -54,9 +55,11 @@
       else toast(t.message, opts);
     });
     void loadInitialState();
+    const detachKbdHints = kbdHints.attach();
     window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
+      detachKbdHints();
       detachToast();
       sessions.detach();
       settings.detach();
