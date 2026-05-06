@@ -286,6 +286,11 @@ function mapClaudeHook(
         summary: toolName ? `tool: ${toolName}` : 'running tool'
       };
     }
+    case 'PermissionRequest':
+      return {
+        state: 'waiting_for_approval',
+        summary: claudePermissionSummary(payload)
+      };
     case 'PostToolUse':
       return { state: 'working', summary: 'thinking' };
     case 'Notification':
@@ -377,6 +382,11 @@ function isCompletedNotification(lowerMessage: string): boolean {
   return lowerMessage.includes('task completed')
     || lowerMessage.includes('completed successfully')
     || lowerMessage.includes('response complete');
+}
+
+function claudePermissionSummary(payload: Record<string, unknown>): string {
+  const toolName = stringField(payload, 'tool_name');
+  return toolName ? `approval: ${toolName}` : 'waiting for approval';
 }
 
 function mapCodexHook(

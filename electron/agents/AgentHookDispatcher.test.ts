@@ -30,6 +30,7 @@ describe('AgentHookDispatcher', () => {
       ['SessionStart', 'starting'],
       ['UserPromptSubmit', 'working'],
       ['PreToolUse', 'running_tool'],
+      ['PermissionRequest', 'waiting_for_approval'],
       ['PostToolUse', 'working'],
       ['Notification', 'waiting_for_input'],
       ['Stop', 'completed'],
@@ -66,6 +67,19 @@ describe('AgentHookDispatcher', () => {
         }
       });
       expect(observer.getSnapshot('sess-1')?.state).toBe('waiting_for_approval');
+    });
+
+    it('maps Claude PermissionRequest hooks to approval with tool summary', async () => {
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: 'sess-1',
+        payload: {
+          hook_event_name: 'PermissionRequest',
+          tool_name: 'Bash'
+        }
+      });
+      expect(observer.getSnapshot('sess-1')?.state).toBe('waiting_for_approval');
+      expect(observer.listEvents('sess-1')[0]?.summary).toBe('approval: Bash');
     });
 
     it('preserves Claude permission notification messages for approval summaries', async () => {

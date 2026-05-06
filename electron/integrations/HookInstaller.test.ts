@@ -407,11 +407,11 @@ describe('mergeClaudeHooks (pure)', () => {
     expect(stop[0]!.hooks[0]!.command).toBe('new');
   });
 
-  it('installs Claude interrupt hooks', () => {
+  it('does not install unsupported Claude interrupt hooks', () => {
     const merged = mergeClaudeHooks({}, 'soloe');
     const hooks = merged.hooks as Record<string, unknown[]>;
-    expect(hooks.Interrupt).toHaveLength(1);
-    expect(hooks.UserInterrupt).toHaveLength(1);
+    expect(hooks.Interrupt).toBeUndefined();
+    expect(hooks.UserInterrupt).toBeUndefined();
   });
 });
 
