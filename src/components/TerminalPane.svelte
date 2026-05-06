@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { SearchAddon } from '@xterm/addon-search';
@@ -35,6 +36,8 @@
     sessionId,
     active
   }: { terminalId: TerminalId; sessionId: SessionId; active: boolean } = $props();
+
+  let fontSize = $derived(settings.current.terminal.fontSize);
 
   let host: HTMLDivElement | undefined = $state();
   let findInput: HTMLInputElement | null = $state(null);
@@ -198,11 +201,10 @@
 
   $effect(() => {
     if (!host) return;
+    const initFontSize = untrack(() => fontSize);
     const t = new Terminal({
-      // Cascadia Code is a fallback for codepoints @fontsource's JetBrains Mono
-      // subsets don't cover (notably box-drawing U+2500-259F used by TUI rules).
       fontFamily: 'JetBrains Mono, Cascadia Code, ui-monospace, monospace',
-      fontSize: settings.current.terminal.fontSize,
+      fontSize: initFontSize,
       fontWeight: 400,
       fontWeightBold: 700,
       // Integer lineHeight: non-integer values produce per-DPR-rounded row
@@ -346,7 +348,7 @@
     // TUI looks garbled until a scroll or refresh evicts those entries. Repaint
     // on every batch of font loads (initial preload plus lazy subsets fetched
     // on demand) so no stale fallback glyphs survive.
-    const fontPx = settings.current.terminal.fontSize;
+    const fontPx = initFontSize;
     let fontsDisposed = false;
     const dropAtlasAndRepaint = () => {
       if (fontsDisposed) return;
@@ -423,10 +425,12 @@
     const onSave = () => { void saveBuffer().catch(reportError); };
     const onCopy = () => { void copyBuffer().catch(reportError); };
     const onCopyMarkdown = () => { void copyMarkdown().catch(reportError); };
+    const onRefocus = () => { if (active) term?.focus(); };
     window.addEventListener('soloe:terminal-find', onFind);
     window.addEventListener('soloe:terminal-save-buffer', onSave);
     window.addEventListener('soloe:terminal-copy-buffer', onCopy);
     window.addEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
+    window.addEventListener('soloe:refocus-terminal', onRefocus);
 
     return () => {
       fontsDisposed = true;
@@ -435,6 +439,7 @@
       window.removeEventListener('soloe:terminal-save-buffer', onSave);
       window.removeEventListener('soloe:terminal-copy-buffer', onCopy);
       window.removeEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
+      window.removeEventListener('soloe:refocus-terminal', onRefocus);
       ro.disconnect();
       onInput.dispose();
       offOutput();
@@ -460,7 +465,7 @@
 
   $effect(() => {
     if (!term || !fit || !host) return;
-    term.options.fontSize = settings.current.terminal.fontSize;
+    term.options.fontSize = fontSize;
     requestAnimationFrame(() => {
       if (!host) return;
       const rect = host.getBoundingClientRect();

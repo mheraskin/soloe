@@ -227,7 +227,7 @@
 
     <Tabs.Content value="terminal" class={contentClass}>
       <div class="flex flex-col gap-1.5">
-        <Label class="text-xs text-muted-foreground">New session button</Label>
+        <Label class="text-xs text-muted-foreground">Quick-open default</Label>
         <Select.Root
           type="single"
           value={settings.current.defaults.newSessionKind}
@@ -243,6 +243,9 @@
             {/each}
           </Select.Content>
         </Select.Root>
+        <span class="text-[11px] text-muted-foreground">
+          Session type opened by <kbd class="rounded border border-border px-1 font-mono text-[10px]">Ctrl+T</kbd> and the <b>+</b> button.
+        </span>
       </div>
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground">Run mode</Label>
