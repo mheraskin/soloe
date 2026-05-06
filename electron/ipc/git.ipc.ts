@@ -1,10 +1,12 @@
 import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
+  FileDiffRequest,
   GitCheckoutRequest,
   GitRecentCommitsRequest,
   GitRepoRequest,
-  GitStatusRequest
+  GitStatusRequest,
+  WorkingChangesRequest
 } from '@shared/types/git.js';
 import type { GitService } from '../git/GitService.js';
 import { ipcInvoke } from './result.js';
@@ -88,6 +90,26 @@ export class GitIpc {
         })
       )
     );
+    ipcMain.handle(IpcChannels.git.workingChanges, (_e, request: WorkingChangesRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.listWorkingChanges(request.cwd, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
+    );
+    ipcMain.handle(IpcChannels.git.fileDiff, (_e, request: FileDiffRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.getFileDiff(request.cwd, request.path, {
+          fromPath: request.fromPath ?? null,
+          contextLines: request.contextLines,
+          context: {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          }
+        })
+      )
+    );
 
     this.detachListener = this.opts.service.onChange((repoPath) => {
       for (const win of this.opts.getWindows()) {
@@ -106,6 +128,8 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.branches);
     ipcMain.removeHandler(IpcChannels.git.recentCommits);
     ipcMain.removeHandler(IpcChannels.git.checkout);
+    ipcMain.removeHandler(IpcChannels.git.workingChanges);
+    ipcMain.removeHandler(IpcChannels.git.fileDiff);
     this.detachListener?.();
     this.detachListener = null;
     this.registered = false;

@@ -18,11 +18,13 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  FileDiffRequest,
   GitCheckoutRequest,
   GitChangeEvent,
   GitRecentCommitsRequest,
   GitRepoRequest,
-  GitStatusRequest
+  GitStatusRequest,
+  WorkingChangesRequest
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
@@ -163,6 +165,10 @@ export const ipc = {
       unwrap(await c.git.recentCommits(toIpcPayload(request))),
     checkout: async (request: GitCheckoutRequest) =>
       unwrap(await c.git.checkout(toIpcPayload(request))),
+    workingChanges: async (request: WorkingChangesRequest) =>
+      unwrap(await c.git.workingChanges(toIpcPayload(request))),
+    fileDiff: async (request: FileDiffRequest) =>
+      unwrap(await c.git.fileDiff(toIpcPayload(request))),
     onChange: (cb: (event: GitChangeEvent) => void) => c.git.onChange(cb)
   },
   files: {

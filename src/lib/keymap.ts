@@ -103,6 +103,13 @@ export const Keymap = {
     keys: ['Ctrl', 'Shift', 'N'],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'n'
+  },
+  toggleDiffRail: {
+    id: 'rail.toggle-diff',
+    description: 'Toggle working diff pane',
+    keys: ['Ctrl', 'Shift', 'D'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'd'
   }
 } as const satisfies Record<string, KeymapBinding>;
 

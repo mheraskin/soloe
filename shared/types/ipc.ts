@@ -8,6 +8,8 @@ import type {
   WorkerStatusResult
 } from './agents.js';
 import type {
+  FileDiff,
+  FileDiffRequest,
   GitAheadBehind,
   GitBranch,
   GitCheckoutRequest,
@@ -19,7 +21,9 @@ import type {
   GitShortstat,
   GitStatus,
   GitStatusRequest,
-  GitWorktree
+  GitWorktree,
+  WorkingChangesRequest,
+  WorkingChangesResult
 } from './git.js';
 import type {
   FileOpenRequest,
@@ -140,6 +144,8 @@ export const IpcChannels = {
     branches: 'git:branches',
     recentCommits: 'git:recent-commits',
     checkout: 'git:checkout',
+    workingChanges: 'git:working-changes',
+    fileDiff: 'git:file-diff',
     change: 'git:change'
   },
   files: {
@@ -297,6 +303,8 @@ export interface GitApi {
   branches(request: GitRepoRequest): Promise<IpcResult<GitBranch[]>>;
   recentCommits(request: GitRecentCommitsRequest): Promise<IpcResult<GitCommit[]>>;
   checkout(request: GitCheckoutRequest): Promise<IpcResult<GitStatus>>;
+  workingChanges(request: WorkingChangesRequest): Promise<IpcResult<WorkingChangesResult>>;
+  fileDiff(request: FileDiffRequest): Promise<IpcResult<FileDiff>>;
   onChange(listener: (event: GitChangeEvent) => void): () => void;
 }
 

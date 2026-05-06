@@ -281,9 +281,15 @@
         rightRail.toggleTab('notes');
         return false;
       }
+      if (Keymap.toggleDiffRail.match(e)) {
+        e.preventDefault();
+        rightRail.toggleTab('diff');
+        return false;
+      }
       for (const binding of Object.values(Keymap)) {
         if (binding.id === Keymap.deleteSelectedSession.id) continue;
         if (binding.id === Keymap.toggleNotesRail.id) continue;
+        if (binding.id === Keymap.toggleDiffRail.id) continue;
         if (binding.match(e)) return false;
       }
 

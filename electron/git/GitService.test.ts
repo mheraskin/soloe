@@ -215,6 +215,153 @@ describe.skipIf(!hasGit)('GitService', () => {
       'Repository has uncommitted changes'
     );
   });
+
+  it('listWorkingChanges: empty for clean repo', async () => {
+    await initRepo(tmpRoot);
+    const res = await svc.listWorkingChanges(tmpRoot);
+    expect(res.isRepo).toBe(true);
+    expect(res.changes).toEqual([]);
+  });
+
+  it('listWorkingChanges: covers modified, deleted, and untracked entries', async () => {
+    await initRepo(tmpRoot);
+    await fs.writeFile(path.join(tmpRoot, 'b.txt'), 'kept\n', 'utf8');
+    spawnSync('git', ['add', '.'], { cwd: tmpRoot });
+    spawnSync('git', ['commit', '-m', 'second'], { cwd: tmpRoot });
+
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'changed\n', 'utf8');
+    await fs.unlink(path.join(tmpRoot, 'b.txt'));
+    await fs.writeFile(path.join(tmpRoot, 'c.txt'), 'fresh\nlines\n', 'utf8');
+
+    const res = await svc.listWorkingChanges(tmpRoot);
+    const byPath = new Map(res.changes.map((c) => [c.path, c]));
+
+    expect(byPath.get('a.txt')).toMatchObject({ kind: 'modified', insertions: 1, deletions: 1 });
+    expect(byPath.get('b.txt')).toMatchObject({ kind: 'deleted', deletions: 1 });
+    expect(byPath.get('c.txt')).toMatchObject({ kind: 'untracked', insertions: 2, deletions: 0 });
+  });
+
+  it('getFileDiff: produces hunks with correct old/new line numbers', async () => {
+    await initRepo(tmpRoot);
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'a\nb\nc\nd\ne\n', 'utf8');
+    spawnSync('git', ['add', '.'], { cwd: tmpRoot });
+    spawnSync('git', ['commit', '-m', 'expand'], { cwd: tmpRoot });
+
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'a\nb\nzz\nd\ne\n', 'utf8');
+    const diff = await svc.getFileDiff(tmpRoot, 'a.txt');
+
+    expect(diff.kind).toBe('modified');
+    expect(diff.binary).toBe(false);
+    expect(diff.hunks.length).toBeGreaterThan(0);
+    const hunk = diff.hunks[0]!;
+    const removed = hunk.lines.find((l) => l.kind === 'remove');
+    const added = hunk.lines.find((l) => l.kind === 'add');
+    expect(removed?.oldLine).toBe(3);
+    expect(added?.newLine).toBe(3);
+  });
+
+  it('getFileDiff: handles untracked files via the no-index fallback', async () => {
+    await initRepo(tmpRoot);
+    await fs.writeFile(path.join(tmpRoot, 'fresh.txt'), 'one\ntwo\n', 'utf8');
+
+    const diff = await svc.getFileDiff(tmpRoot, 'fresh.txt');
+    expect(diff.kind).toBe('untracked');
+    expect(diff.empty).toBe(false);
+    const adds = diff.hunks.flatMap((h) => h.lines).filter((l) => l.kind === 'add');
+    expect(adds.length).toBe(2);
+    expect(adds[0]?.text).toBe('one');
+  });
+
+  it('listWorkingChanges: routes through WSL git for POSIX worktree paths', async () => {
+    const calls: string[] = [];
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, cwd, args) => {
+        const command = args.join(' ');
+        calls.push(`${cwd}::${command}`);
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: '/home/me/repo\n', stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: '/home/me/repo/.git\n', stderr: '' };
+        }
+        if (command.startsWith('diff --no-color --numstat -z --diff-filter=AMDRCT HEAD')) {
+          return { code: 0, stdout: '2\t1\tsrc/a.ts\0', stderr: '' };
+        }
+        if (command === 'status --porcelain=v1 -z') {
+          return { code: 0, stdout: ' M src/a.ts\0', stderr: '' };
+        }
+        if (command === 'ls-files --others --exclude-standard -z') {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const result = await wslSvc.listWorkingChanges('/home/me/repo', {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+
+      expect(result.isRepo).toBe(true);
+      expect(result.repoPath).toBe('/home/me/repo');
+      expect(result.changes).toEqual([
+        expect.objectContaining({ path: 'src/a.ts', kind: 'modified', insertions: 2, deletions: 1 })
+      ]);
+      // Every git invocation must have been dispatched through the WSL stub.
+      expect(calls.length).toBeGreaterThan(0);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
+  it('getFileDiff: routes through WSL git including the untracked fallback', async () => {
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: '/home/me/repo\n', stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: '/home/me/repo/.git\n', stderr: '' };
+        }
+        if (command.includes('--no-index') && command.includes('/dev/null')) {
+          return {
+            code: 1,
+            stdout: [
+              'diff --git a/dev/null b/fresh.txt',
+              'new file mode 100644',
+              'index 0000000..e69de29',
+              '--- a/dev/null',
+              '+++ b/fresh.txt',
+              '@@ -0,0 +1,2 @@',
+              '+one',
+              '+two',
+              ''
+            ].join('\n'),
+            stderr: ''
+          };
+        }
+        // The tracked attempt returns an empty diff so the fallback kicks in.
+        if (command.startsWith('diff --no-color --no-ext-diff')) {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const diff = await wslSvc.getFileDiff('/home/me/repo', 'fresh.txt', {
+        context: { runMode: 'wsl', wslDistro: 'Ubuntu' }
+      });
+      expect(diff.kind).toBe('untracked');
+      expect(diff.hunks).toHaveLength(1);
+      const adds = diff.hunks[0]!.lines.filter((l) => l.kind === 'add');
+      expect(adds.map((l) => l.text)).toEqual(['one', 'two']);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
 });
 
 async function initRepo(repoPath: string): Promise<void> {

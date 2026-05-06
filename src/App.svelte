@@ -213,6 +213,11 @@
       rightRail.toggleTab('notes');
       return;
     }
+    if (Keymap.toggleDiffRail.match(e)) {
+      consume(e);
+      rightRail.toggleTab('diff');
+      return;
+    }
     if (commandPalette.isOpen || filePalette.open) return;
     if (
       Keymap.deleteSelectedSession.match(e)

@@ -2,13 +2,20 @@ import { spawn } from 'node:child_process';
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import * as path from 'node:path';
 import type {
+  DiffHunk,
+  DiffLine,
+  DiffLineKind,
+  FileDiff,
   GitAheadBehind,
   GitBranch,
   GitCommit,
   GitDirty,
   GitShortstat,
   GitStatus,
-  GitWorktree
+  GitWorktree,
+  WorkingChange,
+  WorkingChangeKind,
+  WorkingChangesResult
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
 
@@ -244,6 +251,196 @@ export class GitService {
     }
     this.invalidate(info.repoPath);
     return this.getStatus(info.repoPath, true, context);
+  }
+
+  // List every file with pending working-tree changes (staged + unstaged +
+  // untracked), with per-file +/- counts. Untracked files run through
+  // `diff --no-index` so a brand-new file shows real insertion totals.
+  async listWorkingChanges(
+    cwd: string,
+    context: GitRepoContext = {}
+  ): Promise<WorkingChangesResult> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return { repoPath: null, isRepo: false, changes: [] };
+
+    const tracked = await this.runInRepo(info, [
+      'diff',
+      '--no-color',
+      '--numstat',
+      '-z',
+      '--diff-filter=AMDRCT',
+      'HEAD'
+    ]);
+    let trackedEntries: TrackedNumstat[] = [];
+    if (tracked.code === 0) {
+      trackedEntries = parseNumstatZ(tracked.stdout);
+    } else {
+      // Repos with no commits yet: HEAD is unresolvable. Fall back to the
+      // staged-vs-empty-tree numstat so initial-commit files still show up.
+      const fallback = await this.runInRepo(info, [
+        'diff',
+        '--no-color',
+        '--numstat',
+        '-z',
+        '--cached',
+        '--diff-filter=AMDRCT'
+      ]);
+      if (fallback.code === 0) trackedEntries = parseNumstatZ(fallback.stdout);
+    }
+
+    const renameSources = new Set<string>();
+    for (const entry of trackedEntries) {
+      if (entry.fromPath) renameSources.add(entry.fromPath);
+    }
+
+    // Status flags tell us whether each tracked entry is staged, unstaged, or
+    // both. We prefer porcelain v1 -z because it gives us the X/Y bytes per
+    // path in a parseable way.
+    const status = await this.runInRepo(info, ['status', '--porcelain=v1', '-z']);
+    const flagByPath = new Map<string, { staged: boolean; unstaged: boolean }>();
+    if (status.code === 0) parsePorcelainV1Flags(status.stdout, flagByPath);
+
+    const changes: WorkingChange[] = [];
+    for (const entry of trackedEntries) {
+      const flags = flagByPath.get(entry.path) ?? { staged: false, unstaged: true };
+      changes.push({
+        path: entry.path,
+        fromPath: entry.fromPath,
+        kind: entry.kind,
+        staged: flags.staged,
+        insertions: entry.insertions,
+        deletions: entry.deletions,
+        binary: entry.binary
+      });
+    }
+
+    const untrackedList = await this.runInRepo(info, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z'
+    ]);
+    if (untrackedList.code === 0 && untrackedList.stdout) {
+      const files = untrackedList.stdout.split('\0').filter(Boolean);
+      for (const file of files) {
+        if (renameSources.has(file)) continue;
+        const insertions = await this.untrackedInsertions(info, file);
+        changes.push({
+          path: file,
+          fromPath: null,
+          kind: 'untracked',
+          staged: false,
+          insertions: insertions.lines,
+          deletions: 0,
+          binary: insertions.binary
+        });
+      }
+    }
+
+    changes.sort((a, b) => a.path.localeCompare(b.path));
+    return { repoPath: info.repoPath, isRepo: true, changes };
+  }
+
+  // Produce structured hunks for a single working-tree file. Combines the
+  // staged and unstaged half via `--HEAD` so partial stages don't fragment
+  // the view. Untracked files run through `diff --no-index` against the
+  // null device so the entire body is rendered as additions.
+  async getFileDiff(
+    cwd: string,
+    targetPath: string,
+    options: {
+      fromPath?: string | null;
+      contextLines?: number;
+      context?: GitRepoContext;
+    } = {}
+  ): Promise<FileDiff> {
+    const ctx = options.context ?? {};
+    const info = await this.resolveRepo(cwd, ctx);
+    if (!info) {
+      return {
+        path: targetPath,
+        fromPath: options.fromPath ?? null,
+        kind: 'modified',
+        binary: false,
+        hunks: [],
+        empty: true
+      };
+    }
+
+    const contextLines = Math.max(0, Math.trunc(options.contextLines ?? 3));
+    const args = [
+      'diff',
+      '--no-color',
+      '--no-ext-diff',
+      `--unified=${contextLines}`,
+      'HEAD',
+      '--',
+      ...(options.fromPath ? [options.fromPath] : []),
+      targetPath
+    ];
+
+    let output = await this.runInRepo(info, args);
+    let mode: 'tracked' | 'untracked-fallback' = 'tracked';
+
+    if (output.code !== 0 || !output.stdout.trim()) {
+      // No commit yet, or path is untracked: try the new-file fallback.
+      const untrackedArgs = [
+        'diff',
+        '--no-color',
+        '--no-ext-diff',
+        `--unified=${contextLines}`,
+        '--no-index',
+        '--',
+        '/dev/null',
+        targetPath
+      ];
+      const untracked = await this.runInRepo(info, untrackedArgs);
+      // `--no-index` returns code 1 when the files differ — which is the
+      // normal case here. Treat any stdout as success.
+      if (untracked.stdout.trim().length > 0) {
+        output = untracked;
+        mode = 'untracked-fallback';
+      }
+    }
+
+    const parsed = parseUnifiedDiff(output.stdout);
+    // The --no-index branch always synthesizes a "new file" header, which
+    // would parse as kind='added'. Force 'untracked' so the UI can label the
+    // file as never-staged versus a true staged-add.
+    const kind =
+      mode === 'untracked-fallback' ? 'untracked' : parsed?.kind ?? 'modified';
+    return {
+      path: targetPath,
+      fromPath: options.fromPath ?? parsed?.fromPath ?? null,
+      kind,
+      binary: parsed?.binary ?? false,
+      hunks: parsed?.hunks ?? [],
+      empty: !parsed || parsed.hunks.length === 0
+    };
+  }
+
+  private async untrackedInsertions(
+    info: RepoInfo,
+    file: string
+  ): Promise<{ lines: number; binary: boolean }> {
+    const result = await this.runInRepo(info, [
+      'diff',
+      '--no-color',
+      '--numstat',
+      '--no-index',
+      '--',
+      '/dev/null',
+      file
+    ]);
+    // `--no-index` exits 1 when files differ; trust stdout regardless.
+    const text = result.stdout.trim();
+    if (!text) return { lines: 0, binary: false };
+    const firstLine = text.split('\n')[0] ?? '';
+    const [insRaw, , ...rest] = firstLine.split('\t');
+    const trailer = rest.join('\t');
+    if (insRaw === '-' || trailer === '-') return { lines: 0, binary: true };
+    const lines = Number(insRaw);
+    return { lines: Number.isFinite(lines) ? lines : 0, binary: false };
   }
 
   onChange(listener: (repoPath: string) => void): () => void {
@@ -594,4 +791,204 @@ function runWslGit(
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
+}
+
+interface TrackedNumstat {
+  path: string;
+  fromPath: string | null;
+  kind: WorkingChangeKind;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+function parseNumstatZ(output: string): TrackedNumstat[] {
+  // `git diff --numstat -z` emits records terminated by NUL. Each record is
+  // either `<ins>\t<del>\t<path>` (NUL) or, for renames/copies, that triple
+  // followed by an extra NUL-terminated <fromPath> and <toPath>.
+  const tokens = output.split('\0');
+  const out: TrackedNumstat[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const head = tokens[i];
+    if (!head) {
+      i += 1;
+      continue;
+    }
+    const parts = head.split('\t');
+    if (parts.length < 3) {
+      i += 1;
+      continue;
+    }
+    const insRaw = parts[0] ?? '';
+    const delRaw = parts[1] ?? '';
+    const inlinePath = parts[2] ?? '';
+    const binary = insRaw === '-' || delRaw === '-';
+    const insertions = binary ? 0 : Number(insRaw) || 0;
+    const deletions = binary ? 0 : Number(delRaw) || 0;
+
+    if (inlinePath.length > 0) {
+      out.push({
+        path: inlinePath,
+        fromPath: null,
+        kind: classifyByDelta(insertions, deletions, binary),
+        insertions,
+        deletions,
+        binary
+      });
+      i += 1;
+      continue;
+    }
+
+    // Rename/copy form: read the next two NUL-separated names.
+    const fromPath = tokens[i + 1] ?? '';
+    const toPath = tokens[i + 2] ?? '';
+    if (toPath) {
+      out.push({
+        path: toPath,
+        fromPath: fromPath || null,
+        kind: 'renamed',
+        insertions,
+        deletions,
+        binary
+      });
+    }
+    i += 3;
+  }
+  return out;
+}
+
+function classifyByDelta(
+  insertions: number,
+  deletions: number,
+  binary: boolean
+): WorkingChangeKind {
+  if (binary) return 'modified';
+  if (insertions > 0 && deletions === 0) return 'added';
+  if (insertions === 0 && deletions > 0) return 'deleted';
+  return 'modified';
+}
+
+function parsePorcelainV1Flags(
+  output: string,
+  out: Map<string, { staged: boolean; unstaged: boolean }>
+): void {
+  // Format: XY<space><path>NUL, with rename entries spelled
+  // XY<space><to>NUL<from>NUL.
+  const tokens = output.split('\0');
+  let i = 0;
+  while (i < tokens.length) {
+    const record = tokens[i];
+    if (!record) {
+      i += 1;
+      continue;
+    }
+    if (record.length < 4) {
+      i += 1;
+      continue;
+    }
+    const x = record[0]!;
+    const y = record[1]!;
+    const filePath = record.slice(3);
+    const isRename = x === 'R' || y === 'R' || x === 'C' || y === 'C';
+    const stageStaged = x !== ' ' && x !== '?' && x !== '!';
+    const stageUnstaged = y !== ' ' && y !== '?' && y !== '!';
+    out.set(filePath, { staged: stageStaged, unstaged: stageUnstaged });
+    i += 1;
+    if (isRename) {
+      // Drop the from-path token; the renamed entry is keyed by destination.
+      i += 1;
+    }
+  }
+}
+
+interface ParsedDiff {
+  fromPath: string | null;
+  kind: WorkingChangeKind;
+  binary: boolean;
+  hunks: DiffHunk[];
+}
+
+function parseUnifiedDiff(text: string): ParsedDiff | null {
+  if (!text) return null;
+  const lines = text.split('\n');
+  let fromPath: string | null = null;
+  let kind: WorkingChangeKind = 'modified';
+  let binary = false;
+  const hunks: DiffHunk[] = [];
+  let current: DiffHunk | null = null;
+  let oldCursor = 0;
+  let newCursor = 0;
+  let sawHeader = false;
+
+  for (const raw of lines) {
+    if (raw.startsWith('diff --git ')) {
+      sawHeader = true;
+      continue;
+    }
+    if (!sawHeader && raw.startsWith('--- ')) sawHeader = true;
+    if (raw.startsWith('new file mode')) kind = 'added';
+    else if (raw.startsWith('deleted file mode')) kind = 'deleted';
+    else if (raw.startsWith('rename from ')) {
+      fromPath = raw.slice('rename from '.length);
+      kind = 'renamed';
+    } else if (raw.startsWith('copy from ')) {
+      fromPath = raw.slice('copy from '.length);
+      kind = 'copied';
+    } else if (raw.startsWith('Binary files') || raw.includes('GIT binary patch')) {
+      binary = true;
+    }
+
+    if (raw.startsWith('@@')) {
+      const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(raw);
+      if (!match) continue;
+      const oldStart = Number(match[1] ?? 0);
+      const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+      const newStart = Number(match[3] ?? 0);
+      const newCount = match[4] === undefined ? 1 : Number(match[4]);
+      current = {
+        header: (match[5] ?? '').trim(),
+        oldStart,
+        oldCount,
+        newStart,
+        newCount,
+        lines: []
+      };
+      hunks.push(current);
+      oldCursor = oldStart;
+      newCursor = newStart;
+      continue;
+    }
+
+    if (!current) continue;
+
+    const head = raw[0];
+    if (head === '+' && !raw.startsWith('+++')) {
+      current.lines.push(makeLine('add', null, newCursor, raw.slice(1)));
+      newCursor += 1;
+    } else if (head === '-' && !raw.startsWith('---')) {
+      current.lines.push(makeLine('remove', oldCursor, null, raw.slice(1)));
+      oldCursor += 1;
+    } else if (head === '\\') {
+      // "\ No newline at end of file" — annotate as meta on current pair.
+      current.lines.push(makeLine('meta', null, null, raw));
+    } else if (head === ' ' || raw === '') {
+      const ctx = head === ' ' ? raw.slice(1) : '';
+      current.lines.push(makeLine('context', oldCursor, newCursor, ctx));
+      oldCursor += 1;
+      newCursor += 1;
+    }
+  }
+
+  if (!sawHeader && hunks.length === 0 && !binary) return null;
+  return { fromPath, kind, binary, hunks };
+}
+
+function makeLine(
+  kind: DiffLineKind,
+  oldLine: number | null,
+  newLine: number | null,
+  text: string
+): DiffLine {
+  return { kind, oldLine, newLine, text };
 }

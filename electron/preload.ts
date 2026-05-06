@@ -32,11 +32,13 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  FileDiffRequest,
   GitCheckoutRequest,
   GitChangeEvent,
   GitRecentCommitsRequest,
   GitRepoRequest,
-  GitStatusRequest
+  GitStatusRequest,
+  WorkingChangesRequest
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
@@ -169,6 +171,10 @@ const soloe: SoloeApi = {
     recentCommits: (request: GitRecentCommitsRequest) =>
       ipcRenderer.invoke(IpcChannels.git.recentCommits, request),
     checkout: (request: GitCheckoutRequest) => ipcRenderer.invoke(IpcChannels.git.checkout, request),
+    workingChanges: (request: WorkingChangesRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.workingChanges, request),
+    fileDiff: (request: FileDiffRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.fileDiff, request),
     onChange: (cb: (event: GitChangeEvent) => void) =>
       subscribe<GitChangeEvent>(IpcChannels.git.change, cb)
   },
