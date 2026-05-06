@@ -44,6 +44,7 @@
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
   let search: SearchAddon | null = null;
+  let renderer: WebglAddon | CanvasAddon | null = null;
   let pendingOutput = '';
   // Hide the loading overlay only once output has actually settled — the first
   // byte alone is too early (shells stream a banner before the prompt; agents
@@ -314,7 +315,6 @@
     });
 
     // Renderer: prefer WebGL, fall back to Canvas, then DOM.
-    let renderer: WebglAddon | CanvasAddon | null = null;
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => webgl.dispose());
@@ -353,13 +353,19 @@
       if (renderer && 'clearTextureAtlas' in renderer) {
         renderer.clearTextureAtlas();
       }
-      t.refresh(0, t.rows - 1);
+      // Wait a frame so the browser commits the newly-loaded font to the
+      // render tree before xterm re-rasterises the atlas.
+      requestAnimationFrame(() => {
+        if (fontsDisposed) return;
+        if (renderer && 'clearTextureAtlas' in renderer) {
+          renderer.clearTextureAtlas();
+        }
+        t.refresh(0, t.rows - 1);
+      });
     };
     void Promise.all([
       document.fonts.load(`400 ${fontPx}px "JetBrains Mono"`),
       document.fonts.load(`700 ${fontPx}px "JetBrains Mono"`),
-      // Force the symbol subset to fetch up front so TUI rules don't flash
-      // as system-fallback dashes before loadingdone evicts the atlas.
       document.fonts.load(`400 ${fontPx}px "Cascadia Code"`, '─'),
       document.fonts.load(`700 ${fontPx}px "Cascadia Code"`, '─')
     ]).then(dropAtlasAndRepaint).catch(() => {});
@@ -439,6 +445,7 @@
       term = null;
       fit = null;
       search = null;
+      renderer = null;
       pendingOutput = '';
       clearReadyTimers();
     };
@@ -469,9 +476,17 @@
     });
   });
 
-  // When this pane becomes active, refit and focus on next frame.
+  // When this pane becomes active, refit, focus, and evict the glyph atlas.
+  // While hidden (opacity-0), the WebGL texture atlas can accumulate stale
+  // fallback-font glyphs (lazy font subsets loaded after the terminal last
+  // painted). Clearing it here forces a full re-rasterisation with the
+  // correct fonts on every tab switch.
   $effect(() => {
     if (!active || !term || !fit || !host) return;
+    if (renderer && 'clearTextureAtlas' in renderer) {
+      renderer.clearTextureAtlas();
+    }
+    term.refresh(0, term.rows - 1);
     requestAnimationFrame(() => {
       if (!host) return;
       const rect = host.getBoundingClientRect();
