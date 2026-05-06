@@ -121,7 +121,7 @@ function ensureWindowsDevShellShortcut(appIcon: string): void {
 
   try {
     mkdirSync(path.dirname(shortcutPath), { recursive: true });
-    const written = shell.writeShortcutLink(shortcutPath, 'create', {
+    const written = shell.writeShortcutLink(shortcutPath, 'replace', {
       target: process.execPath,
       args,
       cwd: process.cwd(),
