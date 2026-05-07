@@ -345,13 +345,19 @@
   });
 
   let visibleItems = $derived.by(() => {
-    const out: Array<{ row: Row; idx: number; top: number }> = [];
+    const out: Array<{ row: Row }> = [];
     const { start, end } = visibleRange;
     for (let i = start; i < end; i++) {
-      out.push({ row: rows[i]!, idx: i, top: offsets[i] ?? 0 });
+      out.push({ row: rows[i]! });
     }
     return out;
   });
+
+  // Position the entire visible block by the first row's offset and let rows
+  // stack via document flow inside it. Per-row absolute `top` would let a
+  // taller-than-estimated wrapped row overlap its neighbour until the
+  // ResizeObserver round-trip completed; document flow rules that out.
+  let visibleStartTop = $derived(offsets[visibleRange.start] ?? 0);
 
   // Sticky hunk header — find the latest hunk-header at or above scrollTop,
   // plus the next one so we can push the current header up smoothly when
@@ -693,12 +699,9 @@
     </header>
   {/if}
 
+  <div class="absolute right-0 left-0" style:top="{visibleStartTop}px">
   {#each visibleItems as item (rowKey(item.row))}
-    <div
-      class="absolute right-0 left-0"
-      style:top="{item.top}px"
-      use:measureRow={rowKey(item.row)}
-    >
+    <div use:measureRow={rowKey(item.row)}>
       {#if item.row.kind === 'hunk-header'}
         <header
           class={[
@@ -947,6 +950,7 @@
       {/if}
     </div>
   {/each}
+  </div>
 </div>
 
 {#if hoverPreview}
