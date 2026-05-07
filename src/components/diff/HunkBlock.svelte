@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { mode } from 'mode-watcher';
   import type { DiffHunk } from '@shared/types/git.js';
   import type { DiffSide } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
+  import { highlight, languageFor, type HighlightedLine } from '$lib/highlight.svelte';
   import CommentMarker from './CommentMarker.svelte';
 
   interface Props {
@@ -185,6 +187,8 @@
       {#each hunk.lines as line, idx (idx)}
         {@const oldStarting = commentsStartingAt('old', line.oldLine)}
         {@const newStarting = commentsStartingAt('new', line.newLine)}
+        {@const anchorSide = line.kind === 'remove' ? 'old' : 'new'}
+        {@const anchorLine = anchorSide === 'old' ? line.oldLine : line.newLine}
         <div
           class={[
             'flex min-h-[1.45em] gap-0',
@@ -223,7 +227,11 @@
           >
             {#if line.kind === 'add'}+{:else if line.kind === 'remove'}−{:else if line.kind === 'meta'}~{:else}&nbsp;{/if}
           </span>
-          <span class={textCls}>{line.text || ' '}</span>
+          <span
+            class={textCls}
+            data-diff-side={line.kind === 'meta' || anchorLine === null ? null : anchorSide}
+            data-diff-line={line.kind === 'meta' || anchorLine === null ? null : anchorLine}
+          >{line.text || ' '}</span>
         </div>
       {/each}
     {:else}
@@ -254,7 +262,11 @@
                 {row.old ?? ''}
                 <CommentMarker comments={oldStarting} />
               </span>
-              <span class={splitTextCls}>
+              <span
+                class={splitTextCls}
+                data-diff-side={row.old !== null ? 'old' : null}
+                data-diff-line={row.old}
+              >
                 {#if row.kind === 'context'}
                   {row.text || ' '}
                 {:else if row.oldText !== null}
@@ -278,7 +290,11 @@
                 {row.new ?? ''}
                 <CommentMarker comments={newStarting} />
               </span>
-              <span class={splitTextCls}>
+              <span
+                class={splitTextCls}
+                data-diff-side={row.new !== null ? 'new' : null}
+                data-diff-line={row.new}
+              >
                 {#if row.kind === 'context'}
                   {row.text || ' '}
                 {:else if row.newText !== null}

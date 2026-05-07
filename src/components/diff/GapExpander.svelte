@@ -102,7 +102,8 @@
             <CommentMarker comments={commentsStartingAt('new', newLine)} />
           </span>
           <span class="w-5 shrink-0 pl-1 text-center select-none">&nbsp;</span>
-          <span class={textCls}>{text || ' '}</span>
+          <span class={textCls} data-diff-side="new" data-diff-line={newLine}
+            >{text || ' '}</span>
         </div>
       {/each}
     {:else}
@@ -121,7 +122,8 @@
               {oldLine}
               <CommentMarker comments={commentsStartingAt('old', oldLine)} />
             </span>
-            <span class={splitTextCls}>{text || ' '}</span>
+            <span class={splitTextCls} data-diff-side="old" data-diff-line={oldLine}
+              >{text || ' '}</span>
           </div>
           <div class="flex min-h-[1.45em] bg-background">
             <span
@@ -134,7 +136,8 @@
               {newLine}
               <CommentMarker comments={commentsStartingAt('new', newLine)} />
             </span>
-            <span class={splitTextCls}>{text || ' '}</span>
+            <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
+              >{text || ' '}</span>
           </div>
         </div>
       {/each}

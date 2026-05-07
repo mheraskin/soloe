@@ -205,4 +205,13 @@
     @apply bg-background text-foreground;
     letter-spacing: var(--tracking-normal);
   }
+
+  ::selection {
+    background-color: oklch(0.86 0.015 80 / 0.65);
+    color: var(--foreground);
+  }
+  .dark ::selection {
+    background-color: oklch(0.55 0.01 80 / 0.55);
+    color: var(--foreground);
+  }
 }

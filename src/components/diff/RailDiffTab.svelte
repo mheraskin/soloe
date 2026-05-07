@@ -31,6 +31,9 @@
   import HunkBlock from './HunkBlock.svelte';
   import GapExpander from './GapExpander.svelte';
   import RailResolvedPanel from './RailResolvedPanel.svelte';
+  import DiffSelectionMenu from './DiffSelectionMenu.svelte';
+
+  let diffRootEl: HTMLDivElement | null = $state(null);
 
   type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked';
 
@@ -543,7 +546,8 @@
           {@const gapPath = diff.fromPath ?? diff.path}
           {@const canExpand = diff.kind !== 'added' && diff.kind !== 'untracked'}
           <ScrollArea class="min-h-0 flex-1">
-            <div class="flex flex-col">
+            <div bind:this={diffRootEl} class="flex flex-col">
+              <DiffSelectionMenu cwd={activeCwd!} filePath={diff.path} rootEl={diffRootEl} />
               {#if canExpand && diff.hunks[0] && diff.hunks[0].oldStart > 1}
                 <GapExpander
                   cwd={activeCwd!}
