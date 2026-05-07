@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Activity, NotebookPen, GitCompare, BookOpen } from '@lucide/svelte';
+  import { Activity, NotebookPen, GitCompare, BookOpen, ArrowLeftRight } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { Keymap } from '../lib/keymap';
@@ -74,9 +74,10 @@
 
 <aside
   class={[
-    'relative flex flex-row-reverse overflow-hidden border-l border-border bg-sidebar',
+    'relative flex flex-row-reverse border-l border-border bg-sidebar',
     fullscreen ? 'min-w-0 flex-1' : 'flex-shrink-0',
-    !rightRail.open && 'w-10'
+    !rightRail.open && 'w-10',
+    rightRail.open && 'overflow-hidden'
   ]}
   class:select-none={resizing}
   style={rightRail.open && !fullscreen ? `width: ${width}px` : undefined}
@@ -126,6 +127,29 @@
         </Tooltip.Root>
       {/each}
       <div class="min-h-2 flex-1"></div>
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <div
+              {...props}
+              role="note"
+              aria-label="Switch focus between terminal and pane: Ctrl+;"
+              class="flex flex-col items-center gap-0.5 pb-1 text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+            >
+              <ArrowLeftRight class="size-3" />
+              <kbd
+                class="inline-flex h-3.5 min-w-3.5 items-center justify-center rounded border border-border/70 bg-muted/70 px-1 font-mono text-[9px] leading-none tracking-tight"
+                >Ctrl</kbd
+              >
+              <kbd
+                class="inline-flex h-3.5 min-w-3.5 items-center justify-center rounded border border-border/70 bg-muted/70 px-1 font-mono text-[9px] leading-none tracking-tight"
+                >;</kbd
+              >
+            </div>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content side="left">Switch focus between terminal and pane</Tooltip.Content>
+      </Tooltip.Root>
       <ProcessUsageWidget />
     </nav>
   </Tooltip.Provider>
