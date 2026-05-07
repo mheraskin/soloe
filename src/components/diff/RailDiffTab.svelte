@@ -385,7 +385,7 @@
       </div>
     </div>
 
-    <ScrollArea class="max-h-36 shrink-0 border-b border-border">
+    <ScrollArea class="max-h-44 shrink-0 border-b border-border">
       <div class="flex flex-col gap-px p-1.5">
         {#if changesEntry?.loading && filteredChanges.length === 0}
           <div class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
