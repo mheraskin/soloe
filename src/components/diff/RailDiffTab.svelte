@@ -13,25 +13,21 @@
     Maximize2,
     Minimize2,
     WrapText,
-    Send,
-    Archive,
-    History
+    MessageSquare
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
   import { sessions } from '../../stores/sessions.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
-  import { reportError, toasts } from '../../stores/toast.svelte';
+  import { reportError } from '../../stores/toast.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
-  import { sendComments } from '../../lib/diff-comment-sender';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import ChangeRow from './ChangeRow.svelte';
   import VirtualDiffBody from './VirtualDiffBody.svelte';
-  import RailResolvedPanel from './RailResolvedPanel.svelte';
-  import RailOutdatedPanel from './RailOutdatedPanel.svelte';
+  import RailCommentsPanel from './RailCommentsPanel.svelte';
   import DiffSelectionMenu from './DiffSelectionMenu.svelte';
 
   let diffRootEl: HTMLDivElement | null = $state(null);
@@ -159,41 +155,12 @@
     workingDiff.query = queryDraft;
   }
 
-  // Comments work at the cwd level; the bulk-send affordance just enumerates
-  // every unsent body across files in the worktree.
-  let cwdComments = $derived(activeCwd ? diffComments.forWorktree(activeCwd) : []);
-  let unsentComments = $derived(
-    cwdComments.filter((c) => !c.sentAt && !c.resolvedAt && c.text.trim().length > 0)
+  // The single Comments rail consolidates Active/Outdated/Resolved tabs and
+  // owns the per-comment Send affordances; this tab just toggles it open.
+  let totalCommentCount = $derived(
+    activeCwd ? diffComments.forWorktree(activeCwd).length : 0
   );
-  let resolvedCount = $derived(cwdComments.filter((c) => c.resolvedAt).length);
-  let outdatedCount = $derived(
-    activeCwd ? diffComments.outdatedForWorktree(activeCwd).length : 0
-  );
-  let sendingAll = $state(false);
-  let showResolved = $state(false);
-  let showOutdated = $state(false);
-
-  async function sendAllUnsent(): Promise<void> {
-    if (sendingAll || unsentComments.length === 0) return;
-    sendingAll = true;
-    try {
-      const ids = unsentComments.map((c) => c.id);
-      const result = await sendComments(ids);
-      if (result.delivered > 0) {
-        toasts.push(
-          `Sent ${result.delivered} comment${result.delivered === 1 ? '' : 's'}`,
-          'info'
-        );
-      }
-      if (result.errors.length > 0) {
-        toasts.push(result.errors[0] ?? 'Some comments failed to send', 'error');
-      }
-    } catch (err) {
-      reportError(err);
-    } finally {
-      sendingAll = false;
-    }
-  }
+  let showComments = $state(false);
 
   let stagedChanges = $derived(filteredChanges.filter((c) => c.staged));
   let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged));
@@ -286,53 +253,17 @@
       </span>
     </div>
     <div class="flex items-center gap-1">
-      {#if unsentComments.length > 0}
-        <Button
-          variant="outline"
-          size="xs"
-          onclick={() => void sendAllUnsent()}
-          disabled={sendingAll}
-          title={`Send ${unsentComments.length} unsent comment${unsentComments.length === 1 ? '' : 's'}`}
-          aria-label="Send all unsent comments"
-        >
-          {#if sendingAll}
-            <Loader2 class="size-3 animate-spin" />
-          {:else}
-            <Send class="size-3" />
-          {/if}
-          <span>Send all ({unsentComments.length})</span>
-        </Button>
-      {/if}
-      {#if outdatedCount > 0}
+      {#if totalCommentCount > 0}
         <Button
           variant="ghost"
           size="xs"
-          onclick={() => {
-            showOutdated = !showOutdated;
-            if (showOutdated) showResolved = false;
-          }}
-          aria-pressed={showOutdated}
-          title="Outdated comments — line content changed since the comment was made"
-          aria-label="Show outdated comments"
+          onclick={() => (showComments = !showComments)}
+          aria-pressed={showComments}
+          title="Comments"
+          aria-label="Show comments"
         >
-          <History class="size-3" />
-          <span>Outdated ({outdatedCount})</span>
-        </Button>
-      {/if}
-      {#if resolvedCount > 0}
-        <Button
-          variant="ghost"
-          size="xs"
-          onclick={() => {
-            showResolved = !showResolved;
-            if (showResolved) showOutdated = false;
-          }}
-          aria-pressed={showResolved}
-          title="Resolved comments"
-          aria-label="Show resolved comments"
-        >
-          <Archive class="size-3" />
-          <span>Resolved ({resolvedCount})</span>
+          <MessageSquare class="size-3" />
+          <span>Comments ({totalCommentCount})</span>
         </Button>
       {/if}
       <Button
@@ -396,10 +327,8 @@
     <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
       Pick a session to inspect its working tree.
     </div>
-  {:else if showOutdated}
-    <RailOutdatedPanel cwd={activeCwd} onClose={() => (showOutdated = false)} />
-  {:else if showResolved}
-    <RailResolvedPanel cwd={activeCwd} onClose={() => (showResolved = false)} />
+  {:else if showComments}
+    <RailCommentsPanel cwd={activeCwd} onClose={() => (showComments = false)} />
   {:else if changesEntry?.result && !changesEntry.result.isRepo}
     <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
       <GitCompare class="size-4 shrink-0" />
