@@ -11,14 +11,18 @@
     Plus,
     Minus,
     Maximize2,
-    Minimize2
+    Minimize2,
+    Send,
+    Archive
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
   import { sessions } from '../../stores/sessions.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
-  import { reportError } from '../../stores/toast.svelte';
+  import { reportError, toasts } from '../../stores/toast.svelte';
+  import { diffComments } from '../../stores/diff-comments.svelte';
+  import { sendComments } from '../../lib/diff-comment-sender';
   import { Keymap } from '../../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -27,6 +31,7 @@
   import ChangeRow from './ChangeRow.svelte';
   import HunkBlock from './HunkBlock.svelte';
   import GapExpander from './GapExpander.svelte';
+  import RailResolvedPanel from './RailResolvedPanel.svelte';
 
   type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked';
 
@@ -140,6 +145,38 @@
     workingDiff.query = queryDraft;
   }
 
+  // Comments work at the cwd level; the bulk-send affordance just enumerates
+  // every unsent body across files in the worktree.
+  let cwdComments = $derived(activeCwd ? diffComments.forWorktree(activeCwd) : []);
+  let unsentComments = $derived(
+    cwdComments.filter((c) => !c.sentAt && !c.resolvedAt && c.text.trim().length > 0)
+  );
+  let resolvedCount = $derived(cwdComments.filter((c) => c.resolvedAt).length);
+  let sendingAll = $state(false);
+  let showResolved = $state(false);
+
+  async function sendAllUnsent(): Promise<void> {
+    if (sendingAll || unsentComments.length === 0) return;
+    sendingAll = true;
+    try {
+      const ids = unsentComments.map((c) => c.id);
+      const result = await sendComments(ids);
+      if (result.delivered > 0) {
+        toasts.push(
+          `Sent ${result.delivered} comment${result.delivered === 1 ? '' : 's'}`,
+          'info'
+        );
+      }
+      if (result.errors.length > 0) {
+        toasts.push(result.errors[0] ?? 'Some comments failed to send', 'error');
+      }
+    } catch (err) {
+      reportError(err);
+    } finally {
+      sendingAll = false;
+    }
+  }
+
   let stagedChanges = $derived(filteredChanges.filter((c) => c.staged));
   let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged));
   let showGroups = $derived(workingDiff.filter === 'all' && (stagedChanges.length > 0 || unstagedChanges.length > 0));
@@ -203,8 +240,18 @@
       searchInputEl?.select();
     };
     window.addEventListener('soloe:refocus-rail', onRefocus);
+    // Single document-level mouseup finalizes any in-progress gutter drag
+    // started inside a HunkBlock. Without this, releasing the cursor outside
+    // a gutter cell would leave the selection stuck in dragging state.
+    const onDocMouseup = () => {
+      if (diffComments.selection?.dragging) {
+        diffComments.endSelectionAndCreate();
+      }
+    };
+    window.addEventListener('mouseup', onDocMouseup);
     return () => {
       window.removeEventListener('soloe:refocus-rail', onRefocus);
+      window.removeEventListener('mouseup', onDocMouseup);
       workingDiff.detach();
     };
   });
@@ -225,6 +272,36 @@
       </span>
     </div>
     <div class="flex items-center gap-1">
+      {#if unsentComments.length > 0}
+        <Button
+          variant="outline"
+          size="xs"
+          onclick={() => void sendAllUnsent()}
+          disabled={sendingAll}
+          title={`Send ${unsentComments.length} unsent comment${unsentComments.length === 1 ? '' : 's'}`}
+          aria-label="Send all unsent comments"
+        >
+          {#if sendingAll}
+            <Loader2 class="size-3 animate-spin" />
+          {:else}
+            <Send class="size-3" />
+          {/if}
+          <span>Send all ({unsentComments.length})</span>
+        </Button>
+      {/if}
+      {#if resolvedCount > 0}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={() => (showResolved = !showResolved)}
+          aria-pressed={showResolved}
+          title="Resolved comments"
+          aria-label="Show resolved comments"
+        >
+          <Archive class="size-3" />
+          <span>Resolved ({resolvedCount})</span>
+        </Button>
+      {/if}
       <Button
         variant="ghost"
         size="xs"
@@ -275,6 +352,8 @@
     <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
       Pick a session to inspect its working tree.
     </div>
+  {:else if showResolved}
+    <RailResolvedPanel cwd={activeCwd} onClose={() => (showResolved = false)} />
   {:else if changesEntry?.result && !changesEntry.result.isRepo}
     <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
       <GitCompare class="size-4 shrink-0" />
@@ -468,7 +547,13 @@
                 />
               {/if}
               {#each diff.hunks as hunk, idx (idx)}
-                <HunkBlock {hunk} mode={workingDiff.viewMode} {gutterWidth} />
+                <HunkBlock
+                  {hunk}
+                  mode={workingDiff.viewMode}
+                  {gutterWidth}
+                  cwd={activeCwd!}
+                  filePath={diff.path}
+                />
                 {#if canExpand && idx < diff.hunks.length - 1}
                   {@const next = diff.hunks[idx + 1]}
                   {@const gapOldStart = hunk.oldStart + hunk.oldCount}

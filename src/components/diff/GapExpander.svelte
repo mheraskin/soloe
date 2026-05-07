@@ -1,6 +1,8 @@
 <script lang="ts">
   import { ChevronsUpDown, Loader2 } from '@lucide/svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
+  import { diffComments, type DiffSide } from '../../stores/diff-comments.svelte';
+  import CommentMarker from './CommentMarker.svelte';
 
   interface Props {
     cwd: string;
@@ -27,49 +29,103 @@
   function gutterStyle(width: number): string {
     return `width: ${Math.max(3, width)}ch;`;
   }
+
+  function isSelected(side: DiffSide, line: number): boolean {
+    const sel = diffComments.selection;
+    if (!sel || sel.cwd !== cwd || sel.filePath !== filePath || sel.side !== side) return false;
+    return line >= sel.startLine && line <= sel.endLine;
+  }
+
+  function isInComment(side: DiffSide, line: number): boolean {
+    return diffComments.forLine(cwd, filePath, side, line).length > 0;
+  }
+
+  function commentsStartingAt(side: DiffSide, line: number) {
+    return diffComments
+      .activeForFile(cwd, filePath)
+      .filter((c) => c.side === side && c.startLine === line);
+  }
+
+  function gutterClass(side: DiffSide, line: number): string {
+    const base =
+      'relative shrink-0 cursor-pointer border-r border-border/60 px-1.5 text-right text-muted-foreground/70 select-none';
+    if (isSelected(side, line)) return `${base} bg-amber-500/30`;
+    if (isInComment(side, line)) return `${base} bg-amber-500/15`;
+    return base;
+  }
+
+  function onGutterMousedown(e: MouseEvent, side: DiffSide, line: number): void {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    diffComments.startSelection(cwd, filePath, side, line);
+  }
+
+  function onGutterEnter(side: DiffSide, line: number): void {
+    diffComments.extendSelection(side, line);
+  }
 </script>
 
 {#if entry.lines && entry.lines.length > 0}
   <div class="flex flex-col font-mono text-[11px] leading-[1.55]">
     {#if mode === 'unified'}
       {#each entry.lines as text, idx (idx)}
+        {@const oldLine = oldStart + idx}
+        {@const newLine = newStart + idx}
         <div class="flex min-h-[1.45em] gap-0">
           <span
-            class="shrink-0 select-none border-r border-border/60 px-1.5 text-right text-muted-foreground/70"
+            class={gutterClass('old', oldLine)}
             style={gutterStyle(gutterWidth)}
+            onmousedown={(e) => onGutterMousedown(e, 'old', oldLine)}
+            onmouseenter={() => onGutterEnter('old', oldLine)}
+            role="presentation"
           >
-            {oldStart + idx}
+            {oldLine}
+            <CommentMarker comments={commentsStartingAt('old', oldLine)} />
           </span>
           <span
-            class="shrink-0 select-none border-r border-border/60 px-1.5 text-right text-muted-foreground/70"
+            class={gutterClass('new', newLine)}
             style={gutterStyle(gutterWidth)}
+            onmousedown={(e) => onGutterMousedown(e, 'new', newLine)}
+            onmouseenter={() => onGutterEnter('new', newLine)}
+            role="presentation"
           >
-            {newStart + idx}
+            {newLine}
+            <CommentMarker comments={commentsStartingAt('new', newLine)} />
           </span>
-          <span class="w-5 shrink-0 select-none pl-1 text-center">&nbsp;</span>
-          <span class="min-w-0 grow whitespace-pre-wrap break-all px-1">{text || ' '}</span>
+          <span class="w-5 shrink-0 pl-1 text-center select-none">&nbsp;</span>
+          <span class="min-w-0 grow px-1 break-all whitespace-pre-wrap">{text || ' '}</span>
         </div>
       {/each}
     {:else}
       {#each entry.lines as text, idx (idx)}
+        {@const oldLine = oldStart + idx}
+        {@const newLine = newStart + idx}
         <div class="grid grid-cols-2 gap-px bg-border/50">
           <div class="flex min-h-[1.45em] bg-background">
             <span
-              class="shrink-0 select-none border-r border-border/60 px-1.5 text-right text-muted-foreground/70"
+              class={gutterClass('old', oldLine)}
               style={gutterStyle(gutterWidth)}
+              onmousedown={(e) => onGutterMousedown(e, 'old', oldLine)}
+              onmouseenter={() => onGutterEnter('old', oldLine)}
+              role="presentation"
             >
-              {oldStart + idx}
+              {oldLine}
+              <CommentMarker comments={commentsStartingAt('old', oldLine)} />
             </span>
-            <span class="min-w-0 grow whitespace-pre-wrap break-all px-1.5">{text || ' '}</span>
+            <span class="min-w-0 grow px-1.5 break-all whitespace-pre-wrap">{text || ' '}</span>
           </div>
           <div class="flex min-h-[1.45em] bg-background">
             <span
-              class="shrink-0 select-none border-r border-border/60 px-1.5 text-right text-muted-foreground/70"
+              class={gutterClass('new', newLine)}
               style={gutterStyle(gutterWidth)}
+              onmousedown={(e) => onGutterMousedown(e, 'new', newLine)}
+              onmouseenter={() => onGutterEnter('new', newLine)}
+              role="presentation"
             >
-              {newStart + idx}
+              {newLine}
+              <CommentMarker comments={commentsStartingAt('new', newLine)} />
             </span>
-            <span class="min-w-0 grow whitespace-pre-wrap break-all px-1.5">{text || ' '}</span>
+            <span class="min-w-0 grow px-1.5 break-all whitespace-pre-wrap">{text || ' '}</span>
           </div>
         </div>
       {/each}
