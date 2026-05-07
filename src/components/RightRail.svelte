@@ -84,7 +84,7 @@
     <nav class="flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = rightRail.open && rightRail.activeTab === tab.id}
-        <Tooltip.Root>
+        <Tooltip.Root disabled={kbdHints.altHeld}>
           <Tooltip.Trigger>
             {#snippet child({ props })}
               <div class="relative">
@@ -102,9 +102,14 @@
                 >
                   <tab.icon class="size-4" />
                 </button>
-                {#if kbdHints.altHeld && tab.shortcut && !isActive}
-                  <div class="pointer-events-none absolute top-1/2 right-full mr-1.5 -translate-y-1/2">
-                    <Kbd keys={[...tab.shortcut]} />
+                {#if kbdHints.altHeld && !isActive}
+                  <div
+                    class="pointer-events-none absolute top-1/2 right-full z-50 mr-2 -translate-y-1/2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-foreground px-3 py-1.5 text-xs text-background shadow-md"
+                  >
+                    <span>{tab.label}</span>
+                    {#if tab.shortcut}
+                      <Kbd keys={[...tab.shortcut]} />
+                    {/if}
                   </div>
                 {/if}
               </div>
