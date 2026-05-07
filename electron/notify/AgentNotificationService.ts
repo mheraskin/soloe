@@ -1,5 +1,6 @@
 import type { ObservedAgentSnapshot, ObserverEvent } from '@shared/types/agents.js';
-import type { AgentObservedState, Session, SessionId, SessionKind } from '@shared/types/sessions.js';
+import type { AgentObservedState, Session, SessionId } from '@shared/types/sessions.js';
+import { effectiveAgentProvider, launchProvider } from '@shared/types/sessions.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { Notifier } from './Notifier.js';
@@ -120,7 +121,9 @@ function buildNativeNotice(
   event: ObserverEvent | null
 ): { title: string; body: string } {
   const sessionName = session?.name || '(unnamed)';
-  const provider = providerLabel(session?.kind ?? snapshot.provider);
+  const provider = providerLabel(
+    session ? effectiveAgentProvider(session) ?? launchProvider(session) ?? snapshot.provider : snapshot.provider
+  );
   return {
     title: `${provider} ${titleSuffix(snapshot.state)}`,
     body: `${sessionName}: ${reasonFor(snapshot, event)}`
@@ -151,7 +154,7 @@ function reasonFor(
   return titleSuffix(snapshot.state);
 }
 
-function providerLabel(provider: SessionKind | ObservedAgentSnapshot['provider']): string {
+function providerLabel(provider: ObservedAgentSnapshot['provider']): string {
   if (provider === 'claude_code') return 'Claude';
   if (provider === 'codex') return 'Codex';
   return 'Agent';

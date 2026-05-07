@@ -33,11 +33,11 @@ describe('AutoRenameService', () => {
       launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
     });
     const children: FakeChild[] = [];
-    const spawnImpl = vi.fn(((..._args: Parameters<typeof spawn>) => {
+    const spawnImpl = vi.fn((..._args: Parameters<typeof spawn>) => {
       const child = new FakeChild();
       children.push(child);
       return child;
-    }) as typeof spawn);
+    }) as unknown as typeof spawn;
     const service = new AutoRenameService({
       sessionStore,
       settings: settingsStore,

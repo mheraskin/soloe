@@ -44,6 +44,7 @@ interface TerminalInstance {
   locationBuffer: string;
   usageLimitBuffer: string;
   usageLimitDetected: boolean;
+  agentProvider: AgentRuntimeProvider | null;
   exitedAt?: string;
   exitCode?: number | null;
   signal?: number | null;
@@ -115,7 +116,7 @@ export class PtyManager extends EventEmitter {
     this.emitStatus(sessionId, terminalId, 'starting');
     await nextTick();
 
-    const agentProvider = effectiveAgentProvider(session);
+    const agentProvider = effectiveAgentProvider(session) ?? legacyAgentProvider(session);
     const release = agentProvider ? await this.acquireAgentSpawnSlot(agentProvider) : noop;
     let proc: pty.IPty;
     try {
@@ -153,12 +154,14 @@ export class PtyManager extends EventEmitter {
       cwd: session.cwd,
       locationBuffer: '',
       usageLimitBuffer: '',
-      usageLimitDetected: false
+      usageLimitDetected: false,
+      agentProvider
     };
     this.terminals.set(terminalId, instance);
 
     proc.onData((data) => {
       this.handleLocationSequences(instance, data);
+      this.handleAgentOutputState(instance, data);
       this.handleUsageLimitOutput(instance, data);
       this.opts.batcher.push(terminalId, sessionId, data);
     });
@@ -189,8 +192,16 @@ export class PtyManager extends EventEmitter {
   write(terminalId: TerminalId, data: string): void {
     const instance = this.terminals.get(terminalId);
     if (!instance || instance.status !== 'running') return;
+    this.handleAgentInputState(instance, data);
     this.clearApprovalStateOnInput(instance.sessionId, data);
     instance.pty.write(data);
+  }
+
+  private handleAgentInputState(instance: TerminalInstance, data: string): void {
+    if (!instance.agentProvider || !data.includes('\x03')) return;
+    const snapshot = this.opts.observer?.getSnapshot(instance.sessionId);
+    if (!snapshot || snapshot.state === 'idle' || snapshot.state === 'exited') return;
+    this.opts.observer?.setTuiObservedState(instance.sessionId, 'idle', 'idle');
   }
 
   private clearApprovalStateOnInput(sessionId: SessionId, data: string): void {
@@ -389,6 +400,17 @@ export class PtyManager extends EventEmitter {
     });
   }
 
+  private handleAgentOutputState(instance: TerminalInstance, data: string): void {
+    if (!instance.agentProvider) return;
+    const text = stripAnsi(data);
+    if (!isApprovalPromptOutput(text)) return;
+    this.opts.observer?.setTuiObservedState(
+      instance.sessionId,
+      'waiting_for_approval',
+      'waiting for approval'
+    );
+  }
+
   private toRuntimeState(instance: TerminalInstance): SessionRuntimeState {
     const state: SessionRuntimeState = {
       sessionId: instance.sessionId,
@@ -406,6 +428,19 @@ export class PtyManager extends EventEmitter {
 }
 
 const noop = (): void => {};
+
+function legacyAgentProvider(session: Session): AgentRuntimeProvider | null {
+  const kind = (session as unknown as { kind?: unknown }).kind;
+  if (kind === 'claude_code' || kind === 'codex') return kind;
+  return null;
+}
+
+function isApprovalPromptOutput(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, ' ');
+  return normalized.includes('do you want to allow')
+    || normalized.includes('needs your permission')
+    || normalized.includes('waiting for approval');
+}
 
 function newTerminalId(): TerminalId {
   return `t-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;

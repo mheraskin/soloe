@@ -69,6 +69,9 @@ export class SessionCommandBuilder {
     if (runtime.provider === 'claude_code') {
       const threadId = runtime.providerThreadId ?? s.providerThreadId;
       const args = threadId ? ['--resume', threadId] : ['--continue'];
+      if (s.launch.type === 'agent' && s.launch.provider === 'claude_code') {
+        appendAgentLaunchArgs(args, s.launch, 'claude_code');
+      }
       return buildAgentCommand(
         ctx.binaries?.claude ?? 'claude',
         args,
@@ -79,6 +82,9 @@ export class SessionCommandBuilder {
 
     const threadId = runtime.providerThreadId ?? s.providerThreadId;
     const args = threadId ? ['resume', threadId] : ['resume'];
+    if (s.launch.type === 'agent' && s.launch.provider === 'codex') {
+      appendAgentLaunchArgs(args, s.launch, 'codex');
+    }
     return buildAgentCommand(
       ctx.binaries?.codex ?? 'codex',
       args,
@@ -151,6 +157,7 @@ export class SessionCommandBuilder {
     }
     const env: Record<string, string> = buildSoloeEnv(s.id, s.runMode, 'claude_code', ctx);
     if (launch.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
+    appendAgentLaunchArgs(args, launch, 'claude_code');
     return buildAgentCommand(ctx.binaries?.claude ?? 'claude', args, env, s.runMode);
   }
 
@@ -176,6 +183,7 @@ export class SessionCommandBuilder {
     if (launch.reasoningEffort) {
       args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
     }
+    appendExtraArgs(args, launch.extraArgs);
     return {
       ...buildAgentCommand(
         ctx.binaries?.codex ?? 'codex',
@@ -185,6 +193,26 @@ export class SessionCommandBuilder {
       )
     };
   }
+}
+
+function appendAgentLaunchArgs(
+  args: string[],
+  launch: AgentLaunch,
+  provider: 'claude_code' | 'codex'
+): void {
+  if (launch.model) {
+    if (provider === 'claude_code') args.push('--model', launch.model);
+    else args.push('-m', launch.model);
+  }
+  if (provider === 'codex' && launch.reasoningEffort) {
+    args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
+  }
+  appendExtraArgs(args, launch.extraArgs);
+}
+
+function appendExtraArgs(args: string[], extraArgs: string[] | undefined): void {
+  if (!extraArgs?.length) return;
+  args.push(...extraArgs);
 }
 
 function isKnownEmptyClaudeSession(session: Session): boolean {
@@ -354,13 +382,24 @@ function buildAgentLaunchFunctions(): string {
     '      }',
     '      ;;',
     '    esac',
-    '    printf \'{"hook_event_name":"SessionStart","source":"shell_launch"}\' | curl -sS --max-time 1 -X POST \\',
+    '    __soloe_args_b64=$(printf \'%s\\0\' "$@" | base64 | tr -d \'\\n\')',
+    '    printf \'{"hook_event_name":"SessionStart","source":"shell_launch","argv_b64":"%s"}\' "$__soloe_args_b64" | curl -sS --max-time 1 -X POST \\',
     '      -H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN" \\',
     '      -H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" \\',
     '      -H "Content-Type: application/json" \\',
     '      --data-binary @- "$__soloe_u/hook/$__soloe_provider" >/dev/null 2>&1 || true',
     '  fi',
-    '  command "$__soloe_provider" "$@"',
+    '  __soloe_exit=0',
+    '  command "$__soloe_provider" "$@" || __soloe_exit=$?',
+    '  if [ -n "$SOLOE_BRIDGE_URL" ] && [ -n "$SOLOE_BRIDGE_TOKEN" ] && [ -n "$SOLOE_SESSION_ID" ]; then',
+    '    __soloe_args_b64=$(printf \'%s\\0\' "$@" | base64 | tr -d \'\\n\')',
+    '    printf \'{"hook_event_name":"SessionEnd","source":"shell_launch","argv_b64":"%s","exit_code":%s}\' "$__soloe_args_b64" "$__soloe_exit" | curl -sS --max-time 1 -X POST \\',
+    '      -H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN" \\',
+    '      -H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" \\',
+    '      -H "Content-Type: application/json" \\',
+    '      --data-binary @- "$__soloe_u/hook/$__soloe_provider" >/dev/null 2>&1 || true',
+    '  fi',
+    '  return "$__soloe_exit"',
     '}',
     'claude() { __soloe_agent_launch claude "$@"; }',
     'codex() { __soloe_agent_launch codex "$@"; }'

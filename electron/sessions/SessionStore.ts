@@ -18,6 +18,22 @@ interface StorageShape {
   sessions: Session[];
 }
 
+type LegacySessionDraft = Omit<SessionDraft, 'launch'> & {
+  launch?: never;
+  kind: 'standard_terminal' | 'claude_code' | 'codex';
+  shell?: ShellKind;
+  command?: string;
+  args?: string[];
+  resumeMode?: AgentLaunch['resumeMode'];
+  claudeSessionName?: string;
+  claudeSessionId?: string;
+  codexSessionId?: string;
+  fullscreenTui?: boolean;
+  model?: string;
+  reasoningEffort?: AgentLaunch['reasoningEffort'];
+  extraArgs?: string[];
+};
+
 const STORAGE_VERSION = 1;
 
 export class SessionStore {
@@ -59,12 +75,13 @@ export class SessionStore {
     return this.cache!.get(id) ?? null;
   }
 
-  async create(draft: SessionDraft): Promise<Session> {
+  async create(draft: SessionDraft | LegacySessionDraft): Promise<Session> {
     await this.ensureLoaded();
+    const normalizedDraft = normalizeSessionDraft(draft);
     const now = new Date().toISOString();
-    const id = this.generateId(draft.name);
+    const id = this.generateId(normalizedDraft.name);
     const session = {
-      ...draft,
+      ...normalizedDraft,
       id,
       createdAt: now,
       lastUsedAt: now,
@@ -72,8 +89,8 @@ export class SessionStore {
       // New sessions are eligible for auto-rename until the user manually
       // edits the name (which sets autoNamed=false). Drafts may pre-set this
       // explicitly for tests or imports.
-      autoNamed: draft.autoNamed ?? true,
-      hasUserInput: draft.hasUserInput ?? initialHasUserInput(draft)
+      autoNamed: normalizedDraft.autoNamed ?? true,
+      hasUserInput: normalizedDraft.hasUserInput ?? initialHasUserInput(normalizedDraft)
     } as Session;
     validateSession(session);
     this.cache!.set(id, session);
@@ -368,6 +385,9 @@ function validateSession(s: Session): void {
       if (s.launch.provider === 'codex' && s.launch.resumeMode === 'resume_by_id' && !s.launch.codexSessionId) {
         throw new Error('codexSessionId is required for resume_by_id');
       }
+      if (s.launch.extraArgs !== undefined && !isStringArray(s.launch.extraArgs)) {
+        throw new Error('extraArgs must be an array of strings when set');
+      }
       break;
     default:
       throw new Error('launch.type must be terminal or agent');
@@ -385,6 +405,29 @@ function isKnownEmptyClaudeSession(session: Session): boolean {
   return launchProvider(session) === 'claude_code' && session.hasUserInput === false;
 }
 
+function normalizeSessionDraft(draft: SessionDraft | LegacySessionDraft): SessionDraft {
+  if (draft.launch) return draft as SessionDraft;
+  const raw = draft as unknown as Record<string, unknown>;
+  const launch = parseLaunch(raw);
+  if (!launch) return draft as unknown as SessionDraft;
+  const {
+    kind: _kind,
+    shell: _shell,
+    command: _command,
+    args: _args,
+    resumeMode: _resumeMode,
+    claudeSessionName: _claudeSessionName,
+    claudeSessionId: _claudeSessionId,
+    codexSessionId: _codexSessionId,
+    fullscreenTui: _fullscreenTui,
+    model: _model,
+    reasoningEffort: _reasoningEffort,
+    extraArgs: _extraArgs,
+    ...rest
+  } = raw;
+  return { ...rest, launch } as unknown as SessionDraft;
+}
+
 function migrateRawSession(raw: Record<string, unknown>): Session | null {
   const launch = parseLaunch(raw);
   if (!launch) return null;
@@ -400,6 +443,7 @@ function migrateRawSession(raw: Record<string, unknown>): Session | null {
     fullscreenTui: _fullscreenTui,
     model: _model,
     reasoningEffort: _reasoningEffort,
+    extraArgs: _extraArgs,
     currentAgentRuntime: rawRuntime,
     ...rest
   } = raw;
@@ -454,7 +498,8 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         ...(typeof existing['codexSessionId'] === 'string' ? { codexSessionId: existing['codexSessionId'] } : {}),
         ...(typeof existing['fullscreenTui'] === 'boolean' ? { fullscreenTui: existing['fullscreenTui'] } : {}),
         ...(typeof existing['model'] === 'string' ? { model: existing['model'] } : {}),
-        ...(isCodexReasoningEffort(existing['reasoningEffort']) ? { reasoningEffort: existing['reasoningEffort'] } : {})
+        ...(isCodexReasoningEffort(existing['reasoningEffort']) ? { reasoningEffort: existing['reasoningEffort'] } : {}),
+        ...(isStringArray(existing['extraArgs']) ? { extraArgs: existing['extraArgs'] } : {})
       };
     }
   }
@@ -481,7 +526,9 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         resumeMode: typeof raw['resumeMode'] === 'string' ? raw['resumeMode'] as AgentLaunch['resumeMode'] : 'new',
         ...(typeof raw['claudeSessionName'] === 'string' ? { claudeSessionName: raw['claudeSessionName'] } : {}),
         ...(typeof raw['claudeSessionId'] === 'string' ? { claudeSessionId: raw['claudeSessionId'] } : {}),
-        ...(typeof raw['fullscreenTui'] === 'boolean' ? { fullscreenTui: raw['fullscreenTui'] } : {})
+        ...(typeof raw['fullscreenTui'] === 'boolean' ? { fullscreenTui: raw['fullscreenTui'] } : {}),
+        ...(typeof raw['model'] === 'string' ? { model: raw['model'] } : {}),
+        ...(isStringArray(raw['extraArgs']) ? { extraArgs: raw['extraArgs'] } : {})
       };
     case 'codex':
       return {
@@ -490,7 +537,8 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         resumeMode: typeof raw['resumeMode'] === 'string' ? raw['resumeMode'] as AgentLaunch['resumeMode'] : 'new',
         ...(typeof raw['codexSessionId'] === 'string' ? { codexSessionId: raw['codexSessionId'] } : {}),
         ...(typeof raw['model'] === 'string' ? { model: raw['model'] } : {}),
-        ...(isCodexReasoningEffort(raw['reasoningEffort']) ? { reasoningEffort: raw['reasoningEffort'] } : {})
+        ...(isCodexReasoningEffort(raw['reasoningEffort']) ? { reasoningEffort: raw['reasoningEffort'] } : {}),
+        ...(isStringArray(raw['extraArgs']) ? { extraArgs: raw['extraArgs'] } : {})
       };
     default:
       return null;
@@ -513,6 +561,10 @@ function isCodexResumeMode(value: unknown): boolean {
 
 function isCodexReasoningEffort(value: unknown): value is 'low' | 'medium' | 'high' {
   return value === 'low' || value === 'medium' || value === 'high';
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

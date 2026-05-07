@@ -6,6 +6,7 @@ export type ShellKind = 'auto' | 'bash' | 'zsh' | 'pwsh' | 'cmd' | 'custom';
 
 export type AgentRuntimeProvider = 'claude_code' | 'codex';
 export type SessionLaunchKind = 'terminal' | AgentRuntimeProvider;
+export type SessionKind = 'standard_terminal' | AgentRuntimeProvider;
 
 export type SessionRuntimeMode = 'tui' | 'sdk_worker';
 
@@ -40,6 +41,7 @@ export interface AgentLaunch {
   fullscreenTui?: boolean;
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
+  extraArgs?: string[];
 }
 
 export type SessionLaunch = TerminalLaunch | AgentLaunch;
@@ -79,6 +81,8 @@ export type AgentObservedState =
 export interface Session {
   id: SessionId;
   launch: SessionLaunch;
+  kind?: SessionKind;
+  resumeMode?: ClaudeResumeMode | CodexResumeMode;
   runtimeMode?: SessionRuntimeMode;
   name: string;
   cwd: string;

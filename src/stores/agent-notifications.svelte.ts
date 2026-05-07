@@ -221,6 +221,15 @@ class AgentNotificationsStore {
       return;
     }
 
+    if (opts.rowSessionId === opts.activeSessionId && previous === opts.state) {
+      this.log('acknowledge active repeated notify state', {
+        rowSessionId: opts.rowSessionId,
+        state: opts.state
+      });
+      this.acknowledge(opts.rowSessionId);
+      return;
+    }
+
     const marker = this.setMarker(
       opts.rowSessionId,
       opts.subjectId,

@@ -22,6 +22,8 @@ export interface NativeNotificationOptions {
   icon?: string;
 }
 
+export type NativeNotification = NativeNotificationOptions;
+
 export interface NativeNotificationHandle {
   show(): void;
   on?(event: 'click' | 'close' | 'failed', listener: () => void): unknown;

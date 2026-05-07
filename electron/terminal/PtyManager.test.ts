@@ -8,7 +8,6 @@ import type {
 } from '@shared/types/terminal.js';
 import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
-import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => ({

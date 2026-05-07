@@ -148,6 +148,8 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     expect(rc).toContain('codex() { __soloe_agent_launch codex "$@"; }');
     expect(rc).toContain('"$__soloe_u/hook/$__soloe_provider"');
     expect(rc).toContain('"hook_event_name":"SessionStart"');
+    expect(rc).toContain('"argv_b64":"%s"');
+    expect(rc).toContain('"hook_event_name":"SessionEnd"');
     expect(rc).toContain('command "$__soloe_provider" "$@"');
   });
 
@@ -169,6 +171,28 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     expect(script).toContain('--resume claude-attached-123');
   });
 
+  it('preserves attached Claude launch arguments when resuming', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: {
+        type: 'agent',
+        provider: 'claude_code',
+        resumeMode: 'new',
+        model: 'sonnet',
+        extraArgs: ['--dangerously-skip-permissions']
+      },
+      currentAgentRuntime: {
+        provider: 'claude_code',
+        status: 'active',
+        providerThreadId: 'claude-attached-123'
+      }
+    };
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('--resume claude-attached-123 --model sonnet --dangerously-skip-permissions');
+  });
+
   it('resumes an attached Codex runtime instead of reopening the shell', () => {
     const s: Session = {
       ...baseFields(),
@@ -185,6 +209,31 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('command -v codex');
     expect(script).toContain('resume codex-attached-123');
+  });
+
+  it('preserves attached Codex launch arguments when resuming', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+        extraArgs: ['--sandbox', 'danger-full-access']
+      },
+      currentAgentRuntime: {
+        provider: 'codex',
+        status: 'active',
+        providerThreadId: 'codex-attached-123'
+      }
+    };
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain(
+      'resume codex-attached-123 -m gpt-5.5 -c model_reasoning_effort=high --sandbox danger-full-access'
+    );
   });
 
   it('falls back to provider resume-last commands for attached runtimes without a captured id', () => {

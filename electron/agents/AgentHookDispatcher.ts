@@ -1,4 +1,10 @@
-import type { AgentObservedState, Session, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import type {
+  AgentLaunch,
+  AgentObservedState,
+  Session,
+  SessionId,
+  SessionUpdate
+} from '@shared/types/sessions.js';
 import { launchProvider } from '@shared/types/sessions.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
@@ -208,7 +214,6 @@ export class AgentHookDispatcher {
       if (!canUpdateRuntime) return;
 
       const now = new Date().toISOString();
-      const matchingLaunch = launchProvider(existing) === provider;
       const priorProviderThreadId =
         existingRuntime?.provider === provider ? existingRuntime.providerThreadId : undefined;
       const runtime = {
@@ -226,11 +231,9 @@ export class AgentHookDispatcher {
       const transcriptPath = stringField(payload, 'transcript_path');
       if (transcriptPath) patch.transcriptPath = transcriptPath;
 
-      if (sessionId && provider === 'claude_code' && matchingLaunch && existing.launch.type === 'agent') {
-        patch.launch = { ...existing.launch, claudeSessionId: sessionId };
-      }
-      if (sessionId && provider === 'codex' && matchingLaunch && existing.launch.type === 'agent') {
-        patch.launch = { ...existing.launch, codexSessionId: sessionId };
+      const launchPatch = buildLaunchPatch(existing, provider, sessionId, payload, startsRuntime);
+      if (launchPatch) {
+        patch.launch = launchPatch;
       }
 
       const changed =
@@ -239,10 +242,7 @@ export class AgentHookDispatcher {
         || existing.currentAgentRuntime?.providerThreadId !== runtime.providerThreadId
         || existing.providerThreadId !== patch.providerThreadId
         || (transcriptPath !== undefined && existing.transcriptPath !== transcriptPath)
-        || (sessionId && provider === 'claude_code' && matchingLaunch && existing.launch.type === 'agent'
-          && existing.launch.claudeSessionId !== sessionId)
-        || (sessionId && provider === 'codex' && matchingLaunch && existing.launch.type === 'agent'
-          && existing.launch.codexSessionId !== sessionId);
+        || (launchPatch !== null && !sameLaunch(existing.launch, launchPatch));
       if (!changed) return;
 
       const updated = await this.opts.sessionStore.update(soloeSessionId, patch);
@@ -268,6 +268,143 @@ export class AgentHookDispatcher {
       this.opts.log?.('failed to mark session input', err);
     }
   }
+}
+
+function buildLaunchPatch(
+  existing: Session,
+  provider: HookProvider,
+  providerSessionId: string | undefined,
+  payload: Record<string, unknown>,
+  startsRuntime: boolean
+): AgentLaunch | null {
+  const capturedArgs = decodeArgvPayload(payload);
+  const hasCapturedArgs = capturedArgs !== null;
+  const shouldPromote =
+    startsRuntime && (existing.launch.type === 'terminal' || existing.launch.provider !== provider);
+  const shouldRefreshMatchingAgent =
+    existing.launch.type === 'agent'
+    && existing.launch.provider === provider
+    && (providerSessionId !== undefined || hasCapturedArgs);
+
+  if (!shouldPromote && !shouldRefreshMatchingAgent) return null;
+
+  const base: AgentLaunch =
+    existing.launch.type === 'agent' && existing.launch.provider === provider
+      ? { ...existing.launch }
+      : { type: 'agent', provider, resumeMode: 'new' };
+
+  if (provider === 'claude_code') {
+    delete base.codexSessionId;
+    delete base.reasoningEffort;
+    if (providerSessionId) base.claudeSessionId = providerSessionId;
+    if (existing.launch.type === 'agent' && existing.launch.provider === 'claude_code') {
+      base.fullscreenTui = existing.launch.fullscreenTui;
+    }
+  } else {
+    delete base.claudeSessionId;
+    delete base.claudeSessionName;
+    delete base.fullscreenTui;
+    if (providerSessionId) base.codexSessionId = providerSessionId;
+  }
+
+  if (hasCapturedArgs) {
+    const parsed = parseAgentLaunchArgs(provider, capturedArgs);
+    if (parsed.model !== undefined) base.model = parsed.model;
+    else delete base.model;
+    if (provider === 'codex' && parsed.reasoningEffort !== undefined) {
+      base.reasoningEffort = parsed.reasoningEffort;
+    } else if (provider === 'codex') {
+      delete base.reasoningEffort;
+    }
+    if (parsed.extraArgs.length > 0) base.extraArgs = parsed.extraArgs;
+    else delete base.extraArgs;
+  }
+
+  return base;
+}
+
+function sameLaunch(a: Session['launch'], b: Session['launch']): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function decodeArgvPayload(payload: Record<string, unknown>): string[] | null {
+  const raw = stringField(payload, 'argv_b64') ?? stringField(payload, 'argvB64');
+  if (!raw) return null;
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    return decoded.split('\0').filter((arg) => arg.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function parseAgentLaunchArgs(
+  provider: HookProvider,
+  args: string[]
+): {
+  model?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  extraArgs: string[];
+} {
+  const extraArgs: string[] = [];
+  let model: string | undefined;
+  let reasoningEffort: 'low' | 'medium' | 'high' | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    const next = args[i + 1];
+
+    if (provider === 'codex' && i === 0 && arg === 'resume') {
+      if (next && !next.startsWith('-')) i += 1;
+      continue;
+    }
+    if (provider === 'claude_code' && (arg === '--resume' || arg === '-r')) {
+      if (next) i += 1;
+      continue;
+    }
+    if (provider === 'claude_code' && arg.startsWith('--resume=')) continue;
+    if (provider === 'claude_code' && arg === '--continue') continue;
+
+    if (arg === '--model' || arg === '-m') {
+      if (next) {
+        model = next;
+        i += 1;
+      }
+      continue;
+    }
+    if (arg.startsWith('--model=')) {
+      model = arg.slice('--model='.length);
+      continue;
+    }
+
+    if (provider === 'codex' && arg === '-c') {
+      const parsed = parseCodexReasoningEffort(next);
+      if (parsed) {
+        reasoningEffort = parsed;
+        i += 1;
+        continue;
+      }
+    }
+    if (provider === 'codex') {
+      const parsed = parseCodexReasoningEffort(arg);
+      if (parsed) {
+        reasoningEffort = parsed;
+        continue;
+      }
+    }
+
+    extraArgs.push(arg);
+  }
+  return {
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    extraArgs
+  };
+}
+
+function parseCodexReasoningEffort(value: string | undefined): 'low' | 'medium' | 'high' | null {
+  if (!value) return null;
+  const match = value.match(/^model_reasoning_effort=(low|medium|high)$/);
+  return match ? match[1] as 'low' | 'medium' | 'high' : null;
 }
 
 function mapClaudeHook(
@@ -304,6 +441,9 @@ function mapClaudeHook(
       }
       return { state: 'completed', summary: 'completed' };
     case 'SessionEnd':
+      if (stringField(payload, 'source') === 'shell_launch') {
+        return { state: 'idle', summary: 'idle' };
+      }
       return { state: 'exited', summary: 'session ended' };
     case 'StopFailure': {
       const usageLimit = detectUsageLimit(payload);
@@ -416,6 +556,11 @@ function mapCodexHook(
       return { state: 'working', summary: 'thinking' };
     case 'Stop':
       return { state: 'completed', summary: 'completed' };
+    case 'SessionEnd':
+      if (stringField(payload, 'source') === 'shell_launch') {
+        return { state: 'idle', summary: 'idle' };
+      }
+      return { state: 'exited', summary: 'session ended' };
     default:
       return null;
   }

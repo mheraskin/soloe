@@ -7,6 +7,8 @@ import { AgentObserverManager } from './AgentObserverManager.js';
 import { SessionStore } from '../sessions/SessionStore.js';
 import type { AutoRenameService } from './AutoRenameService.js';
 
+const argvB64 = (...args: string[]) => Buffer.from(`${args.join('\0')}\0`, 'utf8').toString('base64');
+
 describe('AgentHookDispatcher', () => {
   let tmp: string;
   let observer: AgentObserverManager;
@@ -364,7 +366,7 @@ describe('AgentHookDispatcher', () => {
       expect(updated?.launch.type === 'agent' ? updated.launch.claudeSessionId : undefined).toBeUndefined();
     });
 
-    it('promotes the current runtime when the hook provider does not match the stored kind', async () => {
+    it('switches the stored agent launch when the hook provider does not match the stored kind', async () => {
       const created = await sessionStore.create({
         name: 'work',
         cwd: '/tmp',
@@ -375,10 +377,20 @@ describe('AgentHookDispatcher', () => {
       await dispatcher.dispatch({
         provider: 'codex',
         soloeSessionId: created.id,
-        payload: { hook_event_name: 'SessionStart', session_id: 'codex-uuid-abc' }
+        payload: {
+          hook_event_name: 'SessionStart',
+          session_id: 'codex-uuid-abc',
+          argv_b64: argvB64('--model', 'gpt-5.5')
+        }
       });
       const updated = await sessionStore.get(created.id);
-      expect(updated?.launch.type === 'agent' ? updated.launch.codexSessionId : undefined).toBeUndefined();
+      expect(updated?.launch).toMatchObject({
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        codexSessionId: 'codex-uuid-abc',
+        model: 'gpt-5.5'
+      });
       expect(updated?.providerThreadId).toBe('codex-uuid-abc');
       expect(updated?.currentAgentRuntime).toMatchObject({
         provider: 'codex',
@@ -402,10 +414,22 @@ describe('AgentHookDispatcher', () => {
       await dispatcher.dispatch({
         provider: 'claude_code',
         soloeSessionId: created.id,
-        payload: { hook_event_name: 'SessionStart', session_id: 'claude-uuid-attached' }
+        payload: {
+          hook_event_name: 'SessionStart',
+          session_id: 'claude-uuid-attached',
+          source: 'shell_launch',
+          argv_b64: argvB64('--model', 'sonnet', '--dangerously-skip-permissions')
+        }
       });
       const updated = await sessionStore.get(created.id);
-      expect(updated?.launch.type).toBe('terminal');
+      expect(updated?.launch).toMatchObject({
+        type: 'agent',
+        provider: 'claude_code',
+        resumeMode: 'new',
+        claudeSessionId: 'claude-uuid-attached',
+        model: 'sonnet',
+        extraArgs: ['--dangerously-skip-permissions']
+      });
       expect(updated?.providerThreadId).toBe('claude-uuid-attached');
       expect(updated?.currentAgentRuntime).toMatchObject({
         provider: 'claude_code',
@@ -416,6 +440,52 @@ describe('AgentHookDispatcher', () => {
         provider: 'claude_code',
         providerThreadId: 'claude-uuid-attached',
         state: 'starting'
+      });
+
+      const reloaded = new SessionStore(join(tmp, 'sessions.json'));
+      await reloaded.init();
+      expect((await reloaded.get(created.id))?.launch).toMatchObject({
+        type: 'agent',
+        provider: 'claude_code',
+        model: 'sonnet',
+        extraArgs: ['--dangerously-skip-permissions']
+      });
+    });
+
+    it('marks a shell-launched agent idle when the command exits without closing the terminal', async () => {
+      const created = await sessionStore.create({
+        name: 'shell',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        launch: { type: 'terminal', shell: 'bash' }
+      });
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'SessionStart',
+          source: 'shell_launch',
+          session_id: 'codex-uuid-attached'
+        }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'SessionEnd',
+          source: 'shell_launch',
+          session_id: 'codex-uuid-attached',
+          exit_code: 130
+        }
+      });
+
+      expect(observer.getSnapshot(created.id)?.state).toBe('idle');
+      expect((await sessionStore.get(created.id))?.currentAgentRuntime).toMatchObject({
+        provider: 'codex',
+        status: 'exited',
+        providerThreadId: 'codex-uuid-attached'
       });
     });
 
