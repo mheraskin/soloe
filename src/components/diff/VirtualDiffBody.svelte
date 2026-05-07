@@ -312,6 +312,7 @@
     void mode;
     void wrap;
     measured = {};
+    maxContentWidth = 0;
   });
 
   function findFirstAtOrAfter(target: number): number {
@@ -380,9 +381,11 @@
     let currentKey = key;
     const update = () => {
       const h = node.offsetHeight;
-      if (!h || h <= 0) return;
-      if (measured[currentKey] === h) return;
-      measured = { ...measured, [currentKey]: h };
+      if (h > 0 && measured[currentKey] !== h) {
+        measured = { ...measured, [currentKey]: h };
+      }
+      const w = node.scrollWidth;
+      if (w > maxContentWidth) maxContentWidth = w;
     };
     update();
     const ro = new ResizeObserver(update);
@@ -622,7 +625,11 @@
   {/if}
 {/snippet}
 
-<div class="relative w-full" style:height="{totalHeight}px">
+<div
+  class="relative w-full"
+  style:height="{totalHeight}px"
+  style:min-width={!wrap && maxContentWidth > 0 ? `${maxContentWidth}px` : null}
+>
   {#if sticky}
     <header
       class="absolute right-0 left-0 z-10 flex items-center gap-2 border-y border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"

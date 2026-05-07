@@ -511,7 +511,11 @@
         {:else}
           {@const gapPath = diff.fromPath ?? diff.path}
           {@const canExpand = diff.kind !== 'added' && diff.kind !== 'untracked'}
-          <ScrollArea class="min-h-0 flex-1" bind:viewportRef={diffViewportEl}>
+          <ScrollArea
+            orientation={workingDiff.wordWrap ? 'vertical' : 'both'}
+            class="min-h-0 flex-1"
+            bind:viewportRef={diffViewportEl}
+          >
             <div bind:this={diffRootEl} class="flex flex-col">
               <DiffSelectionMenu
                 cwd={activeCwd!}
