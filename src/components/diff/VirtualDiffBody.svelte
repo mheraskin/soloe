@@ -686,7 +686,7 @@
             </span>
             <span class="w-5 shrink-0 pl-1 text-center select-none">&nbsp;</span>
             <span class={textCls} data-diff-side="new" data-diff-line={newLine}
-              >{text || ' '}</span>
+              >{@html renderText(text, 'context')}</span>
           </div>
         {:else}
           <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono text-[11px] leading-[1.55]">
@@ -702,7 +702,7 @@
                 <CommentMarker comments={commentsStartingAt('new', newLine)} />
               </span>
               <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
-                >{text || ' '}</span>
+                >{@html renderText(text, 'context')}</span>
             </div>
             <div class="flex min-h-[1.45em] bg-background">
               <span
@@ -715,7 +715,7 @@
                 {newLine}
               </span>
               <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
-                >{text || ' '}</span>
+                >{@html renderText(text, 'context')}</span>
             </div>
           </div>
         {/if}

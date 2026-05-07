@@ -2,6 +2,7 @@
   import { ChevronsUpDown, Loader2 } from '@lucide/svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
   import { diffComments, type DiffSide } from '../../stores/diff-comments.svelte';
+  import { highlightLine, languageForPath } from '$lib/highlight';
   import CommentMarker from './CommentMarker.svelte';
 
   interface Props {
@@ -30,6 +31,12 @@
 
   let entry = $derived(workingDiff.fileLinesEntry(cwd, filePath, oldStart, oldEnd));
   let gapSize = $derived(oldEnd - oldStart + 1);
+  let language = $derived(languageForPath(filePath));
+
+  function renderLine(text: string): string {
+    if (!text) return '&nbsp;';
+    return highlightLine(text, language);
+  }
 
   async function expand(): Promise<void> {
     await workingDiff.loadFileLines(cwd, filePath, oldStart, oldEnd);
@@ -119,7 +126,7 @@
           </span>
           <span class="w-5 shrink-0 pl-1 text-center select-none">&nbsp;</span>
           <span class={textCls} data-diff-side="new" data-diff-line={newLine}
-            >{text || ' '}</span>
+            >{@html renderLine(text)}</span>
         </div>
       {/each}
     {:else}
@@ -139,7 +146,7 @@
               <CommentMarker comments={commentsStartingAt('new', newLine)} />
             </span>
             <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
-              >{text || ' '}</span>
+              >{@html renderLine(text)}</span>
           </div>
           <div class="flex min-h-[1.45em] bg-background">
             <span
@@ -152,7 +159,7 @@
               {newLine}
             </span>
             <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
-              >{text || ' '}</span>
+              >{@html renderLine(text)}</span>
           </div>
         </div>
       {/each}
