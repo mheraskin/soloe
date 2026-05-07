@@ -38,6 +38,7 @@ import { DiagnosticsIpc } from './ipc/diagnostics.ipc.js';
 import { WindowIpc } from './ipc/window.ipc.js';
 import { AgentIntegrationIpc } from './ipc/agent-integration.ipc.js';
 import { HookInstaller } from './integrations/HookInstaller.js';
+import { probeWslMcpHostname } from './integrations/WslHostDetector.js';
 import { SessionTranscriptReader } from './overview/SessionTranscriptReader.js';
 import { WorktreeFactsCollector } from './overview/WorktreeFactsCollector.js';
 import { SummaryCacheStore } from './overview/SummaryCacheStore.js';
@@ -302,10 +303,30 @@ async function setupServices(): Promise<AppServices> {
   });
   const diagnosticsIpc = new DiagnosticsIpc({ service: diagnostics });
   const windowIpc = new WindowIpc();
-  const hookInstaller = new HookInstaller({ bridge: effectiveBridgeConfig });
+  const hookInstaller = new HookInstaller({
+    bridge: effectiveBridgeConfig,
+    wslHostnameProbe: probeWslMcpHostname
+  });
   await hookInstaller.refresh().catch((err) => {
     console.warn('failed to detect WSL hosts for hook installer:', err);
   });
+  // After WSL hosts are known, repair any stale MCP URL in already-installed
+  // configs. Off by default for users who explicitly opt out — they have to
+  // re-click Install themselves after WSL reboots / port shifts.
+  const integrationSettings = (await settings.get()).integrations;
+  if (integrationSettings.autoRefreshMcpUrl) {
+    void hookInstaller.refreshMcpForInstalledHosts().then((res) => {
+      if (res.rewritten.length > 0) {
+        console.log(
+          '[hooks] refreshed MCP URL for hosts:',
+          res.rewritten.map((h) => (h.kind === 'wsl' ? `wsl:${h.distro}` : 'windows')).join(', ')
+        );
+      }
+      for (const e of res.errors) {
+        console.warn('[hooks] MCP refresh failed:', e.host, e.error);
+      }
+    });
+  }
   const agentIntegrationIpc = new AgentIntegrationIpc({
     installer: hookInstaller,
     getWindows: () => BrowserWindow.getAllWindows()

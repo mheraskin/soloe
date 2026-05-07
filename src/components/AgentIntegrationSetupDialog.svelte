@@ -50,7 +50,9 @@
       </Dialog.Title>
       <Dialog.Description class="text-sm text-foreground">
         Connect Claude and Codex on each environment Soloe should observe. Hooks live in each
-        environment's home directory and are not shared between Windows and WSL.
+        environment's home directory and are not shared between Windows and WSL. Soloe will
+        re-probe the WSL bridge URL on every launch and rewrite agent configs if it drifted (you
+        can opt out in Settings → Integration).
       </Dialog.Description>
     </Dialog.Header>
 

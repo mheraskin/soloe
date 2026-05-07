@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ipc } from '../../lib/ipc';
+  import { settings } from '../../stores/settings.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import type { AgentIntegrationStatus } from '@shared/types/ipc.js';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Label } from '$lib/components/ui/label';
   import AgentIntegrationGrid from '../AgentIntegrationGrid.svelte';
 
   let status = $state<AgentIntegrationStatus | null>(null);
@@ -17,6 +20,14 @@
   async function refresh() {
     try {
       status = await ipc.agentIntegration.status();
+    } catch (e) {
+      reportError(e);
+    }
+  }
+
+  async function setAutoRefresh(value: boolean): Promise<void> {
+    try {
+      await settings.update({ integrations: { autoRefreshMcpUrl: value } });
     } catch (e) {
       reportError(e);
     }
@@ -46,4 +57,23 @@
   {#if status}
     <AgentIntegrationGrid {status} onChange={(next) => (status = next)} />
   {/if}
+
+  <div class="flex flex-col gap-1.5 rounded-md border border-border p-2.5">
+    <div class="flex items-center gap-2">
+      <Checkbox
+        id="auto-refresh-mcp-url"
+        checked={settings.current.integrations.autoRefreshMcpUrl}
+        onCheckedChange={(v) => setAutoRefresh(v === true)}
+      />
+      <Label for="auto-refresh-mcp-url" class="text-sm text-foreground">
+        Auto-refresh MCP URL on app start
+      </Label>
+    </div>
+    <p class="m-0 text-[11px] text-muted-foreground">
+      WSL's <code>host.wsl.internal</code> address can change between reboots. When enabled, Soloe
+      probes each connected environment on launch and rewrites the agent config files if the URL
+      drifted. Turn this off and you'll need to click <b>Update setup</b> manually whenever the
+      bridge URL changes.
+    </p>
+  </div>
 </div>

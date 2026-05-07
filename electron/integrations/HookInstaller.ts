@@ -40,6 +40,16 @@ export interface HookInstallerOptions {
   hosts?: HookHost[];
   detector?: WslHostDetector;
   bridge?: BridgeIdentity;
+  // Resolves the hostname an MCP client inside `distro` should use to reach
+  // the Windows host. Defaults to "host.wsl.internal"; override with a probe
+  // (e.g. via wsl.exe ip route) for distros where that doesn't resolve.
+  wslHostnameProbe?: (distro: string) => Promise<string>;
+}
+
+export interface RefreshMcpResult {
+  // Hosts whose MCP URLs were rewritten because the resolved value changed.
+  rewritten: HookHostKey[];
+  errors: { host: HookHostKey; error: string }[];
 }
 
 const CLAUDE_EVENTS = [
@@ -131,11 +141,13 @@ export class HookInstaller {
   private hostsList: HookHost[];
   private readonly detector: WslHostDetector;
   private readonly bridge: BridgeIdentity | null;
+  private readonly wslHostnameProbe: (distro: string) => Promise<string>;
 
   constructor(opts: HookInstallerOptions = {}) {
     this.hostsList = opts.hosts ?? [defaultLocalHost()];
     this.detector = opts.detector ?? new WslHostDetector();
     this.bridge = opts.bridge ?? null;
+    this.wslHostnameProbe = opts.wslHostnameProbe ?? (async () => 'host.wsl.internal');
   }
 
   hosts(): HookHost[] {
@@ -173,10 +185,8 @@ export class HookInstaller {
     const original = await readJsonOrNull(filePath);
     let updated = mergeClaudeHooks(original ?? {}, HOOK_COMMAND_CLAUDE);
     if (this.bridge) {
-      updated = mergeClaudeMcp(updated, {
-        url: mcpUrlForHost(target, this.bridge.port),
-        token: this.bridge.token
-      });
+      const url = await this.resolveMcpUrlForHost(target);
+      updated = mergeClaudeMcp(updated, { url, token: this.bridge.token });
     }
     await this.writeAtomic(filePath, JSON.stringify(updated, null, 2) + '\n', original !== null);
   }
@@ -196,9 +206,8 @@ export class HookInstaller {
     const original = await readTomlOrNull(filePath);
     let updated = mergeCodexHooks(original ?? {}, HOOK_COMMAND_CODEX);
     if (this.bridge) {
-      updated = mergeCodexMcp(updated, {
-        url: mcpUrlForHost(target, this.bridge.port)
-      });
+      const url = await this.resolveMcpUrlForHost(target);
+      updated = mergeCodexMcp(updated, { url });
     }
     await this.writeAtomic(filePath, stringifyToml(updated), original !== null);
   }
@@ -210,6 +219,74 @@ export class HookInstaller {
     if (!original) return;
     const cleaned = removeSoloeFromCodex(original);
     await this.writeAtomic(filePath, stringifyToml(cleaned), false);
+  }
+
+  // Walks every available host and rewrites the soloe MCP URL in any
+  // already-installed config whose value differs from the current canonical
+  // one. No-op for entries without the _soloe marker. Returns hosts that were
+  // actually rewritten so the caller can log/notify; entries already at the
+  // right URL are skipped silently. Bridge must be configured.
+  async refreshMcpForInstalledHosts(): Promise<RefreshMcpResult> {
+    const result: RefreshMcpResult = { rewritten: [], errors: [] };
+    if (!this.bridge) return result;
+    for (const host of this.hostsList) {
+      if (!host.available) continue;
+      const key: HookHostKey = host.kind === 'wsl'
+        ? { kind: 'wsl', distro: host.distro ?? '' }
+        : { kind: 'windows' };
+      try {
+        const url = await this.resolveMcpUrlForHost(host);
+        const claudeChanged = await this.refreshClaudeMcp(host, url);
+        const codexChanged = await this.refreshCodexMcp(host, url);
+        if (claudeChanged || codexChanged) result.rewritten.push(key);
+      } catch (err) {
+        result.errors.push({ host: key, error: errorMessage(err) });
+      }
+    }
+    return result;
+  }
+
+  private async refreshClaudeMcp(host: HookHost, url: string): Promise<boolean> {
+    if (!this.bridge) return false;
+    const filePath = this.claudeUserPath(host);
+    const original = await readJsonOrNull(filePath);
+    if (!original) return false;
+    const servers = isObject(original['mcpServers']) ? original['mcpServers'] : null;
+    const entry = servers ? servers[SOLOE_MCP_NAME] : null;
+    if (!isObject(entry) || entry[SOLOE_MARKER] !== true) return false;
+    if (entry['url'] === url && this.bearerHeaderMatches(entry, this.bridge.token)) return false;
+    const updated = mergeClaudeMcp(original, { url, token: this.bridge.token });
+    await this.writeAtomic(filePath, JSON.stringify(updated, null, 2) + '\n', true);
+    return true;
+  }
+
+  private async refreshCodexMcp(host: HookHost, url: string): Promise<boolean> {
+    if (!this.bridge) return false;
+    const filePath = this.codexConfigPath(host);
+    const original = await readTomlOrNull(filePath);
+    if (!original) return false;
+    const servers = isObject(original['mcp_servers']) ? original['mcp_servers'] : null;
+    const entry = servers ? servers[SOLOE_MCP_NAME] : null;
+    if (!isObject(entry) || entry[SOLOE_MARKER] !== true) return false;
+    if (entry['url'] === url) return false;
+    const updated = mergeCodexMcp(original, { url });
+    await this.writeAtomic(filePath, stringifyToml(updated), true);
+    return true;
+  }
+
+  private bearerHeaderMatches(entry: Record<string, unknown>, token: string): boolean {
+    const headers = entry['headers'];
+    if (!isObject(headers)) return false;
+    return headers['Authorization'] === `Bearer ${token}`;
+  }
+
+  private async resolveMcpUrlForHost(host: HookHost): Promise<string> {
+    if (!this.bridge) throw new Error('bridge identity not configured');
+    if (host.kind === 'wsl') {
+      const hostname = await this.wslHostnameProbe(host.distro ?? '');
+      return `http://${hostname}:${this.bridge.port}/mcp`;
+    }
+    return `http://127.0.0.1:${this.bridge.port}/mcp`;
   }
 
   private requireHost(key: HookHostKey): HookHost {
@@ -599,4 +676,8 @@ function stripSoloeFromGroup(group: unknown): unknown | null {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

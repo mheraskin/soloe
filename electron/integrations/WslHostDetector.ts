@@ -111,3 +111,48 @@ function getWslHome(distro: string): Promise<string | null> {
     });
   });
 }
+
+// Resolves the hostname an MCP client running inside `distro` should use to
+// reach the Windows host. Mirrors the runtime fallback chain in
+// HookInstaller's hook command: prefer `host.wsl.internal` when DNS resolves,
+// otherwise the default-route gateway IP, otherwise the resolv.conf
+// nameserver. Returns `host.wsl.internal` on probe failure as a best-effort
+// default rather than throwing — the caller can always retry next boot.
+export function probeWslMcpHostname(distro: string): Promise<string> {
+  const script =
+    'if getent hosts host.wsl.internal >/dev/null 2>&1; then ' +
+    'printf %s host.wsl.internal; ' +
+    'else ' +
+    "ip=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}'); " +
+    "[ -z \"$ip\" ] && ip=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null); " +
+    'printf %s "${ip:-host.wsl.internal}"; ' +
+    'fi';
+  return new Promise((resolve) => {
+    const child = spawn(
+      'wsl.exe',
+      ['-d', distro, '--', 'bash', '-c', script],
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    let stdout = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve('host.wsl.internal');
+    }, 5000);
+    child.stdout.on('data', (b: Buffer) => {
+      stdout += b.toString('utf8');
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve('host.wsl.internal');
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        resolve('host.wsl.internal');
+        return;
+      }
+      const out = stdout.trim();
+      resolve(out || 'host.wsl.internal');
+    });
+  });
+}

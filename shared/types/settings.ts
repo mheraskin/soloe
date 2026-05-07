@@ -59,6 +59,10 @@ export interface QuickLaunchPreset {
   extraArgs?: string;
 }
 
+export interface SettingsIntegrations {
+  autoRefreshMcpUrl: boolean;
+}
+
 // Single source of truth for model selection across Settings (background
 // tasks), Quick Launch presets, and the @-mention picker. Refresh by checking
 // platform.claude.com/docs/en/about-claude/models/overview and
@@ -103,6 +107,7 @@ export interface Settings {
   binaries: SettingsBinaries;
   models: SettingsModels;
   quickLaunch: QuickLaunchPreset[];
+  integrations: SettingsIntegrations;
 }
 
 export type SettingsUpdate = {
@@ -112,6 +117,7 @@ export type SettingsUpdate = {
   binaries?: Partial<SettingsBinaries>;
   models?: Partial<SettingsModels>;
   quickLaunch?: QuickLaunchPreset[];
+  integrations?: Partial<SettingsIntegrations>;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -130,5 +136,6 @@ export const DEFAULT_SETTINGS: Settings = {
     textGeneration: DEFAULT_MODEL_CODEX,
     gitCommitGeneration: DEFAULT_MODEL_CODEX
   },
-  quickLaunch: []
+  quickLaunch: [],
+  integrations: { autoRefreshMcpUrl: true }
 };

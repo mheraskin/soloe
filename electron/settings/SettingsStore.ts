@@ -47,7 +47,8 @@ export class SettingsStore {
       defaults: { ...this.cache!.defaults, ...(patch.defaults ?? {}) },
       binaries: mergeBinaries(this.cache!.binaries, patch.binaries),
       models: mergeModels(this.cache!.models, patch.models),
-      quickLaunch: patch.quickLaunch ?? [...this.cache!.quickLaunch]
+      quickLaunch: patch.quickLaunch ?? [...this.cache!.quickLaunch],
+      integrations: { ...this.cache!.integrations, ...(patch.integrations ?? {}) }
     };
     validateSettings(next);
     this.cache = next;
@@ -199,10 +200,21 @@ function parseSettings(raw: unknown): Settings {
     },
     binaries: filterStringRecord(binaries),
     models: parseModels(raw['models']),
-    quickLaunch: parseQuickLaunch(raw['quickLaunch'])
+    quickLaunch: parseQuickLaunch(raw['quickLaunch']),
+    integrations: parseIntegrations(raw['integrations'])
   };
   validateSettings(out);
   return out;
+}
+
+function parseIntegrations(raw: unknown): Settings['integrations'] {
+  if (!isObject(raw)) return { ...DEFAULT_SETTINGS.integrations };
+  return {
+    autoRefreshMcpUrl: pickBoolean(
+      raw['autoRefreshMcpUrl'],
+      DEFAULT_SETTINGS.integrations.autoRefreshMcpUrl
+    )
+  };
 }
 
 function pickEnum(value: unknown, valid: Set<unknown>, fallback: string): string {
@@ -291,6 +303,10 @@ function validateSettings(s: Settings): void {
     if (typeof p.id !== 'string' || !p.id) throw new Error('quickLaunch preset requires an id');
     if (typeof p.label !== 'string' || !p.label) throw new Error('quickLaunch preset requires a label');
     if (!isAgentProvider(p.provider)) throw new Error(`Invalid quickLaunch provider: ${p.provider}`);
+  }
+  if (!isObject(s.integrations as unknown)) throw new Error('integrations must be an object');
+  if (typeof s.integrations.autoRefreshMcpUrl !== 'boolean') {
+    throw new Error('integrations.autoRefreshMcpUrl must be a boolean');
   }
 }
 

@@ -729,3 +729,233 @@ describe('HookInstaller without bridge', () => {
     expect(written.mcpServers).toBeUndefined();
   });
 });
+
+describe('refreshMcpForInstalledHosts', () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'soloe-home-'));
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it('returns an empty result when bridge is not configured', async () => {
+    const installer = new HookInstaller({ hosts: [localHost(homeDir)] });
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res).toEqual({ rewritten: [], errors: [] });
+  });
+
+  it('rewrites a stale Claude MCP URL on a windows host', async () => {
+    const installer = new HookInstaller({
+      hosts: [localHost(homeDir)],
+      bridge: { port: 17896, token: 'tok-123' }
+    });
+    await installer.installClaude(LOCAL);
+    const settingsPath = join(homeDir, '.claude', 'settings.json');
+    const original = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    original.mcpServers.soloe.url = 'http://127.0.0.1:99999/mcp';
+    await fs.writeFile(settingsPath, JSON.stringify(original, null, 2));
+
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res.errors).toEqual([]);
+    expect(res.rewritten).toEqual([{ kind: 'windows' }]);
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    expect(after.mcpServers.soloe.url).toBe('http://127.0.0.1:17896/mcp');
+  });
+
+  it('rewrites a stale Claude bearer token even when URL matches', async () => {
+    const installer = new HookInstaller({
+      hosts: [localHost(homeDir)],
+      bridge: { port: 17896, token: 'tok-NEW' }
+    });
+    await installer.installClaude(LOCAL);
+    const settingsPath = join(homeDir, '.claude', 'settings.json');
+    const original = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    original.mcpServers.soloe.headers.Authorization = 'Bearer tok-OLD';
+    await fs.writeFile(settingsPath, JSON.stringify(original, null, 2));
+
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res.rewritten).toEqual([{ kind: 'windows' }]);
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    expect(after.mcpServers.soloe.headers.Authorization).toBe('Bearer tok-NEW');
+  });
+
+  it('rewrites a stale Codex MCP URL on a windows host', async () => {
+    const installer = new HookInstaller({
+      hosts: [localHost(homeDir)],
+      bridge: { port: 17896, token: 'tok-123' }
+    });
+    await installer.installCodex(LOCAL);
+    const codexPath = join(homeDir, '.codex', 'config.toml');
+    const raw = await fs.readFile(codexPath, 'utf8');
+    await fs.writeFile(
+      codexPath,
+      raw.replace('http://127.0.0.1:17896/mcp', 'http://127.0.0.1:99999/mcp')
+    );
+
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res.errors).toEqual([]);
+    expect(res.rewritten).toEqual([{ kind: 'windows' }]);
+    const parsed = parseToml(await fs.readFile(codexPath, 'utf8')) as Record<string, unknown>;
+    const servers = parsed['mcp_servers'] as Record<string, Record<string, unknown>>;
+    expect(servers['soloe']!['url']).toBe('http://127.0.0.1:17896/mcp');
+  });
+
+  it('is a no-op when URL and token already match', async () => {
+    const installer = new HookInstaller({
+      hosts: [localHost(homeDir)],
+      bridge: { port: 17896, token: 'tok-123' }
+    });
+    await installer.installClaude(LOCAL);
+    await installer.installCodex(LOCAL);
+    const claudeBefore = await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8');
+    const codexBefore = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
+
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res.rewritten).toEqual([]);
+    expect(res.errors).toEqual([]);
+
+    const claudeAfter = await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8');
+    const codexAfter = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
+    expect(claudeAfter).toBe(claudeBefore);
+    expect(codexAfter).toBe(codexBefore);
+  });
+
+  it('skips entries without the _soloe marker', async () => {
+    const installer = new HookInstaller({
+      hosts: [localHost(homeDir)],
+      bridge: { port: 17896, token: 'tok-123' }
+    });
+    const settingsPath = join(homeDir, '.claude', 'settings.json');
+    await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        mcpServers: {
+          soloe: { type: 'http', url: 'http://user.example.com/mcp' }
+        }
+      })
+    );
+
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res.rewritten).toEqual([]);
+    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    expect(after.mcpServers.soloe.url).toBe('http://user.example.com/mcp');
+  });
+
+  it('does nothing when the host has no config files', async () => {
+    const installer = new HookInstaller({
+      hosts: [localHost(homeDir)],
+      bridge: { port: 17896, token: 'tok-123' }
+    });
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res.rewritten).toEqual([]);
+    expect(res.errors).toEqual([]);
+  });
+
+  it('uses the WSL hostname probe for WSL hosts', async () => {
+    const wslHomeDir = mkdtempSync(join(tmpdir(), 'soloe-wsl-'));
+    try {
+      const probed: string[] = [];
+      const installer = new HookInstaller({
+        hosts: [wslHost('Ubuntu', wslHomeDir)],
+        bridge: { port: 17896, token: 'tok-123' },
+        wslHostnameProbe: async (distro) => {
+          probed.push(distro);
+          return '172.21.0.1';
+        }
+      });
+      // Install with the probe → URL written uses the probed IP.
+      await installer.installClaude({ kind: 'wsl', distro: 'Ubuntu' });
+      const installed = JSON.parse(
+        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
+      );
+      expect(installed.mcpServers.soloe.url).toBe('http://172.21.0.1:17896/mcp');
+
+      // Simulate a reboot where the IP drifted to a new value.
+      const drifted = JSON.parse(
+        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
+      );
+      drifted.mcpServers.soloe.url = 'http://172.99.0.1:17896/mcp';
+      await fs.writeFile(
+        join(wslHomeDir, '.claude', 'settings.json'),
+        JSON.stringify(drifted, null, 2)
+      );
+
+      const res = await installer.refreshMcpForInstalledHosts();
+      expect(res.errors).toEqual([]);
+      expect(res.rewritten).toEqual([{ kind: 'wsl', distro: 'Ubuntu' }]);
+      expect(probed).toContain('Ubuntu');
+      const after = JSON.parse(
+        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
+      );
+      expect(after.mcpServers.soloe.url).toBe('http://172.21.0.1:17896/mcp');
+    } finally {
+      rmSync(wslHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('captures probe failures as errors without blocking other hosts', async () => {
+    const wslHomeDir = mkdtempSync(join(tmpdir(), 'soloe-wsl-'));
+    try {
+      const installer = new HookInstaller({
+        hosts: [localHost(homeDir), wslHost('Ubuntu', wslHomeDir)],
+        bridge: { port: 17896, token: 'tok-123' },
+        wslHostnameProbe: async () => {
+          throw new Error('wsl probe boom');
+        }
+      });
+      // Local install + drift so there's something to refresh on the windows side.
+      await installer.installClaude(LOCAL);
+      const settingsPath = join(homeDir, '.claude', 'settings.json');
+      const original = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+      original.mcpServers.soloe.url = 'http://127.0.0.1:99999/mcp';
+      await fs.writeFile(settingsPath, JSON.stringify(original, null, 2));
+
+      // Pre-seed a stale WSL config to give the refresher something to attempt.
+      await fs.mkdir(join(wslHomeDir, '.claude'), { recursive: true });
+      await fs.writeFile(
+        join(wslHomeDir, '.claude', 'settings.json'),
+        JSON.stringify({
+          mcpServers: {
+            soloe: {
+              _soloe: true,
+              _soloe_version: SOLOE_HOOK_VERSION,
+              type: 'http',
+              url: 'http://stale:17896/mcp',
+              headers: { Authorization: 'Bearer tok-123' }
+            }
+          }
+        })
+      );
+
+      const res = await installer.refreshMcpForInstalledHosts();
+      expect(res.rewritten).toEqual([{ kind: 'windows' }]);
+      expect(res.errors).toHaveLength(1);
+      expect(res.errors[0]!.host).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
+      expect(res.errors[0]!.error).toMatch(/wsl probe boom/);
+    } finally {
+      rmSync(wslHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips unavailable hosts silently', async () => {
+    const installer = new HookInstaller({
+      hosts: [
+        {
+          kind: 'wsl',
+          distro: 'Broken',
+          label: 'WSL: Broken',
+          homeDir: '',
+          available: false,
+          reason: 'no $HOME'
+        }
+      ],
+      bridge: { port: 17896, token: 'tok-123' }
+    });
+    const res = await installer.refreshMcpForInstalledHosts();
+    expect(res).toEqual({ rewritten: [], errors: [] });
+  });
+});
