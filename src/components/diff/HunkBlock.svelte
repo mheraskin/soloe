@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { mode } from 'mode-watcher';
   import type { DiffHunk } from '@shared/types/git.js';
   import type { DiffSide } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
-  import { highlight, languageFor, type HighlightedLine } from '$lib/highlight.svelte';
+  import { highlightLine, languageForPath } from '$lib/highlight';
   import CommentMarker from './CommentMarker.svelte';
 
   interface Props {
@@ -16,6 +15,20 @@
   }
 
   let { hunk, mode, gutterWidth, cwd, filePath, wrap = true }: Props = $props();
+
+  let language = $derived(languageForPath(filePath));
+
+  function renderLine(text: string, kind: 'context' | 'add' | 'remove' | 'meta'): string {
+    if (!text) return '&nbsp;';
+    if (kind === 'meta') return escapeText(text);
+    return highlightLine(text, language);
+  }
+
+  function escapeText(s: string): string {
+    return s.replace(/[&<>]/g, (c) =>
+      c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'
+    );
+  }
 
   let textCls = $derived(
     wrap
@@ -87,7 +100,10 @@
   });
 
   function gutterStyle(width: number): string {
-    return `width: ${Math.max(3, width)}ch;`;
+    // min-width so digits never overflow into the adjacent gutter when the
+    // line count grows past the hint — together with the inner padding this
+    // keeps the two numbers visually distinct rather than mashed together.
+    return `min-width: ${Math.max(3, width)}ch;`;
   }
 
   function isSelected(side: DiffSide, line: number | null): boolean {
@@ -109,30 +125,46 @@
       .filter((c) => c.side === side && c.startLine === line);
   }
 
-  function gutterClass(side: DiffSide, line: number | null): string {
+  function gutterClass(side: DiffSide, oldLine: number | null, newLine: number | null): string {
     const base =
-      'relative shrink-0 cursor-pointer border-r border-border/60 px-1.5 text-right text-muted-foreground/70 select-none';
-    if (line === null) return `${base}`;
-    if (isSelected(side, line)) return `${base} bg-amber-500/30`;
-    if (isInComment(side, line)) return `${base} bg-amber-500/15`;
-    return base;
+      'relative shrink-0 cursor-pointer border-r border-border/60 px-2 text-right text-muted-foreground/70 select-none';
+    const lineForSide = side === 'old' ? oldLine : newLine;
+    if (lineForSide === null) return base;
+    const isContext = oldLine !== null && newLine !== null;
+    const otherSide: DiffSide = side === 'old' ? 'new' : 'old';
+    const otherLine = otherSide === 'old' ? oldLine : newLine;
+    if (
+      isSelected(side, lineForSide) ||
+      (isContext && isSelected(otherSide, otherLine))
+    ) {
+      return `${base} bg-amber-500/30`;
+    }
+    if (
+      isInComment(side, lineForSide) ||
+      (isContext && isInComment(otherSide, otherLine))
+    ) {
+      return `${base} bg-amber-500/15`;
+    }
+    return `${base} group-hover/diffrow:bg-amber-500/10`;
   }
 
   // Resolve a click on (preferredSide) to whichever side of the row actually
-  // has a line number. Add rows have no oldLine, remove rows have no newLine —
-  // clicking the empty gutter on those rows still anchors the comment to the
-  // row's only existing side instead of being dead.
+  // has a line number. Context rows always anchor to side='new' so we only
+  // memorize one canonical coordinate (the new-file position). Add/remove
+  // rows have only one side; clicking the empty gutter falls through to the
+  // existing side instead of being dead.
   function resolveTarget(
     preferredSide: DiffSide,
     oldLine: number | null,
     newLine: number | null
   ): { side: DiffSide; line: number } | null {
-    const preferredLine = preferredSide === 'old' ? oldLine : newLine;
-    if (preferredLine !== null) return { side: preferredSide, line: preferredLine };
-    const fallbackSide: DiffSide = preferredSide === 'old' ? 'new' : 'old';
-    const fallbackLine = fallbackSide === 'old' ? oldLine : newLine;
-    if (fallbackLine === null) return null;
-    return { side: fallbackSide, line: fallbackLine };
+    if (oldLine !== null && newLine !== null) {
+      return { side: 'new', line: newLine };
+    }
+    if (newLine !== null) return { side: 'new', line: newLine };
+    if (oldLine !== null) return { side: 'old', line: oldLine };
+    void preferredSide;
+    return null;
   }
 
   function onGutterMousedown(
@@ -191,14 +223,14 @@
         {@const anchorLine = anchorSide === 'old' ? line.oldLine : line.newLine}
         <div
           class={[
-            'flex min-h-[1.45em] gap-0',
+            'group/diffrow flex min-h-[1.45em] gap-0',
             line.kind === 'add' && 'bg-emerald-500/10 dark:bg-emerald-500/12',
             line.kind === 'remove' && 'bg-rose-500/10 dark:bg-rose-500/12',
             line.kind === 'meta' && 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
           ]}
         >
           <span
-            class={gutterClass('old', line.oldLine)}
+            class={gutterClass('old', line.oldLine, line.newLine)}
             style={gutterStyle(gutterWidth)}
             onmousedown={(e) => onGutterMousedown(e, 'old', line.oldLine, line.newLine)}
             onmouseenter={() => onGutterEnter('old', line.oldLine, line.newLine)}
@@ -208,7 +240,7 @@
             <CommentMarker comments={oldStarting} />
           </span>
           <span
-            class={gutterClass('new', line.newLine)}
+            class={gutterClass('new', line.oldLine, line.newLine)}
             style={gutterStyle(gutterWidth)}
             onmousedown={(e) => onGutterMousedown(e, 'new', line.oldLine, line.newLine)}
             onmouseenter={() => onGutterEnter('new', line.oldLine, line.newLine)}
@@ -231,7 +263,7 @@
             class={textCls}
             data-diff-side={line.kind === 'meta' || anchorLine === null ? null : anchorSide}
             data-diff-line={line.kind === 'meta' || anchorLine === null ? null : anchorLine}
-          >{line.text || ' '}</span>
+          >{@html renderLine(line.text, line.kind)}</span>
         </div>
       {/each}
     {:else}
@@ -243,9 +275,12 @@
             <span class="whitespace-pre-wrap">{row.text}</span>
           </div>
         {:else}
+          {@const isContext = row.kind === 'context'}
+          {@const oldAnchorSide = isContext ? 'new' : 'old'}
+          {@const oldAnchorLine = isContext ? row.new : row.old}
           {@const oldStarting = commentsStartingAt('old', row.old)}
           {@const newStarting = commentsStartingAt('new', row.new)}
-          <div class="grid grid-cols-2 gap-px bg-border/50">
+          <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50">
             <div
               class={[
                 'flex min-h-[1.45em] bg-background',
@@ -253,7 +288,7 @@
               ]}
             >
               <span
-                class={gutterClass('old', row.old)}
+                class={gutterClass('old', row.old, row.new)}
                 style={gutterStyle(gutterWidth)}
                 onmousedown={(e) => onGutterMousedown(e, 'old', row.old, row.new)}
                 onmouseenter={() => onGutterEnter('old', row.old, row.new)}
@@ -264,13 +299,13 @@
               </span>
               <span
                 class={splitTextCls}
-                data-diff-side={row.old !== null ? 'old' : null}
-                data-diff-line={row.old}
+                data-diff-side={oldAnchorLine !== null ? oldAnchorSide : null}
+                data-diff-line={oldAnchorLine}
               >
                 {#if row.kind === 'context'}
-                  {row.text || ' '}
+                  {@html renderLine(row.text, 'context')}
                 {:else if row.oldText !== null}
-                  {row.oldText || ' '}
+                  {@html renderLine(row.oldText, 'remove')}
                 {/if}
               </span>
             </div>
@@ -281,7 +316,7 @@
               ]}
             >
               <span
-                class={gutterClass('new', row.new)}
+                class={gutterClass('new', row.old, row.new)}
                 style={gutterStyle(gutterWidth)}
                 onmousedown={(e) => onGutterMousedown(e, 'new', row.old, row.new)}
                 onmouseenter={() => onGutterEnter('new', row.old, row.new)}
@@ -296,9 +331,9 @@
                 data-diff-line={row.new}
               >
                 {#if row.kind === 'context'}
-                  {row.text || ' '}
+                  {@html renderLine(row.text, 'context')}
                 {:else if row.newText !== null}
-                  {row.newText || ' '}
+                  {@html renderLine(row.newText, 'add')}
                 {/if}
               </span>
             </div>

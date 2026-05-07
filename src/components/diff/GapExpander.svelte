@@ -36,7 +36,9 @@
   }
 
   function gutterStyle(width: number): string {
-    return `width: ${Math.max(3, width)}ch;`;
+    // min-width so digits never overflow into the adjacent gutter when the
+    // line count grows past the hint.
+    return `min-width: ${Math.max(3, width)}ch;`;
   }
 
   function isSelected(side: DiffSide, line: number): boolean {
@@ -55,22 +57,37 @@
       .filter((c) => c.side === side && c.startLine === line);
   }
 
-  function gutterClass(side: DiffSide, line: number): string {
+  // Gap rows are always context — every row has both old & new line numbers,
+  // and comments anchor to side='new'. Mirror highlights and hover state
+  // across both gutter columns so the row reads as one unit.
+  function gutterClass(side: DiffSide, oldLine: number, newLine: number): string {
     const base =
-      'relative shrink-0 cursor-pointer border-r border-border/60 px-1.5 text-right text-muted-foreground/70 select-none';
-    if (isSelected(side, line)) return `${base} bg-amber-500/30`;
-    if (isInComment(side, line)) return `${base} bg-amber-500/15`;
-    return base;
+      'relative shrink-0 cursor-pointer border-r border-border/60 px-2 text-right text-muted-foreground/70 select-none';
+    if (isSelected('new', newLine) || isSelected('old', oldLine)) {
+      return `${base} bg-amber-500/30`;
+    }
+    if (isInComment('new', newLine) || isInComment('old', oldLine)) {
+      return `${base} bg-amber-500/15`;
+    }
+    void side;
+    return `${base} group-hover/diffrow:bg-amber-500/10`;
   }
 
-  function onGutterMousedown(e: MouseEvent, side: DiffSide, line: number): void {
+  function onGutterMousedown(e: MouseEvent, newLine: number): void {
     if (e.button !== 0) return;
     e.preventDefault();
-    diffComments.startSelection(cwd, filePath, side, line);
+    diffComments.startSelection(cwd, filePath, 'new', newLine);
   }
 
-  function onGutterEnter(side: DiffSide, line: number): void {
-    diffComments.extendSelection(side, line);
+  function onGutterEnter(newLine: number, oldLine: number): void {
+    // While dragging, snap to the locked side so the empty gap rows still
+    // extend correctly when a drag started in a hunk on the 'old' side.
+    const sel = diffComments.selection;
+    if (sel?.dragging) {
+      diffComments.extendSelection(sel.side, sel.side === 'old' ? oldLine : newLine);
+      return;
+    }
+    diffComments.extendSelection('new', newLine);
   }
 </script>
 
@@ -80,26 +97,25 @@
       {#each entry.lines as text, idx (idx)}
         {@const oldLine = oldStart + idx}
         {@const newLine = newStart + idx}
-        <div class="flex min-h-[1.45em] gap-0">
+        <div class="group/diffrow flex min-h-[1.45em] gap-0">
           <span
-            class={gutterClass('old', oldLine)}
+            class={gutterClass('old', oldLine, newLine)}
             style={gutterStyle(gutterWidth)}
-            onmousedown={(e) => onGutterMousedown(e, 'old', oldLine)}
-            onmouseenter={() => onGutterEnter('old', oldLine)}
+            onmousedown={(e) => onGutterMousedown(e, newLine)}
+            onmouseenter={() => onGutterEnter(newLine, oldLine)}
             role="presentation"
           >
             {oldLine}
-            <CommentMarker comments={commentsStartingAt('old', oldLine)} />
+            <CommentMarker comments={commentsStartingAt('new', newLine)} />
           </span>
           <span
-            class={gutterClass('new', newLine)}
+            class={gutterClass('new', oldLine, newLine)}
             style={gutterStyle(gutterWidth)}
-            onmousedown={(e) => onGutterMousedown(e, 'new', newLine)}
-            onmouseenter={() => onGutterEnter('new', newLine)}
+            onmousedown={(e) => onGutterMousedown(e, newLine)}
+            onmouseenter={() => onGutterEnter(newLine, oldLine)}
             role="presentation"
           >
             {newLine}
-            <CommentMarker comments={commentsStartingAt('new', newLine)} />
           </span>
           <span class="w-5 shrink-0 pl-1 text-center select-none">&nbsp;</span>
           <span class={textCls} data-diff-side="new" data-diff-line={newLine}
@@ -110,31 +126,30 @@
       {#each entry.lines as text, idx (idx)}
         {@const oldLine = oldStart + idx}
         {@const newLine = newStart + idx}
-        <div class="grid grid-cols-2 gap-px bg-border/50">
+        <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50">
           <div class="flex min-h-[1.45em] bg-background">
             <span
-              class={gutterClass('old', oldLine)}
+              class={gutterClass('old', oldLine, newLine)}
               style={gutterStyle(gutterWidth)}
-              onmousedown={(e) => onGutterMousedown(e, 'old', oldLine)}
-              onmouseenter={() => onGutterEnter('old', oldLine)}
+              onmousedown={(e) => onGutterMousedown(e, newLine)}
+              onmouseenter={() => onGutterEnter(newLine, oldLine)}
               role="presentation"
             >
               {oldLine}
-              <CommentMarker comments={commentsStartingAt('old', oldLine)} />
+              <CommentMarker comments={commentsStartingAt('new', newLine)} />
             </span>
-            <span class={splitTextCls} data-diff-side="old" data-diff-line={oldLine}
+            <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
               >{text || ' '}</span>
           </div>
           <div class="flex min-h-[1.45em] bg-background">
             <span
-              class={gutterClass('new', newLine)}
+              class={gutterClass('new', oldLine, newLine)}
               style={gutterStyle(gutterWidth)}
-              onmousedown={(e) => onGutterMousedown(e, 'new', newLine)}
-              onmouseenter={() => onGutterEnter('new', newLine)}
+              onmousedown={(e) => onGutterMousedown(e, newLine)}
+              onmouseenter={() => onGutterEnter(newLine, oldLine)}
               role="presentation"
             >
               {newLine}
-              <CommentMarker comments={commentsStartingAt('new', newLine)} />
             </span>
             <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
               >{text || ' '}</span>

@@ -215,3 +215,88 @@
     color: var(--foreground);
   }
 }
+
+/* highlight.js token colors — light theme defaults, .dark overrides below.
+   We don't use a stock hljs CSS so colors stay aligned with the app palette. */
+:root {
+  --hl-keyword: oklch(0.45 0.18 295);
+  --hl-string: oklch(0.45 0.13 145);
+  --hl-number: oklch(0.55 0.18 45);
+  --hl-comment: oklch(0.55 0 0);
+  --hl-function: oklch(0.5 0.16 255);
+  --hl-type: oklch(0.55 0.13 195);
+  --hl-variable: oklch(0.45 0.1 30);
+  --hl-tag: oklch(0.5 0.18 25);
+  --hl-attr: oklch(0.55 0.16 65);
+  --hl-meta: oklch(0.55 0 0);
+}
+.dark {
+  --hl-keyword: oklch(0.78 0.13 295);
+  --hl-string: oklch(0.78 0.13 145);
+  --hl-number: oklch(0.78 0.15 65);
+  --hl-comment: oklch(0.55 0 0);
+  --hl-function: oklch(0.78 0.12 235);
+  --hl-type: oklch(0.78 0.1 195);
+  --hl-variable: oklch(0.82 0.06 60);
+  --hl-tag: oklch(0.74 0.16 25);
+  --hl-attr: oklch(0.82 0.13 80);
+  --hl-meta: oklch(0.6 0 0);
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-built_in {
+  color: var(--hl-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-symbol,
+.hljs-quote {
+  color: var(--hl-string);
+}
+.hljs-number {
+  color: var(--hl-number);
+}
+.hljs-comment {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-section {
+  color: var(--hl-function);
+}
+.hljs-type,
+.hljs-class .hljs-title {
+  color: var(--hl-type);
+}
+.hljs-variable,
+.hljs-params {
+  color: var(--hl-variable);
+}
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--hl-tag);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property {
+  color: var(--hl-attr);
+}
+.hljs-meta,
+.hljs-doctag,
+.hljs-bullet {
+  color: var(--hl-meta);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
