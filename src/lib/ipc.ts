@@ -19,6 +19,7 @@ import type {
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
   FileDiffRequest,
+  FileLinesRequest,
   GitCheckoutRequest,
   GitChangeEvent,
   GitRecentCommitsRequest,
@@ -170,6 +171,8 @@ export const ipc = {
       unwrap(await c.git.workingChanges(toIpcPayload(request))),
     fileDiff: async (request: FileDiffRequest) =>
       unwrap(await c.git.fileDiff(toIpcPayload(request))),
+    fileLines: async (request: FileLinesRequest) =>
+      unwrap(await c.git.fileLines(toIpcPayload(request))),
     stageFiles: async (request: StageFilesRequest) =>
       unwrap(await c.git.stageFiles(toIpcPayload(request))),
     unstageFiles: async (request: StageFilesRequest) =>

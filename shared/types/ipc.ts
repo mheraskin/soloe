@@ -10,6 +10,8 @@ import type {
 import type {
   FileDiff,
   FileDiffRequest,
+  FileLinesRequest,
+  FileLinesResult,
   GitAheadBehind,
   GitBranch,
   GitCheckoutRequest,
@@ -147,6 +149,7 @@ export const IpcChannels = {
     checkout: 'git:checkout',
     workingChanges: 'git:working-changes',
     fileDiff: 'git:file-diff',
+    fileLines: 'git:file-lines',
     stageFiles: 'git:stage-files',
     unstageFiles: 'git:unstage-files',
     change: 'git:change'
@@ -308,6 +311,7 @@ export interface GitApi {
   checkout(request: GitCheckoutRequest): Promise<IpcResult<GitStatus>>;
   workingChanges(request: WorkingChangesRequest): Promise<IpcResult<WorkingChangesResult>>;
   fileDiff(request: FileDiffRequest): Promise<IpcResult<FileDiff>>;
+  fileLines(request: FileLinesRequest): Promise<IpcResult<FileLinesResult>>;
   stageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
   unstageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
   onChange(listener: (event: GitChangeEvent) => void): () => void;

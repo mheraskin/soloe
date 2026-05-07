@@ -161,6 +161,20 @@ export interface FileDiffRequest {
   wslDistro?: string;
 }
 
+export interface FileLinesRequest {
+  cwd: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
+export interface FileLinesResult {
+  lines: string[];
+  totalLines: number;
+}
+
 export interface FileDiff {
   path: string;
   fromPath: string | null;

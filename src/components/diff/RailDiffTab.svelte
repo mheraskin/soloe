@@ -9,18 +9,24 @@
     Columns,
     FileDiff,
     Plus,
-    Minus
+    Minus,
+    Maximize2,
+    Minimize2,
+    SquareTerminal
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
   import { sessions } from '../../stores/sessions.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
   import { reportError } from '../../stores/toast.svelte';
+  import { Keymap } from '../../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import KbdHint from '../KbdHint.svelte';
   import ChangeRow from './ChangeRow.svelte';
   import HunkBlock from './HunkBlock.svelte';
+  import GapExpander from './GapExpander.svelte';
 
   type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked';
 
@@ -186,6 +192,11 @@
     workingDiff.setContextLines(clampContext(value));
   }
 
+  function focusTerminal(): void {
+    if (workingDiff.fullscreen) workingDiff.fullscreen = false;
+    window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
+  }
+
   onMount(() => {
     workingDiff.attachListeners();
     return () => workingDiff.detach();
@@ -206,6 +217,20 @@
       <Button
         variant="ghost"
         size="xs"
+        onclick={focusTerminal}
+        aria-label="Focus terminal"
+        title="Focus terminal (Ctrl+;)"
+        class="relative"
+      >
+        <SquareTerminal class="size-3" />
+        <KbdHint
+          keys={[...Keymap.focusTerminal.keys]}
+          class="absolute -top-2 -right-2 z-10"
+        />
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
         onclick={() =>
           (workingDiff.viewMode = workingDiff.viewMode === 'unified' ? 'split' : 'unified')}
         aria-label={workingDiff.viewMode === 'unified' ? 'Switch to split view' : 'Switch to unified view'}
@@ -217,6 +242,25 @@
         {:else}
           <Rows class="size-3" />
         {/if}
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={() => (workingDiff.fullscreen = !workingDiff.fullscreen)}
+        aria-label={workingDiff.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        title={workingDiff.fullscreen ? 'Exit fullscreen (Ctrl+Shift+M)' : 'Fullscreen (Ctrl+Shift+M)'}
+        aria-pressed={workingDiff.fullscreen}
+        class="relative"
+      >
+        {#if workingDiff.fullscreen}
+          <Minimize2 class="size-3" />
+        {:else}
+          <Maximize2 class="size-3" />
+        {/if}
+        <KbdHint
+          keys={[...Keymap.toggleDiffFullscreen.keys]}
+          class="absolute -top-2 -right-2 z-10"
+        />
       </Button>
       <Button
         variant="ghost"
@@ -412,10 +456,40 @@
             No textual changes.
           </div>
         {:else}
+          {@const gapPath = diff.fromPath ?? diff.path}
+          {@const canExpand = diff.kind !== 'added' && diff.kind !== 'untracked'}
           <ScrollArea class="min-h-0 flex-1">
             <div class="flex flex-col">
+              {#if canExpand && diff.hunks[0] && diff.hunks[0].oldStart > 1}
+                <GapExpander
+                  cwd={activeCwd!}
+                  filePath={gapPath}
+                  oldStart={1}
+                  oldEnd={diff.hunks[0].oldStart - 1}
+                  newStart={1}
+                  {gutterWidth}
+                  mode={workingDiff.viewMode}
+                />
+              {/if}
               {#each diff.hunks as hunk, idx (idx)}
                 <HunkBlock {hunk} mode={workingDiff.viewMode} {gutterWidth} />
+                {#if canExpand && idx < diff.hunks.length - 1}
+                  {@const next = diff.hunks[idx + 1]}
+                  {@const gapOldStart = hunk.oldStart + hunk.oldCount}
+                  {@const gapNewStart = hunk.newStart + hunk.newCount}
+                  {@const gapOldEnd = next ? next.oldStart - 1 : gapOldStart - 1}
+                  {#if gapOldEnd >= gapOldStart}
+                    <GapExpander
+                      cwd={activeCwd!}
+                      filePath={gapPath}
+                      oldStart={gapOldStart}
+                      oldEnd={gapOldEnd}
+                      newStart={gapNewStart}
+                      {gutterWidth}
+                      mode={workingDiff.viewMode}
+                    />
+                  {/if}
+                {/if}
               {/each}
             </div>
           </ScrollArea>

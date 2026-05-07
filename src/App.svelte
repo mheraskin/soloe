@@ -12,6 +12,7 @@
   import { filePalette } from './stores/file-palette.svelte';
   import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
+  import { workingDiff } from './stores/working-diff.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
@@ -93,6 +94,12 @@
     appliedTheme = theme;
     untrack(() => setMode(theme));
   });
+
+  // Diff fullscreen takes over the main area: terminal hides, the rail
+  // expands to fill the remaining space (sidebar stays put).
+  let diffFullscreen = $derived(
+    rightRail.open && rightRail.activeTab === 'diff' && workingDiff.fullscreen
+  );
 
   // Poll git status/diff for every worktree of every known project at the
   // slow tier so sessionless worktrees still get a +N −N indicator. Sessions
@@ -218,6 +225,23 @@
       rightRail.toggleTab('diff');
       return;
     }
+    if (Keymap.toggleDiffFullscreen.match(e)) {
+      consume(e);
+      // Ensure the diff pane is the visible rail before flipping fullscreen,
+      // otherwise the toggle fires invisibly when the user is on Notes or
+      // Inspector and they wonder if the shortcut even worked.
+      rightRail.openTab('diff');
+      workingDiff.fullscreen = !workingDiff.fullscreen;
+      return;
+    }
+    if (Keymap.focusTerminal.match(e)) {
+      consume(e);
+      // Fullscreen diff covers the terminal entirely; bring it back so the
+      // refocus event has a target to land on.
+      if (workingDiff.fullscreen) workingDiff.fullscreen = false;
+      window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
+      return;
+    }
     if (commandPalette.isOpen || filePalette.open) return;
     if (
       Keymap.deleteSelectedSession.match(e)
@@ -303,8 +327,10 @@
   </header>
   <div class="flex min-h-0 flex-1">
     <Sidebar />
-    <TerminalArea />
-    <RightRail />
+    {#if !diffFullscreen}
+      <TerminalArea />
+    {/if}
+    <RightRail fullscreen={diffFullscreen} />
   </div>
   <NewSessionModal />
   <ProjectModal />

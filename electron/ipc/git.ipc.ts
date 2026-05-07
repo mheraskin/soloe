@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   FileDiffRequest,
+  FileLinesRequest,
   GitCheckoutRequest,
   GitRecentCommitsRequest,
   GitRepoRequest,
@@ -111,6 +112,20 @@ export class GitIpc {
         })
       )
     );
+    ipcMain.handle(IpcChannels.git.fileLines, (_e, request: FileLinesRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.getFileLines(
+          request.cwd,
+          request.path,
+          request.startLine,
+          request.endLine,
+          {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          }
+        )
+      )
+    );
     ipcMain.handle(IpcChannels.git.stageFiles, (_e, request: StageFilesRequest) =>
       ipcInvoke(() =>
         this.opts.service.stageFiles(request.cwd, request.paths, {
@@ -147,6 +162,7 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.checkout);
     ipcMain.removeHandler(IpcChannels.git.workingChanges);
     ipcMain.removeHandler(IpcChannels.git.fileDiff);
+    ipcMain.removeHandler(IpcChannels.git.fileLines);
     ipcMain.removeHandler(IpcChannels.git.stageFiles);
     ipcMain.removeHandler(IpcChannels.git.unstageFiles);
     this.detachListener?.();

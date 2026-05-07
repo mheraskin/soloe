@@ -110,6 +110,19 @@ export const Keymap = {
     keys: ['Ctrl', 'Shift', 'D'],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'd'
+  },
+  toggleDiffFullscreen: {
+    id: 'rail.diff-fullscreen',
+    description: 'Toggle diff fullscreen',
+    keys: ['Ctrl', 'Shift', 'M'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'm'
+  },
+  focusTerminal: {
+    id: 'focus.terminal',
+    description: 'Focus terminal',
+    keys: ['Ctrl', ';'],
+    match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === ';'
   }
 } as const satisfies Record<string, KeymapBinding>;
 

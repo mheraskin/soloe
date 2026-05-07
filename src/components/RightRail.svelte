@@ -31,6 +31,14 @@
   const MAX_WIDTH = 640;
   const DEFAULT_WIDTH = 320;
 
+  interface Props {
+    // When true, the rail content (typically the diff tab) stretches to
+    // fill the entire main area; the resize handle is suppressed.
+    fullscreen?: boolean;
+  }
+
+  let { fullscreen = false }: Props = $props();
+
   let width = $state(DEFAULT_WIDTH);
   let resizing = $state(false);
   let hoveredTab = $state<Record<string, boolean>>({});
@@ -64,9 +72,13 @@
 </script>
 
 <aside
-  class={`relative flex flex-shrink-0 flex-row-reverse overflow-hidden border-l border-border bg-sidebar ${rightRail.open ? '' : 'w-10'}`}
+  class={[
+    'relative flex flex-row-reverse overflow-hidden border-l border-border bg-sidebar',
+    fullscreen ? 'min-w-0 flex-1' : 'flex-shrink-0',
+    !rightRail.open && 'w-10'
+  ]}
   class:select-none={resizing}
-  style={rightRail.open ? `width: ${width}px` : undefined}
+  style={rightRail.open && !fullscreen ? `width: ${width}px` : undefined}
   aria-label="Session rail"
 >
   <Tooltip.Provider delayDuration={250}>
@@ -122,13 +134,15 @@
         </ScrollArea>
       {/if}
     </div>
-    <button
-      type="button"
-      class={`absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
-      aria-label="Resize rail"
-      onpointerdown={startResize}
-    >
-      <span class="absolute bottom-1 left-1 block size-2 border-b border-l border-muted-foreground/60"></span>
-    </button>
+    {#if !fullscreen}
+      <button
+        type="button"
+        class={`absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
+        aria-label="Resize rail"
+        onpointerdown={startResize}
+      >
+        <span class="absolute bottom-1 left-1 block size-2 border-b border-l border-muted-foreground/60"></span>
+      </button>
+    {/if}
   {/if}
 </aside>

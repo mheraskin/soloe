@@ -8,7 +8,8 @@
     Trash2,
     PencilLine,
     ArrowLeftToLine,
-    TextSelect
+    TextSelect,
+    SquareTerminal
   } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
   import { projects } from '../../stores/projects.svelte';
@@ -17,10 +18,12 @@
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
   import { kbdHints } from '../../stores/kbd-hints.svelte';
+  import { Keymap } from '../../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Kbd } from '$lib/components/ui/kbd';
+  import KbdHint from '../KbdHint.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
 
@@ -272,6 +275,10 @@
     if (!trimmed) return '';
     return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
   }
+
+  function focusTerminal(): void {
+    window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
@@ -282,17 +289,33 @@
         {activeProject?.name ?? 'No project selected'}
       </span>
     </div>
-    <Button
-      variant="outline"
-      size="xs"
-      onclick={() => void onNewDraft()}
-      disabled={!activeProjectId}
-      aria-label="New note"
-      title="New note"
-    >
-      <Plus class="size-3" />
-      <span>New</span>
-    </Button>
+    <div class="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={focusTerminal}
+        aria-label="Focus terminal"
+        title="Focus terminal (Ctrl+;)"
+        class="relative"
+      >
+        <SquareTerminal class="size-3" />
+        <KbdHint
+          keys={[...Keymap.focusTerminal.keys]}
+          class="absolute -top-2 -right-2 z-10"
+        />
+      </Button>
+      <Button
+        variant="outline"
+        size="xs"
+        onclick={() => void onNewDraft()}
+        disabled={!activeProjectId}
+        aria-label="New note"
+        title="New note"
+      >
+        <Plus class="size-3" />
+        <span>New</span>
+      </Button>
+    </div>
   </header>
 
   {#if !activeProjectId}

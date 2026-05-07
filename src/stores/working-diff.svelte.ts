@@ -31,6 +31,13 @@ interface ActiveSelection {
   filePath: string;
 }
 
+interface FileLinesEntry {
+  lines: string[] | null;
+  totalLines: number;
+  loading: boolean;
+  error: string | null;
+}
+
 const DEFAULT_CONTEXT_LINES = 3;
 
 class WorkingDiffStore {
@@ -60,12 +67,23 @@ class WorkingDiffStore {
 
   query = $state<string>('');
 
+  // True when the diff rail should expand to fill the entire main area,
+  // covering the terminal beneath. Persists across mounts; the App layout
+  // reads this to hide the terminal and stretch the rail.
+  fullscreen = $state<boolean>(false);
+
+  // Lazy-expanded gap content keyed by `${cwd}::${path}::${start}-${end}`.
+  // Only filled when the user clicks an expander between hunks. Surviving
+  // entries are dropped on file invalidation alongside the diff cache.
+  fileLinesByKey = $state<Record<string, FileLinesEntry>>({});
+
   private contextByCwd = new Map<string, RepoContext>();
   private inflightChanges = new Map<string, Promise<WorkingChangesResult | null>>();
   // Per-key in-flight diff fetches — selection clicks and the eager prefetch
   // share a single request when they hit the same file, so neither blocks
   // the other.
   private inflightDiffs = new Map<string, Promise<FileDiff | null>>();
+  private inflightFileLines = new Map<string, Promise<FileLinesEntry>>();
   private detachers: Array<() => void> = [];
   private generationCounter = 0;
   // Cap eager prefetch on huge changesets. Beyond this we fall back to the
@@ -324,6 +342,88 @@ class WorkingDiffStore {
     await Promise.all(Array.from({ length: concurrency }, () => next()));
   }
 
+  fileLinesKey(cwd: string, filePath: string, startLine: number, endLine: number): string {
+    return `${cwd}::${filePath}::${startLine}-${endLine}`;
+  }
+
+  fileLinesEntry(
+    cwd: string,
+    filePath: string,
+    startLine: number,
+    endLine: number
+  ): FileLinesEntry {
+    const key = this.fileLinesKey(cwd, filePath, startLine, endLine);
+    return (
+      this.fileLinesByKey[key] ?? {
+        lines: null,
+        totalLines: 0,
+        loading: false,
+        error: null
+      }
+    );
+  }
+
+  async loadFileLines(
+    cwd: string,
+    filePath: string,
+    startLine: number,
+    endLine: number
+  ): Promise<FileLinesEntry> {
+    const trimmed = cwd.trim();
+    const idle: FileLinesEntry = { lines: null, totalLines: 0, loading: false, error: null };
+    if (!trimmed || !filePath || startLine > endLine) return idle;
+    const key = this.fileLinesKey(trimmed, filePath, startLine, endLine);
+    const existing = this.fileLinesByKey[key];
+    if (existing?.lines) return existing;
+    const inflight = this.inflightFileLines.get(key);
+    if (inflight) return inflight;
+
+    const ctx = this.contextByCwd.get(trimmed) ?? {};
+    this.fileLinesByKey = {
+      ...this.fileLinesByKey,
+      [key]: { lines: null, totalLines: 0, loading: true, error: null }
+    };
+
+    const request = ipc.git
+      .fileLines({
+        cwd: trimmed,
+        path: filePath,
+        startLine,
+        endLine,
+        ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+      })
+      .then((result): FileLinesEntry => {
+        const entry: FileLinesEntry = {
+          lines: result.lines,
+          totalLines: result.totalLines,
+          loading: false,
+          error: null
+        };
+        this.fileLinesByKey = { ...this.fileLinesByKey, [key]: entry };
+        return entry;
+      })
+      .catch((err: unknown): FileLinesEntry => {
+        const message = err instanceof Error ? err.message : String(err);
+        const entry: FileLinesEntry = {
+          lines: null,
+          totalLines: 0,
+          loading: false,
+          error: message
+        };
+        this.fileLinesByKey = { ...this.fileLinesByKey, [key]: entry };
+        return entry;
+      })
+      .finally(() => {
+        if (this.inflightFileLines.get(key) === request) {
+          this.inflightFileLines.delete(key);
+        }
+      });
+
+    this.inflightFileLines.set(key, request);
+    return request;
+  }
+
   async stageFiles(cwd: string, paths: string[]): Promise<void> {
     const trimmed = cwd.trim();
     if (!trimmed || !paths.length) return;
@@ -364,6 +464,10 @@ class WorkingDiffStore {
     }
     this.diffsByKey = next;
     this.inflightDiffs.clear();
+    // Hunk boundaries shift when ctx changes, so existing gap expansions
+    // become meaningless. Drop them all and let users re-expand on demand.
+    this.fileLinesByKey = {};
+    this.inflightFileLines.clear();
   }
 
   invalidate(cwd: string): void {
@@ -388,6 +492,23 @@ class WorkingDiffStore {
     // cleared slot.
     for (const key of Array.from(this.inflightDiffs.keys())) {
       if (key.startsWith(prefix)) this.inflightDiffs.delete(key);
+    }
+    this.dropFileLines(prefix);
+  }
+
+  private dropFileLines(prefix: string): void {
+    const remaining: Record<string, FileLinesEntry> = {};
+    let touched = false;
+    for (const [key, entry] of Object.entries(this.fileLinesByKey)) {
+      if (key.startsWith(prefix)) {
+        touched = true;
+        continue;
+      }
+      remaining[key] = entry;
+    }
+    if (touched) this.fileLinesByKey = remaining;
+    for (const key of Array.from(this.inflightFileLines.keys())) {
+      if (key.startsWith(prefix)) this.inflightFileLines.delete(key);
     }
   }
 
@@ -414,6 +535,7 @@ class WorkingDiffStore {
     for (const key of Array.from(this.inflightDiffs.keys())) {
       if (key.startsWith(prefix)) this.inflightDiffs.delete(key);
     }
+    this.dropFileLines(prefix);
   }
 
   attachListeners(): void {

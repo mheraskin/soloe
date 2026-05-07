@@ -367,6 +367,35 @@ export class GitService {
     this.invalidate(info.repoPath);
   }
 
+  // Fetch a 1-based line range from HEAD's version of the file. Used by
+  // the diff viewer to lazily expand collapsed unchanged regions between
+  // hunks — the renderer only sends context-around-changes by default to
+  // keep payloads small, then fetches more on demand here.
+  async getFileLines(
+    cwd: string,
+    filePath: string,
+    startLine: number,
+    endLine: number,
+    context: GitRepoContext = {}
+  ): Promise<{ lines: string[]; totalLines: number }> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return { lines: [], totalLines: 0 };
+    if (!filePath || endLine < 1 || startLine > endLine) {
+      return { lines: [], totalLines: 0 };
+    }
+    const output = await this.runInRepo(info, ['show', `HEAD:${filePath}`]);
+    if (output.code !== 0) return { lines: [], totalLines: 0 };
+    const all = output.stdout.split('\n');
+    // git emits a trailing newline for normal files, which split turns into
+    // a phantom empty entry; drop it so totalLines reflects the real count.
+    if (all.length > 0 && all[all.length - 1] === '') all.pop();
+    const totalLines = all.length;
+    const start = Math.max(1, Math.trunc(startLine));
+    const end = Math.min(totalLines, Math.trunc(endLine));
+    if (start > end) return { lines: [], totalLines };
+    return { lines: all.slice(start - 1, end), totalLines };
+  }
+
   async getFileDiff(
     cwd: string,
     targetPath: string,
