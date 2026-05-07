@@ -1,11 +1,17 @@
 <script lang="ts">
   import type { DiffHunk, DiffLine, FileDiff } from '@shared/types/git.js';
-  import type { DiffSide } from '../../stores/diff-comments.svelte';
+  import type { DiffComment, DiffSide } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
+  import {
+    commentAgents,
+    parseMentions,
+    type CommentAgent
+  } from '../../stores/comment-agents.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
   import { highlightLine, languageForPath } from '$lib/highlight';
   import CommentMarker from './CommentMarker.svelte';
-  import { ChevronsUpDown, Loader2 } from '@lucide/svelte';
+  import AgentBadge from './AgentBadge.svelte';
+  import { CheckCircle2, ChevronsUpDown, CircleCheck, Loader2 } from '@lucide/svelte';
 
   interface Props {
     cwd: string;
@@ -67,7 +73,7 @@
     newText: string | null;
     isContext: boolean;
   };
-  type SplitMetaRow = { kind: 'split-meta'; text: string };
+  type SplitMetaRow = { kind: 'split-meta'; text: string; hunkIdx: number; pairIdx: number };
   type Row = GapButtonRow | GapLineRow | HunkHeaderRow | LineRow | PairRow | SplitMetaRow;
 
   type PairBuilt =
@@ -165,7 +171,7 @@
         for (let pidx = 0; pidx < pairs.length; pidx++) {
           const p = pairs[pidx]!;
           if (p.kind === 'meta') {
-            out.push({ kind: 'split-meta', text: p.text });
+            out.push({ kind: 'split-meta', text: p.text, hunkIdx: hidx, pairIdx: pidx });
           } else {
             out.push({
               kind: 'pair',
@@ -212,8 +218,8 @@
     return out;
   });
 
-  const ROW_PX_BASE = 21;
-  const ROW_PX_BUTTON = 28;
+  const ROW_PX_BASE = 18;
+  const ROW_PX_BUTTON = 24;
   const ROW_PX_HEADER = 19;
 
   function estimateHeight(row: Row): number {
@@ -222,13 +228,42 @@
     return ROW_PX_BASE;
   }
 
-  let measured = $state<number[]>([]);
+  // Measurements keyed by stable row identity, not array index. Indexing by
+  // position breaks the moment rows shift (e.g. expanding a gap replaces a
+  // gap-button at idx N with several gap-lines, pushing every subsequent row
+  // down by one slot). The old measurements at those slots would then be
+  // applied to entirely different rows, producing visible gaps until the
+  // ResizeObserver caught up.
+  function rowKey(row: Row): string {
+    switch (row.kind) {
+      case 'gap-button':
+        return `gb:${row.oldStart}-${row.oldEnd}`;
+      case 'gap-line':
+        return `gl:${row.oldLine}-${row.newLine}`;
+      case 'hunk-header':
+        return `hh:${row.hunkIdx}`;
+      case 'line':
+        return `ln:${row.hunkIdx}-${row.lineIdx}`;
+      case 'pair':
+        return `pr:${row.hunkIdx}-${row.pairIdx}`;
+      case 'split-meta':
+        return `sm:${row.hunkIdx}-${row.pairIdx}`;
+    }
+  }
+
+  let measured = $state<Record<string, number>>({});
+
+  // When wrap is off, rows can extend beyond viewport. Track the widest
+  // measured row so the relative container can grow and the ScrollArea sees
+  // horizontal overflow. Always grows; resets on diff/mode/wrap change below.
+  let maxContentWidth = $state(0);
 
   let heights = $derived.by<number[]>(() => {
     const arr = new Array<number>(rows.length);
     for (let i = 0; i < rows.length; i++) {
-      const m = measured[i];
-      arr[i] = m && m > 0 ? m : estimateHeight(rows[i]!);
+      const r = rows[i]!;
+      const m = measured[rowKey(r)];
+      arr[i] = m && m > 0 ? m : estimateHeight(r);
     }
     return arr;
   });
@@ -252,6 +287,9 @@
     if (!v) return;
     const onScroll = () => {
       scrollTop = v.scrollTop;
+      // Hover preview anchors to a captured rect; once the gutter scrolls
+      // away the tooltip would float in the wrong place. Cheaper to drop it.
+      cancelHover();
     };
     const onResize = () => {
       viewportHeight = v.clientHeight;
@@ -273,7 +311,7 @@
     void diff;
     void mode;
     void wrap;
-    measured = [];
+    measured = {};
   });
 
   function findFirstAtOrAfter(target: number): number {
@@ -335,23 +373,24 @@
     return { hunk: headerRow.hunk, top: stickyTop, height: headerHeight };
   });
 
-  function measureRow(node: HTMLElement, idx: number): { update: (newIdx: number) => void; destroy: () => void } {
-    let currentIdx = idx;
+  function measureRow(
+    node: HTMLElement,
+    key: string
+  ): { update: (newKey: string) => void; destroy: () => void } {
+    let currentKey = key;
     const update = () => {
       const h = node.offsetHeight;
       if (!h || h <= 0) return;
-      if (measured[currentIdx] === h) return;
-      const next = measured.slice();
-      next[currentIdx] = h;
-      measured = next;
+      if (measured[currentKey] === h) return;
+      measured = { ...measured, [currentKey]: h };
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(node);
     return {
-      update(newIdx: number) {
-        if (newIdx === currentIdx) return;
-        currentIdx = newIdx;
+      update(newKey: string) {
+        if (newKey === currentKey) return;
+        currentKey = newKey;
         update();
       },
       destroy() {
@@ -458,6 +497,7 @@
     const target = resolveTarget(preferredSide, oldLine, newLine);
     if (!target) return;
     e.preventDefault();
+    cancelHover();
     diffComments.startSelection(cwd, filePath, target.side, target.line);
   }
 
@@ -482,6 +522,7 @@
   function onGapGutterMousedown(e: MouseEvent, newLine: number): void {
     if (e.button !== 0) return;
     e.preventDefault();
+    cancelHover();
     diffComments.startSelection(cwd, filePath, 'new', newLine);
   }
 
@@ -492,6 +533,75 @@
       return;
     }
     diffComments.extendSelection('new', newLine);
+  }
+
+  // Gutter hover preview — a small floating panel that lists every comment
+  // covering the hovered line, opened after a short delay so quick mouse
+  // passes don't flash. Anchored to the gutter span's bounding rect at the
+  // moment of hover; scrolling or starting a drag cancels it.
+  type HoverPreview = {
+    side: DiffSide;
+    line: number;
+    rect: DOMRect;
+    comments: DiffComment[];
+  };
+  let hoverPreview = $state<HoverPreview | null>(null);
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  const HOVER_DELAY_MS = 180;
+
+  function clearHoverTimer(): void {
+    if (hoverTimer) {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+  }
+
+  function cancelHover(): void {
+    clearHoverTimer();
+    hoverPreview = null;
+  }
+
+  function scheduleHover(
+    preferredSide: DiffSide,
+    oldLine: number | null,
+    newLine: number | null,
+    target: EventTarget | null
+  ): void {
+    if (diffComments.selection?.dragging) return;
+    if (diffComments.editingId !== null) return;
+    const t = resolveTarget(preferredSide, oldLine, newLine);
+    if (!t) {
+      cancelHover();
+      return;
+    }
+    const comments = diffComments.forLine(cwd, filePath, t.side, t.line);
+    if (comments.length === 0) {
+      cancelHover();
+      return;
+    }
+    const el = target as HTMLElement | null;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    clearHoverTimer();
+    hoverTimer = setTimeout(() => {
+      hoverPreview = { side: t.side, line: t.line, rect, comments };
+      hoverTimer = null;
+    }, HOVER_DELAY_MS);
+  }
+
+  function hoverAgentsFor(comment: DiffComment): CommentAgent[] {
+    const out: CommentAgent[] = [];
+    for (const name of parseMentions(comment.text)) {
+      const agent = commentAgents.byName(comment.cwd, name);
+      if (agent) out.push(agent);
+    }
+    return out;
+  }
+
+  function hoverRangeLabel(comment: DiffComment): string {
+    return comment.endLine === comment.startLine
+      ? `L${comment.startLine}`
+      : `L${comment.startLine}–${comment.endLine}`;
   }
 
   async function expandGap(oldStart: number, oldEnd: number): Promise<void> {
@@ -523,11 +633,11 @@
     </header>
   {/if}
 
-  {#each visibleItems as item (item.idx)}
+  {#each visibleItems as item (rowKey(item.row))}
     <div
       class="absolute right-0 left-0"
       style:top="{item.top}px"
-      use:measureRow={item.idx}
+      use:measureRow={rowKey(item.row)}
     >
       {#if item.row.kind === 'hunk-header'}
         <header
@@ -557,7 +667,11 @@
             class={gutterClass('old', line.oldLine, line.newLine)}
             style={gutterStyle(gutterWidth)}
             onmousedown={(e) => onGutterMousedown(e, 'old', line.oldLine, line.newLine)}
-            onmouseenter={() => onGutterEnter('old', line.oldLine, line.newLine)}
+            onmouseenter={(e) => {
+              onGutterEnter('old', line.oldLine, line.newLine);
+              scheduleHover('old', line.oldLine, line.newLine, e.currentTarget);
+            }}
+            onmouseleave={cancelHover}
             role="presentation"
           >
             {line.oldLine ?? ''}
@@ -567,7 +681,11 @@
             class={gutterClass('new', line.oldLine, line.newLine)}
             style={gutterStyle(gutterWidth)}
             onmousedown={(e) => onGutterMousedown(e, 'new', line.oldLine, line.newLine)}
-            onmouseenter={() => onGutterEnter('new', line.oldLine, line.newLine)}
+            onmouseenter={(e) => {
+              onGutterEnter('new', line.oldLine, line.newLine);
+              scheduleHover('new', line.oldLine, line.newLine, e.currentTarget);
+            }}
+            onmouseleave={cancelHover}
             role="presentation"
           >
             {line.newLine ?? ''}
@@ -606,7 +724,11 @@
               class={gutterClass('old', row.old, row.new)}
               style={gutterStyle(gutterWidth)}
               onmousedown={(e) => onGutterMousedown(e, 'old', row.old, row.new)}
-              onmouseenter={() => onGutterEnter('old', row.old, row.new)}
+              onmouseenter={(e) => {
+                onGutterEnter('old', row.old, row.new);
+                scheduleHover('old', row.old, row.new, e.currentTarget);
+              }}
+              onmouseleave={cancelHover}
               role="presentation"
             >
               {row.old ?? ''}
@@ -634,7 +756,11 @@
               class={gutterClass('new', row.old, row.new)}
               style={gutterStyle(gutterWidth)}
               onmousedown={(e) => onGutterMousedown(e, 'new', row.old, row.new)}
-              onmouseenter={() => onGutterEnter('new', row.old, row.new)}
+              onmouseenter={(e) => {
+                onGutterEnter('new', row.old, row.new);
+                scheduleHover('new', row.old, row.new, e.currentTarget);
+              }}
+              onmouseleave={cancelHover}
               role="presentation"
             >
               {row.new ?? ''}
@@ -669,7 +795,11 @@
               class={gapGutterClass('old', oldLine, newLine)}
               style={gutterStyle(gutterWidth)}
               onmousedown={(e) => onGapGutterMousedown(e, newLine)}
-              onmouseenter={() => onGapGutterEnter(oldLine, newLine)}
+              onmouseenter={(e) => {
+                onGapGutterEnter(oldLine, newLine);
+                scheduleHover('old', oldLine, newLine, e.currentTarget);
+              }}
+              onmouseleave={cancelHover}
               role="presentation"
             >
               {oldLine}
@@ -679,7 +809,11 @@
               class={gapGutterClass('new', oldLine, newLine)}
               style={gutterStyle(gutterWidth)}
               onmousedown={(e) => onGapGutterMousedown(e, newLine)}
-              onmouseenter={() => onGapGutterEnter(oldLine, newLine)}
+              onmouseenter={(e) => {
+                onGapGutterEnter(oldLine, newLine);
+                scheduleHover('new', oldLine, newLine, e.currentTarget);
+              }}
+              onmouseleave={cancelHover}
               role="presentation"
             >
               {newLine}
@@ -695,7 +829,11 @@
                 class={gapGutterClass('old', oldLine, newLine)}
                 style={gutterStyle(gutterWidth)}
                 onmousedown={(e) => onGapGutterMousedown(e, newLine)}
-                onmouseenter={() => onGapGutterEnter(oldLine, newLine)}
+                onmouseenter={(e) => {
+                  onGapGutterEnter(oldLine, newLine);
+                  scheduleHover('old', oldLine, newLine, e.currentTarget);
+                }}
+                onmouseleave={cancelHover}
                 role="presentation"
               >
                 {oldLine}
@@ -709,7 +847,11 @@
                 class={gapGutterClass('new', oldLine, newLine)}
                 style={gutterStyle(gutterWidth)}
                 onmousedown={(e) => onGapGutterMousedown(e, newLine)}
-                onmouseenter={() => onGapGutterEnter(oldLine, newLine)}
+                onmouseenter={(e) => {
+                  onGapGutterEnter(oldLine, newLine);
+                  scheduleHover('new', oldLine, newLine, e.currentTarget);
+                }}
+                onmouseleave={cancelHover}
                 role="presentation"
               >
                 {newLine}
@@ -746,3 +888,51 @@
     </div>
   {/each}
 </div>
+
+{#if hoverPreview}
+  <div
+    class="pointer-events-none fixed z-50 w-80 max-w-sm rounded-md border border-border bg-popover text-popover-foreground shadow-md"
+    style:left="{Math.min(hoverPreview.rect.right + 8, (typeof window !== 'undefined' ? window.innerWidth : 1920) - 340)}px"
+    style:top="{Math.max(8, hoverPreview.rect.top - 4)}px"
+    role="tooltip"
+  >
+    <div class="flex items-center justify-between border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
+      <span class="font-mono">
+        {hoverPreview.side === 'old' ? 'before' : 'after'} L{hoverPreview.line}
+      </span>
+      <span>
+        {hoverPreview.comments.length} comment{hoverPreview.comments.length === 1 ? '' : 's'}
+      </span>
+    </div>
+    <ul class="flex max-h-72 flex-col gap-2 overflow-auto p-2">
+      {#each hoverPreview.comments as c (c.id)}
+        {@const agents = hoverAgentsFor(c)}
+        <li class="flex flex-col gap-1 border-l-2 border-amber-500/60 pl-2">
+          <div class="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+            <span class="font-mono">{hoverRangeLabel(c)}</span>
+            {#if c.sentAt}
+              <span class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400">
+                <CheckCircle2 class="size-2.5" /> sent
+              </span>
+            {/if}
+            {#if c.resolvedAt}
+              <span class="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 font-medium tracking-wide text-muted-foreground uppercase">
+                <CircleCheck class="size-2.5" /> resolved
+              </span>
+            {/if}
+          </div>
+          <div class="line-clamp-3 font-mono text-[11px] leading-snug whitespace-pre-wrap break-words">
+            {c.text || '(empty)'}
+          </div>
+          {#if agents.length > 0}
+            <div class="flex flex-wrap items-center gap-1">
+              {#each agents as agent (agent.id)}
+                <AgentBadge name={agent.name} provider={agent.provider} model={agent.model} />
+              {/each}
+            </div>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  </div>
+{/if}
