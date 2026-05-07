@@ -29,13 +29,13 @@
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import ChangeRow from './ChangeRow.svelte';
-  import HunkBlock from './HunkBlock.svelte';
-  import GapExpander from './GapExpander.svelte';
+  import VirtualDiffBody from './VirtualDiffBody.svelte';
   import RailResolvedPanel from './RailResolvedPanel.svelte';
   import RailOutdatedPanel from './RailOutdatedPanel.svelte';
   import DiffSelectionMenu from './DiffSelectionMenu.svelte';
 
   let diffRootEl: HTMLDivElement | null = $state(null);
+  let diffViewportEl: HTMLElement | null = $state(null);
 
   type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked';
 
@@ -582,7 +582,7 @@
         {:else}
           {@const gapPath = diff.fromPath ?? diff.path}
           {@const canExpand = diff.kind !== 'added' && diff.kind !== 'untracked'}
-          <ScrollArea class="min-h-0 flex-1">
+          <ScrollArea class="min-h-0 flex-1" bind:viewportRef={diffViewportEl}>
             <div bind:this={diffRootEl} class="flex flex-col">
               <DiffSelectionMenu
                 cwd={activeCwd!}
@@ -590,46 +590,17 @@
                 rootEl={diffRootEl}
                 {diff}
               />
-              {#if canExpand && diff.hunks[0] && diff.hunks[0].oldStart > 1}
-                <GapExpander
-                  cwd={activeCwd!}
-                  filePath={gapPath}
-                  oldStart={1}
-                  oldEnd={diff.hunks[0].oldStart - 1}
-                  newStart={1}
-                  {gutterWidth}
-                  mode={workingDiff.viewMode}
-                  wrap={workingDiff.wordWrap}
-                />
-              {/if}
-              {#each diff.hunks as hunk, idx (idx)}
-                <HunkBlock
-                  {hunk}
-                  mode={workingDiff.viewMode}
-                  {gutterWidth}
-                  cwd={activeCwd!}
-                  filePath={diff.path}
-                  wrap={workingDiff.wordWrap}
-                />
-                {#if canExpand && idx < diff.hunks.length - 1}
-                  {@const next = diff.hunks[idx + 1]}
-                  {@const gapOldStart = hunk.oldStart + hunk.oldCount}
-                  {@const gapNewStart = hunk.newStart + hunk.newCount}
-                  {@const gapOldEnd = next ? next.oldStart - 1 : gapOldStart - 1}
-                  {#if gapOldEnd >= gapOldStart}
-                    <GapExpander
-                      cwd={activeCwd!}
-                      filePath={gapPath}
-                      oldStart={gapOldStart}
-                      oldEnd={gapOldEnd}
-                      newStart={gapNewStart}
-                      {gutterWidth}
-                      mode={workingDiff.viewMode}
-                      wrap={workingDiff.wordWrap}
-                    />
-                  {/if}
-                {/if}
-              {/each}
+              <VirtualDiffBody
+                cwd={activeCwd!}
+                filePath={diff.path}
+                {gapPath}
+                {diff}
+                mode={workingDiff.viewMode}
+                {gutterWidth}
+                {canExpand}
+                wrap={workingDiff.wordWrap}
+                viewport={diffViewportEl}
+              />
             </div>
           </ScrollArea>
         {/if}
