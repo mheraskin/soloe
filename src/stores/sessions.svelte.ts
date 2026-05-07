@@ -18,6 +18,7 @@ import { projects } from './projects.svelte';
 import { settings } from './settings.svelte';
 import { randomName } from '../lib/random-name';
 import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelte';
+import { rightRail } from './right-rail.svelte';
 
 const LAST_SELECTED_KEY = 'soloe.lastSelectedByProject.v1';
 const STANDALONE_KEY = '__standalone__';
@@ -621,7 +622,13 @@ class SessionsStore {
   }
 
   select(id: SessionId | null): void {
+    const prevId = this.selectedId;
     this.selectedId = id;
+    // Switching to a different session pulls focus back to the terminal,
+    // so collapse a fullscreen rail. Toggling the same session off shouldn't.
+    if (id && id !== prevId) {
+      rightRail.fullscreen = false;
+    }
     if (id) {
       agentNotifications.markSessionOpened(id);
       const session = this.sessions.find((s) => s.id === id);
