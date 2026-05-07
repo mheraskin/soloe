@@ -111,6 +111,13 @@ export const Keymap = {
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'd'
   },
+  toggleOverviewRail: {
+    id: 'rail.toggle-overview',
+    description: 'Toggle worktree overview pane',
+    keys: ['Ctrl', 'Shift', 'O'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'o'
+  },
   toggleRailFullscreen: {
     id: 'rail.fullscreen',
     description: 'Toggle right pane fullscreen',

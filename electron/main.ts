@@ -36,6 +36,11 @@ import { DiagnosticsIpc } from './ipc/diagnostics.ipc.js';
 import { WindowIpc } from './ipc/window.ipc.js';
 import { AgentIntegrationIpc } from './ipc/agent-integration.ipc.js';
 import { HookInstaller } from './integrations/HookInstaller.js';
+import { SessionTranscriptReader } from './overview/SessionTranscriptReader.js';
+import { WorktreeFactsCollector } from './overview/WorktreeFactsCollector.js';
+import { SummaryCacheStore } from './overview/SummaryCacheStore.js';
+import { WorktreeOverviewService } from './overview/WorktreeOverviewService.js';
+import { OverviewIpc } from './ipc/overview.ipc.js';
 
 interface AppServices {
   store: SessionStore;
@@ -62,6 +67,8 @@ interface AppServices {
   diagnosticsIpc: DiagnosticsIpc;
   windowIpc: WindowIpc;
   agentIntegrationIpc: AgentIntegrationIpc;
+  overviewService: WorktreeOverviewService;
+  overviewIpc: OverviewIpc;
 }
 
 let services: AppServices | null = null;
@@ -150,6 +157,7 @@ async function setupServices(): Promise<AppServices> {
   const projectsFile = path.join(userDataPath, 'projects.json');
   const notesDir = path.join(userDataPath, 'notes');
   const crashDir = path.join(userDataPath, 'crashes');
+  const overviewCacheFile = path.join(userDataPath, 'overview-cache.json');
 
   const store = new SessionStore(sessionsFile);
   await store.init();
@@ -284,6 +292,24 @@ async function setupServices(): Promise<AppServices> {
     installer: hookInstaller,
     getWindows: () => BrowserWindow.getAllWindows()
   });
+
+  const overviewReader = new SessionTranscriptReader();
+  const overviewFacts = new WorktreeFactsCollector({
+    gitBinary: (await settings.get()).binaries.git ?? 'git'
+  });
+  const overviewCache = new SummaryCacheStore(overviewCacheFile);
+  await overviewCache.init();
+  const overviewService = new WorktreeOverviewService({
+    reader: overviewReader,
+    facts: overviewFacts,
+    cache: overviewCache,
+    getSettings: () => settings.get()
+  });
+  const overviewIpc = new OverviewIpc({
+    service: overviewService,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+
   sessionsIpc.register();
   terminalIpc.register();
   observerIpc.register();
@@ -296,6 +322,7 @@ async function setupServices(): Promise<AppServices> {
   diagnosticsIpc.register();
   windowIpc.register();
   agentIntegrationIpc.register();
+  overviewIpc.register();
 
   return {
     store,
@@ -321,7 +348,9 @@ async function setupServices(): Promise<AppServices> {
     filesIpc,
     diagnosticsIpc,
     windowIpc,
-    agentIntegrationIpc
+    agentIntegrationIpc,
+    overviewService,
+    overviewIpc
   };
 }
 
@@ -413,6 +442,7 @@ async function cleanup(): Promise<void> {
     services.diagnosticsIpc.dispose();
     services.windowIpc.dispose();
     services.agentIntegrationIpc.dispose();
+    services.overviewIpc.dispose();
     services.git.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);

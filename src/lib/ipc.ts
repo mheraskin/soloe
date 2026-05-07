@@ -48,6 +48,12 @@ import type {
   TerminalStartOptions,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
+import type {
+  AskFollowUpChunk,
+  AskFollowUpRequest,
+  GetOverviewRequest,
+  RegenerateOverviewRequest
+} from '@shared/types/overview.js';
 
 function unwrap<T>(r: IpcResult<T>): T {
   if (!r.ok) throw new Error(r.error);
@@ -216,5 +222,15 @@ export const ipc = {
     onToast: (cb: (toast: ToastNotification) => void) => c.notify.onToast(cb),
     onActivateSession: (cb: (sessionId: SessionId) => void) =>
       c.notify.onActivateSession(cb)
+  },
+  overview: {
+    get: async (request: GetOverviewRequest) =>
+      unwrap(await c.overview.get(toIpcPayload(request))),
+    regenerate: async (request: RegenerateOverviewRequest) =>
+      unwrap(await c.overview.regenerate(toIpcPayload(request))),
+    askStart: async (request: AskFollowUpRequest) =>
+      unwrap(await c.overview.askStart(toIpcPayload(request))),
+    askCancel: async (requestId: string) => unwrap(await c.overview.askCancel(requestId)),
+    onChunk: (cb: (chunk: AskFollowUpChunk) => void) => c.overview.onChunk(cb)
   }
 };

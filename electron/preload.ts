@@ -56,6 +56,12 @@ import type {
   TerminalStartOptions,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
+import type {
+  AskFollowUpChunk,
+  AskFollowUpRequest,
+  GetOverviewRequest,
+  RegenerateOverviewRequest
+} from '@shared/types/overview.js';
 
 function subscribe<T>(channel: string, cb: (event: T) => void): () => void {
   const handler = (_e: IpcRendererEvent, payload: T) => cb(payload);
@@ -224,6 +230,18 @@ const soloe: SoloeApi = {
       subscribe<ToastNotification>(IpcChannels.notify.toast, cb),
     onActivateSession: (cb: (sessionId: SessionId) => void) =>
       subscribe<SessionId>(IpcChannels.notify.activateSession, cb)
+  },
+  overview: {
+    get: (request: GetOverviewRequest) =>
+      ipcRenderer.invoke(IpcChannels.overview.get, request),
+    regenerate: (request: RegenerateOverviewRequest) =>
+      ipcRenderer.invoke(IpcChannels.overview.regenerate, request),
+    askStart: (request: AskFollowUpRequest) =>
+      ipcRenderer.invoke(IpcChannels.overview.askStart, request),
+    askCancel: (requestId: string) =>
+      ipcRenderer.invoke(IpcChannels.overview.askCancel, requestId),
+    onChunk: (cb: (chunk: AskFollowUpChunk) => void) =>
+      subscribe<AskFollowUpChunk>(IpcChannels.overview.askChunk, cb)
   }
 };
 

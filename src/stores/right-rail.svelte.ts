@@ -1,4 +1,4 @@
-export type RailTabId = 'inspector' | 'notes' | 'diff';
+export type RailTabId = 'inspector' | 'notes' | 'diff' | 'overview';
 
 class RightRailStore {
   activeTab = $state<RailTabId>('inspector');

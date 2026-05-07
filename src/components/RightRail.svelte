@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Activity, NotebookPen, GitCompare } from '@lucide/svelte';
+  import { Activity, NotebookPen, GitCompare, BookOpen } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { Keymap } from '../lib/keymap';
@@ -11,6 +11,7 @@
   import ProcessUsageWidget from './ProcessUsageWidget.svelte';
   import RailInspectorTab from './rail/RailInspectorTab.svelte';
   import RailNotesTab from './rail/RailNotesTab.svelte';
+  import RailOverviewTab from './rail/RailOverviewTab.svelte';
   import RailDiffTab from './diff/RailDiffTab.svelte';
 
   interface Tab {
@@ -23,6 +24,7 @@
   const tabs: Tab[] = [
     { id: 'inspector', label: 'Inspector', icon: Activity },
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
+    { id: 'overview', label: 'Worktree overview', icon: BookOpen, shortcut: Keymap.toggleOverviewRail.keys },
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
@@ -134,6 +136,8 @@
         <RailNotesTab />
       {:else if rightRail.activeTab === 'diff'}
         <RailDiffTab />
+      {:else if rightRail.activeTab === 'overview'}
+        <RailOverviewTab />
       {:else}
         <ScrollArea class="min-h-0 flex-1">
           {#if rightRail.activeTab === 'inspector'}

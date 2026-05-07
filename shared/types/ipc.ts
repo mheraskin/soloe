@@ -182,6 +182,13 @@ export const IpcChannels = {
   notify: {
     toast: 'notify:toast',
     activateSession: 'notify:activate-session'
+  },
+  overview: {
+    get: 'overview:get',
+    regenerate: 'overview:regenerate',
+    askStart: 'overview:ask-start',
+    askCancel: 'overview:ask-cancel',
+    askChunk: 'overview:ask-chunk'
   }
 } as const;
 
@@ -198,7 +205,8 @@ export type IpcChannel =
   | (typeof IpcChannels.diagnostics)[keyof typeof IpcChannels.diagnostics]
   | (typeof IpcChannels.window)[keyof typeof IpcChannels.window]
   | (typeof IpcChannels.agentIntegration)[keyof typeof IpcChannels.agentIntegration]
-  | (typeof IpcChannels.notify)[keyof typeof IpcChannels.notify];
+  | (typeof IpcChannels.notify)[keyof typeof IpcChannels.notify]
+  | (typeof IpcChannels.overview)[keyof typeof IpcChannels.overview];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -401,6 +409,17 @@ export interface NotifyApi {
   onActivateSession(listener: (sessionId: SessionId) => void): () => void;
 }
 
+export interface OverviewApi {
+  get(request: import('./overview.js').GetOverviewRequest):
+    Promise<IpcResult<import('./overview.js').WorktreeOverview>>;
+  regenerate(request: import('./overview.js').RegenerateOverviewRequest):
+    Promise<IpcResult<import('./overview.js').WorktreeOverview>>;
+  askStart(request: import('./overview.js').AskFollowUpRequest):
+    Promise<IpcResult<{ requestId: string }>>;
+  askCancel(requestId: string): Promise<IpcResult<true>>;
+  onChunk(listener: (chunk: import('./overview.js').AskFollowUpChunk) => void): () => void;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -415,6 +434,7 @@ export interface SoloeApi {
   window: WindowApi;
   agentIntegration: AgentIntegrationApi;
   notify: NotifyApi;
+  overview: OverviewApi;
 }
 
 declare global {
