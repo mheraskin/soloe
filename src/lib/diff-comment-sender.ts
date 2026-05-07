@@ -18,14 +18,17 @@ function bracketedPaste(text: string): string {
 // Build the prompt body delivered to the target. The leading [soloe-comment:<id>]
 // tag is the deterministic handle the agent passes back to the comment_resolve
 // MCP tool — keep it on its own line at the very top so simple summarizers
-// don't drop it.
+// don't drop it. The trailing instruction is what actually nudges the agent to
+// close the loop; without it, well-behaved agents can still discover the tool
+// from tools/list, but resolution becomes opportunistic rather than expected.
 function buildPrompt(comment: DiffComment): string {
   const range =
     comment.endLine === comment.startLine
       ? `L${comment.startLine}`
       : `L${comment.startLine}–${comment.endLine}`;
   const header = `Re: ${comment.filePath} (${comment.side === 'old' ? 'before' : 'after'} ${range})`;
-  return `[soloe-comment:${comment.id}]\n${header}\n\n${comment.text}`;
+  const footer = `When you have addressed this, call the soloe MCP tool comment_resolve with id="${comment.id}".`;
+  return `[soloe-comment:${comment.id}]\n${header}\n\n${comment.text}\n\n${footer}`;
 }
 
 export interface SendCommentResult {
