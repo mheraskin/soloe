@@ -38,6 +38,7 @@ import type {
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitStatusRequest,
+  StageFilesRequest,
   WorkingChangesRequest
 } from '@shared/types/git.js';
 import type {
@@ -175,6 +176,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.git.workingChanges, request),
     fileDiff: (request: FileDiffRequest) =>
       ipcRenderer.invoke(IpcChannels.git.fileDiff, request),
+    stageFiles: (request: StageFilesRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.stageFiles, request),
+    unstageFiles: (request: StageFilesRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.unstageFiles, request),
     onChange: (cb: (event: GitChangeEvent) => void) =>
       subscribe<GitChangeEvent>(IpcChannels.git.change, cb)
   },

@@ -341,10 +341,32 @@ export class GitService {
     return { repoPath: info.repoPath, isRepo: true, changes };
   }
 
-  // Produce structured hunks for a single working-tree file. Combines the
-  // staged and unstaged half via `--HEAD` so partial stages don't fragment
-  // the view. Untracked files run through `diff --no-index` against the
-  // null device so the entire body is rendered as additions.
+  async stageFiles(
+    cwd: string,
+    paths: string[],
+    context: GitRepoContext = {}
+  ): Promise<void> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info || paths.length === 0) return;
+    await this.runInRepo(info, ['add', '--', ...paths]);
+    this.invalidate(info.repoPath);
+  }
+
+  async unstageFiles(
+    cwd: string,
+    paths: string[],
+    context: GitRepoContext = {}
+  ): Promise<void> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info || paths.length === 0) return;
+    const result = await this.runInRepo(info, ['reset', 'HEAD', '--', ...paths]);
+    if (result.code !== 0) {
+      // Fresh repo with no HEAD — unstage via rm --cached instead.
+      await this.runInRepo(info, ['rm', '--cached', '--', ...paths]);
+    }
+    this.invalidate(info.repoPath);
+  }
+
   async getFileDiff(
     cwd: string,
     targetPath: string,

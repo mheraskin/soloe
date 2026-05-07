@@ -145,6 +145,13 @@ export interface DiffHunk {
   lines: DiffLine[];
 }
 
+export interface StageFilesRequest {
+  cwd: string;
+  paths: string[];
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
 export interface FileDiffRequest {
   cwd: string;
   path: string;

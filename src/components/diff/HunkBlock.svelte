@@ -76,7 +76,7 @@
   });
 
   function gutterStyle(width: number): string {
-    return `width: ${Math.max(2, width)}ch;`;
+    return `width: ${Math.max(3, width)}ch;`;
   }
 </script>
 
@@ -118,7 +118,7 @@
           </span>
           <span
             class={[
-              'w-3 shrink-0 select-none text-center',
+              'w-5 shrink-0 select-none pl-1 text-center',
               line.kind === 'add' && 'text-emerald-600 dark:text-emerald-400',
               line.kind === 'remove' && 'text-rose-600 dark:text-rose-400',
               line.kind === 'meta' && 'text-amber-600 dark:text-amber-400'

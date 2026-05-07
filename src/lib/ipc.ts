@@ -24,6 +24,7 @@ import type {
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitStatusRequest,
+  StageFilesRequest,
   WorkingChangesRequest
 } from '@shared/types/git.js';
 import type {
@@ -169,6 +170,10 @@ export const ipc = {
       unwrap(await c.git.workingChanges(toIpcPayload(request))),
     fileDiff: async (request: FileDiffRequest) =>
       unwrap(await c.git.fileDiff(toIpcPayload(request))),
+    stageFiles: async (request: StageFilesRequest) =>
+      unwrap(await c.git.stageFiles(toIpcPayload(request))),
+    unstageFiles: async (request: StageFilesRequest) =>
+      unwrap(await c.git.unstageFiles(toIpcPayload(request))),
     onChange: (cb: (event: GitChangeEvent) => void) => c.git.onChange(cb)
   },
   files: {

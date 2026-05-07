@@ -1,13 +1,16 @@
 <script lang="ts">
+  import { Plus, Minus } from '@lucide/svelte';
   import type { WorkingChange } from '@shared/types/git.js';
 
   interface Props {
     change: WorkingChange;
     selected: boolean;
     onpick: () => void;
+    onstage?: () => void;
+    onunstage?: () => void;
   }
 
-  let { change, selected, onpick }: Props = $props();
+  let { change, selected, onpick, onstage, onunstage }: Props = $props();
 
   // Single-letter glyph chosen for compactness in the narrow rail. Pairs
   // visually with the colour to disambiguate at small sizes.
@@ -49,8 +52,9 @@
   });
 </script>
 
-<button
-  type="button"
+<div
+  role="button"
+  tabindex="0"
   class={[
     'group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors',
     selected
@@ -58,6 +62,7 @@
       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
   ]}
   onclick={onpick}
+  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onpick(); } }}
   aria-current={selected ? 'true' : undefined}
   title={change.fromPath ? `${change.fromPath} → ${change.path}` : change.path}
 >
@@ -92,16 +97,39 @@
     {/if}
   </span>
 
-  <span class="flex shrink-0 items-baseline gap-1 font-mono text-[10px]">
-    {#if change.binary}
-      <span class="text-muted-foreground/70">bin</span>
-    {:else}
-      {#if change.insertions > 0}
-        <span class="text-emerald-500">+{change.insertions}</span>
-      {/if}
-      {#if change.deletions > 0}
-        <span class="text-rose-500">−{change.deletions}</span>
-      {/if}
+  <span class="flex shrink-0 items-center gap-1">
+    {#if change.staged && onunstage}
+      <button
+        type="button"
+        class="flex size-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted-foreground/20 group-hover:opacity-100"
+        onclick={(e) => { e.stopPropagation(); onunstage?.(); }}
+        title="Unstage"
+        aria-label="Unstage {change.path}"
+      >
+        <Minus class="size-3 text-rose-500" />
+      </button>
+    {:else if !change.staged && onstage}
+      <button
+        type="button"
+        class="flex size-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted-foreground/20 group-hover:opacity-100"
+        onclick={(e) => { e.stopPropagation(); onstage?.(); }}
+        title="Stage"
+        aria-label="Stage {change.path}"
+      >
+        <Plus class="size-3 text-emerald-500" />
+      </button>
     {/if}
+    <span class="font-mono text-[10px]">
+      {#if change.binary}
+        <span class="text-muted-foreground/70">bin</span>
+      {:else}
+        {#if change.insertions > 0}
+          <span class="text-emerald-500">+{change.insertions}</span>
+        {/if}
+        {#if change.deletions > 0}
+          <span class="text-rose-500">−{change.deletions}</span>
+        {/if}
+      {/if}
+    </span>
   </span>
-</button>
+</div>

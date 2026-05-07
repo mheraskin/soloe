@@ -7,7 +7,9 @@
     Search,
     Rows,
     Columns,
-    FileDiff
+    FileDiff,
+    Plus,
+    Minus
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
@@ -131,9 +133,35 @@
     workingDiff.query = queryDraft;
   }
 
+  let stagedChanges = $derived(filteredChanges.filter((c) => c.staged));
+  let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged));
+  let showGroups = $derived(workingDiff.filter === 'all' && (stagedChanges.length > 0 || unstagedChanges.length > 0));
+
   function pickChange(path: string): void {
     if (!activeCwd) return;
     workingDiff.setSelected(activeCwd, path);
+  }
+
+  async function stageFile(path: string): Promise<void> {
+    if (!activeCwd) return;
+    await workingDiff.stageFiles(activeCwd, [path]);
+  }
+
+  async function unstageFile(path: string): Promise<void> {
+    if (!activeCwd) return;
+    await workingDiff.unstageFiles(activeCwd, [path]);
+  }
+
+  async function stageAll(): Promise<void> {
+    if (!activeCwd) return;
+    const paths = unstagedChanges.map((c) => c.path);
+    if (paths.length) await workingDiff.stageFiles(activeCwd, paths);
+  }
+
+  async function unstageAll(): Promise<void> {
+    if (!activeCwd) return;
+    const paths = stagedChanges.map((c) => c.path);
+    if (paths.length) await workingDiff.unstageFiles(activeCwd, paths);
   }
 
   async function refresh(): Promise<void> {
@@ -264,37 +292,86 @@
     </div>
 
     <ScrollArea class="max-h-56 shrink-0 border-b border-border">
-      <ul class="flex flex-col gap-px p-1.5">
+      <div class="flex flex-col gap-px p-1.5">
         {#if changesEntry?.loading && filteredChanges.length === 0}
-          <li class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+          <div class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
             <Loader2 class="size-3 animate-spin" />
             Loading…
-          </li>
+          </div>
         {:else if changesEntry?.error}
-          <li class="flex items-start gap-2 px-2 py-3 text-xs text-destructive">
+          <div class="flex items-start gap-2 px-2 py-3 text-xs text-destructive">
             <AlertCircle class="size-3 shrink-0" />
             <span class="break-words">{changesEntry.error}</span>
-          </li>
+          </div>
         {:else if filteredChanges.length === 0}
-          <li class="px-2 py-3 text-xs text-muted-foreground">
+          <div class="px-2 py-3 text-xs text-muted-foreground">
             {#if totalChangeCount === 0}
               Working tree is clean.
             {:else}
               Nothing matches the current filter.
             {/if}
-          </li>
-        {:else}
-          {#each filteredChanges as change (change.path)}
-            <li>
+          </div>
+        {:else if showGroups}
+          {#if stagedChanges.length > 0}
+            <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+              <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                Staged ({stagedChanges.length})
+              </span>
+              <button
+                type="button"
+                class="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
+                onclick={() => void unstageAll().catch(reportError)}
+                title="Unstage all"
+                aria-label="Unstage all"
+              >
+                <Minus class="size-3" />
+              </button>
+            </div>
+            {#each stagedChanges as change (change.path)}
               <ChangeRow
                 {change}
                 selected={change.path === effectiveSelected}
                 onpick={() => pickChange(change.path)}
+                onunstage={() => void unstageFile(change.path).catch(reportError)}
               />
-            </li>
+            {/each}
+          {/if}
+          {#if unstagedChanges.length > 0}
+            <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+              <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                Changes ({unstagedChanges.length})
+              </span>
+              <button
+                type="button"
+                class="flex size-4 items-center justify-center rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
+                onclick={() => void stageAll().catch(reportError)}
+                title="Stage all"
+                aria-label="Stage all"
+              >
+                <Plus class="size-3" />
+              </button>
+            </div>
+            {#each unstagedChanges as change (change.path)}
+              <ChangeRow
+                {change}
+                selected={change.path === effectiveSelected}
+                onpick={() => pickChange(change.path)}
+                onstage={() => void stageFile(change.path).catch(reportError)}
+              />
+            {/each}
+          {/if}
+        {:else}
+          {#each filteredChanges as change (change.path)}
+            <ChangeRow
+              {change}
+              selected={change.path === effectiveSelected}
+              onpick={() => pickChange(change.path)}
+              onstage={!change.staged ? () => void stageFile(change.path).catch(reportError) : undefined}
+              onunstage={change.staged ? () => void unstageFile(change.path).catch(reportError) : undefined}
+            />
           {/each}
         {/if}
-      </ul>
+      </div>
     </ScrollArea>
 
     <section class="flex min-h-0 flex-1 flex-col">

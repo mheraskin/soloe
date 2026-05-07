@@ -6,6 +6,7 @@ import type {
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitStatusRequest,
+  StageFilesRequest,
   WorkingChangesRequest
 } from '@shared/types/git.js';
 import type { GitService } from '../git/GitService.js';
@@ -110,6 +111,22 @@ export class GitIpc {
         })
       )
     );
+    ipcMain.handle(IpcChannels.git.stageFiles, (_e, request: StageFilesRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.stageFiles(request.cwd, request.paths, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        }).then(() => true as const)
+      )
+    );
+    ipcMain.handle(IpcChannels.git.unstageFiles, (_e, request: StageFilesRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.unstageFiles(request.cwd, request.paths, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        }).then(() => true as const)
+      )
+    );
 
     this.detachListener = this.opts.service.onChange((repoPath) => {
       for (const win of this.opts.getWindows()) {
@@ -130,6 +147,8 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.checkout);
     ipcMain.removeHandler(IpcChannels.git.workingChanges);
     ipcMain.removeHandler(IpcChannels.git.fileDiff);
+    ipcMain.removeHandler(IpcChannels.git.stageFiles);
+    ipcMain.removeHandler(IpcChannels.git.unstageFiles);
     this.detachListener?.();
     this.detachListener = null;
     this.registered = false;

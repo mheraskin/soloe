@@ -324,6 +324,30 @@ class WorkingDiffStore {
     await Promise.all(Array.from({ length: concurrency }, () => next()));
   }
 
+  async stageFiles(cwd: string, paths: string[]): Promise<void> {
+    const trimmed = cwd.trim();
+    if (!trimmed || !paths.length) return;
+    const ctx = this.contextByCwd.get(trimmed) ?? {};
+    await ipc.git.stageFiles({
+      cwd: trimmed,
+      paths,
+      ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+      ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+    });
+  }
+
+  async unstageFiles(cwd: string, paths: string[]): Promise<void> {
+    const trimmed = cwd.trim();
+    if (!trimmed || !paths.length) return;
+    const ctx = this.contextByCwd.get(trimmed) ?? {};
+    await ipc.git.unstageFiles({
+      cwd: trimmed,
+      paths,
+      ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+      ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+    });
+  }
+
   setContextLines(value: number): void {
     const clamped = Math.max(0, Math.min(50, Math.trunc(value)));
     if (clamped === this.contextLines) return;

@@ -22,6 +22,7 @@ import type {
   GitStatus,
   GitStatusRequest,
   GitWorktree,
+  StageFilesRequest,
   WorkingChangesRequest,
   WorkingChangesResult
 } from './git.js';
@@ -146,6 +147,8 @@ export const IpcChannels = {
     checkout: 'git:checkout',
     workingChanges: 'git:working-changes',
     fileDiff: 'git:file-diff',
+    stageFiles: 'git:stage-files',
+    unstageFiles: 'git:unstage-files',
     change: 'git:change'
   },
   files: {
@@ -305,6 +308,8 @@ export interface GitApi {
   checkout(request: GitCheckoutRequest): Promise<IpcResult<GitStatus>>;
   workingChanges(request: WorkingChangesRequest): Promise<IpcResult<WorkingChangesResult>>;
   fileDiff(request: FileDiffRequest): Promise<IpcResult<FileDiff>>;
+  stageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
+  unstageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
   onChange(listener: (event: GitChangeEvent) => void): () => void;
 }
 
