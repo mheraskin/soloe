@@ -11,19 +11,19 @@
     Plus,
     Minus,
     Maximize2,
-    Minimize2,
-    SquareTerminal
+    Minimize2
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
   import { sessions } from '../../stores/sessions.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
+  import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { Keymap } from '../../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import KbdHint from '../KbdHint.svelte';
+  import { Kbd } from '$lib/components/ui/kbd';
   import ChangeRow from './ChangeRow.svelte';
   import HunkBlock from './HunkBlock.svelte';
   import GapExpander from './GapExpander.svelte';
@@ -85,15 +85,16 @@
   let filteredChanges = $derived(activeCwd ? workingDiff.filteredChangesFor(activeCwd) : []);
   let totalChangeCount = $derived(changesEntry?.result?.changes.length ?? 0);
 
-  // The selection in the store is the source of truth, but we want to fall
-  // back to the first visible change so the diff pane is never empty when
-  // there's something to show.
+  // Existence is checked against the full change list, not the filtered
+  // subset, so staging a file under the "Unstaged" filter doesn't yank the
+  // open diff away.
   let storedSelected = $derived(activeCwd ? workingDiff.selectedFilePath(activeCwd) : null);
   let effectiveSelected = $derived.by<string | null>(() => {
-    if (!filteredChanges.length) return null;
-    if (storedSelected && filteredChanges.some((c) => c.path === storedSelected)) {
+    const all = changesEntry?.result?.changes ?? [];
+    if (storedSelected && all.some((c) => c.path === storedSelected)) {
       return storedSelected;
     }
+    if (!filteredChanges.length) return null;
     return filteredChanges[0]?.path ?? null;
   });
 
@@ -192,14 +193,20 @@
     workingDiff.setContextLines(clampContext(value));
   }
 
-  function focusTerminal(): void {
-    if (workingDiff.fullscreen) workingDiff.fullscreen = false;
-    window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
-  }
+  let searchInputEl: HTMLInputElement | null = $state(null);
 
   onMount(() => {
     workingDiff.attachListeners();
-    return () => workingDiff.detach();
+    const onRefocus = () => {
+      if (rightRail.activeTab !== 'diff') return;
+      searchInputEl?.focus();
+      searchInputEl?.select();
+    };
+    window.addEventListener('soloe:refocus-rail', onRefocus);
+    return () => {
+      window.removeEventListener('soloe:refocus-rail', onRefocus);
+      workingDiff.detach();
+    };
   });
 </script>
 
@@ -212,22 +219,12 @@
       <span class="truncate text-xs text-foreground">
         {selected ? selected.name : 'No session selected'}
       </span>
+      <span class="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/80">
+        <Kbd keys={[...Keymap.toggleTerminalFocus.keys]} />
+        <span>terminal</span>
+      </span>
     </div>
     <div class="flex items-center gap-1">
-      <Button
-        variant="ghost"
-        size="xs"
-        onclick={focusTerminal}
-        aria-label="Focus terminal"
-        title="Focus terminal (Ctrl+;)"
-        class="relative"
-      >
-        <SquareTerminal class="size-3" />
-        <KbdHint
-          keys={[...Keymap.focusTerminal.keys]}
-          class="absolute -top-2 -right-2 z-10"
-        />
-      </Button>
       <Button
         variant="ghost"
         size="xs"
@@ -246,21 +243,16 @@
       <Button
         variant="ghost"
         size="xs"
-        onclick={() => (workingDiff.fullscreen = !workingDiff.fullscreen)}
-        aria-label={workingDiff.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        title={workingDiff.fullscreen ? 'Exit fullscreen (Ctrl+Shift+M)' : 'Fullscreen (Ctrl+Shift+M)'}
-        aria-pressed={workingDiff.fullscreen}
-        class="relative"
+        onclick={() => rightRail.toggleFullscreen()}
+        aria-label={rightRail.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        title={rightRail.fullscreen ? 'Exit fullscreen (Ctrl+Shift+M)' : 'Fullscreen (Ctrl+Shift+M)'}
+        aria-pressed={rightRail.fullscreen}
       >
-        {#if workingDiff.fullscreen}
+        {#if rightRail.fullscreen}
           <Minimize2 class="size-3" />
         {:else}
           <Maximize2 class="size-3" />
         {/if}
-        <KbdHint
-          keys={[...Keymap.toggleDiffFullscreen.keys]}
-          class="absolute -top-2 -right-2 z-10"
-        />
       </Button>
       <Button
         variant="ghost"
@@ -293,6 +285,7 @@
       <div class="relative">
         <Search class="absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
         <Input
+          bind:ref={searchInputEl}
           bind:value={queryDraft}
           oninput={commitQuery}
           placeholder="Filter by path"
@@ -375,6 +368,7 @@
               <ChangeRow
                 {change}
                 selected={change.path === effectiveSelected}
+                pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
                 onpick={() => pickChange(change.path)}
                 onunstage={() => void unstageFile(change.path).catch(reportError)}
               />
@@ -399,6 +393,7 @@
               <ChangeRow
                 {change}
                 selected={change.path === effectiveSelected}
+                pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
                 onpick={() => pickChange(change.path)}
                 onstage={() => void stageFile(change.path).catch(reportError)}
               />
@@ -409,6 +404,7 @@
             <ChangeRow
               {change}
               selected={change.path === effectiveSelected}
+              pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
               onpick={() => pickChange(change.path)}
               onstage={!change.staged ? () => void stageFile(change.path).catch(reportError) : undefined}
               onunstage={change.staged ? () => void unstageFile(change.path).catch(reportError) : undefined}

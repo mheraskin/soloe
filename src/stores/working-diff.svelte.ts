@@ -67,10 +67,7 @@ class WorkingDiffStore {
 
   query = $state<string>('');
 
-  // True when the diff rail should expand to fill the entire main area,
-  // covering the terminal beneath. Persists across mounts; the App layout
-  // reads this to hide the terminal and stretch the rail.
-  fullscreen = $state<boolean>(false);
+  pendingStage = $state<Record<string, true>>({});
 
   // Lazy-expanded gap content keyed by `${cwd}::${path}::${start}-${end}`.
   // Only filled when the user clicks an expander between hunks. Surviving
@@ -86,6 +83,11 @@ class WorkingDiffStore {
   private inflightFileLines = new Map<string, Promise<FileLinesEntry>>();
   private detachers: Array<() => void> = [];
   private generationCounter = 0;
+  // `git diff HEAD` ignores the index, so stage/unstage events don't need a
+  // diff-cache wipe — entries here mark the window during which we treat
+  // change events as our own and skip the heavy refresh.
+  private stageSuppressUntil = new Map<string, number>();
+  private static readonly STAGE_SUPPRESS_MS = 1500;
   // Cap eager prefetch on huge changesets. Beyond this we fall back to the
   // lazy per-click load — the user is unlikely to click through 200+ files
   // in a single review session anyway.
@@ -427,25 +429,117 @@ class WorkingDiffStore {
   async stageFiles(cwd: string, paths: string[]): Promise<void> {
     const trimmed = cwd.trim();
     if (!trimmed || !paths.length) return;
+    const previous = this.applyStagedLocally(trimmed, paths, true);
+    this.markPending(trimmed, paths, true);
+    this.stageSuppressUntil.set(
+      trimmed,
+      Date.now() + WorkingDiffStore.STAGE_SUPPRESS_MS
+    );
     const ctx = this.contextByCwd.get(trimmed) ?? {};
-    await ipc.git.stageFiles({
-      cwd: trimmed,
-      paths,
-      ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-      ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
-    });
+    try {
+      await ipc.git.stageFiles({
+        cwd: trimmed,
+        paths,
+        ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+      });
+    } catch (err) {
+      if (previous) this.restoreStagedLocally(trimmed, previous);
+      throw err;
+    } finally {
+      this.markPending(trimmed, paths, false);
+    }
   }
 
   async unstageFiles(cwd: string, paths: string[]): Promise<void> {
     const trimmed = cwd.trim();
     if (!trimmed || !paths.length) return;
+    const previous = this.applyStagedLocally(trimmed, paths, false);
+    this.markPending(trimmed, paths, true);
+    this.stageSuppressUntil.set(
+      trimmed,
+      Date.now() + WorkingDiffStore.STAGE_SUPPRESS_MS
+    );
     const ctx = this.contextByCwd.get(trimmed) ?? {};
-    await ipc.git.unstageFiles({
-      cwd: trimmed,
-      paths,
-      ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-      ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+    try {
+      await ipc.git.unstageFiles({
+        cwd: trimmed,
+        paths,
+        ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+      });
+    } catch (err) {
+      if (previous) this.restoreStagedLocally(trimmed, previous);
+      throw err;
+    } finally {
+      this.markPending(trimmed, paths, false);
+    }
+  }
+
+  isStagePending(cwd: string, path: string): boolean {
+    return this.pendingStage[`${cwd}::${path}`] === true;
+  }
+
+  private markPending(cwd: string, paths: string[], pending: boolean): void {
+    if (!paths.length) return;
+    const next = { ...this.pendingStage };
+    let touched = false;
+    for (const p of paths) {
+      const key = `${cwd}::${p}`;
+      if (pending) {
+        if (next[key] !== true) {
+          next[key] = true;
+          touched = true;
+        }
+      } else if (key in next) {
+        delete next[key];
+        touched = true;
+      }
+    }
+    if (touched) this.pendingStage = next;
+  }
+
+  private applyStagedLocally(
+    cwd: string,
+    paths: string[],
+    staged: boolean
+  ): Map<string, boolean> | null {
+    const entry = this.changesByCwd[cwd];
+    if (!entry?.result) return null;
+    const pathSet = new Set(paths);
+    const previous = new Map<string, boolean>();
+    let touched = false;
+    const newChanges = entry.result.changes.map((c) => {
+      if (!pathSet.has(c.path)) return c;
+      if (c.staged === staged) return c;
+      previous.set(c.path, c.staged);
+      touched = true;
+      return { ...c, staged };
     });
+    if (!touched) return null;
+    this.changesByCwd = {
+      ...this.changesByCwd,
+      [cwd]: {
+        ...entry,
+        result: { ...entry.result, changes: newChanges }
+      }
+    };
+    return previous;
+  }
+
+  private restoreStagedLocally(cwd: string, previous: Map<string, boolean>): void {
+    const entry = this.changesByCwd[cwd];
+    if (!entry?.result) return;
+    const newChanges = entry.result.changes.map((c) =>
+      previous.has(c.path) ? { ...c, staged: previous.get(c.path) ?? c.staged } : c
+    );
+    this.changesByCwd = {
+      ...this.changesByCwd,
+      [cwd]: {
+        ...entry,
+        result: { ...entry.result, changes: newChanges }
+      }
+    };
   }
 
   setContextLines(value: number): void {
@@ -547,8 +641,10 @@ class WorkingDiffStore {
         // result so each affected worktree refreshes.
         for (const [cwd, entry] of Object.entries(this.changesByCwd)) {
           if (entry.result?.repoPath !== event.repoPath) continue;
+          const suppress = (this.stageSuppressUntil.get(cwd) ?? 0) > Date.now();
           void this.loadChanges(cwd).then((result) => {
             if (!result) return;
+            if (suppress) return;
             // The file list may now disagree with what we cached: file
             // bodies likely moved, files may have appeared or vanished.
             // Drop the bodies and re-prime so the next click is instant

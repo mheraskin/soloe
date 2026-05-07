@@ -7,7 +7,7 @@
   import { kbdHints } from '../stores/kbd-hints.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Tooltip from '$lib/components/ui/tooltip';
-  import KbdHint from './KbdHint.svelte';
+  import { Kbd } from '$lib/components/ui/kbd';
   import ProcessUsageWidget from './ProcessUsageWidget.svelte';
   import RailInspectorTab from './rail/RailInspectorTab.svelte';
   import RailNotesTab from './rail/RailNotesTab.svelte';
@@ -110,7 +110,7 @@
           <Tooltip.Content side="left" class="flex items-center gap-1.5">
             <span>{tab.label}</span>
             {#if tab.shortcut}
-              <KbdHint keys={[...tab.shortcut]} />
+              <Kbd keys={[...tab.shortcut]} />
             {/if}
           </Tooltip.Content>
         </Tooltip.Root>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { ModeWatcher, setMode } from 'mode-watcher';
   import { Maximize2, Minus, Settings, X } from '@lucide/svelte';
   import { sessions } from './stores/sessions.svelte';
@@ -12,7 +12,6 @@
   import { filePalette } from './stores/file-palette.svelte';
   import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
-  import { workingDiff } from './stores/working-diff.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
@@ -95,11 +94,10 @@
     untrack(() => setMode(theme));
   });
 
-  // Diff fullscreen takes over the main area: terminal hides, the rail
-  // expands to fill the remaining space (sidebar stays put).
-  let diffFullscreen = $derived(
-    rightRail.open && rightRail.activeTab === 'diff' && workingDiff.fullscreen
-  );
+  // Rail fullscreen takes over the main area: terminal hides, the rail
+  // expands to fill the remaining space (sidebar stays put). Applies to
+  // whichever tab is active (diff, notes, inspector).
+  let railFullscreen = $derived(rightRail.open && rightRail.fullscreen);
 
   // Poll git status/diff for every worktree of every known project at the
   // slow tier so sessionless worktrees still get a +N −N indicator. Sessions
@@ -154,6 +152,31 @@
   function isTerminalKeyTarget(e: KeyboardEvent): boolean {
     const target = e.target as HTMLElement | null;
     return Boolean(target?.closest('.xterm'));
+  }
+
+  // Ctrl+; should ping-pong: if the rail is currently focused, snap back to
+  // the terminal; otherwise jump into the rail's primary input. We probe
+  // document.activeElement at keypress time rather than tracking focus in a
+  // store because the latter would need to wire into every focusable child.
+  async function toggleTerminalFocus(): Promise<void> {
+    const active = document.activeElement as HTMLElement | null;
+    const inRail = Boolean(active?.closest('aside[aria-label="Session rail"]'));
+    if (inRail) {
+      // Fullscreen covers the terminal; exit it so the refocus event has a
+      // pane to land on. The TerminalPane only attaches its listener on
+      // mount, so wait for the layout to flush before dispatching.
+      if (rightRail.fullscreen) {
+        rightRail.fullscreen = false;
+        await tick();
+      }
+      window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
+      return;
+    }
+    if (!rightRail.open) {
+      window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('soloe:refocus-rail'));
   }
 
   function selectedSessionContext(): { projectId?: string; cwd?: string; branch?: string } {
@@ -225,21 +248,17 @@
       rightRail.toggleTab('diff');
       return;
     }
-    if (Keymap.toggleDiffFullscreen.match(e)) {
+    if (Keymap.toggleRailFullscreen.match(e)) {
       consume(e);
-      // Ensure the diff pane is the visible rail before flipping fullscreen,
-      // otherwise the toggle fires invisibly when the user is on Notes or
-      // Inspector and they wonder if the shortcut even worked.
-      rightRail.openTab('diff');
-      workingDiff.fullscreen = !workingDiff.fullscreen;
+      // Toggle fullscreen on whichever tab is currently active. If the rail
+      // is closed, the store opens it before flipping the flag so the user
+      // sees the result instead of toggling invisibly.
+      rightRail.toggleFullscreen();
       return;
     }
-    if (Keymap.focusTerminal.match(e)) {
+    if (Keymap.toggleTerminalFocus.match(e)) {
       consume(e);
-      // Fullscreen diff covers the terminal entirely; bring it back so the
-      // refocus event has a target to land on.
-      if (workingDiff.fullscreen) workingDiff.fullscreen = false;
-      window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
+      void toggleTerminalFocus();
       return;
     }
     if (commandPalette.isOpen || filePalette.open) return;
@@ -327,10 +346,11 @@
   </header>
   <div class="flex min-h-0 flex-1">
     <Sidebar />
-    {#if !diffFullscreen}
+    <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
+    <div class={railFullscreen ? 'hidden' : 'contents'}>
       <TerminalArea />
-    {/if}
-    <RightRail fullscreen={diffFullscreen} />
+    </div>
+    <RightRail fullscreen={railFullscreen} />
   </div>
   <NewSessionModal />
   <ProjectModal />

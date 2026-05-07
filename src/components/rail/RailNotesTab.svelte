@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     Plus,
     Loader2,
@@ -8,8 +8,7 @@
     Trash2,
     PencilLine,
     ArrowLeftToLine,
-    TextSelect,
-    SquareTerminal
+    TextSelect
   } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
   import { projects } from '../../stores/projects.svelte';
@@ -18,12 +17,12 @@
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
   import { kbdHints } from '../../stores/kbd-hints.svelte';
+  import { rightRail } from '../../stores/right-rail.svelte';
   import { Keymap } from '../../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Kbd } from '$lib/components/ui/kbd';
-  import KbdHint from '../KbdHint.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
 
@@ -276,9 +275,14 @@
     return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
   }
 
-  function focusTerminal(): void {
-    window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
-  }
+  onMount(() => {
+    const onRefocus = () => {
+      if (rightRail.activeTab !== 'notes') return;
+      textareaEl?.focus();
+    };
+    window.addEventListener('soloe:refocus-rail', onRefocus);
+    return () => window.removeEventListener('soloe:refocus-rail', onRefocus);
+  });
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
@@ -288,34 +292,22 @@
       <span class="truncate text-xs text-foreground">
         {activeProject?.name ?? 'No project selected'}
       </span>
+      <span class="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/80">
+        <Kbd keys={[...Keymap.toggleTerminalFocus.keys]} />
+        <span>terminal</span>
+      </span>
     </div>
-    <div class="flex items-center gap-1">
-      <Button
-        variant="ghost"
-        size="xs"
-        onclick={focusTerminal}
-        aria-label="Focus terminal"
-        title="Focus terminal (Ctrl+;)"
-        class="relative"
-      >
-        <SquareTerminal class="size-3" />
-        <KbdHint
-          keys={[...Keymap.focusTerminal.keys]}
-          class="absolute -top-2 -right-2 z-10"
-        />
-      </Button>
-      <Button
-        variant="outline"
-        size="xs"
-        onclick={() => void onNewDraft()}
-        disabled={!activeProjectId}
-        aria-label="New note"
-        title="New note"
-      >
-        <Plus class="size-3" />
-        <span>New</span>
-      </Button>
-    </div>
+    <Button
+      variant="outline"
+      size="xs"
+      onclick={() => void onNewDraft()}
+      disabled={!activeProjectId}
+      aria-label="New note"
+      title="New note"
+    >
+      <Plus class="size-3" />
+      <span>New</span>
+    </Button>
   </header>
 
   {#if !activeProjectId}

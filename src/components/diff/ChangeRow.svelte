@@ -5,12 +5,13 @@
   interface Props {
     change: WorkingChange;
     selected: boolean;
+    pending?: boolean;
     onpick: () => void;
     onstage?: () => void;
     onunstage?: () => void;
   }
 
-  let { change, selected, onpick, onstage, onunstage }: Props = $props();
+  let { change, selected, pending = false, onpick, onstage, onunstage }: Props = $props();
 
   // Single-letter glyph chosen for compactness in the narrow rail. Pairs
   // visually with the colour to disambiguate at small sizes.
@@ -80,8 +81,24 @@
     <span class="flex items-center gap-1.5">
       <span class="truncate text-foreground">{basename}</span>
       {#if change.staged}
-        <span class="rounded-sm bg-primary/15 px-1 text-[9px] tracking-wider text-primary uppercase">
-          staged
+        {#if pending}
+          <span
+            class="animate-pulse rounded-sm bg-primary/15 px-1 text-[9px] tracking-wider text-primary uppercase"
+            aria-live="polite"
+          >
+            staging…
+          </span>
+        {:else}
+          <span class="rounded-sm bg-primary/15 px-1 text-[9px] tracking-wider text-primary uppercase">
+            staged
+          </span>
+        {/if}
+      {:else if pending}
+        <span
+          class="animate-pulse rounded-sm bg-muted px-1 text-[9px] tracking-wider text-muted-foreground uppercase"
+          aria-live="polite"
+        >
+          unstaging…
         </span>
       {/if}
     </span>
@@ -101,22 +118,22 @@
     {#if change.staged && onunstage}
       <button
         type="button"
-        class="flex size-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted-foreground/20 group-hover:opacity-100"
+        class="flex size-4 items-center justify-center rounded text-rose-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500"
         onclick={(e) => { e.stopPropagation(); onunstage?.(); }}
         title="Unstage"
         aria-label="Unstage {change.path}"
       >
-        <Minus class="size-3 text-rose-500" />
+        <Minus class="size-3" />
       </button>
     {:else if !change.staged && onstage}
       <button
         type="button"
-        class="flex size-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted-foreground/20 group-hover:opacity-100"
+        class="flex size-4 items-center justify-center rounded text-emerald-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-emerald-500"
         onclick={(e) => { e.stopPropagation(); onstage?.(); }}
         title="Stage"
         aria-label="Stage {change.path}"
       >
-        <Plus class="size-3 text-emerald-500" />
+        <Plus class="size-3" />
       </button>
     {/if}
     <span class="font-mono text-[10px]">
