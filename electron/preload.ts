@@ -10,6 +10,10 @@ import type {
   ToastNotification
 } from '@shared/types/ipc.js';
 import type {
+  CommentsRpcRequest,
+  CommentsRpcResponse
+} from '@shared/types/comments-rpc.js';
+import type {
   CreateWorkerSessionRequest,
   ListObserverEventsRequest,
   ObservedAgentSnapshot,
@@ -242,6 +246,12 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.overview.askCancel, requestId),
     onChunk: (cb: (chunk: AskFollowUpChunk) => void) =>
       subscribe<AskFollowUpChunk>(IpcChannels.overview.askChunk, cb)
+  },
+  comments: {
+    onRpcRequest: (cb: (request: CommentsRpcRequest) => void) =>
+      subscribe<CommentsRpcRequest>(IpcChannels.comments.rpcRequest, cb),
+    sendRpcResponse: (response: CommentsRpcResponse) =>
+      ipcRenderer.send(IpcChannels.comments.rpcResponse, response)
   }
 };
 

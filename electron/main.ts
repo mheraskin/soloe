@@ -17,6 +17,8 @@ import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
 import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
 import { AgentHookDispatcher } from './agents/AgentHookDispatcher.js';
 import { AutoRenameService } from './agents/AutoRenameService.js';
+import { CommentsBridge } from './comments/CommentsBridge.js';
+import { BridgePersistence, type BridgeConfig } from './integrations/BridgePersistence.js';
 import { Notifier } from './notify/Notifier.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
@@ -52,6 +54,7 @@ interface AppServices {
   observerStore: AgentObserverStore;
   runtime: AgentRuntimeManager;
   mcp: SoloeMcpServer;
+  commentsBridge: CommentsBridge;
   git: GitService;
   files: FileSearchService;
   diagnostics: DiagnosticsService;
@@ -158,6 +161,8 @@ async function setupServices(): Promise<AppServices> {
   const notesDir = path.join(userDataPath, 'notes');
   const crashDir = path.join(userDataPath, 'crashes');
   const overviewCacheFile = path.join(userDataPath, 'overview-cache.json');
+  const bridgeFile = path.join(userDataPath, 'bridge.json');
+  const bridgePersistence = new BridgePersistence(bridgeFile);
 
   const store = new SessionStore(sessionsFile);
   await store.init();
@@ -221,12 +226,25 @@ async function setupServices(): Promise<AppServices> {
     onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[hook-dispatcher] ${message}`, detail)
   });
-  const mcp = new SoloeMcpServer({
+  const commentsBridge = new CommentsBridge({
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  commentsBridge.start();
+
+  const initialBridgeConfig = await bridgePersistence.loadOrCreate();
+  const { mcp, info: startedInfo, config: effectiveBridgeConfig } = await startMcp({
     observer,
     runtime,
-    onHookEvent: (event) => hookDispatcher.dispatch(event)
+    onHookEvent: (event) => hookDispatcher.dispatch(event),
+    commentsBridge,
+    initialConfig: initialBridgeConfig
   });
-  mcpInfo = await mcp.start();
+  if (effectiveBridgeConfig.port !== initialBridgeConfig.port) {
+    await bridgePersistence.save(effectiveBridgeConfig).catch((err) => {
+      console.warn('[bridge] failed to persist bridge config:', err);
+    });
+  }
+  mcpInfo = startedInfo;
 
   let manager: PtyManager;
   const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
@@ -284,7 +302,7 @@ async function setupServices(): Promise<AppServices> {
   });
   const diagnosticsIpc = new DiagnosticsIpc({ service: diagnostics });
   const windowIpc = new WindowIpc();
-  const hookInstaller = new HookInstaller();
+  const hookInstaller = new HookInstaller({ bridge: effectiveBridgeConfig });
   await hookInstaller.refresh().catch((err) => {
     console.warn('failed to detect WSL hosts for hook installer:', err);
   });
@@ -334,6 +352,7 @@ async function setupServices(): Promise<AppServices> {
     observerStore,
     runtime,
     mcp,
+    commentsBridge,
     git,
     files,
     diagnostics,
@@ -352,6 +371,59 @@ async function setupServices(): Promise<AppServices> {
     overviewService,
     overviewIpc
   };
+}
+
+interface StartMcpDeps {
+  observer: AgentObserverManager;
+  runtime: AgentRuntimeManager;
+  onHookEvent: (event: import('./agents/SoloeMcpServer.js').HookEvent) => void | Promise<void>;
+  commentsBridge: CommentsBridge;
+  initialConfig: BridgeConfig;
+}
+
+interface StartMcpResult {
+  mcp: SoloeMcpServer;
+  info: SoloeMcpServerInfo;
+  config: BridgeConfig;
+}
+
+// Start the MCP bridge using a persisted port. If the saved port is already
+// taken (another instance, or the user manually grabbed it), retry with port=0
+// so the OS assigns one and report the new port back so it can be persisted.
+async function startMcp(deps: StartMcpDeps): Promise<StartMcpResult> {
+  const tryStart = async (port: number): Promise<StartMcpResult> => {
+    const mcp = new SoloeMcpServer({
+      observer: deps.observer,
+      runtime: deps.runtime,
+      onHookEvent: deps.onHookEvent,
+      commentsBridge: deps.commentsBridge,
+      port,
+      token: deps.initialConfig.token
+    });
+    const info = await mcp.start();
+    const finalPort = portFromUrl(info.url) ?? port;
+    return { mcp, info, config: { port: finalPort, token: deps.initialConfig.token } };
+  };
+  try {
+    return await tryStart(deps.initialConfig.port);
+  } catch (err) {
+    if (deps.initialConfig.port === 0) throw err;
+    console.warn(
+      `[bridge] persisted port ${deps.initialConfig.port} unavailable, falling back to OS-assigned`,
+      err
+    );
+    return tryStart(0);
+  }
+}
+
+function portFromUrl(url: string): number | null {
+  try {
+    const parsed = new URL(url);
+    const port = Number(parsed.port);
+    return Number.isFinite(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
 }
 
 async function createWindow(): Promise<BrowserWindow> {
@@ -448,6 +520,7 @@ async function cleanup(): Promise<void> {
     await services.observerStore.persist(services.observer);
     await services.pty.dispose();
     await services.runtime.dispose();
+    services.commentsBridge.stop();
     await services.mcp.stop();
     services = null;
   }

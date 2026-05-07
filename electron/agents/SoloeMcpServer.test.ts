@@ -179,6 +179,74 @@ describe('SoloeMcpServer — hook endpoints', () => {
   });
 });
 
+describe('SoloeMcpServer — comment_resolve', () => {
+  it('lists comment_resolve in tools/list', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret' });
+    const tools = await server.handlePayload({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(JSON.stringify(tools)).toContain('comment_resolve');
+  });
+
+  it('forwards comment_resolve to the comments bridge', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const calls: string[] = [];
+    const commentsBridge = {
+      async resolveComment(id: string) {
+        calls.push(id);
+        return { ok: true as const };
+      }
+    };
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret', commentsBridge });
+
+    const result = await server.handlePayload({
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'comment_resolve', arguments: { id: 'abc-123' } }
+    }) as { result?: { structuredContent?: unknown } };
+
+    expect(calls).toEqual(['abc-123']);
+    expect(result.result?.structuredContent).toEqual({ ok: true });
+  });
+
+  it('errors when bridge is unavailable', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret' });
+
+    const result = await server.handlePayload({
+      jsonrpc: '2.0',
+      id: 8,
+      method: 'tools/call',
+      params: { name: 'comment_resolve', arguments: { id: 'abc-123' } }
+    }) as { error?: { message?: string } };
+
+    expect(result.error?.message).toBe('comments bridge not available');
+  });
+
+  it('errors when id is missing', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const commentsBridge = {
+      async resolveComment() {
+        return { ok: true as const };
+      }
+    };
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret', commentsBridge });
+
+    const result = await server.handlePayload({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'tools/call',
+      params: { name: 'comment_resolve', arguments: {} }
+    }) as { error?: { message?: string } };
+
+    expect(result.error?.message).toBe('id is required');
+  });
+});
+
 const fakeAdapter: WorkerSdkAdapter = {
   async run() {
     return { resultSummary: 'done' };

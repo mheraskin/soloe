@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomBytes } from 'node:crypto';
 import type { AgentRuntimeManager } from './AgentRuntimeManager.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
+import type { CommentsRpcResult } from '@shared/types/comments-rpc.js';
 
 export type HookProvider = 'claude_code' | 'codex';
 
@@ -11,6 +12,10 @@ export interface HookEvent {
   payload: Record<string, unknown>;
 }
 
+export interface CommentsBridgeLike {
+  resolveComment(id: string): Promise<CommentsRpcResult>;
+}
+
 export interface SoloeMcpServerOptions {
   observer: AgentObserverManager;
   runtime: AgentRuntimeManager;
@@ -18,6 +23,7 @@ export interface SoloeMcpServerOptions {
   port?: number;
   token?: string;
   onHookEvent?: (event: HookEvent) => void | Promise<void>;
+  commentsBridge?: CommentsBridgeLike;
 }
 
 export interface SoloeMcpServerInfo {
@@ -86,6 +92,16 @@ const TOOLS: McpTool[] = [
       type: 'object',
       required: ['workerId'],
       properties: { workerId: { type: 'string' } }
+    }
+  },
+  {
+    name: 'comment_resolve',
+    description:
+      'Mark a Soloe diff comment as resolved. The id is the value embedded in the [soloe-comment:<id>] tag at the top of the prompt that delivered the comment.',
+    inputSchema: {
+      type: 'object',
+      required: ['id'],
+      properties: { id: { type: 'string' } }
     }
   }
 ];
@@ -277,6 +293,12 @@ export class SoloeMcpServer {
         );
       case 'stop_worker_session':
         return this.opts.runtime.stopWorkerSession(requiredString(args, 'workerId'));
+      case 'comment_resolve': {
+        if (!this.opts.commentsBridge) {
+          throw new Error('comments bridge not available');
+        }
+        return this.opts.commentsBridge.resolveComment(requiredString(args, 'id'));
+      }
       default:
         throw new Error(`unknown tool: ${name}`);
     }

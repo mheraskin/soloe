@@ -31,9 +31,15 @@ export interface HookInstallStatus {
   hosts: HostInstallStatus[];
 }
 
+export interface BridgeIdentity {
+  port: number;
+  token: string;
+}
+
 export interface HookInstallerOptions {
   hosts?: HookHost[];
   detector?: WslHostDetector;
+  bridge?: BridgeIdentity;
 }
 
 const CLAUDE_EVENTS = [
@@ -61,7 +67,9 @@ const CODEX_EVENTS = [
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 9;
+export const SOLOE_HOOK_VERSION = 10;
+const SOLOE_MCP_NAME = 'soloe';
+const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 
@@ -122,10 +130,12 @@ export function wslHostFrom(info: WslDistroInfo): HookHost {
 export class HookInstaller {
   private hostsList: HookHost[];
   private readonly detector: WslHostDetector;
+  private readonly bridge: BridgeIdentity | null;
 
   constructor(opts: HookInstallerOptions = {}) {
     this.hostsList = opts.hosts ?? [defaultLocalHost()];
     this.detector = opts.detector ?? new WslHostDetector();
+    this.bridge = opts.bridge ?? null;
   }
 
   hosts(): HookHost[] {
@@ -161,7 +171,13 @@ export class HookInstaller {
     const target = this.requireHost(host);
     const filePath = this.claudeUserPath(target);
     const original = await readJsonOrNull(filePath);
-    const updated = mergeClaudeHooks(original ?? {}, HOOK_COMMAND_CLAUDE);
+    let updated = mergeClaudeHooks(original ?? {}, HOOK_COMMAND_CLAUDE);
+    if (this.bridge) {
+      updated = mergeClaudeMcp(updated, {
+        url: mcpUrlForHost(target, this.bridge.port),
+        token: this.bridge.token
+      });
+    }
     await this.writeAtomic(filePath, JSON.stringify(updated, null, 2) + '\n', original !== null);
   }
 
@@ -178,7 +194,12 @@ export class HookInstaller {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
     const original = await readTomlOrNull(filePath);
-    const updated = mergeCodexHooks(original ?? {}, HOOK_COMMAND_CODEX);
+    let updated = mergeCodexHooks(original ?? {}, HOOK_COMMAND_CODEX);
+    if (this.bridge) {
+      updated = mergeCodexMcp(updated, {
+        url: mcpUrlForHost(target, this.bridge.port)
+      });
+    }
     await this.writeAtomic(filePath, stringifyToml(updated), original !== null);
   }
 
@@ -274,6 +295,44 @@ async function readTomlOrNull(filePath: string): Promise<Record<string, unknown>
   }
 }
 
+export function mcpUrlForHost(host: HookHost, port: number): string {
+  const hostname = host.kind === 'wsl' ? 'host.wsl.internal' : '127.0.0.1';
+  return `http://${hostname}:${port}/mcp`;
+}
+
+export function mergeClaudeMcp(
+  original: Record<string, unknown>,
+  args: { url: string; token: string }
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original };
+  const servers = isObject(next['mcpServers']) ? { ...next['mcpServers'] } : {};
+  servers[SOLOE_MCP_NAME] = {
+    [SOLOE_MARKER]: true,
+    [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
+    type: 'http',
+    url: args.url,
+    headers: { Authorization: `Bearer ${args.token}` }
+  };
+  next['mcpServers'] = servers;
+  return next;
+}
+
+export function mergeCodexMcp(
+  original: Record<string, unknown>,
+  args: { url: string }
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original };
+  const servers = isObject(next['mcp_servers']) ? { ...next['mcp_servers'] } : {};
+  servers[SOLOE_MCP_NAME] = {
+    [SOLOE_MARKER]: true,
+    [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
+    url: args.url,
+    bearer_token_env_var: SOLOE_BRIDGE_TOKEN_ENV
+  };
+  next['mcp_servers'] = servers;
+  return next;
+}
+
 export function mergeClaudeHooks(
   original: Record<string, unknown>,
   command: string
@@ -322,24 +381,39 @@ export function removeSoloeFromClaude(
   original: Record<string, unknown>
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...original };
-  if (!isObject(next['hooks'])) return next;
-  const hooksRoot: Record<string, unknown> = { ...next['hooks'] };
-  for (const event of Object.keys(hooksRoot)) {
-    const groups = hooksRoot[event];
-    if (!Array.isArray(groups)) continue;
-    const cleaned = groups
-      .map((group) => stripSoloeFromGroup(group))
-      .filter((group) => group !== null);
-    if (cleaned.length === 0) {
-      delete hooksRoot[event];
+  if (isObject(next['hooks'])) {
+    const hooksRoot: Record<string, unknown> = { ...next['hooks'] };
+    for (const event of Object.keys(hooksRoot)) {
+      const groups = hooksRoot[event];
+      if (!Array.isArray(groups)) continue;
+      const cleaned = groups
+        .map((group) => stripSoloeFromGroup(group))
+        .filter((group) => group !== null);
+      if (cleaned.length === 0) {
+        delete hooksRoot[event];
+      } else {
+        hooksRoot[event] = cleaned;
+      }
+    }
+    if (Object.keys(hooksRoot).length === 0) {
+      delete next['hooks'];
     } else {
-      hooksRoot[event] = cleaned;
+      next['hooks'] = hooksRoot;
     }
   }
-  if (Object.keys(hooksRoot).length === 0) {
-    delete next['hooks'];
-  } else {
-    next['hooks'] = hooksRoot;
+  if (isObject(next['mcpServers'])) {
+    const servers: Record<string, unknown> = { ...next['mcpServers'] };
+    for (const name of Object.keys(servers)) {
+      const entry = servers[name];
+      if (isObject(entry) && entry[SOLOE_MARKER] === true) {
+        delete servers[name];
+      }
+    }
+    if (Object.keys(servers).length === 0) {
+      delete next['mcpServers'];
+    } else {
+      next['mcpServers'] = servers;
+    }
   }
   return next;
 }
@@ -378,36 +452,59 @@ export function removeSoloeFromCodex(
   original: Record<string, unknown>
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...original };
-  if (!isObject(next['hooks'])) return next;
-  const hooksRoot: Record<string, unknown> = { ...next['hooks'] };
-  for (const event of Object.keys(hooksRoot)) {
-    const groups = hooksRoot[event];
-    if (!Array.isArray(groups)) continue;
-    const cleaned = groups
-      .map((group) => stripSoloeFromGroup(group))
-      .filter((group) => group !== null);
-    if (cleaned.length === 0) {
-      delete hooksRoot[event];
+  if (isObject(next['hooks'])) {
+    const hooksRoot: Record<string, unknown> = { ...next['hooks'] };
+    for (const event of Object.keys(hooksRoot)) {
+      const groups = hooksRoot[event];
+      if (!Array.isArray(groups)) continue;
+      const cleaned = groups
+        .map((group) => stripSoloeFromGroup(group))
+        .filter((group) => group !== null);
+      if (cleaned.length === 0) {
+        delete hooksRoot[event];
+      } else {
+        hooksRoot[event] = cleaned;
+      }
+    }
+    if (Object.keys(hooksRoot).length === 0) {
+      delete next['hooks'];
     } else {
-      hooksRoot[event] = cleaned;
+      next['hooks'] = hooksRoot;
     }
   }
-  if (Object.keys(hooksRoot).length === 0) {
-    delete next['hooks'];
-  } else {
-    next['hooks'] = hooksRoot;
+  if (isObject(next['mcp_servers'])) {
+    const servers: Record<string, unknown> = { ...next['mcp_servers'] };
+    for (const name of Object.keys(servers)) {
+      const entry = servers[name];
+      if (isObject(entry) && entry[SOLOE_MARKER] === true) {
+        delete servers[name];
+      }
+    }
+    if (Object.keys(servers).length === 0) {
+      delete next['mcp_servers'];
+    } else {
+      next['mcp_servers'] = servers;
+    }
   }
   return next;
 }
 
 function claudeSoloeStatus(data: Record<string, unknown>): AgentIntegrationTargetStatus {
-  const hooks = data['hooks'];
-  if (!isObject(hooks)) return emptyStatus();
   const versions: number[] = [];
-  for (const groups of Object.values(hooks)) {
-    if (!Array.isArray(groups)) continue;
-    for (const group of groups) {
-      const version = soloeClaudeEntryVersion(group);
+  const hooks = data['hooks'];
+  if (isObject(hooks)) {
+    for (const groups of Object.values(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        const version = soloeClaudeEntryVersion(group);
+        if (version !== null) versions.push(version);
+      }
+    }
+  }
+  const servers = data['mcpServers'];
+  if (isObject(servers)) {
+    for (const entry of Object.values(servers)) {
+      const version = soloeMcpEntryVersion(entry);
       if (version !== null) versions.push(version);
     }
   }
@@ -415,17 +512,31 @@ function claudeSoloeStatus(data: Record<string, unknown>): AgentIntegrationTarge
 }
 
 function codexSoloeStatus(data: Record<string, unknown>): AgentIntegrationTargetStatus {
-  const hooks = data['hooks'];
-  if (!isObject(hooks)) return emptyStatus();
   const versions: number[] = [];
-  for (const groups of Object.values(hooks)) {
-    if (!Array.isArray(groups)) continue;
-    for (const group of groups) {
-      const version = soloeCodexEntryVersion(group);
+  const hooks = data['hooks'];
+  if (isObject(hooks)) {
+    for (const groups of Object.values(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        const version = soloeCodexEntryVersion(group);
+        if (version !== null) versions.push(version);
+      }
+    }
+  }
+  const servers = data['mcp_servers'];
+  if (isObject(servers)) {
+    for (const entry of Object.values(servers)) {
+      const version = soloeMcpEntryVersion(entry);
       if (version !== null) versions.push(version);
     }
   }
   return statusFromVersions(versions);
+}
+
+function soloeMcpEntryVersion(entry: unknown): number | null {
+  if (!isObject(entry)) return null;
+  if (entry[SOLOE_MARKER] !== true) return null;
+  return markerVersion(entry);
 }
 
 function isSoloeClaudeEntry(entry: unknown): boolean {

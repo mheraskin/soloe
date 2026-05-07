@@ -56,6 +56,7 @@ import type {
   SessionUpdate
 } from './sessions.js';
 import type { Settings, SettingsUpdate } from './settings.js';
+import type { CommentsRpcRequest, CommentsRpcResponse } from './comments-rpc.js';
 import type { NoteContent, NoteSummary, NotesChangeEvent } from './notes.js';
 import type {
   SpawnSpec,
@@ -189,6 +190,10 @@ export const IpcChannels = {
     askStart: 'overview:ask-start',
     askCancel: 'overview:ask-cancel',
     askChunk: 'overview:ask-chunk'
+  },
+  comments: {
+    rpcRequest: 'comments:rpc:request',
+    rpcResponse: 'comments:rpc:response'
   }
 } as const;
 
@@ -206,7 +211,8 @@ export type IpcChannel =
   | (typeof IpcChannels.window)[keyof typeof IpcChannels.window]
   | (typeof IpcChannels.agentIntegration)[keyof typeof IpcChannels.agentIntegration]
   | (typeof IpcChannels.notify)[keyof typeof IpcChannels.notify]
-  | (typeof IpcChannels.overview)[keyof typeof IpcChannels.overview];
+  | (typeof IpcChannels.overview)[keyof typeof IpcChannels.overview]
+  | (typeof IpcChannels.comments)[keyof typeof IpcChannels.comments];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -420,6 +426,11 @@ export interface OverviewApi {
   onChunk(listener: (chunk: import('./overview.js').AskFollowUpChunk) => void): () => void;
 }
 
+export interface CommentsApi {
+  onRpcRequest(listener: (request: CommentsRpcRequest) => void): () => void;
+  sendRpcResponse(response: CommentsRpcResponse): void;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -435,6 +446,7 @@ export interface SoloeApi {
   agentIntegration: AgentIntegrationApi;
   notify: NotifyApi;
   overview: OverviewApi;
+  comments: CommentsApi;
 }
 
 declare global {

@@ -15,16 +15,17 @@ function bracketedPaste(text: string): string {
   return `\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~\r`;
 }
 
-// Build the prompt body delivered to the target. Comments don't carry diff
-// context here (the agent can read the file itself), so we just include the
-// file:line header and the user's text.
+// Build the prompt body delivered to the target. The leading [soloe-comment:<id>]
+// tag is the deterministic handle the agent passes back to the comment_resolve
+// MCP tool — keep it on its own line at the very top so simple summarizers
+// don't drop it.
 function buildPrompt(comment: DiffComment): string {
   const range =
     comment.endLine === comment.startLine
       ? `L${comment.startLine}`
       : `L${comment.startLine}–${comment.endLine}`;
   const header = `Re: ${comment.filePath} (${comment.side === 'old' ? 'before' : 'after'} ${range})`;
-  return `${header}\n\n${comment.text}`;
+  return `[soloe-comment:${comment.id}]\n${header}\n\n${comment.text}`;
 }
 
 export interface SendCommentResult {

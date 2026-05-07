@@ -10,6 +10,9 @@ import {
   removeSoloeFromClaude,
   mergeCodexHooks,
   removeSoloeFromCodex,
+  mergeClaudeMcp,
+  mergeCodexMcp,
+  mcpUrlForHost,
   SOLOE_HOOK_VERSION,
   type HookHost
 } from './HookInstaller.js';
@@ -468,5 +471,261 @@ describe('mergeCodexHooks / removeSoloeFromCodex (pure)', () => {
     expect((cleaned.hooks as Record<string, unknown[]>)['UserPromptSubmit']).toEqual(
       original.hooks.UserPromptSubmit
     );
+  });
+});
+
+describe('mcpUrlForHost', () => {
+  it('uses 127.0.0.1 for windows hosts', () => {
+    const host: HookHost = { kind: 'windows', label: 'Local', homeDir: '/tmp', available: true };
+    expect(mcpUrlForHost(host, 17896)).toBe('http://127.0.0.1:17896/mcp');
+  });
+
+  it('uses host.wsl.internal for WSL hosts', () => {
+    const host: HookHost = {
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      label: 'WSL: Ubuntu',
+      homeDir: '/tmp',
+      available: true
+    };
+    expect(mcpUrlForHost(host, 17896)).toBe('http://host.wsl.internal:17896/mcp');
+  });
+});
+
+describe('mergeClaudeMcp / removeSoloeFromClaude (pure)', () => {
+  it('writes a Soloe http MCP server entry with literal Bearer token', () => {
+    const merged = mergeClaudeMcp({}, { url: 'http://127.0.0.1:17896/mcp', token: 'abc' });
+    const servers = merged.mcpServers as Record<string, Record<string, unknown>>;
+    expect(servers.soloe).toMatchObject({
+      _soloe: true,
+      _soloe_version: SOLOE_HOOK_VERSION,
+      type: 'http',
+      url: 'http://127.0.0.1:17896/mcp',
+      headers: { Authorization: 'Bearer abc' }
+    });
+  });
+
+  it('preserves other mcpServers entries when merging', () => {
+    const original = {
+      mcpServers: {
+        other: { type: 'http', url: 'http://example.com' }
+      }
+    };
+    const merged = mergeClaudeMcp(original, { url: 'http://127.0.0.1:17896/mcp', token: 'abc' });
+    const servers = merged.mcpServers as Record<string, unknown>;
+    expect(servers.other).toEqual({ type: 'http', url: 'http://example.com' });
+    expect(servers.soloe).toBeDefined();
+  });
+
+  it('replaces an existing soloe entry on re-merge', () => {
+    const first = mergeClaudeMcp({}, { url: 'http://127.0.0.1:17896/mcp', token: 'old' });
+    const second = mergeClaudeMcp(first, { url: 'http://127.0.0.1:17896/mcp', token: 'new' });
+    const soloe = (second.mcpServers as Record<string, Record<string, unknown>>).soloe!;
+    expect((soloe.headers as Record<string, string>).Authorization).toBe('Bearer new');
+  });
+
+  it('removeSoloeFromClaude strips the Soloe MCP entry but keeps user entries', () => {
+    const original = {
+      mcpServers: {
+        other: { type: 'http', url: 'http://example.com' }
+      }
+    };
+    const merged = mergeClaudeMcp(original, { url: 'http://127.0.0.1:17896/mcp', token: 'abc' });
+    const cleaned = removeSoloeFromClaude(merged);
+    const servers = cleaned.mcpServers as Record<string, unknown>;
+    expect(servers.other).toEqual({ type: 'http', url: 'http://example.com' });
+    expect(servers.soloe).toBeUndefined();
+  });
+
+  it('removeSoloeFromClaude drops mcpServers if it becomes empty', () => {
+    const merged = mergeClaudeMcp({}, { url: 'http://127.0.0.1:17896/mcp', token: 'abc' });
+    const cleaned = removeSoloeFromClaude(merged);
+    expect(cleaned.mcpServers).toBeUndefined();
+  });
+
+  it('removeSoloeFromClaude does not touch a user-named soloe entry without marker', () => {
+    const original = {
+      mcpServers: {
+        soloe: { type: 'http', url: 'http://user.example.com' }
+      }
+    };
+    const cleaned = removeSoloeFromClaude(original);
+    expect((cleaned.mcpServers as Record<string, unknown>).soloe).toEqual({
+      type: 'http',
+      url: 'http://user.example.com'
+    });
+  });
+});
+
+describe('mergeCodexMcp / removeSoloeFromCodex (pure)', () => {
+  it('writes a Soloe MCP server entry referencing the env-var token', () => {
+    const merged = mergeCodexMcp({}, { url: 'http://127.0.0.1:17896/mcp' });
+    const servers = merged.mcp_servers as Record<string, Record<string, unknown>>;
+    expect(servers.soloe).toMatchObject({
+      _soloe: true,
+      _soloe_version: SOLOE_HOOK_VERSION,
+      url: 'http://127.0.0.1:17896/mcp',
+      bearer_token_env_var: 'SOLOE_BRIDGE_TOKEN'
+    });
+  });
+
+  it('preserves other mcp_servers entries when merging', () => {
+    const original = {
+      mcp_servers: { other: { url: 'http://example.com' } }
+    };
+    const merged = mergeCodexMcp(original, { url: 'http://127.0.0.1:17896/mcp' });
+    const servers = merged.mcp_servers as Record<string, unknown>;
+    expect(servers.other).toEqual({ url: 'http://example.com' });
+    expect(servers.soloe).toBeDefined();
+  });
+
+  it('removeSoloeFromCodex strips the Soloe MCP entry', () => {
+    const merged = mergeCodexMcp({}, { url: 'http://127.0.0.1:17896/mcp' });
+    const cleaned = removeSoloeFromCodex(merged);
+    expect(cleaned.mcp_servers).toBeUndefined();
+  });
+});
+
+describe('HookInstaller with bridge — MCP registration', () => {
+  let homeDir: string;
+  let installer: HookInstaller;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'soloe-home-'));
+    installer = new HookInstaller({
+      hosts: [localHost(homeDir)],
+      bridge: { port: 17896, token: 'tok-123' }
+    });
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it('installClaude writes both hooks and MCP server entry', async () => {
+    await installer.installClaude(LOCAL);
+    const written = JSON.parse(
+      await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
+    );
+    expect(written.hooks).toBeDefined();
+    expect(written.mcpServers.soloe).toMatchObject({
+      _soloe: true,
+      _soloe_version: SOLOE_HOOK_VERSION,
+      type: 'http',
+      url: 'http://127.0.0.1:17896/mcp',
+      headers: { Authorization: 'Bearer tok-123' }
+    });
+  });
+
+  it('uninstallClaude strips both hooks and MCP entry', async () => {
+    await installer.installClaude(LOCAL);
+    await installer.uninstallClaude(LOCAL);
+    const written = JSON.parse(
+      await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
+    );
+    expect(written.hooks).toBeUndefined();
+    expect(written.mcpServers).toBeUndefined();
+  });
+
+  it('installCodex writes both hooks and MCP server entry', async () => {
+    await installer.installCodex(LOCAL);
+    const raw = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
+    const parsed = parseToml(raw) as Record<string, unknown>;
+    expect(parsed.hooks).toBeDefined();
+    const servers = parsed.mcp_servers as Record<string, Record<string, unknown>>;
+    expect(servers.soloe).toMatchObject({
+      _soloe: true,
+      _soloe_version: SOLOE_HOOK_VERSION,
+      url: 'http://127.0.0.1:17896/mcp',
+      bearer_token_env_var: 'SOLOE_BRIDGE_TOKEN'
+    });
+  });
+
+  it('uninstallCodex strips both hooks and MCP entry', async () => {
+    await installer.installCodex(LOCAL);
+    await installer.uninstallCodex(LOCAL);
+    const raw = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
+    const parsed = parseToml(raw) as Record<string, unknown>;
+    expect(parsed.hooks).toBeUndefined();
+    expect(parsed.mcp_servers).toBeUndefined();
+  });
+
+  it('reinstall replaces the MCP entry rather than stacking it', async () => {
+    await installer.installClaude(LOCAL);
+    await installer.installClaude(LOCAL);
+    const written = JSON.parse(
+      await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
+    );
+    expect(Object.keys(written.mcpServers)).toEqual(['soloe']);
+  });
+
+  it('routes WSL host MCP URL through host.wsl.internal', async () => {
+    const wslHomeDir = mkdtempSync(join(tmpdir(), 'soloe-wsl-'));
+    try {
+      const multi = new HookInstaller({
+        hosts: [localHost(homeDir), wslHost('Ubuntu', wslHomeDir)],
+        bridge: { port: 17896, token: 'tok-123' }
+      });
+      await multi.installClaude({ kind: 'wsl', distro: 'Ubuntu' });
+      const written = JSON.parse(
+        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
+      );
+      expect(written.mcpServers.soloe.url).toBe('http://host.wsl.internal:17896/mcp');
+    } finally {
+      rmSync(wslHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('status reports as not-current when MCP entry is at an older version', async () => {
+    const settingsPath = join(homeDir, '.claude', 'settings.json');
+    await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        mcpServers: {
+          soloe: { _soloe: true, _soloe_version: 5, type: 'http', url: 'http://x' }
+        }
+      })
+    );
+    const s = await installer.status();
+    expect(s.hosts[0]!.claude).toEqual({ installed: true, current: false, version: 5 });
+  });
+
+  it('status reports as current when fully installed at the latest version', async () => {
+    await installer.installClaude(LOCAL);
+    await installer.installCodex(LOCAL);
+    const s = await installer.status();
+    expect(s.hosts[0]!.claude).toEqual({
+      installed: true,
+      current: true,
+      version: SOLOE_HOOK_VERSION
+    });
+    expect(s.hosts[0]!.codex).toEqual({
+      installed: true,
+      current: true,
+      version: SOLOE_HOOK_VERSION
+    });
+  });
+});
+
+describe('HookInstaller without bridge', () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'soloe-home-'));
+  });
+
+  afterEach(() => {
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it('installClaude without bridge writes hooks but no MCP entry', async () => {
+    const installer = new HookInstaller({ hosts: [localHost(homeDir)] });
+    await installer.installClaude(LOCAL);
+    const written = JSON.parse(
+      await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
+    );
+    expect(written.hooks).toBeDefined();
+    expect(written.mcpServers).toBeUndefined();
   });
 });
