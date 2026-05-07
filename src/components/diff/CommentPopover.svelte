@@ -1,7 +1,16 @@
 <script lang="ts">
   import * as Popover from '$lib/components/ui/popover';
   import { Button } from '$lib/components/ui/button';
-  import { Trash2, PencilLine, Send, Loader2, CheckCircle2, CircleCheck, CircleDot } from '@lucide/svelte';
+  import {
+    Trash2,
+    PencilLine,
+    Send,
+    Loader2,
+    CheckCircle2,
+    CircleCheck,
+    CircleDot,
+    X
+  } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
   import type { DiffComment } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
@@ -204,13 +213,15 @@
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      // Enter saves the comment (primary action). Shift+Enter inserts a
+      // newline. Cmd/Ctrl+Enter sends — secondary, opt-in shortcut.
       e.preventDefault();
-      void runSend();
+      save();
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      save();
+      void runSend();
     }
   }
 
@@ -271,43 +282,90 @@
       {@render trigger({ props })}
     {/snippet}
   </Popover.Trigger>
-  <Popover.Content side="right" align="start" class="w-80">
-    {#if editing}
-      <div class="relative">
-        <textarea
-          bind:this={textareaEl}
-          bind:value={draft}
-          onkeydown={onKeydown}
-          onkeyup={syncCursor}
-          oninput={syncCursor}
-          onclick={syncCursor}
-          onselect={syncCursor}
-          class="min-h-20 w-full resize-none rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:border-ring"
-          placeholder="Add a comment… use @ to mention"
-          spellcheck="false"
-        ></textarea>
-        {#if pickerOpen}
-          <MentionPicker
-            items={pickerItems}
-            activeIndex={pickerActiveIdx}
-            onSelect={(i) => {
-              const item = pickerItems[i];
-              if (item) applyMention(item);
-            }}
-            onHover={(i) => (pickerActiveIdx = i)}
-          />
+  <Popover.Content side="right" align="start" class="w-80 p-0">
+    <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+      <div class="flex min-w-0 items-center gap-1.5">
+        <span class="font-mono text-xs font-semibold text-foreground">{lineLabel}</span>
+        {#if !editing && comment.sentAt}
+          <span
+            class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400"
+            title={`Sent ${new Date(comment.sentAt).toLocaleString()}`}
+          >
+            <CheckCircle2 class="size-2.5" /> sent
+          </span>
+        {/if}
+        {#if !editing && comment.resolvedAt}
+          <span
+            class="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-muted-foreground uppercase"
+            title={`Resolved ${new Date(comment.resolvedAt).toLocaleString()}`}
+          >
+            <CircleCheck class="size-2.5" /> resolved
+          </span>
         {/if}
       </div>
-      {#if resolvedAgents.length > 0}
-        <div class="mt-1 flex flex-wrap items-center gap-1">
-          {#each resolvedAgents as agent (agent.id)}
-            <AgentBadge name={agent.name} provider={agent.provider} model={agent.model} />
-          {/each}
+      <div class="flex items-center gap-0.5">
+        {#if !editing}
+          <Button
+            variant="ghost"
+            size="xs"
+            onclick={toggleResolve}
+            aria-label={comment.resolvedAt ? 'Reopen comment' : 'Resolve comment'}
+            title={comment.resolvedAt ? 'Reopen' : 'Resolve'}
+          >
+            {#if comment.resolvedAt}
+              <CircleDot class="size-3" />
+            {:else}
+              <CircleCheck class="size-3" />
+            {/if}
+          </Button>
+        {/if}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={() => (open = false)}
+          aria-label="Close"
+          title="Close"
+        >
+          <X class="size-3" />
+        </Button>
+      </div>
+    </header>
+
+    <div class="px-3 py-2">
+      {#if editing}
+        <div class="relative">
+          <textarea
+            bind:this={textareaEl}
+            bind:value={draft}
+            onkeydown={onKeydown}
+            onkeyup={syncCursor}
+            oninput={syncCursor}
+            onclick={syncCursor}
+            onselect={syncCursor}
+            class="min-h-20 w-full resize-none rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:border-ring"
+            placeholder="Add a comment… use @ to mention"
+            spellcheck="false"
+          ></textarea>
+          {#if pickerOpen}
+            <MentionPicker
+              items={pickerItems}
+              activeIndex={pickerActiveIdx}
+              onSelect={(i) => {
+                const item = pickerItems[i];
+                if (item) applyMention(item);
+              }}
+              onHover={(i) => (pickerActiveIdx = i)}
+            />
+          {/if}
         </div>
-      {/if}
-      <div class="mt-2 flex items-center justify-between gap-2">
-        <span class="text-[10px] text-muted-foreground">{lineLabel}</span>
-        <div class="flex items-center gap-1.5">
+        {#if resolvedAgents.length > 0}
+          <div class="mt-1.5 flex flex-wrap items-center gap-1">
+            {#each resolvedAgents as agent (agent.id)}
+              <AgentBadge name={agent.name} provider={agent.provider} model={agent.model} />
+            {/each}
+          </div>
+        {/if}
+        <div class="mt-2 flex items-center justify-between gap-2">
           {#if comment.text.length > 0}
             <Button
               variant="ghost"
@@ -318,56 +376,40 @@
             >
               <Trash2 class="size-3" />
             </Button>
+          {:else}
+            <span></span>
           {/if}
-          <Button variant="outline" size="xs" onclick={save} disabled={sending}>Save</Button>
-          <Button
-            size="xs"
-            onclick={() => void runSend()}
-            disabled={sending || draft.trim().length === 0}
-            title="Comment & send (Enter)"
-          >
-            {#if sending}
-              <Loader2 class="size-3 animate-spin" />
-            {:else}
-              <Send class="size-3" />
-            {/if}
-            <span>{sendLabel}</span>
-          </Button>
+          <div class="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="xs"
+              onclick={() => void runSend()}
+              disabled={sending || draft.trim().length === 0}
+              title="Send (Cmd/Ctrl+Enter)"
+            >
+              {#if sending}
+                <Loader2 class="size-3 animate-spin" />
+              {:else}
+                <Send class="size-3" />
+              {/if}
+              <span>{sendLabel}</span>
+            </Button>
+            <Button size="xs" onclick={save} disabled={sending} title="Save (Enter)">Save</Button>
+          </div>
         </div>
-      </div>
-    {:else}
-      <div class="flex flex-col gap-2">
-        <pre
-          class="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug"
-        >{comment.text || '(empty)'}</pre>
-        {#if resolvedAgents.length > 0}
-          <div class="flex flex-wrap items-center gap-1">
-            {#each resolvedAgents as agent (agent.id)}
-              <AgentBadge name={agent.name} provider={agent.provider} model={agent.model} />
-            {/each}
-          </div>
-        {/if}
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-1.5">
-            <span class="text-[10px] text-muted-foreground">{lineLabel}</span>
-            {#if comment.sentAt}
-              <span
-                class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400"
-                title={`Sent ${new Date(comment.sentAt).toLocaleString()}`}
-              >
-                <CheckCircle2 class="size-2.5" /> sent
-              </span>
-            {/if}
-            {#if comment.resolvedAt}
-              <span
-                class="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-muted-foreground uppercase"
-                title={`Resolved ${new Date(comment.resolvedAt).toLocaleString()}`}
-              >
-                <CircleCheck class="size-2.5" /> resolved
-              </span>
-            {/if}
-          </div>
-          <div class="flex items-center gap-1.5">
+      {:else}
+        <div class="flex flex-col gap-2">
+          <pre
+            class="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug"
+          >{comment.text || '(empty)'}</pre>
+          {#if resolvedAgents.length > 0}
+            <div class="flex flex-wrap items-center gap-1">
+              {#each resolvedAgents as agent (agent.id)}
+                <AgentBadge name={agent.name} provider={agent.provider} model={agent.model} />
+              {/each}
+            </div>
+          {/if}
+          <div class="flex items-center justify-between gap-2">
             <Button
               variant="ghost"
               size="xs"
@@ -377,41 +419,30 @@
             >
               <Trash2 class="size-3" />
             </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={toggleResolve}
-              aria-label={comment.resolvedAt ? 'Reopen comment' : 'Resolve comment'}
-              title={comment.resolvedAt ? 'Reopen' : 'Resolve'}
-            >
-              {#if comment.resolvedAt}
-                <CircleDot class="size-3" />
-              {:else}
-                <CircleCheck class="size-3" />
-              {/if}
-            </Button>
-            <Button variant="outline" size="xs" onclick={startEditing}>
-              <PencilLine class="size-3" />
-              <span>Edit</span>
-            </Button>
-            {#if comment.text.trim().length > 0}
-              <Button
-                size="xs"
-                onclick={() => void runSend()}
-                disabled={sending}
-                title={comment.sentAt ? 'Send again' : sendLabel}
-              >
-                {#if sending}
-                  <Loader2 class="size-3 animate-spin" />
-                {:else}
-                  <Send class="size-3" />
-                {/if}
-                <span>{comment.sentAt ? 'Resend' : sendLabel}</span>
+            <div class="flex items-center gap-1.5">
+              <Button variant="outline" size="xs" onclick={startEditing}>
+                <PencilLine class="size-3" />
+                <span>Edit</span>
               </Button>
-            {/if}
+              {#if comment.text.trim().length > 0}
+                <Button
+                  size="xs"
+                  onclick={() => void runSend()}
+                  disabled={sending}
+                  title={comment.sentAt ? 'Send again' : sendLabel}
+                >
+                  {#if sending}
+                    <Loader2 class="size-3 animate-spin" />
+                  {:else}
+                    <Send class="size-3" />
+                  {/if}
+                  <span>{comment.sentAt ? 'Resend' : sendLabel}</span>
+                </Button>
+              {/if}
+            </div>
           </div>
         </div>
-      </div>
-    {/if}
+      {/if}
+    </div>
   </Popover.Content>
 </Popover.Root>
