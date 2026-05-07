@@ -7,17 +7,26 @@
   interface Props {
     cwd: string;
     filePath: string;
-    // 1-based line range in the *old* file. Since the gap is unchanged
-    // content, the new-file range maps onto the same lines but with a
-    // different starting offset, which we pass separately for the gutter.
     oldStart: number;
     oldEnd: number;
     newStart: number;
     gutterWidth: number;
     mode: 'unified' | 'split';
+    wrap?: boolean;
   }
 
-  let { cwd, filePath, oldStart, oldEnd, newStart, gutterWidth, mode }: Props = $props();
+  let { cwd, filePath, oldStart, oldEnd, newStart, gutterWidth, mode, wrap = true }: Props = $props();
+
+  let textCls = $derived(
+    wrap
+      ? 'min-w-0 grow px-1 break-all whitespace-pre-wrap'
+      : 'min-w-0 grow px-1 whitespace-pre'
+  );
+  let splitTextCls = $derived(
+    wrap
+      ? 'min-w-0 grow px-1.5 break-all whitespace-pre-wrap'
+      : 'min-w-0 grow px-1.5 whitespace-pre'
+  );
 
   let entry = $derived(workingDiff.fileLinesEntry(cwd, filePath, oldStart, oldEnd));
   let gapSize = $derived(oldEnd - oldStart + 1);
@@ -93,7 +102,7 @@
             <CommentMarker comments={commentsStartingAt('new', newLine)} />
           </span>
           <span class="w-5 shrink-0 pl-1 text-center select-none">&nbsp;</span>
-          <span class="min-w-0 grow px-1 break-all whitespace-pre-wrap">{text || ' '}</span>
+          <span class={textCls}>{text || ' '}</span>
         </div>
       {/each}
     {:else}
@@ -112,7 +121,7 @@
               {oldLine}
               <CommentMarker comments={commentsStartingAt('old', oldLine)} />
             </span>
-            <span class="min-w-0 grow px-1.5 break-all whitespace-pre-wrap">{text || ' '}</span>
+            <span class={splitTextCls}>{text || ' '}</span>
           </div>
           <div class="flex min-h-[1.45em] bg-background">
             <span
@@ -125,7 +134,7 @@
               {newLine}
               <CommentMarker comments={commentsStartingAt('new', newLine)} />
             </span>
-            <span class="min-w-0 grow px-1.5 break-all whitespace-pre-wrap">{text || ' '}</span>
+            <span class={splitTextCls}>{text || ' '}</span>
           </div>
         </div>
       {/each}

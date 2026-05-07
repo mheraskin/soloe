@@ -10,9 +10,21 @@
     gutterWidth: number;
     cwd: string;
     filePath: string;
+    wrap?: boolean;
   }
 
-  let { hunk, mode, gutterWidth, cwd, filePath }: Props = $props();
+  let { hunk, mode, gutterWidth, cwd, filePath, wrap = true }: Props = $props();
+
+  let textCls = $derived(
+    wrap
+      ? 'min-w-0 grow px-1 break-all whitespace-pre-wrap'
+      : 'min-w-0 grow px-1 whitespace-pre'
+  );
+  let splitTextCls = $derived(
+    wrap
+      ? 'min-w-0 grow px-1.5 break-all whitespace-pre-wrap'
+      : 'min-w-0 grow px-1.5 whitespace-pre'
+  );
 
   type PairRow =
     | { kind: 'context'; old: number | null; new: number | null; text: string }
@@ -104,21 +116,60 @@
     return base;
   }
 
-  function onGutterMousedown(e: MouseEvent, side: DiffSide, line: number | null): void {
-    if (line === null || e.button !== 0) return;
-    e.preventDefault();
-    diffComments.startSelection(cwd, filePath, side, line);
+  // Resolve a click on (preferredSide) to whichever side of the row actually
+  // has a line number. Add rows have no oldLine, remove rows have no newLine —
+  // clicking the empty gutter on those rows still anchors the comment to the
+  // row's only existing side instead of being dead.
+  function resolveTarget(
+    preferredSide: DiffSide,
+    oldLine: number | null,
+    newLine: number | null
+  ): { side: DiffSide; line: number } | null {
+    const preferredLine = preferredSide === 'old' ? oldLine : newLine;
+    if (preferredLine !== null) return { side: preferredSide, line: preferredLine };
+    const fallbackSide: DiffSide = preferredSide === 'old' ? 'new' : 'old';
+    const fallbackLine = fallbackSide === 'old' ? oldLine : newLine;
+    if (fallbackLine === null) return null;
+    return { side: fallbackSide, line: fallbackLine };
   }
 
-  function onGutterEnter(side: DiffSide, line: number | null): void {
-    if (line === null) return;
-    diffComments.extendSelection(side, line);
+  function onGutterMousedown(
+    e: MouseEvent,
+    preferredSide: DiffSide,
+    oldLine: number | null,
+    newLine: number | null
+  ): void {
+    if (e.button !== 0) return;
+    const target = resolveTarget(preferredSide, oldLine, newLine);
+    if (!target) return;
+    e.preventDefault();
+    diffComments.startSelection(cwd, filePath, target.side, target.line);
+  }
+
+  function onGutterEnter(
+    preferredSide: DiffSide,
+    oldLine: number | null,
+    newLine: number | null
+  ): void {
+    // While dragging, snap to the selection's locked side so hovering either
+    // gutter on a context row still extends the range.
+    const sel = diffComments.selection;
+    if (sel?.dragging) {
+      const sideLine = sel.side === 'old' ? oldLine : newLine;
+      if (sideLine !== null) {
+        diffComments.extendSelection(sel.side, sideLine);
+        return;
+      }
+    }
+    const target = resolveTarget(preferredSide, oldLine, newLine);
+    if (!target) return;
+    diffComments.extendSelection(target.side, target.line);
   }
 </script>
 
 <section class="border-t border-border first:border-t-0">
   <header
-    class="sticky top-0 z-[1] flex items-center gap-2 border-b border-border bg-muted/40 px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+    class="sticky top-0 z-[1] flex items-center gap-2 border-b border-border bg-muted px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
     title="@@ -{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@"
   >
     <span class="text-muted-foreground/70">
@@ -145,8 +196,8 @@
           <span
             class={gutterClass('old', line.oldLine)}
             style={gutterStyle(gutterWidth)}
-            onmousedown={(e) => onGutterMousedown(e, 'old', line.oldLine)}
-            onmouseenter={() => onGutterEnter('old', line.oldLine)}
+            onmousedown={(e) => onGutterMousedown(e, 'old', line.oldLine, line.newLine)}
+            onmouseenter={() => onGutterEnter('old', line.oldLine, line.newLine)}
             role="presentation"
           >
             {line.oldLine ?? ''}
@@ -155,8 +206,8 @@
           <span
             class={gutterClass('new', line.newLine)}
             style={gutterStyle(gutterWidth)}
-            onmousedown={(e) => onGutterMousedown(e, 'new', line.newLine)}
-            onmouseenter={() => onGutterEnter('new', line.newLine)}
+            onmousedown={(e) => onGutterMousedown(e, 'new', line.oldLine, line.newLine)}
+            onmouseenter={() => onGutterEnter('new', line.oldLine, line.newLine)}
             role="presentation"
           >
             {line.newLine ?? ''}
@@ -172,7 +223,7 @@
           >
             {#if line.kind === 'add'}+{:else if line.kind === 'remove'}−{:else if line.kind === 'meta'}~{:else}&nbsp;{/if}
           </span>
-          <span class="min-w-0 grow px-1 break-all whitespace-pre-wrap">{line.text || ' '}</span>
+          <span class={textCls}>{line.text || ' '}</span>
         </div>
       {/each}
     {:else}
@@ -196,14 +247,14 @@
               <span
                 class={gutterClass('old', row.old)}
                 style={gutterStyle(gutterWidth)}
-                onmousedown={(e) => onGutterMousedown(e, 'old', row.old)}
-                onmouseenter={() => onGutterEnter('old', row.old)}
+                onmousedown={(e) => onGutterMousedown(e, 'old', row.old, row.new)}
+                onmouseenter={() => onGutterEnter('old', row.old, row.new)}
                 role="presentation"
               >
                 {row.old ?? ''}
                 <CommentMarker comments={oldStarting} />
               </span>
-              <span class="min-w-0 grow px-1.5 break-all whitespace-pre-wrap">
+              <span class={splitTextCls}>
                 {#if row.kind === 'context'}
                   {row.text || ' '}
                 {:else if row.oldText !== null}
@@ -220,14 +271,14 @@
               <span
                 class={gutterClass('new', row.new)}
                 style={gutterStyle(gutterWidth)}
-                onmousedown={(e) => onGutterMousedown(e, 'new', row.new)}
-                onmouseenter={() => onGutterEnter('new', row.new)}
+                onmousedown={(e) => onGutterMousedown(e, 'new', row.old, row.new)}
+                onmouseenter={() => onGutterEnter('new', row.old, row.new)}
                 role="presentation"
               >
                 {row.new ?? ''}
                 <CommentMarker comments={newStarting} />
               </span>
-              <span class="min-w-0 grow px-1.5 break-all whitespace-pre-wrap">
+              <span class={splitTextCls}>
                 {#if row.kind === 'context'}
                   {row.text || ' '}
                 {:else if row.newText !== null}

@@ -85,26 +85,30 @@
     <nav class="flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = rightRail.open && rightRail.activeTab === tab.id}
-        {@const tooltipOpen =
-          (kbdHints.altHeld && tab.shortcut !== undefined && !isActive) ||
-          hoveredTab[tab.id] === true}
-        <Tooltip.Root open={tooltipOpen} onOpenChange={(v) => (hoveredTab[tab.id] = v)}>
+        <Tooltip.Root bind:open={hoveredTab[tab.id]}>
           <Tooltip.Trigger>
             {#snippet child({ props })}
-              <button
-                {...props}
-                type="button"
-                class={`flex size-8 items-center justify-center rounded-md transition-colors ${
-                  isActive
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                }`}
-                onclick={() => rightRail.toggleTab(tab.id)}
-                aria-label={tab.label}
-                aria-pressed={isActive}
-              >
-                <tab.icon class="size-4" />
-              </button>
+              <div class="relative">
+                <button
+                  {...props}
+                  type="button"
+                  class={`flex size-8 items-center justify-center rounded-md transition-colors ${
+                    isActive
+                      ? 'bg-muted text-foreground'
+                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                  }`}
+                  onclick={() => rightRail.toggleTab(tab.id)}
+                  aria-label={tab.label}
+                  aria-pressed={isActive}
+                >
+                  <tab.icon class="size-4" />
+                </button>
+                {#if kbdHints.altHeld && tab.shortcut && !isActive}
+                  <div class="pointer-events-none absolute top-1/2 right-full mr-1.5 -translate-y-1/2">
+                    <Kbd keys={[...tab.shortcut]} />
+                  </div>
+                {/if}
+              </div>
             {/snippet}
           </Tooltip.Trigger>
           <Tooltip.Content side="left" class="flex items-center gap-1.5">

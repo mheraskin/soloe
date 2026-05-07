@@ -18,7 +18,6 @@
   import { ipc } from '../../lib/ipc';
   import { kbdHints } from '../../stores/kbd-hints.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
-  import { Keymap } from '../../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -291,10 +290,6 @@
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Notes</span>
       <span class="truncate text-xs text-foreground">
         {activeProject?.name ?? 'No project selected'}
-      </span>
-      <span class="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/80">
-        <Kbd keys={[...Keymap.toggleTerminalFocus.keys]} />
-        <span>terminal</span>
       </span>
     </div>
     <Button

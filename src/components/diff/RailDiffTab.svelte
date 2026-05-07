@@ -12,6 +12,7 @@
     Minus,
     Maximize2,
     Minimize2,
+    WrapText,
     Send,
     Archive
   } from '@lucide/svelte';
@@ -23,11 +24,9 @@
   import { reportError, toasts } from '../../stores/toast.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
   import { sendComments } from '../../lib/diff-comment-sender';
-  import { Keymap } from '../../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import { Kbd } from '$lib/components/ui/kbd';
   import ChangeRow from './ChangeRow.svelte';
   import HunkBlock from './HunkBlock.svelte';
   import GapExpander from './GapExpander.svelte';
@@ -266,10 +265,6 @@
       <span class="truncate text-xs text-foreground">
         {selected ? selected.name : 'No session selected'}
       </span>
-      <span class="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/80">
-        <Kbd keys={[...Keymap.toggleTerminalFocus.keys]} />
-        <span>terminal</span>
-      </span>
     </div>
     <div class="flex items-center gap-1">
       {#if unsentComments.length > 0}
@@ -302,6 +297,17 @@
           <span>Resolved ({resolvedCount})</span>
         </Button>
       {/if}
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={() => (workingDiff.wordWrap = !workingDiff.wordWrap)}
+        aria-label={workingDiff.wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
+        title={workingDiff.wordWrap ? 'No wrap' : 'Wrap lines'}
+        aria-pressed={workingDiff.wordWrap}
+        disabled={!activeCwd}
+      >
+        <WrapText class="size-3" />
+      </Button>
       <Button
         variant="ghost"
         size="xs"
@@ -391,7 +397,10 @@
             </button>
           {/each}
         </div>
-        <label class="flex items-center gap-1 text-muted-foreground">
+        <label
+          class="flex items-center gap-1 text-muted-foreground"
+          title="Lines of unchanged context around each change"
+        >
           <span>ctx</span>
           <input
             type="number"
@@ -407,7 +416,7 @@
       </div>
     </div>
 
-    <ScrollArea class="max-h-56 shrink-0 border-b border-border">
+    <ScrollArea class="max-h-36 shrink-0 border-b border-border">
       <div class="flex flex-col gap-px p-1.5">
         {#if changesEntry?.loading && filteredChanges.length === 0}
           <div class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
@@ -544,6 +553,7 @@
                   newStart={1}
                   {gutterWidth}
                   mode={workingDiff.viewMode}
+                  wrap={workingDiff.wordWrap}
                 />
               {/if}
               {#each diff.hunks as hunk, idx (idx)}
@@ -553,6 +563,7 @@
                   {gutterWidth}
                   cwd={activeCwd!}
                   filePath={diff.path}
+                  wrap={workingDiff.wordWrap}
                 />
                 {#if canExpand && idx < diff.hunks.length - 1}
                   {@const next = diff.hunks[idx + 1]}
@@ -568,6 +579,7 @@
                       newStart={gapNewStart}
                       {gutterWidth}
                       mode={workingDiff.viewMode}
+                      wrap={workingDiff.wordWrap}
                     />
                   {/if}
                 {/if}

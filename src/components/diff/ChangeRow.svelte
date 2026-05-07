@@ -115,6 +115,18 @@
   </span>
 
   <span class="flex shrink-0 items-center gap-1">
+    <span class="font-mono text-[10px]">
+      {#if change.binary}
+        <span class="text-muted-foreground/70">bin</span>
+      {:else}
+        {#if change.insertions > 0}
+          <span class="text-emerald-500">+{change.insertions}</span>
+        {/if}
+        {#if change.deletions > 0}
+          <span class="text-rose-500">−{change.deletions}</span>
+        {/if}
+      {/if}
+    </span>
     {#if change.staged && onunstage}
       <button
         type="button"
@@ -136,17 +148,5 @@
         <Plus class="size-3" />
       </button>
     {/if}
-    <span class="font-mono text-[10px]">
-      {#if change.binary}
-        <span class="text-muted-foreground/70">bin</span>
-      {:else}
-        {#if change.insertions > 0}
-          <span class="text-emerald-500">+{change.insertions}</span>
-        {/if}
-        {#if change.deletions > 0}
-          <span class="text-rose-500">−{change.deletions}</span>
-        {/if}
-      {/if}
-    </span>
   </span>
 </div>

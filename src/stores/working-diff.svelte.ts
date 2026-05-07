@@ -62,6 +62,8 @@ class WorkingDiffStore {
   // 'unified' for narrow rail use; 'split' for side-by-side when wide enough.
   viewMode = $state<'unified' | 'split'>('unified');
 
+  wordWrap = $state<boolean>(true);
+
   // 'all' | 'staged' | 'unstaged' | 'untracked' — coarse filter.
   filter = $state<'all' | 'staged' | 'unstaged' | 'untracked'>('all');
 
@@ -641,14 +643,9 @@ class WorkingDiffStore {
         // result so each affected worktree refreshes.
         for (const [cwd, entry] of Object.entries(this.changesByCwd)) {
           if (entry.result?.repoPath !== event.repoPath) continue;
-          const suppress = (this.stageSuppressUntil.get(cwd) ?? 0) > Date.now();
+          if ((this.stageSuppressUntil.get(cwd) ?? 0) > Date.now()) continue;
           void this.loadChanges(cwd).then((result) => {
             if (!result) return;
-            if (suppress) return;
-            // The file list may now disagree with what we cached: file
-            // bodies likely moved, files may have appeared or vanished.
-            // Drop the bodies and re-prime so the next click is instant
-            // and shows current content.
             this.clearDiffCache(cwd);
             void this.prefetchDiffs(cwd);
           });
