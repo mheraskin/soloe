@@ -41,7 +41,6 @@
 
   let width = $state(DEFAULT_WIDTH);
   let resizing = $state(false);
-  let hoveredTab = $state<Record<string, boolean>>({});
 
   onMount(() => {
     const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY));
@@ -85,7 +84,7 @@
     <nav class="flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = rightRail.open && rightRail.activeTab === tab.id}
-        <Tooltip.Root bind:open={hoveredTab[tab.id]}>
+        <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
               <div class="relative">
