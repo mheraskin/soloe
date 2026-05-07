@@ -5,10 +5,12 @@ import {
   DEFAULT_SETTINGS,
   MODEL_CATALOG,
   type ModelSelection,
+  type QuickLaunchPreset,
   type Settings,
   type SettingsModels,
   type SettingsUpdate
 } from '@shared/types/settings.js';
+import { isAgentProvider } from '@shared/types/sessions.js';
 
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
@@ -44,7 +46,8 @@ export class SettingsStore {
       terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
       defaults: { ...this.cache!.defaults, ...(patch.defaults ?? {}) },
       binaries: mergeBinaries(this.cache!.binaries, patch.binaries),
-      models: mergeModels(this.cache!.models, patch.models)
+      models: mergeModels(this.cache!.models, patch.models),
+      quickLaunch: patch.quickLaunch ?? [...this.cache!.quickLaunch]
     };
     validateSettings(next);
     this.cache = next;
@@ -195,7 +198,8 @@ function parseSettings(raw: unknown): Settings {
       ...(typeof defaults['wslDistro'] === 'string' && defaults['wslDistro'] ? { wslDistro: defaults['wslDistro'] } : {})
     },
     binaries: filterStringRecord(binaries),
-    models: parseModels(raw['models'])
+    models: parseModels(raw['models']),
+    quickLaunch: parseQuickLaunch(raw['quickLaunch'])
   };
   validateSettings(out);
   return out;
@@ -234,6 +238,24 @@ function filterStringRecord(raw: Record<string, unknown>): Settings['binaries'] 
   return out;
 }
 
+function parseQuickLaunch(raw: unknown): QuickLaunchPreset[] {
+  if (!Array.isArray(raw)) return [];
+  const out: QuickLaunchPreset[] = [];
+  for (const item of raw) {
+    if (!isObject(item)) continue;
+    const { id, label, provider, model, dangerouslySkipPermissions } = item;
+    if (typeof id !== 'string' || !id) continue;
+    if (typeof label !== 'string' || !label) continue;
+    if (!isAgentProvider(provider)) continue;
+    const preset: QuickLaunchPreset = { id, label, provider };
+    if (typeof model === 'string' && model) preset.model = model;
+    if (dangerouslySkipPermissions === true) preset.dangerouslySkipPermissions = true;
+    if (typeof item['extraArgs'] === 'string' && item['extraArgs']) preset.extraArgs = item['extraArgs'];
+    out.push(preset);
+  }
+  return out;
+}
+
 function validateSettings(s: Settings): void {
   if (s.version !== 1) throw new Error(`Unsupported settings version: ${s.version}`);
   if (!VALID_THEMES.has(s.appearance.theme)) throw new Error(`Invalid theme: ${s.appearance.theme}`);
@@ -263,6 +285,12 @@ function validateSettings(s: Settings): void {
     if (!parseModelSelection(sel)) {
       throw new Error(`Invalid models.${task}: ${JSON.stringify(sel)}`);
     }
+  }
+  if (!Array.isArray(s.quickLaunch)) throw new Error('quickLaunch must be an array');
+  for (const p of s.quickLaunch) {
+    if (typeof p.id !== 'string' || !p.id) throw new Error('quickLaunch preset requires an id');
+    if (typeof p.label !== 'string' || !p.label) throw new Error('quickLaunch preset requires a label');
+    if (!isAgentProvider(p.provider)) throw new Error(`Invalid quickLaunch provider: ${p.provider}`);
   }
 }
 

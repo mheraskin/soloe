@@ -1,4 +1,4 @@
-import type { ShellKind, RunMode, SessionLaunchKind } from './sessions.js';
+import type { ShellKind, RunMode, SessionLaunchKind, AgentRuntimeProvider } from './sessions.js';
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type TerminalFontSizePref = 11 | 12 | 13 | 14;
@@ -50,18 +50,47 @@ export interface ModelCatalogEntry {
   label: string;
 }
 
-// Catalog mirrors the visible/api-supported entries from `codex debug models`
-// plus the claude aliases we use. Codex models change over time — refresh by
-// running `codex debug models | jq '.models[] | select(.visibility == "list"
-// and .supported_in_api) | .slug'` and reconciling.
+export interface QuickLaunchPreset {
+  id: string;
+  label: string;
+  provider: AgentRuntimeProvider;
+  model?: string;
+  dangerouslySkipPermissions?: boolean;
+  extraArgs?: string;
+}
+
+// Single source of truth for model selection across Settings (background
+// tasks), Quick Launch presets, and the @-mention picker. Refresh by checking
+// platform.claude.com/docs/en/about-claude/models/overview and
+// developers.openai.com/codex/models, or by running
+// `codex debug models | jq '.models[] | select(.visibility == "list" and
+// .supported_in_api) | .slug'` for the live Codex slugs.
 export const MODEL_CATALOG: ModelCatalogEntry[] = [
-  { provider: 'codex', id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-  { provider: 'codex', id: 'gpt-5.4', label: 'GPT-5.4' },
+  // Claude — current
+  { provider: 'claude', id: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+  { provider: 'claude', id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  { provider: 'claude', id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  // Claude — legacy / still available
+  { provider: 'claude', id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+  { provider: 'claude', id: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
+  { provider: 'claude', id: 'claude-opus-4-1', label: 'Claude Opus 4.1' },
+  { provider: 'claude', id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+  // Claude — CLI aliases (always resolve to the latest of each tier)
+  { provider: 'claude', id: 'opus', label: 'Claude Opus (latest)' },
+  { provider: 'claude', id: 'sonnet', label: 'Claude Sonnet (latest)' },
+  { provider: 'claude', id: 'haiku', label: 'Claude Haiku (latest)' },
+  // Codex
   { provider: 'codex', id: 'gpt-5.5', label: 'GPT-5.5' },
+  { provider: 'codex', id: 'gpt-5.4', label: 'GPT-5.4' },
+  { provider: 'codex', id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
   { provider: 'codex', id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
-  { provider: 'claude', id: 'haiku', label: 'Claude Haiku' },
-  { provider: 'claude', id: 'sonnet', label: 'Claude Sonnet' }
+  { provider: 'codex', id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
+  { provider: 'codex', id: 'gpt-5.2', label: 'GPT-5.2' }
 ];
+
+export function modelCatalogFor(provider: ModelProvider): ModelCatalogEntry[] {
+  return MODEL_CATALOG.filter((m) => m.provider === provider);
+}
 
 export const DEFAULT_MODEL_CODEX: ModelSelection = { provider: 'codex', id: 'gpt-5.4-mini' };
 export const DEFAULT_MODEL_CLAUDE: ModelSelection = { provider: 'claude', id: 'haiku' };
@@ -73,6 +102,7 @@ export interface Settings {
   defaults: SettingsDefaults;
   binaries: SettingsBinaries;
   models: SettingsModels;
+  quickLaunch: QuickLaunchPreset[];
 }
 
 export type SettingsUpdate = {
@@ -81,6 +111,7 @@ export type SettingsUpdate = {
   defaults?: Partial<SettingsDefaults>;
   binaries?: Partial<SettingsBinaries>;
   models?: Partial<SettingsModels>;
+  quickLaunch?: QuickLaunchPreset[];
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -98,5 +129,6 @@ export const DEFAULT_SETTINGS: Settings = {
   models: {
     textGeneration: DEFAULT_MODEL_CODEX,
     gitCommitGeneration: DEFAULT_MODEL_CODEX
-  }
+  },
+  quickLaunch: []
 };

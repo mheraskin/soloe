@@ -3,7 +3,9 @@
   import { Plus } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import type { AgentRuntimeProvider } from '@shared/types/sessions.js';
+  import type { QuickLaunchPreset } from '@shared/types/settings.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Popover from '$lib/components/ui/popover';
@@ -115,6 +117,26 @@
       .catch(reportError);
   }
 
+  function launchPreset(preset: QuickLaunchPreset): void {
+    open = false;
+    const args: string[] = [];
+    if (preset.dangerouslySkipPermissions) args.push('--dangerously-skip-permissions');
+    if (preset.extraArgs) {
+      args.push(...preset.extraArgs.split(/\s+/).filter(Boolean));
+    }
+    void sessions
+      .createAgentWithDefaults(preset.provider, {
+        ...(projectId ? { projectId } : {}),
+        cwd,
+        ...(branch ? { branch } : {}),
+        ...(preset.model ? { model: preset.model } : {}),
+        ...(args.length ? { extraArgs: args } : {})
+      })
+      .catch(reportError);
+  }
+
+  let presets = $derived(settings.current.quickLaunch);
+
   onDestroy(clearTimers);
 </script>
 
@@ -140,7 +162,7 @@
     align="end"
     side="right"
     sideOffset={8}
-    class="z-40 w-44 rounded-md border-border bg-card p-1.5 shadow-md"
+    class="z-40 w-48 rounded-md border-border bg-card p-1.5 shadow-md"
     onpointerenter={clearCloseTimer}
     onpointerleave={scheduleClose}
   >
@@ -176,5 +198,25 @@
         <span class="truncate leading-none">Terminal</span>
       </Button>
     </div>
+    {#if presets.length > 0}
+      <div class="my-1 border-t border-border"></div>
+      <div class="flex flex-col gap-0.5">
+        {#each presets as preset (preset.id)}
+          <Button
+            variant="ghost"
+            class="h-7 w-full justify-start gap-2 px-2 text-xs"
+            title={preset.label}
+            aria-label={preset.label}
+            onclick={() => launchPreset(preset)}
+          >
+            <KindIcon
+              kind={preset.provider === 'claude_code' ? 'claude_code' : 'codex'}
+              size={14}
+            />
+            <span class="truncate">{preset.label}</span>
+          </Button>
+        {/each}
+      </div>
+    {/if}
   </Popover.Content>
 </Popover.Root>

@@ -1,17 +1,21 @@
 <script lang="ts">
   import { Tabs } from 'bits-ui';
-  import { Box, Cpu, Palette, PlugZap, TerminalSquare } from '@lucide/svelte';
+  import { Box, Cpu, Palette, PlugZap, Rocket, TerminalSquare, X } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import type {
+    ModelProvider,
     ModelSelection,
     ModelTask,
+    QuickLaunchPreset,
     SettingsBinaries,
     TerminalFontSizePref,
     ThemePref
   } from '@shared/types/settings.js';
-  import { MODEL_CATALOG } from '@shared/types/settings.js';
-  import type { RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
+  import { MODEL_CATALOG, modelCatalogFor } from '@shared/types/settings.js';
+  import type { AgentRuntimeProvider, RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
   import { reportError } from '../../stores/toast.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
   import { Switch } from '$lib/components/ui/switch';
@@ -19,6 +23,7 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { cn } from '$lib/utils';
   import AgentIntegrationForm from './AgentIntegrationForm.svelte';
+  import KindIcon from '../KindIcon.svelte';
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
@@ -56,6 +61,7 @@
     { value: 'integration', label: 'Integration', icon: PlugZap },
     { value: 'appearance', label: 'Appearance', icon: Palette },
     { value: 'models', label: 'Models', icon: Cpu },
+    { value: 'quicklaunch', label: 'Quick Launch', icon: Rocket },
     { value: 'terminal', label: 'Terminal', icon: TerminalSquare },
     { value: 'binaries', label: 'Binaries', icon: Box }
   ] as const;
@@ -92,6 +98,14 @@
       (m) => m.provider === value.provider && m.id === value.id
     );
     return entry?.label ?? `${value.provider}: ${value.id}`;
+  }
+
+  function providerKind(provider: ModelProvider): 'claude_code' | 'codex' {
+    return provider === 'claude' ? 'claude_code' : 'codex';
+  }
+
+  function presetProviderToModel(provider: AgentRuntimeProvider): ModelProvider {
+    return provider === 'claude_code' ? 'claude' : 'codex';
   }
 
   async function setModel(task: ModelTask, value: string) {
@@ -149,6 +163,41 @@
       await settings.update({ binaries: { [key]: value } as never });
     } catch (e) { reportError(e); }
   }
+
+  const quickLaunchProviders: { value: AgentRuntimeProvider; label: string }[] = [
+    { value: 'claude_code', label: 'Claude' },
+    { value: 'codex', label: 'Codex' }
+  ];
+
+  function generatePresetId(): string {
+    return `ql_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  async function addPreset(): Promise<void> {
+    const next: QuickLaunchPreset[] = [
+      ...settings.current.quickLaunch,
+      { id: generatePresetId(), label: '', provider: 'claude_code' }
+    ];
+    try {
+      await settings.update({ quickLaunch: next });
+    } catch (e) { reportError(e); }
+  }
+
+  async function removePreset(id: string): Promise<void> {
+    const next = settings.current.quickLaunch.filter((p) => p.id !== id);
+    try {
+      await settings.update({ quickLaunch: next });
+    } catch (e) { reportError(e); }
+  }
+
+  async function updatePreset(id: string, patch: Partial<QuickLaunchPreset>): Promise<void> {
+    const next = settings.current.quickLaunch.map((p) =>
+      p.id === id ? { ...p, ...patch } : p
+    );
+    try {
+      await settings.update({ quickLaunch: next });
+    } catch (e) { reportError(e); }
+  }
 </script>
 
 <Tabs.Root
@@ -197,23 +246,27 @@
         isn't listed.
       </p>
       {#each modelTasks as task (task.key)}
+        {@const selected = settings.current.models[task.key]}
         <div class="flex flex-col gap-1.5">
           <Label class="text-xs text-muted-foreground">{task.label}</Label>
           <Select.Root
             type="single"
-            value={modelKey(settings.current.models[task.key])}
+            value={modelKey(selected)}
             onValueChange={(v) => setModel(task.key, v)}
           >
             <Select.Trigger class="w-full">
-              {modelLabel(settings.current.models[task.key])}
+              <span class="flex items-center gap-2">
+                {#if selected}
+                  <KindIcon kind={providerKind(selected.provider)} size={14} />
+                {/if}
+                <span>{modelLabel(selected)}</span>
+              </span>
             </Select.Trigger>
             <Select.Content>
               {#each MODEL_CATALOG as entry (modelKey(entry))}
                 <Select.Item value={modelKey(entry)} label={entry.label}>
                   <span class="flex items-center gap-2">
-                    <span class="text-[10px] tracking-wider text-muted-foreground uppercase">
-                      {entry.provider}
-                    </span>
+                    <KindIcon kind={providerKind(entry.provider)} size={14} />
                     <span>{entry.label}</span>
                   </span>
                 </Select.Item>
@@ -223,6 +276,132 @@
           <span class="text-[11px] text-muted-foreground">{task.hint}</span>
         </div>
       {/each}
+    </Tabs.Content>
+
+    <Tabs.Content value="quicklaunch" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">
+        Presets appear below the three main icons in the <b>+</b> popover for quick one-click
+        launching.
+      </p>
+      {#each settings.current.quickLaunch as preset (preset.id)}
+        {@const presetModelOptions = modelCatalogFor(presetProviderToModel(preset.provider))}
+        {@const presetSelectedModel = presetModelOptions.find((m) => m.id === preset.model)}
+        <div class="flex flex-col gap-2 rounded-md border border-border p-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <KindIcon kind={preset.provider} size={16} />
+              <span class="text-sm font-medium">
+                {preset.label || '(untitled)'}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="size-6 shrink-0 text-muted-foreground hover:text-destructive"
+              title="Remove preset"
+              onclick={() => removePreset(preset.id)}
+            >
+              <X class="size-3.5" />
+            </Button>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-label-${preset.id}`}>Label</Label>
+            <Input
+              id={`ql-label-${preset.id}`}
+              type="text"
+              placeholder="e.g. Opus 4.7"
+              value={preset.label}
+              onchange={(e) =>
+                updatePreset(preset.id, { label: (e.currentTarget as HTMLInputElement).value })}
+            />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Provider</Label>
+            <Select.Root
+              type="single"
+              value={preset.provider}
+              onValueChange={(v) =>
+                updatePreset(preset.id, { provider: v as AgentRuntimeProvider })}
+            >
+              <Select.Trigger class="w-full">
+                {quickLaunchProviders.find((p) => p.value === preset.provider)?.label ?? preset.provider}
+              </Select.Trigger>
+              <Select.Content>
+                {#each quickLaunchProviders as p (p.value)}
+                  <Select.Item value={p.value} label={p.label}>{p.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Model</Label>
+            <Select.Root
+              type="single"
+              value={preset.model ?? '__default__'}
+              onValueChange={(v) =>
+                updatePreset(preset.id, { model: v === '__default__' ? undefined : v })}
+            >
+              <Select.Trigger class="w-full">
+                <span class="flex items-center gap-2">
+                  {#if preset.model}
+                    <KindIcon kind={preset.provider} size={14} />
+                  {/if}
+                  <span>{presetSelectedModel?.label ?? (preset.model || '(CLI default)')}</span>
+                </span>
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="__default__" label="(CLI default)">
+                  (CLI default)
+                </Select.Item>
+                {#each presetModelOptions as entry (entry.id)}
+                  <Select.Item value={entry.id} label={entry.label}>
+                    <span class="flex items-center gap-2">
+                      <KindIcon kind={providerKind(entry.provider)} size={14} />
+                      <span>{entry.label}</span>
+                    </span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          {#if preset.provider === 'claude_code'}
+            <div class="flex items-center gap-2">
+              <Checkbox
+                id={`ql-skip-perms-${preset.id}`}
+                checked={preset.dangerouslySkipPermissions ?? false}
+                onCheckedChange={(v) =>
+                  updatePreset(preset.id, { dangerouslySkipPermissions: v === true || undefined })}
+              />
+              <Label for={`ql-skip-perms-${preset.id}`} class="text-sm text-foreground">
+                --dangerously-skip-permissions
+              </Label>
+            </div>
+          {/if}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-args-${preset.id}`}>
+              Extra CLI args
+            </Label>
+            <Input
+              id={`ql-args-${preset.id}`}
+              type="text"
+              placeholder={preset.provider === 'claude_code'
+                ? '--verbose --allowedTools bash,computer'
+                : '--full-auto'}
+              value={preset.extraArgs ?? ''}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLInputElement).value.trim();
+                updatePreset(preset.id, { extraArgs: v || undefined });
+              }}
+            />
+            <span class="text-[11px] text-muted-foreground">
+              Space-separated flags appended to the CLI command.
+            </span>
+          </div>
+        </div>
+      {/each}
+      <Button variant="outline" class="w-full" onclick={addPreset}>
+        Add preset
+      </Button>
     </Tabs.Content>
 
     <Tabs.Content value="terminal" class={contentClass}>

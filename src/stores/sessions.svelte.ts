@@ -346,6 +346,8 @@ class SessionsStore {
       projectId?: string;
       cwd?: string;
       branch?: string;
+      model?: string;
+      extraArgs?: string[];
     } = {}
   ): Promise<Session> {
     return this.createTypedWithDefaults(kind, opts);
@@ -378,6 +380,8 @@ class SessionsStore {
       projectId?: string;
       cwd?: string;
       branch?: string;
+      model?: string;
+      extraArgs?: string[];
     } = {}
   ): Promise<Session> {
     const defaults = settings.current.defaults;
@@ -408,11 +412,22 @@ class SessionsStore {
               type: 'agent',
               provider: 'claude_code',
               resumeMode: 'new',
-              fullscreenTui: true
+              fullscreenTui: true,
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
             }
           };
         case 'codex':
-          return { ...base, launch: { type: 'agent', provider: 'codex', resumeMode: 'new' } };
+          return {
+            ...base,
+            launch: {
+              type: 'agent',
+              provider: 'codex',
+              resumeMode: 'new',
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
+            }
+          };
       }
     })();
     const created = await this.create(draft);
