@@ -286,16 +286,10 @@
         rightRail.toggleTab('diff');
         return false;
       }
-      if (Keymap.toggleOverviewRail.match(e)) {
-        e.preventDefault();
-        rightRail.toggleTab('overview');
-        return false;
-      }
       for (const binding of Object.values(Keymap)) {
         if (binding.id === Keymap.deleteSelectedSession.id) continue;
         if (binding.id === Keymap.toggleNotesRail.id) continue;
         if (binding.id === Keymap.toggleDiffRail.id) continue;
-        if (binding.id === Keymap.toggleOverviewRail.id) continue;
         if (binding.match(e)) return false;
       }
 

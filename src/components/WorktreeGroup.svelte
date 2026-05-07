@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
+  import { BookOpen, ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
   import type { Session, SessionId } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
@@ -8,10 +8,12 @@
   import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
+  import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
+  import WorktreeOverviewDialog from './WorktreeOverviewDialog.svelte';
 
   let {
     title,
@@ -36,6 +38,7 @@
   } = $props();
 
   let expanded = $state(true);
+  let overviewOpen = $state(false);
 
   let trimmedFilter = $derived(filter.trim());
   let labelMatches = $derived.by(() => {
@@ -220,6 +223,16 @@
           {items.length}
         </Badge>
       </Collapsible.Trigger>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        class="shrink-0"
+        title="Worktree overview"
+        aria-label="Worktree overview"
+        onclick={() => (overviewOpen = true)}
+      >
+        <BookOpen />
+      </Button>
       <AgentLaunchPopover
         {projectId}
         {cwd}
@@ -235,4 +248,5 @@
     </Collapsible.Content>
   </Collapsible.Root>
   </div>
+  <WorktreeOverviewDialog bind:open={overviewOpen} {cwd} branch={title} />
 {/if}
