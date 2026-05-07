@@ -66,12 +66,12 @@
   function handleOpenChange(next: boolean): void {
     open = next;
     if (!next && editing) {
-      // Closing while editing acts as save (mirrors the notes pattern of
-      // blur-to-save). Empty drafts on never-saved comments delete instead.
-      if (draft.trim().length === 0 && comment.text.length === 0) {
+      // Closing the popover discards the draft — persistence requires an
+      // explicit Save or Send click. Brand-new comments (never had saved
+      // text) are removed entirely so the placeholder doesn't linger.
+      diffComments.closeEditor();
+      if (comment.text.length === 0) {
         diffComments.remove(comment.id);
-      } else {
-        save();
       }
     }
   }
@@ -83,14 +83,6 @@
     }
     diffComments.closeEditor();
     pruneAgentsAfterSave();
-  }
-
-  function cancel(): void {
-    diffComments.closeEditor();
-    if (comment.text.length === 0) {
-      diffComments.remove(comment.id);
-    }
-    open = false;
   }
 
   function deleteComment(): void {
@@ -207,7 +199,13 @@
 
     if (e.key === 'Escape') {
       e.preventDefault();
-      cancel();
+      // Close the popover; onOpenChange discards the draft (no auto-save).
+      open = false;
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      void runSend();
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -237,11 +235,10 @@
 
   let sending = $state(false);
 
-  // The button label switches between sending to mentions and dropping the
-  // text into the user's currently-focused terminal as context. We treat
-  // resolved mentions as the trigger; bare `@foo` text without a registry
-  // hit doesn't count.
-  let sendLabel = $derived(resolvedAgents.length > 0 ? 'Send' : 'Add as context');
+  // Label stays "Send" regardless of whether mentions are resolved; the
+  // underlying send-time logic still routes mention-less comments to the
+  // currently-focused terminal, but the label keeps a single primary CTA.
+  let sendLabel = $derived('Send');
 
   async function runSend(): Promise<void> {
     if (sending) return;
@@ -309,23 +306,25 @@
         </div>
       {/if}
       <div class="mt-2 flex items-center justify-between gap-2">
-        <Button
-          variant="ghost"
-          size="xs"
-          onclick={deleteComment}
-          aria-label="Delete comment"
-          title="Delete comment"
-        >
-          <Trash2 class="size-3" />
-        </Button>
+        <span class="text-[10px] text-muted-foreground">{lineLabel}</span>
         <div class="flex items-center gap-1.5">
-          <span class="text-[10px] text-muted-foreground">{lineLabel}</span>
-          <Button variant="outline" size="xs" onclick={cancel}>Cancel</Button>
+          {#if comment.text.length > 0}
+            <Button
+              variant="ghost"
+              size="xs"
+              onclick={deleteComment}
+              aria-label="Delete comment"
+              title="Delete"
+            >
+              <Trash2 class="size-3" />
+            </Button>
+          {/if}
           <Button variant="outline" size="xs" onclick={save} disabled={sending}>Save</Button>
           <Button
             size="xs"
             onclick={() => void runSend()}
             disabled={sending || draft.trim().length === 0}
+            title="Comment & send (Enter)"
           >
             {#if sending}
               <Loader2 class="size-3 animate-spin" />
