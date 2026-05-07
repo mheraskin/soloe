@@ -11,7 +11,15 @@
   import { highlightLine, languageForPath } from '$lib/highlight';
   import CommentMarker from './CommentMarker.svelte';
   import AgentBadge from './AgentBadge.svelte';
-  import { CheckCircle2, ChevronsUpDown, CircleCheck, Loader2 } from '@lucide/svelte';
+  import { Button } from '$lib/components/ui/button';
+  import {
+    CheckCircle2,
+    ChevronsUpDown,
+    CircleCheck,
+    CircleDot,
+    Loader2,
+    PencilLine
+  } from '@lucide/svelte';
 
   interface Props {
     cwd: string;
@@ -449,17 +457,17 @@
   function gutterClass(side: DiffSide, oldLine: number | null, newLine: number | null): string {
     const base =
       'relative shrink-0 cursor-pointer border-r border-border/60 px-2 text-right text-muted-foreground/70 select-none';
-    const lineForSide = side === 'old' ? oldLine : newLine;
-    if (lineForSide === null) return base;
-    const isContext = oldLine !== null && newLine !== null;
-    const otherSide: DiffSide = side === 'old' ? 'new' : 'old';
-    const otherLine = otherSide === 'old' ? oldLine : newLine;
-    if (isSelected(side, lineForSide) || (isContext && isSelected(otherSide, otherLine))) {
-      return `${base} bg-amber-500/30`;
-    }
-    if (isInComment(side, lineForSide) || (isContext && isInComment(otherSide, otherLine))) {
-      return `${base} bg-amber-500/15`;
-    }
+    // Highlight spans both gutter columns when *either* side has a comment or
+    // selection on this row — including add-only and remove-only rows where
+    // one side has no line number. Earlier versions early-returned the bare
+    // class on null sides, leaving an empty column unmarked.
+    const oldSelected = oldLine !== null && isSelected('old', oldLine);
+    const newSelected = newLine !== null && isSelected('new', newLine);
+    if (oldSelected || newSelected) return `${base} bg-amber-500/30`;
+    const oldHasComment = oldLine !== null && isInComment('old', oldLine);
+    const newHasComment = newLine !== null && isInComment('new', newLine);
+    if (oldHasComment || newHasComment) return `${base} bg-amber-500/15`;
+    void side;
     return `${base} group-hover/diffrow:bg-amber-500/10`;
   }
 
@@ -550,7 +558,11 @@
   };
   let hoverPreview = $state<HoverPreview | null>(null);
   let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
   const HOVER_DELAY_MS = 180;
+  // Bridge delay — gives the user time to move from the gutter into the panel
+  // without the preview closing under them.
+  const HOVER_CLOSE_DELAY_MS = 120;
 
   function clearHoverTimer(): void {
     if (hoverTimer) {
@@ -559,9 +571,50 @@
     }
   }
 
+  function clearHoverCloseTimer(): void {
+    if (hoverCloseTimer) {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = null;
+    }
+  }
+
   function cancelHover(): void {
     clearHoverTimer();
+    clearHoverCloseTimer();
     hoverPreview = null;
+  }
+
+  // Soft-close — schedules a close after a short delay so the user can move
+  // the cursor into the preview panel itself. Entering the panel cancels it.
+  function softCloseHover(): void {
+    clearHoverTimer();
+    clearHoverCloseTimer();
+    hoverCloseTimer = setTimeout(() => {
+      hoverPreview = null;
+      hoverCloseTimer = null;
+    }, HOVER_CLOSE_DELAY_MS);
+  }
+
+  function keepHoverOpen(): void {
+    clearHoverCloseTimer();
+  }
+
+  function editHoverComment(id: string): void {
+    cancelHover();
+    diffComments.beginEdit(id);
+  }
+
+  function toggleResolveHoverComment(c: DiffComment): void {
+    diffComments.setResolved(c.id, !c.resolvedAt);
+    // Refresh the preview so the badge updates without waiting for a reopen.
+    if (hoverPreview) {
+      const updated = diffComments.forLine(cwd, filePath, hoverPreview.side, hoverPreview.line);
+      if (updated.length === 0) {
+        cancelHover();
+      } else {
+        hoverPreview = { ...hoverPreview, comments: updated };
+      }
+    }
   }
 
   function scheduleHover(
@@ -678,7 +731,7 @@
               onGutterEnter('old', line.oldLine, line.newLine);
               scheduleHover('old', line.oldLine, line.newLine, e.currentTarget);
             }}
-            onmouseleave={cancelHover}
+            onmouseleave={softCloseHover}
             role="presentation"
           >
             {line.oldLine ?? ''}
@@ -692,7 +745,7 @@
               onGutterEnter('new', line.oldLine, line.newLine);
               scheduleHover('new', line.oldLine, line.newLine, e.currentTarget);
             }}
-            onmouseleave={cancelHover}
+            onmouseleave={softCloseHover}
             role="presentation"
           >
             {line.newLine ?? ''}
@@ -735,7 +788,7 @@
                 onGutterEnter('old', row.old, row.new);
                 scheduleHover('old', row.old, row.new, e.currentTarget);
               }}
-              onmouseleave={cancelHover}
+              onmouseleave={softCloseHover}
               role="presentation"
             >
               {row.old ?? ''}
@@ -767,7 +820,7 @@
                 onGutterEnter('new', row.old, row.new);
                 scheduleHover('new', row.old, row.new, e.currentTarget);
               }}
-              onmouseleave={cancelHover}
+              onmouseleave={softCloseHover}
               role="presentation"
             >
               {row.new ?? ''}
@@ -806,7 +859,7 @@
                 onGapGutterEnter(oldLine, newLine);
                 scheduleHover('old', oldLine, newLine, e.currentTarget);
               }}
-              onmouseleave={cancelHover}
+              onmouseleave={softCloseHover}
               role="presentation"
             >
               {oldLine}
@@ -820,7 +873,7 @@
                 onGapGutterEnter(oldLine, newLine);
                 scheduleHover('new', oldLine, newLine, e.currentTarget);
               }}
-              onmouseleave={cancelHover}
+              onmouseleave={softCloseHover}
               role="presentation"
             >
               {newLine}
@@ -840,7 +893,7 @@
                   onGapGutterEnter(oldLine, newLine);
                   scheduleHover('old', oldLine, newLine, e.currentTarget);
                 }}
-                onmouseleave={cancelHover}
+                onmouseleave={softCloseHover}
                 role="presentation"
               >
                 {oldLine}
@@ -858,7 +911,7 @@
                   onGapGutterEnter(oldLine, newLine);
                   scheduleHover('new', oldLine, newLine, e.currentTarget);
                 }}
-                onmouseleave={cancelHover}
+                onmouseleave={softCloseHover}
                 role="presentation"
               >
                 {newLine}
@@ -898,10 +951,12 @@
 
 {#if hoverPreview}
   <div
-    class="pointer-events-none fixed z-50 w-80 max-w-sm rounded-md border border-border bg-popover text-popover-foreground shadow-md"
+    class="fixed z-50 w-80 max-w-sm rounded-md border border-border bg-popover text-popover-foreground shadow-md"
     style:left="{Math.min(hoverPreview.rect.right + 8, (typeof window !== 'undefined' ? window.innerWidth : 1920) - 340)}px"
     style:top="{Math.max(8, hoverPreview.rect.top - 4)}px"
     role="tooltip"
+    onmouseenter={keepHoverOpen}
+    onmouseleave={cancelHover}
   >
     <div class="flex items-center justify-between border-b border-border px-2 py-1 text-[10px] text-muted-foreground">
       <span class="font-mono">
@@ -915,18 +970,44 @@
       {#each hoverPreview.comments as c (c.id)}
         {@const agents = hoverAgentsFor(c)}
         <li class="flex flex-col gap-1 border-l-2 border-amber-500/60 pl-2">
-          <div class="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-            <span class="font-mono">{hoverRangeLabel(c)}</span>
-            {#if c.sentAt}
-              <span class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400">
-                <CheckCircle2 class="size-2.5" /> sent
-              </span>
-            {/if}
-            {#if c.resolvedAt}
-              <span class="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 font-medium tracking-wide text-muted-foreground uppercase">
-                <CircleCheck class="size-2.5" /> resolved
-              </span>
-            {/if}
+          <div class="flex flex-wrap items-center justify-between gap-1.5 text-[10px] text-muted-foreground">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="font-mono">{hoverRangeLabel(c)}</span>
+              {#if c.sentAt}
+                <span class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400">
+                  <CheckCircle2 class="size-2.5" /> sent
+                </span>
+              {/if}
+              {#if c.resolvedAt}
+                <span class="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 font-medium tracking-wide text-muted-foreground uppercase">
+                  <CircleCheck class="size-2.5" /> resolved
+                </span>
+              {/if}
+            </div>
+            <div class="flex items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="xs"
+                onclick={() => toggleResolveHoverComment(c)}
+                aria-label={c.resolvedAt ? 'Reopen' : 'Resolve'}
+                title={c.resolvedAt ? 'Reopen' : 'Resolve'}
+              >
+                {#if c.resolvedAt}
+                  <CircleDot class="size-3" />
+                {:else}
+                  <CircleCheck class="size-3" />
+                {/if}
+              </Button>
+              <Button
+                variant="ghost"
+                size="xs"
+                onclick={() => editHoverComment(c.id)}
+                aria-label="Edit"
+                title="Edit"
+              >
+                <PencilLine class="size-3" />
+              </Button>
+            </div>
           </div>
           <div class="line-clamp-3 font-mono text-[11px] leading-snug whitespace-pre-wrap break-words">
             {c.text || '(empty)'}
