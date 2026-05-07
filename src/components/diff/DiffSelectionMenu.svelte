@@ -1,14 +1,16 @@
 <script lang="ts">
   import { MessageSquarePlus } from '@lucide/svelte';
+  import type { FileDiff } from '@shared/types/git.js';
   import { diffComments, type DiffSide } from '../../stores/diff-comments.svelte';
 
   interface Props {
     cwd: string;
     filePath: string;
     rootEl: HTMLElement | null;
+    diff: FileDiff | null;
   }
 
-  let { cwd, filePath, rootEl }: Props = $props();
+  let { cwd, filePath, rootEl, diff }: Props = $props();
 
   type Anchor = {
     side: DiffSide;
@@ -105,7 +107,7 @@
     if (!a) return;
     diffComments.startSelection(cwd, filePath, a.side, a.startLine);
     diffComments.extendSelection(a.side, a.endLine);
-    diffComments.endSelectionAndCreate();
+    diffComments.endSelectionAndCreate(diff);
     window.getSelection()?.removeAllRanges();
     anchor = null;
   }

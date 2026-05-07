@@ -1,4 +1,21 @@
+import type { FileDiff } from '@shared/types/git.js';
+
 export type DiffSide = 'new' | 'old';
+
+// Snapshot of the diff lines a comment was anchored to at creation. Mirrors
+// GitHub's diff_hunk + original_position model: when a later edit changes the
+// content at the anchored line(s), the comment is flagged "outdated" rather
+// than silently re-pointed at unrelated content.
+export interface DiffCommentAnchor {
+  // The exact text of every line covered by the comment range, in order.
+  text: string[];
+  // Up to ANCHOR_CONTEXT lines immediately preceding the range. May be empty
+  // when the comment sits near the start of a hunk's context window.
+  contextBefore: string[];
+  // Up to ANCHOR_CONTEXT lines immediately following the range. May be empty
+  // when the comment sits near the end of a hunk's context window.
+  contextAfter: string[];
+}
 
 export interface DiffComment {
   id: string;
@@ -12,6 +29,9 @@ export interface DiffComment {
   updatedAt: number;
   resolvedAt?: number;
   sentAt?: number;
+  // Optional — older comments persisted before anchors were introduced are
+  // grandfathered as fresh and never flagged outdated.
+  anchor?: DiffCommentAnchor;
 }
 
 export interface DiffSelection {
@@ -25,9 +45,78 @@ export interface DiffSelection {
 }
 
 const STORAGE_KEY = 'soloe.diffComments.v1';
+const ANCHOR_CONTEXT = 3;
 
 function fileKey(cwd: string, filePath: string): string {
   return `${cwd}::${filePath}`;
+}
+
+// Walk a FileDiff to collect the live (post-change for 'new', pre-change for
+// 'old') line numbers paired with their text. Add/remove lines from the
+// opposite side are skipped — they don't carry a number on the requested side.
+function collectLiveLines(diff: FileDiff, side: DiffSide): Map<number, string> {
+  const sideKey: 'oldLine' | 'newLine' = side === 'old' ? 'oldLine' : 'newLine';
+  const out = new Map<number, string>();
+  for (const hunk of diff.hunks) {
+    for (const line of hunk.lines) {
+      if (line.kind === 'meta') continue;
+      if (side === 'new' && line.kind === 'remove') continue;
+      if (side === 'old' && line.kind === 'add') continue;
+      const num = line[sideKey];
+      if (num === null) continue;
+      out.set(num, line.text);
+    }
+  }
+  return out;
+}
+
+// Capture an anchor for the lines [startLine..endLine] on `side` from the
+// current FileDiff. Returns null when the lines aren't present in any hunk
+// (e.g. comments dropped on gap-expander rows whose content lives outside
+// the diff). Such comments stay anchorless — they grandfather as fresh.
+export function buildAnchorFromDiff(
+  diff: FileDiff,
+  side: DiffSide,
+  startLine: number,
+  endLine: number
+): DiffCommentAnchor | null {
+  const live = collectLiveLines(diff, side);
+  const covered: string[] = [];
+  for (let n = startLine; n <= endLine; n++) {
+    const text = live.get(n);
+    if (text === undefined) return null;
+    covered.push(text);
+  }
+  const before: string[] = [];
+  for (let n = startLine - 1; n >= startLine - ANCHOR_CONTEXT && n > 0; n--) {
+    const text = live.get(n);
+    if (text === undefined) break;
+    before.unshift(text);
+  }
+  const after: string[] = [];
+  for (let n = endLine + 1; n <= endLine + ANCHOR_CONTEXT; n++) {
+    const text = live.get(n);
+    if (text === undefined) break;
+    after.push(text);
+  }
+  return { text: covered, contextBefore: before, contextAfter: after };
+}
+
+// A comment is outdated when the live diff carries different text at its
+// anchored coordinates. Lines that aren't present in any hunk match HEAD by
+// definition — we treat that as fresh, since the snapshot was taken from the
+// same file the diff is built from.
+export function isCommentOutdated(comment: DiffComment, diff: FileDiff | null): boolean {
+  const anchor = comment.anchor;
+  if (!anchor || !diff) return false;
+  const live = collectLiveLines(diff, comment.side);
+  for (let i = 0; i < anchor.text.length; i++) {
+    const num = comment.startLine + i;
+    const liveText = live.get(num);
+    if (liveText === undefined) continue;
+    if (liveText !== anchor.text[i]) return true;
+  }
+  return false;
 }
 
 function loadFromStorage(): Record<string, DiffComment[]> {
@@ -55,16 +144,22 @@ class DiffCommentsStore {
   // being edited. A freshly-created comment from a drag selection sets this
   // so its marker renders the popover open immediately.
   editingId = $state<string | null>(null);
+  // Recomputed whenever the active file's diff changes. Comments in this set
+  // are filtered out of activeForFile (no gutter markers) and surfaced in the
+  // rail's Outdated panel instead.
+  outdatedIds = $state<Set<string>>(new Set());
 
   forFile(cwd: string, filePath: string): DiffComment[] {
     return this.byKey[fileKey(cwd, filePath)] ?? [];
   }
 
-  // Default to active (unresolved) comments. The diff gutter calls this to
-  // decide what to render — resolved comments live in the rail's resolved
-  // panel and shouldn't crowd the line view.
+  // Default to active (unresolved + not-outdated) comments. The diff gutter
+  // calls this to decide what to render — resolved ones live in the rail's
+  // resolved panel, outdated ones in the rail's outdated panel.
   activeForFile(cwd: string, filePath: string): DiffComment[] {
-    return this.forFile(cwd, filePath).filter((c) => !c.resolvedAt);
+    return this.forFile(cwd, filePath).filter(
+      (c) => !c.resolvedAt && !this.outdatedIds.has(c.id)
+    );
   }
 
   forWorktree(cwd: string): DiffComment[] {
@@ -78,6 +173,20 @@ class DiffCommentsStore {
 
   resolvedForWorktree(cwd: string): DiffComment[] {
     return this.forWorktree(cwd).filter((c) => c.resolvedAt);
+  }
+
+  // Outdated, but not resolved — a resolved comment lives in the resolved
+  // panel regardless of whether the line was later edited away.
+  outdatedForFile(cwd: string, filePath: string): DiffComment[] {
+    return this.forFile(cwd, filePath).filter(
+      (c) => !c.resolvedAt && this.outdatedIds.has(c.id)
+    );
+  }
+
+  outdatedForWorktree(cwd: string): DiffComment[] {
+    return this.forWorktree(cwd).filter(
+      (c) => !c.resolvedAt && this.outdatedIds.has(c.id)
+    );
   }
 
   forLine(cwd: string, filePath: string, side: DiffSide, line: number): DiffComment[] {
@@ -113,9 +222,12 @@ class DiffCommentsStore {
     };
   }
 
-  endSelectionAndCreate(): DiffComment | null {
+  endSelectionAndCreate(diff?: FileDiff | null): DiffComment | null {
     const sel = this.selection;
     if (!sel) return null;
+    const anchor = diff
+      ? buildAnchorFromDiff(diff, sel.side, sel.startLine, sel.endLine)
+      : null;
     const comment: DiffComment = {
       id: crypto.randomUUID(),
       cwd: sel.cwd,
@@ -125,7 +237,8 @@ class DiffCommentsStore {
       endLine: sel.endLine,
       text: '',
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      ...(anchor ? { anchor } : {})
     };
     this.add(comment);
     this.selection = null;
@@ -172,6 +285,11 @@ class DiffCommentsStore {
     if (touched) {
       this.byKey = next;
       if (this.editingId === id) this.editingId = null;
+      if (this.outdatedIds.has(id)) {
+        const set = new Set(this.outdatedIds);
+        set.delete(id);
+        this.outdatedIds = set;
+      }
       this.persist();
     }
   }
@@ -194,6 +312,27 @@ class DiffCommentsStore {
       if (found) return found;
     }
     return null;
+  }
+
+  // Reconcile the outdated set for a single file against its current diff.
+  // Comments without an anchor (older records or gap-row drops) are never
+  // flagged. Producing a fresh Set instance triggers Svelte reactivity.
+  recomputeOutdated(cwd: string, filePath: string, diff: FileDiff | null): void {
+    const fileComments = this.forFile(cwd, filePath);
+    if (fileComments.length === 0) return;
+    const fileIds = new Set(fileComments.map((c) => c.id));
+    const next = new Set<string>();
+    for (const id of this.outdatedIds) {
+      if (!fileIds.has(id)) next.add(id);
+    }
+    let touched = next.size !== this.outdatedIds.size;
+    for (const c of fileComments) {
+      const out = isCommentOutdated(c, diff);
+      const was = this.outdatedIds.has(c.id);
+      if (out) next.add(c.id);
+      if (out !== was) touched = true;
+    }
+    if (touched) this.outdatedIds = next;
   }
 
   private persist(): void {

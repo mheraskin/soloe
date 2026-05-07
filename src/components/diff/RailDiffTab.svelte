@@ -14,7 +14,8 @@
     Minimize2,
     WrapText,
     Send,
-    Archive
+    Archive,
+    History
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
@@ -31,6 +32,7 @@
   import HunkBlock from './HunkBlock.svelte';
   import GapExpander from './GapExpander.svelte';
   import RailResolvedPanel from './RailResolvedPanel.svelte';
+  import RailOutdatedPanel from './RailOutdatedPanel.svelte';
   import DiffSelectionMenu from './DiffSelectionMenu.svelte';
 
   let diffRootEl: HTMLDivElement | null = $state(null);
@@ -128,6 +130,16 @@
     activeCwd && effectiveSelected ? workingDiff.diffEntryFor(activeCwd, effectiveSelected) : null
   );
 
+  // Reconcile the outdated set whenever the active file's diff body changes.
+  // Comments whose anchored text no longer matches the live diff land in the
+  // Outdated panel and stop rendering markers in the diff itself.
+  $effect(() => {
+    const cwd = activeCwd;
+    const path = effectiveSelected;
+    if (!cwd || !path) return;
+    diffComments.recomputeOutdated(cwd, path, diffEntry?.diff ?? null);
+  });
+
   // Gutter width hint: scale with the largest line number we will render.
   let gutterWidth = $derived.by<number>(() => {
     const hunks: DiffHunk[] = diffEntry?.diff?.hunks ?? [];
@@ -154,8 +166,12 @@
     cwdComments.filter((c) => !c.sentAt && !c.resolvedAt && c.text.trim().length > 0)
   );
   let resolvedCount = $derived(cwdComments.filter((c) => c.resolvedAt).length);
+  let outdatedCount = $derived(
+    activeCwd ? diffComments.outdatedForWorktree(activeCwd).length : 0
+  );
   let sendingAll = $state(false);
   let showResolved = $state(false);
+  let showOutdated = $state(false);
 
   async function sendAllUnsent(): Promise<void> {
     if (sendingAll || unsentComments.length === 0) return;
@@ -247,7 +263,7 @@
     // a gutter cell would leave the selection stuck in dragging state.
     const onDocMouseup = () => {
       if (diffComments.selection?.dragging) {
-        diffComments.endSelectionAndCreate();
+        diffComments.endSelectionAndCreate(diffEntry?.diff ?? null);
       }
     };
     window.addEventListener('mouseup', onDocMouseup);
@@ -287,11 +303,30 @@
           <span>Send all ({unsentComments.length})</span>
         </Button>
       {/if}
+      {#if outdatedCount > 0}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={() => {
+            showOutdated = !showOutdated;
+            if (showOutdated) showResolved = false;
+          }}
+          aria-pressed={showOutdated}
+          title="Outdated comments — line content changed since the comment was made"
+          aria-label="Show outdated comments"
+        >
+          <History class="size-3" />
+          <span>Outdated ({outdatedCount})</span>
+        </Button>
+      {/if}
       {#if resolvedCount > 0}
         <Button
           variant="ghost"
           size="xs"
-          onclick={() => (showResolved = !showResolved)}
+          onclick={() => {
+            showResolved = !showResolved;
+            if (showResolved) showOutdated = false;
+          }}
           aria-pressed={showResolved}
           title="Resolved comments"
           aria-label="Show resolved comments"
@@ -361,6 +396,8 @@
     <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
       Pick a session to inspect its working tree.
     </div>
+  {:else if showOutdated}
+    <RailOutdatedPanel cwd={activeCwd} onClose={() => (showOutdated = false)} />
   {:else if showResolved}
     <RailResolvedPanel cwd={activeCwd} onClose={() => (showResolved = false)} />
   {:else if changesEntry?.result && !changesEntry.result.isRepo}
@@ -547,7 +584,12 @@
           {@const canExpand = diff.kind !== 'added' && diff.kind !== 'untracked'}
           <ScrollArea class="min-h-0 flex-1">
             <div bind:this={diffRootEl} class="flex flex-col">
-              <DiffSelectionMenu cwd={activeCwd!} filePath={diff.path} rootEl={diffRootEl} />
+              <DiffSelectionMenu
+                cwd={activeCwd!}
+                filePath={diff.path}
+                rootEl={diffRootEl}
+                {diff}
+              />
               {#if canExpand && diff.hunks[0] && diff.hunks[0].oldStart > 1}
                 <GapExpander
                   cwd={activeCwd!}
