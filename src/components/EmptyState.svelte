@@ -6,13 +6,14 @@
     AlertTriangle,
     Terminal,
     FolderOpen,
-    Command
+    Command,
+    Copy
   } from '@lucide/svelte';
   import type { AgentRuntimeProvider, Session, SessionStatus } from '@shared/types/sessions.js';
   import { launchKind, launchProvider } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
-  import { reportError } from '../stores/toast.svelte';
+  import { reportError, toasts } from '../stores/toast.svelte';
   import { kindLabel } from '../lib/sessions-helpers';
   import { Keymap } from '../lib/keymap';
   import { Button } from '$lib/components/ui/button';
@@ -29,6 +30,42 @@
   let canContinueAcrossAgents = $derived(
     session !== null && (displayKind === 'claude_code' || displayKind === 'codex')
   );
+  let providerSessionId = $derived.by(() => {
+    if (!session) return null;
+    if (displayKind === 'claude_code') {
+      return (
+        (session.currentAgentRuntime?.provider === 'claude_code'
+          ? session.currentAgentRuntime.providerThreadId
+          : undefined)
+        ?? session.providerThreadId
+        ?? observed?.providerThreadId
+        ?? (session.launch.type === 'agent' && session.launch.provider === 'claude_code'
+          ? session.launch.claudeSessionId
+          : undefined)
+        ?? null
+      );
+    }
+    if (displayKind === 'codex') {
+      return (
+        (session.currentAgentRuntime?.provider === 'codex'
+          ? session.currentAgentRuntime.providerThreadId
+          : undefined)
+        ?? session.providerThreadId
+        ?? observed?.providerThreadId
+        ?? (session.launch.type === 'agent' && session.launch.provider === 'codex'
+          ? session.launch.codexSessionId
+          : undefined)
+        ?? null
+      );
+    }
+    return null;
+  });
+  let providerResumeCommand = $derived.by(() => {
+    if (!providerSessionId) return null;
+    if (displayKind === 'claude_code') return `claude --resume ${providerSessionId}`;
+    if (displayKind === 'codex') return `codex resume ${providerSessionId}`;
+    return null;
+  });
 
   async function resume() {
     if (!session || busy) return;
@@ -95,6 +132,16 @@
 
   function quickCommandPalette() {
     commandPalette.toggle();
+  }
+
+  async function copyProviderResumeCommand() {
+    if (!providerResumeCommand) return;
+    try {
+      await navigator.clipboard.writeText(providerResumeCommand);
+      toasts.push('Copied resume command', 'info');
+    } catch (err) {
+      reportError(err);
+    }
   }
 </script>
 
@@ -178,6 +225,27 @@
           <Plus /> <span>New session</span>
         </Button>
       </div>
+      {#if providerSessionId && providerResumeCommand}
+        <div class="mt-3 flex w-full max-w-xl flex-col gap-1.5 rounded-md border border-border/70 bg-muted/20 p-3 text-left">
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-[11px] font-medium text-muted-foreground">Provider session ID</span>
+            <code class="min-w-0 font-mono text-[11px] break-all text-foreground">{providerSessionId}</code>
+          </div>
+          <div class="flex items-center gap-2">
+            <code class="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 font-mono text-[11px] break-all text-foreground">
+              {providerResumeCommand}
+            </code>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              aria-label="Copy resume command"
+              onclick={copyProviderResumeCommand}
+            >
+              <Copy />
+            </Button>
+          </div>
+        </div>
+      {/if}
       {#if canContinueAcrossAgents}
         <div class="mt-2 flex flex-col items-center gap-1.5">
           <span class="text-[11px] leading-4 text-muted-foreground">Continue in another agent</span>
