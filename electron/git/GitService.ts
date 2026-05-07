@@ -5,6 +5,7 @@ import type {
   DiffHunk,
   DiffLine,
   DiffLineKind,
+  DiscardFileEntry,
   FileDiff,
   GitAheadBehind,
   GitBranch,
@@ -364,6 +365,50 @@ export class GitService {
       // Fresh repo with no HEAD — unstage via rm --cached instead.
       await this.runInRepo(info, ['rm', '--cached', '--', ...paths]);
     }
+    this.invalidate(info.repoPath);
+  }
+
+  // Mirror VSCode's "Discard Changes": for each file, choose the right
+  // restore strategy by kind. Untracked files are removed via clean; newly
+  // added (or copied) files are removed from index AND disk via rm; modified
+  // and deleted files come back from HEAD via checkout. Renames need both
+  // sides — the new path is removed and the original is restored from HEAD.
+  async discardFiles(
+    cwd: string,
+    files: DiscardFileEntry[],
+    context: GitRepoContext = {}
+  ): Promise<void> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info || files.length === 0) return;
+
+    const restore = new Set<string>();
+    const remove = new Set<string>();
+    const cleanUntracked = new Set<string>();
+
+    for (const f of files) {
+      if (!f.path) continue;
+      if (f.kind === 'untracked') {
+        cleanUntracked.add(f.path);
+      } else if (f.kind === 'added' || f.kind === 'copied') {
+        remove.add(f.path);
+      } else if (f.kind === 'renamed') {
+        remove.add(f.path);
+        if (f.fromPath) restore.add(f.fromPath);
+      } else {
+        restore.add(f.path);
+      }
+    }
+
+    if (restore.size > 0) {
+      await this.runInRepo(info, ['checkout', 'HEAD', '--', ...restore]);
+    }
+    if (remove.size > 0) {
+      await this.runInRepo(info, ['rm', '--force', '--', ...remove]);
+    }
+    if (cleanUntracked.size > 0) {
+      await this.runInRepo(info, ['clean', '-f', '--', ...cleanUntracked]);
+    }
+
     this.invalidate(info.repoPath);
   }
 

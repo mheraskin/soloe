@@ -22,6 +22,8 @@
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
+  import { confirmStore } from '../../stores/confirm.svelte';
+  import type { WorkingChange } from '@shared/types/git.js';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -32,6 +34,17 @@
 
   let diffRootEl: HTMLDivElement | null = $state(null);
   let diffViewportEl: HTMLElement | null = $state(null);
+
+  // Floor at ~4.5 rows so the 5th file always peeks under the splitter when
+  // there are more than four entries. User can drag taller; persisted across
+  // sessions like the sidebar/right-rail widths.
+  const LIST_HEIGHT_KEY = 'soloe.diffListHeight.v1';
+  const MIN_LIST_HEIGHT = 220;
+  const MAX_LIST_HEIGHT = 640;
+  let listHeight = $state(MIN_LIST_HEIGHT);
+  let resizingList = $state(false);
+  let resizeStartY = 0;
+  let resizeStartHeight = 0;
 
   type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked';
 
@@ -193,6 +206,27 @@
     if (paths.length) await workingDiff.unstageFiles(activeCwd, paths);
   }
 
+  // Destructive: discarding rewrites the working tree from HEAD (or removes
+  // untracked/added files outright). Always gate on a danger confirm — this
+  // is the same pattern other delete-style flows use.
+  async function discardChange(change: WorkingChange): Promise<void> {
+    if (!activeCwd) return;
+    const verb = change.kind === 'untracked' || change.kind === 'added' ? 'delete' : 'discard changes to';
+    const ok = await confirmStore.ask({
+      title: 'Discard changes',
+      message: `Are you sure you want to ${verb} ${change.path}? This cannot be undone.`,
+      confirmLabel: 'Discard',
+      cancelLabel: 'Cancel',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    try {
+      await workingDiff.discardFiles(activeCwd, [change]);
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
   async function refresh(): Promise<void> {
     if (!activeCwd) return;
     workingDiff.invalidate(activeCwd);
@@ -217,7 +251,33 @@
 
   let searchInputEl: HTMLInputElement | null = $state(null);
 
+  function clampListHeight(value: number): number {
+    return Math.max(MIN_LIST_HEIGHT, Math.min(MAX_LIST_HEIGHT, Math.round(value)));
+  }
+
+  function startResizeList(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resizingList = true;
+    resizeStartY = event.clientY;
+    resizeStartHeight = listHeight;
+    window.addEventListener('pointermove', resizeList);
+    window.addEventListener('pointerup', stopResizeList, { once: true });
+  }
+
+  function resizeList(event: PointerEvent): void {
+    listHeight = clampListHeight(resizeStartHeight + (event.clientY - resizeStartY));
+  }
+
+  function stopResizeList(): void {
+    resizingList = false;
+    window.removeEventListener('pointermove', resizeList);
+    localStorage.setItem(LIST_HEIGHT_KEY, String(listHeight));
+  }
+
   onMount(() => {
+    const stored = Number(localStorage.getItem(LIST_HEIGHT_KEY));
+    if (Number.isFinite(stored) && stored > 0) listHeight = clampListHeight(stored);
     workingDiff.attachListeners();
     const onRefocus = () => {
       if (rightRail.activeTab !== 'diff') return;
@@ -242,7 +302,7 @@
   });
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col">
+<div class="flex min-h-0 flex-1 flex-col" class:select-none={resizingList}>
   <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 flex-col">
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -385,7 +445,7 @@
       </div>
     </div>
 
-    <ScrollArea class="max-h-44 shrink-0 border-b border-border">
+    <ScrollArea class="shrink-0" style="height: {listHeight}px">
       <div class="flex flex-col gap-px p-1.5">
         {#if changesEntry?.loading && filteredChanges.length === 0}
           <div class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
@@ -428,6 +488,7 @@
                 pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
                 onpick={() => pickChange(change.path)}
                 onunstage={() => void unstageFile(change.path).catch(reportError)}
+                ondiscard={() => void discardChange(change)}
               />
             {/each}
           {/if}
@@ -453,6 +514,7 @@
                 pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
                 onpick={() => pickChange(change.path)}
                 onstage={() => void stageFile(change.path).catch(reportError)}
+                ondiscard={() => void discardChange(change)}
               />
             {/each}
           {/if}
@@ -465,11 +527,21 @@
               onpick={() => pickChange(change.path)}
               onstage={!change.staged ? () => void stageFile(change.path).catch(reportError) : undefined}
               onunstage={change.staged ? () => void unstageFile(change.path).catch(reportError) : undefined}
+              ondiscard={() => void discardChange(change)}
             />
           {/each}
         {/if}
       </div>
     </ScrollArea>
+    <button
+      type="button"
+      class={[
+        'h-1.5 w-full shrink-0 cursor-row-resize border-b border-border outline-none transition-colors hover:bg-ring/30 focus-visible:bg-ring/40',
+        resizingList && 'bg-ring/20'
+      ]}
+      aria-label="Resize file list"
+      onpointerdown={startResizeList}
+    ></button>
 
     <section class="flex min-h-0 flex-1 flex-col">
       {#if !effectiveSelected}

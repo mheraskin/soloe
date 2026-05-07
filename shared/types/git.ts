@@ -152,6 +152,19 @@ export interface StageFilesRequest {
   wslDistro?: string;
 }
 
+export interface DiscardFileEntry {
+  path: string;
+  kind: WorkingChangeKind;
+  fromPath?: string | null;
+}
+
+export interface DiscardFilesRequest {
+  cwd: string;
+  files: DiscardFileEntry[];
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
 export interface FileDiffRequest {
   cwd: string;
   path: string;

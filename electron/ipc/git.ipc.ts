@@ -1,6 +1,7 @@
 import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
+  DiscardFilesRequest,
   FileDiffRequest,
   FileLinesRequest,
   GitCheckoutRequest,
@@ -142,6 +143,14 @@ export class GitIpc {
         }).then(() => true as const)
       )
     );
+    ipcMain.handle(IpcChannels.git.discardFiles, (_e, request: DiscardFilesRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.discardFiles(request.cwd, request.files, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        }).then(() => true as const)
+      )
+    );
 
     this.detachListener = this.opts.service.onChange((repoPath) => {
       for (const win of this.opts.getWindows()) {
@@ -165,6 +174,7 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.fileLines);
     ipcMain.removeHandler(IpcChannels.git.stageFiles);
     ipcMain.removeHandler(IpcChannels.git.unstageFiles);
+    ipcMain.removeHandler(IpcChannels.git.discardFiles);
     this.detachListener?.();
     this.detachListener = null;
     this.registered = false;

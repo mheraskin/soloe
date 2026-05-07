@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, Minus } from '@lucide/svelte';
+  import { Plus, Minus, RotateCcw } from '@lucide/svelte';
   import type { WorkingChange } from '@shared/types/git.js';
 
   interface Props {
@@ -9,9 +9,10 @@
     onpick: () => void;
     onstage?: () => void;
     onunstage?: () => void;
+    ondiscard?: () => void;
   }
 
-  let { change, selected, pending = false, onpick, onstage, onunstage }: Props = $props();
+  let { change, selected, pending = false, onpick, onstage, onunstage, ondiscard }: Props = $props();
 
   // Single-letter glyph chosen for compactness in the narrow rail. Pairs
   // visually with the colour to disambiguate at small sizes.
@@ -127,6 +128,17 @@
         {/if}
       {/if}
     </span>
+    {#if ondiscard}
+      <button
+        type="button"
+        class="flex size-4 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500"
+        onclick={(e) => { e.stopPropagation(); ondiscard?.(); }}
+        title="Discard changes"
+        aria-label="Discard changes to {change.path}"
+      >
+        <RotateCcw class="size-3" />
+      </button>
+    {/if}
     {#if change.staged && onunstage}
       <button
         type="button"

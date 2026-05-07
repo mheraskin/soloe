@@ -37,6 +37,7 @@ import type {
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
   FileDiffRequest,
+  DiscardFilesRequest,
   FileLinesRequest,
   GitCheckoutRequest,
   GitChangeEvent,
@@ -193,6 +194,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.git.stageFiles, request),
     unstageFiles: (request: StageFilesRequest) =>
       ipcRenderer.invoke(IpcChannels.git.unstageFiles, request),
+    discardFiles: (request: DiscardFilesRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.discardFiles, request),
     onChange: (cb: (event: GitChangeEvent) => void) =>
       subscribe<GitChangeEvent>(IpcChannels.git.change, cb)
   },

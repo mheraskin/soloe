@@ -18,6 +18,7 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  DiscardFilesRequest,
   FileDiffRequest,
   FileLinesRequest,
   GitCheckoutRequest,
@@ -183,6 +184,8 @@ export const ipc = {
       unwrap(await c.git.stageFiles(toIpcPayload(request))),
     unstageFiles: async (request: StageFilesRequest) =>
       unwrap(await c.git.unstageFiles(toIpcPayload(request))),
+    discardFiles: async (request: DiscardFilesRequest) =>
+      unwrap(await c.git.discardFiles(toIpcPayload(request))),
     onChange: (cb: (event: GitChangeEvent) => void) => c.git.onChange(cb)
   },
   files: {

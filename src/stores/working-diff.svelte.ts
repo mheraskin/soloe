@@ -478,6 +478,28 @@ class WorkingDiffStore {
     }
   }
 
+  async discardFiles(cwd: string, files: WorkingChange[]): Promise<void> {
+    const trimmed = cwd.trim();
+    if (!trimmed || !files.length) return;
+    const paths = files.map((f) => f.path);
+    this.markPending(trimmed, paths, true);
+    const ctx = this.contextByCwd.get(trimmed) ?? {};
+    try {
+      await ipc.git.discardFiles({
+        cwd: trimmed,
+        files: files.map((f) => ({
+          path: f.path,
+          kind: f.kind,
+          ...(f.fromPath ? { fromPath: f.fromPath } : {})
+        })),
+        ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+      });
+    } finally {
+      this.markPending(trimmed, paths, false);
+    }
+  }
+
   isStagePending(cwd: string, path: string): boolean {
     return this.pendingStage[`${cwd}::${path}`] === true;
   }

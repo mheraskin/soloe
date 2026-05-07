@@ -25,6 +25,7 @@ import type {
   GitStatusRequest,
   GitWorktree,
   StageFilesRequest,
+  DiscardFilesRequest,
   WorkingChangesRequest,
   WorkingChangesResult
 } from './git.js';
@@ -153,6 +154,7 @@ export const IpcChannels = {
     fileLines: 'git:file-lines',
     stageFiles: 'git:stage-files',
     unstageFiles: 'git:unstage-files',
+    discardFiles: 'git:discard-files',
     change: 'git:change'
   },
   files: {
@@ -328,6 +330,7 @@ export interface GitApi {
   fileLines(request: FileLinesRequest): Promise<IpcResult<FileLinesResult>>;
   stageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
   unstageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
+  discardFiles(request: DiscardFilesRequest): Promise<IpcResult<true>>;
   onChange(listener: (event: GitChangeEvent) => void): () => void;
 }
 
