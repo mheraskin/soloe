@@ -178,6 +178,16 @@ export class AgentHookDispatcher {
     payload: Record<string, unknown>
   ): void {
     if (mapping.state) {
+      const current = this.opts.observer.getSnapshot(soloeSessionId);
+      if (shouldPreserveApproval(current?.state, mapping.state)) {
+        this.opts.observer.appendEvent({
+          subjectId: soloeSessionId,
+          subjectKind: current?.subjectKind ?? 'session',
+          state: current?.state ?? 'waiting_for_approval',
+          summary: current?.state === 'waiting_for_approval' ? 'waiting for approval' : mapping.summary
+        });
+        return;
+      }
       const detail = stringField(payload, 'message') ?? stringField(payload, 'reason');
       this.opts.observer.setTuiObservedState(
         soloeSessionId,
@@ -268,6 +278,14 @@ export class AgentHookDispatcher {
       this.opts.log?.('failed to mark session input', err);
     }
   }
+}
+
+function shouldPreserveApproval(
+  current: AgentObservedState | undefined,
+  next: AgentObservedState
+): boolean {
+  return current === 'waiting_for_approval'
+    && (next === 'working' || next === 'running_tool');
 }
 
 function buildLaunchPatch(

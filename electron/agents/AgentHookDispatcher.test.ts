@@ -224,6 +224,56 @@ describe('AgentHookDispatcher', () => {
       );
     });
 
+    it('keeps Codex in approval after the normal prompt and tool hook sequence', async () => {
+      const created = await sessionStore.create({
+        name: 'Codex',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'SessionStart', session_id: 'codex-805093' }
+      });
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'UserPromptSubmit', prompt: 'fix the onboarding test failure' }
+      });
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'PreToolUse', tool_name: 'shell' }
+      });
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'PermissionRequest' }
+      });
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: { hook_event_name: 'PostToolUse', tool_name: 'shell' }
+      });
+
+      expect(observer.getSnapshot(created.id)).toMatchObject({
+        state: 'waiting_for_approval',
+        provider: 'codex',
+        providerThreadId: 'codex-805093'
+      });
+      expect(observer.listEvents(created.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            state: 'waiting_for_approval',
+            summary: 'waiting for approval'
+          })
+        ])
+      );
+    });
+
     it('treats approval-required Codex tool hooks as approval instead of running tool', async () => {
       await dispatcher.dispatch({
         provider: 'codex',
