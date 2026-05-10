@@ -54,6 +54,12 @@ export interface FollowUpChunk {
 }
 
 export class WorktreeOverviewService {
+  // Dedup concurrent regenerate calls for the same worktree so that closing
+  // and reopening the dialog (or two dialogs on the same cwd) wait on the
+  // same spawn rather than firing a duplicate. Cache writes happen before
+  // the promise resolves, so subsequent getOverview calls hit the cache.
+  private readonly inFlightRegens = new Map<string, Promise<WorktreeOverview>>();
+
   constructor(private readonly opts: WorktreeOverviewServiceOptions) {}
 
   async getOverview(args: GenerateOverviewArgs): Promise<WorktreeOverview> {
@@ -102,10 +108,25 @@ export class WorktreeOverviewService {
 
   async regenerate(args: GenerateOverviewArgs): Promise<WorktreeOverview> {
     const cwd = path.resolve(args.worktreeCwd);
+    const existing = this.inFlightRegens.get(cwd);
+    if (existing) {
+      console.log('[overview.service] regenerate join in-flight', { cwd });
+      return existing;
+    }
+    const promise = this.runRegenerate(cwd, args).finally(() => {
+      this.inFlightRegens.delete(cwd);
+    });
+    this.inFlightRegens.set(cwd, promise);
+    return promise;
+  }
+
+  private async runRegenerate(cwd: string, args: GenerateOverviewArgs): Promise<WorktreeOverview> {
+    console.log('[overview.service] regenerate start', { cwd, runMode: args.runMode, wslDistro: args.wslDistro, baseBranch: args.baseBranch });
     const [refs, facts] = await Promise.all([
       this.opts.reader.listAllSessions(cwd),
       this.opts.facts.collect(cwd, args.baseBranch)
     ]);
+    console.log('[overview.service] sources collected', { sessionCount: refs.length, headSha: facts.head, branch: facts.branch });
     const transcripts = await Promise.all(refs.map((r) => this.opts.reader.readTranscript(r)));
     const built = buildOverviewPrompt({
       worktreeCwd: cwd,
@@ -115,6 +136,7 @@ export class WorktreeOverviewService {
 
     const settings = await this.opts.getSettings();
     const provider = await pickProvider(settings);
+    console.log('[overview.service] provider picked', provider);
     if (!provider) {
       return {
         worktreeCwd: cwd,
@@ -130,6 +152,7 @@ export class WorktreeOverviewService {
     }
 
     const fullPrompt = `${built.systemPrompt}\n\n${built.contextText}\n\n${built.instruction}`;
+    console.log('[overview.service] spawning agent', { provider: provider.provider, model: provider.id, promptBytes: fullPrompt.length });
     const result = await this.runOneShot({
       provider,
       prompt: fullPrompt,
@@ -139,6 +162,7 @@ export class WorktreeOverviewService {
       binaries: settings.binaries,
       timeoutMs: OVERVIEW_TIMEOUT_MS
     }).catch((err: Error) => ({ ok: false as const, error: err.message }));
+    console.log('[overview.service] runOneShot done', result.ok ? { ok: true, textBytes: result.text.length } : { ok: false, error: result.error });
 
     if (!result.ok) {
       return {
@@ -227,14 +251,24 @@ export class WorktreeOverviewService {
 
   private async runOneShot(args: RunArgs): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
     const { argv } = buildArgv(args.provider, args.binaries, args.prompt);
+    console.log('[overview.service] runOneShot launch', {
+      runMode: args.runMode,
+      wslDistro: args.wslDistro,
+      cwd: args.cwd,
+      executable: argv.executable,
+      // The prompt is the last arg and may be huge — log only how it was built.
+      argShape: argv.args.slice(0, -1).concat([`<prompt:${argv.args.at(-1)?.length ?? 0} bytes>`])
+    });
     return new Promise((resolve) => {
       const child = launch(argv, args, this.opts.spawnImpl ?? spawn);
+      console.log('[overview.service] child spawned', { pid: child.pid });
       let stdout = '';
       let stderr = '';
       let settled = false;
       const timeout = setTimeout(() => {
         if (settled) return;
         settled = true;
+        console.warn('[overview.service] timeout, killing', { pid: child.pid });
         try { child.kill('SIGKILL'); } catch { /* ignore */ }
         resolve({ ok: false, error: `overview generation timed out after ${args.timeoutMs}ms` });
       }, args.timeoutMs);
@@ -250,12 +284,14 @@ export class WorktreeOverviewService {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        console.error('[overview.service] child error', err);
         resolve({ ok: false, error: err.message });
       });
       child.on('close', (code) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        console.log('[overview.service] child closed', { code, stdoutBytes: stdout.length, stderrBytes: stderr.length, stderrPreview: stderr.slice(0, 500) });
         if (code !== 0) {
           resolve({ ok: false, error: stderr.trim() || `exit ${code}` });
           return;

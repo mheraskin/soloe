@@ -27,6 +27,7 @@
   let regenerating = $state(false);
   let lastError = $state<string | null>(null);
   let chatHistory = $state<ChatPanelMessage[]>([]);
+  let autoRegenAttemptedFor = $state<string | null>(null);
 
   let activeRequestId: string | null = null;
   let activeOnChunk: ((text: string) => void) | null = null;
@@ -50,9 +51,23 @@
     void loadOverview(target);
   });
 
+  // Kick off a regenerate the first time we land on a worktree with no cache.
+  // One attempt per cwd: if it errors, leave the user in control rather than
+  // burning another spawn. The main-process service dedupes concurrent regens
+  // for the same cwd, so reopening while one is in flight is safe.
+  $effect(() => {
+    if (!overview || loading || regenerating) return;
+    if (overview.status !== 'missing') return;
+    if (overview.errorMessage) return;
+    if (autoRegenAttemptedFor === cwd) return;
+    autoRegenAttemptedFor = cwd;
+    void regenerate();
+  });
+
   async function clearOverview() {
     overview = null;
     chatHistory = [];
+    autoRegenAttemptedFor = null;
   }
 
   async function loadOverview(targetCwd: string) {
@@ -60,15 +75,19 @@
     chatHistory = [];
     loading = true;
     lastError = null;
+    const req = {
+      worktreeCwd: targetCwd,
+      runMode: settings.current.defaults.runMode,
+      wslDistro: settings.current.defaults.wslDistro,
+      baseBranch
+    };
+    console.log('[overview] get →', req);
     try {
-      const result = await ipc.overview.get({
-        worktreeCwd: targetCwd,
-        runMode: settings.current.defaults.runMode,
-        wslDistro: settings.current.defaults.wslDistro,
-        baseBranch
-      });
+      const result = await ipc.overview.get(req);
+      console.log('[overview] get ←', { status: result.status, hasText: !!result.text, errorMessage: result.errorMessage });
       if (cwd === targetCwd) overview = result;
     } catch (err) {
+      console.error('[overview] get threw', err);
       lastError = err instanceof Error ? err.message : String(err);
     } finally {
       if (cwd === targetCwd) loading = false;
@@ -76,19 +95,29 @@
   }
 
   async function regenerate() {
+    console.log('[overview] regenerate clicked', { regenerating, cwd, loading });
     if (regenerating) return;
     regenerating = true;
     lastError = null;
     const targetCwd = cwd;
+    const req = {
+      worktreeCwd: targetCwd,
+      runMode: settings.current.defaults.runMode,
+      wslDistro: settings.current.defaults.wslDistro,
+      baseBranch
+    };
+    console.log('[overview] regenerate →', req);
     try {
-      const result = await ipc.overview.regenerate({
-        worktreeCwd: targetCwd,
-        runMode: settings.current.defaults.runMode,
-        wslDistro: settings.current.defaults.wslDistro,
-        baseBranch
+      const result = await ipc.overview.regenerate(req);
+      console.log('[overview] regenerate ←', {
+        status: result.status,
+        hasText: !!result.text,
+        errorMessage: result.errorMessage,
+        generatedBy: result.generatedBy
       });
       if (cwd === targetCwd) overview = result;
     } catch (err) {
+      console.error('[overview] regenerate threw', err);
       lastError = err instanceof Error ? err.message : String(err);
       reportError(err);
     } finally {

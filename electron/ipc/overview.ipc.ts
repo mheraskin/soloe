@@ -29,13 +29,28 @@ export class OverviewIpc {
     if (this.registered) return;
     this.registered = true;
 
-    ipcMain.handle(IpcChannels.overview.get, (_e, request: GetOverviewRequest) =>
-      ipcInvoke(() => this.opts.service.getOverview(request))
-    );
+    ipcMain.handle(IpcChannels.overview.get, (_e, request: GetOverviewRequest) => {
+      console.log('[overview.ipc] get →', request);
+      return ipcInvoke(async () => {
+        const r = await this.opts.service.getOverview(request);
+        console.log('[overview.ipc] get ←', { status: r.status, hasText: !!r.text, errorMessage: r.errorMessage });
+        return r;
+      });
+    });
 
-    ipcMain.handle(IpcChannels.overview.regenerate, (_e, request: RegenerateOverviewRequest) =>
-      ipcInvoke(() => this.opts.service.regenerate(request))
-    );
+    ipcMain.handle(IpcChannels.overview.regenerate, (_e, request: RegenerateOverviewRequest) => {
+      console.log('[overview.ipc] regenerate →', request);
+      return ipcInvoke(async () => {
+        const r = await this.opts.service.regenerate(request);
+        console.log('[overview.ipc] regenerate ←', {
+          status: r.status,
+          hasText: !!r.text,
+          errorMessage: r.errorMessage,
+          generatedBy: r.generatedBy
+        });
+        return r;
+      });
+    });
 
     ipcMain.handle(IpcChannels.overview.askStart, (_e, request: AskFollowUpRequest) =>
       ipcInvoke(async () => {
