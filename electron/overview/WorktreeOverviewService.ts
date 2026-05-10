@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as os from 'node:os';
-import * as path from 'node:path';
 import type {
   ChatMessage,
   OverviewProvider,
@@ -63,7 +62,7 @@ export class WorktreeOverviewService {
   constructor(private readonly opts: WorktreeOverviewServiceOptions) {}
 
   async getOverview(args: GenerateOverviewArgs): Promise<WorktreeOverview> {
-    const cwd = path.resolve(args.worktreeCwd);
+    const cwd = args.worktreeCwd;
     const [refs, facts] = await Promise.all([
       this.opts.reader.listAllSessions(cwd),
       this.opts.facts.collect(cwd, args.baseBranch)
@@ -107,7 +106,7 @@ export class WorktreeOverviewService {
   }
 
   async regenerate(args: GenerateOverviewArgs): Promise<WorktreeOverview> {
-    const cwd = path.resolve(args.worktreeCwd);
+    const cwd = args.worktreeCwd;
     const existing = this.inFlightRegens.get(cwd);
     if (existing) {
       console.log('[overview.service] regenerate join in-flight', { cwd });
@@ -210,7 +209,7 @@ export class WorktreeOverviewService {
   }
 
   async *streamFollowUp(args: StreamFollowUpArgs): AsyncIterable<FollowUpChunk> {
-    const cwd = path.resolve(args.worktreeCwd);
+    const cwd = args.worktreeCwd;
     const [refs, facts] = await Promise.all([
       this.opts.reader.listAllSessions(cwd),
       this.opts.facts.collect(cwd, args.baseBranch)
@@ -291,9 +290,18 @@ export class WorktreeOverviewService {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        console.log('[overview.service] child closed', { code, stdoutBytes: stdout.length, stderrBytes: stderr.length, stderrPreview: stderr.slice(0, 500) });
+        console.log('[overview.service] child closed', {
+          code,
+          stdoutBytes: stdout.length,
+          stderrBytes: stderr.length,
+          stdoutPreview: stdout.slice(0, 500),
+          stderrPreview: stderr.slice(0, 500)
+        });
         if (code !== 0) {
-          resolve({ ok: false, error: stderr.trim() || `exit ${code}` });
+          // codex writes its errors to stdout, so fall back to stdout when
+          // stderr is empty rather than hiding the real cause behind "exit N".
+          const detail = (stderr.trim() || stdout.trim()).slice(0, 500);
+          resolve({ ok: false, error: detail ? `${detail} (exit ${code})` : `exit ${code}` });
           return;
         }
         resolve({ ok: true, text: stdout.trim() });
