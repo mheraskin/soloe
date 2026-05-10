@@ -172,6 +172,15 @@ export class SoloeMcpServer {
       writeJson(res, 400, { error: 'invalid json' });
       return;
     }
+    // JSON-RPC notifications carry no `id`. Per the MCP Streamable HTTP
+    // transport, the server must reply with 202 Accepted and no body —
+    // returning a JSON-RPC response (even an error one) makes rmcp clients
+    // tear down the channel right after `notifications/initialized`.
+    if (isJsonRpcNotification(payload)) {
+      res.statusCode = 202;
+      res.end();
+      return;
+    }
     try {
       writeJson(res, 200, await this.handlePayload(payload));
     } catch (err) {
@@ -318,6 +327,10 @@ export function isAuthorizedHeaders(
   if (headerToken === `Bearer ${token}`) return true;
   const soloeToken = headers['x-soloe-token'];
   return soloeToken === token || (Array.isArray(soloeToken) && soloeToken.includes(token));
+}
+
+function isJsonRpcNotification(payload: unknown): boolean {
+  return isRecord(payload) && payload['jsonrpc'] === '2.0' && payload['id'] === undefined;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
