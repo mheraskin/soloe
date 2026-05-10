@@ -155,9 +155,14 @@ export class SessionTranscriptReader {
   ): Promise<WorktreeSessionRef | null> {
     const stat = await safeStat(file);
     if (!stat) return null;
-    const lines = await readLines(file);
-    if (lines.length === 0) return null;
-    const meta = parseJsonLine(lines[0] ?? '');
+    // Codex transcripts always begin with `session_meta` carrying the cwd.
+    // Read only the first chunk to check it — most files under
+    // ~/.codex/sessions belong to other worktrees, and pulling each full
+    // transcript over a WSL UNC share to discover that is what made the
+    // initial scan unbearable.
+    const firstLine = await readFirstLine(file);
+    if (!firstLine) return null;
+    const meta = parseJsonLine(firstLine);
     if (!meta || meta['type'] !== 'session_meta') return null;
     const payload = meta['payload'] as Record<string, unknown> | undefined;
     if (!payload) return null;
@@ -165,14 +170,7 @@ export class SessionTranscriptReader {
     if (typeof cwd !== 'string' || !pathsEqual(cwd, expectedCwd)) return null;
     const sessionId = typeof payload['id'] === 'string' ? (payload['id'] as string) : path.basename(file, '.jsonl');
     const startedAt = typeof payload['timestamp'] === 'string' ? (payload['timestamp'] as string) : undefined;
-    let endedAt: string | undefined = startedAt;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const rec = parseJsonLine(lines[i] ?? '');
-      if (rec && typeof rec['timestamp'] === 'string') {
-        endedAt = rec['timestamp'] as string;
-        break;
-      }
-    }
+    const endedAt = (await readLastTimestamp(file)) ?? startedAt;
     return {
       provider: 'codex',
       sessionFile: file,
@@ -458,6 +456,58 @@ function extractTextContent(content: unknown): string {
 async function readLines(file: string): Promise<string[]> {
   const raw = await fs.readFile(file, 'utf8');
   return raw.split('\n').filter((line) => line.length > 0);
+}
+
+async function readFirstLine(file: string, maxBytes = 16_384): Promise<string> {
+  let fd: import('node:fs/promises').FileHandle | null = null;
+  try {
+    fd = await fs.open(file, 'r');
+    const buf = Buffer.alloc(maxBytes);
+    const { bytesRead } = await fd.read(buf, 0, maxBytes, 0);
+    if (bytesRead === 0) return '';
+    const str = buf.toString('utf8', 0, bytesRead);
+    const newlineIdx = str.indexOf('\n');
+    return newlineIdx === -1 ? str : str.slice(0, newlineIdx);
+  } catch {
+    return '';
+  } finally {
+    if (fd) await fd.close().catch(() => {});
+  }
+}
+
+// Returns the latest `timestamp` value from a jsonl by scanning the tail
+// only — the alternative is reading multi-MB transcripts in full just to
+// look at the last record, which dominates listing time over UNC.
+async function readLastTimestamp(file: string, tailBytes = 65_536): Promise<string | undefined> {
+  let fd: import('node:fs/promises').FileHandle | null = null;
+  try {
+    fd = await fs.open(file, 'r');
+    const stat = await fd.stat();
+    const size = stat.size;
+    if (size === 0) return undefined;
+    const readSize = Math.min(tailBytes, size);
+    const start = size - readSize;
+    const buf = Buffer.alloc(readSize);
+    const { bytesRead } = await fd.read(buf, 0, readSize, start);
+    if (bytesRead === 0) return undefined;
+    let chunk = buf.toString('utf8', 0, bytesRead);
+    if (start > 0) {
+      const firstNewline = chunk.indexOf('\n');
+      if (firstNewline !== -1) chunk = chunk.slice(firstNewline + 1);
+    }
+    const lines = chunk.split('\n').filter((l) => l.length > 0);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const rec = parseJsonLine(lines[i] ?? '');
+      if (rec && typeof rec['timestamp'] === 'string') {
+        return rec['timestamp'] as string;
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fd) await fd.close().catch(() => {});
+  }
 }
 
 function parseJsonLine(line: string): Record<string, unknown> | null {
