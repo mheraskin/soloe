@@ -501,7 +501,8 @@ export function mergeCodexHooks(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...original };
   const features = isObject(next['features']) ? { ...next['features'] } : {};
-  features['codex_hooks'] = true;
+  features['hooks'] = true;
+  delete features['codex_hooks'];
   next['features'] = features;
   const hooksRoot = isObject(next['hooks']) ? { ...next['hooks'] } : {};
   for (const event of CODEX_EVENTS) {

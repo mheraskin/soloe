@@ -214,7 +214,7 @@ describe('HookInstaller', () => {
           'Stop'
         ])
       );
-      expect((parsed as { features?: { codex_hooks?: boolean } }).features?.codex_hooks).toBe(true);
+      expect((parsed as { features?: { hooks?: boolean } }).features?.hooks).toBe(true);
     });
 
     it('writes a hook command that actually runs curl', async () => {
