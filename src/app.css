@@ -300,3 +300,98 @@
 .hljs-strong {
   font-weight: 600;
 }
+
+.md-prose {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.md-prose > :first-child {
+  margin-top: 0;
+}
+.md-prose > :last-child {
+  margin-bottom: 0;
+}
+.md-prose p {
+  margin: 0.5em 0;
+}
+.md-prose h1,
+.md-prose h2,
+.md-prose h3,
+.md-prose h4 {
+  margin: 0.9em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.md-prose h1 { font-size: 1.15rem; }
+.md-prose h2 { font-size: 1.05rem; }
+.md-prose h3 { font-size: 0.95rem; }
+.md-prose h4 { font-size: 0.9rem; }
+.md-prose ul,
+.md-prose ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.md-prose ul { list-style: disc; }
+.md-prose ol { list-style: decimal; }
+.md-prose li {
+  margin: 0.15em 0;
+}
+.md-prose li > ul,
+.md-prose li > ol {
+  margin: 0.15em 0;
+}
+.md-prose a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: color-mix(in oklch, var(--muted) 35%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+  border-radius: 4px;
+  padding: 0.05em 0.32em;
+}
+.md-prose pre.md-code {
+  margin: 0.6em 0;
+  padding: 0.6em 0.8em;
+  background: color-mix(in oklch, var(--muted) 30%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.md-prose pre.md-code code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 0.85em;
+  white-space: pre;
+}
+.md-prose blockquote {
+  margin: 0.6em 0;
+  padding: 0.1em 0.8em;
+  border-left: 3px solid color-mix(in oklch, var(--border) 80%, transparent);
+  color: var(--muted-foreground);
+}
+.md-prose hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+}
+.md-prose strong { font-weight: 600; }
+.md-prose em { font-style: italic; }
+.md-prose table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.85em;
+}
+.md-prose th,
+.md-prose td {
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  padding: 0.3em 0.55em;
+  text-align: left;
+}
+.md-prose th { background: color-mix(in oklch, var(--muted) 30%, transparent); }

@@ -13,7 +13,7 @@
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { renderMarkdown } from '../lib/markdown';
   import ChatPanel, { type ChatPanelMessage } from './ChatPanel.svelte';
 
   interface Props {
@@ -296,49 +296,52 @@
     {/if}
   </header>
 
-  <div class="flex min-h-0 flex-1 flex-col">
-    <div class="min-h-0 flex-1 border-b border-border">
-      <ScrollArea class="h-full">
-        <div class="px-3 py-2 text-sm">
-          {#if loading && !overview}
-            <div class="flex items-center gap-2 text-muted-foreground">
-              <Loader2 class="h-3 w-3 animate-spin" />
-              <span>Loading overview…</span>
-            </div>
-          {:else if !overview}
-            <p class="text-muted-foreground">Select a worktree to see its overview.</p>
-          {:else if overview.status === 'missing' && !regenerating}
-            <p class="text-muted-foreground">
-              No overview generated yet. Click <em>Regenerate</em> to summarize what's been done in this worktree.
-            </p>
-          {:else if regenerating}
-            <div class="flex items-center gap-2 text-muted-foreground">
-              <Loader2 class="h-3 w-3 animate-spin" />
-              <span>Reading sessions and asking the model…</span>
-            </div>
-          {:else if overview.text}
-            <pre class="m-0 font-sans text-sm whitespace-pre-wrap break-words">{overview.text}</pre>
-          {:else if overview.errorMessage}
-            <p class="text-destructive">{overview.errorMessage}</p>
-          {:else}
-            <p class="text-muted-foreground">Overview is empty.</p>
-          {/if}
+  {#snippet overviewBubble()}
+    <div class="rounded-md border border-border/60 bg-card px-3 py-2 text-sm">
+      <div class="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <span>Overview</span>
+        {#if regenerating}
+          <span class="inline-flex items-center gap-1 normal-case">
+            <Loader2 class="h-3 w-3 animate-spin" />
+            <span class="font-normal tracking-normal">regenerating…</span>
+          </span>
+        {/if}
+      </div>
+      {#if loading && !overview}
+        <div class="flex items-center gap-2 text-muted-foreground">
+          <Loader2 class="h-3 w-3 animate-spin" />
+          <span>Loading overview…</span>
         </div>
-      </ScrollArea>
+      {:else if !overview}
+        <p class="text-muted-foreground">Select a worktree to see its overview.</p>
+      {:else if regenerating && !overview.text}
+        <div class="flex items-center gap-2 text-muted-foreground">
+          <Loader2 class="h-3 w-3 animate-spin" />
+          <span>Reading sessions and asking the model…</span>
+        </div>
+      {:else if overview.text}
+        <div class="md-prose">{@html renderMarkdown(overview.text)}</div>
+      {:else if overview.status === 'missing'}
+        <p class="text-muted-foreground">
+          No overview generated yet. Click <em>Regenerate</em> to summarize what's been done in this worktree.
+        </p>
+      {:else if overview.errorMessage}
+        <p class="text-destructive">{overview.errorMessage}</p>
+      {:else}
+        <p class="text-muted-foreground">Overview is empty.</p>
+      {/if}
     </div>
+  {/snippet}
 
-    <div class="flex h-72 min-h-0 flex-col">
-      <ChatPanel
-        {send}
-        bind:history={chatHistory}
-        onCancel={cancelStream}
-        disabled={!overview || overview.status === 'missing'}
-        placeholder="Ask a follow-up about this worktree…"
-        emptyHint={overview && overview.status !== 'missing'
-          ? 'Ask follow-up questions about what was done in this worktree.'
-          : 'Generate an overview first to enable follow-ups.'}
-        contextSummary={overview ? sourcesLabel : ''}
-      />
-    </div>
+  <div class="flex min-h-0 flex-1 flex-col">
+    <ChatPanel
+      {send}
+      bind:history={chatHistory}
+      onCancel={cancelStream}
+      disabled={!overview || overview.status === 'missing'}
+      placeholder="Ask a follow-up about this worktree…"
+      contextSummary={overview ? sourcesLabel : ''}
+      prefix={overviewBubble}
+    />
   </div>
 </div>

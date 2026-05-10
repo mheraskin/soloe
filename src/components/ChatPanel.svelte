@@ -21,10 +21,11 @@
 </script>
 
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import { Send, Loader2, StopCircle, Trash2 } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Textarea } from '$lib/components/ui/textarea';
+  import { renderMarkdown } from '../lib/markdown';
 
   interface Props {
     send: (
@@ -39,6 +40,7 @@
     disabled?: boolean;
     history?: ChatPanelMessage[];
     onHistoryChange?: (history: ChatPanelMessage[]) => void;
+    prefix?: Snippet;
   }
 
   let {
@@ -49,7 +51,8 @@
     onCancel,
     disabled = false,
     history = $bindable([]),
-    onHistoryChange
+    onHistoryChange,
+    prefix
   }: Props = $props();
 
   let input = $state('');
@@ -148,23 +151,17 @@
 
 <div class="flex h-full flex-col">
   <div {@attach attachScroll} class="flex-1 overflow-y-auto px-3 py-2">
-    {#if history.length === 0}
-      <div class="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
-        {#if emptyHint}
-          <p class="max-w-sm">{emptyHint}</p>
+    {#if prefix || history.length > 0}
+      <div class="flex flex-col gap-3">
+        {#if prefix}
+          {@render prefix()}
         {/if}
-        {#if contextSummary}
-          <p class="mt-2 text-xs">{contextSummary}</p>
-        {/if}
-      </div>
-    {:else}
-      <ul class="flex flex-col gap-3">
         {#each history as msg, i (i)}
-          <li
+          <div
             class={[
-              'rounded-md border px-3 py-2 text-sm whitespace-pre-wrap',
+              'rounded-md border px-3 py-2 text-sm',
               msg.role === 'user'
-                ? 'border-border bg-accent/40'
+                ? 'border-border bg-accent/40 whitespace-pre-wrap'
                 : 'border-border/60 bg-card'
             ]}
           >
@@ -177,10 +174,27 @@
                 </span>
               {/if}
             </div>
-            {msg.content || (pending && assistantStreamingIdx === i ? '…' : '')}
-          </li>
+            {#if msg.role === 'assistant'}
+              {#if msg.content}
+                <div class="md-prose">{@html renderMarkdown(msg.content)}</div>
+              {:else if pending && assistantStreamingIdx === i}
+                <span class="text-muted-foreground">…</span>
+              {/if}
+            {:else}
+              {msg.content}
+            {/if}
+          </div>
         {/each}
-      </ul>
+      </div>
+    {:else}
+      <div class="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
+        {#if emptyHint}
+          <p class="max-w-sm">{emptyHint}</p>
+        {/if}
+        {#if contextSummary}
+          <p class="mt-2 text-xs">{contextSummary}</p>
+        {/if}
+      </div>
     {/if}
   </div>
 
