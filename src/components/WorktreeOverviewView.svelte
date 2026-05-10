@@ -13,8 +13,11 @@
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Select from '$lib/components/ui/select';
+  import { MODEL_CATALOG, type ModelProvider, type ModelSelection } from '@shared/types/settings.js';
   import { renderMarkdown } from '../lib/markdown';
   import ChatPanel, { type ChatPanelMessage } from './ChatPanel.svelte';
+  import KindIcon from './KindIcon.svelte';
 
   interface Props {
     cwd: string;
@@ -236,6 +239,61 @@
     return `${p} · ${overview.generatedBy.model}`;
   });
 
+  // Model the next regenerate will use. Falls back to textGeneration for
+  // settings written before worktreeOverview existed (mirrors pickProvider
+  // in WorktreeOverviewService).
+  let selectedModel = $derived.by<ModelSelection | null>(() => {
+    return (
+      settings.current.models.worktreeOverview ??
+      settings.current.models.textGeneration ??
+      null
+    );
+  });
+
+  function modelKey(value: ModelSelection | null | undefined): string {
+    return value ? `${value.provider}:${value.id}` : '';
+  }
+  function parseModelKey(value: string): ModelSelection | null {
+    const idx = value.indexOf(':');
+    if (idx <= 0) return null;
+    const provider = value.slice(0, idx);
+    const id = value.slice(idx + 1);
+    if (provider !== 'codex' && provider !== 'claude') return null;
+    if (!id) return null;
+    return { provider, id };
+  }
+  function modelLabel(value: ModelSelection | null | undefined): string {
+    if (!value) return 'Default model';
+    const entry = MODEL_CATALOG.find((m) => m.provider === value.provider && m.id === value.id);
+    return entry?.label ?? `${value.provider}: ${value.id}`;
+  }
+  function providerKind(provider: ModelProvider): 'claude_code' | 'codex' {
+    return provider === 'claude' ? 'claude_code' : 'codex';
+  }
+  async function setSelectedModel(value: string) {
+    const parsed = parseModelKey(value);
+    if (!parsed) return;
+    try {
+      await settings.update({ models: { worktreeOverview: parsed } });
+    } catch (e) {
+      reportError(e);
+    }
+  }
+
+  // Show "Regenerate to apply" when the user has picked a model that
+  // differs from whatever produced the cached overview. Compares by
+  // provider+id; the catalog uses 'claude' but generatedBy uses
+  // 'claude_code', so we normalize.
+  let modelChangedSinceLastRun = $derived.by(() => {
+    if (!selectedModel || !overview?.generatedBy) return false;
+    const generatedProvider: ModelProvider =
+      overview.generatedBy.provider === 'claude_code' ? 'claude' : 'codex';
+    return (
+      generatedProvider !== selectedModel.provider ||
+      overview.generatedBy.model !== selectedModel.id
+    );
+  });
+
   let sourcesLabel = $derived.by(() => {
     if (!overview) return '';
     const s = overview.sources;
@@ -263,6 +321,30 @@
         </Badge>
       {/if}
       <div class="flex-1"></div>
+      <Select.Root
+        type="single"
+        value={modelKey(selectedModel)}
+        onValueChange={(v) => void setSelectedModel(v)}
+      >
+        <Select.Trigger class="h-7 w-auto min-w-[150px] gap-1.5 px-2 py-0 text-xs" aria-label="Overview model">
+          <span class="flex items-center gap-1.5 truncate">
+            {#if selectedModel}
+              <KindIcon kind={providerKind(selectedModel.provider)} size={12} />
+            {/if}
+            <span class="truncate">{modelLabel(selectedModel)}</span>
+          </span>
+        </Select.Trigger>
+        <Select.Content>
+          {#each MODEL_CATALOG as entry (modelKey(entry))}
+            <Select.Item value={modelKey(entry)} label={entry.label}>
+              <span class="flex items-center gap-2">
+                <KindIcon kind={providerKind(entry.provider)} size={14} />
+                <span>{entry.label}</span>
+              </span>
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
       <Button
         variant="outline"
         size="xs"
@@ -286,6 +368,9 @@
           <span class="text-foreground/70">· {providerLabel}</span>
         {/if}
         <span>· {sourcesLabel}</span>
+        {#if modelChangedSinceLastRun && !regenerating}
+          <span class="text-primary/90">· click Regenerate to apply {modelLabel(selectedModel)}</span>
+        {/if}
       </div>
     {/if}
     {#if lastError}
@@ -320,6 +405,12 @@
           <span>Reading sessions and asking the model…</span>
         </div>
       {:else if overview.text}
+        {#if regenerating}
+          <div class="mb-2 flex items-center gap-2 rounded border border-primary/30 bg-primary/5 px-2 py-1 text-xs text-foreground/80">
+            <Loader2 class="h-3 w-3 flex-shrink-0 animate-spin" />
+            <span>Regenerating overview… showing previous version below.</span>
+          </div>
+        {/if}
         <div class="md-prose">{@html renderMarkdown(overview.text)}</div>
       {:else if overview.status === 'missing'}
         <p class="text-muted-foreground">

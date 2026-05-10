@@ -469,7 +469,9 @@ function launch(
 }
 
 async function pickProvider(settings: Settings): Promise<ModelSelection | null> {
-  const configured = settings.models.textGeneration ?? null;
+  // Prefer the dedicated overview slot; fall back to the older textGeneration
+  // slot for settings written before worktreeOverview existed.
+  const configured = settings.models.worktreeOverview ?? settings.models.textGeneration ?? null;
   const codexAvailable = Boolean(settings.binaries.codex) || true;
   const claudeAvailable = Boolean(settings.binaries.claude) || true;
   if (configured) return configured;

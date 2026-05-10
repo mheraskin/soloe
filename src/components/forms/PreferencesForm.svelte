@@ -54,6 +54,11 @@
       key: 'gitCommitGeneration',
       label: 'Git commit messages',
       hint: 'Used when suggesting commit messages from a diff.'
+    },
+    {
+      key: 'worktreeOverview',
+      label: 'Worktree overview',
+      hint: 'Used to summarize a worktree and answer follow-up questions about it.'
     }
   ];
 

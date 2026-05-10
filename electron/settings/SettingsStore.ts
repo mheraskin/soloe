@@ -18,7 +18,7 @@ const VALID_RUN_MODES = new Set(['windows', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
 const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
-const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration'];
+const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration', 'worktreeOverview'];
 
 export class SettingsStore {
   private cache: Settings | null = null;
@@ -164,6 +164,9 @@ function parseModels(raw: unknown): SettingsModels {
   }
   if (!out.gitCommitGeneration && DEFAULT_SETTINGS.models.gitCommitGeneration) {
     out.gitCommitGeneration = { ...DEFAULT_SETTINGS.models.gitCommitGeneration };
+  }
+  if (!out.worktreeOverview && DEFAULT_SETTINGS.models.worktreeOverview) {
+    out.worktreeOverview = { ...DEFAULT_SETTINGS.models.worktreeOverview };
   }
   return out;
 }

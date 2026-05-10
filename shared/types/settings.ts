@@ -32,7 +32,7 @@ export interface SettingsBinaries {
 
 export type ModelProvider = 'codex' | 'claude';
 
-export type ModelTask = 'textGeneration' | 'gitCommitGeneration';
+export type ModelTask = 'textGeneration' | 'gitCommitGeneration' | 'worktreeOverview';
 
 export interface ModelSelection {
   provider: ModelProvider;
@@ -42,6 +42,7 @@ export interface ModelSelection {
 export interface SettingsModels {
   textGeneration?: ModelSelection;
   gitCommitGeneration?: ModelSelection;
+  worktreeOverview?: ModelSelection;
 }
 
 export interface ModelCatalogEntry {
@@ -134,7 +135,8 @@ export const DEFAULT_SETTINGS: Settings = {
   binaries: {},
   models: {
     textGeneration: DEFAULT_MODEL_CODEX,
-    gitCommitGeneration: DEFAULT_MODEL_CODEX
+    gitCommitGeneration: DEFAULT_MODEL_CODEX,
+    worktreeOverview: DEFAULT_MODEL_CODEX
   },
   quickLaunch: [],
   integrations: { autoRefreshMcpUrl: true }
