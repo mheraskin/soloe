@@ -40,15 +40,19 @@ export class SessionTranscriptReader {
     if (scope?.runMode === 'wsl') {
       const distro = scope.wslDistro ?? 'Ubuntu';
       const wslHome = await resolveWslHome(distro);
-      return {
+      const dirs = {
         claudeProjectsDir: posixToWslUnc(distro, `${wslHome}/.claude/projects`),
         codexSessionsDir: posixToWslUnc(distro, `${wslHome}/.codex/sessions`)
       };
+      console.log('[overview.reader] resolveDirs (wsl)', { distro, wslHome, ...dirs });
+      return dirs;
     }
-    return {
+    const dirs = {
       claudeProjectsDir: path.join(this.homeDir, '.claude', 'projects'),
       codexSessionsDir: path.join(this.homeDir, '.codex', 'sessions')
     };
+    console.log('[overview.reader] resolveDirs (native)', { homeDir: this.homeDir, ...dirs });
+    return dirs;
   }
 
   async listClaudeSessionFiles(cwd: string, scope?: SessionScope): Promise<WorktreeSessionRef[]> {
@@ -58,9 +62,14 @@ export class SessionTranscriptReader {
     try {
       entries = await fs.readdir(projectDir);
     } catch (err: unknown) {
-      if (isNotFound(err)) return [];
+      if (isNotFound(err)) {
+        console.log('[overview.reader] claude projectDir not found', { projectDir });
+        return [];
+      }
+      console.error('[overview.reader] claude readdir failed', { projectDir, err });
       throw err;
     }
+    console.log('[overview.reader] claude listing', { projectDir, entries: entries.length });
     const refs: WorktreeSessionRef[] = [];
     for (const name of entries) {
       if (!name.endsWith('.jsonl')) continue;
@@ -75,11 +84,13 @@ export class SessionTranscriptReader {
   async listCodexSessionFiles(cwd: string, scope?: SessionScope): Promise<WorktreeSessionRef[]> {
     const dirs = await this.resolveDirs(scope);
     const files = await listJsonlFilesRecursive(dirs.codexSessionsDir);
+    console.log('[overview.reader] codex listing', { root: dirs.codexSessionsDir, files: files.length });
     const refs: WorktreeSessionRef[] = [];
     for (const file of files) {
       const ref = await this.peekCodexFile(file, cwd);
       if (ref) refs.push(ref);
     }
+    console.log('[overview.reader] codex matched', { cwd, matched: refs.length });
     refs.sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''));
     return refs;
   }
