@@ -8,6 +8,7 @@
     WorktreeOverview
   } from '@shared/types/overview.js';
   import { ipc } from '../lib/ipc';
+  import { sessions } from '../stores/sessions.svelte';
   import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -32,6 +33,15 @@
   let activeRequestId: string | null = null;
   let activeOnChunk: ((text: string) => void) | null = null;
   let activeStreamResolve: ((result: { ok: boolean; error?: string }) => void) | null = null;
+
+  // Transcript files for the agent sessions currently open in this worktree.
+  // The overview is scoped to these — closed/historical sessions don't
+  // contribute even if their .jsonl is still on disk.
+  const openSessionFiles = $derived.by(() =>
+    sessions.sessions
+      .filter((s) => s.cwd === cwd && s.launch.type === 'agent' && s.transcriptPath)
+      .map((s) => s.transcriptPath as string)
+  );
 
   const detachChunk = ipc.overview.onChunk(handleChunk);
 
@@ -80,7 +90,8 @@
       worktreeCwd: targetCwd,
       runMode: settings.current.defaults.runMode,
       wslDistro: settings.current.defaults.wslDistro,
-      baseBranch
+      baseBranch,
+      sessionFiles: openSessionFiles
     };
     console.log('[overview] get →', req);
     try {
@@ -105,7 +116,8 @@
       worktreeCwd: targetCwd,
       runMode: settings.current.defaults.runMode,
       wslDistro: settings.current.defaults.wslDistro,
-      baseBranch
+      baseBranch,
+      sessionFiles: openSessionFiles
     };
     console.log('[overview] regenerate →', req);
     try {
@@ -156,6 +168,7 @@
       runMode: settings.current.defaults.runMode,
       wslDistro: settings.current.defaults.wslDistro,
       baseBranch,
+      sessionFiles: openSessionFiles,
       message,
       history
     };

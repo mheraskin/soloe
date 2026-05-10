@@ -100,6 +100,11 @@ export interface GetOverviewRequest {
   runMode?: RunMode;
   wslDistro?: string;
   baseBranch?: string;
+  // Transcript paths for the sessions currently open in this worktree, as
+  // the renderer sees them (posix in WSL mode, native in Windows mode).
+  // When provided the overview is scoped to just these files instead of
+  // every historical transcript that ever ran in this cwd.
+  sessionFiles?: string[];
 }
 
 export interface RegenerateOverviewRequest extends GetOverviewRequest {}
@@ -109,6 +114,7 @@ export interface AskFollowUpRequest {
   runMode?: RunMode;
   wslDistro?: string;
   baseBranch?: string;
+  sessionFiles?: string[];
   message: string;
   history: ChatMessage[];
 }

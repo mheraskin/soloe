@@ -105,6 +105,52 @@ export class SessionTranscriptReader {
     );
   }
 
+  // Peek a known set of transcript files instead of scanning the whole
+  // .claude/projects + .codex/sessions trees. The renderer hands us the
+  // transcript paths reported by the agent hooks for sessions currently
+  // open in this worktree, so we trust the list and just stat/peek each
+  // file. Codex peeks still validate the cwd in session_meta — defends
+  // against a stale/wrong path slipping through — but unmatched files
+  // are silently dropped rather than treated as errors.
+  async listScopedSessions(
+    filePaths: string[],
+    cwd: string,
+    scope?: SessionScope
+  ): Promise<WorktreeSessionRef[]> {
+    if (filePaths.length === 0) return [];
+    const refs = await Promise.all(
+      filePaths.map((p) => this.peekScopedFile(p, cwd, scope))
+    );
+    return refs
+      .filter((r): r is WorktreeSessionRef => r !== null)
+      .sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''));
+  }
+
+  private async peekScopedFile(
+    rendererPath: string,
+    cwd: string,
+    scope?: SessionScope
+  ): Promise<WorktreeSessionRef | null> {
+    const file = this.translateRendererPath(rendererPath, scope);
+    if (isClaudeTranscriptPath(rendererPath)) {
+      return this.peekClaudeFile(file);
+    }
+    if (isCodexTranscriptPath(rendererPath)) {
+      return this.peekCodexFile(file, cwd);
+    }
+    // Unknown layout — try claude first (cheaper) then codex. Costs at most
+    // one extra stat for an unrecognized path.
+    const claude = await this.peekClaudeFile(file);
+    if (claude) return claude;
+    return this.peekCodexFile(file, cwd);
+  }
+
+  private translateRendererPath(p: string, scope?: SessionScope): string {
+    if (scope?.runMode !== 'wsl') return p;
+    if (!p.startsWith('/')) return p;
+    return posixToWslUnc(scope.wslDistro ?? 'Ubuntu', p);
+  }
+
   async readTranscript(ref: WorktreeSessionRef): Promise<SessionTranscript> {
     if (ref.provider === 'claude_code') {
       return readClaudeTranscript(ref.sessionFile);
@@ -558,6 +604,14 @@ async function safeStat(file: string): Promise<{ mtimeMs: number; size: number }
 
 function pathsEqual(a: string, b: string): boolean {
   return path.resolve(a) === path.resolve(b);
+}
+
+function isClaudeTranscriptPath(p: string): boolean {
+  return p.includes('.claude/projects') || p.includes('.claude\\projects');
+}
+
+function isCodexTranscriptPath(p: string): boolean {
+  return p.includes('.codex/sessions') || p.includes('.codex\\sessions');
 }
 
 function isNotFound(err: unknown): boolean {

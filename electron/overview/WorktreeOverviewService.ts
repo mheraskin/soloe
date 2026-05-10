@@ -39,6 +39,11 @@ export interface GenerateOverviewArgs {
   runMode?: RunMode;
   wslDistro?: string;
   baseBranch?: string;
+  // When present, scope the overview to just these transcripts (the
+  // sessions the renderer has open in this worktree) instead of every
+  // historical .jsonl found under .claude/projects + .codex/sessions for
+  // this cwd.
+  sessionFiles?: string[];
 }
 
 export interface StreamFollowUpArgs extends GenerateOverviewArgs {
@@ -65,7 +70,7 @@ export class WorktreeOverviewService {
     const cwd = args.worktreeCwd;
     const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.opts.reader.listAllSessions(cwd, scope),
+      this.listScopedOrAll(cwd, scope, args.sessionFiles),
       this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     const watermark: OverviewWatermark = {
@@ -121,10 +126,10 @@ export class WorktreeOverviewService {
   }
 
   private async runRegenerate(cwd: string, args: GenerateOverviewArgs): Promise<WorktreeOverview> {
-    console.log('[overview.service] regenerate start', { cwd, runMode: args.runMode, wslDistro: args.wslDistro, baseBranch: args.baseBranch });
+    console.log('[overview.service] regenerate start', { cwd, runMode: args.runMode, wslDistro: args.wslDistro, baseBranch: args.baseBranch, openSessions: args.sessionFiles?.length ?? null });
     const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.opts.reader.listAllSessions(cwd, scope),
+      this.listScopedOrAll(cwd, scope, args.sessionFiles),
       this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     console.log('[overview.service] sources collected', { sessionCount: refs.length, headSha: facts.head, branch: facts.branch });
@@ -214,7 +219,7 @@ export class WorktreeOverviewService {
     const cwd = args.worktreeCwd;
     const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.opts.reader.listAllSessions(cwd, scope),
+      this.listScopedOrAll(cwd, scope, args.sessionFiles),
       this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     const transcripts = await Promise.all(refs.map((r) => this.opts.reader.readTranscript(r)));
@@ -251,15 +256,30 @@ export class WorktreeOverviewService {
     });
   }
 
+  // Renderer hands us the transcript paths for sessions currently open in
+  // the worktree; when that list is provided we trust it and skip the
+  // historical scan. An empty array still means "scoped to nothing" — the
+  // user explicitly has no agent tabs open here, and we'd rather show that
+  // honestly than dredge up every transcript ever recorded.
+  private async listScopedOrAll(
+    cwd: string,
+    scope: { runMode?: RunMode; wslDistro?: string },
+    sessionFiles: string[] | undefined
+  ) {
+    if (sessionFiles) {
+      return this.opts.reader.listScopedSessions(sessionFiles, cwd, scope);
+    }
+    return this.opts.reader.listAllSessions(cwd, scope);
+  }
+
   private async runOneShot(args: RunArgs): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
-    const { argv } = buildArgv(args.provider, args.binaries, args.prompt);
+    const { argv } = buildArgv(args.provider, args.binaries);
     console.log('[overview.service] runOneShot launch', {
       runMode: args.runMode,
       wslDistro: args.wslDistro,
       cwd: args.cwd,
       executable: argv.executable,
-      // The prompt is the last arg and may be huge — log only how it was built.
-      argShape: argv.args.slice(0, -1).concat([`<prompt:${argv.args.at(-1)?.length ?? 0} bytes>`])
+      argShape: argv.args.concat([`<stdin:${args.prompt.length} bytes>`])
     });
     return new Promise((resolve) => {
       const child = launch(argv, args, this.opts.spawnImpl ?? spawn);
@@ -309,12 +329,14 @@ export class WorktreeOverviewService {
         }
         resolve({ ok: true, text: stdout.trim() });
       });
+      writePromptToStdin(child, args.prompt);
     });
   }
 
   private async *streamOneShot(args: RunArgs): AsyncIterable<FollowUpChunk> {
-    const { argv } = buildArgv(args.provider, args.binaries, args.prompt);
+    const { argv } = buildArgv(args.provider, args.binaries);
     const child = launch(argv, args, this.opts.spawnImpl ?? spawn);
+    writePromptToStdin(child, args.prompt);
     const queue: FollowUpChunk[] = [];
     let resolveNext: (() => void) | null = null;
     let settled = false;
@@ -385,17 +407,22 @@ interface RunArgs {
   timeoutMs: number;
 }
 
+// The prompt is fed via stdin rather than tacked on as a positional arg —
+// overview prompts can be ~MB, and on Windows that blows past the
+// CreateProcess command-line limit (~32K) when we shell through wsl.exe.
+// Both `codex exec` and `claude -p` read prompt text from stdin when no
+// positional prompt is given.
 function buildArgv(
   target: ModelSelection,
-  binaries: SettingsBinaries,
-  prompt: string
+  binaries: SettingsBinaries
 ): { argv: { executable: string; args: string[] } } {
   if (target.provider === 'codex') {
     const exe = binaries.codex || 'codex';
     return {
       argv: {
         executable: exe,
-        args: ['exec', '--skip-git-repo-check', '--color', 'never', '-m', target.id, prompt]
+        // No positional PROMPT → codex exec reads it from stdin.
+        args: ['exec', '--skip-git-repo-check', '--color', 'never', '-m', target.id]
       }
     };
   }
@@ -403,9 +430,16 @@ function buildArgv(
   return {
     argv: {
       executable: exe,
-      args: ['-p', '--model', target.id, '--output-format', 'text', prompt]
+      args: ['-p', '--model', target.id, '--output-format', 'text']
     }
   };
+}
+
+function writePromptToStdin(child: ChildProcess, prompt: string): void {
+  const stdin = child.stdin;
+  if (!stdin) return;
+  stdin.on('error', () => { /* swallow EPIPE if child exits early */ });
+  stdin.end(prompt, 'utf8');
 }
 
 function launch(
@@ -421,7 +455,7 @@ function launch(
       {
         cwd: process.env['USERPROFILE'] ?? process.env['HOME'] ?? os.homedir(),
         env: process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true
       }
     );
@@ -429,7 +463,7 @@ function launch(
   return spawnImpl(argv.executable, argv.args, {
     cwd: args.cwd,
     env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true
   });
 }
