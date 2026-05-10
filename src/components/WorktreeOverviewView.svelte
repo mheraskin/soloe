@@ -51,13 +51,14 @@
     void loadOverview(target);
   });
 
-  // Kick off a regenerate the first time we land on a worktree with no cache.
-  // One attempt per cwd: if it errors, leave the user in control rather than
-  // burning another spawn. The main-process service dedupes concurrent regens
-  // for the same cwd, so reopening while one is in flight is safe.
+  // Kick off a regenerate when the cache is missing or stale relative to
+  // current sources. One attempt per cwd: if it errors, leave the user in
+  // control rather than burning another spawn. The main-process service
+  // dedupes concurrent regens for the same cwd, so reopening while one is
+  // in flight is safe.
   $effect(() => {
     if (!overview || loading || regenerating) return;
-    if (overview.status !== 'missing') return;
+    if (overview.status !== 'missing' && overview.status !== 'stale') return;
     if (overview.errorMessage) return;
     if (autoRegenAttemptedFor === cwd) return;
     autoRegenAttemptedFor = cwd;
