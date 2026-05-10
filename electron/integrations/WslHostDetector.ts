@@ -118,20 +118,27 @@ function getWslHome(distro: string): Promise<string | null> {
 // otherwise the default-route gateway IP, otherwise the resolv.conf
 // nameserver. Returns `host.wsl.internal` on probe failure as a best-effort
 // default rather than throwing — the caller can always retry next boot.
+//
+// Why stdin instead of `bash -c '<script>'`: wsl.exe pre-expands any `$VAR`
+// reference in a command-line argument using the *Windows* environment before
+// bash receives it, so locally-defined shell vars (`$ip`, awk's `$3`, etc.)
+// get clobbered to empty and `${ip:-host.wsl.internal}` always returned the
+// literal default. Feeding the script over stdin to `bash -s` keeps the body
+// opaque to that layer.
 export function probeWslMcpHostname(distro: string): Promise<string> {
   const script =
-    'if getent hosts host.wsl.internal >/dev/null 2>&1; then ' +
-    'printf %s host.wsl.internal; ' +
-    'else ' +
-    "ip=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}'); " +
-    "[ -z \"$ip\" ] && ip=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null); " +
-    'printf %s "${ip:-host.wsl.internal}"; ' +
-    'fi';
+    'if getent hosts host.wsl.internal >/dev/null 2>&1; then\n' +
+    '  printf %s host.wsl.internal\n' +
+    'else\n' +
+    "  ip=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}')\n" +
+    "  [ -z \"$ip\" ] && ip=$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null)\n" +
+    '  printf %s "${ip:-host.wsl.internal}"\n' +
+    'fi\n';
   return new Promise((resolve) => {
     const child = spawn(
       'wsl.exe',
-      ['-d', distro, '--', 'bash', '-c', script],
-      { stdio: ['ignore', 'pipe', 'ignore'] }
+      ['-d', distro, '--', 'bash', '-s'],
+      { stdio: ['pipe', 'pipe', 'ignore'] }
     );
     let stdout = '';
     const timer = setTimeout(() => {
@@ -154,5 +161,6 @@ export function probeWslMcpHostname(distro: string): Promise<string> {
       const out = stdout.trim();
       resolve(out || 'host.wsl.internal');
     });
+    child.stdin?.end(script);
   });
 }
