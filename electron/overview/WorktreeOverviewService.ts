@@ -63,9 +63,10 @@ export class WorktreeOverviewService {
 
   async getOverview(args: GenerateOverviewArgs): Promise<WorktreeOverview> {
     const cwd = args.worktreeCwd;
+    const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.opts.reader.listAllSessions(cwd),
-      this.opts.facts.collect(cwd, args.baseBranch)
+      this.opts.reader.listAllSessions(cwd, scope),
+      this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     const watermark: OverviewWatermark = {
       perSession: refs.map((r) => ({
@@ -121,9 +122,10 @@ export class WorktreeOverviewService {
 
   private async runRegenerate(cwd: string, args: GenerateOverviewArgs): Promise<WorktreeOverview> {
     console.log('[overview.service] regenerate start', { cwd, runMode: args.runMode, wslDistro: args.wslDistro, baseBranch: args.baseBranch });
+    const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.opts.reader.listAllSessions(cwd),
-      this.opts.facts.collect(cwd, args.baseBranch)
+      this.opts.reader.listAllSessions(cwd, scope),
+      this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     console.log('[overview.service] sources collected', { sessionCount: refs.length, headSha: facts.head, branch: facts.branch });
     const transcripts = await Promise.all(refs.map((r) => this.opts.reader.readTranscript(r)));
@@ -210,9 +212,10 @@ export class WorktreeOverviewService {
 
   async *streamFollowUp(args: StreamFollowUpArgs): AsyncIterable<FollowUpChunk> {
     const cwd = args.worktreeCwd;
+    const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.opts.reader.listAllSessions(cwd),
-      this.opts.facts.collect(cwd, args.baseBranch)
+      this.opts.reader.listAllSessions(cwd, scope),
+      this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     const transcripts = await Promise.all(refs.map((r) => this.opts.reader.readTranscript(r)));
     const cached = await this.opts.cache.get(cwd);

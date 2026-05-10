@@ -8,6 +8,13 @@ import type {
   TranscriptWatermark,
   WorktreeSessionRef
 } from '@shared/types/overview.js';
+import type { RunMode } from '@shared/types/sessions.js';
+import { posixToWslUnc, resolveWslHome } from '../runtime/wsl-paths.js';
+
+export interface SessionScope {
+  runMode?: RunMode;
+  wslDistro?: string;
+}
 
 const TURN_TEXT_MAX = 16_000;
 
@@ -22,16 +29,31 @@ export class SessionTranscriptReader {
     this.homeDir = opts.homeDir ?? os.homedir();
   }
 
-  claudeProjectsDir(): string {
-    return path.join(this.homeDir, '.claude', 'projects');
+  // Resolves the .claude/projects and .codex/sessions roots. In WSL mode the
+  // agents wrote those files inside WSL ($HOME/.claude/...), not under the
+  // Windows user profile, so we point at \\wsl.localhost\<distro>\... — Windows
+  // fs APIs read those UNC paths natively. Non-WSL falls back to os.homedir().
+  private async resolveDirs(scope?: SessionScope): Promise<{
+    claudeProjectsDir: string;
+    codexSessionsDir: string;
+  }> {
+    if (scope?.runMode === 'wsl') {
+      const distro = scope.wslDistro ?? 'Ubuntu';
+      const wslHome = await resolveWslHome(distro);
+      return {
+        claudeProjectsDir: posixToWslUnc(distro, `${wslHome}/.claude/projects`),
+        codexSessionsDir: posixToWslUnc(distro, `${wslHome}/.codex/sessions`)
+      };
+    }
+    return {
+      claudeProjectsDir: path.join(this.homeDir, '.claude', 'projects'),
+      codexSessionsDir: path.join(this.homeDir, '.codex', 'sessions')
+    };
   }
 
-  codexSessionsDir(): string {
-    return path.join(this.homeDir, '.codex', 'sessions');
-  }
-
-  async listClaudeSessionFiles(cwd: string): Promise<WorktreeSessionRef[]> {
-    const projectDir = path.join(this.claudeProjectsDir(), encodeClaudeCwd(cwd));
+  async listClaudeSessionFiles(cwd: string, scope?: SessionScope): Promise<WorktreeSessionRef[]> {
+    const dirs = await this.resolveDirs(scope);
+    const projectDir = path.join(dirs.claudeProjectsDir, encodeClaudeCwd(cwd));
     let entries: string[];
     try {
       entries = await fs.readdir(projectDir);
@@ -50,9 +72,9 @@ export class SessionTranscriptReader {
     return refs;
   }
 
-  async listCodexSessionFiles(cwd: string): Promise<WorktreeSessionRef[]> {
-    const root = this.codexSessionsDir();
-    const files = await listJsonlFilesRecursive(root);
+  async listCodexSessionFiles(cwd: string, scope?: SessionScope): Promise<WorktreeSessionRef[]> {
+    const dirs = await this.resolveDirs(scope);
+    const files = await listJsonlFilesRecursive(dirs.codexSessionsDir);
     const refs: WorktreeSessionRef[] = [];
     for (const file of files) {
       const ref = await this.peekCodexFile(file, cwd);
@@ -62,10 +84,10 @@ export class SessionTranscriptReader {
     return refs;
   }
 
-  async listAllSessions(cwd: string): Promise<WorktreeSessionRef[]> {
+  async listAllSessions(cwd: string, scope?: SessionScope): Promise<WorktreeSessionRef[]> {
     const [claude, codex] = await Promise.all([
-      this.listClaudeSessionFiles(cwd),
-      this.listCodexSessionFiles(cwd)
+      this.listClaudeSessionFiles(cwd, scope),
+      this.listCodexSessionFiles(cwd, scope)
     ]);
     return [...claude, ...codex].sort(
       (a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? '')

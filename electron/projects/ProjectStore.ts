@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { posixToWslUnc, resolveWslHome } from '../runtime/wsl-paths.js';
 import type {
   Project,
   ProjectDetectResult,
@@ -47,7 +48,6 @@ export class ProjectStore {
   private cache: Map<ProjectId, Project> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
   private listeners = new Set<(projects: Project[]) => void>();
-  private wslHomeCache = new Map<string, string>();
 
   constructor(
     private readonly filePath: string,
@@ -281,7 +281,7 @@ export class ProjectStore {
       }
     }
 
-    const home = scope === 'wsl' ? await this.resolveWslHome(wslDistro!) : os.homedir();
+    const home = scope === 'wsl' ? await resolveWslHome(wslDistro!) : os.homedir();
     const suggestions = [...byPath.values()]
       .slice(0, limit)
       .map((s) => ({ ...s, displayPath: toDisplayPath(s.path, home, scope) }));
@@ -298,7 +298,7 @@ export class ProjectStore {
     parsed: ParsedProjectQuery,
     limit: number
   ): Promise<ProjectPathSuggestion[]> {
-    const home = await this.resolveWslHome(distro);
+    const home = await resolveWslHome(distro);
     const baseDir = parsed.baseDir
       ? expandWslHome(parsed.baseDir, home)
       : home;
@@ -335,15 +335,6 @@ export class ProjectStore {
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map((entry) => entry.suggestion);
-  }
-
-  private async resolveWslHome(distro: string): Promise<string> {
-    const cached = this.wslHomeCache.get(distro);
-    if (cached) return cached;
-    const home = await runWslCommand(distro, 'printf %s "$HOME"');
-    const resolved = home.trim() || '/root';
-    this.wslHomeCache.set(distro, resolved);
-    return resolved;
   }
 
   onChange(fn: (projects: Project[]) => void): () => void {
@@ -801,14 +792,6 @@ function joinPosix(base: string, child: string): string {
   return `${base.replace(/\/+$/, '')}/${child.replace(/^\/+/, '')}`;
 }
 
-function posixToWslUnc(distro: string, posixPath: string): string {
-  const noLead = posixPath.replace(/^\/+/, '');
-  const winSubpath = noLead.replace(/\//g, '\\');
-  return winSubpath
-    ? `\\\\wsl.localhost\\${distro}\\${winSubpath}`
-    : `\\\\wsl.localhost\\${distro}\\`;
-}
-
 function toDisplayPath(p: string, home: string, scope: ProjectSearchScope): string {
   if (!home) return p;
   const sep = scope === 'wsl' ? '/' : path.sep;
@@ -834,32 +817,6 @@ function projectMatchesScope(
   if (!wslDistro) return true;
   if (!project.defaultWslDistro) return true;
   return project.defaultWslDistro === wslDistro;
-}
-
-function runWslCommand(distro: string, bashLine: string): Promise<string> {
-  return new Promise((resolve) => {
-    const child = spawn(
-      'wsl.exe',
-      ['-d', distro, '--', 'bash', '-lc', bashLine],
-      { stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-    let stdout = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      resolve('');
-    }, 2500);
-    child.stdout.on('data', (b: Buffer) => {
-      stdout += b.toString('utf8');
-    });
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve('');
-    });
-    child.on('exit', () => {
-      clearTimeout(timer);
-      resolve(stdout);
-    });
-  });
 }
 
 async function suggestWindowsDirectories(
