@@ -77,7 +77,7 @@ const CODEX_EVENTS = [
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 10;
+export const SOLOE_HOOK_VERSION = 11;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
@@ -221,11 +221,15 @@ export class HookInstaller {
     await this.writeAtomic(filePath, stringifyToml(cleaned), false);
   }
 
-  // Walks every available host and rewrites the soloe MCP URL in any
-  // already-installed config whose value differs from the current canonical
-  // one. No-op for entries without the _soloe marker. Returns hosts that were
-  // actually rewritten so the caller can log/notify; entries already at the
-  // right URL are skipped silently. Bridge must be configured.
+  // Walks every available host with an existing soloe install and either:
+  //   - runs a full re-install when the host's recorded _soloe_version is
+  //     older than SOLOE_HOOK_VERSION (covers schema migrations like the
+  //     `[features].codex_hooks` → `[features].hooks` rename), or
+  //   - rewrites the MCP URL/token when the resolved value drifted while
+  //     the rest of the install is current (cheap path for WSL host moves).
+  // No-op for hosts where soloe was never installed. Returns hosts that
+  // were actually rewritten so the caller can log/notify. Bridge must be
+  // configured.
   async refreshMcpForInstalledHosts(): Promise<RefreshMcpResult> {
     const result: RefreshMcpResult = { rewritten: [], errors: [] };
     if (!this.bridge) return result;
@@ -236,14 +240,42 @@ export class HookInstaller {
         : { kind: 'windows' };
       try {
         const url = await this.resolveMcpUrlForHost(host);
-        const claudeChanged = await this.refreshClaudeMcp(host, url);
-        const codexChanged = await this.refreshCodexMcp(host, url);
+        const claudeChanged = await this.refreshClaudeHost(host, key, url);
+        const codexChanged = await this.refreshCodexHost(host, key, url);
         if (claudeChanged || codexChanged) result.rewritten.push(key);
       } catch (err) {
         result.errors.push({ host: key, error: errorMessage(err) });
       }
     }
     return result;
+  }
+
+  private async refreshClaudeHost(host: HookHost, key: HookHostKey, url: string): Promise<boolean> {
+    if (!this.bridge) return false;
+    const filePath = this.claudeUserPath(host);
+    const original = await readJsonOrNull(filePath);
+    if (!original) return false;
+    const status = claudeSoloeStatus(original);
+    if (!status.installed) return false;
+    if (typeof status.version === 'number' && status.version < SOLOE_HOOK_VERSION) {
+      await this.installClaude(key);
+      return true;
+    }
+    return this.refreshClaudeMcp(host, url);
+  }
+
+  private async refreshCodexHost(host: HookHost, key: HookHostKey, url: string): Promise<boolean> {
+    if (!this.bridge) return false;
+    const filePath = this.codexConfigPath(host);
+    const original = await readTomlOrNull(filePath);
+    if (!original) return false;
+    const status = codexSoloeStatus(original);
+    if (!status.installed) return false;
+    if (typeof status.version === 'number' && status.version < SOLOE_HOOK_VERSION) {
+      await this.installCodex(key);
+      return true;
+    }
+    return this.refreshCodexMcp(host, url);
   }
 
   private async refreshClaudeMcp(host: HookHost, url: string): Promise<boolean> {
