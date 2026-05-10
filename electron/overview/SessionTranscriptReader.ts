@@ -504,16 +504,35 @@ async function readLines(file: string): Promise<string[]> {
   return raw.split('\n').filter((line) => line.length > 0);
 }
 
-async function readFirstLine(file: string, maxBytes = 16_384): Promise<string> {
+// Reads the first newline-delimited record from `file`. We keep reading
+// chunks until we hit `\n` because codex transcripts embed the full
+// system prompt inside session_meta.payload.base_instructions, which
+// makes the first line easily 30–80 KB — capping at a single 16 KB
+// chunk would return truncated JSON, parseJsonLine would fail, and the
+// session would silently drop out of the overview.
+async function readFirstLine(file: string, maxBytes = 4_194_304): Promise<string> {
   let fd: import('node:fs/promises').FileHandle | null = null;
   try {
     fd = await fs.open(file, 'r');
-    const buf = Buffer.alloc(maxBytes);
-    const { bytesRead } = await fd.read(buf, 0, maxBytes, 0);
-    if (bytesRead === 0) return '';
-    const str = buf.toString('utf8', 0, bytesRead);
-    const newlineIdx = str.indexOf('\n');
-    return newlineIdx === -1 ? str : str.slice(0, newlineIdx);
+    const chunkSize = 16_384;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let position = 0;
+    while (total < maxBytes) {
+      const tmp = Buffer.alloc(chunkSize);
+      const { bytesRead } = await fd.read(tmp, 0, chunkSize, position);
+      if (bytesRead === 0) break;
+      const slice = tmp.subarray(0, bytesRead);
+      const newlineIdx = slice.indexOf(0x0a);
+      if (newlineIdx !== -1) {
+        chunks.push(slice.subarray(0, newlineIdx));
+        return Buffer.concat(chunks).toString('utf8');
+      }
+      chunks.push(Buffer.from(slice));
+      total += bytesRead;
+      position += bytesRead;
+    }
+    return Buffer.concat(chunks).toString('utf8');
   } catch {
     return '';
   } finally {
