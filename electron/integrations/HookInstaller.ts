@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { AgentIntegrationTargetStatus } from '@shared/types/ipc.js';
 import { WslHostDetector, type WslDistroInfo } from './WslHostDetector.js';
@@ -13,6 +13,11 @@ export interface HookHost {
   distro?: string;
   label: string;
   homeDir: string;
+  // For WSL hosts: the in-distro Linux home (e.g. /home/foo). Codex computes
+  // hook-trust keys from the source path it itself reads — that's the Linux
+  // path inside the distro, not the UNC we write through. Always set for
+  // available WSL hosts.
+  homeLinux?: string;
   available: boolean;
   reason?: string;
 }
@@ -75,9 +80,25 @@ const CODEX_EVENTS = [
   'Stop'
 ];
 
+// Codex's persisted-hook-state keys use lowercase snake_case event labels (see
+// codex-rs/hooks/src/lib.rs::hook_event_key_label). PascalCase is only the
+// TOML event-array key.
+const CODEX_EVENT_LABEL: Record<string, string> = {
+  PreToolUse: 'pre_tool_use',
+  PermissionRequest: 'permission_request',
+  PostToolUse: 'post_tool_use',
+  PreCompact: 'pre_compact',
+  PostCompact: 'post_compact',
+  SessionStart: 'session_start',
+  UserPromptSubmit: 'user_prompt_submit',
+  Stop: 'stop'
+};
+
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-export const SOLOE_HOOK_VERSION = 11;
+// Bumping forces a one-time reinstall on next boot, which is how soloe picks up
+// the [hooks.state] pre-trust entries codex 0.129+ requires.
+export const SOLOE_HOOK_VERSION = 12;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
@@ -133,6 +154,7 @@ export function wslHostFrom(info: WslDistroInfo): HookHost {
     distro: info.distro,
     label: `WSL: ${info.distro}`,
     homeDir: info.homeUnc,
+    homeLinux: info.homeLinux ?? undefined,
     available: true
   };
 }
@@ -203,8 +225,9 @@ export class HookInstaller {
   async installCodex(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
+    const keyPath = codexConfigKeyPath(target);
     const original = await readTomlOrNull(filePath);
-    let updated = mergeCodexHooks(original ?? {}, HOOK_COMMAND_CODEX);
+    let updated = mergeCodexHooks(original ?? {}, HOOK_COMMAND_CODEX, keyPath);
     if (this.bridge) {
       const url = await this.resolveMcpUrlForHost(target);
       updated = mergeCodexMcp(updated, { url });
@@ -215,9 +238,10 @@ export class HookInstaller {
   async uninstallCodex(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
+    const keyPath = codexConfigKeyPath(target);
     const original = await readTomlOrNull(filePath);
     if (!original) return;
-    const cleaned = removeSoloeFromCodex(original);
+    const cleaned = removeSoloeFromCodex(original, keyPath);
     await this.writeAtomic(filePath, stringifyToml(cleaned), false);
   }
 
@@ -377,6 +401,18 @@ function describeHostKey(key: HookHostKey): string {
   return key.kind === 'wsl' ? `wsl:${key.distro}` : 'windows';
 }
 
+// Path codex itself reads when loading user-level config. For local hosts this
+// matches the path Soloe writes to. For WSL hosts, Soloe writes through a UNC
+// (\\wsl.localhost\<distro>\...), but codex inside the distro sees the Linux
+// path — and that's what feeds into hook-state keys, so we reconstruct it
+// from homeLinux.
+export function codexConfigKeyPath(host: HookHost): string {
+  if (host.kind === 'wsl' && host.homeLinux) {
+    return `${host.homeLinux}/.codex/config.toml`;
+  }
+  return path.join(host.homeDir, '.codex', 'config.toml');
+}
+
 async function readJsonOrNull(filePath: string): Promise<Record<string, unknown> | null> {
   try {
     const raw = await fs.readFile(filePath, 'utf8');
@@ -529,7 +565,8 @@ export function removeSoloeFromClaude(
 
 export function mergeCodexHooks(
   original: Record<string, unknown>,
-  command: string
+  command: string,
+  configKeyPath: string
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...original };
   const features = isObject(next['features']) ? { ...next['features'] } : {};
@@ -537,9 +574,11 @@ export function mergeCodexHooks(
   delete features['codex_hooks'];
   next['features'] = features;
   const hooksRoot = isObject(next['hooks']) ? { ...next['hooks'] } : {};
+  const stateRoot = isObject(hooksRoot['state']) ? { ...hooksRoot['state'] } : {};
   for (const event of CODEX_EVENTS) {
     const groups = Array.isArray(hooksRoot[event]) ? [...(hooksRoot[event] as unknown[])] : [];
     const filtered = groups.filter((entry) => !isSoloeCodexEntry(entry));
+    const groupIndex = filtered.length;
     filtered.push({
       [SOLOE_MARKER]: true,
       [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
@@ -553,20 +592,78 @@ export function mergeCodexHooks(
       ]
     });
     hooksRoot[event] = filtered;
+    // Pre-trust the hook so codex 0.129+ runs it without manual /hooks review.
+    // Codex matches `current_hash == trusted_hash` at hook-discovery time; if
+    // a third-party tool reorders our group later, our key drifts and codex
+    // re-flags us as untrusted — recovers on next soloe boot via reinstall.
+    const stateKey = codexHookStateKey(configKeyPath, event, groupIndex, 0);
+    stateRoot[stateKey] = {
+      enabled: true,
+      trusted_hash: codexCommandHookHash(event, command)
+    };
+  }
+  if (Object.keys(stateRoot).length > 0) {
+    hooksRoot['state'] = stateRoot;
   }
   next['hooks'] = hooksRoot;
   return next;
 }
 
+// Mirrors codex-rs/hooks/src/lib.rs::hook_key.
+function codexHookStateKey(
+  configKeyPath: string,
+  event: string,
+  groupIndex: number,
+  handlerIndex: number
+): string {
+  const label = CODEX_EVENT_LABEL[event] ?? event;
+  return `${configKeyPath}:${label}:${groupIndex}:${handlerIndex}`;
+}
+
+// Replicates codex-rs/hooks/src/engine/discovery.rs::command_hook_hash for the
+// shape soloe always installs: no matcher, no statusMessage, async=false,
+// timeout normalized to 600. Codex's pipeline is:
+//   TomlValue::try_from(NormalizedHookIdentity)  // omits None Options
+//     -> serde_json::to_value
+//     -> canonical_json (sort keys recursively)
+//     -> serde_json::to_vec (compact)
+//     -> sha256 -> hex -> "sha256:<hex>"
+// Our identity object is already key-sorted at every level, so JSON.stringify
+// produces the canonical bytes directly.
+export function codexCommandHookHash(event: string, command: string): string {
+  const label = CODEX_EVENT_LABEL[event] ?? event;
+  const identity = {
+    event_name: label,
+    hooks: [
+      {
+        async: false,
+        command,
+        timeout: 600,
+        type: 'command'
+      }
+    ]
+  };
+  const digest = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+  return `sha256:${digest}`;
+}
+
 export function removeSoloeFromCodex(
-  original: Record<string, unknown>
+  original: Record<string, unknown>,
+  configKeyPath: string
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...original };
   if (isObject(next['hooks'])) {
     const hooksRoot: Record<string, unknown> = { ...next['hooks'] };
+    const stateKeysToDrop: string[] = [];
     for (const event of Object.keys(hooksRoot)) {
+      if (event === 'state') continue;
       const groups = hooksRoot[event];
       if (!Array.isArray(groups)) continue;
+      groups.forEach((group, idx) => {
+        if (isSoloeCodexEntry(group)) {
+          stateKeysToDrop.push(codexHookStateKey(configKeyPath, event, idx, 0));
+        }
+      });
       const cleaned = groups
         .map((group) => stripSoloeFromGroup(group))
         .filter((group) => group !== null);
@@ -574,6 +671,17 @@ export function removeSoloeFromCodex(
         delete hooksRoot[event];
       } else {
         hooksRoot[event] = cleaned;
+      }
+    }
+    if (isObject(hooksRoot['state']) && stateKeysToDrop.length > 0) {
+      const stateRoot: Record<string, unknown> = { ...hooksRoot['state'] };
+      for (const key of stateKeysToDrop) {
+        delete stateRoot[key];
+      }
+      if (Object.keys(stateRoot).length === 0) {
+        delete hooksRoot['state'];
+      } else {
+        hooksRoot['state'] = stateRoot;
       }
     }
     if (Object.keys(hooksRoot).length === 0) {

@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseToml } from 'smol-toml';
 import {
@@ -460,17 +461,89 @@ describe('removeSoloeFromClaude (pure)', () => {
 });
 
 describe('mergeCodexHooks / removeSoloeFromCodex (pure)', () => {
+  const KEY_PATH = '/home/foo/.codex/config.toml';
+
   it('roundtrip preserves user entries', () => {
     const original = {
       hooks: {
         UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'user' }] }]
       }
     };
-    const installed = mergeCodexHooks(original, 'soloe');
-    const cleaned = removeSoloeFromCodex(installed);
+    const installed = mergeCodexHooks(original, 'soloe', KEY_PATH);
+    const cleaned = removeSoloeFromCodex(installed, KEY_PATH);
     expect((cleaned.hooks as Record<string, unknown[]>)['UserPromptSubmit']).toEqual(
       original.hooks.UserPromptSubmit
     );
+  });
+
+  it('writes [hooks.state] entries that pre-trust each soloe hook', () => {
+    const installed = mergeCodexHooks({}, 'soloe', KEY_PATH);
+    const state = (installed.hooks as Record<string, unknown>)['state'] as Record<
+      string,
+      { enabled: boolean; trusted_hash: string }
+    >;
+    const preToolUseKey = `${KEY_PATH}:pre_tool_use:0:0`;
+    expect(state[preToolUseKey]).toBeDefined();
+    expect(state[preToolUseKey]!.enabled).toBe(true);
+    expect(state[preToolUseKey]!.trusted_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(state[`${KEY_PATH}:user_prompt_submit:0:0`]).toBeDefined();
+    expect(state[`${KEY_PATH}:stop:0:0`]).toBeDefined();
+  });
+
+  it('matches codex command_hook_hash for a known input', () => {
+    // Replicates codex's pipeline byte-for-byte, asserting the canonical
+    // JSON we hash matches what serde_json::to_value(canonical_json(...))
+    // produces for the soloe-shaped hook (no matcher, no statusMessage).
+    const installed = mergeCodexHooks({}, 'echo soloe', KEY_PATH);
+    const state = (installed.hooks as Record<string, unknown>)['state'] as Record<
+      string,
+      { trusted_hash: string }
+    >;
+    // SHA256 of:
+    //   {"event_name":"pre_tool_use","hooks":[{"async":false,"command":"echo soloe","timeout":600,"type":"command"}]}
+    const expected = createHash('sha256')
+      .update(
+        JSON.stringify({
+          event_name: 'pre_tool_use',
+          hooks: [{ async: false, command: 'echo soloe', timeout: 600, type: 'command' }]
+        })
+      )
+      .digest('hex');
+    expect(state[`${KEY_PATH}:pre_tool_use:0:0`]!.trusted_hash).toBe(`sha256:${expected}`);
+  });
+
+  it('keeps soloe at the right group_index when other hooks already exist', () => {
+    const original = {
+      hooks: {
+        PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'pre-existing' }] }]
+      }
+    };
+    const installed = mergeCodexHooks(original, 'soloe', KEY_PATH);
+    const groups = (installed.hooks as Record<string, unknown[]>)['PreToolUse']!;
+    expect(groups).toHaveLength(2);
+    const state = (installed.hooks as Record<string, unknown>)['state'] as Record<string, unknown>;
+    // soloe was appended after the user's group, so its key uses index 1
+    expect(state[`${KEY_PATH}:pre_tool_use:1:0`]).toBeDefined();
+    expect(state[`${KEY_PATH}:pre_tool_use:0:0`]).toBeUndefined();
+  });
+
+  it('removeSoloeFromCodex drops state entries we wrote', () => {
+    const installed = mergeCodexHooks({}, 'soloe', KEY_PATH);
+    const cleaned = removeSoloeFromCodex(installed, KEY_PATH);
+    expect((cleaned.hooks as Record<string, unknown> | undefined)?.['state']).toBeUndefined();
+  });
+
+  it('removeSoloeFromCodex preserves third-party state entries', () => {
+    const installed = mergeCodexHooks({}, 'soloe', KEY_PATH);
+    const hooksRoot = installed.hooks as Record<string, unknown>;
+    const state = { ...(hooksRoot['state'] as Record<string, unknown>) };
+    state[`${KEY_PATH}:other_event:0:0`] = { enabled: true, trusted_hash: 'sha256:other' };
+    hooksRoot['state'] = state;
+    const cleaned = removeSoloeFromCodex(installed, KEY_PATH);
+    const remaining = (cleaned.hooks as Record<string, unknown>)['state'] as Record<string, unknown>;
+    expect(remaining).toEqual({
+      [`${KEY_PATH}:other_event:0:0`]: { enabled: true, trusted_hash: 'sha256:other' }
+    });
   });
 });
 
@@ -581,7 +654,7 @@ describe('mergeCodexMcp / removeSoloeFromCodex (pure)', () => {
 
   it('removeSoloeFromCodex strips the Soloe MCP entry', () => {
     const merged = mergeCodexMcp({}, { url: 'http://127.0.0.1:17896/mcp' });
-    const cleaned = removeSoloeFromCodex(merged);
+    const cleaned = removeSoloeFromCodex(merged, '/home/foo/.codex/config.toml');
     expect(cleaned.mcp_servers).toBeUndefined();
   });
 });
