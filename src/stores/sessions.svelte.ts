@@ -319,9 +319,10 @@ class SessionsStore {
   async create(draft: SessionDraft): Promise<Session> {
     const created = await ipc.sessions.create(draft);
     // New sessions get the highest sortIndex from the backend, so appending
-    // here matches the persisted order. Selection moves to the new session.
+    // here matches the persisted order. Selection routes through select()
+    // so the rail fullscreen collapse stays consistent with manual switches.
     this.sessions = [...this.sessions, created];
-    this.selectedId = created.id;
+    this.select(created.id);
     return created;
   }
 
