@@ -13,7 +13,9 @@
     Maximize2,
     Minimize2,
     WrapText,
-    MessageSquare
+    MessageSquare,
+    ChevronsUp,
+    ChevronsDown
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
@@ -35,16 +37,21 @@
   let diffRootEl: HTMLDivElement | null = $state(null);
   let diffViewportEl: HTMLElement | null = $state(null);
 
-  // Floor at ~4.5 rows so the 5th file always peeks under the splitter when
-  // there are more than four entries. User can drag taller; persisted across
-  // sessions like the sidebar/right-rail widths.
-  const LIST_HEIGHT_KEY = 'soloe.diffListHeight.v1';
-  const MIN_LIST_HEIGHT = 220;
+  // Auto-fit by default: 4 full rows + half of the 5th when there are more,
+  // otherwise just enough for whatever's there. The user can still drag to
+  // override; their value is persisted. Key bumped to v2 to discard the old
+  // 220px floor so existing users get the new auto-fit behaviour.
+  const LIST_HEIGHT_KEY = 'soloe.diffListHeight.v2';
+  const MIN_LIST_HEIGHT = 60;
   const MAX_LIST_HEIGHT = 640;
-  let listHeight = $state(MIN_LIST_HEIGHT);
+  const ROW_HEIGHT_PX = 36;
+  const LIST_VERTICAL_PADDING_PX = 12;
+  const GROUP_HEADER_PX = 24;
+  let userListHeightOverride = $state<number | null>(null);
   let resizingList = $state(false);
   let resizeStartY = 0;
   let resizeStartHeight = 0;
+  let diffExpanded = $state(false);
 
   type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked';
 
@@ -179,6 +186,28 @@
   let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged));
   let showGroups = $derived(workingDiff.filter === 'all' && (stagedChanges.length > 0 || unstagedChanges.length > 0));
 
+  // Natural height fits up to 4 rows; if there's a 5th, peek half of it so
+  // the splitter signals "more below" instead of blank space.
+  let naturalListHeight = $derived.by<number>(() => {
+    const count = filteredChanges.length;
+    if (count === 0) return MIN_LIST_HEIGHT;
+    const visibleRows = Math.min(count, 4);
+    const peek = count > 4 ? 0.5 : 0;
+    const headerCount = showGroups
+      ? (stagedChanges.length > 0 ? 1 : 0) + (unstagedChanges.length > 0 ? 1 : 0)
+      : 0;
+    return Math.round(
+      LIST_VERTICAL_PADDING_PX
+        + visibleRows * ROW_HEIGHT_PX
+        + peek * ROW_HEIGHT_PX
+        + headerCount * GROUP_HEADER_PX
+    );
+  });
+
+  let listHeight = $derived(
+    userListHeightOverride !== null ? userListHeightOverride : naturalListHeight
+  );
+
   function pickChange(path: string): void {
     if (!activeCwd) return;
     workingDiff.setSelected(activeCwd, path);
@@ -266,18 +295,25 @@
   }
 
   function resizeList(event: PointerEvent): void {
-    listHeight = clampListHeight(resizeStartHeight + (event.clientY - resizeStartY));
+    userListHeightOverride = clampListHeight(resizeStartHeight + (event.clientY - resizeStartY));
   }
 
   function stopResizeList(): void {
     resizingList = false;
     window.removeEventListener('pointermove', resizeList);
-    localStorage.setItem(LIST_HEIGHT_KEY, String(listHeight));
+    if (userListHeightOverride !== null) {
+      localStorage.setItem(LIST_HEIGHT_KEY, String(userListHeightOverride));
+    }
   }
 
   onMount(() => {
-    const stored = Number(localStorage.getItem(LIST_HEIGHT_KEY));
-    if (Number.isFinite(stored) && stored > 0) listHeight = clampListHeight(stored);
+    const raw = localStorage.getItem(LIST_HEIGHT_KEY);
+    if (raw !== null) {
+      const stored = Number(raw);
+      if (Number.isFinite(stored) && stored > 0) {
+        userListHeightOverride = clampListHeight(stored);
+      }
+    }
     workingDiff.attachListeners();
     const onRefocus = () => {
       if (rightRail.activeTab !== 'diff') return;
@@ -303,7 +339,10 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col" class:select-none={resizingList}>
-  <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+  <header
+    class="flex items-center justify-between gap-2 border-b border-border px-3 py-2"
+    class:hidden={diffExpanded}
+  >
     <div class="flex min-w-0 flex-col">
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
         Working tree
@@ -395,7 +434,10 @@
       <span>This folder isn't a git repository.</span>
     </div>
   {:else}
-    <div class="flex flex-col gap-1.5 border-b border-border px-3 py-2">
+    <div
+      class="flex flex-col gap-1.5 border-b border-border px-3 py-2"
+      class:hidden={diffExpanded}
+    >
       <div class="relative">
         <Search class="absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -445,7 +487,10 @@
       </div>
     </div>
 
-    <ScrollArea class="shrink-0" style="height: {listHeight}px">
+    <ScrollArea
+      class={['shrink-0', diffExpanded && 'hidden']}
+      style="height: {listHeight}px"
+    >
       <div class="flex flex-col gap-px p-1.5">
         {#if changesEntry?.loading && filteredChanges.length === 0}
           <div class="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
@@ -537,7 +582,8 @@
       type="button"
       class={[
         'h-1.5 w-full shrink-0 cursor-row-resize border-b border-border outline-none transition-colors hover:bg-ring/30 focus-visible:bg-ring/40',
-        resizingList && 'bg-ring/20'
+        resizingList && 'bg-ring/20',
+        diffExpanded && 'hidden'
       ]}
       aria-label="Resize file list"
       onpointerdown={startResizeList}
@@ -568,9 +614,25 @@
               <span class="truncate text-[10px] text-muted-foreground">from {diff.fromPath}</span>
             {/if}
           </div>
-          <span class="shrink-0 font-mono text-[10px] text-muted-foreground uppercase">
-            {diff.kind}
-          </span>
+          <div class="flex shrink-0 items-center gap-2">
+            <span class="font-mono text-[10px] text-muted-foreground uppercase">
+              {diff.kind}
+            </span>
+            <Button
+              variant="ghost"
+              size="xs"
+              onclick={() => (diffExpanded = !diffExpanded)}
+              aria-pressed={diffExpanded}
+              aria-label={diffExpanded ? 'Show file list' : 'Hide file list'}
+              title={diffExpanded ? 'Show file list' : 'Hide file list'}
+            >
+              {#if diffExpanded}
+                <ChevronsDown class="size-3" />
+              {:else}
+                <ChevronsUp class="size-3" />
+              {/if}
+            </Button>
+          </div>
         </header>
         {#if diff.binary}
           <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">

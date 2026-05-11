@@ -116,16 +116,16 @@
   </span>
 
   <span class="flex shrink-0 items-center gap-1">
-    <span class="font-mono text-[10px]">
+    <span class="flex items-center justify-end gap-1.5 font-mono text-[10px] tabular-nums">
       {#if change.binary}
         <span class="text-muted-foreground/70">bin</span>
       {:else}
-        {#if change.insertions > 0}
-          <span class="text-emerald-500">+{change.insertions}</span>
-        {/if}
-        {#if change.deletions > 0}
-          <span class="text-rose-500">−{change.deletions}</span>
-        {/if}
+        <span class="min-w-[2.25rem] text-right text-emerald-500">
+          {#if change.insertions > 0}+{change.insertions}{/if}
+        </span>
+        <span class="min-w-[2rem] text-right text-rose-500">
+          {#if change.deletions > 0}−{change.deletions}{/if}
+        </span>
       {/if}
     </span>
     {#if ondiscard}
