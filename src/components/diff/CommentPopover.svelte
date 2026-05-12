@@ -60,15 +60,20 @@
 
   // When editing flips on (e.g. from a fresh selection or an Edit click in
   // view mode), force the popover open and prime the textarea draft.
+  // Auto-focus only on Edit of an existing comment — a brand-new comment
+  // (empty text from a drag-select) lets the user click in deliberately so
+  // the focus doesn't grab from wherever they were.
   $effect(() => {
     if (editing) {
       open = true;
       draft = comment.text;
-      queueMicrotask(() => {
-        textareaEl?.focus();
-        textareaEl?.select();
-        syncCursor();
-      });
+      if (comment.text.length > 0) {
+        queueMicrotask(() => {
+          textareaEl?.focus();
+          textareaEl?.select();
+          syncCursor();
+        });
+      }
     }
   });
 
@@ -91,6 +96,9 @@
       diffComments.update(comment.id, { text: next });
     }
     diffComments.closeEditor();
+    // Close the popover on save so a just-added comment doesn't linger like
+    // a hover preview after the user finishes typing.
+    open = false;
     pruneAgentsAfterSave();
   }
 
@@ -283,9 +291,9 @@
     {/snippet}
   </Popover.Trigger>
   <Popover.Content side="right" align="start" class="w-80 p-0">
-    <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
+    <header class="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/30 px-3 py-1.5">
       <div class="flex min-w-0 items-center gap-1.5">
-        <span class="font-mono text-xs font-semibold text-foreground">{lineLabel}</span>
+        <span class="font-mono text-xs font-medium text-muted-foreground">{lineLabel}</span>
         {#if !editing && comment.sentAt}
           <span
             class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400"

@@ -14,6 +14,7 @@ import { isAgentProvider } from '@shared/types/sessions.js';
 
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
+const VALID_DIFF_FONT_SIZES = new Set([11, 12, 13, 14, 15, 16]);
 const VALID_RUN_MODES = new Set(['windows', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
@@ -44,6 +45,7 @@ export class SettingsStore {
       version: 1,
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
       terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
+      diff: { ...this.cache!.diff, ...(patch.diff ?? {}) },
       defaults: { ...this.cache!.defaults, ...(patch.defaults ?? {}) },
       binaries: mergeBinaries(this.cache!.binaries, patch.binaries),
       models: mergeModels(this.cache!.models, patch.models),
@@ -179,6 +181,7 @@ function parseSettings(raw: unknown): Settings {
   if (!isObject(raw)) return clone(DEFAULT_SETTINGS);
   const appearance = isObject(raw['appearance']) ? raw['appearance'] : {};
   const terminal = isObject(raw['terminal']) ? raw['terminal'] : {};
+  const diff = isObject(raw['diff']) ? raw['diff'] : {};
   const defaults = isObject(raw['defaults']) ? raw['defaults'] : {};
   const binaries = isObject(raw['binaries']) ? raw['binaries'] : {};
 
@@ -193,6 +196,9 @@ function parseSettings(raw: unknown): Settings {
         terminal['confirmDeleteTabs'],
         DEFAULT_SETTINGS.terminal.confirmDeleteTabs
       )
+    },
+    diff: {
+      fontSize: pickDiffFontSize(diff['fontSize'])
     },
     defaults: {
       runMode: pickEnum(defaults['runMode'], VALID_RUN_MODES, DEFAULT_SETTINGS.defaults.runMode) as Settings['defaults']['runMode'],
@@ -228,6 +234,12 @@ function pickTerminalFontSize(value: unknown): Settings['terminal']['fontSize'] 
   return VALID_TERMINAL_FONT_SIZES.has(value as number)
     ? (value as Settings['terminal']['fontSize'])
     : DEFAULT_SETTINGS.terminal.fontSize;
+}
+
+function pickDiffFontSize(value: unknown): Settings['diff']['fontSize'] {
+  return VALID_DIFF_FONT_SIZES.has(value as number)
+    ? (value as Settings['diff']['fontSize'])
+    : DEFAULT_SETTINGS.diff.fontSize;
 }
 
 function pickBoolean(value: unknown, fallback: boolean): boolean {
@@ -279,6 +291,9 @@ function validateSettings(s: Settings): void {
   }
   if (typeof s.terminal.confirmDeleteTabs !== 'boolean') {
     throw new Error('Invalid terminal.confirmDeleteTabs');
+  }
+  if (!VALID_DIFF_FONT_SIZES.has(s.diff.fontSize)) {
+    throw new Error(`Invalid diff.fontSize: ${s.diff.fontSize}`);
   }
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
   if (!VALID_SHELLS.has(s.defaults.shell)) throw new Error(`Invalid shell: ${s.defaults.shell}`);

@@ -2,6 +2,7 @@
   import type { DiffHunk } from '@shared/types/git.js';
   import type { DiffSide } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
+  import { settings } from '../../stores/settings.svelte';
   import { highlightLine, languageForPath } from '$lib/highlight';
   import CommentMarker from './CommentMarker.svelte';
 
@@ -17,6 +18,8 @@
   let { hunk, mode, gutterWidth, cwd, filePath, wrap = true }: Props = $props();
 
   let language = $derived(languageForPath(filePath));
+  let fontSize = $derived(settings.current.diff.fontSize);
+  let bodyStyle = $derived(`font-size: ${fontSize}px;`);
 
   function renderLine(text: string, kind: 'context' | 'add' | 'remove' | 'meta'): string {
     if (!text) return '&nbsp;';
@@ -100,10 +103,12 @@
   });
 
   function gutterStyle(width: number): string {
-    // min-width so digits never overflow into the adjacent gutter when the
-    // line count grows past the hint — together with the inner padding this
-    // keeps the two numbers visually distinct rather than mashed together.
-    return `min-width: ${Math.max(3, width)}ch;`;
+    // Box-sizing is border-box, so plain `min-width: Nch` includes the px-2
+    // padding + border-r inside that floor. An empty gutter would then stop
+    // at the floor while a populated one grows past it, leaving the new-line
+    // column drifting left on add-only rows. Adding the 17px back keeps
+    // every gutter the same width regardless of whether it has content.
+    return `min-width: calc(${Math.max(3, width)}ch + 17px);`;
   }
 
   function isSelected(side: DiffSide, line: number | null): boolean {
@@ -113,16 +118,18 @@
     return line >= sel.startLine && line <= sel.endLine;
   }
 
-  function isInComment(side: DiffSide, line: number | null): boolean {
-    if (line === null) return false;
-    return diffComments.forLine(cwd, filePath, side, line).length > 0;
-  }
-
   function commentsStartingAt(side: DiffSide, line: number | null) {
     if (line === null) return [];
     return diffComments
       .activeForFile(cwd, filePath)
       .filter((c) => c.side === side && c.startLine === line);
+  }
+
+  function commentsContinuingAt(side: DiffSide, line: number | null) {
+    if (line === null) return [];
+    return diffComments
+      .activeForFile(cwd, filePath)
+      .filter((c) => c.side === side && c.startLine < line && line <= c.endLine);
   }
 
   function gutterClass(side: DiffSide, oldLine: number | null, newLine: number | null): string {
@@ -139,12 +146,8 @@
     ) {
       return `${base} bg-amber-500/30`;
     }
-    if (
-      isInComment(side, lineForSide) ||
-      (isContext && isInComment(otherSide, otherLine))
-    ) {
-      return `${base} bg-amber-500/15`;
-    }
+    // No background tint for in-comment rows — the vertical bar now spans
+    // every covered row, so the bg tint would just duplicate the signal.
     return `${base} group-hover/diffrow:bg-amber-500/10`;
   }
 
@@ -214,11 +217,13 @@
     {/if}
   </header>
 
-  <div class="flex flex-col font-mono text-[11px] leading-[1.55]">
+  <div class="flex flex-col font-mono leading-[1.55]" style={bodyStyle}>
     {#if mode === 'unified'}
       {#each hunk.lines as line, idx (idx)}
         {@const oldStarting = commentsStartingAt('old', line.oldLine)}
         {@const newStarting = commentsStartingAt('new', line.newLine)}
+        {@const oldContinuing = commentsContinuingAt('old', line.oldLine)}
+        {@const newContinuing = commentsContinuingAt('new', line.newLine)}
         {@const anchorSide = line.kind === 'remove' ? 'old' : 'new'}
         {@const anchorLine = anchorSide === 'old' ? line.oldLine : line.newLine}
         <div
@@ -237,7 +242,7 @@
             role="presentation"
           >
             {line.oldLine ?? ''}
-            <CommentMarker comments={oldStarting} />
+            <CommentMarker starting={oldStarting} continuing={oldContinuing} />
           </span>
           <span
             class={gutterClass('new', line.oldLine, line.newLine)}
@@ -247,7 +252,7 @@
             role="presentation"
           >
             {line.newLine ?? ''}
-            <CommentMarker comments={newStarting} />
+            <CommentMarker starting={newStarting} continuing={newContinuing} />
           </span>
           <span
             class={[
@@ -280,6 +285,8 @@
           {@const oldAnchorLine = isContext ? row.new : row.old}
           {@const oldStarting = commentsStartingAt('old', row.old)}
           {@const newStarting = commentsStartingAt('new', row.new)}
+          {@const oldContinuing = commentsContinuingAt('old', row.old)}
+          {@const newContinuing = commentsContinuingAt('new', row.new)}
           <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50">
             <div
               class={[
@@ -295,7 +302,7 @@
                 role="presentation"
               >
                 {row.old ?? ''}
-                <CommentMarker comments={oldStarting} />
+                <CommentMarker starting={oldStarting} continuing={oldContinuing} />
               </span>
               <span
                 class={splitTextCls}
@@ -323,7 +330,7 @@
                 role="presentation"
               >
                 {row.new ?? ''}
-                <CommentMarker comments={newStarting} />
+                <CommentMarker starting={newStarting} continuing={newContinuing} />
               </span>
               <span
                 class={splitTextCls}

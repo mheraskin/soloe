@@ -8,6 +8,7 @@
     type CommentAgent
   } from '../../stores/comment-agents.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
+  import { settings } from '../../stores/settings.svelte';
   import { highlightLine, languageForPath } from '$lib/highlight';
   import CommentMarker from './CommentMarker.svelte';
   import AgentBadge from './AgentBadge.svelte';
@@ -46,6 +47,8 @@
   }: Props = $props();
 
   let language = $derived(languageForPath(filePath));
+  let fontSize = $derived(settings.current.diff.fontSize);
+  let bodyStyle = $derived(`font-size: ${fontSize}px;`);
 
   type GapButtonRow = {
     kind: 'gap-button';
@@ -313,12 +316,14 @@
     };
   });
 
-  // Drop measured heights when the diff body, mode, or wrap changes — the
-  // previous measurements no longer correspond to the rows we'll render.
+  // Drop measured heights when the diff body, mode, wrap, or font size
+  // changes — the previous measurements no longer correspond to the rows
+  // we'll render.
   $effect(() => {
     void diff;
     void mode;
     void wrap;
+    void fontSize;
     measured = {};
     maxContentWidth = 0;
   });
@@ -438,7 +443,11 @@
   );
 
   function gutterStyle(width: number): string {
-    return `min-width: ${Math.max(3, width)}ch;`;
+    // Box-sizing is border-box, so `min-width: Nch` includes px-2 padding +
+    // border-r. An empty gutter would stop at the floor while a populated
+    // one grows past it, leaving the new-line number drifting left on
+    // add-only rows. Adding 17px back keeps every gutter the same width.
+    return `min-width: calc(${Math.max(3, width)}ch + 17px);`;
   }
 
   function isSelected(side: DiffSide, line: number | null): boolean {
@@ -448,11 +457,6 @@
     return line >= sel.startLine && line <= sel.endLine;
   }
 
-  function isInComment(side: DiffSide, line: number | null): boolean {
-    if (line === null) return false;
-    return diffComments.forLine(cwd, filePath, side, line).length > 0;
-  }
-
   function commentsStartingAt(side: DiffSide, line: number | null) {
     if (line === null) return [];
     return diffComments
@@ -460,19 +464,23 @@
       .filter((c) => c.side === side && c.startLine === line);
   }
 
+  function commentsContinuingAt(side: DiffSide, line: number | null) {
+    if (line === null) return [];
+    return diffComments
+      .activeForFile(cwd, filePath)
+      .filter((c) => c.side === side && c.startLine < line && line <= c.endLine);
+  }
+
   function gutterClass(side: DiffSide, oldLine: number | null, newLine: number | null): string {
     const base =
       'relative shrink-0 cursor-pointer border-r border-border/60 px-2 text-right text-muted-foreground/70 select-none';
-    // Highlight spans both gutter columns when *either* side has a comment or
-    // selection on this row — including add-only and remove-only rows where
-    // one side has no line number. Earlier versions early-returned the bare
-    // class on null sides, leaving an empty column unmarked.
+    // Highlight spans both gutter columns when *either* side has a selection
+    // on this row — including add-only and remove-only rows where one side
+    // has no line number. The vertical bar (CommentMarker) covers the
+    // commented-row case across the whole range; no bg tint needed.
     const oldSelected = oldLine !== null && isSelected('old', oldLine);
     const newSelected = newLine !== null && isSelected('new', newLine);
     if (oldSelected || newSelected) return `${base} bg-amber-500/30`;
-    const oldHasComment = oldLine !== null && isInComment('old', oldLine);
-    const newHasComment = newLine !== null && isInComment('new', newLine);
-    if (oldHasComment || newHasComment) return `${base} bg-amber-500/15`;
     void side;
     return `${base} group-hover/diffrow:bg-amber-500/10`;
   }
@@ -484,9 +492,6 @@
       'relative shrink-0 cursor-pointer border-r border-border/60 px-2 text-right text-muted-foreground/70 select-none';
     if (isSelected('new', newLine) || isSelected('old', oldLine)) {
       return `${base} bg-amber-500/30`;
-    }
-    if (isInComment('new', newLine) || isInComment('old', oldLine)) {
-      return `${base} bg-amber-500/15`;
     }
     void side;
     return `${base} group-hover/diffrow:bg-amber-500/10`;
@@ -716,11 +721,14 @@
         {@const line = item.row.line}
         {@const oldStarting = commentsStartingAt('old', line.oldLine)}
         {@const newStarting = commentsStartingAt('new', line.newLine)}
+        {@const oldContinuing = commentsContinuingAt('old', line.oldLine)}
+        {@const newContinuing = commentsContinuingAt('new', line.newLine)}
         {@const anchorSide = line.kind === 'remove' ? 'old' : 'new'}
         {@const anchorLine = anchorSide === 'old' ? line.oldLine : line.newLine}
         <div
+          style={bodyStyle}
           class={[
-            'group/diffrow flex min-h-[1.45em] gap-0 font-mono text-[11px] leading-[1.55]',
+            'group/diffrow flex min-h-[1.45em] gap-0 font-mono leading-[1.55]',
             line.kind === 'add' && 'bg-emerald-500/10 dark:bg-emerald-500/12',
             line.kind === 'remove' && 'bg-rose-500/10 dark:bg-rose-500/12',
             line.kind === 'meta' && 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
@@ -738,7 +746,7 @@
             role="presentation"
           >
             {line.oldLine ?? ''}
-            <CommentMarker comments={oldStarting} />
+            <CommentMarker starting={oldStarting} continuing={oldContinuing} />
           </span>
           <span
             class={gutterClass('new', line.oldLine, line.newLine)}
@@ -752,7 +760,7 @@
             role="presentation"
           >
             {line.newLine ?? ''}
-            <CommentMarker comments={newStarting} />
+            <CommentMarker starting={newStarting} continuing={newContinuing} />
           </span>
           <span
             class={[
@@ -774,9 +782,11 @@
         {@const row = item.row}
         {@const oldStarting = commentsStartingAt('old', row.old)}
         {@const newStarting = commentsStartingAt('new', row.new)}
+        {@const oldContinuing = commentsContinuingAt('old', row.old)}
+        {@const newContinuing = commentsContinuingAt('new', row.new)}
         {@const oldAnchorSide = row.isContext ? 'new' : 'old'}
         {@const oldAnchorLine = row.isContext ? row.new : row.old}
-        <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono text-[11px] leading-[1.55]">
+        <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono leading-[1.55]" style={bodyStyle}>
           <div
             class={[
               'flex min-h-[1.45em] bg-background',
@@ -795,7 +805,7 @@
               role="presentation"
             >
               {row.old ?? ''}
-              <CommentMarker comments={oldStarting} />
+              <CommentMarker starting={oldStarting} continuing={oldContinuing} />
             </span>
             <span
               class={splitTextCls}
@@ -827,7 +837,7 @@
               role="presentation"
             >
               {row.new ?? ''}
-              <CommentMarker comments={newStarting} />
+              <CommentMarker starting={newStarting} continuing={newContinuing} />
             </span>
             <span
               class={splitTextCls}
@@ -853,7 +863,7 @@
         {@const newLine = item.row.newLine}
         {@const text = item.row.text}
         {#if mode === 'unified'}
-          <div class="group/diffrow flex min-h-[1.45em] gap-0 font-mono text-[11px] leading-[1.55]">
+          <div class="group/diffrow flex min-h-[1.45em] gap-0 font-mono leading-[1.55]" style={bodyStyle}>
             <span
               class={gapGutterClass('old', oldLine, newLine)}
               style={gutterStyle(gutterWidth)}
@@ -866,7 +876,10 @@
               role="presentation"
             >
               {oldLine}
-              <CommentMarker comments={commentsStartingAt('new', newLine)} />
+              <CommentMarker
+                starting={commentsStartingAt('new', newLine)}
+                continuing={commentsContinuingAt('new', newLine)}
+              />
             </span>
             <span
               class={gapGutterClass('new', oldLine, newLine)}
@@ -886,7 +899,7 @@
               >{@html renderText(text, 'context')}</span>
           </div>
         {:else}
-          <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono text-[11px] leading-[1.55]">
+          <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono leading-[1.55]" style={bodyStyle}>
             <div class="flex min-h-[1.45em] bg-background">
               <span
                 class={gapGutterClass('old', oldLine, newLine)}
@@ -900,7 +913,10 @@
                 role="presentation"
               >
                 {oldLine}
-                <CommentMarker comments={commentsStartingAt('new', newLine)} />
+                <CommentMarker
+                  starting={commentsStartingAt('new', newLine)}
+                  continuing={commentsContinuingAt('new', newLine)}
+                />
               </span>
               <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
                 >{@html renderText(text, 'context')}</span>

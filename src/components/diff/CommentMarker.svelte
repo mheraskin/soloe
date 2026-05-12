@@ -3,20 +3,31 @@
   import CommentPopover from './CommentPopover.svelte';
 
   interface Props {
-    comments: DiffComment[];
+    // Comments whose startLine matches this row — render the clickable bar +
+    // popover trigger.
+    starting: DiffComment[];
+    // Comments whose range covers this row but start earlier — render a
+    // visual-only bar so the thread reads as one continuous mark across all
+    // covered rows.
+    continuing?: DiffComment[];
   }
 
-  let { comments }: Props = $props();
+  let { starting, continuing = [] }: Props = $props();
 
-  let count = $derived(comments.length);
+  let count = $derived(starting.length);
   // Color shifts to emerald only when every comment at this anchor has been
   // sent — a partially-sent thread keeps the unsent amber as a "still has
   // work" cue.
-  let allSent = $derived(comments.length > 0 && comments.every((c) => Boolean(c.sentAt)));
+  let allSent = $derived(
+    starting.length > 0 && starting.every((c) => Boolean(c.sentAt))
+  );
+  let allContSent = $derived(
+    continuing.length > 0 && continuing.every((c) => Boolean(c.sentAt))
+  );
 </script>
 
-{#if comments.length > 0}
-  {#each comments as comment, i (comment.id)}
+{#if starting.length > 0}
+  {#each starting as comment, i (comment.id)}
     <CommentPopover {comment}>
       {#snippet trigger({ props })}
         {#if i === 0}
@@ -58,4 +69,14 @@
       {/snippet}
     </CommentPopover>
   {/each}
+{:else if continuing.length > 0}
+  <!-- Continuation bar — purely visual so a multi-line comment reads as one
+       continuous mark. Click target lives at the start row. -->
+  <span
+    class={[
+      'pointer-events-none absolute top-0 bottom-0 left-0 z-[1] w-[3px]',
+      allContSent ? 'bg-emerald-500' : 'bg-amber-500'
+    ]}
+    aria-hidden="true"
+  ></span>
 {/if}

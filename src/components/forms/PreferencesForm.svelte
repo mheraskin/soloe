@@ -3,6 +3,7 @@
   import { Box, Cpu, Palette, PlugZap, Rocket, TerminalSquare, X } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import type {
+    DiffFontSizePref,
     ModelProvider,
     ModelSelection,
     ModelTask,
@@ -27,6 +28,7 @@
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
+  const diffFontSizes: DiffFontSizePref[] = [11, 12, 13, 14, 15, 16];
   const runModes: RunMode[] = ['windows', 'wsl'];
   const shells: ShellKind[] = ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom'];
   const newSessionKinds: { value: SessionLaunchKind; label: string }[] = [
@@ -136,6 +138,12 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setDiffFontSize(value: DiffFontSizePref) {
+    try {
+      await settings.update({ diff: { fontSize: value } });
+    } catch (e) { reportError(e); }
+  }
+
   async function setConfirmDeleteTabs(value: boolean) {
     try {
       await settings.update({ terminal: { confirmDeleteTabs: value } });
@@ -239,6 +247,21 @@
           <Select.Content>
             {#each themes as t (t)}
               <Select.Item value={t} label={t}>{t}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Diff font size</Label>
+        <Select.Root
+          type="single"
+          value={String(settings.current.diff.fontSize)}
+          onValueChange={(v) => setDiffFontSize(Number(v) as DiffFontSizePref)}
+        >
+          <Select.Trigger class="w-full">{settings.current.diff.fontSize}px</Select.Trigger>
+          <Select.Content>
+            {#each diffFontSizes as f (f)}
+              <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
             {/each}
           </Select.Content>
         </Select.Root>

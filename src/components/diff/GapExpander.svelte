@@ -2,6 +2,7 @@
   import { ChevronsUpDown, Loader2 } from '@lucide/svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
   import { diffComments, type DiffSide } from '../../stores/diff-comments.svelte';
+  import { settings } from '../../stores/settings.svelte';
   import { highlightLine, languageForPath } from '$lib/highlight';
   import CommentMarker from './CommentMarker.svelte';
 
@@ -32,6 +33,8 @@
   let entry = $derived(workingDiff.fileLinesEntry(cwd, filePath, oldStart, oldEnd));
   let gapSize = $derived(oldEnd - oldStart + 1);
   let language = $derived(languageForPath(filePath));
+  let fontSize = $derived(settings.current.diff.fontSize);
+  let bodyStyle = $derived(`font-size: ${fontSize}px;`);
 
   function renderLine(text: string): string {
     if (!text) return '&nbsp;';
@@ -43,9 +46,9 @@
   }
 
   function gutterStyle(width: number): string {
-    // min-width so digits never overflow into the adjacent gutter when the
-    // line count grows past the hint.
-    return `min-width: ${Math.max(3, width)}ch;`;
+    // Match the diff hunks: include px-2 + border-r in the floor so an empty
+    // gutter doesn't shrink below a populated one.
+    return `min-width: calc(${Math.max(3, width)}ch + 17px);`;
   }
 
   function isSelected(side: DiffSide, line: number): boolean {
@@ -54,27 +57,27 @@
     return line >= sel.startLine && line <= sel.endLine;
   }
 
-  function isInComment(side: DiffSide, line: number): boolean {
-    return diffComments.forLine(cwd, filePath, side, line).length > 0;
-  }
-
   function commentsStartingAt(side: DiffSide, line: number) {
     return diffComments
       .activeForFile(cwd, filePath)
       .filter((c) => c.side === side && c.startLine === line);
   }
 
+  function commentsContinuingAt(side: DiffSide, line: number) {
+    return diffComments
+      .activeForFile(cwd, filePath)
+      .filter((c) => c.side === side && c.startLine < line && line <= c.endLine);
+  }
+
   // Gap rows are always context — every row has both old & new line numbers,
-  // and comments anchor to side='new'. Mirror highlights and hover state
-  // across both gutter columns so the row reads as one unit.
+  // and comments anchor to side='new'. Selection highlights mirror across
+  // both gutter columns so the row reads as one unit. In-comment rows rely
+  // on the vertical bar from CommentMarker, not a bg tint.
   function gutterClass(side: DiffSide, oldLine: number, newLine: number): string {
     const base =
       'relative shrink-0 cursor-pointer border-r border-border/60 px-2 text-right text-muted-foreground/70 select-none';
     if (isSelected('new', newLine) || isSelected('old', oldLine)) {
       return `${base} bg-amber-500/30`;
-    }
-    if (isInComment('new', newLine) || isInComment('old', oldLine)) {
-      return `${base} bg-amber-500/15`;
     }
     void side;
     return `${base} group-hover/diffrow:bg-amber-500/10`;
@@ -99,7 +102,7 @@
 </script>
 
 {#if entry.lines && entry.lines.length > 0}
-  <div class="flex flex-col font-mono text-[11px] leading-[1.55]">
+  <div class="flex flex-col font-mono leading-[1.55]" style={bodyStyle}>
     {#if mode === 'unified'}
       {#each entry.lines as text, idx (idx)}
         {@const oldLine = oldStart + idx}
@@ -113,7 +116,10 @@
             role="presentation"
           >
             {oldLine}
-            <CommentMarker comments={commentsStartingAt('new', newLine)} />
+            <CommentMarker
+              starting={commentsStartingAt('new', newLine)}
+              continuing={commentsContinuingAt('new', newLine)}
+            />
           </span>
           <span
             class={gutterClass('new', oldLine, newLine)}
@@ -143,7 +149,10 @@
               role="presentation"
             >
               {oldLine}
-              <CommentMarker comments={commentsStartingAt('new', newLine)} />
+              <CommentMarker
+                starting={commentsStartingAt('new', newLine)}
+                continuing={commentsContinuingAt('new', newLine)}
+              />
             </span>
             <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
               >{@html renderLine(text)}</span>

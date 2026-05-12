@@ -2,6 +2,7 @@ import type { ShellKind, RunMode, SessionLaunchKind, AgentRuntimeProvider } from
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type TerminalFontSizePref = 11 | 12 | 13 | 14;
+export type DiffFontSizePref = 11 | 12 | 13 | 14 | 15 | 16;
 
 export interface SettingsAppearance {
   theme: ThemePref;
@@ -10,6 +11,10 @@ export interface SettingsAppearance {
 export interface SettingsTerminal {
   fontSize: TerminalFontSizePref;
   confirmDeleteTabs: boolean;
+}
+
+export interface SettingsDiff {
+  fontSize: DiffFontSizePref;
 }
 
 export interface SettingsDefaults {
@@ -104,6 +109,7 @@ export interface Settings {
   version: 1;
   appearance: SettingsAppearance;
   terminal: SettingsTerminal;
+  diff: SettingsDiff;
   defaults: SettingsDefaults;
   binaries: SettingsBinaries;
   models: SettingsModels;
@@ -114,6 +120,7 @@ export interface Settings {
 export type SettingsUpdate = {
   appearance?: Partial<SettingsAppearance>;
   terminal?: Partial<SettingsTerminal>;
+  diff?: Partial<SettingsDiff>;
   defaults?: Partial<SettingsDefaults>;
   binaries?: Partial<SettingsBinaries>;
   models?: Partial<SettingsModels>;
@@ -125,6 +132,7 @@ export const DEFAULT_SETTINGS: Settings = {
   version: 1,
   appearance: { theme: 'dark' },
   terminal: { fontSize: 13, confirmDeleteTabs: true },
+  diff: { fontSize: 13 },
   defaults: {
     runMode: 'wsl',
     wslDistro: 'Ubuntu',
