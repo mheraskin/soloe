@@ -59,21 +59,18 @@
   });
 
   // When editing flips on (e.g. from a fresh selection or an Edit click in
-  // view mode), force the popover open and prime the textarea draft.
-  // Auto-focus only on Edit of an existing comment — a brand-new comment
-  // (empty text from a drag-select) lets the user click in deliberately so
-  // the focus doesn't grab from wherever they were.
+  // view mode), force the popover open, prime the textarea draft, and focus
+  // it so the user can type immediately. For an existing comment the
+  // content is selected so a keystroke replaces it.
   $effect(() => {
     if (editing) {
       open = true;
       draft = comment.text;
-      if (comment.text.length > 0) {
-        queueMicrotask(() => {
-          textareaEl?.focus();
-          textareaEl?.select();
-          syncCursor();
-        });
-      }
+      queueMicrotask(() => {
+        textareaEl?.focus();
+        if (comment.text.length > 0) textareaEl?.select();
+        syncCursor();
+      });
     }
   });
 
@@ -291,9 +288,9 @@
     {/snippet}
   </Popover.Trigger>
   <Popover.Content side="right" align="start" class="w-80 p-0">
-    <header class="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/30 px-3 py-1.5">
+    <header class="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/30 px-2 py-0.5">
       <div class="flex min-w-0 items-center gap-1.5">
-        <span class="font-mono text-xs font-medium text-muted-foreground">{lineLabel}</span>
+        <span class="font-mono text-[10px] font-medium text-muted-foreground">{lineLabel}</span>
         {#if !editing && comment.sentAt}
           <span
             class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400"
@@ -311,11 +308,11 @@
           </span>
         {/if}
       </div>
-      <div class="flex items-center gap-0.5">
+      <div class="flex items-center">
         {#if !editing}
-          <Button
-            variant="ghost"
-            size="xs"
+          <button
+            type="button"
+            class="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
             onclick={toggleResolve}
             aria-label={comment.resolvedAt ? 'Reopen comment' : 'Resolve comment'}
             title={comment.resolvedAt ? 'Reopen' : 'Resolve'}
@@ -325,21 +322,21 @@
             {:else}
               <CircleCheck class="size-3" />
             {/if}
-          </Button>
+          </button>
         {/if}
-        <Button
-          variant="ghost"
-          size="xs"
+        <button
+          type="button"
+          class="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           onclick={() => (open = false)}
           aria-label="Close"
           title="Close"
         >
           <X class="size-3" />
-        </Button>
+        </button>
       </div>
     </header>
 
-    <div class="px-3 py-2">
+    <div class="px-2 py-1.5">
       {#if editing}
         <div class="relative">
           <textarea
@@ -350,7 +347,7 @@
             oninput={syncCursor}
             onclick={syncCursor}
             onselect={syncCursor}
-            class="min-h-20 w-full resize-none rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus:border-ring"
+            class="min-h-14 w-full resize-none rounded-md border border-input bg-background p-1.5 font-mono text-[11px] leading-snug outline-none focus:border-ring"
             placeholder="Add a comment… use @ to mention"
             spellcheck="false"
           ></textarea>
@@ -367,13 +364,13 @@
           {/if}
         </div>
         {#if resolvedAgents.length > 0}
-          <div class="mt-1.5 flex flex-wrap items-center gap-1">
+          <div class="mt-1 flex flex-wrap items-center gap-1">
             {#each resolvedAgents as agent (agent.id)}
               <AgentBadge name={agent.name} provider={agent.provider} model={agent.model} />
             {/each}
           </div>
         {/if}
-        <div class="mt-2 flex items-center justify-between gap-2">
+        <div class="mt-1.5 flex items-center justify-between gap-2">
           {#if comment.text.length > 0}
             <Button
               variant="ghost"
@@ -406,9 +403,9 @@
           </div>
         </div>
       {:else}
-        <div class="flex flex-col gap-2">
+        <div class="flex flex-col gap-1.5">
           <pre
-            class="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug"
+            class="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-snug"
           >{comment.text || '(empty)'}</pre>
           {#if resolvedAgents.length > 0}
             <div class="flex flex-wrap items-center gap-1">
