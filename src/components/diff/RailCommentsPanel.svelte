@@ -8,7 +8,6 @@
     Send,
     Trash2
   } from '@lucide/svelte';
-  import { SvelteMap } from 'svelte/reactivity';
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import type { AnchorLineKind, DiffComment } from '../../stores/diff-comments.svelte';
@@ -65,7 +64,10 @@
   );
 
   let grouped = $derived.by<{ filePath: string; comments: DiffComment[] }[]>(() => {
-    const map = new SvelteMap<string, DiffComment[]>();
+    // Plain Map by design: this is a local helper inside a pure derived,
+    // not reactive state. SvelteMap here loops because mutating it
+    // invalidates the derived that's currently mutating it.
+    const map = new Map<string, DiffComment[]>();
     for (const c of visible) {
       const list = map.get(c.filePath) ?? [];
       list.push(c);
