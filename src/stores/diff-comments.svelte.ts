@@ -382,7 +382,9 @@ class DiffCommentsStore {
 
   // Reconcile the outdated set for a single file against its current diff.
   // Comments without an anchor (older records or gap-row drops) are never
-  // flagged. Producing a fresh Set instance triggers Svelte reactivity.
+  // flagged. The effect calling this also reads `outdatedIds` (we iterate it
+  // here), so a same-contents-new-Set write would re-fire the effect in a
+  // loop — only assign when the set's contents have actually changed.
   recomputeOutdated(cwd: string, filePath: string, diff: FileDiff | null): void {
     const fileComments = this.forFile(cwd, filePath);
     if (fileComments.length === 0) return;
@@ -391,14 +393,20 @@ class DiffCommentsStore {
     for (const id of this.outdatedIds) {
       if (!fileIds.has(id)) next.add(id);
     }
-    let touched = next.size !== this.outdatedIds.size;
     for (const c of fileComments) {
-      const out = isCommentOutdated(c, diff);
-      const was = this.outdatedIds.has(c.id);
-      if (out) next.add(c.id);
-      if (out !== was) touched = true;
+      if (isCommentOutdated(c, diff)) next.add(c.id);
     }
-    if (touched) this.outdatedIds = next;
+    if (next.size === this.outdatedIds.size) {
+      let same = true;
+      for (const id of next) {
+        if (!this.outdatedIds.has(id)) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    this.outdatedIds = next;
   }
 
   private persist(): void {
