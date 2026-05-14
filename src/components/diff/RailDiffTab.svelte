@@ -109,14 +109,20 @@
   let changesEntry = $derived(activeCwd ? workingDiff.changesFor(activeCwd) : null);
   let filteredChanges = $derived(activeCwd ? workingDiff.filteredChangesFor(activeCwd) : []);
   let totalChangeCount = $derived(changesEntry?.result?.changes.length ?? 0);
+  let stagedChanges = $derived(filteredChanges.filter((c) => c.staged));
+  let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged));
+  let showGroups = $derived(workingDiff.filter === 'all' && (stagedChanges.length > 0 || unstagedChanges.length > 0));
+  // Stack order mirrors the file list under the "All" filter (staged then
+  // unstaged) so clicking a row scrolls to the same index in the diff.
+  let stackChanges = $derived(showGroups ? [...stagedChanges, ...unstagedChanges] : filteredChanges);
 
-  // Existence is checked against the full change list, not the filtered
-  // subset, so staging a file under the "Unstaged" filter doesn't yank the
-  // open diff away.
   let storedSelected = $derived(activeCwd ? workingDiff.selectedFilePath(activeCwd) : null);
+  // Multi-file viewer renders the filtered set as a scroll stack; the
+  // "selected" file is the one currently in view (highlight + active for
+  // outside integrations). Anything outside the filter can't be the active
+  // one because it isn't rendered.
   let effectiveSelected = $derived.by<string | null>(() => {
-    const all = changesEntry?.result?.changes ?? [];
-    if (storedSelected && all.some((c) => c.path === storedSelected)) {
+    if (storedSelected && filteredChanges.some((c) => c.path === storedSelected)) {
       return storedSelected;
     }
     if (!filteredChanges.length) return null;
@@ -142,23 +148,134 @@
     void workingDiff.loadDiff(cwd, path).catch(reportError);
   });
 
-  let diffEntry = $derived(
-    activeCwd && effectiveSelected ? workingDiff.diffEntryFor(activeCwd, effectiveSelected) : null
-  );
+  // Per-file refs power the scroll-stacked viewer: each file section reports
+  // its position so virtualization stays correct and click-to-scroll lands on
+  // the right anchor. Actions register/unregister and bump layoutTick so the
+  // sectionTops derived recomputes — ResizeObserver covers the rest.
+  let sectionEls = $state<Record<string, HTMLDivElement | null>>({});
+  let bodyWrapperEls = $state<Record<string, HTMLDivElement | null>>({});
+  let layoutTick = $state(0);
+  let scrollLockUntil = 0;
 
-  // Reconcile the outdated set whenever the active file's diff body changes.
-  // Comments whose anchored text no longer matches the live diff land in the
-  // Outdated panel and stop rendering markers in the diff itself.
+  function bindSection(node: HTMLDivElement, path: string) {
+    sectionEls[path] = node;
+    layoutTick++;
+    let current = path;
+    return {
+      update(newPath: string) {
+        if (newPath === current) return;
+        sectionEls[current] = null;
+        current = newPath;
+        sectionEls[current] = node;
+        layoutTick++;
+      },
+      destroy() {
+        sectionEls[current] = null;
+        layoutTick++;
+      }
+    };
+  }
+
+  function bindBodyWrapper(node: HTMLDivElement, path: string) {
+    bodyWrapperEls[path] = node;
+    layoutTick++;
+    let current = path;
+    return {
+      update(newPath: string) {
+        if (newPath === current) return;
+        bodyWrapperEls[current] = null;
+        current = newPath;
+        bodyWrapperEls[current] = node;
+        layoutTick++;
+      },
+      destroy() {
+        bodyWrapperEls[current] = null;
+        layoutTick++;
+      }
+    };
+  }
+
   $effect(() => {
-    const cwd = activeCwd;
-    const path = effectiveSelected;
-    if (!cwd || !path) return;
-    diffComments.recomputeOutdated(cwd, path, diffEntry?.diff ?? null);
+    void stackChanges;
+    void workingDiff.wordWrap;
+    void workingDiff.viewMode;
+    layoutTick++;
   });
 
-  // Gutter width hint: scale with the largest line number we will render.
-  let gutterWidth = $derived.by<number>(() => {
-    const hunks: DiffHunk[] = diffEntry?.diff?.hunks ?? [];
+  $effect(() => {
+    const root = diffRootEl;
+    if (!root) return;
+    const ro = new ResizeObserver(() => {
+      layoutTick++;
+    });
+    ro.observe(root);
+    return () => ro.disconnect();
+  });
+
+  // Body offsets within diffRootEl. VirtualDiffBody virtualizes against the
+  // shared viewport scrollTop; without these offsets every body would think
+  // its content starts at scroll 0 and stickies/visible-rows would misalign.
+  let sectionTops = $derived.by<Record<string, number>>(() => {
+    void layoutTick;
+    const out: Record<string, number> = {};
+    const root = diffRootEl;
+    if (!root) return out;
+    const rootRect = root.getBoundingClientRect();
+    for (const change of stackChanges) {
+      const wrapper = bodyWrapperEls[change.path];
+      if (!wrapper) continue;
+      out[change.path] = wrapper.getBoundingClientRect().top - rootRect.top;
+    }
+    return out;
+  });
+
+  // Scroll-driven selection: the topmost file in the viewport becomes the
+  // active one. A brief lock after pickChange keeps the smooth scroll from
+  // stuttering the highlight through every intermediate section.
+  $effect(() => {
+    const viewport = diffViewportEl;
+    const cwd = activeCwd;
+    if (!viewport || !cwd) return;
+    const onScroll = () => {
+      if (performance.now() < scrollLockUntil) return;
+      const viewportRect = viewport.getBoundingClientRect();
+      const threshold = viewportRect.top + 40;
+      let bestPath: string | null = null;
+      for (const change of stackChanges) {
+        const section = sectionEls[change.path];
+        if (!section) continue;
+        const rect = section.getBoundingClientRect();
+        if (rect.top <= threshold) {
+          bestPath = change.path;
+        } else {
+          break;
+        }
+      }
+      if (bestPath && bestPath !== storedSelected) {
+        workingDiff.setSelected(cwd, bestPath);
+      }
+    };
+    viewport.addEventListener('scroll', onScroll, { passive: true });
+    return () => viewport.removeEventListener('scroll', onScroll);
+  });
+
+  // Reconcile the outdated set per file. Comments whose anchored text no
+  // longer matches the live diff land in the Outdated panel and stop
+  // rendering markers; running this for every loaded diff keeps outdated
+  // detection in sync even when the user hasn't scrolled to that file yet.
+  $effect(() => {
+    const cwd = activeCwd;
+    if (!cwd) return;
+    for (const change of filteredChanges) {
+      const entry = workingDiff.diffEntryFor(cwd, change.path);
+      if (entry?.diff) {
+        diffComments.recomputeOutdated(cwd, change.path, entry.diff);
+      }
+    }
+  });
+
+  function gutterWidthFor(hunks: DiffHunk[] | undefined): number {
+    if (!hunks) return 2;
     let max = 0;
     for (const hunk of hunks) {
       const oldEnd = hunk.oldStart + hunk.oldCount;
@@ -167,7 +284,7 @@
       if (newEnd > max) max = newEnd;
     }
     return Math.max(2, String(max).length);
-  });
+  }
 
   let queryDraft = $state(workingDiff.query);
 
@@ -185,10 +302,6 @@
       : 0
   );
   let showComments = $state(false);
-
-  let stagedChanges = $derived(filteredChanges.filter((c) => c.staged));
-  let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged));
-  let showGroups = $derived(workingDiff.filter === 'all' && (stagedChanges.length > 0 || unstagedChanges.length > 0));
 
   // Natural height fits up to 4 rows; if there's a 5th, peek half of it so
   // the splitter signals "more below" instead of blank space.
@@ -215,6 +328,14 @@
   function pickChange(path: string): void {
     if (!activeCwd) return;
     workingDiff.setSelected(activeCwd, path);
+    const section = sectionEls[path];
+    const viewport = diffViewportEl;
+    if (!section || !viewport) return;
+    scrollLockUntil = performance.now() + 600;
+    const sectionRect = section.getBoundingClientRect();
+    const viewportRect = viewport.getBoundingClientRect();
+    const top = viewport.scrollTop + sectionRect.top - viewportRect.top;
+    viewport.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
   }
 
   async function stageFile(path: string): Promise<void> {
@@ -328,10 +449,15 @@
     // Single document-level mouseup finalizes any in-progress gutter drag
     // started inside a HunkBlock. Without this, releasing the cursor outside
     // a gutter cell would leave the selection stuck in dragging state.
+    // Use the selection's own file rather than the active one — drag may
+    // have started in a file that isn't the topmost in the viewport.
     const onDocMouseup = () => {
-      if (diffComments.selection?.dragging) {
-        diffComments.endSelectionAndCreate(diffEntry?.diff ?? null);
-      }
+      const sel = diffComments.selection;
+      if (!sel?.dragging) return;
+      const cwd = activeCwd;
+      if (!cwd) return;
+      const entry = workingDiff.diffEntryFor(cwd, sel.filePath);
+      diffComments.endSelectionAndCreate(entry?.diff ?? null);
     };
     window.addEventListener('mouseup', onDocMouseup);
     return () => {
@@ -594,91 +720,114 @@
     ></button>
 
     <section class="flex min-h-0 flex-1 flex-col">
-      {#if !effectiveSelected}
+      {#if stackChanges.length === 0}
         <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
           <FileDiff class="size-4 shrink-0" />
-          <span>Pick a file above to inspect its diff.</span>
+          <span>Nothing to diff.</span>
         </div>
-      {:else if diffEntry?.loading && !diffEntry.diff}
-        <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
-          <Loader2 class="size-3 animate-spin" />
-          Loading diff…
-        </div>
-      {:else if diffEntry?.error}
-        <div class="flex flex-1 items-start justify-center gap-2 px-3 py-4 text-xs text-destructive">
-          <AlertCircle class="size-3 shrink-0" />
-          <span class="break-words">{diffEntry.error}</span>
-        </div>
-      {:else if diffEntry?.diff}
-        {@const diff = diffEntry.diff}
-        <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
-          <div class="flex min-w-0 flex-col">
-            <span class="truncate font-mono text-[11px] text-foreground">{diff.path}</span>
-            {#if diff.fromPath && diff.fromPath !== diff.path}
-              <span class="truncate text-[10px] text-muted-foreground">from {diff.fromPath}</span>
-            {/if}
-          </div>
-          <div class="flex shrink-0 items-center gap-2">
-            <span class="font-mono text-[10px] text-muted-foreground uppercase">
-              {diff.kind}
-            </span>
-            <Button
-              variant="ghost"
-              size="xs"
-              onclick={() => (diffExpanded = !diffExpanded)}
-              aria-pressed={diffExpanded}
-              aria-label={diffExpanded ? 'Show file list' : 'Hide file list'}
-              title={diffExpanded ? 'Show file list' : 'Hide file list'}
-            >
-              {#if diffExpanded}
-                <ChevronsDown class="size-3" />
-              {:else}
-                <ChevronsUp class="size-3" />
-              {/if}
-            </Button>
-          </div>
-        </header>
-        {#if diff.binary}
-          <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
-            Binary file — diff not shown.
-          </div>
-        {:else if diff.empty || diff.hunks.length === 0}
-          <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
-            No textual changes.
-          </div>
-        {:else}
-          {@const gapPath = diff.fromPath ?? diff.path}
-          {@const canExpand = diff.kind !== 'added' && diff.kind !== 'untracked'}
-          <ScrollArea
-            orientation={workingDiff.wordWrap ? 'vertical' : 'both'}
-            class="min-h-0 flex-1"
-            bind:viewportRef={diffViewportEl}
-          >
-            <div bind:this={diffRootEl} class="flex flex-col">
-              <DiffSelectionMenu
-                cwd={activeCwd!}
-                filePath={diff.path}
-                rootEl={diffRootEl}
-                {diff}
-              />
-              <VirtualDiffBody
-                cwd={activeCwd!}
-                filePath={diff.path}
-                {gapPath}
-                {diff}
-                mode={workingDiff.viewMode}
-                {gutterWidth}
-                {canExpand}
-                wrap={workingDiff.wordWrap}
-                viewport={diffViewportEl}
-              />
-            </div>
-          </ScrollArea>
-        {/if}
       {:else}
-        <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
-          Select a file to view changes.
-        </div>
+        <ScrollArea
+          orientation={workingDiff.wordWrap ? 'vertical' : 'both'}
+          class="min-h-0 flex-1"
+          bind:viewportRef={diffViewportEl}
+        >
+          <div bind:this={diffRootEl} class="flex flex-col">
+            {#each stackChanges as change (change.path)}
+              {@const entry = workingDiff.diffEntryFor(activeCwd!, change.path)}
+              {@const fileDiff = entry?.diff ?? null}
+              {@const gapPath = fileDiff?.fromPath ?? change.path}
+              {@const canExpand = fileDiff ? fileDiff.kind !== 'added' && fileDiff.kind !== 'untracked' : false}
+              {@const gutter = gutterWidthFor(fileDiff?.hunks)}
+              {@const isActive = change.path === effectiveSelected}
+              <div
+                use:bindSection={change.path}
+                data-file-path={change.path}
+                class="relative flex flex-col"
+              >
+                <header
+                  class={[
+                    'sticky top-0 z-20 flex items-center justify-between gap-2 border-y border-border px-3 py-1.5 backdrop-blur-sm',
+                    isActive ? 'bg-muted/90' : 'bg-background/95'
+                  ]}
+                >
+                  <div class="flex min-w-0 flex-col">
+                    <span class="truncate font-mono text-[11px] text-foreground">
+                      {fileDiff?.path ?? change.path}
+                    </span>
+                    {#if fileDiff?.fromPath && fileDiff.fromPath !== fileDiff.path}
+                      <span class="truncate text-[10px] text-muted-foreground">
+                        from {fileDiff.fromPath}
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="flex shrink-0 items-center gap-2">
+                    <span class="font-mono text-[10px] text-muted-foreground uppercase">
+                      {fileDiff?.kind ?? change.kind}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onclick={() => (diffExpanded = !diffExpanded)}
+                      aria-pressed={diffExpanded}
+                      aria-label={diffExpanded ? 'Show file list' : 'Hide file list'}
+                      title={diffExpanded ? 'Show file list' : 'Hide file list'}
+                    >
+                      {#if diffExpanded}
+                        <ChevronsDown class="size-3" />
+                      {:else}
+                        <ChevronsUp class="size-3" />
+                      {/if}
+                    </Button>
+                  </div>
+                </header>
+                <div use:bindBodyWrapper={change.path}>
+                  {#if entry?.loading && !fileDiff}
+                    <div class="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
+                      <Loader2 class="size-3 animate-spin" />
+                      Loading diff…
+                    </div>
+                  {:else if entry?.error}
+                    <div class="flex items-start justify-center gap-2 px-3 py-4 text-xs text-destructive">
+                      <AlertCircle class="size-3 shrink-0" />
+                      <span class="break-words">{entry.error}</span>
+                    </div>
+                  {:else if fileDiff?.binary}
+                    <div class="px-3 py-4 text-center text-xs text-muted-foreground">
+                      Binary file — diff not shown.
+                    </div>
+                  {:else if fileDiff && (fileDiff.empty || fileDiff.hunks.length === 0)}
+                    <div class="px-3 py-4 text-center text-xs text-muted-foreground">
+                      No textual changes.
+                    </div>
+                  {:else if fileDiff}
+                    <DiffSelectionMenu
+                      cwd={activeCwd!}
+                      filePath={fileDiff.path}
+                      rootEl={sectionEls[change.path]}
+                      diff={fileDiff}
+                    />
+                    <VirtualDiffBody
+                      cwd={activeCwd!}
+                      filePath={fileDiff.path}
+                      {gapPath}
+                      diff={fileDiff}
+                      mode={workingDiff.viewMode}
+                      gutterWidth={gutter}
+                      {canExpand}
+                      wrap={workingDiff.wordWrap}
+                      viewport={diffViewportEl}
+                      sectionTop={sectionTops[change.path] ?? 0}
+                    />
+                  {:else}
+                    <div class="px-3 py-6 text-center text-xs text-muted-foreground">
+                      Diff not loaded.
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </ScrollArea>
       {/if}
     </section>
   {/if}

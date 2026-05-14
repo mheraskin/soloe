@@ -33,6 +33,11 @@
     canExpand: boolean;
     wrap?: boolean;
     viewport: HTMLElement | null;
+    // y-offset of this file's section within the scroll content. Default 0
+    // (single-file mode); in the concatenated viewer each section reports its
+    // own offset so virtualization and the sticky hunk header stay correct
+    // while multiple bodies share one viewport.
+    sectionTop?: number;
   }
 
   let {
@@ -44,7 +49,8 @@
     gutterWidth,
     canExpand,
     wrap = true,
-    viewport
+    viewport,
+    sectionTop = 0
   }: Props = $props();
 
   let language = $derived(languageForPath(filePath));
@@ -369,8 +375,8 @@
         }
       }
       if (idx < 0) return;
-      const target = (offsets[idx] ?? 0) - Math.max(40, viewportHeight / 3);
-      v.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+      const localTarget = (offsets[idx] ?? 0) - Math.max(40, viewportHeight / 3);
+      v.scrollTo({ top: Math.max(0, sectionTop + localTarget), behavior: 'smooth' });
     });
   });
 
@@ -400,8 +406,9 @@
   const BUFFER_ROWS = 8;
 
   let visibleRange = $derived.by(() => {
-    const startIdx = findFirstAtOrAfter(scrollTop);
-    const endIdx = findFirstAtOrAfter(scrollTop + viewportHeight) + 1;
+    if (!sectionActive) return { start: 0, end: 0 };
+    const startIdx = findFirstAtOrAfter(localScrollTop);
+    const endIdx = findFirstAtOrAfter(Math.min(totalHeight, localBottom)) + 1;
     const start = Math.max(0, startIdx - BUFFER_ROWS);
     const end = Math.min(rows.length, endIdx + BUFFER_ROWS);
     return { start, end };
@@ -422,17 +429,25 @@
   // ResizeObserver round-trip completed; document flow rules that out.
   let visibleStartTop = $derived(offsets[visibleRange.start] ?? 0);
 
-  // Sticky hunk header — find the latest hunk-header at or above scrollTop,
+  // Position within this section. In single-file mode sectionTop=0 so
+  // localScrollTop matches the viewport scroll directly; in multi-file the
+  // viewport scrolls past earlier sections first.
+  let localScrollTop = $derived(Math.max(0, scrollTop - sectionTop));
+  let localBottom = $derived(scrollTop + viewportHeight - sectionTop);
+  let sectionActive = $derived(localBottom > 0 && localScrollTop < totalHeight);
+
+  // Sticky hunk header — find the latest hunk-header at or above localScrollTop,
   // plus the next one so we can push the current header up smoothly when
   // they collide.
   let sticky = $derived.by<{ hunk: DiffHunk; top: number; height: number } | null>(() => {
+    if (!sectionActive) return null;
     let currentIdx = -1;
     let nextIdx = -1;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i]!;
       if (r.kind !== 'hunk-header') continue;
       const top = offsets[i] ?? 0;
-      if (top <= scrollTop) {
+      if (top <= localScrollTop) {
         currentIdx = i;
       } else {
         nextIdx = i;
@@ -441,7 +456,7 @@
     }
     if (currentIdx < 0) return null;
     const headerHeight = heights[currentIdx] ?? ROW_PX_HEADER;
-    let stickyTop = scrollTop;
+    let stickyTop = localScrollTop;
     if (nextIdx >= 0) {
       const nextTop = offsets[nextIdx] ?? 0;
       const limit = nextTop - headerHeight;
@@ -588,6 +603,10 @@
   ): void {
     const sel = diffComments.selection;
     if (sel?.dragging) {
+      // Cross-file drag: extendSelection only knows side+line, so applying
+      // another file's coordinates would corrupt this drag's range. Wait
+      // until the cursor returns to the originating file.
+      if (sel.cwd !== cwd || sel.filePath !== filePath) return;
       const sideLine = sel.side === 'old' ? oldLine : newLine;
       if (sideLine !== null) {
         diffComments.extendSelection(sel.side, sideLine);
@@ -609,6 +628,7 @@
   function onGapGutterEnter(oldLine: number, newLine: number): void {
     const sel = diffComments.selection;
     if (sel?.dragging) {
+      if (sel.cwd !== cwd || sel.filePath !== filePath) return;
       diffComments.extendSelection(sel.side, sel.side === 'old' ? oldLine : newLine);
       return;
     }
