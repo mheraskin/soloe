@@ -222,6 +222,10 @@ function parseIntegrations(raw: unknown): Settings['integrations'] {
     autoRefreshMcpUrl: pickBoolean(
       raw['autoRefreshMcpUrl'],
       DEFAULT_SETTINGS.integrations.autoRefreshMcpUrl
+    ),
+    allowClaudeHeadless: pickBoolean(
+      raw['allowClaudeHeadless'],
+      DEFAULT_SETTINGS.integrations.allowClaudeHeadless
     )
   };
 }
@@ -325,6 +329,9 @@ function validateSettings(s: Settings): void {
   if (!isObject(s.integrations as unknown)) throw new Error('integrations must be an object');
   if (typeof s.integrations.autoRefreshMcpUrl !== 'boolean') {
     throw new Error('integrations.autoRefreshMcpUrl must be a boolean');
+  }
+  if (typeof s.integrations.allowClaudeHeadless !== 'boolean') {
+    throw new Error('integrations.allowClaudeHeadless must be a boolean');
   }
 }
 

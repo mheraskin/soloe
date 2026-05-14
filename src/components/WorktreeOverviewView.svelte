@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { RefreshCw, Loader2, AlertCircle } from '@lucide/svelte';
+  import { RefreshCw, Loader2, AlertCircle, ExternalLink } from '@lucide/svelte';
   import type {
     AskFollowUpChunk,
     AskFollowUpRequest,
@@ -239,15 +239,32 @@
     return `${p} · ${overview.generatedBy.model}`;
   });
 
+  let claudeHeadlessAllowed = $derived(
+    settings.current.integrations.allowClaudeHeadless
+  );
+
+  // Catalog filtered to what's currently allowed. When Claude headless is
+  // off, only Codex entries are pickable; the disabled-state row below the
+  // list explains how to re-enable.
+  let allowedCatalog = $derived.by(() =>
+    claudeHeadlessAllowed
+      ? MODEL_CATALOG
+      : MODEL_CATALOG.filter((m) => m.provider !== 'claude')
+  );
+
   // Model the next regenerate will use. Falls back to textGeneration for
   // settings written before worktreeOverview existed (mirrors pickProvider
-  // in WorktreeOverviewService).
+  // in WorktreeOverviewService). Treats a saved Claude selection as
+  // null when the headless opt-in is off, so the trigger doesn't claim a
+  // model Soloe won't actually spawn.
   let selectedModel = $derived.by<ModelSelection | null>(() => {
-    return (
+    const raw =
       settings.current.models.worktreeOverview ??
       settings.current.models.textGeneration ??
-      null
-    );
+      null;
+    if (!raw) return null;
+    if (raw.provider === 'claude' && !claudeHeadlessAllowed) return null;
+    return raw;
   });
 
   function modelKey(value: ModelSelection | null | undefined): string {
@@ -335,7 +352,7 @@
           </span>
         </Select.Trigger>
         <Select.Content>
-          {#each MODEL_CATALOG as entry (modelKey(entry))}
+          {#each allowedCatalog as entry (modelKey(entry))}
             <Select.Item value={modelKey(entry)} label={entry.label}>
               <span class="flex items-center gap-2">
                 <KindIcon kind={providerKind(entry.provider)} size={14} />
@@ -343,6 +360,27 @@
               </span>
             </Select.Item>
           {/each}
+          {#if !claudeHeadlessAllowed}
+            <div
+              class="mt-1 flex items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] text-muted-foreground"
+            >
+              <KindIcon kind="claude_code" size={12} />
+              <span class="flex-1">Claude is disabled</span>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
+                onclick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  settings.openDialog('integration');
+                }}
+                title="Open Integration settings"
+              >
+                <span>Turn on in settings</span>
+                <ExternalLink class="size-2.5" />
+              </button>
+            </div>
+          {/if}
         </Select.Content>
       </Select.Root>
       <Button

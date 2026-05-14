@@ -33,6 +33,14 @@
     }
   }
 
+  async function setAllowClaudeHeadless(value: boolean): Promise<void> {
+    try {
+      await settings.update({ integrations: { allowClaudeHeadless: value } });
+    } catch (e) {
+      reportError(e);
+    }
+  }
+
   onMount(() => {
     void refresh();
     const off = ipc.agentIntegration.onChange((s) => {
@@ -74,6 +82,25 @@
       probes each connected environment on launch and rewrites the agent config files if the URL
       drifted. Turn this off and you'll need to click <b>Update setup</b> manually whenever the
       bridge URL changes.
+    </p>
+  </div>
+
+  <div class="flex flex-col gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5">
+    <div class="flex items-center gap-2">
+      <Checkbox
+        id="allow-claude-headless"
+        checked={settings.current.integrations.allowClaudeHeadless}
+        onCheckedChange={(v) => setAllowClaudeHeadless(v === true)}
+      />
+      <Label for="allow-claude-headless" class="text-sm text-foreground">
+        Allow Claude for Soloe-dispatched tasks
+      </Label>
+    </div>
+    <p class="m-0 text-[11px] text-amber-200/90">
+      <b>Warning:</b> Soloe-dispatched tasks (worktree overviews, background summaries) spawn
+      <code>claude -p</code>, which may be metered separately from your interactive Claude Code
+      subscription and can incur API charges. Off by default. When off, Claude is hidden from
+      background-task model pickers and only Codex is used.
     </p>
   </div>
 </div>

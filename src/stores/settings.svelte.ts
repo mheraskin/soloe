@@ -6,8 +6,13 @@ class SettingsStore {
   current = $state<Settings>(structuredClone(DEFAULT_SETTINGS));
   loaded = $state(false);
   dialogOpen = $state(false);
+  // Tab the dialog should land on the next time it opens. Bumped each
+  // time openDialog(tab) is called so PreferencesForm reacts even when
+  // the dialog was already open.
+  targetTab = $state<{ tab: string; nonce: number } | null>(null);
 
   private detachers: Array<() => void> = [];
+  private targetTabNonce = 0;
 
   async load(): Promise<void> {
     const s = await ipc.settings.get();
@@ -34,7 +39,11 @@ class SettingsStore {
     this.current = next;
   }
 
-  openDialog(): void {
+  openDialog(tab?: string): void {
+    if (tab) {
+      this.targetTabNonce += 1;
+      this.targetTab = { tab, nonce: this.targetTabNonce };
+    }
     this.dialogOpen = true;
   }
 

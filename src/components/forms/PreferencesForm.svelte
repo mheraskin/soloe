@@ -74,6 +74,18 @@
   ] as const;
 
   let activeTab = $state<string>('integration');
+  let lastAppliedTabNonce = -1;
+
+  // React to settings.openDialog('integration') and similar by jumping to
+  // the requested tab. The nonce changes on every call so reopening with
+  // the same tab still triggers a switch.
+  $effect(() => {
+    const t = settings.targetTab;
+    if (!t) return;
+    if (t.nonce === lastAppliedTabNonce) return;
+    lastAppliedTabNonce = t.nonce;
+    activeTab = t.tab;
+  });
 
   const triggerClass = cn(
     'group/tab flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium',

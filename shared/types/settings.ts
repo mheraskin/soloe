@@ -67,6 +67,12 @@ export interface QuickLaunchPreset {
 
 export interface SettingsIntegrations {
   autoRefreshMcpUrl: boolean;
+  // Opt-in for Soloe-dispatched tasks that spawn `claude -p` (worktree
+  // overview, background summarization, etc). Off by default because
+  // headless Claude usage may bill differently than the interactive
+  // subscription. When false, Claude is hidden from background-task
+  // model pickers and the service refuses to spawn it.
+  allowClaudeHeadless: boolean;
 }
 
 // Single source of truth for model selection across Settings (background
@@ -147,5 +153,5 @@ export const DEFAULT_SETTINGS: Settings = {
     worktreeOverview: DEFAULT_MODEL_CODEX
   },
   quickLaunch: [],
-  integrations: { autoRefreshMcpUrl: true }
+  integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false }
 };

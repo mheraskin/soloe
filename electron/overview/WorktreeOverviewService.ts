@@ -141,9 +141,9 @@ export class WorktreeOverviewService {
     });
 
     const settings = await this.opts.getSettings();
-    const provider = await pickProvider(settings);
-    console.log('[overview.service] provider picked', provider);
-    if (!provider) {
+    const providerResult = await pickProvider(settings);
+    console.log('[overview.service] provider picked', providerResult);
+    if (!providerResult.selection) {
       return {
         worktreeCwd: cwd,
         status: 'missing',
@@ -153,9 +153,13 @@ export class WorktreeOverviewService {
         watermark: null,
         sources: built.sources,
         facts,
-        errorMessage: 'No Claude or Codex binary configured. Connect one in Settings → Agent integration.'
+        errorMessage:
+          providerResult.reason === 'claude_blocked'
+            ? CLAUDE_HEADLESS_BLOCKED_MESSAGE
+            : 'No Claude or Codex binary configured. Connect one in Settings → Agent integration.'
       };
     }
+    const provider = providerResult.selection;
 
     const fullPrompt = `${built.systemPrompt}\n\n${built.contextText}\n\n${built.instruction}`;
     console.log('[overview.service] spawning agent', { provider: provider.provider, model: provider.id, promptBytes: fullPrompt.length });
@@ -234,11 +238,18 @@ export class WorktreeOverviewService {
     });
 
     const settings = await this.opts.getSettings();
-    const provider = await pickProvider(settings);
-    if (!provider) {
-      yield { type: 'error', error: 'No Claude or Codex binary configured.' };
+    const providerResult = await pickProvider(settings);
+    if (!providerResult.selection) {
+      yield {
+        type: 'error',
+        error:
+          providerResult.reason === 'claude_blocked'
+            ? CLAUDE_HEADLESS_BLOCKED_MESSAGE
+            : 'No Claude or Codex binary configured.'
+      };
       return;
     }
+    const provider = providerResult.selection;
 
     const conversationText = built.conversation
       .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
@@ -468,16 +479,29 @@ function launch(
   });
 }
 
-async function pickProvider(settings: Settings): Promise<ModelSelection | null> {
+export const CLAUDE_HEADLESS_BLOCKED_MESSAGE =
+  'Claude is disabled for Soloe-dispatched tasks. Enable "Allow Claude for Soloe-dispatched tasks" in Settings → Integration, or pick a Codex model.';
+
+type ProviderResult =
+  | { selection: ModelSelection; reason?: never }
+  | { selection: null; reason: 'no_binary' | 'claude_blocked' };
+
+async function pickProvider(settings: Settings): Promise<ProviderResult> {
   // Prefer the dedicated overview slot; fall back to the older textGeneration
   // slot for settings written before worktreeOverview existed.
   const configured = settings.models.worktreeOverview ?? settings.models.textGeneration ?? null;
-  const codexAvailable = Boolean(settings.binaries.codex) || true;
-  const claudeAvailable = Boolean(settings.binaries.claude) || true;
-  if (configured) return configured;
-  if (claudeAvailable) return { provider: 'claude', id: 'sonnet' };
-  if (codexAvailable) return { provider: 'codex', id: 'gpt-5.4' };
-  return null;
+  const claudeAllowed = settings.integrations.allowClaudeHeadless === true;
+  // Honor a saved Claude pick only when the user has opted into headless
+  // Claude usage; otherwise the renderer will have surfaced the disabled
+  // state and the service refuses rather than billing surprise API calls.
+  if (configured) {
+    if (configured.provider === 'claude' && !claudeAllowed) {
+      return { selection: null, reason: 'claude_blocked' };
+    }
+    return { selection: configured };
+  }
+  if (claudeAllowed) return { selection: { provider: 'claude', id: 'sonnet' } };
+  return { selection: { provider: 'codex', id: 'gpt-5.4' } };
 }
 
 function dedupeProviders(arr: OverviewProvider[]): OverviewProvider[] {
