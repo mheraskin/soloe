@@ -93,6 +93,14 @@
     }
   }
 
+  // Bits-ui only fires onOpenChange when *it* drives the close (outside
+  // click, etc.) — not when the bound value flips from script. The X button
+  // and Escape key both close from script, so they have to invoke the same
+  // discard path explicitly or empty new comments would linger.
+  function requestClose(): void {
+    handleOpenChange(false);
+  }
+
   function save(): void {
     const next = draft.trim();
     if (next !== comment.text) {
@@ -219,8 +227,8 @@
 
     if (e.key === 'Escape') {
       e.preventDefault();
-      // Close the popover; onOpenChange discards the draft (no auto-save).
-      open = false;
+      // Discard the draft on Esc, same as the X button.
+      requestClose();
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
@@ -340,7 +348,7 @@
           <button
             type="button"
             class="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-            onclick={() => (open = false)}
+            onclick={requestClose}
             aria-label="Close"
             title="Close"
           >
