@@ -17,7 +17,7 @@
     ChevronsUp,
     ChevronsDown
   } from '@lucide/svelte';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
   import { sessions } from '../../stores/sessions.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
@@ -195,11 +195,19 @@
     };
   }
 
+  // The `layoutTick++` writes here look harmless, but `x++` is `x = x + 1` —
+  // the right side reads `layoutTick`, which subscribes the effect to its
+  // own write and self-loops under Svelte 5 prod-build cycle detection
+  // (dev mode batches it away). Wrap the increments in `untrack` so the
+  // read doesn't take a dependency. ResizeObserver/action callbacks are
+  // already safe because they run outside an effect's tracking scope.
   $effect(() => {
     void stackChanges;
     void workingDiff.wordWrap;
     void workingDiff.viewMode;
-    layoutTick++;
+    untrack(() => {
+      layoutTick++;
+    });
   });
 
   $effect(() => {
