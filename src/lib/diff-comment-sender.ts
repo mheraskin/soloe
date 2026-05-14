@@ -15,6 +15,12 @@ function bracketedPaste(text: string): string {
   return `\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~\r`;
 }
 
+function rangeLabel(comment: DiffComment): string {
+  return comment.endLine === comment.startLine
+    ? `L${comment.startLine}`
+    : `L${comment.startLine}–${comment.endLine}`;
+}
+
 // Build the prompt body delivered to the target. The leading [soloe-comment:<id>]
 // tag is the deterministic handle the agent passes back to the comment_resolve
 // MCP tool — keep it on its own line at the very top so simple summarizers
@@ -22,13 +28,27 @@ function bracketedPaste(text: string): string {
 // close the loop; without it, well-behaved agents can still discover the tool
 // from tools/list, but resolution becomes opportunistic rather than expected.
 function buildPrompt(comment: DiffComment): string {
-  const range =
-    comment.endLine === comment.startLine
-      ? `L${comment.startLine}`
-      : `L${comment.startLine}–${comment.endLine}`;
-  const header = `Re: ${comment.filePath} (${comment.side === 'old' ? 'before' : 'after'} ${range})`;
+  const header = `Re: ${comment.filePath} (${comment.side === 'old' ? 'before' : 'after'} ${rangeLabel(comment)})`;
   const footer = `When you have addressed this, call the soloe MCP tool comment_resolve with id="${comment.id}".`;
   return `[soloe-comment:${comment.id}]\n${header}\n\n${comment.text}\n\n${footer}`;
+}
+
+// Bundle multiple comments into a single delivery. One intro + one footer
+// keeps the agent from re-reading the same "call comment_resolve" instruction
+// N times, and stops the bracketed paste from triggering N submit-press
+// roundtrips in the CLI. The per-comment header still carries the soloe id so
+// resolution stays deterministic.
+function buildBatchPrompt(comments: DiffComment[]): string {
+  if (comments.length === 1) return buildPrompt(comments[0]!);
+  const sections = comments.map((c) => {
+    const sideLabel = c.side === 'old' ? 'before' : 'after';
+    const header = `[soloe-comment:${c.id}] ${c.filePath} (${sideLabel} ${rangeLabel(c)})`;
+    return `${header}\n${c.text}`;
+  });
+  const intro = `${comments.length} review comments to address:`;
+  const footer =
+    'When you finish each one, call the soloe MCP tool comment_resolve with the matching [soloe-comment:<id>] value.';
+  return `${intro}\n\n${sections.join('\n\n')}\n\n${footer}`;
 }
 
 export interface SendCommentResult {
@@ -143,16 +163,81 @@ export async function sendComment(commentId: string): Promise<SendCommentResult>
   return { delivered, errors };
 }
 
-// Send every unsent comment in the worktree's current set, in order. Used by
-// the rail's "Send all" affordance. Returns aggregate counts so the caller
-// can toast a summary.
-export async function sendComments(commentIds: string[]): Promise<SendCommentResult> {
-  let delivered = 0;
+// Resolve the set of target sessions a single comment routes to. With
+// mentions, each resolved agent's session counts. Without mentions, falls
+// back to the currently-selected session (mirrors the "add as context" flow).
+async function resolveSessionTargets(
+  comment: DiffComment
+): Promise<{ sessionIds: string[]; errors: string[] }> {
   const errors: string[] = [];
-  for (const id of commentIds) {
-    const r = await sendComment(id);
-    delivered += r.delivered;
-    errors.push(...r.errors);
+  const sessionIds = new Set<string>();
+  const mentions = parseMentions(comment.text);
+  const hasResolvedMention = mentions.some((n) => commentAgents.byName(comment.cwd, n));
+
+  if (hasResolvedMention) {
+    const { targets, errors: resolveErrors } = await resolveTargets(comment);
+    errors.push(...resolveErrors);
+    for (const { sessionId } of targets) sessionIds.add(sessionId);
+  } else {
+    const selected = sessions.selected;
+    if (!selected) {
+      errors.push('No active session to receive the comment');
+    } else {
+      sessionIds.add(selected.id);
+    }
   }
-  return { delivered, errors };
+
+  return { sessionIds: [...sessionIds], errors };
+}
+
+// Send a set of comments. Each session that receives any comment gets exactly
+// one bracketed-paste containing every comment routed to it, so the underlying
+// CLI sees one user message instead of N. A comment that fans out to several
+// sessions is still counted once in `delivered` (it lands in each session's
+// bundle) and is flagged sent once any session accepted it.
+export async function sendComments(commentIds: string[]): Promise<SendCommentResult> {
+  if (commentIds.length === 1) {
+    return sendComment(commentIds[0]!);
+  }
+
+  const errors: string[] = [];
+  // sessionId -> ordered comments to bundle for that target.
+  const bySession = new Map<string, DiffComment[]>();
+
+  for (const id of commentIds) {
+    const comment = diffComments.byId(id);
+    if (!comment) {
+      errors.push('Comment not found');
+      continue;
+    }
+    if (!comment.text.trim()) {
+      errors.push('Comment is empty');
+      continue;
+    }
+    const { sessionIds, errors: resolveErrors } = await resolveSessionTargets(comment);
+    errors.push(...resolveErrors);
+    for (const sid of sessionIds) {
+      const list = bySession.get(sid) ?? [];
+      list.push(comment);
+      bySession.set(sid, list);
+    }
+  }
+
+  const deliveredIds = new Set<string>();
+  for (const [sessionId, comments] of bySession) {
+    const payload = buildBatchPrompt(comments);
+    try {
+      await deliverToSession(sessionId, payload);
+      for (const c of comments) deliveredIds.add(c.id);
+    } catch (err) {
+      errors.push(`Send to session failed: ${(err as Error).message}`);
+    }
+  }
+
+  const now = Date.now();
+  for (const id of deliveredIds) {
+    diffComments.update(id, { sentAt: now });
+  }
+
+  return { delivered: deliveredIds.size, errors };
 }
