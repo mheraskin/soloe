@@ -37,13 +37,15 @@
   let activeOnChunk: ((text: string) => void) | null = null;
   let activeStreamResolve: ((result: { ok: boolean; error?: string }) => void) | null = null;
 
-  // Transcript files for the agent sessions currently open in this worktree.
-  // The overview is scoped to these — closed/historical sessions don't
-  // contribute even if their .jsonl is still on disk.
-  const openSessionFiles = $derived.by(() =>
+  // Agent sessions currently open in this worktree, paired with the
+  // user-visible tab name. The overview is scoped to these — closed/
+  // historical sessions don't contribute even if their .jsonl is still on
+  // disk — and the tab name lets the generator structure the result
+  // around how the user sees the sessions.
+  const openSessions = $derived.by(() =>
     sessions.sessions
       .filter((s) => s.cwd === cwd && s.launch.type === 'agent' && s.transcriptPath)
-      .map((s) => s.transcriptPath as string)
+      .map((s) => ({ transcriptPath: s.transcriptPath as string, name: s.name }))
   );
 
   const detachChunk = ipc.overview.onChunk(handleChunk);
@@ -94,7 +96,7 @@
       runMode: settings.current.defaults.runMode,
       wslDistro: settings.current.defaults.wslDistro,
       baseBranch,
-      sessionFiles: openSessionFiles
+      sessions: openSessions
     };
     console.log('[overview] get →', req);
     try {
@@ -120,7 +122,7 @@
       runMode: settings.current.defaults.runMode,
       wslDistro: settings.current.defaults.wslDistro,
       baseBranch,
-      sessionFiles: openSessionFiles
+      sessions: openSessions
     };
     console.log('[overview] regenerate →', req);
     try {
@@ -171,7 +173,7 @@
       runMode: settings.current.defaults.runMode,
       wslDistro: settings.current.defaults.wslDistro,
       baseBranch,
-      sessionFiles: openSessionFiles,
+      sessions: openSessions,
       message,
       history
     };

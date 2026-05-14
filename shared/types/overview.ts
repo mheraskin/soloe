@@ -20,6 +20,10 @@ export interface SessionTranscript {
   turns: SessionTranscriptTurn[];
   hasCompaction: boolean;
   watermark: TranscriptWatermark;
+  // User-visible tab name for the corresponding session in the renderer.
+  // Only set when the overview is scoped to open sessions — historical
+  // scans don't have a tab to read a name from.
+  displayName?: string;
 }
 
 export interface TranscriptWatermark {
@@ -35,6 +39,14 @@ export interface WorktreeSessionRef {
   startedAt?: string;
   endedAt?: string;
   watermark: TranscriptWatermark;
+  // Set when the renderer hands us a scoped list with tab names; left
+  // undefined for historical scans where no open tab is associated.
+  displayName?: string;
+}
+
+export interface OverviewSessionInput {
+  transcriptPath: string;
+  name: string;
 }
 
 export interface WorktreeFacts {
@@ -100,11 +112,13 @@ export interface GetOverviewRequest {
   runMode?: RunMode;
   wslDistro?: string;
   baseBranch?: string;
-  // Transcript paths for the sessions currently open in this worktree, as
-  // the renderer sees them (posix in WSL mode, native in Windows mode).
-  // When provided the overview is scoped to just these files instead of
-  // every historical transcript that ever ran in this cwd.
-  sessionFiles?: string[];
+  // The sessions currently open in this worktree, as the renderer sees
+  // them: transcriptPath in renderer form (posix in WSL mode, native in
+  // Windows mode) plus the user-visible tab name. When provided the
+  // overview is scoped to just these files instead of every historical
+  // transcript that ever ran in this cwd; the tab name lets the model
+  // organize the overview around the user's view of the sessions.
+  sessions?: OverviewSessionInput[];
 }
 
 export interface RegenerateOverviewRequest extends GetOverviewRequest {}
@@ -114,7 +128,7 @@ export interface AskFollowUpRequest {
   runMode?: RunMode;
   wslDistro?: string;
   baseBranch?: string;
-  sessionFiles?: string[];
+  sessions?: OverviewSessionInput[];
   message: string;
   history: ChatMessage[];
 }

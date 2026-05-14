@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type {
   OverviewProvider,
+  OverviewSessionInput,
   SessionTranscript,
   SessionTranscriptTurn,
   TranscriptWatermark,
@@ -113,13 +114,17 @@ export class SessionTranscriptReader {
   // against a stale/wrong path slipping through — but unmatched files
   // are silently dropped rather than treated as errors.
   async listScopedSessions(
-    filePaths: string[],
+    inputs: OverviewSessionInput[],
     cwd: string,
     scope?: SessionScope
   ): Promise<WorktreeSessionRef[]> {
-    if (filePaths.length === 0) return [];
-    const refs = await Promise.all(
-      filePaths.map((p) => this.peekScopedFile(p, cwd, scope))
+    if (inputs.length === 0) return [];
+    const refs: Array<WorktreeSessionRef | null> = await Promise.all(
+      inputs.map(async (input): Promise<WorktreeSessionRef | null> => {
+        const ref = await this.peekScopedFile(input.transcriptPath, cwd, scope);
+        if (!ref) return null;
+        return { ...ref, displayName: input.name };
+      })
     );
     return refs
       .filter((r): r is WorktreeSessionRef => r !== null)
@@ -152,10 +157,13 @@ export class SessionTranscriptReader {
   }
 
   async readTranscript(ref: WorktreeSessionRef): Promise<SessionTranscript> {
-    if (ref.provider === 'claude_code') {
-      return readClaudeTranscript(ref.sessionFile);
-    }
-    return readCodexTranscript(ref.sessionFile);
+    const transcript =
+      ref.provider === 'claude_code'
+        ? await readClaudeTranscript(ref.sessionFile)
+        : await readCodexTranscript(ref.sessionFile);
+    return ref.displayName
+      ? { ...transcript, displayName: ref.displayName }
+      : transcript;
   }
 
   private async peekClaudeFile(file: string): Promise<WorktreeSessionRef | null> {

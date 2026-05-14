@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import type {
   ChatMessage,
   OverviewProvider,
+  OverviewSessionInput,
   OverviewWatermark,
   WorktreeOverview
 } from '@shared/types/overview.js';
@@ -42,8 +43,10 @@ export interface GenerateOverviewArgs {
   // When present, scope the overview to just these transcripts (the
   // sessions the renderer has open in this worktree) instead of every
   // historical .jsonl found under .claude/projects + .codex/sessions for
-  // this cwd.
-  sessionFiles?: string[];
+  // this cwd. Each entry carries the user-visible tab name so the
+  // generated overview can be organized around how the user sees the
+  // sessions, not the on-disk filename.
+  sessions?: OverviewSessionInput[];
 }
 
 export interface StreamFollowUpArgs extends GenerateOverviewArgs {
@@ -70,7 +73,7 @@ export class WorktreeOverviewService {
     const cwd = args.worktreeCwd;
     const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.listScopedOrAll(cwd, scope, args.sessionFiles),
+      this.listScopedOrAll(cwd, scope, args.sessions),
       this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     const watermark: OverviewWatermark = {
@@ -126,10 +129,10 @@ export class WorktreeOverviewService {
   }
 
   private async runRegenerate(cwd: string, args: GenerateOverviewArgs): Promise<WorktreeOverview> {
-    console.log('[overview.service] regenerate start', { cwd, runMode: args.runMode, wslDistro: args.wslDistro, baseBranch: args.baseBranch, openSessions: args.sessionFiles?.length ?? null });
+    console.log('[overview.service] regenerate start', { cwd, runMode: args.runMode, wslDistro: args.wslDistro, baseBranch: args.baseBranch, openSessions: args.sessions?.length ?? null });
     const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.listScopedOrAll(cwd, scope, args.sessionFiles),
+      this.listScopedOrAll(cwd, scope, args.sessions),
       this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     console.log('[overview.service] sources collected', { sessionCount: refs.length, headSha: facts.head, branch: facts.branch });
@@ -223,7 +226,7 @@ export class WorktreeOverviewService {
     const cwd = args.worktreeCwd;
     const scope = { runMode: args.runMode, wslDistro: args.wslDistro };
     const [refs, facts] = await Promise.all([
-      this.listScopedOrAll(cwd, scope, args.sessionFiles),
+      this.listScopedOrAll(cwd, scope, args.sessions),
       this.opts.facts.collect(cwd, args.baseBranch, scope)
     ]);
     const transcripts = await Promise.all(refs.map((r) => this.opts.reader.readTranscript(r)));
@@ -275,10 +278,10 @@ export class WorktreeOverviewService {
   private async listScopedOrAll(
     cwd: string,
     scope: { runMode?: RunMode; wslDistro?: string },
-    sessionFiles: string[] | undefined
+    sessions: OverviewSessionInput[] | undefined
   ) {
-    if (sessionFiles) {
-      return this.opts.reader.listScopedSessions(sessionFiles, cwd, scope);
+    if (sessions) {
+      return this.opts.reader.listScopedSessions(sessions, cwd, scope);
     }
     return this.opts.reader.listAllSessions(cwd, scope);
   }
