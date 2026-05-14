@@ -9,9 +9,10 @@
     Send,
     Trash2
   } from '@lucide/svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import type { DiffComment } from '../../stores/diff-comments.svelte';
+  import type { AnchorLineKind, DiffComment } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
   import { reportError, toasts } from '../../stores/toast.svelte';
@@ -67,7 +68,7 @@
   );
 
   let grouped = $derived.by<{ filePath: string; comments: DiffComment[] }[]>(() => {
-    const map = new Map<string, DiffComment[]>();
+    const map = new SvelteMap<string, DiffComment[]>();
     for (const c of visible) {
       const list = map.get(c.filePath) ?? [];
       list.push(c);
@@ -158,6 +159,35 @@
       if (agent) out.push(agent);
     }
     return out;
+  }
+
+  // Per-line kinds for the anchored range. Older comments persisted before
+  // this field was captured fall back to using the comment's `side` as a
+  // proxy — side='old' only ever held remove/context, side='new' add/context,
+  // so default to the change kind since most comments target changes.
+  function anchorKinds(c: DiffComment): AnchorLineKind[] {
+    const length = c.anchor?.text.length ?? 0;
+    if (c.anchor?.kinds) return c.anchor.kinds;
+    const fallback: AnchorLineKind = c.side === 'old' ? 'remove' : 'add';
+    return Array.from({ length }, () => fallback);
+  }
+
+  function lineBg(kind: AnchorLineKind): string {
+    if (kind === 'add') return 'bg-emerald-500/10 dark:bg-emerald-500/12';
+    if (kind === 'remove') return 'bg-rose-500/10 dark:bg-rose-500/12';
+    return '';
+  }
+
+  function linePrefixColor(kind: AnchorLineKind): string {
+    if (kind === 'add') return 'text-emerald-600 dark:text-emerald-400';
+    if (kind === 'remove') return 'text-rose-600 dark:text-rose-400';
+    return 'text-muted-foreground/40';
+  }
+
+  function linePrefixChar(kind: AnchorLineKind): string {
+    if (kind === 'add') return '+';
+    if (kind === 'remove') return '−';
+    return ' ';
   }
 
   let tabs = $derived<Array<{ id: Tab; label: string; count: number }>>([
@@ -256,9 +286,7 @@
               {@const agents = agentsFor(c)}
               {@const sending = sendingById[c.id] === true}
               {@const expanded = expandedById[c.id] === true}
-              {@const hasContext =
-                c.anchor !== undefined
-                && (c.anchor.contextBefore.length > 0 || c.anchor.contextAfter.length > 0)}
+              {@const kinds = anchorKinds(c)}
               <article
                 class="flex flex-col gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5"
               >
@@ -334,43 +362,93 @@
                   </div>
                 </div>
                 {#if c.anchor}
+                  {@const firstKind = kinds[0] ?? 'context'}
+                  {@const firstLine = c.anchor.text[0] ?? ''}
+                  {@const moreCount = c.anchor.text.length - 1}
                   <div
-                    class="overflow-hidden rounded border border-dashed border-border/60 bg-background/40 font-mono text-[10px] leading-snug text-muted-foreground"
+                    class="overflow-hidden rounded border border-dashed border-border/60 bg-background/40 font-mono text-[10px] leading-snug"
                     title={tab === 'outdated'
                       ? 'Original line content at the time the comment was made'
                       : 'Anchored line content'}
                   >
-                    {#if expanded && c.anchor.contextBefore.length > 0}
-                      <pre
-                        class="max-h-24 overflow-auto whitespace-pre-wrap px-2 pt-1 text-muted-foreground/70"
-                      >{c.anchor.contextBefore.join('\n')}</pre>
-                    {/if}
-                    <pre
-                      class="max-h-40 overflow-auto whitespace-pre-wrap px-2 py-1 text-foreground/85"
-                    >{c.anchor.text.join('\n') || '(empty line)'}</pre>
-                    {#if expanded && c.anchor.contextAfter.length > 0}
-                      <pre
-                        class="max-h-24 overflow-auto whitespace-pre-wrap px-2 pb-1 text-muted-foreground/70"
-                      >{c.anchor.contextAfter.join('\n')}</pre>
-                    {/if}
-                    {#if hasContext}
-                      <button
-                        type="button"
-                        class="flex w-full items-center justify-center gap-1 border-t border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                        onclick={() => toggleExpanded(c.id)}
-                        aria-expanded={expanded}
-                        aria-label={expanded ? 'Hide context' : 'Show context'}
-                        title={expanded ? 'Hide context' : 'Show surrounding lines'}
+                    {#if !expanded}
+                      <div
+                        class={[
+                          'flex items-center gap-1 overflow-hidden px-1.5 py-1',
+                          lineBg(firstKind)
+                        ]}
                       >
-                        {#if expanded}
-                          <ChevronDown class="size-3" />
-                          <span>Hide context</span>
-                        {:else}
-                          <ChevronRight class="size-3" />
-                          <span>Show context</span>
+                        <span
+                          class={[
+                            'w-3 shrink-0 select-none text-center',
+                            linePrefixColor(firstKind)
+                          ]}>{linePrefixChar(firstKind)}</span
+                        >
+                        <span class="min-w-0 flex-1 truncate text-foreground/85"
+                          >{firstLine || '(empty line)'}</span
+                        >
+                        {#if moreCount > 0}
+                          <span class="shrink-0 text-muted-foreground/60">+{moreCount}</span>
                         {/if}
-                      </button>
+                      </div>
+                    {:else}
+                      {#if c.anchor.contextBefore.length > 0}
+                        {#each c.anchor.contextBefore as line, i (i)}
+                          <div class="flex gap-1 px-1.5 text-muted-foreground/60">
+                            <span
+                              class="w-3 shrink-0 select-none text-center text-muted-foreground/30"
+                              >&nbsp;</span
+                            >
+                            <span class="min-w-0 flex-1 break-all whitespace-pre-wrap"
+                              >{line || ' '}</span
+                            >
+                          </div>
+                        {/each}
+                      {/if}
+                      {#each c.anchor.text as line, i (i)}
+                        {@const kind = kinds[i] ?? 'context'}
+                        <div class={['flex gap-1 px-1.5 text-foreground/85', lineBg(kind)]}>
+                          <span
+                            class={[
+                              'w-3 shrink-0 select-none text-center',
+                              linePrefixColor(kind)
+                            ]}>{linePrefixChar(kind)}</span
+                          >
+                          <span class="min-w-0 flex-1 break-all whitespace-pre-wrap"
+                            >{line || ' '}</span
+                          >
+                        </div>
+                      {/each}
+                      {#if c.anchor.contextAfter.length > 0}
+                        {#each c.anchor.contextAfter as line, i (i)}
+                          <div class="flex gap-1 px-1.5 text-muted-foreground/60">
+                            <span
+                              class="w-3 shrink-0 select-none text-center text-muted-foreground/30"
+                              >&nbsp;</span
+                            >
+                            <span class="min-w-0 flex-1 break-all whitespace-pre-wrap"
+                              >{line || ' '}</span
+                            >
+                          </div>
+                        {/each}
+                      {/if}
                     {/if}
+                    <button
+                      type="button"
+                      class="flex w-full items-center justify-center gap-1 border-t border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                      onclick={() => toggleExpanded(c.id)}
+                      aria-expanded={expanded}
+                      aria-label={expanded ? 'Collapse' : 'Expand'}
+                      title={expanded ? 'Collapse' : 'Show full content with context'}
+                    >
+                      {#if expanded}
+                        <ChevronDown class="size-3" />
+                        <span>Collapse</span>
+                      {:else}
+                        <ChevronRight class="size-3" />
+                        <span>Expand</span>
+                      {/if}
+                    </button>
                   </div>
                 {/if}
                 <pre

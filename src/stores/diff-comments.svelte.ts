@@ -1,6 +1,7 @@
 import type { FileDiff } from '@shared/types/git.js';
 
 export type DiffSide = 'new' | 'old';
+export type AnchorLineKind = 'context' | 'add' | 'remove';
 
 // Snapshot of the diff lines a comment was anchored to at creation. Mirrors
 // GitHub's diff_hunk + original_position model: when a later edit changes the
@@ -15,6 +16,10 @@ export interface DiffCommentAnchor {
   // Up to ANCHOR_CONTEXT lines immediately following the range. May be empty
   // when the comment sits near the end of a hunk's context window.
   contextAfter: string[];
+  // Per-line kind for the anchored range, in the same order as `text`.
+  // Pre-existing records persisted before this field was introduced may omit
+  // it — UI falls back to inferring from the comment's `side`.
+  kinds?: AnchorLineKind[];
 }
 
 export interface DiffComment {
@@ -52,11 +57,15 @@ function fileKey(cwd: string, filePath: string): string {
 }
 
 // Walk a FileDiff to collect the live (post-change for 'new', pre-change for
-// 'old') line numbers paired with their text. Add/remove lines from the
-// opposite side are skipped — they don't carry a number on the requested side.
-function collectLiveLines(diff: FileDiff, side: DiffSide): Map<number, string> {
+// 'old') line numbers paired with their text + kind. Add/remove lines from
+// the opposite side are skipped — they don't carry a number on the requested
+// side.
+function collectLiveLines(
+  diff: FileDiff,
+  side: DiffSide
+): Map<number, { text: string; kind: AnchorLineKind }> {
   const sideKey: 'oldLine' | 'newLine' = side === 'old' ? 'oldLine' : 'newLine';
-  const out = new Map<number, string>();
+  const out = new Map<number, { text: string; kind: AnchorLineKind }>();
   for (const hunk of diff.hunks) {
     for (const line of hunk.lines) {
       if (line.kind === 'meta') continue;
@@ -64,7 +73,7 @@ function collectLiveLines(diff: FileDiff, side: DiffSide): Map<number, string> {
       if (side === 'old' && line.kind === 'add') continue;
       const num = line[sideKey];
       if (num === null) continue;
-      out.set(num, line.text);
+      out.set(num, { text: line.text, kind: line.kind });
     }
   }
   return out;
@@ -82,24 +91,26 @@ export function buildAnchorFromDiff(
 ): DiffCommentAnchor | null {
   const live = collectLiveLines(diff, side);
   const covered: string[] = [];
+  const kinds: AnchorLineKind[] = [];
   for (let n = startLine; n <= endLine; n++) {
-    const text = live.get(n);
-    if (text === undefined) return null;
-    covered.push(text);
+    const entry = live.get(n);
+    if (entry === undefined) return null;
+    covered.push(entry.text);
+    kinds.push(entry.kind);
   }
   const before: string[] = [];
   for (let n = startLine - 1; n >= startLine - ANCHOR_CONTEXT && n > 0; n--) {
-    const text = live.get(n);
-    if (text === undefined) break;
-    before.unshift(text);
+    const entry = live.get(n);
+    if (entry === undefined) break;
+    before.unshift(entry.text);
   }
   const after: string[] = [];
   for (let n = endLine + 1; n <= endLine + ANCHOR_CONTEXT; n++) {
-    const text = live.get(n);
-    if (text === undefined) break;
-    after.push(text);
+    const entry = live.get(n);
+    if (entry === undefined) break;
+    after.push(entry.text);
   }
-  return { text: covered, contextBefore: before, contextAfter: after };
+  return { text: covered, contextBefore: before, contextAfter: after, kinds };
 }
 
 // A comment is outdated when the live diff carries different text at its
@@ -112,9 +123,9 @@ export function isCommentOutdated(comment: DiffComment, diff: FileDiff | null): 
   const live = collectLiveLines(diff, comment.side);
   for (let i = 0; i < anchor.text.length; i++) {
     const num = comment.startLine + i;
-    const liveText = live.get(num);
-    if (liveText === undefined) continue;
-    if (liveText !== anchor.text[i]) return true;
+    const liveEntry = live.get(num);
+    if (liveEntry === undefined) continue;
+    if (liveEntry.text !== anchor.text[i]) return true;
   }
   return false;
 }
