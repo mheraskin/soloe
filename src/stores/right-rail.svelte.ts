@@ -130,6 +130,13 @@ class RightRailStore {
   toggleTab(tab: RailTabId): void {
     const state = this.current();
     if (state.open && state.activeTab === tab) {
+      // Clicking the active tab in fullscreen drops back to the split
+      // layout so the terminal becomes visible again, instead of closing
+      // the rail outright.
+      if (state.fullscreen) {
+        this.patch({ fullscreen: false });
+        return;
+      }
       this.patch({ open: false, fullscreen: false });
       return;
     }

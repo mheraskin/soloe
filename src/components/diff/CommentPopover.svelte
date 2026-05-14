@@ -14,6 +14,7 @@
   import type { Snippet } from 'svelte';
   import type { DiffComment } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
+  import { rightRail } from '../../stores/right-rail.svelte';
   import {
     commentAgents,
     parseMentions,
@@ -273,6 +274,9 @@
   async function runSend(): Promise<void> {
     if (sending) return;
     sending = true;
+    // Sending hands off to the agent in the terminal — drop fullscreen so
+    // the user lands back on the pane that's about to consume the input.
+    if (rightRail.fullscreen) rightRail.fullscreen = false;
     try {
       // Stage 3 always saves first so the persisted text matches what got
       // delivered. If we're in editing mode, save() also closes the editor.

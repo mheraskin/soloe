@@ -14,6 +14,7 @@
   import type { AnchorLineKind, DiffComment } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
+  import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError, toasts } from '../../stores/toast.svelte';
   import { sendComments } from '../../lib/diff-comment-sender';
   import {
@@ -102,9 +103,16 @@
     expandedById = { ...expandedById, [id]: !expandedById[id] };
   }
 
+  // Drop fullscreen on send so the terminal becomes visible again — the
+  // typical reason to send is to hand off to the agent running in it.
+  function exitFullscreenForHandoff(): void {
+    if (rightRail.fullscreen) rightRail.fullscreen = false;
+  }
+
   async function sendOne(id: string): Promise<void> {
     if (sendingById[id]) return;
     sendingById = { ...sendingById, [id]: true };
+    exitFullscreenForHandoff();
     try {
       const result = await sendComments([id]);
       if (result.delivered > 0) toasts.push('Sent', 'info');
@@ -121,6 +129,7 @@
   async function sendAllUnsent(): Promise<void> {
     if (sendingAll || unsentInActive.length === 0) return;
     sendingAll = true;
+    exitFullscreenForHandoff();
     try {
       const ids = unsentInActive.map((c) => c.id);
       const result = await sendComments(ids);
