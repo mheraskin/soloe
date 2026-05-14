@@ -1,6 +1,5 @@
 <script lang="ts">
   import {
-    ArrowLeft,
     Check,
     ChevronDown,
     ChevronRight,
@@ -51,9 +50,6 @@
     allComments.filter((c) => !c.resolvedAt && diffComments.outdatedIds.has(c.id))
   );
   let resolvedComments = $derived(allComments.filter((c) => c.resolvedAt));
-  // Header total excludes resolved — they live in their own tab but shouldn't
-  // pad the headline count that signals "stuff still needs attention".
-  let unresolvedCount = $derived(allComments.length - resolvedComments.length);
 
   let visible = $derived(
     tab === 'active'
@@ -190,11 +186,15 @@
     return ' ';
   }
 
-  let tabs = $derived<Array<{ id: Tab; label: string; count: number }>>([
-    { id: 'active', label: 'Active', count: activeComments.length },
-    { id: 'outdated', label: 'Outdated', count: outdatedComments.length },
-    { id: 'resolved', label: 'Resolved', count: resolvedComments.length }
-  ]);
+  let tabs = $derived<Array<{ id: Tab; label: string; count: number }>>(
+    (
+      [
+        { id: 'active', label: 'Active', count: activeComments.length },
+        { id: 'outdated', label: 'Outdated', count: outdatedComments.length },
+        { id: 'resolved', label: 'Resolved', count: resolvedComments.length }
+      ] as Array<{ id: Tab; label: string; count: number }>
+    ).filter((t) => t.count > 0 || t.id === tab)
+  );
 
   let emptyMessage = $derived(
     tab === 'active'
@@ -206,23 +206,12 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
-  <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-    <Button variant="ghost" size="xs" onclick={onClose} aria-label="Back to diff" title="Back">
-      <ArrowLeft class="size-3" />
-      <span>Back</span>
-    </Button>
-    <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-      Comments ({unresolvedCount})
-    </span>
-    <span class="w-12"></span>
-  </header>
-
-  <div class="flex shrink-0 border-b border-border">
+  <div class="flex shrink-0 items-stretch gap-1 border-b border-border pr-1">
     {#each tabs as t (t.id)}
       <button
         type="button"
         class={[
-          'flex flex-1 items-center justify-center gap-1 border-b-2 px-2 py-1.5 text-xs transition-colors',
+          'flex items-center gap-1 border-b-2 px-3 py-1 text-xs transition-colors',
           tab === t.id
             ? 'border-foreground text-foreground'
             : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -231,34 +220,28 @@
         aria-pressed={tab === t.id}
       >
         <span>{t.label}</span>
-        <span class="text-muted-foreground/80">({t.count})</span>
+        <span class="text-muted-foreground/80">{t.count}</span>
       </button>
     {/each}
+    {#if tab === 'active' && unsentInActive.length > 0}
+      <div class="ml-auto flex items-center">
+        <Button
+          variant="outline"
+          size="xs"
+          onclick={() => void sendAllUnsent()}
+          disabled={sendingAll}
+          aria-label="Send all unsent comments"
+        >
+          {#if sendingAll}
+            <Loader2 class="size-3 animate-spin" />
+          {:else}
+            <Send class="size-3" />
+          {/if}
+          <span>Send {unsentInActive.length} unsent</span>
+        </Button>
+      </div>
+    {/if}
   </div>
-
-  {#if tab === 'active' && unsentInActive.length > 0}
-    <div
-      class="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5"
-    >
-      <span class="text-[11px] text-muted-foreground">
-        {unsentInActive.length} unsent
-      </span>
-      <Button
-        variant="outline"
-        size="xs"
-        onclick={() => void sendAllUnsent()}
-        disabled={sendingAll}
-        aria-label="Send all unsent comments"
-      >
-        {#if sendingAll}
-          <Loader2 class="size-3 animate-spin" />
-        {:else}
-          <Send class="size-3" />
-        {/if}
-        <span>Send {unsentInActive.length} unsent</span>
-      </Button>
-    </div>
-  {/if}
 
   {#if visible.length === 0}
     <div
@@ -273,7 +256,7 @@
           <section class="flex flex-col gap-1.5">
             <button
               type="button"
-              class="flex items-center gap-1 px-1 text-left text-[10px] font-medium tracking-wider text-muted-foreground uppercase hover:text-foreground"
+              class="sticky top-0 z-10 flex items-center gap-1 border-b border-border/60 bg-background/95 px-1 py-1 text-left text-[10px] font-medium tracking-wider text-muted-foreground uppercase backdrop-blur-sm hover:text-foreground"
               onclick={() => jumpTo(group.filePath)}
               title="Jump to {group.filePath}"
             >
@@ -297,7 +280,7 @@
                     onclick={() => jumpToComment(c)}
                     title="Jump to {c.filePath} {lineLabel(c)}"
                   >
-                    <span class="truncate">{c.filePath}:{lineLabel(c)}</span>
+                    <span class="truncate">{lineLabel(c)}</span>
                     {#if isUnsent}
                       <span
                         class="shrink-0 rounded bg-amber-500/20 px-1 py-0.5 text-[9px] uppercase text-amber-700 dark:text-amber-400"
@@ -365,8 +348,12 @@
                   {@const firstKind = kinds[0] ?? 'context'}
                   {@const firstLine = c.anchor.text[0] ?? ''}
                   {@const moreCount = c.anchor.text.length - 1}
+                  {@const hasMore =
+                    moreCount > 0 ||
+                    c.anchor.contextBefore.length > 0 ||
+                    c.anchor.contextAfter.length > 0}
                   <div
-                    class="overflow-hidden rounded border border-dashed border-border/60 bg-background/40 font-mono text-[10px] leading-snug"
+                    class="relative overflow-hidden rounded border border-dashed border-border/60 bg-background/40 font-mono text-[10px] leading-snug"
                     title={tab === 'outdated'
                       ? 'Original line content at the time the comment was made'
                       : 'Anchored line content'}
@@ -375,6 +362,7 @@
                       <div
                         class={[
                           'flex items-center gap-1 overflow-hidden px-1.5 py-1',
+                          hasMore ? 'pr-6' : '',
                           lineBg(firstKind)
                         ]}
                       >
@@ -433,22 +421,22 @@
                         {/each}
                       {/if}
                     {/if}
-                    <button
-                      type="button"
-                      class="flex w-full items-center justify-center gap-1 border-t border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                      onclick={() => toggleExpanded(c.id)}
-                      aria-expanded={expanded}
-                      aria-label={expanded ? 'Collapse' : 'Expand'}
-                      title={expanded ? 'Collapse' : 'Show full content with context'}
-                    >
-                      {#if expanded}
-                        <ChevronDown class="size-3" />
-                        <span>Collapse</span>
-                      {:else}
-                        <ChevronRight class="size-3" />
-                        <span>Expand</span>
-                      {/if}
-                    </button>
+                    {#if hasMore}
+                      <button
+                        type="button"
+                        class="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded bg-muted/70 text-muted-foreground/80 hover:bg-muted hover:text-foreground"
+                        onclick={() => toggleExpanded(c.id)}
+                        aria-expanded={expanded}
+                        aria-label={expanded ? 'Collapse anchor preview' : 'Expand anchor preview'}
+                        title={expanded ? 'Collapse' : 'Show full content with context'}
+                      >
+                        {#if expanded}
+                          <ChevronDown class="size-3" />
+                        {:else}
+                          <ChevronRight class="size-3" />
+                        {/if}
+                      </button>
+                    {/if}
                   </div>
                 {/if}
                 <pre
