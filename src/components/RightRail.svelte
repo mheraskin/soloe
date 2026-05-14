@@ -42,6 +42,15 @@
   let width = $state(DEFAULT_WIDTH);
   let resizing = $state(false);
 
+  // Keep RailDiffTab in the DOM across worktree switches as long as any
+  // worktree has it active in its persisted state. Switching to a worktree
+  // whose saved rail tab differs just hides the diff tab via CSS instead of
+  // tearing it down — preserves scroll state, search, and any in-flight
+  // diff requests across worktree hops.
+  let diffMounted = $derived(rightRail.diffMountedCwds.length > 0);
+  let diffVisible = $derived(rightRail.open && rightRail.activeTab === 'diff');
+  let nonDiffVisible = $derived(rightRail.open && rightRail.activeTab !== 'diff');
+
   onMount(() => {
     const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY));
     if (Number.isFinite(stored)) width = clampWidth(stored);
@@ -152,12 +161,21 @@
     </nav>
   </Tooltip.Provider>
 
-  {#if rightRail.open}
+  {#if diffMounted}
+    <div
+      class={[
+        'min-w-0 flex-1 flex-col border-r border-border',
+        diffVisible ? 'flex' : 'hidden'
+      ]}
+    >
+      <RailDiffTab />
+    </div>
+  {/if}
+
+  {#if nonDiffVisible}
     <div class="flex min-w-0 flex-1 flex-col border-r border-border">
       {#if rightRail.activeTab === 'notes'}
         <RailNotesTab />
-      {:else if rightRail.activeTab === 'diff'}
-        <RailDiffTab />
       {:else}
         <ScrollArea class="min-h-0 flex-1">
           {#if rightRail.activeTab === 'inspector'}
@@ -166,15 +184,16 @@
         </ScrollArea>
       {/if}
     </div>
-    {#if !fullscreen}
-      <button
-        type="button"
-        class={`absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
-        aria-label="Resize rail"
-        onpointerdown={startResize}
-      >
-        <span class="absolute bottom-1 left-1 block size-2 border-b border-l border-muted-foreground/60"></span>
-      </button>
-    {/if}
+  {/if}
+
+  {#if rightRail.open && !fullscreen}
+    <button
+      type="button"
+      class={`absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
+      aria-label="Resize rail"
+      onpointerdown={startResize}
+    >
+      <span class="absolute bottom-1 left-1 block size-2 border-b border-l border-muted-foreground/60"></span>
+    </button>
   {/if}
 </aside>

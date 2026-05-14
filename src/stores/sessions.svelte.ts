@@ -625,10 +625,16 @@ class SessionsStore {
   select(id: SessionId | null): void {
     const prevId = this.selectedId;
     this.selectedId = id;
-    // Switching to a different session pulls focus back to the terminal,
-    // so collapse a fullscreen rail. Toggling the same session off shouldn't.
+    // Same-worktree session swaps should still reveal the terminal — the rail
+    // covers it when fullscreen and the user is moving to a different process
+    // they want to see. Cross-worktree swaps leave fullscreen alone so each
+    // worktree's saved rail state is honoured.
     if (id && id !== prevId) {
-      rightRail.fullscreen = false;
+      const prev = prevId ? this.sessions.find((s) => s.id === prevId) : null;
+      const next = this.sessions.find((s) => s.id === id);
+      if (prev && next && prev.cwd && prev.cwd === next.cwd) {
+        rightRail.fullscreen = false;
+      }
     }
     if (id) {
       agentNotifications.markSessionOpened(id);

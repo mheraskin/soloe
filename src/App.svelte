@@ -99,6 +99,13 @@
   // whichever tab is active (diff, notes, inspector).
   let railFullscreen = $derived(rightRail.open && rightRail.fullscreen);
 
+  // Keep the rail store's notion of the active worktree in sync with the
+  // selected session, so its per-worktree open/fullscreen/tab state can be
+  // recalled when bouncing between worktrees.
+  $effect(() => {
+    rightRail.setActiveCwd(sessions.selected?.cwd ?? null);
+  });
+
   // Poll git status/diff for every worktree of every known project at the
   // slow tier so sessionless worktrees still get a +N −N indicator. Sessions
   // bump matching worktrees to the fast tier via the next effect.

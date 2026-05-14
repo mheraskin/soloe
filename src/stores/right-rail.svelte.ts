@@ -1,35 +1,148 @@
 export type RailTabId = 'inspector' | 'notes' | 'diff';
 
-class RightRailStore {
-  activeTab = $state<RailTabId>('inspector');
-  open = $state(false);
+interface RailState {
+  activeTab: RailTabId;
+  open: boolean;
   // When true, the active rail tab stretches across the main area and
   // covers the terminal. Applies to whichever tab is active, not just diff.
-  fullscreen = $state(false);
+  fullscreen: boolean;
+}
+
+const DEFAULT_STATE: RailState = {
+  activeTab: 'inspector',
+  open: false,
+  fullscreen: false
+};
+
+// Bucket used when no worktree is active (e.g. no session selected). Lets the
+// rail still behave like a single global state in that edge case.
+const NO_WORKTREE_KEY = '__none__';
+const STORAGE_KEY = 'soloe.rightRail.v1';
+
+function sanitize(value: Partial<RailState> | undefined): RailState {
+  const tab: RailTabId =
+    value?.activeTab === 'notes' || value?.activeTab === 'diff' ? value.activeTab : 'inspector';
+  return {
+    activeTab: tab,
+    open: typeof value?.open === 'boolean' ? value.open : false,
+    fullscreen: typeof value?.fullscreen === 'boolean' ? value.fullscreen : false
+  };
+}
+
+class RightRailStore {
+  // The store keys all of its visible state by worktree cwd. A consumer in
+  // App.svelte feeds the active cwd in as `sessions.selected` changes, so we
+  // don't have to import the sessions store from here (would be a cycle).
+  private activeCwd = $state<string | null>(null);
+  private stateByCwd = $state<Record<string, RailState>>({});
+
+  constructor() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, Partial<RailState>>;
+      const next: Record<string, RailState> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        next[key] = sanitize(value);
+      }
+      this.stateByCwd = next;
+    } catch {
+      // Corrupt entry — start fresh; not worth surfacing to the user.
+    }
+  }
+
+  setActiveCwd(cwd: string | null | undefined): void {
+    const next = cwd && cwd.trim().length > 0 ? cwd.trim() : null;
+    if (next === this.activeCwd) return;
+    this.activeCwd = next;
+  }
+
+  private currentKey(): string {
+    return this.activeCwd ?? NO_WORKTREE_KEY;
+  }
+
+  private current(): RailState {
+    return this.stateByCwd[this.currentKey()] ?? DEFAULT_STATE;
+  }
+
+  private patch(next: Partial<RailState>): void {
+    const key = this.currentKey();
+    const prev = this.stateByCwd[key] ?? DEFAULT_STATE;
+    this.stateByCwd[key] = { ...prev, ...next };
+    this.persist();
+  }
+
+  private persist(): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.stateByCwd));
+    } catch {
+      // Quota or serialization error — ignore.
+    }
+  }
+
+  get activeTab(): RailTabId {
+    return this.current().activeTab;
+  }
+
+  get open(): boolean {
+    return this.current().open;
+  }
+  set open(value: boolean) {
+    // Closing the rail also clears fullscreen so reopening from a tab icon
+    // doesn't snap straight back into the terminal-hiding mode.
+    if (value) {
+      this.patch({ open: true });
+    } else {
+      this.patch({ open: false, fullscreen: false });
+    }
+  }
+
+  get fullscreen(): boolean {
+    return this.current().fullscreen;
+  }
+  set fullscreen(value: boolean) {
+    if (value) {
+      this.patch({ fullscreen: true, open: true });
+    } else {
+      this.patch({ fullscreen: false });
+    }
+  }
+
+  // Worktrees where the diff tab is the persisted active tab and the rail is
+  // open. Used to keep RailDiffTab mounted for those worktrees across
+  // worktree switches, so the diff body doesn't tear down and rebuild when
+  // jumping back and forth.
+  get diffMountedCwds(): string[] {
+    const out: string[] = [];
+    for (const [key, value] of Object.entries(this.stateByCwd)) {
+      if (key === NO_WORKTREE_KEY) continue;
+      if (value.open && value.activeTab === 'diff') out.push(key);
+    }
+    return out;
+  }
 
   openTab(tab: RailTabId): void {
-    this.activeTab = tab;
-    this.open = true;
+    this.patch({ activeTab: tab, open: true });
   }
 
   toggleTab(tab: RailTabId): void {
-    if (this.open && this.activeTab === tab) {
-      this.open = false;
-      this.fullscreen = false;
+    const state = this.current();
+    if (state.open && state.activeTab === tab) {
+      this.patch({ open: false, fullscreen: false });
       return;
     }
-    this.activeTab = tab;
-    this.open = true;
+    this.patch({ activeTab: tab, open: true });
   }
 
   close(): void {
-    this.open = false;
-    this.fullscreen = false;
+    this.patch({ open: false, fullscreen: false });
   }
 
   toggleFullscreen(): void {
-    if (!this.open) this.open = true;
-    this.fullscreen = !this.fullscreen;
+    const state = this.current();
+    this.patch({ fullscreen: !state.fullscreen, open: true });
   }
 }
 
