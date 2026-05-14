@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { DiffHunk, DiffLine, FileDiff } from '@shared/types/git.js';
   import type { DiffComment, DiffSide } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
@@ -351,21 +352,26 @@
     return false;
   }
 
+  // Smooth-scroll into view when a comment-jump arrives. Read everything but
+  // `highlightHint`/`viewport` via `untrack` — the scroll triggers measureRow
+  // writes, which would otherwise re-derive `offsets`/`rows` and re-fire this
+  // effect, looping until Svelte hit its update-depth limit.
   $effect(() => {
     const h = highlightHint;
-    if (!h) return;
     const v = viewport;
-    if (!v) return;
-    let idx = -1;
-    for (let i = 0; i < rows.length; i++) {
-      if (rowMatchesHighlight(rows[i]!)) {
-        idx = i;
-        break;
+    if (!h || !v) return;
+    untrack(() => {
+      let idx = -1;
+      for (let i = 0; i < rows.length; i++) {
+        if (rowMatchesHighlight(rows[i]!)) {
+          idx = i;
+          break;
+        }
       }
-    }
-    if (idx < 0) return;
-    const target = (offsets[idx] ?? 0) - Math.max(40, viewportHeight / 3);
-    v.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+      if (idx < 0) return;
+      const target = (offsets[idx] ?? 0) - Math.max(40, viewportHeight / 3);
+      v.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+    });
   });
 
   // Drop measured heights when the diff body, mode, wrap, or font size
