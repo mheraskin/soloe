@@ -2,6 +2,8 @@
   import {
     ArrowLeft,
     Check,
+    ChevronDown,
+    ChevronRight,
     Loader2,
     RotateCcw,
     Send,
@@ -35,6 +37,10 @@
   // pick up the change — Svelte 5 doesn't track mutation of plain Records.
   let sendingById = $state<Record<string, boolean>>({});
   let sendingAll = $state(false);
+  // Per-id "show full anchor context" flags. The collapsed preview shows the
+  // anchored lines only; expanding adds the surrounding contextBefore /
+  // contextAfter so reviewers don't need to jump to the diff to read context.
+  let expandedById = $state<Record<string, boolean>>({});
 
   let allComments = $derived(diffComments.forWorktree(cwd));
   let activeComments = $derived(
@@ -44,6 +50,9 @@
     allComments.filter((c) => !c.resolvedAt && diffComments.outdatedIds.has(c.id))
   );
   let resolvedComments = $derived(allComments.filter((c) => c.resolvedAt));
+  // Header total excludes resolved — they live in their own tab but shouldn't
+  // pad the headline count that signals "stuff still needs attention".
+  let unresolvedCount = $derived(allComments.length - resolvedComments.length);
 
   let visible = $derived(
     tab === 'active'
@@ -81,6 +90,19 @@
   function jumpTo(filePath: string): void {
     workingDiff.setSelected(cwd, filePath);
     onClose();
+  }
+
+  // Jump to a comment's exact anchor. Selects the file (if different),
+  // fires the highlight hint the diff viewer picks up to scroll into view
+  // and flash the lines, then closes the panel so the diff is visible.
+  function jumpToComment(c: DiffComment): void {
+    workingDiff.setSelected(cwd, c.filePath);
+    diffComments.highlightLines(c.cwd, c.filePath, c.side, c.startLine, c.endLine);
+    onClose();
+  }
+
+  function toggleExpanded(id: string): void {
+    expandedById = { ...expandedById, [id]: !expandedById[id] };
   }
 
   async function sendOne(id: string): Promise<void> {
@@ -160,7 +182,7 @@
       <span>Back</span>
     </Button>
     <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-      Comments ({allComments.length})
+      Comments ({unresolvedCount})
     </span>
     <span class="w-12"></span>
   </header>
@@ -233,6 +255,10 @@
                 !c.sentAt && c.text.trim().length > 0 && !c.resolvedAt}
               {@const agents = agentsFor(c)}
               {@const sending = sendingById[c.id] === true}
+              {@const expanded = expandedById[c.id] === true}
+              {@const hasContext =
+                c.anchor !== undefined
+                && (c.anchor.contextBefore.length > 0 || c.anchor.contextAfter.length > 0)}
               <article
                 class="flex flex-col gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5"
               >
@@ -240,7 +266,7 @@
                   <button
                     type="button"
                     class="flex min-w-0 items-center gap-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
-                    onclick={() => jumpTo(c.filePath)}
+                    onclick={() => jumpToComment(c)}
                     title="Jump to {c.filePath} {lineLabel(c)}"
                   >
                     <span class="truncate">{c.filePath}:{lineLabel(c)}</span>
@@ -307,10 +333,45 @@
                     </Button>
                   </div>
                 </div>
-                {#if tab === 'outdated' && c.anchor}
-                  <pre
-                    class="max-h-32 overflow-auto rounded border border-dashed border-border/60 bg-background/40 px-2 py-1 font-mono text-[10px] leading-snug text-muted-foreground"
-                    title="Original line content at the time the comment was made">{c.anchor.text.join('\n') || '(empty line)'}</pre>
+                {#if c.anchor}
+                  <div
+                    class="overflow-hidden rounded border border-dashed border-border/60 bg-background/40 font-mono text-[10px] leading-snug text-muted-foreground"
+                    title={tab === 'outdated'
+                      ? 'Original line content at the time the comment was made'
+                      : 'Anchored line content'}
+                  >
+                    {#if expanded && c.anchor.contextBefore.length > 0}
+                      <pre
+                        class="max-h-24 overflow-auto whitespace-pre-wrap px-2 pt-1 text-muted-foreground/70"
+                      >{c.anchor.contextBefore.join('\n')}</pre>
+                    {/if}
+                    <pre
+                      class="max-h-40 overflow-auto whitespace-pre-wrap px-2 py-1 text-foreground/85"
+                    >{c.anchor.text.join('\n') || '(empty line)'}</pre>
+                    {#if expanded && c.anchor.contextAfter.length > 0}
+                      <pre
+                        class="max-h-24 overflow-auto whitespace-pre-wrap px-2 pb-1 text-muted-foreground/70"
+                      >{c.anchor.contextAfter.join('\n')}</pre>
+                    {/if}
+                    {#if hasContext}
+                      <button
+                        type="button"
+                        class="flex w-full items-center justify-center gap-1 border-t border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        onclick={() => toggleExpanded(c.id)}
+                        aria-expanded={expanded}
+                        aria-label={expanded ? 'Hide context' : 'Show context'}
+                        title={expanded ? 'Hide context' : 'Show surrounding lines'}
+                      >
+                        {#if expanded}
+                          <ChevronDown class="size-3" />
+                          <span>Hide context</span>
+                        {:else}
+                          <ChevronRight class="size-3" />
+                          <span>Show context</span>
+                        {/if}
+                      </button>
+                    {/if}
+                  </div>
                 {/if}
                 <pre
                   class="max-h-32 overflow-auto whitespace-pre-wrap font-mono text-xs leading-snug text-foreground/90"

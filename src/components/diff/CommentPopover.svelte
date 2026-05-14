@@ -59,19 +59,25 @@
   });
 
   // When editing flips on (e.g. from a fresh selection or an Edit click in
-  // view mode), force the popover open, prime the textarea draft, and focus
-  // it so the user can type immediately. For an existing comment the
-  // content is selected so a keystroke replaces it.
+  // view mode), force the popover open and prime the textarea draft.
   $effect(() => {
     if (editing) {
       open = true;
       draft = comment.text;
-      queueMicrotask(() => {
-        textareaEl?.focus();
-        if (comment.text.length > 0) textareaEl?.select();
-        syncCursor();
-      });
     }
+  });
+
+  // Focus the textarea once it actually exists in the DOM. The popover is
+  // rendered through a portal so the element binds *after* editing flips on;
+  // depending on textareaEl in a separate effect picks up the late mount.
+  // Also pre-empts bits-ui's default auto-focus, which would otherwise land
+  // on the first focusable child (the close button) before this runs.
+  $effect(() => {
+    if (!editing) return;
+    if (!textareaEl) return;
+    textareaEl.focus();
+    if (textareaEl.value.length > 0) textareaEl.select();
+    syncCursor();
   });
 
   function handleOpenChange(next: boolean): void {
@@ -287,56 +293,62 @@
       {@render trigger({ props })}
     {/snippet}
   </Popover.Trigger>
-  <Popover.Content side="right" align="start" class="w-80 p-0">
-    <header class="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/30 px-2 py-0.5">
-      <div class="flex min-w-0 items-center gap-1.5">
-        <span class="font-mono text-[10px] font-medium text-muted-foreground">{lineLabel}</span>
-        {#if !editing && comment.sentAt}
-          <span
-            class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400"
-            title={`Sent ${new Date(comment.sentAt).toLocaleString()}`}
-          >
-            <CheckCircle2 class="size-2.5" /> sent
-          </span>
-        {/if}
-        {#if !editing && comment.resolvedAt}
-          <span
-            class="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-muted-foreground uppercase"
-            title={`Resolved ${new Date(comment.resolvedAt).toLocaleString()}`}
-          >
-            <CircleCheck class="size-2.5" /> resolved
-          </span>
-        {/if}
-      </div>
-      <div class="flex items-center">
-        {#if !editing}
+  <Popover.Content
+    side="top"
+    align="start"
+    sideOffset={6}
+    class="w-80 p-0"
+    onOpenAutoFocus={(e) => e.preventDefault()}
+  >
+    <div class="px-2 pt-1 pb-1.5">
+      <div class="mb-1 flex items-center justify-between gap-1.5">
+        <div class="flex min-w-0 items-center gap-1.5">
+          <span class="font-mono text-[10px] font-medium text-muted-foreground">{lineLabel}</span>
+          {#if !editing && comment.sentAt}
+            <span
+              class="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400"
+              title={`Sent ${new Date(comment.sentAt).toLocaleString()}`}
+            >
+              <CheckCircle2 class="size-2.5" /> sent
+            </span>
+          {/if}
+          {#if !editing && comment.resolvedAt}
+            <span
+              class="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-muted-foreground uppercase"
+              title={`Resolved ${new Date(comment.resolvedAt).toLocaleString()}`}
+            >
+              <CircleCheck class="size-2.5" /> resolved
+            </span>
+          {/if}
+        </div>
+        <div class="flex shrink-0 items-center gap-0.5">
+          {#if !editing}
+            <button
+              type="button"
+              class="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              onclick={toggleResolve}
+              aria-label={comment.resolvedAt ? 'Reopen comment' : 'Resolve comment'}
+              title={comment.resolvedAt ? 'Reopen' : 'Resolve'}
+            >
+              {#if comment.resolvedAt}
+                <CircleDot class="size-3" />
+              {:else}
+                <CircleCheck class="size-3" />
+              {/if}
+            </button>
+          {/if}
           <button
             type="button"
             class="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-            onclick={toggleResolve}
-            aria-label={comment.resolvedAt ? 'Reopen comment' : 'Resolve comment'}
-            title={comment.resolvedAt ? 'Reopen' : 'Resolve'}
+            onclick={() => (open = false)}
+            aria-label="Close"
+            title="Close"
           >
-            {#if comment.resolvedAt}
-              <CircleDot class="size-3" />
-            {:else}
-              <CircleCheck class="size-3" />
-            {/if}
+            <X class="size-3" />
           </button>
-        {/if}
-        <button
-          type="button"
-          class="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-          onclick={() => (open = false)}
-          aria-label="Close"
-          title="Close"
-        >
-          <X class="size-3" />
-        </button>
+        </div>
       </div>
-    </header>
 
-    <div class="px-2 py-1.5">
       {#if editing}
         <div class="relative">
           <textarea

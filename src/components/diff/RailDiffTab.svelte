@@ -177,8 +177,12 @@
 
   // The single Comments rail consolidates Active/Outdated/Resolved tabs and
   // owns the per-comment Send affordances; this tab just toggles it open.
+  // The toggle's count reflects unresolved threads only — resolved ones are
+  // still reachable inside the panel but stay out of the headline number.
   let totalCommentCount = $derived(
-    activeCwd ? diffComments.forWorktree(activeCwd).length : 0
+    activeCwd
+      ? diffComments.forWorktree(activeCwd).filter((c) => !c.resolvedAt).length
+      : 0
   );
   let showComments = $state(false);
 

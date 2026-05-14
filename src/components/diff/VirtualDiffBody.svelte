@@ -316,6 +316,58 @@
     };
   });
 
+  // Flash-on-jump support: when the comments rail surfaces a highlight hint
+  // targeting this file, scroll the first matching row into view and apply
+  // a one-shot pulse class to every row inside the range. The store clears
+  // the hint after ~1.6s so the class falls off automatically.
+  let highlightHint = $derived.by(() => {
+    const h = diffComments.highlight;
+    if (!h || h.cwd !== cwd || h.filePath !== filePath) return null;
+    return h;
+  });
+
+  function lineMatchesHighlight(side: DiffSide, line: number | null): boolean {
+    if (line === null) return false;
+    const h = highlightHint;
+    if (!h || h.side !== side) return false;
+    return line >= h.startLine && line <= h.endLine;
+  }
+
+  function rowMatchesHighlight(row: Row): boolean {
+    const h = highlightHint;
+    if (!h) return false;
+    if (row.kind === 'line') {
+      const ln = h.side === 'old' ? row.line.oldLine : row.line.newLine;
+      return ln !== null && ln >= h.startLine && ln <= h.endLine;
+    }
+    if (row.kind === 'pair') {
+      const ln = h.side === 'old' ? row.old : row.new;
+      return ln !== null && ln >= h.startLine && ln <= h.endLine;
+    }
+    if (row.kind === 'gap-line') {
+      const ln = h.side === 'old' ? row.oldLine : row.newLine;
+      return ln >= h.startLine && ln <= h.endLine;
+    }
+    return false;
+  }
+
+  $effect(() => {
+    const h = highlightHint;
+    if (!h) return;
+    const v = viewport;
+    if (!v) return;
+    let idx = -1;
+    for (let i = 0; i < rows.length; i++) {
+      if (rowMatchesHighlight(rows[i]!)) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) return;
+    const target = (offsets[idx] ?? 0) - Math.max(40, viewportHeight / 3);
+    v.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  });
+
   // Drop measured heights when the diff body, mode, wrap, or font size
   // changes — the previous measurements no longer correspond to the rows
   // we'll render.
@@ -725,13 +777,15 @@
         {@const newContinuing = commentsContinuingAt('new', line.newLine)}
         {@const anchorSide = line.kind === 'remove' ? 'old' : 'new'}
         {@const anchorLine = anchorSide === 'old' ? line.oldLine : line.newLine}
+        {@const flashing = rowMatchesHighlight(item.row)}
         <div
           style={bodyStyle}
           class={[
             'group/diffrow flex min-h-[1.45em] gap-0 font-mono leading-[1.55]',
             line.kind === 'add' && 'bg-emerald-500/10 dark:bg-emerald-500/12',
             line.kind === 'remove' && 'bg-rose-500/10 dark:bg-rose-500/12',
-            line.kind === 'meta' && 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+            line.kind === 'meta' && 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+            flashing && 'diff-comment-flash'
           ]}
         >
           <span
@@ -786,7 +840,14 @@
         {@const newContinuing = commentsContinuingAt('new', row.new)}
         {@const oldAnchorSide = row.isContext ? 'new' : 'old'}
         {@const oldAnchorLine = row.isContext ? row.new : row.old}
-        <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono leading-[1.55]" style={bodyStyle}>
+        {@const flashing = rowMatchesHighlight(item.row)}
+        <div
+          class={[
+            'group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono leading-[1.55]',
+            flashing && 'diff-comment-flash'
+          ]}
+          style={bodyStyle}
+        >
           <div
             class={[
               'flex min-h-[1.45em] bg-background',
@@ -982,11 +1043,13 @@
       <span class="font-mono">
         {hoverPreview.side === 'old' ? 'before' : 'after'} L{hoverPreview.line}
       </span>
-      <span>
-        {hoverPreview.comments.length} comment{hoverPreview.comments.length === 1 ? '' : 's'}
-      </span>
+      {#if hoverPreview.comments.length > 1}
+        <span>
+          {hoverPreview.comments.length} comments
+        </span>
+      {/if}
     </div>
-    <ul class="flex max-h-72 flex-col gap-2 overflow-auto p-2">
+    <ul class="flex max-h-72 flex-col gap-2 overflow-auto overscroll-contain p-2">
       {#each hoverPreview.comments as c (c.id)}
         {@const agents = hoverAgentsFor(c)}
         <li class="flex flex-col gap-1 border-l-2 border-amber-500/60 pl-2">
@@ -1029,7 +1092,9 @@
               </Button>
             </div>
           </div>
-          <div class="line-clamp-3 font-mono text-[11px] leading-snug whitespace-pre-wrap break-words">
+          <div
+            class="max-h-32 overflow-y-auto overscroll-contain font-mono text-[11px] leading-snug whitespace-pre-wrap break-words"
+          >
             {c.text || '(empty)'}
           </div>
           {#if agents.length > 0}

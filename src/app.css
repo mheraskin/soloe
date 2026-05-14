@@ -395,3 +395,16 @@
   text-align: left;
 }
 .md-prose th { background: color-mix(in oklch, var(--muted) 30%, transparent); }
+
+/* One-shot pulse applied to a diff row when the user jumps from the
+   comments rail to its anchored line. Fades to transparent so whatever the
+   row's natural background is (rose/emerald/etc.) takes over once the
+   animation completes. */
+@keyframes diff-comment-flash {
+  0% { background-color: oklch(0.85 0.18 75 / 0.55); }
+  60% { background-color: oklch(0.85 0.18 75 / 0.35); }
+  100% { background-color: transparent; }
+}
+.diff-comment-flash {
+  animation: diff-comment-flash 1.5s ease-out;
+}

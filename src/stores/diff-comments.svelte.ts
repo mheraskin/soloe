@@ -137,6 +137,23 @@ function loadFromStorage(): Record<string, DiffComment[]> {
   return {};
 }
 
+// Transient "flash this range" hint fired when the user jumps from the
+// comments rail to the diff viewer. The viewer scrolls to the range and
+// applies a fading background so the user can see which lines the comment
+// is anchored to. Cleared automatically after a short interval.
+export interface DiffCommentHighlight {
+  cwd: string;
+  filePath: string;
+  side: DiffSide;
+  startLine: number;
+  endLine: number;
+  // Monotonic nonce — bumping it forces consumers to re-trigger even when
+  // the user clicks the same comment twice in a row.
+  nonce: number;
+}
+
+const HIGHLIGHT_DURATION_MS = 1600;
+
 class DiffCommentsStore {
   byKey = $state<Record<string, DiffComment[]>>(loadFromStorage());
   selection = $state<DiffSelection | null>(null);
@@ -148,6 +165,9 @@ class DiffCommentsStore {
   // are filtered out of activeForFile (no gutter markers) and surfaced in the
   // rail's Outdated panel instead.
   outdatedIds = $state<Set<string>>(new Set());
+  // Pending "flash this range" hint. The diff viewer picks it up via $effect.
+  highlight = $state<DiffCommentHighlight | null>(null);
+  private highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
   forFile(cwd: string, filePath: string): DiffComment[] {
     return this.byKey[fileKey(cwd, filePath)] ?? [];
@@ -196,6 +216,12 @@ class DiffCommentsStore {
   }
 
   startSelection(cwd: string, filePath: string, side: DiffSide, line: number): void {
+    // Discard any open draft that never got text typed into it. Without this,
+    // clicking from one gutter row to another would leave behind a phantom
+    // empty comment — the prior popover's outside-click handler can't clean
+    // up because we're about to null out editingId, and its "remove on close"
+    // guard reads editing as already-false by the time it fires.
+    this.discardEmptyDraft();
     this.selection = {
       cwd,
       filePath,
@@ -206,6 +232,14 @@ class DiffCommentsStore {
       dragging: true
     };
     this.editingId = null;
+  }
+
+  private discardEmptyDraft(): void {
+    const id = this.editingId;
+    if (!id) return;
+    const draft = this.byId(id);
+    if (!draft) return;
+    if (draft.text.trim().length === 0) this.remove(id);
   }
 
   extendSelection(side: DiffSide, line: number): void {
@@ -312,6 +346,38 @@ class DiffCommentsStore {
       if (found) return found;
     }
     return null;
+  }
+
+  // Surface a transient highlight hint that the diff viewer translates into
+  // a scroll-into-view + fade flash. Bumps a nonce so clicking the same
+  // comment twice still re-triggers the flash; the auto-clear timer keeps
+  // the highlight from sticking around.
+  highlightLines(
+    cwd: string,
+    filePath: string,
+    side: DiffSide,
+    startLine: number,
+    endLine: number
+  ): void {
+    if (this.highlightTimer) {
+      clearTimeout(this.highlightTimer);
+      this.highlightTimer = null;
+    }
+    const next: DiffCommentHighlight = {
+      cwd,
+      filePath,
+      side,
+      startLine,
+      endLine,
+      nonce: Date.now()
+    };
+    this.highlight = next;
+    this.highlightTimer = setTimeout(() => {
+      if (this.highlight && this.highlight.nonce === next.nonce) {
+        this.highlight = null;
+      }
+      this.highlightTimer = null;
+    }, HIGHLIGHT_DURATION_MS);
   }
 
   // Reconcile the outdated set for a single file against its current diff.
