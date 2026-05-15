@@ -48,7 +48,6 @@
   let fit: FitAddon | null = null;
   let search: SearchAddon | null = null;
   let renderer: WebglAddon | CanvasAddon | null = null;
-  let pendingOutput = '';
   // Hide the loading overlay only once output has actually settled — the first
   // byte alone is too early (shells stream a banner before the prompt; agents
   // paint a TUI in stages). We wait for a quiet window after first output, with
@@ -179,22 +178,17 @@
     t.paste(text);
   }
 
-  function canRender(): boolean {
-    if (!active || !host) return false;
-    const rect = host.getBoundingClientRect();
-    return rect.width >= 4 && rect.height >= 4;
-  }
-
+  // Always write straight to xterm; the renderer is a separate concern and
+  // is harmlessly a no-op when the canvas is offscreen or 0×0. Buffering
+  // output ourselves used to create a stale-frame class of bugs when the
+  // host was hidden via display:none (rail fullscreen) without `active`
+  // flipping, because nothing flushed the backlog on un-hide.
   function writeOutput(data: string): void {
-    if (!term || !canRender()) {
-      pendingOutput += data;
-      return;
-    }
+    if (!term) return;
     try {
       term.write(data);
       noteOutput(data.length);
     } catch (err) {
-      pendingOutput = data + pendingOutput;
       console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
     }
   }
@@ -457,16 +451,8 @@
       fit = null;
       search = null;
       renderer = null;
-      pendingOutput = '';
       clearReadyTimers();
     };
-  });
-
-  $effect(() => {
-    if (!active || !term || !pendingOutput || !canRender()) return;
-    const data = pendingOutput;
-    pendingOutput = '';
-    writeOutput(data);
   });
 
   $effect(() => {
