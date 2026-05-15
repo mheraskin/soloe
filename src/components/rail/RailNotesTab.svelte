@@ -8,7 +8,9 @@
     Trash2,
     PencilLine,
     ArrowLeftToLine,
-    TextSelect
+    TextSelect,
+    Send,
+    Eraser
   } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
   import { projects } from '../../stores/projects.svelte';
@@ -102,10 +104,11 @@
     const ctrlOrCmd = event.metaKey || event.ctrlKey;
     if (ctrlOrCmd && !event.altKey && event.key === 'Enter') {
       event.preventDefault();
+      // ⌘⏎ submits (paste + CR like comments do); ⌘⇧⏎ stays as paste-only.
       if (event.shiftKey) {
-        void sendAll();
-      } else {
         void sendSelectionOrAll();
+      } else {
+        void sendSelectionOrAllAndSubmit();
       }
       return;
     }
@@ -133,12 +136,16 @@
     hasSelection = readSelection().length > 0;
   }
 
-  async function sendText(text: string): Promise<void> {
+  // submit=true mirrors the comments path: bracketed paste + CR so the agent
+  // sees one user message and presses enter. Without it, the text lands in
+  // the prompt area for the user to edit / submit themselves.
+  async function sendText(text: string, submit: boolean): Promise<void> {
     if (!text) return;
     const id = activeTerminalId;
     if (!id) return;
     try {
-      await ipc.terminal.input(id, PASTE_START + text + PASTE_END);
+      const suffix = submit ? '\r' : '';
+      await ipc.terminal.input(id, PASTE_START + text + PASTE_END + suffix);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
     } catch (err) {
       reportError(err);
@@ -146,16 +153,29 @@
   }
 
   async function sendAll(): Promise<void> {
-    await sendText(editorValue);
+    await sendText(editorValue, false);
   }
 
   async function sendSelection(): Promise<void> {
-    await sendText(readSelection());
+    await sendText(readSelection(), false);
   }
 
   async function sendSelectionOrAll(): Promise<void> {
     const sel = readSelection();
-    await sendText(sel || editorValue);
+    await sendText(sel || editorValue, false);
+  }
+
+  async function sendAllAndSubmit(): Promise<void> {
+    await sendText(editorValue, true);
+  }
+
+  async function sendSelectionAndSubmit(): Promise<void> {
+    await sendText(readSelection(), true);
+  }
+
+  async function sendSelectionOrAllAndSubmit(): Promise<void> {
+    const sel = readSelection();
+    await sendText(sel || editorValue, true);
   }
 
   async function onNewDraft(): Promise<void> {
@@ -170,6 +190,22 @@
       notes.discardDraft();
     }
     notes.newDraft();
+    void tick().then(() => textareaEl?.focus());
+  }
+
+  async function onClear(): Promise<void> {
+    if (editorValue.trim().length === 0) return;
+    const isDraft = notes.isDraft;
+    const ok = await confirmStore.ask({
+      title: isDraft ? 'Clear draft?' : 'Clear note contents?',
+      message: isDraft
+        ? 'The current draft will be emptied.'
+        : 'The note will be saved as empty.',
+      confirmLabel: 'Clear',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    notes.clearCurrent();
     void tick().then(() => textareaEl?.focus());
   }
 
@@ -374,7 +410,23 @@
           {statusLabel}
         </span>
       </div>
-      <div class="flex items-center gap-2 border-b border-border px-3 py-1.5">
+      <div class="flex items-center gap-1.5 border-b border-border px-3 py-1.5">
+        <Button
+          variant="default"
+          size="xs"
+          class="min-w-0 flex-1 justify-center gap-1.5 px-2"
+          onclick={() => void sendAllAndSubmit()}
+          disabled={!canSend || editorValue.trim().length === 0}
+          aria-label="Send"
+          title="Send (paste and submit)"
+        >
+          {#if kbdHints.altHeld}
+            <Kbd keys={['Ctrl', 'Enter']} />
+          {:else}
+            <Send class="size-3 shrink-0" />
+            <span class="min-w-0 truncate">Send</span>
+          {/if}
+        </Button>
         <Button
           variant="outline"
           size="xs"
@@ -382,6 +434,7 @@
           onclick={() => void sendAll()}
           disabled={!canSend || editorValue.trim().length === 0}
           aria-label="Add as context"
+          title="Add as context (paste without submitting)"
         >
           {#if kbdHints.altHeld}
             <Kbd keys={['Ctrl', 'Shift', 'Enter']} />
@@ -392,6 +445,7 @@
         </Button>
         {#if notes.isDraft}
           <Button
+            variant="outline"
             size="xs"
             class="min-w-0 shrink-0 gap-1.5 px-2"
             onclick={openSaveDialog}
@@ -405,6 +459,17 @@
             {/if}
           </Button>
         {/if}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          class="shrink-0 text-muted-foreground hover:text-destructive"
+          onclick={() => void onClear()}
+          disabled={editorValue.trim().length === 0}
+          aria-label="Clear contents"
+          title="Clear"
+        >
+          <Eraser class="size-3" />
+        </Button>
       </div>
       <ContextMenu.Root>
         <ContextMenu.Trigger>
@@ -429,6 +494,20 @@
           {/snippet}
         </ContextMenu.Trigger>
         <ContextMenu.Content class="w-56">
+          <ContextMenu.Item
+            disabled={!canSend || editorValue.trim().length === 0}
+            onclick={() => void sendAllAndSubmit()}
+          >
+            <Send class="size-3.5" />
+            Send
+          </ContextMenu.Item>
+          {#if hasSelection}
+            <ContextMenu.Item disabled={!canSend} onclick={() => void sendSelectionAndSubmit()}>
+              <TextSelect class="size-3.5" />
+              Send selection
+            </ContextMenu.Item>
+          {/if}
+          <ContextMenu.Separator />
           <ContextMenu.Item
             disabled={!canSend || editorValue.trim().length === 0}
             onclick={() => void sendAll()}

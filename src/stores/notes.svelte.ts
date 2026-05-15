@@ -5,11 +5,58 @@ import { sessions } from './sessions.svelte';
 
 export type NotesStatus = 'idle' | 'saving' | 'saved' | 'error';
 
+// Per-project draft persistence. Drafts are scratch space — they survive app
+// restarts in localStorage so a half-written note isn't lost just because the
+// user closed the window before saving to disk. The key prefix is namespaced
+// so projects can't collide. Removed on save/discard.
+const DRAFT_KEY_PREFIX = 'soloe.notes.draft.';
+
+function loadDraftsFromStorage(): Record<ProjectId, string> {
+  if (typeof localStorage === 'undefined') return {};
+  const result: Record<ProjectId, string> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(DRAFT_KEY_PREFIX)) continue;
+      const value = localStorage.getItem(key);
+      if (value !== null && value.length > 0) {
+        const projectId = key.slice(DRAFT_KEY_PREFIX.length) as ProjectId;
+        result[projectId] = value;
+      }
+    }
+  } catch {
+    // Storage disabled (private mode / quota). Drafts stay in-memory only.
+  }
+  return result;
+}
+
+function persistDraft(projectId: ProjectId, content: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (content.length > 0) {
+      localStorage.setItem(DRAFT_KEY_PREFIX + projectId, content);
+    } else {
+      localStorage.removeItem(DRAFT_KEY_PREFIX + projectId);
+    }
+  } catch {
+    // Quota / private mode — silently fall back to in-memory only.
+  }
+}
+
+function clearStoredDraft(projectId: ProjectId): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(DRAFT_KEY_PREFIX + projectId);
+  } catch {
+    // No-op.
+  }
+}
+
 class NotesStoreClass {
   listsByProject = $state<Record<ProjectId, NoteSummary[]>>({});
   loadedProjects = $state<Record<ProjectId, boolean>>({});
 
-  draftsByProject = $state<Record<ProjectId, string>>({});
+  draftsByProject = $state<Record<ProjectId, string>>(loadDraftsFromStorage());
 
   // null view = draft is showing, string = saved-note filename
   viewByProject = $state<Record<ProjectId, string | null>>({});
@@ -113,12 +160,33 @@ class NotesStoreClass {
     const next = { ...this.draftsByProject };
     delete next[id];
     this.draftsByProject = next;
+    clearStoredDraft(id);
   }
 
   updateDraftContent(content: string): void {
     const id = this.activeProjectId;
     if (!id) return;
     this.draftsByProject = { ...this.draftsByProject, [id]: content };
+    persistDraft(id, content);
+  }
+
+  // Wipes whatever the editor is showing. Draft mode resets the draft;
+  // saved-note mode resets the editor buffer (debounced auto-save flushes
+  // the empty content to disk so the clear sticks).
+  clearCurrent(): void {
+    const id = this.activeProjectId;
+    if (!id) return;
+    if (this.view === null) {
+      this.draftsByProject = { ...this.draftsByProject, [id]: '' };
+      clearStoredDraft(id);
+    } else {
+      this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
+      const status = this.statusByProject[id];
+      if (status === 'saved' || status === 'error') {
+        this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
+        this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
+      }
+    }
   }
 
   updateSavedContent(content: string): void {
@@ -161,6 +229,7 @@ class NotesStoreClass {
       const drafts = { ...this.draftsByProject };
       delete drafts[id];
       this.draftsByProject = drafts;
+      clearStoredDraft(id);
       this.viewByProject = { ...this.viewByProject, [id]: note.filename };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: note.content };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
