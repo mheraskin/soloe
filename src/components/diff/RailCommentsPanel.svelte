@@ -4,11 +4,13 @@
     ChevronDown,
     ChevronRight,
     Loader2,
+    MessageSquarePlus,
     RotateCcw,
     Send,
     Trash2
   } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Popover from '$lib/components/ui/popover';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Textarea } from '$lib/components/ui/textarea';
   import type { AnchorLineKind, DiffComment } from '../../stores/diff-comments.svelte';
@@ -38,10 +40,11 @@
   // pick up the change — Svelte 5 doesn't track mutation of plain Records.
   let sendingById = $state<Record<string, boolean>>({});
   let sendingAll = $state(false);
-  // Optional preamble that gets prepended to the bulk-send payload. Lives in
-  // the composer at the bottom of the panel; cleared on a successful send so
-  // each batch starts fresh.
+  // Optional preamble for bulk-send. Lives behind the "with message" popover
+  // next to the Send-all button so the fast path stays one click. Cleared on
+  // a successful send so each batch starts fresh.
   let preambleText = $state('');
+  let preambleOpen = $state(false);
   // Per-id "show full anchor context" flags. The collapsed preview shows the
   // anchored lines only; expanding adds the surrounding contextBefore /
   // contextAfter so reviewers don't need to jump to the diff to read context.
@@ -133,22 +136,26 @@
     }
   }
 
-  async function sendAllUnsent(): Promise<void> {
+  async function sendAllUnsent(preamble?: string): Promise<void> {
     if (sendingAll || unsentInActive.length === 0) return;
     sendingAll = true;
     exitFullscreenForHandoff();
     try {
       const ids = unsentInActive.map((c) => c.id);
-      const preamble = preambleText.trim();
-      const result = await sendComments(ids, preamble || undefined);
+      const trimmed = preamble?.trim();
+      const result = await sendComments(ids, trimmed || undefined);
       if (result.delivered > 0) {
         toasts.push(
           `Sent ${result.delivered} comment${result.delivered === 1 ? '' : 's'}`,
           'info'
         );
-        // Drop the preamble only after at least one delivery — keeps the
-        // message editable for a retry when everything failed.
-        preambleText = '';
+        // Drop the preamble + close the popover only after at least one
+        // delivery — keeps the message editable for a retry when everything
+        // failed.
+        if (trimmed) {
+          preambleText = '';
+          preambleOpen = false;
+        }
       }
       if (result.errors.length > 0) {
         toasts.push(result.errors[0] ?? 'Some comments failed to send', 'error');
@@ -226,23 +233,97 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
-  <div class="flex shrink-0 items-end gap-1 border-b border-border">
-    {#each tabs as t (t.id)}
-      <button
-        type="button"
-        class={[
-          'flex items-center gap-1 border-b-2 px-3 py-1 text-xs transition-colors',
-          tab === t.id
-            ? 'border-foreground text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-        ]}
-        onclick={() => (tab = t.id)}
-        aria-pressed={tab === t.id}
-      >
-        <span>{t.label}</span>
-        <span class="text-muted-foreground/80">{t.count}</span>
-      </button>
-    {/each}
+  <div class="flex shrink-0 items-stretch justify-between gap-1 border-b border-border">
+    <div class="flex items-end gap-1">
+      {#each tabs as t (t.id)}
+        <button
+          type="button"
+          class={[
+            'flex items-center gap-1 border-b-2 px-3 py-1 text-xs transition-colors',
+            tab === t.id
+              ? 'border-foreground text-foreground'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          ]}
+          onclick={() => (tab = t.id)}
+          aria-pressed={tab === t.id}
+        >
+          <span>{t.label}</span>
+          <span class="text-muted-foreground/80">{t.count}</span>
+        </button>
+      {/each}
+    </div>
+    {#if tab === 'active' && unsentInActive.length > 0}
+      {@const count = unsentInActive.length}
+      <div class="flex items-center gap-1 pr-1.5">
+        <Button
+          variant="default"
+          size="xs"
+          onclick={() => void sendAllUnsent()}
+          disabled={sendingAll}
+          aria-label="Send all unsent comments"
+          title="Send all"
+        >
+          {#if sendingAll && !preambleOpen}
+            <Loader2 class="size-3 animate-spin" />
+          {:else}
+            <Send class="size-3" />
+          {/if}
+          <span>Send all ({count})</span>
+        </Button>
+        <Popover.Root bind:open={preambleOpen}>
+          <Popover.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="outline"
+                size="icon-xs"
+                aria-label="Send with optional message"
+                title="Send with a message"
+              >
+                <MessageSquarePlus class="size-3" />
+              </Button>
+            {/snippet}
+          </Popover.Trigger>
+          <Popover.Content align="end" sideOffset={6} class="w-80 p-2">
+            <div class="flex flex-col gap-1.5">
+              <Textarea
+                bind:value={preambleText}
+                placeholder={count === 1
+                  ? 'Message to send with this comment…'
+                  : `Message to send with these ${count} comments…`}
+                rows={3}
+                disabled={sendingAll}
+                aria-label="Message to accompany unsent comments"
+                onkeydown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    void sendAllUnsent(preambleText);
+                  }
+                }}
+                class="min-h-[4rem] resize-none rounded-md font-mono text-xs leading-snug"
+              />
+              <div class="flex items-center justify-end">
+                <Button
+                  variant="default"
+                  size="xs"
+                  onclick={() => void sendAllUnsent(preambleText)}
+                  disabled={sendingAll || !preambleText.trim()}
+                  aria-label="Send all with message"
+                  title="Send (⌘⏎)"
+                >
+                  {#if sendingAll && preambleOpen}
+                    <Loader2 class="size-3 animate-spin" />
+                  {:else}
+                    <Send class="size-3" />
+                  {/if}
+                  <span>Send all ({count})</span>
+                </Button>
+              </div>
+            </div>
+          </Popover.Content>
+        </Popover.Root>
+      </div>
+    {/if}
   </div>
 
   {#if visible.length === 0}
@@ -463,51 +544,4 @@
     </ScrollArea>
   {/if}
 
-  {#if tab === 'active' && unsentInActive.length > 0}
-    {@const count = unsentInActive.length}
-    <div class="shrink-0 border-t border-border bg-muted/30 px-2 py-2">
-      <div class="flex flex-col gap-1.5">
-        <Textarea
-          bind:value={preambleText}
-          placeholder={count === 1
-            ? 'Optional message to send with this comment…'
-            : `Optional message to send with these ${count} comments…`}
-          rows={2}
-          disabled={sendingAll}
-          aria-label="Message to accompany unsent comments"
-          onkeydown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-              e.preventDefault();
-              void sendAllUnsent();
-            }
-          }}
-          class="min-h-[2.25rem] resize-none rounded-md bg-background px-2 py-1.5 font-mono text-xs leading-snug placeholder:text-muted-foreground/60"
-        />
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-[10px] text-muted-foreground">
-            {count} unsent
-            <span class="text-muted-foreground/60">·</span>
-            <span class="text-muted-foreground/60">
-              {preambleText.trim() ? 'with message' : 'no message'}
-            </span>
-          </span>
-          <Button
-            variant="default"
-            size="xs"
-            onclick={() => void sendAllUnsent()}
-            disabled={sendingAll}
-            aria-label="Send all unsent comments"
-            title="Send all (⌘⏎)"
-          >
-            {#if sendingAll}
-              <Loader2 class="size-3 animate-spin" />
-            {:else}
-              <Send class="size-3" />
-            {/if}
-            <span>Send all</span>
-          </Button>
-        </div>
-      </div>
-    </div>
-  {/if}
 </div>
