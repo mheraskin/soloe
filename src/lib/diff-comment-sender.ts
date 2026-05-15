@@ -37,15 +37,19 @@ function buildPrompt(comment: DiffComment): string {
 // keeps the agent from re-reading the same "call comment_resolve" instruction
 // N times, and stops the bracketed paste from triggering N submit-press
 // roundtrips in the CLI. The per-comment header still carries the soloe id so
-// resolution stays deterministic.
-function buildBatchPrompt(comments: DiffComment[]): string {
-  if (comments.length === 1) return buildPrompt(comments[0]!);
+// resolution stays deterministic. An optional preamble is prepended verbatim
+// — used by the bulk-send composer so reviewers can frame the batch ("focus
+// on perf", "these are nits, ship anyway") without editing each comment.
+function buildBatchPrompt(comments: DiffComment[], preamble?: string): string {
+  if (comments.length === 1 && !preamble) return buildPrompt(comments[0]!);
   const sections = comments.map((c) => {
     const sideLabel = c.side === 'old' ? 'before' : 'after';
     const header = `[soloe-comment:${c.id}] ${c.filePath} (${sideLabel} ${rangeLabel(c)})`;
     return `${header}\n${c.text}`;
   });
-  const intro = `${comments.length} review comments to address:`;
+  const noun = comments.length === 1 ? 'review comment' : 'review comments';
+  const base = `${comments.length} ${noun} to address:`;
+  const intro = preamble ? `${preamble}\n\n${base}` : base;
   const footer =
     'When you finish each one, call the soloe MCP tool comment_resolve with the matching [soloe-comment:<id>] value.';
   return `${intro}\n\n${sections.join('\n\n')}\n\n${footer}`;
@@ -195,8 +199,14 @@ async function resolveSessionTargets(
 // CLI sees one user message instead of N. A comment that fans out to several
 // sessions is still counted once in `delivered` (it lands in each session's
 // bundle) and is flagged sent once any session accepted it.
-export async function sendComments(commentIds: string[]): Promise<SendCommentResult> {
-  if (commentIds.length === 1) {
+export async function sendComments(
+  commentIds: string[],
+  preamble?: string
+): Promise<SendCommentResult> {
+  const cleanPreamble = preamble?.trim() ? preamble.trim() : undefined;
+  // Single-comment fast path only applies without a preamble — otherwise we
+  // need the batch builder to slot the preamble above the comment.
+  if (commentIds.length === 1 && !cleanPreamble) {
     return sendComment(commentIds[0]!);
   }
 
@@ -225,7 +235,7 @@ export async function sendComments(commentIds: string[]): Promise<SendCommentRes
 
   const deliveredIds = new Set<string>();
   for (const [sessionId, comments] of bySession) {
-    const payload = buildBatchPrompt(comments);
+    const payload = buildBatchPrompt(comments, cleanPreamble);
     try {
       await deliverToSession(sessionId, payload);
       for (const c of comments) deliveredIds.add(c.id);

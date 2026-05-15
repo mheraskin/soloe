@@ -10,6 +10,7 @@
   } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { Textarea } from '$lib/components/ui/textarea';
   import type { AnchorLineKind, DiffComment } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
   import { workingDiff } from '../../stores/working-diff.svelte';
@@ -37,6 +38,10 @@
   // pick up the change — Svelte 5 doesn't track mutation of plain Records.
   let sendingById = $state<Record<string, boolean>>({});
   let sendingAll = $state(false);
+  // Optional preamble that gets prepended to the bulk-send payload. Lives in
+  // the composer at the bottom of the panel; cleared on a successful send so
+  // each batch starts fresh.
+  let preambleText = $state('');
   // Per-id "show full anchor context" flags. The collapsed preview shows the
   // anchored lines only; expanding adds the surrounding contextBefore /
   // contextAfter so reviewers don't need to jump to the diff to read context.
@@ -134,12 +139,16 @@
     exitFullscreenForHandoff();
     try {
       const ids = unsentInActive.map((c) => c.id);
-      const result = await sendComments(ids);
+      const preamble = preambleText.trim();
+      const result = await sendComments(ids, preamble || undefined);
       if (result.delivered > 0) {
         toasts.push(
           `Sent ${result.delivered} comment${result.delivered === 1 ? '' : 's'}`,
           'info'
         );
+        // Drop the preamble only after at least one delivery — keeps the
+        // message editable for a retry when everything failed.
+        preambleText = '';
       }
       if (result.errors.length > 0) {
         toasts.push(result.errors[0] ?? 'Some comments failed to send', 'error');
@@ -217,7 +226,7 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
-  <div class="flex shrink-0 items-stretch gap-1 border-b border-border pr-1">
+  <div class="flex shrink-0 items-end gap-1 border-b border-border">
     {#each tabs as t (t.id)}
       <button
         type="button"
@@ -234,24 +243,6 @@
         <span class="text-muted-foreground/80">{t.count}</span>
       </button>
     {/each}
-    {#if tab === 'active' && unsentInActive.length > 0}
-      <div class="ml-auto flex items-center">
-        <Button
-          variant="outline"
-          size="xs"
-          onclick={() => void sendAllUnsent()}
-          disabled={sendingAll}
-          aria-label="Send all unsent comments"
-        >
-          {#if sendingAll}
-            <Loader2 class="size-3 animate-spin" />
-          {:else}
-            <Send class="size-3" />
-          {/if}
-          <span>Send {unsentInActive.length} unsent</span>
-        </Button>
-      </div>
-    {/if}
   </div>
 
   {#if visible.length === 0}
@@ -470,5 +461,53 @@
         {/each}
       </div>
     </ScrollArea>
+  {/if}
+
+  {#if tab === 'active' && unsentInActive.length > 0}
+    {@const count = unsentInActive.length}
+    <div class="shrink-0 border-t border-border bg-muted/30 px-2 py-2">
+      <div class="flex flex-col gap-1.5">
+        <Textarea
+          bind:value={preambleText}
+          placeholder={count === 1
+            ? 'Optional message to send with this comment…'
+            : `Optional message to send with these ${count} comments…`}
+          rows={2}
+          disabled={sendingAll}
+          aria-label="Message to accompany unsent comments"
+          onkeydown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              void sendAllUnsent();
+            }
+          }}
+          class="min-h-[2.25rem] resize-none rounded-md bg-background px-2 py-1.5 font-mono text-xs leading-snug placeholder:text-muted-foreground/60"
+        />
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[10px] text-muted-foreground">
+            {count} unsent
+            <span class="text-muted-foreground/60">·</span>
+            <span class="text-muted-foreground/60">
+              {preambleText.trim() ? 'with message' : 'no message'}
+            </span>
+          </span>
+          <Button
+            variant="default"
+            size="xs"
+            onclick={() => void sendAllUnsent()}
+            disabled={sendingAll}
+            aria-label="Send all unsent comments"
+            title="Send all (⌘⏎)"
+          >
+            {#if sendingAll}
+              <Loader2 class="size-3 animate-spin" />
+            {:else}
+              <Send class="size-3" />
+            {/if}
+            <span>Send all</span>
+          </Button>
+        </div>
+      </div>
+    </div>
   {/if}
 </div>
