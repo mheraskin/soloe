@@ -289,13 +289,13 @@
               <Textarea
                 bind:value={preambleText}
                 placeholder={count === 1
-                  ? 'Message to send with this comment…'
-                  : `Message to send with these ${count} comments…`}
+                  ? 'Message to send with this comment… (Enter to send, Shift+Enter for newline)'
+                  : `Message to send with these ${count} comments… (Enter to send, Shift+Enter for newline)`}
                 rows={3}
                 disabled={sendingAll}
                 aria-label="Message to accompany unsent comments"
                 onkeydown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
                     e.preventDefault();
                     void sendAllUnsent(preambleText);
                   }
@@ -309,7 +309,7 @@
                   onclick={() => void sendAllUnsent(preambleText)}
                   disabled={sendingAll || !preambleText.trim()}
                   aria-label="Send all with message"
-                  title="Send (⌘⏎)"
+                  title="Send (Enter)"
                 >
                   {#if sendingAll && preambleOpen}
                     <Loader2 class="size-3 animate-spin" />

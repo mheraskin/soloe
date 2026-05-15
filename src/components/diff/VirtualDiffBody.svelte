@@ -240,9 +240,17 @@
   const ROW_PX_BUTTON = 24;
   const ROW_PX_HEADER = 19;
 
+  // With wrap=true a single source line can render to 2–4 visual rows; a
+  // static 18px estimate underprices them and the visible-range offsets
+  // thrash mid-scroll while ResizeObserver catches up. Track a running
+  // last-measured value as the wrapped-row estimate so newly virtualized
+  // rows land near their final position on first paint.
+  let estimatedLinePx = $state(ROW_PX_BASE);
+
   function estimateHeight(row: Row): number {
     if (row.kind === 'gap-button') return ROW_PX_BUTTON;
     if (row.kind === 'hunk-header') return ROW_PX_HEADER;
+    if (wrap && (row.kind === 'line' || row.kind === 'pair')) return estimatedLinePx;
     return ROW_PX_BASE;
   }
 
@@ -275,6 +283,16 @@
   // measured row so the relative container can grow and the ScrollArea sees
   // horizontal overflow. Always grows; resets on diff/mode/wrap change below.
   let maxContentWidth = $state(0);
+
+  // Coalesce ResizeObserver-driven measurement writes into one state update
+  // per frame. Mounting N virtualized rows used to fire N separate writes,
+  // each cascading through heights → offsets → visibleRange → mount more
+  // rows; fast scroll jittered and gutter clicks landed on rows whose y had
+  // shifted mid-event. Plain `let` (not $state) so the pending buffer is
+  // itself non-reactive.
+  let pendingMeasured: Record<string, number> | null = null;
+  let pendingMaxWidth = 0;
+  let measureRaf: number | null = null;
 
   let heights = $derived.by<number[]>(() => {
     const arr = new Array<number>(rows.length);
@@ -390,6 +408,19 @@
     void fontSize;
     measured = {};
     maxContentWidth = 0;
+    estimatedLinePx = ROW_PX_BASE;
+    if (measureRaf !== null) {
+      cancelAnimationFrame(measureRaf);
+      measureRaf = null;
+    }
+    pendingMeasured = null;
+    pendingMaxWidth = 0;
+  });
+
+  $effect(() => {
+    return () => {
+      if (measureRaf !== null) cancelAnimationFrame(measureRaf);
+    };
   });
 
   function findFirstAtOrAfter(target: number): number {
@@ -466,6 +497,31 @@
     return { hunk: headerRow.hunk, top: stickyTop, height: headerHeight };
   });
 
+  function flushMeasurements(): void {
+    measureRaf = null;
+    if (pendingMeasured) {
+      // Drive the wrapped-row estimate off the latest line/pair seen in
+      // this batch — last-seen wins. A running average isn't worth the
+      // bookkeeping; the visible window dominates and outliers self-correct
+      // on the next batch.
+      for (const key in pendingMeasured) {
+        if (key.startsWith('ln:') || key.startsWith('pr:')) {
+          const h = pendingMeasured[key]!;
+          if (h > 0) estimatedLinePx = h;
+        }
+      }
+      measured = { ...measured, ...pendingMeasured };
+      pendingMeasured = null;
+    }
+    if (pendingMaxWidth > maxContentWidth) maxContentWidth = pendingMaxWidth;
+    pendingMaxWidth = 0;
+  }
+
+  function scheduleFlush(): void {
+    if (measureRaf !== null) return;
+    measureRaf = requestAnimationFrame(flushMeasurements);
+  }
+
   function measureRow(
     node: HTMLElement,
     key: string
@@ -473,11 +529,16 @@
     let currentKey = key;
     const update = () => {
       const h = node.offsetHeight;
-      if (h > 0 && measured[currentKey] !== h) {
-        measured = { ...measured, [currentKey]: h };
+      if (h > 0 && measured[currentKey] !== h && pendingMeasured?.[currentKey] !== h) {
+        if (!pendingMeasured) pendingMeasured = {};
+        pendingMeasured[currentKey] = h;
+        scheduleFlush();
       }
       const w = node.scrollWidth;
-      if (w > maxContentWidth) maxContentWidth = w;
+      if (w > maxContentWidth && w > pendingMaxWidth) {
+        pendingMaxWidth = w;
+        scheduleFlush();
+      }
     };
     update();
     const ro = new ResizeObserver(update);
