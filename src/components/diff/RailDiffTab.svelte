@@ -15,7 +15,12 @@
     WrapText,
     MessageSquare,
     ChevronsUp,
-    ChevronsDown
+    ChevronsDown,
+    ChevronDown,
+    ChevronRight,
+    RotateCcw,
+    FoldVertical,
+    UnfoldVertical
   } from '@lucide/svelte';
   import { onMount, untrack } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
@@ -237,6 +242,212 @@
     return out;
   });
 
+  // Per-file collapse state. Keyed by `${cwd}::${path}` so it stays stable
+  // across worktree switches without spilling between them. Staged files are
+  // auto-seeded collapsed (see effect below) so a big mechanical staged diff
+  // doesn't drown out the unstaged review; once the user toggles, their
+  // preference wins for the rest of the session.
+  let collapsedByPath = $state<Record<string, boolean>>({});
+  // Plain Set: non-reactive memory of which (cwd,path) pairs have already
+  // been considered for the staged-seed rule. Stays out of the dependency
+  // graph so the seeding effect below doesn't read what it writes.
+  const collapseSeedSeen = new Set<string>();
+
+  function collapseKey(path: string): string {
+    return `${activeCwd ?? '__none__'}::${path}`;
+  }
+
+  function isCollapsed(change: WorkingChange): boolean {
+    return collapsedByPath[collapseKey(change.path)] === true;
+  }
+
+  function toggleCollapsed(change: WorkingChange): void {
+    const key = collapseKey(change.path);
+    const next = { ...collapsedByPath };
+    if (next[key]) delete next[key];
+    else next[key] = true;
+    collapsedByPath = next;
+  }
+
+  let allCollapsed = $derived.by<boolean>(() => {
+    if (stackChanges.length === 0) return false;
+    return stackChanges.every((c) => collapsedByPath[collapseKey(c.path)] === true);
+  });
+
+  function toggleAllCollapsed(): void {
+    const target = !allCollapsed;
+    const next = { ...collapsedByPath };
+    for (const c of stackChanges) {
+      const key = collapseKey(c.path);
+      if (target) next[key] = true;
+      else delete next[key];
+    }
+    collapsedByPath = next;
+  }
+
+  // Staged-file auto-collapse seed. The `untrack` here keeps us from
+  // subscribing to our own write of `collapsedByPath` — `{...collapsedByPath}`
+  // would otherwise re-trigger this effect under Svelte 5 prod cycle
+  // detection (same self-loop pattern as `layoutTick++`).
+  $effect(() => {
+    if (!activeCwd) return;
+    let pending: string[] | null = null;
+    for (const change of stackChanges) {
+      if (!change.staged) continue;
+      const key = collapseKey(change.path);
+      if (collapseSeedSeen.has(key)) continue;
+      collapseSeedSeen.add(key);
+      if (!pending) pending = [];
+      pending.push(key);
+    }
+    if (pending) {
+      const additions = pending;
+      untrack(() => {
+        const next = { ...collapsedByPath };
+        for (const key of additions) next[key] = true;
+        collapsedByPath = next;
+      });
+    }
+  });
+
+  // Per-file scroll position indicator. The shared viewport scrollbar maps
+  // across every file in the stack — fine for jumping between files, useless
+  // for "where am I in this file specifically." This overlay renders just
+  // the active file's bounds as a draggable thumb at the right edge.
+  let diffScrollTop = $state(0);
+  let diffViewportHeight = $state(0);
+  let indicatorHover = $state(false);
+  let indicatorDragging = $state(false);
+  let indicatorIdle = $state(true);
+  let indicatorIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function bumpIndicatorActivity(): void {
+    indicatorIdle = false;
+    if (indicatorIdleTimer) clearTimeout(indicatorIdleTimer);
+    indicatorIdleTimer = setTimeout(() => {
+      indicatorIdle = true;
+    }, 1200);
+  }
+
+  const MIN_THUMB_PX = 28;
+
+  // Active file's bounds in viewport-scroll coordinates. `offsetTop` works
+  // because every section shares the same offsetParent (the bits-ui viewport,
+  // which is positioned). Reading `layoutTick` keeps this fresh across word
+  // wrap, view-mode, and collapse toggles.
+  let currentFileBounds = $derived.by<{ top: number; height: number } | null>(() => {
+    void layoutTick;
+    if (!effectiveSelected) return null;
+    const idx = stackChanges.findIndex((c) => c.path === effectiveSelected);
+    if (idx < 0) return null;
+    const section = sectionEls[effectiveSelected];
+    if (!section) return null;
+    const top = section.offsetTop;
+    let bottom: number;
+    if (idx + 1 < stackChanges.length) {
+      const nextPath = stackChanges[idx + 1].path;
+      const nextSection = sectionEls[nextPath];
+      bottom = nextSection ? nextSection.offsetTop : top + section.offsetHeight;
+    } else {
+      bottom = top + section.offsetHeight;
+    }
+    return { top, height: Math.max(0, bottom - top) };
+  });
+
+  let scrollIndicator = $derived.by<{ thumbTop: number; thumbHeight: number; railHeight: number } | null>(() => {
+    const bounds = currentFileBounds;
+    if (!bounds) return null;
+    if (diffViewportHeight <= 0) return null;
+    // File fits on one viewport: nothing to scroll within → no thumb.
+    if (bounds.height <= diffViewportHeight + 8) return null;
+    const localStart = diffScrollTop - bounds.top;
+    const localEnd = localStart + diffViewportHeight;
+    if (localEnd <= 0 || localStart >= bounds.height) return null;
+    const railHeight = diffViewportHeight;
+    const clampedStart = Math.max(0, Math.min(bounds.height, localStart));
+    const clampedEnd = Math.max(0, Math.min(bounds.height, localEnd));
+    let thumbHeight = Math.max(MIN_THUMB_PX, ((clampedEnd - clampedStart) / bounds.height) * railHeight);
+    thumbHeight = Math.min(thumbHeight, railHeight);
+    let thumbTop = (clampedStart / bounds.height) * railHeight;
+    if (thumbTop + thumbHeight > railHeight) thumbTop = railHeight - thumbHeight;
+    if (thumbTop < 0) thumbTop = 0;
+    return { thumbTop, thumbHeight, railHeight };
+  });
+
+  let indicatorVisible = $derived(
+    scrollIndicator !== null && (!indicatorIdle || indicatorHover || indicatorDragging)
+  );
+
+  function thumbTopToScrollTop(
+    thumbTop: number,
+    bounds: { top: number; height: number },
+    railHeight: number,
+    thumbHeight: number
+  ): number {
+    const denomRail = Math.max(1, railHeight - thumbHeight);
+    const denomFile = Math.max(0, bounds.height - diffViewportHeight);
+    const localStart = (thumbTop / denomRail) * denomFile;
+    return bounds.top + localStart;
+  }
+
+  function startIndicatorDrag(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    const ind = scrollIndicator;
+    const bounds = currentFileBounds;
+    const viewport = diffViewportEl;
+    if (!ind || !bounds || !viewport) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const thumb = event.currentTarget as HTMLElement;
+    const rail = thumb.parentElement;
+    if (!rail) return;
+    const railRect = rail.getBoundingClientRect();
+    // Preserve the cursor's offset within the thumb at drag start so the
+    // thumb tracks the cursor instead of snapping its top to it.
+    const thumbStartLocal = event.clientY - railRect.top - ind.thumbTop;
+    const thumbHeight = ind.thumbHeight;
+    indicatorDragging = true;
+    bumpIndicatorActivity();
+    // Keep the scroll-driven file selection from re-selecting while the
+    // drag steers the viewport.
+    scrollLockUntil = performance.now() + 1500;
+    const onMove = (ev: PointerEvent) => {
+      bumpIndicatorActivity();
+      scrollLockUntil = performance.now() + 1500;
+      const railH = rail.clientHeight;
+      const localY = ev.clientY - railRect.top - thumbStartLocal;
+      const clampedThumbTop = Math.max(0, Math.min(railH - thumbHeight, localY));
+      const nextScrollTop = thumbTopToScrollTop(clampedThumbTop, bounds, railH, thumbHeight);
+      viewport.scrollTop = Math.max(0, nextScrollTop);
+    };
+    const onUp = () => {
+      indicatorDragging = false;
+      bumpIndicatorActivity();
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  }
+
+  function jumpIndicatorRail(event: PointerEvent): void {
+    // Only react to clicks on the rail body; the thumb's pointerdown stops
+    // propagation so its drag-start doesn't double as a jump.
+    if (event.target !== event.currentTarget) return;
+    if (event.button !== 0) return;
+    const ind = scrollIndicator;
+    const bounds = currentFileBounds;
+    const viewport = diffViewportEl;
+    if (!ind || !bounds || !viewport) return;
+    const rail = event.currentTarget as HTMLElement;
+    const railRect = rail.getBoundingClientRect();
+    const localY = event.clientY - railRect.top - ind.thumbHeight / 2;
+    const clampedThumbTop = Math.max(0, Math.min(ind.railHeight - ind.thumbHeight, localY));
+    const nextScrollTop = thumbTopToScrollTop(clampedThumbTop, bounds, ind.railHeight, ind.thumbHeight);
+    viewport.scrollTo({ top: Math.max(0, nextScrollTop), behavior: 'smooth' });
+    bumpIndicatorActivity();
+  }
+
   // Scroll-driven selection: the topmost file in the viewport becomes the
   // active one. A brief lock after pickChange keeps the smooth scroll from
   // stuttering the highlight through every intermediate section.
@@ -244,7 +455,11 @@
     const viewport = diffViewportEl;
     const cwd = activeCwd;
     if (!viewport || !cwd) return;
+    diffScrollTop = viewport.scrollTop;
+    diffViewportHeight = viewport.clientHeight;
     const onScroll = () => {
+      diffScrollTop = viewport.scrollTop;
+      bumpIndicatorActivity();
       if (performance.now() < scrollLockUntil) return;
       const viewportRect = viewport.getBoundingClientRect();
       const threshold = viewportRect.top + 40;
@@ -264,7 +479,14 @@
       }
     };
     viewport.addEventListener('scroll', onScroll, { passive: true });
-    return () => viewport.removeEventListener('scroll', onScroll);
+    const ro = new ResizeObserver(() => {
+      diffViewportHeight = viewport.clientHeight;
+    });
+    ro.observe(viewport);
+    return () => {
+      viewport.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+    };
   });
 
   // Reconcile the outdated set per file. Comments whose anchored text no
@@ -336,6 +558,14 @@
   function pickChange(path: string): void {
     if (!activeCwd) return;
     workingDiff.setSelected(activeCwd, path);
+    // Expand the picked file so the click actually reveals content rather
+    // than scrolling to a still-collapsed header.
+    const key = collapseKey(path);
+    if (collapsedByPath[key]) {
+      const next = { ...collapsedByPath };
+      delete next[key];
+      collapsedByPath = next;
+    }
     const section = sectionEls[path];
     const viewport = diffViewportEl;
     if (!section || !viewport) return;
@@ -477,11 +707,8 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col" class:select-none={resizingList}>
-  <header
-    class="flex items-center justify-between gap-2 border-b border-border px-3 py-2"
-    class:hidden={diffExpanded}
-  >
-    <div class="flex min-w-0 flex-col">
+  <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+    <div class="flex min-w-0 flex-col" class:hidden={diffExpanded}>
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
         Working tree
       </span>
@@ -489,7 +716,7 @@
         {selected ? selected.name : 'No session selected'}
       </span>
     </div>
-    <div class="flex items-center gap-1">
+    <div class="flex items-center gap-1" class:ml-auto={diffExpanded}>
       {#if totalCommentCount > 0}
         <Button
           variant="ghost"
@@ -527,6 +754,36 @@
           <Columns class="size-3" />
         {:else}
           <Rows class="size-3" />
+        {/if}
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={toggleAllCollapsed}
+        aria-pressed={allCollapsed}
+        aria-label={allCollapsed ? 'Expand all files' : 'Collapse all files'}
+        title={allCollapsed ? 'Expand all' : 'Collapse all'}
+        disabled={!activeCwd || stackChanges.length === 0}
+      >
+        {#if allCollapsed}
+          <UnfoldVertical class="size-3" />
+        {:else}
+          <FoldVertical class="size-3" />
+        {/if}
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={() => (diffExpanded = !diffExpanded)}
+        aria-pressed={diffExpanded}
+        aria-label={diffExpanded ? 'Show file list' : 'Hide file list'}
+        title={diffExpanded ? 'Show file list' : 'Hide file list'}
+        disabled={!activeCwd}
+      >
+        {#if diffExpanded}
+          <ChevronsDown class="size-3" />
+        {:else}
+          <ChevronsUp class="size-3" />
         {/if}
       </Button>
       <Button
@@ -727,7 +984,7 @@
       onpointerdown={startResizeList}
     ></button>
 
-    <section class="flex min-h-0 flex-1 flex-col">
+    <section class="relative flex min-h-0 flex-1 flex-col">
       {#if stackChanges.length === 0}
         <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
           <FileDiff class="size-4 shrink-0" />
@@ -747,6 +1004,8 @@
               {@const canExpand = fileDiff ? fileDiff.kind !== 'added' && fileDiff.kind !== 'untracked' : false}
               {@const gutter = gutterWidthFor(fileDiff?.hunks)}
               {@const isActive = change.path === effectiveSelected}
+              {@const collapsed = isCollapsed(change)}
+              {@const stagePending = activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
               <div
                 use:bindSection={change.path}
                 data-file-path={change.path}
@@ -754,11 +1013,25 @@
               >
                 <header
                   class={[
-                    'sticky top-0 z-20 flex items-center justify-between gap-2 border-y border-border px-3 py-1.5 backdrop-blur-sm',
+                    'sticky top-0 z-20 flex items-center gap-2 border-y border-border px-3 py-1.5 backdrop-blur-sm',
                     isActive ? 'bg-muted/90' : 'bg-background/95'
                   ]}
                 >
-                  <div class="flex min-w-0 flex-col">
+                  <button
+                    type="button"
+                    class="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/80 transition-colors hover:bg-muted-foreground/20 hover:text-foreground"
+                    onclick={() => toggleCollapsed(change)}
+                    aria-expanded={!collapsed}
+                    aria-label={collapsed ? `Expand ${change.path}` : `Collapse ${change.path}`}
+                    title={collapsed ? 'Expand' : 'Collapse'}
+                  >
+                    {#if collapsed}
+                      <ChevronRight class="size-3" />
+                    {:else}
+                      <ChevronDown class="size-3" />
+                    {/if}
+                  </button>
+                  <div class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate font-mono text-[11px] text-foreground">
                       {fileDiff?.path ?? change.path}
                     </span>
@@ -768,74 +1041,132 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="flex shrink-0 items-center gap-2">
-                    <span class="font-mono text-[10px] text-muted-foreground uppercase">
+                  <div class="flex shrink-0 items-center gap-1.5">
+                    {#if change.staged}
+                      <button
+                        type="button"
+                        class="flex size-4 items-center justify-center rounded text-rose-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        onclick={() => void unstageFile(change.path).catch(reportError)}
+                        disabled={stagePending}
+                        title="Unstage"
+                        aria-label="Unstage {change.path}"
+                      >
+                        {#if stagePending}
+                          <Loader2 class="size-3 animate-spin" />
+                        {:else}
+                          <Minus class="size-3" />
+                        {/if}
+                      </button>
+                    {:else}
+                      <button
+                        type="button"
+                        class="flex size-4 items-center justify-center rounded text-emerald-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        onclick={() => void stageFile(change.path).catch(reportError)}
+                        disabled={stagePending}
+                        title="Stage"
+                        aria-label="Stage {change.path}"
+                      >
+                        {#if stagePending}
+                          <Loader2 class="size-3 animate-spin" />
+                        {:else}
+                          <Plus class="size-3" />
+                        {/if}
+                      </button>
+                    {/if}
+                    <button
+                      type="button"
+                      class="flex size-4 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500"
+                      onclick={() => void discardChange(change)}
+                      title="Discard changes"
+                      aria-label="Discard changes to {change.path}"
+                    >
+                      <RotateCcw class="size-3" />
+                    </button>
+                    <span class="ml-1 font-mono text-[10px] text-muted-foreground uppercase">
                       {fileDiff?.kind ?? change.kind}
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onclick={() => (diffExpanded = !diffExpanded)}
-                      aria-pressed={diffExpanded}
-                      aria-label={diffExpanded ? 'Show file list' : 'Hide file list'}
-                      title={diffExpanded ? 'Show file list' : 'Hide file list'}
-                    >
-                      {#if diffExpanded}
-                        <ChevronsDown class="size-3" />
-                      {:else}
-                        <ChevronsUp class="size-3" />
-                      {/if}
-                    </Button>
                   </div>
                 </header>
                 <div use:bindBodyWrapper={change.path}>
-                  {#if entry?.loading && !fileDiff}
-                    <div class="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
-                      <Loader2 class="size-3 animate-spin" />
-                      Loading diff…
-                    </div>
-                  {:else if entry?.error}
-                    <div class="flex items-start justify-center gap-2 px-3 py-4 text-xs text-destructive">
-                      <AlertCircle class="size-3 shrink-0" />
-                      <span class="break-words">{entry.error}</span>
-                    </div>
-                  {:else if fileDiff?.binary}
-                    <div class="px-3 py-4 text-center text-xs text-muted-foreground">
-                      Binary file — diff not shown.
-                    </div>
-                  {:else if fileDiff && (fileDiff.empty || fileDiff.hunks.length === 0)}
-                    <div class="px-3 py-4 text-center text-xs text-muted-foreground">
-                      No textual changes.
-                    </div>
-                  {:else if fileDiff}
-                    <DiffSelectionMenu
-                      cwd={activeCwd!}
-                      filePath={fileDiff.path}
-                      rootEl={sectionEls[change.path]}
-                      diff={fileDiff}
-                    />
-                    <VirtualDiffBody
-                      cwd={activeCwd!}
-                      filePath={fileDiff.path}
-                      {gapPath}
-                      diff={fileDiff}
-                      mode={workingDiff.viewMode}
-                      gutterWidth={gutter}
-                      {canExpand}
-                      wrap={workingDiff.wordWrap}
-                      viewport={diffViewportEl}
-                      sectionTop={sectionTops[change.path] ?? 0}
-                    />
-                  {:else}
-                    <div class="px-3 py-6 text-center text-xs text-muted-foreground">
-                      Diff not loaded.
-                    </div>
+                  {#if !collapsed}
+                    {#if entry?.loading && !fileDiff}
+                      <div class="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
+                        <Loader2 class="size-3 animate-spin" />
+                        Loading diff…
+                      </div>
+                    {:else if entry?.error}
+                      <div class="flex items-start justify-center gap-2 px-3 py-4 text-xs text-destructive">
+                        <AlertCircle class="size-3 shrink-0" />
+                        <span class="break-words">{entry.error}</span>
+                      </div>
+                    {:else if fileDiff?.binary}
+                      <div class="px-3 py-4 text-center text-xs text-muted-foreground">
+                        Binary file — diff not shown.
+                      </div>
+                    {:else if fileDiff && (fileDiff.empty || fileDiff.hunks.length === 0)}
+                      <div class="px-3 py-4 text-center text-xs text-muted-foreground">
+                        No textual changes.
+                      </div>
+                    {:else if fileDiff}
+                      <DiffSelectionMenu
+                        cwd={activeCwd!}
+                        filePath={fileDiff.path}
+                        rootEl={sectionEls[change.path]}
+                        diff={fileDiff}
+                      />
+                      <VirtualDiffBody
+                        cwd={activeCwd!}
+                        filePath={fileDiff.path}
+                        {gapPath}
+                        diff={fileDiff}
+                        mode={workingDiff.viewMode}
+                        gutterWidth={gutter}
+                        {canExpand}
+                        wrap={workingDiff.wordWrap}
+                        viewport={diffViewportEl}
+                        sectionTop={sectionTops[change.path] ?? 0}
+                      />
+                    {:else}
+                      <div class="px-3 py-6 text-center text-xs text-muted-foreground">
+                        Diff not loaded.
+                      </div>
+                    {/if}
                   {/if}
                 </div>
               </div>
             {/each}
           </div>
         </ScrollArea>
+        {#if scrollIndicator}
+          <div
+            aria-hidden="true"
+            onpointerdown={jumpIndicatorRail}
+            onmouseenter={() => {
+              indicatorHover = true;
+              bumpIndicatorActivity();
+            }}
+            onmouseleave={() => (indicatorHover = false)}
+            class={[
+              'absolute top-0 right-0 z-30 w-3.5 transition-opacity duration-200',
+              indicatorVisible ? 'opacity-100' : 'opacity-0'
+            ]}
+            style="height: {scrollIndicator.railHeight}px"
+          >
+            <button
+              type="button"
+              tabindex="-1"
+              onpointerdown={startIndicatorDrag}
+              class={[
+                'absolute rounded-full transition-all duration-150',
+                indicatorDragging || indicatorHover
+                  ? 'right-0.5 w-2 bg-foreground/70'
+                  : 'right-1 w-1.5 bg-foreground/40'
+              ]}
+              style="top: {scrollIndicator.thumbTop}px; height: {scrollIndicator.thumbHeight}px"
+              aria-label="Scroll within current file"
+            ></button>
+          </div>
+        {/if}
       {/if}
     </section>
   {/if}
