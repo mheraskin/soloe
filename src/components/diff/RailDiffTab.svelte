@@ -17,6 +17,7 @@
     ChevronsUp,
     ChevronsDown,
     ChevronDown,
+    ChevronLeft,
     ChevronRight,
     RotateCcw,
     FoldVertical,
@@ -310,151 +311,6 @@
     }
   });
 
-  // Per-file scroll position indicator. The shared viewport scrollbar maps
-  // across every file in the stack — fine for jumping between files, useless
-  // for "where am I in this file specifically." This overlay renders just
-  // the active file's bounds as a draggable thumb at the right edge.
-  let diffScrollTop = $state(0);
-  let diffViewportHeight = $state(0);
-  let indicatorHover = $state(false);
-  let indicatorDragging = $state(false);
-  let indicatorIdle = $state(true);
-  let indicatorIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function bumpIndicatorActivity(): void {
-    indicatorIdle = false;
-    if (indicatorIdleTimer) clearTimeout(indicatorIdleTimer);
-    indicatorIdleTimer = setTimeout(() => {
-      indicatorIdle = true;
-    }, 1200);
-  }
-
-  const MIN_THUMB_PX = 28;
-  // Rough sticky-header height in the diff stack (text + py-1.5 + border).
-  // Two-line headers (renamed paths) are taller, but a fixed offset is
-  // enough to keep the indicator's rail clear of the header's right-side
-  // action buttons without measuring the DOM every scroll tick.
-  const STICKY_HEADER_PX = 32;
-
-  // Active file's bounds in viewport-scroll coordinates. `offsetTop` works
-  // because every section shares the same offsetParent (the bits-ui viewport,
-  // which is positioned). Reading `layoutTick` keeps this fresh across word
-  // wrap, view-mode, and collapse toggles.
-  let currentFileBounds = $derived.by<{ top: number; height: number } | null>(() => {
-    void layoutTick;
-    if (!effectiveSelected) return null;
-    const idx = stackChanges.findIndex((c) => c.path === effectiveSelected);
-    if (idx < 0) return null;
-    const section = sectionEls[effectiveSelected];
-    if (!section) return null;
-    const top = section.offsetTop;
-    let bottom: number;
-    if (idx + 1 < stackChanges.length) {
-      const nextPath = stackChanges[idx + 1].path;
-      const nextSection = sectionEls[nextPath];
-      bottom = nextSection ? nextSection.offsetTop : top + section.offsetHeight;
-    } else {
-      bottom = top + section.offsetHeight;
-    }
-    return { top, height: Math.max(0, bottom - top) };
-  });
-
-  // Rail is the active file's intersection with the viewport, not the full
-  // viewport — so when the next file peeks in at the bottom, the indicator
-  // shrinks and stays inside the active file instead of overlapping its
-  // neighbour. `railTop` is viewport-local Y; `thumbTopInRail` is relative
-  // to the rail so the rendering math stays straightforward.
-  let scrollIndicator = $derived.by<
-    { railTop: number; railHeight: number; thumbTopInRail: number; thumbHeight: number } | null
-  >(() => {
-    const bounds = currentFileBounds;
-    if (!bounds) return null;
-    if (diffViewportHeight <= 0) return null;
-    // File fits on one viewport: nothing to scroll within → no thumb.
-    if (bounds.height <= diffViewportHeight + 8) return null;
-    const fileTopInViewport = bounds.top - diffScrollTop;
-    // The active file's sticky header is pinned to the top of the viewport
-    // (or at the file's natural top when freshly scrolled in) — start the
-    // rail just below it so the thumb never collides with the header's
-    // discard/stage buttons on the right.
-    const railTop = Math.max(STICKY_HEADER_PX, fileTopInViewport + STICKY_HEADER_PX);
-    const railBottom = Math.min(diffViewportHeight, fileTopInViewport + bounds.height);
-    const railHeight = Math.max(0, railBottom - railTop);
-    if (railHeight < MIN_THUMB_PX) return null;
-    // Thumb height: same ratio as a regular scrollbar, but scaled by the
-    // visible-portion rail so it shrinks as the rail shrinks at the edges.
-    let thumbHeight = (railHeight / bounds.height) * railHeight;
-    thumbHeight = Math.max(MIN_THUMB_PX, Math.min(railHeight, thumbHeight));
-    const visibleStart = Math.max(0, diffScrollTop - bounds.top);
-    const scrollableDist = Math.max(1, bounds.height - diffViewportHeight);
-    const progress = Math.max(0, Math.min(1, visibleStart / scrollableDist));
-    const thumbTopInRail = progress * Math.max(0, railHeight - thumbHeight);
-    return { railTop, railHeight, thumbTopInRail, thumbHeight };
-  });
-
-  let indicatorVisible = $derived(
-    scrollIndicator !== null && (!indicatorIdle || indicatorHover || indicatorDragging)
-  );
-
-  function startIndicatorDrag(event: PointerEvent): void {
-    if (event.button !== 0) return;
-    const ind = scrollIndicator;
-    const bounds = currentFileBounds;
-    const viewport = diffViewportEl;
-    if (!ind || !bounds || !viewport) return;
-    event.preventDefault();
-    event.stopPropagation();
-    indicatorDragging = true;
-    bumpIndicatorActivity();
-    // Keep the scroll-driven file selection from re-selecting while the
-    // drag steers the viewport.
-    scrollLockUntil = performance.now() + 1500;
-    // Delta-based drag: map cursor movement to scroll movement using the
-    // initial scale. The rail itself moves as the active file approaches
-    // its neighbour, so we can't compute thumb position from cursor against
-    // a moving rail rect — but a fixed scale stays intuitive.
-    const startClientY = event.clientY;
-    const startScrollTop = viewport.scrollTop;
-    const scrollableDist = Math.max(1, bounds.height - diffViewportHeight);
-    const trackPx = Math.max(1, ind.railHeight - ind.thumbHeight);
-    const scale = scrollableDist / trackPx;
-    const onMove = (ev: PointerEvent) => {
-      bumpIndicatorActivity();
-      scrollLockUntil = performance.now() + 1500;
-      const dy = ev.clientY - startClientY;
-      viewport.scrollTop = Math.max(0, startScrollTop + dy * scale);
-    };
-    const onUp = () => {
-      indicatorDragging = false;
-      bumpIndicatorActivity();
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp, { once: true });
-  }
-
-  function jumpIndicatorRail(event: PointerEvent): void {
-    // Only react to clicks on the rail body; the thumb's pointerdown stops
-    // propagation so its drag-start doesn't double as a jump.
-    if (event.target !== event.currentTarget) return;
-    if (event.button !== 0) return;
-    const ind = scrollIndicator;
-    const bounds = currentFileBounds;
-    const viewport = diffViewportEl;
-    if (!ind || !bounds || !viewport) return;
-    const rail = event.currentTarget as HTMLElement;
-    const railRect = rail.getBoundingClientRect();
-    const localY = event.clientY - railRect.top - ind.thumbHeight / 2;
-    const clampedThumbTopInRail = Math.max(0, Math.min(ind.railHeight - ind.thumbHeight, localY));
-    const trackPx = Math.max(1, ind.railHeight - ind.thumbHeight);
-    const scrollableDist = Math.max(1, bounds.height - diffViewportHeight);
-    const progress = clampedThumbTopInRail / trackPx;
-    const nextScrollTop = bounds.top + progress * scrollableDist;
-    viewport.scrollTo({ top: Math.max(0, nextScrollTop), behavior: 'smooth' });
-    bumpIndicatorActivity();
-  }
-
   // Scroll-driven selection: the topmost file in the viewport becomes the
   // active one. A brief lock after pickChange keeps the smooth scroll from
   // stuttering the highlight through every intermediate section.
@@ -462,11 +318,7 @@
     const viewport = diffViewportEl;
     const cwd = activeCwd;
     if (!viewport || !cwd) return;
-    diffScrollTop = viewport.scrollTop;
-    diffViewportHeight = viewport.clientHeight;
     const onScroll = () => {
-      diffScrollTop = viewport.scrollTop;
-      bumpIndicatorActivity();
       if (performance.now() < scrollLockUntil) return;
       const viewportRect = viewport.getBoundingClientRect();
       const threshold = viewportRect.top + 40;
@@ -486,13 +338,8 @@
       }
     };
     viewport.addEventListener('scroll', onScroll, { passive: true });
-    const ro = new ResizeObserver(() => {
-      diffViewportHeight = viewport.clientHeight;
-    });
-    ro.observe(viewport);
     return () => {
       viewport.removeEventListener('scroll', onScroll);
-      ro.disconnect();
     };
   });
 
@@ -724,12 +571,22 @@
       </span>
     </div>
     <div class="flex items-center gap-1" class:ml-auto={diffExpanded}>
-      {#if totalCommentCount > 0}
+      {#if showComments}
         <Button
           variant="ghost"
           size="xs"
-          onclick={() => (showComments = !showComments)}
-          aria-pressed={showComments}
+          onclick={() => (showComments = false)}
+          title="Back to diff"
+          aria-label="Back to diff"
+        >
+          <ChevronLeft class="size-3" />
+          <span>Back</span>
+        </Button>
+      {:else if totalCommentCount > 0}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={() => (showComments = true)}
           title="Comments"
           aria-label="Show comments"
         >
@@ -991,7 +848,7 @@
       onpointerdown={startResizeList}
     ></button>
 
-    <section class="relative flex min-h-0 flex-1 flex-col">
+    <section class="flex min-h-0 flex-1 flex-col">
       {#if stackChanges.length === 0}
         <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
           <FileDiff class="size-4 shrink-0" />
@@ -1161,36 +1018,6 @@
             {/each}
           </div>
         </ScrollArea>
-        {#if scrollIndicator}
-          <div
-            aria-hidden="true"
-            onpointerdown={jumpIndicatorRail}
-            onmouseenter={() => {
-              indicatorHover = true;
-              bumpIndicatorActivity();
-            }}
-            onmouseleave={() => (indicatorHover = false)}
-            class={[
-              'absolute right-0 z-30 w-3.5 transition-opacity duration-200',
-              indicatorVisible ? 'opacity-100' : 'opacity-0'
-            ]}
-            style="top: {scrollIndicator.railTop}px; height: {scrollIndicator.railHeight}px"
-          >
-            <button
-              type="button"
-              tabindex="-1"
-              onpointerdown={startIndicatorDrag}
-              class={[
-                'absolute rounded-full transition-all duration-150',
-                indicatorDragging || indicatorHover
-                  ? 'right-0.5 w-2 bg-foreground/70'
-                  : 'right-1 w-1.5 bg-foreground/40'
-              ]}
-              style="top: {scrollIndicator.thumbTopInRail}px; height: {scrollIndicator.thumbHeight}px"
-              aria-label="Scroll within current file"
-            ></button>
-          </div>
-        {/if}
       {/if}
     </section>
   {/if}
