@@ -161,7 +161,6 @@
   let sectionEls = $state<Record<string, HTMLDivElement | null>>({});
   let bodyWrapperEls = $state<Record<string, HTMLDivElement | null>>({});
   let layoutTick = $state(0);
-  let scrollLockUntil = 0;
 
   function bindSection(node: HTMLDivElement, path: string) {
     sectionEls[path] = node;
@@ -311,38 +310,6 @@
     }
   });
 
-  // Scroll-driven selection: the topmost file in the viewport becomes the
-  // active one. A brief lock after pickChange keeps the smooth scroll from
-  // stuttering the highlight through every intermediate section.
-  $effect(() => {
-    const viewport = diffViewportEl;
-    const cwd = activeCwd;
-    if (!viewport || !cwd) return;
-    const onScroll = () => {
-      if (performance.now() < scrollLockUntil) return;
-      const viewportRect = viewport.getBoundingClientRect();
-      const threshold = viewportRect.top + 40;
-      let bestPath: string | null = null;
-      for (const change of stackChanges) {
-        const section = sectionEls[change.path];
-        if (!section) continue;
-        const rect = section.getBoundingClientRect();
-        if (rect.top <= threshold) {
-          bestPath = change.path;
-        } else {
-          break;
-        }
-      }
-      if (bestPath && bestPath !== storedSelected) {
-        workingDiff.setSelected(cwd, bestPath);
-      }
-    };
-    viewport.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      viewport.removeEventListener('scroll', onScroll);
-    };
-  });
-
   // Reconcile the outdated set per file. Comments whose anchored text no
   // longer matches the live diff land in the Outdated panel and stop
   // rendering markers; running this for every loaded diff keeps outdated
@@ -423,7 +390,6 @@
     const section = sectionEls[path];
     const viewport = diffViewportEl;
     if (!section || !viewport) return;
-    scrollLockUntil = performance.now() + 600;
     const sectionRect = section.getBoundingClientRect();
     const viewportRect = viewport.getBoundingClientRect();
     const top = viewport.scrollTop + sectionRect.top - viewportRect.top;
