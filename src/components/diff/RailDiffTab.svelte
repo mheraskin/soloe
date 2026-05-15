@@ -330,6 +330,11 @@
   }
 
   const MIN_THUMB_PX = 28;
+  // Rough sticky-header height in the diff stack (text + py-1.5 + border).
+  // Two-line headers (renamed paths) are taller, but a fixed offset is
+  // enough to keep the indicator's rail clear of the header's right-side
+  // action buttons without measuring the DOM every scroll tick.
+  const STICKY_HEADER_PX = 32;
 
   // Active file's bounds in viewport-scroll coordinates. `offsetTop` works
   // because every section shares the same offsetParent (the bits-ui viewport,
@@ -354,41 +359,42 @@
     return { top, height: Math.max(0, bottom - top) };
   });
 
-  let scrollIndicator = $derived.by<{ thumbTop: number; thumbHeight: number; railHeight: number } | null>(() => {
+  // Rail is the active file's intersection with the viewport, not the full
+  // viewport — so when the next file peeks in at the bottom, the indicator
+  // shrinks and stays inside the active file instead of overlapping its
+  // neighbour. `railTop` is viewport-local Y; `thumbTopInRail` is relative
+  // to the rail so the rendering math stays straightforward.
+  let scrollIndicator = $derived.by<
+    { railTop: number; railHeight: number; thumbTopInRail: number; thumbHeight: number } | null
+  >(() => {
     const bounds = currentFileBounds;
     if (!bounds) return null;
     if (diffViewportHeight <= 0) return null;
     // File fits on one viewport: nothing to scroll within → no thumb.
     if (bounds.height <= diffViewportHeight + 8) return null;
-    const localStart = diffScrollTop - bounds.top;
-    const localEnd = localStart + diffViewportHeight;
-    if (localEnd <= 0 || localStart >= bounds.height) return null;
-    const railHeight = diffViewportHeight;
-    const clampedStart = Math.max(0, Math.min(bounds.height, localStart));
-    const clampedEnd = Math.max(0, Math.min(bounds.height, localEnd));
-    let thumbHeight = Math.max(MIN_THUMB_PX, ((clampedEnd - clampedStart) / bounds.height) * railHeight);
-    thumbHeight = Math.min(thumbHeight, railHeight);
-    let thumbTop = (clampedStart / bounds.height) * railHeight;
-    if (thumbTop + thumbHeight > railHeight) thumbTop = railHeight - thumbHeight;
-    if (thumbTop < 0) thumbTop = 0;
-    return { thumbTop, thumbHeight, railHeight };
+    const fileTopInViewport = bounds.top - diffScrollTop;
+    // The active file's sticky header is pinned to the top of the viewport
+    // (or at the file's natural top when freshly scrolled in) — start the
+    // rail just below it so the thumb never collides with the header's
+    // discard/stage buttons on the right.
+    const railTop = Math.max(STICKY_HEADER_PX, fileTopInViewport + STICKY_HEADER_PX);
+    const railBottom = Math.min(diffViewportHeight, fileTopInViewport + bounds.height);
+    const railHeight = Math.max(0, railBottom - railTop);
+    if (railHeight < MIN_THUMB_PX) return null;
+    // Thumb height: same ratio as a regular scrollbar, but scaled by the
+    // visible-portion rail so it shrinks as the rail shrinks at the edges.
+    let thumbHeight = (railHeight / bounds.height) * railHeight;
+    thumbHeight = Math.max(MIN_THUMB_PX, Math.min(railHeight, thumbHeight));
+    const visibleStart = Math.max(0, diffScrollTop - bounds.top);
+    const scrollableDist = Math.max(1, bounds.height - diffViewportHeight);
+    const progress = Math.max(0, Math.min(1, visibleStart / scrollableDist));
+    const thumbTopInRail = progress * Math.max(0, railHeight - thumbHeight);
+    return { railTop, railHeight, thumbTopInRail, thumbHeight };
   });
 
   let indicatorVisible = $derived(
     scrollIndicator !== null && (!indicatorIdle || indicatorHover || indicatorDragging)
   );
-
-  function thumbTopToScrollTop(
-    thumbTop: number,
-    bounds: { top: number; height: number },
-    railHeight: number,
-    thumbHeight: number
-  ): number {
-    const denomRail = Math.max(1, railHeight - thumbHeight);
-    const denomFile = Math.max(0, bounds.height - diffViewportHeight);
-    const localStart = (thumbTop / denomRail) * denomFile;
-    return bounds.top + localStart;
-  }
 
   function startIndicatorDrag(event: PointerEvent): void {
     if (event.button !== 0) return;
@@ -398,27 +404,25 @@
     if (!ind || !bounds || !viewport) return;
     event.preventDefault();
     event.stopPropagation();
-    const thumb = event.currentTarget as HTMLElement;
-    const rail = thumb.parentElement;
-    if (!rail) return;
-    const railRect = rail.getBoundingClientRect();
-    // Preserve the cursor's offset within the thumb at drag start so the
-    // thumb tracks the cursor instead of snapping its top to it.
-    const thumbStartLocal = event.clientY - railRect.top - ind.thumbTop;
-    const thumbHeight = ind.thumbHeight;
     indicatorDragging = true;
     bumpIndicatorActivity();
     // Keep the scroll-driven file selection from re-selecting while the
     // drag steers the viewport.
     scrollLockUntil = performance.now() + 1500;
+    // Delta-based drag: map cursor movement to scroll movement using the
+    // initial scale. The rail itself moves as the active file approaches
+    // its neighbour, so we can't compute thumb position from cursor against
+    // a moving rail rect — but a fixed scale stays intuitive.
+    const startClientY = event.clientY;
+    const startScrollTop = viewport.scrollTop;
+    const scrollableDist = Math.max(1, bounds.height - diffViewportHeight);
+    const trackPx = Math.max(1, ind.railHeight - ind.thumbHeight);
+    const scale = scrollableDist / trackPx;
     const onMove = (ev: PointerEvent) => {
       bumpIndicatorActivity();
       scrollLockUntil = performance.now() + 1500;
-      const railH = rail.clientHeight;
-      const localY = ev.clientY - railRect.top - thumbStartLocal;
-      const clampedThumbTop = Math.max(0, Math.min(railH - thumbHeight, localY));
-      const nextScrollTop = thumbTopToScrollTop(clampedThumbTop, bounds, railH, thumbHeight);
-      viewport.scrollTop = Math.max(0, nextScrollTop);
+      const dy = ev.clientY - startClientY;
+      viewport.scrollTop = Math.max(0, startScrollTop + dy * scale);
     };
     const onUp = () => {
       indicatorDragging = false;
@@ -442,8 +446,11 @@
     const rail = event.currentTarget as HTMLElement;
     const railRect = rail.getBoundingClientRect();
     const localY = event.clientY - railRect.top - ind.thumbHeight / 2;
-    const clampedThumbTop = Math.max(0, Math.min(ind.railHeight - ind.thumbHeight, localY));
-    const nextScrollTop = thumbTopToScrollTop(clampedThumbTop, bounds, ind.railHeight, ind.thumbHeight);
+    const clampedThumbTopInRail = Math.max(0, Math.min(ind.railHeight - ind.thumbHeight, localY));
+    const trackPx = Math.max(1, ind.railHeight - ind.thumbHeight);
+    const scrollableDist = Math.max(1, bounds.height - diffViewportHeight);
+    const progress = clampedThumbTopInRail / trackPx;
+    const nextScrollTop = bounds.top + progress * scrollableDist;
     viewport.scrollTo({ top: Math.max(0, nextScrollTop), behavior: 'smooth' });
     bumpIndicatorActivity();
   }
@@ -1012,25 +1019,33 @@
                 class="relative flex flex-col"
               >
                 <header
+                  role="button"
+                  tabindex="0"
                   class={[
-                    'sticky top-0 z-20 flex items-center gap-2 border-y border-border px-3 py-1.5 backdrop-blur-sm',
+                    'sticky top-0 z-20 flex cursor-pointer items-center gap-2 border-y border-border px-3 py-1.5 backdrop-blur-sm select-none',
                     isActive ? 'bg-muted/90' : 'bg-background/95'
                   ]}
+                  onclick={() => toggleCollapsed(change)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      toggleCollapsed(change);
+                    }
+                  }}
+                  aria-expanded={!collapsed}
+                  aria-label={collapsed ? `Expand ${change.path}` : `Collapse ${change.path}`}
+                  title={collapsed ? 'Expand' : 'Collapse'}
                 >
-                  <button
-                    type="button"
-                    class="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/80 transition-colors hover:bg-muted-foreground/20 hover:text-foreground"
-                    onclick={() => toggleCollapsed(change)}
-                    aria-expanded={!collapsed}
-                    aria-label={collapsed ? `Expand ${change.path}` : `Collapse ${change.path}`}
-                    title={collapsed ? 'Expand' : 'Collapse'}
+                  <span
+                    class="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground/80"
+                    aria-hidden="true"
                   >
                     {#if collapsed}
                       <ChevronRight class="size-3" />
                     {:else}
                       <ChevronDown class="size-3" />
                     {/if}
-                  </button>
+                  </span>
                   <div class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate font-mono text-[11px] text-foreground">
                       {fileDiff?.path ?? change.path}
@@ -1042,11 +1057,29 @@
                     {/if}
                   </div>
                   <div class="flex shrink-0 items-center gap-1.5">
+                    <span class="font-mono text-[10px] text-muted-foreground uppercase">
+                      {fileDiff?.kind ?? change.kind}
+                    </span>
+                    <button
+                      type="button"
+                      class="flex size-4 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        void discardChange(change);
+                      }}
+                      title="Discard changes"
+                      aria-label="Discard changes to {change.path}"
+                    >
+                      <RotateCcw class="size-3" />
+                    </button>
                     {#if change.staged}
                       <button
                         type="button"
                         class="flex size-4 items-center justify-center rounded text-rose-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        onclick={() => void unstageFile(change.path).catch(reportError)}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          void unstageFile(change.path).catch(reportError);
+                        }}
                         disabled={stagePending}
                         title="Unstage"
                         aria-label="Unstage {change.path}"
@@ -1061,7 +1094,10 @@
                       <button
                         type="button"
                         class="flex size-4 items-center justify-center rounded text-emerald-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        onclick={() => void stageFile(change.path).catch(reportError)}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          void stageFile(change.path).catch(reportError);
+                        }}
                         disabled={stagePending}
                         title="Stage"
                         aria-label="Stage {change.path}"
@@ -1073,18 +1109,6 @@
                         {/if}
                       </button>
                     {/if}
-                    <button
-                      type="button"
-                      class="flex size-4 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500"
-                      onclick={() => void discardChange(change)}
-                      title="Discard changes"
-                      aria-label="Discard changes to {change.path}"
-                    >
-                      <RotateCcw class="size-3" />
-                    </button>
-                    <span class="ml-1 font-mono text-[10px] text-muted-foreground uppercase">
-                      {fileDiff?.kind ?? change.kind}
-                    </span>
                   </div>
                 </header>
                 <div use:bindBodyWrapper={change.path}>
@@ -1147,10 +1171,10 @@
             }}
             onmouseleave={() => (indicatorHover = false)}
             class={[
-              'absolute top-0 right-0 z-30 w-3.5 transition-opacity duration-200',
+              'absolute right-0 z-30 w-3.5 transition-opacity duration-200',
               indicatorVisible ? 'opacity-100' : 'opacity-0'
             ]}
-            style="height: {scrollIndicator.railHeight}px"
+            style="top: {scrollIndicator.railTop}px; height: {scrollIndicator.railHeight}px"
           >
             <button
               type="button"
@@ -1162,7 +1186,7 @@
                   ? 'right-0.5 w-2 bg-foreground/70'
                   : 'right-1 w-1.5 bg-foreground/40'
               ]}
-              style="top: {scrollIndicator.thumbTop}px; height: {scrollIndicator.thumbHeight}px"
+              style="top: {scrollIndicator.thumbTopInRail}px; height: {scrollIndicator.thumbHeight}px"
               aria-label="Scroll within current file"
             ></button>
           </div>
