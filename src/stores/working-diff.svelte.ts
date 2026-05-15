@@ -5,6 +5,7 @@ import type {
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
+import { git } from './git.svelte';
 
 interface RepoContext {
   runMode?: RunMode;
@@ -666,14 +667,48 @@ class WorkingDiffStore {
         for (const [cwd, entry] of Object.entries(this.changesByCwd)) {
           if (entry.result?.repoPath !== event.repoPath) continue;
           if ((this.stageSuppressUntil.get(cwd) ?? 0) > Date.now()) continue;
-          void this.loadChanges(cwd).then((result) => {
-            if (!result) return;
-            this.clearDiffCache(cwd);
-            void this.prefetchDiffs(cwd);
-          });
+          this.refreshCwd(cwd, true);
         }
       })
     );
+    // Polling fallback: ride the git store's tick so the diff pane refreshes
+    // on the same 5s/30s cadence as tab line counts. Without this, the diff
+    // pane only updates on filesystem-driven onChange events and can lag
+    // behind the tab badges when changes originate outside the watcher.
+    this.detachers.push(
+      git.onTick((cwd) => {
+        if (!this.changesByCwd[cwd]) return;
+        if ((this.stageSuppressUntil.get(cwd) ?? 0) > Date.now()) return;
+        this.refreshCwd(cwd, false);
+      })
+    );
+  }
+
+  // `forceDiffRefresh` clears the per-file diff cache regardless of whether
+  // the changes list looks identical; used by filesystem-watcher events that
+  // already indicate something changed. The polling-tick path passes false
+  // and compares signatures so unchanged worktrees don't refetch all diffs
+  // every 5s.
+  private refreshCwd(cwd: string, forceDiffRefresh: boolean): void {
+    const before = this.changesSignature(this.changesByCwd[cwd]?.result ?? null);
+    void this.loadChanges(cwd).then((result) => {
+      if (!result) return;
+      const after = this.changesSignature(result);
+      if (forceDiffRefresh || before !== after) {
+        this.clearDiffCache(cwd);
+        void this.prefetchDiffs(cwd);
+      }
+    });
+  }
+
+  private changesSignature(result: WorkingChangesResult | null): string {
+    if (!result) return '';
+    return result.changes
+      .map(
+        (c) =>
+          `${c.path}|${c.fromPath ?? ''}|${c.kind}|${c.staged ? 1 : 0}|${c.insertions}|${c.deletions}|${c.binary ? 1 : 0}`
+      )
+      .join('\n');
   }
 
   detach(): void {

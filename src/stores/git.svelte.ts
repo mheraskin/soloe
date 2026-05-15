@@ -65,6 +65,7 @@ class GitStore {
   private projectIntents = new Map<string, RepoContext>();
   private projectIntentSeq = 0;
   private worktreeRequests = new Map<string, Promise<GitWorktree[]>>();
+  private tickListeners = new Set<(cwd: string) => void>();
   private paused = false;
 
   statusFor(cwd: string): GitStatus | null {
@@ -255,7 +256,10 @@ class GitStore {
   // Polls status + shortstat for the given worktree once.
   private async tick(cwd: string): Promise<void> {
     const status = await this.loadStatus(cwd, true);
-    if (!status?.repoPath) return;
+    if (!status?.repoPath) {
+      this.fireTick(cwd);
+      return;
+    }
     // When the worktree is fully clean, shortstat is provably 0/0/0;
     // synthesize it locally and skip the extra git invocation. Otherwise
     // (any staged, unstaged, or untracked entry) fetch the real numbers
@@ -275,9 +279,23 @@ class GitStore {
           error: null
         }
       };
+      this.fireTick(cwd);
       return;
     }
     await this.loadShortstat(status.repoPath, true);
+    this.fireTick(cwd);
+  }
+
+  // Notify listeners that a polling tick completed for this cwd. Used by
+  // the working-diff store so its refresh cadence matches the tab line-count
+  // cadence (5s when a session in the worktree is active, 30s when idle).
+  private fireTick(cwd: string): void {
+    for (const cb of this.tickListeners) cb(cwd);
+  }
+
+  onTick(cb: (cwd: string) => void): () => void {
+    this.tickListeners.add(cb);
+    return () => this.tickListeners.delete(cb);
   }
 
   // Update session-driven polling intents. `fast: true` polls every 5s
