@@ -78,11 +78,29 @@
      hooks; chrome we don't override falls back to Pierre's defaults. */
   .soloe-tree-host {
     --trees-fg-override: var(--foreground);
+    --trees-fg-muted-override: var(--muted-foreground);
     --trees-bg-override: var(--sidebar);
+    --trees-bg-muted-override: color-mix(in oklch, var(--muted) 35%, transparent);
+    --trees-accent-override: var(--primary);
     --trees-border-color-override: var(--border);
     --trees-selected-bg-override: color-mix(in oklch, var(--muted) 70%, transparent);
+    --trees-selected-focused-border-color-override: var(--ring);
     --trees-hover-bg-override: color-mix(in oklch, var(--muted) 35%, transparent);
     --trees-muted-fg-override: var(--muted-foreground);
+    /* The default 16px inline padding makes the rows look like they're
+       indented from the rail edge — drop it so the tree hugs the chrome and
+       reclaim that horizontal space for filenames. The 4px residual keeps
+       the focus ring from clipping against the host border. */
+    --trees-padding-inline-override: 4px;
+    /* Match the app's focus ring (ring color, 2px width, no offset so the
+       outline sits flush against the row background). */
+    --trees-focus-ring-color-override: var(--ring);
+    --trees-focus-ring-width-override: 1.5px;
+    --trees-focus-ring-offset-override: 0px;
+    /* Built-in filter input: keep it on the same surface as the rest of the
+       tree instead of the default brighter chrome. */
+    --trees-search-fg-override: var(--foreground);
+    --trees-search-bg-override: var(--background);
     /* Match the diff tab's ChangeRow palette so a file's status badge means
        the same thing in both panes (emerald=add, amber=mod, rose=del, sky=ren). */
     --trees-status-added-override: var(--color-emerald-500);
