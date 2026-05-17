@@ -167,6 +167,7 @@
 
   async function sendAllAndSubmit(): Promise<void> {
     await sendText(editorValue, true);
+    notes.clearCurrent();
   }
 
   async function sendSelectionAndSubmit(): Promise<void> {
