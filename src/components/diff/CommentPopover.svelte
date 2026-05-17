@@ -73,12 +73,19 @@
   // depending on textareaEl in a separate effect picks up the late mount.
   // Also pre-empts bits-ui's default auto-focus, which would otherwise land
   // on the first focusable child (the close button) before this runs.
+  // rAF defers past bits-ui's FocusScope mount so a focus call from a
+  // different focus context (e.g. clicking the marker while xterm's
+  // helper-textarea holds focus in the terminal pane) actually lands.
   $effect(() => {
     if (!editing) return;
     if (!textareaEl) return;
-    textareaEl.focus();
-    if (textareaEl.value.length > 0) textareaEl.select();
-    syncCursor();
+    const el = textareaEl;
+    const raf = requestAnimationFrame(() => {
+      el.focus();
+      if (el.value.length > 0) el.select();
+      syncCursor();
+    });
+    return () => cancelAnimationFrame(raf);
   });
 
   function handleOpenChange(next: boolean): void {
