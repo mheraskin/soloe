@@ -18,6 +18,7 @@ const DEFAULT_STATE: RailState = {
 // rail still behave like a single global state in that edge case.
 const NO_WORKTREE_KEY = '__none__';
 const STORAGE_KEY = 'soloe.rightRail.v1';
+const DIFF_SCROLL_KEY = 'soloe.diffScroll.v1';
 
 function sanitize(value: Partial<RailState> | undefined): RailState {
   const raw = value?.activeTab;
@@ -37,19 +38,41 @@ class RightRailStore {
   private activeCwd = $state<string | null>(null);
   private stateByCwd = $state<Record<string, RailState>>({});
 
+  // Diff viewport scroll position per worktree. Kept here rather than in
+  // working-diff because the rail already owns per-cwd UI persistence and is
+  // localStorage-backed; the diff body restores from this on cwd switch.
+  // Plain (non-$state) record: writes happen on every scroll tick and we
+  // don't want any subscribers reacting to that.
+  private diffScrollByCwd: Record<string, number> = {};
+
   constructor() {
     if (typeof localStorage === 'undefined') return;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Record<string, Partial<RailState>>;
-      const next: Record<string, RailState> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        next[key] = sanitize(value);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, Partial<RailState>>;
+        const next: Record<string, RailState> = {};
+        for (const [key, value] of Object.entries(parsed)) {
+          next[key] = sanitize(value);
+        }
+        this.stateByCwd = next;
       }
-      this.stateByCwd = next;
     } catch {
       // Corrupt entry — start fresh; not worth surfacing to the user.
+    }
+    try {
+      const raw = localStorage.getItem(DIFF_SCROLL_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const next: Record<string, number> = {};
+        for (const [key, value] of Object.entries(parsed)) {
+          const n = typeof value === 'number' ? value : Number(value);
+          if (Number.isFinite(n) && n >= 0) next[key] = n;
+        }
+        this.diffScrollByCwd = next;
+      }
+    } catch {
+      // Ignore — scroll position is recoverable.
     }
   }
 
@@ -151,6 +174,28 @@ class RightRailStore {
   toggleFullscreen(): void {
     const state = this.current();
     this.patch({ fullscreen: !state.fullscreen, open: true });
+  }
+
+  getDiffScrollTop(cwd: string | null | undefined): number {
+    if (!cwd) return 0;
+    return this.diffScrollByCwd[cwd] ?? 0;
+  }
+
+  setDiffScrollTop(cwd: string | null | undefined, value: number): void {
+    if (!cwd) return;
+    const clamped = Math.max(0, Math.round(value));
+    if (this.diffScrollByCwd[cwd] === clamped) return;
+    this.diffScrollByCwd[cwd] = clamped;
+    this.persistDiffScroll();
+  }
+
+  private persistDiffScroll(): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(DIFF_SCROLL_KEY, JSON.stringify(this.diffScrollByCwd));
+    } catch {
+      // Quota — ignore; in-memory map still works for the session.
+    }
   }
 }
 

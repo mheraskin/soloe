@@ -82,7 +82,11 @@
     if (!textareaEl) return;
     const el = textareaEl;
     const raf = requestAnimationFrame(() => {
-      el.focus();
+      // preventScroll so the rAF-deferred focus can't push the diff viewport
+      // around — without it, the gutter-click-creates-comment path could
+      // scroll the underlying stack (most visibly when some files are
+      // collapsed and the popover renders near a viewport edge).
+      el.focus({ preventScroll: true });
       if (el.value.length > 0) el.select();
       syncCursor();
     });

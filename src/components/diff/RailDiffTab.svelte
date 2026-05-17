@@ -489,6 +489,78 @@
     }
   }
 
+  // Per-cwd diff scroll persistence. Save on scroll (debounced), restore on
+  // cwd swap. Restore retries until diffRootEl is tall enough to accept the
+  // saved offset — diffs load async, so a single setTimeout would land
+  // before content was ready. Capped so we don't poll forever on a worktree
+  // whose stack genuinely doesn't reach the saved offset.
+  let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  let restoreDeadline = 0;
+  const SCROLL_SAVE_DEBOUNCE_MS = 150;
+  const RESTORE_TIMEOUT_MS = 3000;
+  const RESTORE_POLL_MS = 80;
+
+  function cancelRestore(): void {
+    if (restoreTimer !== null) {
+      clearTimeout(restoreTimer);
+      restoreTimer = null;
+    }
+  }
+
+  function tryRestoreScroll(target: number): void {
+    const v = diffViewportEl;
+    if (!v) {
+      if (Date.now() < restoreDeadline) {
+        restoreTimer = setTimeout(() => tryRestoreScroll(target), RESTORE_POLL_MS);
+      }
+      return;
+    }
+    const max = v.scrollHeight - v.clientHeight;
+    if (max >= target || Date.now() >= restoreDeadline) {
+      v.scrollTo({ top: Math.min(Math.max(0, target), Math.max(0, max)), behavior: 'instant' });
+      restoreTimer = null;
+      return;
+    }
+    restoreTimer = setTimeout(() => tryRestoreScroll(target), RESTORE_POLL_MS);
+  }
+
+  $effect(() => {
+    const cwd = activeCwd;
+    cancelRestore();
+    if (!cwd) return;
+    // Read saved offset eagerly (untrack to keep this effect from re-firing
+    // on writes back to the same key).
+    const target = untrack(() => rightRail.getDiffScrollTop(cwd));
+    if (target <= 0) return;
+    restoreDeadline = Date.now() + RESTORE_TIMEOUT_MS;
+    restoreTimer = setTimeout(() => tryRestoreScroll(target), RESTORE_POLL_MS);
+    return () => cancelRestore();
+  });
+
+  $effect(() => {
+    const cwd = activeCwd;
+    const v = diffViewportEl;
+    if (!cwd || !v) return;
+    const onScroll = () => {
+      // User input wins — abort any pending restore so we don't clobber it.
+      if (restoreTimer !== null) cancelRestore();
+      if (scrollSaveTimer !== null) clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = setTimeout(() => {
+        scrollSaveTimer = null;
+        rightRail.setDiffScrollTop(cwd, v.scrollTop);
+      }, SCROLL_SAVE_DEBOUNCE_MS);
+    };
+    v.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      v.removeEventListener('scroll', onScroll);
+      if (scrollSaveTimer !== null) {
+        clearTimeout(scrollSaveTimer);
+        scrollSaveTimer = null;
+      }
+    };
+  });
+
   onMount(() => {
     const raw = localStorage.getItem(LIST_HEIGHT_KEY);
     if (raw !== null) {
@@ -826,7 +898,11 @@
           class="min-h-0 flex-1"
           bind:viewportRef={diffViewportEl}
         >
-          <div bind:this={diffRootEl} class="flex flex-col">
+          <div
+            bind:this={diffRootEl}
+            class="flex flex-col"
+            style:overflow-anchor="none"
+          >
             {#each stackChanges as change (change.path)}
               {@const entry = workingDiff.diffEntryFor(activeCwd!, change.path)}
               {@const fileDiff = entry?.diff ?? null}
