@@ -1,0 +1,62 @@
+# Third-Party Notices
+
+Soloe bundles software from third parties. The terms below apply to each
+bundled component and are reproduced here to satisfy attribution requirements.
+Full license text for each package is also available in
+`node_modules/<package>/LICENSE` (or `LICENSE.md`) in shipped builds.
+
+---
+
+## @pierre/trees
+
+Path-first file tree UI, used by the Files rail tab.
+
+- Project: https://github.com/pierrecomputer/pierre/tree/main/packages/trees
+- License: Apache License 2.0
+- Copyright: 2025 Pierre Computer Company
+
+### NOTICE (from @pierre/trees)
+
+This project includes some code derived from
+[@headless-tree/core](https://github.com/lukasbach/headless-tree).
+
+The initial version of this project used `headless-tree` as the underlying tree
+implementation. Pierre have since written their own core at `packages/path-store`,
+but many of the best ideas from `headless-tree` made their way to `path-store`
+and `trees`.
+
+Original license for `headless-tree/core` (MIT, Copyright (c) 2023 Lukas Bach)
+is reproduced in `node_modules/@pierre/trees/NOTICE.md`.
+
+The full Apache 2.0 license text shipped with the package lives at
+`node_modules/@pierre/trees/LICENSE.md`.
+
+---
+
+## CodeMirror 6
+
+In-editor code view used by the Files rail tab.
+
+- Project: https://codemirror.net/
+- License: MIT
+- Copyright: 2018-present by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Packages bundled:
+
+- `codemirror`
+- `@codemirror/state`
+- `@codemirror/view`
+- `@codemirror/language`
+- `@codemirror/language-data` (and the language packages it lazy-loads)
+- `@codemirror/commands`
+- `@codemirror/search`
+
+Full MIT license text ships with each package at
+`node_modules/<package>/LICENSE`.
+
+---
+
+The Apache 2.0 license requires preserving the NOTICE text above whenever
+Soloe is redistributed. Other dependencies of Soloe carry their own license
+terms; this file only enumerates components that require notice-preservation
+or whose terms differ meaningfully from Soloe's own license.
