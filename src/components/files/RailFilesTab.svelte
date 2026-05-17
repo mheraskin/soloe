@@ -21,6 +21,7 @@
   import { Button } from '$lib/components/ui/button';
   import FileTreeView from './FileTreeView.svelte';
   import FileEditor from './FileEditor.svelte';
+  import EditorSelectionMenu from './EditorSelectionMenu.svelte';
 
   let rootEl: HTMLDivElement | null = $state(null);
   let treeWrapperEl: HTMLDivElement | null = $state(null);
@@ -439,6 +440,10 @@
               relativePath={openFile.relativePath}
               onChange={onChange}
               onSave={onSave}
+            />
+            <EditorSelectionMenu
+              relativePath={openFile.relativePath}
+              rootEl={editorWrapperEl}
             />
           {/if}
         {:else if isSplit}
