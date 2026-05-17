@@ -9,6 +9,7 @@
     CheckCircle2,
     CircleCheck,
     CircleDot,
+    RotateCw,
     X
   } from '@lucide/svelte';
   import type { Snippet } from 'svelte';
@@ -469,6 +470,8 @@
                 >
                   {#if sending}
                     <Loader2 class="size-3 animate-spin" />
+                  {:else if comment.sentAt}
+                    <RotateCw class="size-3" />
                   {:else}
                     <Send class="size-3" />
                   {/if}
