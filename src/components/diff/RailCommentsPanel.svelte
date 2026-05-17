@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     Check,
+    CheckCheck,
     ChevronDown,
     ChevronRight,
     Loader2,
@@ -171,6 +172,16 @@
     diffComments.setResolved(id, value);
   }
 
+  function resolveAllVisible(): void {
+    const ids = visible.filter((c) => !c.resolvedAt).map((c) => c.id);
+    if (ids.length === 0) return;
+    diffComments.setResolvedMany(ids, true);
+    toasts.push(
+      `Resolved ${ids.length} comment${ids.length === 1 ? '' : 's'}`,
+      'info'
+    );
+  }
+
   function deleteOne(id: string): void {
     diffComments.remove(id);
   }
@@ -252,76 +263,88 @@
         </button>
       {/each}
     </div>
-    {#if tab === 'active' && unsentInActive.length > 0}
-      {@const count = unsentInActive.length}
+    {#if tab !== 'resolved' && visible.length > 0}
       <div class="flex items-center gap-1 pr-1.5">
-        <Button
-          variant="default"
-          size="xs"
-          onclick={() => void sendAllUnsent()}
-          disabled={sendingAll}
-          aria-label="Send all unsent comments"
-          title="Send all"
-        >
-          {#if sendingAll && !preambleOpen}
-            <Loader2 class="size-3 animate-spin" />
-          {:else}
-            <Send class="size-3" />
-          {/if}
-          <span>Send all ({count})</span>
-        </Button>
-        <Popover.Root bind:open={preambleOpen}>
-          <Popover.Trigger>
-            {#snippet child({ props })}
-              <Button
-                {...props}
-                variant="outline"
-                size="icon-xs"
-                aria-label="Send with optional message"
-                title="Send with a message"
-              >
-                <MessageSquarePlus class="size-3" />
-              </Button>
-            {/snippet}
-          </Popover.Trigger>
-          <Popover.Content align="end" sideOffset={6} class="w-80 p-2">
-            <div class="flex flex-col gap-1.5">
-              <Textarea
-                bind:value={preambleText}
-                placeholder={count === 1
-                  ? 'Message to send with this comment… (Enter to send, Shift+Enter for newline)'
-                  : `Message to send with these ${count} comments… (Enter to send, Shift+Enter for newline)`}
-                rows={3}
-                disabled={sendingAll}
-                aria-label="Message to accompany unsent comments"
-                onkeydown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-                    e.preventDefault();
-                    void sendAllUnsent(preambleText);
-                  }
-                }}
-                class="min-h-[4rem] resize-none rounded-md font-mono text-xs leading-snug"
-              />
-              <div class="flex items-center justify-end">
+        {#if tab === 'active' && unsentInActive.length > 0}
+          {@const count = unsentInActive.length}
+          <Button
+            variant="default"
+            size="xs"
+            onclick={() => void sendAllUnsent()}
+            disabled={sendingAll}
+            aria-label="Send all unsent comments"
+            title="Send all"
+          >
+            {#if sendingAll && !preambleOpen}
+              <Loader2 class="size-3 animate-spin" />
+            {:else}
+              <Send class="size-3" />
+            {/if}
+            <span>Send all ({count})</span>
+          </Button>
+          <Popover.Root bind:open={preambleOpen}>
+            <Popover.Trigger>
+              {#snippet child({ props })}
                 <Button
-                  variant="default"
-                  size="xs"
-                  onclick={() => void sendAllUnsent(preambleText)}
-                  disabled={sendingAll || !preambleText.trim()}
-                  aria-label="Send all with message"
-                  title="Send (Enter)"
+                  {...props}
+                  variant="outline"
+                  size="icon-xs"
+                  aria-label="Send with optional message"
+                  title="Send with a message"
                 >
-                  {#if sendingAll && preambleOpen}
-                    <Loader2 class="size-3 animate-spin" />
-                  {:else}
-                    <Send class="size-3" />
-                  {/if}
-                  <span>Send all ({count})</span>
+                  <MessageSquarePlus class="size-3" />
                 </Button>
+              {/snippet}
+            </Popover.Trigger>
+            <Popover.Content align="end" sideOffset={6} class="w-80 p-2">
+              <div class="flex flex-col gap-1.5">
+                <Textarea
+                  bind:value={preambleText}
+                  placeholder={count === 1
+                    ? 'Message to send with this comment… (Enter to send, Shift+Enter for newline)'
+                    : `Message to send with these ${count} comments… (Enter to send, Shift+Enter for newline)`}
+                  rows={3}
+                  disabled={sendingAll}
+                  aria-label="Message to accompany unsent comments"
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                      e.preventDefault();
+                      void sendAllUnsent(preambleText);
+                    }
+                  }}
+                  class="min-h-[4rem] resize-none rounded-md font-mono text-xs leading-snug"
+                />
+                <div class="flex items-center justify-end">
+                  <Button
+                    variant="default"
+                    size="xs"
+                    onclick={() => void sendAllUnsent(preambleText)}
+                    disabled={sendingAll || !preambleText.trim()}
+                    aria-label="Send all with message"
+                    title="Send (Enter)"
+                  >
+                    {#if sendingAll && preambleOpen}
+                      <Loader2 class="size-3 animate-spin" />
+                    {:else}
+                      <Send class="size-3" />
+                    {/if}
+                    <span>Send all ({count})</span>
+                  </Button>
+                </div>
               </div>
-            </div>
-          </Popover.Content>
-        </Popover.Root>
+            </Popover.Content>
+          </Popover.Root>
+        {/if}
+        <Button
+          variant="outline"
+          size="xs"
+          onclick={() => resolveAllVisible()}
+          aria-label="Resolve all {tab} comments"
+          title="Resolve all"
+        >
+          <CheckCheck class="size-3" />
+          <span>Resolve all ({visible.length})</span>
+        </Button>
       </div>
     {/if}
   </div>

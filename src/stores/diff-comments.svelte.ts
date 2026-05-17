@@ -343,6 +343,29 @@ class DiffCommentsStore {
     this.update(id, { resolvedAt: resolved ? Date.now() : undefined });
   }
 
+  // Single mutation + single persist — N×setResolved would re-emit byKey and
+  // hit disk on each call.
+  setResolvedMany(ids: string[], resolved: boolean): void {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    const resolvedAt = resolved ? Date.now() : undefined;
+    const updatedAt = Date.now();
+    let touched = false;
+    const next: Record<string, DiffComment[]> = {};
+    for (const [key, list] of Object.entries(this.byKey)) {
+      const updated = list.map((c) => {
+        if (!idSet.has(c.id)) return c;
+        touched = true;
+        return { ...c, resolvedAt, updatedAt };
+      });
+      next[key] = updated;
+    }
+    if (touched) {
+      this.byKey = next;
+      this.persist();
+    }
+  }
+
   beginEdit(id: string): void {
     this.editingId = id;
   }
