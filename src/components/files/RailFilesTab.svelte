@@ -9,8 +9,11 @@
     RefreshCw,
     Save
   } from '@lucide/svelte';
+  import type { GitStatusEntry } from '@pierre/trees';
+  import type { WorkingChange } from '@shared/types/git.js';
   import { sessions } from '../../stores/sessions.svelte';
   import { filesStore } from '../../stores/files.svelte';
+  import { workingDiff } from '../../stores/working-diff.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -26,6 +29,41 @@
   let tree = $derived(activeCwd ? filesStore.treeFor(activeCwd) : null);
   let openFile = $derived(filesStore.openFile);
   let dirty = $derived(filesStore.dirty);
+
+  // Map working-tree changes onto Pierre's status union. 'copied' isn't a
+  // Pierre status — flag the destination as 'added' since that's the closest
+  // semantically (a brand-new path appeared). Renames also surface fromPath so
+  // the old name is painted as 'deleted' alongside the new name as 'renamed'.
+  let gitStatus = $derived.by<GitStatusEntry[] | undefined>(() => {
+    if (!activeCwd) return undefined;
+    const result = workingDiff.changesFor(activeCwd).result;
+    if (!result) return undefined;
+    const entries: GitStatusEntry[] = [];
+    for (const change of result.changes as WorkingChange[]) {
+      entries.push({ path: change.path, status: mapKind(change.kind) });
+      if ((change.kind === 'renamed' || change.kind === 'copied') && change.fromPath) {
+        entries.push({ path: change.fromPath, status: change.kind === 'renamed' ? 'deleted' : 'modified' });
+      }
+    }
+    return entries;
+  });
+
+  function mapKind(kind: WorkingChange['kind']): GitStatusEntry['status'] {
+    switch (kind) {
+      case 'added':
+        return 'added';
+      case 'modified':
+        return 'modified';
+      case 'deleted':
+        return 'deleted';
+      case 'renamed':
+        return 'renamed';
+      case 'copied':
+        return 'added';
+      case 'untracked':
+        return 'untracked';
+    }
+  }
 
   let cwdLabel = $derived.by<string>(() => {
     if (!activeCwd) return '';
@@ -43,11 +81,32 @@
     });
   });
 
+  // Mirror the diff tab's context registration so the file tree's git-status
+  // overlay works even when the diff tab has never been opened. workingDiff
+  // coalesces concurrent loadChanges callers, so this doesn't double-fetch
+  // when both tabs are mounted.
+  $effect(() => {
+    if (!activeCwd || !selected) return;
+    workingDiff.setContext(activeCwd, {
+      runMode: selected.runMode,
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+    });
+  });
+
   // Auto-load the tree on worktree change. Subsequent refreshes are user-driven.
   $effect(() => {
     const cwd = activeCwd;
     if (!cwd) return;
     void filesStore.loadTree(cwd).catch(reportError);
+  });
+
+  // Prime the working-tree changes so the status badges appear immediately on
+  // the first paint. The git change listener attached in RailDiffTab pushes
+  // subsequent refreshes app-wide.
+  $effect(() => {
+    const cwd = activeCwd;
+    if (!cwd) return;
+    void workingDiff.loadChanges(cwd).catch(reportError);
   });
 
   // Close any open file when the user switches worktrees — the path it points
@@ -218,7 +277,7 @@
     </div>
   {:else if tree}
     <div class="flex min-h-0 flex-1 flex-col">
-      <FileTreeView paths={tree.paths} onSelect={onSelectPath} />
+      <FileTreeView paths={tree.paths} gitStatus={gitStatus} onSelect={onSelectPath} />
       {#if tree.truncated}
         <div class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
           Listing truncated — narrow the worktree to see more.

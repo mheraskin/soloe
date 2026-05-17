@@ -1,28 +1,32 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { FileTree } from '@pierre/trees';
+  import { FileTree, type GitStatusEntry } from '@pierre/trees';
 
   interface Props {
     paths: readonly string[];
+    gitStatus?: readonly GitStatusEntry[];
     onSelect?: (path: string) => void;
   }
 
-  let { paths, onSelect }: Props = $props();
+  let { paths, gitStatus, onSelect }: Props = $props();
 
   let host: HTMLDivElement | null = $state(null);
   let tree: FileTree | null = null;
-  // Captures the prop reference handed to the FileTree on mount so the reset
-  // effect can skip the first run (the tree already holds those paths).
+  // Captures the prop references handed to the FileTree on mount so the
+  // reactive effects can skip the first run (the tree already holds them).
   let mountedPaths: readonly string[] | null = null;
+  let mountedGitStatus: readonly GitStatusEntry[] | undefined = undefined;
 
   onMount(() => {
     if (!host) return;
     mountedPaths = paths;
+    mountedGitStatus = gitStatus;
     tree = new FileTree({
       paths: paths.slice(),
       flattenEmptyDirectories: true,
       initialExpansion: 'closed',
       search: true,
+      ...(gitStatus ? { gitStatus: gitStatus.slice() } : {}),
       onSelectionChange: (selected) => {
         // Pierre's selection model can hold multiple paths via shift/cmd-click;
         // we treat any single newly-focused file path as "open this". Folder
@@ -50,6 +54,16 @@
     mountedPaths = paths;
     tree.resetPaths(paths.slice());
   });
+
+  // Push live git status updates onto the tree. Pierre fingerprints the entry
+  // list internally, so a same-reference no-op is cheap, but skipping the
+  // identity-equal case avoids the redundant signature hash on mount.
+  $effect(() => {
+    if (!tree) return;
+    if (gitStatus === mountedGitStatus) return;
+    mountedGitStatus = gitStatus;
+    tree.setGitStatus(gitStatus ? gitStatus.slice() : undefined);
+  });
 </script>
 
 <div
@@ -69,6 +83,14 @@
     --trees-selected-bg-override: color-mix(in oklch, var(--muted) 70%, transparent);
     --trees-hover-bg-override: color-mix(in oklch, var(--muted) 35%, transparent);
     --trees-muted-fg-override: var(--muted-foreground);
+    /* Match the diff tab's ChangeRow palette so a file's status badge means
+       the same thing in both panes (emerald=add, amber=mod, rose=del, sky=ren). */
+    --trees-status-added-override: var(--color-emerald-500);
+    --trees-status-modified-override: var(--color-amber-500);
+    --trees-status-deleted-override: var(--color-rose-500);
+    --trees-status-renamed-override: var(--color-sky-500);
+    --trees-status-untracked-override: var(--color-emerald-400);
+    --trees-status-ignored-override: var(--muted-foreground);
     font-family: var(--font-sans);
   }
 </style>
