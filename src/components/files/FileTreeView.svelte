@@ -98,9 +98,19 @@
     --trees-focus-ring-width-override: 1.5px;
     --trees-focus-ring-offset-override: 0px;
     /* Built-in filter input: keep it on the same surface as the rest of the
-       tree instead of the default brighter chrome. */
+       tree instead of the default brighter chrome, and drop the matched-text
+       weight from the default 600 (bold) to 500 (medium) so search hits don't
+       jump out as a different typeface from the row text. */
     --trees-search-fg-override: var(--foreground);
     --trees-search-bg-override: var(--background);
+    --trees-search-font-weight-override: 500;
+    /* The library hardcodes its own font-family (system-ui) and font-size
+       (13px) onto rows and the search input via internal CSS vars, ignoring
+       whatever the wrapper sets. Push `inherit` through the override hooks so
+       both tree rows and the filter input pick up the rail's font stack and
+       the wrapper's text-* size class. */
+    --trees-font-family-override: inherit;
+    --trees-font-size-override: inherit;
     /* Match the diff tab's ChangeRow palette so a file's status badge means
        the same thing in both panes (emerald=add, amber=mod, rose=del, sky=ren). */
     --trees-status-added-override: var(--color-emerald-500);
