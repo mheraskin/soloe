@@ -21,6 +21,18 @@ function rangeLabel(comment: DiffComment): string {
     : `L${comment.startLine}–${comment.endLine}`;
 }
 
+// Default framing prepended to every send. Without it agents tend to implement
+// questions ("why is this here?") instead of answering them.
+const INTERPRETATION_GUIDANCE =
+  'For each comment, infer intent before acting: answer questions in chat without editing code; implement change requests directly.';
+
+function resolveFooter(ids: string[]): string {
+  if (ids.length === 1) {
+    return `When you have addressed this, call the soloe MCP tool comment_resolve with id="${ids[0]}".`;
+  }
+  return 'When you finish each one, call the soloe MCP tool comment_resolve with the matching [soloe-comment:<id>] value.';
+}
+
 // Build the prompt body delivered to the target. The leading [soloe-comment:<id>]
 // tag is the deterministic handle the agent passes back to the comment_resolve
 // MCP tool — keep it on its own line at the very top so simple summarizers
@@ -29,8 +41,14 @@ function rangeLabel(comment: DiffComment): string {
 // from tools/list, but resolution becomes opportunistic rather than expected.
 function buildPrompt(comment: DiffComment): string {
   const header = `Re: ${comment.filePath} (${comment.side === 'old' ? 'before' : 'after'} ${rangeLabel(comment)})`;
-  const footer = `When you have addressed this, call the soloe MCP tool comment_resolve with id="${comment.id}".`;
-  return `[soloe-comment:${comment.id}]\n${header}\n\n${comment.text}\n\n${footer}`;
+  const parts = [
+    `[soloe-comment:${comment.id}]`,
+    INTERPRETATION_GUIDANCE,
+    header,
+    comment.text,
+    resolveFooter([comment.id])
+  ];
+  return parts.join('\n\n');
 }
 
 // Bundle multiple comments into a single delivery. One intro + one footer
@@ -39,7 +57,9 @@ function buildPrompt(comment: DiffComment): string {
 // roundtrips in the CLI. The per-comment header still carries the soloe id so
 // resolution stays deterministic. An optional preamble is prepended verbatim
 // — used by the bulk-send composer so reviewers can frame the batch ("focus
-// on perf", "these are nits, ship anyway") without editing each comment.
+// on perf", "these are nits, ship anyway") without editing each comment. The
+// preamble lands after the default guidance so reviewer intent wins on
+// recency.
 function buildBatchPrompt(comments: DiffComment[], preamble?: string): string {
   if (comments.length === 1 && !preamble) return buildPrompt(comments[0]!);
   const sections = comments.map((c) => {
@@ -48,11 +68,13 @@ function buildBatchPrompt(comments: DiffComment[], preamble?: string): string {
     return `${header}\n${c.text}`;
   });
   const noun = comments.length === 1 ? 'review comment' : 'review comments';
-  const base = `${comments.length} ${noun} to address:`;
-  const intro = preamble ? `${preamble}\n\n${base}` : base;
-  const footer =
-    'When you finish each one, call the soloe MCP tool comment_resolve with the matching [soloe-comment:<id>] value.';
-  return `${intro}\n\n${sections.join('\n\n')}\n\n${footer}`;
+  const intro = `${comments.length} ${noun} to address:`;
+  const parts = [INTERPRETATION_GUIDANCE];
+  if (preamble) parts.push(preamble);
+  parts.push(intro);
+  parts.push(sections.join('\n\n'));
+  parts.push(resolveFooter(comments.map((c) => c.id)));
+  return parts.join('\n\n');
 }
 
 export interface SendCommentResult {
