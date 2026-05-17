@@ -6,6 +6,8 @@
     Check,
     FolderTree,
     Loader2,
+    Maximize2,
+    Minimize2,
     RefreshCw,
     Save
   } from '@lucide/svelte';
@@ -20,8 +22,34 @@
   import FileTreeView from './FileTreeView.svelte';
   import FileEditor from './FileEditor.svelte';
 
+  let rootEl: HTMLDivElement | null = $state(null);
   let treeWrapperEl: HTMLDivElement | null = $state(null);
   let editorWrapperEl: HTMLElement | null = $state(null);
+
+  // Once the rail is wide enough we render tree + editor side-by-side instead
+  // of the narrow click-into-file flow. 640px is roughly the max non-fullscreen
+  // rail width (see RAIL_WIDTH_KEY in RightRail.svelte), so split mode normally
+  // only kicks in when the user enters fullscreen — but a manual wide drag
+  // gets the same treatment.
+  const SPLIT_THRESHOLD_PX = 640;
+  // Plain `let` (not $state) — the ResizeObserver pushes via the effect below
+  // by writing to a $state cell, so subscribers re-derive without us having
+  // to track every intermediate measurement.
+  let rootWidth = $state(0);
+  let isSplit = $derived(rootWidth >= SPLIT_THRESHOLD_PX);
+
+  $effect(() => {
+    const el = rootEl;
+    if (!el) return;
+    rootWidth = el.clientWidth;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      rootWidth = Math.round(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
 
   let selected = $derived(sessions.selected);
   let activeCwd = $derived.by<string | null>(() => {
@@ -266,7 +294,7 @@
   });
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col">
+<div bind:this={rootEl} class="flex min-h-0 flex-1 flex-col">
   <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 flex-col">
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Files</span>
@@ -274,99 +302,44 @@
         {cwdLabel || 'No session selected'}
       </span>
     </div>
-    {#if activeCwd && !openFile}
+    <div class="flex items-center gap-1">
+      {#if activeCwd && (!openFile || isSplit)}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onclick={onRefresh}
+          disabled={tree?.loading}
+          aria-label="Refresh file tree"
+          title="Refresh"
+        >
+          {#if tree?.loading}
+            <Loader2 class="size-3 animate-spin" />
+          {:else}
+            <RefreshCw class="size-3" />
+          {/if}
+        </Button>
+      {/if}
       <Button
         variant="ghost"
         size="icon-xs"
-        onclick={onRefresh}
-        disabled={tree?.loading}
-        aria-label="Refresh file tree"
-        title="Refresh"
+        onclick={() => rightRail.toggleFullscreen()}
+        aria-label={rightRail.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        title={rightRail.fullscreen ? 'Exit fullscreen (Ctrl+Shift+M)' : 'Fullscreen (Ctrl+Shift+M)'}
+        aria-pressed={rightRail.fullscreen}
       >
-        {#if tree?.loading}
-          <Loader2 class="size-3 animate-spin" />
+        {#if rightRail.fullscreen}
+          <Minimize2 class="size-3" />
         {:else}
-          <RefreshCw class="size-3" />
+          <Maximize2 class="size-3" />
         {/if}
       </Button>
-    {/if}
+    </div>
   </header>
 
   {#if !activeCwd}
     <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
       Select a session to browse its files.
     </div>
-  {:else if openFile}
-    <section bind:this={editorWrapperEl} class="flex min-h-0 flex-1 flex-col">
-      <div class="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onclick={onBack}
-          aria-label="Back to file tree"
-          title="Back"
-        >
-          <ArrowLeft class="size-3.5" />
-        </Button>
-        <span class="min-w-0 flex-1 truncate font-mono text-[11px]" title={openFile.relativePath}>
-          {openFile.relativePath}
-        </span>
-        <span class="flex shrink-0 items-center gap-1 text-[10px]">
-          {#if openFile.saving}
-            <Loader2 class="size-3 animate-spin text-muted-foreground" />
-            <span class="text-muted-foreground">Saving…</span>
-          {:else if openFile.error}
-            <AlertCircle class="size-3 text-destructive" />
-            <span class="text-destructive">Error</span>
-          {:else if dirty}
-            <span class="text-muted-foreground">Unsaved</span>
-          {:else if !openFile.loading && !openFile.binary}
-            <Check class="size-3 text-emerald-500" />
-            <span class="text-emerald-500">Saved</span>
-          {/if}
-        </span>
-        <Button
-          variant="outline"
-          size="xs"
-          class="gap-1.5 px-2"
-          onclick={onSave}
-          disabled={!dirty || openFile.saving || openFile.binary}
-          aria-label="Save file"
-          title="Save (Ctrl/Cmd+S)"
-        >
-          <Save class="size-3" />
-          <span>Save</span>
-        </Button>
-      </div>
-
-      {#if openFile.error && !openFile.saving}
-        <div class="border-b border-border bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">
-          {openFile.error}
-        </div>
-      {/if}
-
-      {#if openFile.loading}
-        <div class="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-          <Loader2 class="mr-2 size-3 animate-spin" />
-          Loading…
-        </div>
-      {:else if openFile.binary}
-        <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
-          Binary file — preview not available.
-        </div>
-      {:else if openFile.truncated}
-        <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
-          File too large to open in the in-rail editor.
-        </div>
-      {:else}
-        <FileEditor
-          value={openFile.content}
-          relativePath={openFile.relativePath}
-          onChange={onChange}
-          onSave={onSave}
-        />
-      {/if}
-    </section>
   {:else if tree?.loading && tree.paths.length === 0}
     <div class="flex flex-1 items-center justify-center text-xs text-muted-foreground">
       <Loader2 class="mr-2 size-3 animate-spin" />
@@ -384,13 +357,115 @@
       <span>No files in this worktree.</span>
     </div>
   {:else if tree}
-    <div bind:this={treeWrapperEl} class="flex min-h-0 flex-1 flex-col">
-      <FileTreeView paths={tree.paths} gitStatus={gitStatus} onSelect={onSelectPath} />
-      {#if tree.truncated}
-        <div class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
-          Listing truncated — narrow the worktree to see more.
-        </div>
-      {/if}
+    <!-- Split mode lays out editor on the left and tree on the right; narrow
+         mode shows one or the other based on whether a file is open. Both
+         wrappers stay in the DOM either way so FileTreeView/CodeMirror keep
+         their internal state (expansion, selection, scroll) across mode and
+         file-open transitions. -->
+    <div class="flex min-h-0 flex-1 flex-row">
+      <section
+        bind:this={editorWrapperEl}
+        class={[
+          'min-h-0 flex-col',
+          isSplit ? 'flex flex-1' : openFile ? 'flex flex-1' : 'hidden'
+        ]}
+      >
+        {#if openFile}
+          <div class="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
+            {#if !isSplit}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onclick={onBack}
+                aria-label="Back to file tree"
+                title="Back"
+              >
+                <ArrowLeft class="size-3.5" />
+              </Button>
+            {/if}
+            <span class="min-w-0 flex-1 truncate font-mono text-[11px]" title={openFile.relativePath}>
+              {openFile.relativePath}
+            </span>
+            <span class="flex shrink-0 items-center gap-1 text-[10px]">
+              {#if openFile.saving}
+                <Loader2 class="size-3 animate-spin text-muted-foreground" />
+                <span class="text-muted-foreground">Saving…</span>
+              {:else if openFile.error}
+                <AlertCircle class="size-3 text-destructive" />
+                <span class="text-destructive">Error</span>
+              {:else if dirty}
+                <span class="text-muted-foreground">Unsaved</span>
+              {:else if !openFile.loading && !openFile.binary}
+                <Check class="size-3 text-emerald-500" />
+                <span class="text-emerald-500">Saved</span>
+              {/if}
+            </span>
+            <Button
+              variant="outline"
+              size="xs"
+              class="gap-1.5 px-2"
+              onclick={onSave}
+              disabled={!dirty || openFile.saving || openFile.binary}
+              aria-label="Save file"
+              title="Save (Ctrl/Cmd+S)"
+            >
+              <Save class="size-3" />
+              <span>Save</span>
+            </Button>
+          </div>
+
+          {#if openFile.error && !openFile.saving}
+            <div class="border-b border-border bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">
+              {openFile.error}
+            </div>
+          {/if}
+
+          {#if openFile.loading}
+            <div class="flex flex-1 items-center justify-center text-xs text-muted-foreground">
+              <Loader2 class="mr-2 size-3 animate-spin" />
+              Loading…
+            </div>
+          {:else if openFile.binary}
+            <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
+              Binary file — preview not available.
+            </div>
+          {:else if openFile.truncated}
+            <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
+              File too large to open in the in-rail editor.
+            </div>
+          {:else}
+            <FileEditor
+              value={openFile.content}
+              relativePath={openFile.relativePath}
+              onChange={onChange}
+              onSave={onSave}
+            />
+          {/if}
+        {:else if isSplit}
+          <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
+            Pick a file from the tree to view its contents.
+          </div>
+        {/if}
+      </section>
+
+      <div
+        bind:this={treeWrapperEl}
+        class={[
+          'min-h-0 flex-col',
+          isSplit
+            ? 'flex w-60 shrink-0 border-l border-border text-[11px]'
+            : openFile
+              ? 'hidden'
+              : 'flex flex-1 text-xs'
+        ]}
+      >
+        <FileTreeView paths={tree.paths} gitStatus={gitStatus} onSelect={onSelectPath} />
+        {#if tree.truncated}
+          <div class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
+            Listing truncated — narrow the worktree to see more.
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>

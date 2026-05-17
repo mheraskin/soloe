@@ -68,7 +68,7 @@
 
 <div
   bind:this={host}
-  class="soloe-tree-host flex min-h-0 flex-1 flex-col text-xs"
+  class="soloe-tree-host flex min-h-0 flex-1 flex-col"
 ></div>
 
 <style>
