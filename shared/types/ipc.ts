@@ -31,6 +31,11 @@ import type {
 } from './git.js';
 import type {
   FileOpenRequest,
+  FileReadRequest,
+  FileReadResult,
+  FileTreeRequest,
+  FileTreeResult,
+  FileWriteRequest,
   ImagePasteRequest,
   ImagePasteResult,
   FilePasteRequest,
@@ -168,7 +173,10 @@ export const IpcChannels = {
     search: 'files:search',
     openInEditor: 'files:open-in-editor',
     pasteIntoTerminal: 'files:paste-into-terminal',
-    pasteImagesIntoTerminal: 'files:paste-images-into-terminal'
+    pasteImagesIntoTerminal: 'files:paste-images-into-terminal',
+    listTree: 'files:list-tree',
+    readFile: 'files:read-file',
+    writeFile: 'files:write-file'
   },
   diagnostics: {
     list: 'diagnostics:list',
@@ -355,6 +363,9 @@ export interface FilesApi {
   openInEditor(request: FileOpenRequest): Promise<IpcResult<true>>;
   pasteIntoTerminal(request: FilePasteRequest): Promise<IpcResult<true>>;
   pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<IpcResult<ImagePasteResult>>;
+  listTree(request: FileTreeRequest): Promise<IpcResult<FileTreeResult>>;
+  readFile(request: FileReadRequest): Promise<IpcResult<FileReadResult>>;
+  writeFile(request: FileWriteRequest): Promise<IpcResult<true>>;
 }
 
 export interface DiagnosticsApi {

@@ -1,3 +1,4 @@
+import type { RunMode } from './sessions.js';
 import type { TerminalId } from './terminal.js';
 
 export interface FileSearchRequest {
@@ -36,4 +37,39 @@ export interface ImagePasteRequest {
 export interface ImagePasteResult {
   paths: string[];
   insertedText: string;
+}
+
+export interface FileTreeRequest {
+  cwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
+}
+
+export interface FileTreeResult {
+  cwd: string;
+  paths: string[];
+  truncated: boolean;
+  isRepo: boolean;
+}
+
+export interface FileReadRequest {
+  cwd: string;
+  relativePath: string;
+  runMode: RunMode;
+  wslDistro?: string;
+}
+
+export interface FileReadResult {
+  relativePath: string;
+  content: string;
+  binary: boolean;
+  size: number;
+}
+
+export interface FileWriteRequest {
+  cwd: string;
+  relativePath: string;
+  content: string;
+  runMode: RunMode;
+  wslDistro?: string;
 }

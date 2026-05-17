@@ -31,6 +31,11 @@ import type {
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
+  FileReadRequest,
+  FileReadResult,
+  FileTreeRequest,
+  FileTreeResult,
+  FileWriteRequest,
   ImagePasteRequest,
   FilePasteRequest,
   FileSearchRequest
@@ -199,7 +204,13 @@ export const ipc = {
     pasteIntoTerminal: async (request: FilePasteRequest) =>
       unwrap(await c.files.pasteIntoTerminal(toIpcPayload(request))),
     pasteImagesIntoTerminal: async (request: ImagePasteRequest) =>
-      unwrap(await c.files.pasteImagesIntoTerminal(toIpcPayload(request)))
+      unwrap(await c.files.pasteImagesIntoTerminal(toIpcPayload(request))),
+    listTree: async (request: FileTreeRequest): Promise<FileTreeResult> =>
+      unwrap(await c.files.listTree(toIpcPayload(request))),
+    readFile: async (request: FileReadRequest): Promise<FileReadResult> =>
+      unwrap(await c.files.readFile(toIpcPayload(request))),
+    writeFile: async (request: FileWriteRequest) =>
+      unwrap(await c.files.writeFile(toIpcPayload(request)))
   },
   diagnostics: {
     list: async () => unwrap(await c.diagnostics.list()),

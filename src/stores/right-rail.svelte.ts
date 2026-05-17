@@ -1,4 +1,4 @@
-export type RailTabId = 'inspector' | 'notes' | 'diff';
+export type RailTabId = 'inspector' | 'notes' | 'diff' | 'files';
 
 interface RailState {
   activeTab: RailTabId;
@@ -20,8 +20,9 @@ const NO_WORKTREE_KEY = '__none__';
 const STORAGE_KEY = 'soloe.rightRail.v1';
 
 function sanitize(value: Partial<RailState> | undefined): RailState {
+  const raw = value?.activeTab;
   const tab: RailTabId =
-    value?.activeTab === 'notes' || value?.activeTab === 'diff' ? value.activeTab : 'inspector';
+    raw === 'notes' || raw === 'diff' || raw === 'files' ? raw : 'inspector';
   return {
     activeTab: tab,
     open: typeof value?.open === 'boolean' ? value.open : false,

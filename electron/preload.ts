@@ -49,6 +49,9 @@ import type {
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
+  FileReadRequest,
+  FileTreeRequest,
+  FileWriteRequest,
   ImagePasteRequest,
   FilePasteRequest,
   FileSearchRequest
@@ -210,7 +213,10 @@ const soloe: SoloeApi = {
     pasteIntoTerminal: (request: FilePasteRequest) =>
       ipcRenderer.invoke(IpcChannels.files.pasteIntoTerminal, request),
     pasteImagesIntoTerminal: (request: ImagePasteRequest) =>
-      ipcRenderer.invoke(IpcChannels.files.pasteImagesIntoTerminal, request)
+      ipcRenderer.invoke(IpcChannels.files.pasteImagesIntoTerminal, request),
+    listTree: (request: FileTreeRequest) => ipcRenderer.invoke(IpcChannels.files.listTree, request),
+    readFile: (request: FileReadRequest) => ipcRenderer.invoke(IpcChannels.files.readFile, request),
+    writeFile: (request: FileWriteRequest) => ipcRenderer.invoke(IpcChannels.files.writeFile, request)
   },
   diagnostics: {
     list: () => ipcRenderer.invoke(IpcChannels.diagnostics.list),
