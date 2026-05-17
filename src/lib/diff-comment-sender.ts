@@ -28,18 +28,19 @@ const INTERPRETATION_GUIDANCE =
 
 function resolveFooter(ids: string[]): string {
   if (ids.length === 1) {
-    return `When you have addressed this, call the soloe MCP tool comment_resolve with id="${ids[0]}".`;
+    return `After addressing this, ask the user "Should I run the soloe MCP tool comment_resolve to mark this resolved?" Only call the tool with id="${ids[0]}" after the user approves.`;
   }
   const list = ids.map((id) => `"${id}"`).join(', ');
-  return `When you have addressed these, call the soloe MCP tool comment_resolve_batch with ids=[${list}].`;
+  return `After addressing these, ask the user "Should I run the soloe MCP tool comment_resolve_batch to mark these resolved?" Only call the tool with ids=[${list}] after the user approves.`;
 }
 
 // Build the prompt body delivered to the target. The leading [soloe-comment:<id>]
 // tag is the deterministic handle the agent passes back to the comment_resolve
 // MCP tool — keep it on its own line at the very top so simple summarizers
-// don't drop it. The trailing instruction is what actually nudges the agent to
-// close the loop; without it, well-behaved agents can still discover the tool
-// from tools/list, but resolution becomes opportunistic rather than expected.
+// don't drop it. The trailing instruction gates resolution on user approval so
+// the human stays in control of which comments flip to done, while still
+// pre-naming the tool and ids so an approval can convert straight into a
+// single tool call.
 function buildPrompt(comment: DiffComment): string {
   const header = `Re: ${comment.filePath} (${comment.side === 'old' ? 'before' : 'after'} ${rangeLabel(comment)})`;
   const parts = [
