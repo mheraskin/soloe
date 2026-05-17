@@ -196,6 +196,9 @@ describe('SoloeMcpServer — comment_resolve', () => {
       async resolveComment(id: string) {
         calls.push(id);
         return { ok: true as const };
+      },
+      async resolveCommentsBatch() {
+        return { ok: true as const };
       }
     };
     const server = new SoloeMcpServer({ observer, runtime, token: 'secret', commentsBridge });
@@ -232,6 +235,9 @@ describe('SoloeMcpServer — comment_resolve', () => {
     const commentsBridge = {
       async resolveComment() {
         return { ok: true as const };
+      },
+      async resolveCommentsBatch() {
+        return { ok: true as const };
       }
     };
     const server = new SoloeMcpServer({ observer, runtime, token: 'secret', commentsBridge });
@@ -244,6 +250,65 @@ describe('SoloeMcpServer — comment_resolve', () => {
     }) as { error?: { message?: string } };
 
     expect(result.error?.message).toBe('id is required');
+  });
+});
+
+describe('SoloeMcpServer — comment_resolve_batch', () => {
+  it('lists comment_resolve_batch in tools/list', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret' });
+    const tools = await server.handlePayload({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    expect(JSON.stringify(tools)).toContain('comment_resolve_batch');
+  });
+
+  it('forwards comment_resolve_batch to the comments bridge', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const calls: string[][] = [];
+    const commentsBridge = {
+      async resolveComment() {
+        return { ok: true as const };
+      },
+      async resolveCommentsBatch(ids: string[]) {
+        calls.push(ids);
+        return { ok: true as const };
+      }
+    };
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret', commentsBridge });
+
+    const result = await server.handlePayload({
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'tools/call',
+      params: { name: 'comment_resolve_batch', arguments: { ids: ['a', 'b', 'c'] } }
+    }) as { result?: { structuredContent?: unknown } };
+
+    expect(calls).toEqual([['a', 'b', 'c']]);
+    expect(result.result?.structuredContent).toEqual({ ok: true });
+  });
+
+  it('errors when ids is not a string array', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const commentsBridge = {
+      async resolveComment() {
+        return { ok: true as const };
+      },
+      async resolveCommentsBatch() {
+        return { ok: true as const };
+      }
+    };
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret', commentsBridge });
+
+    const result = await server.handlePayload({
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/call',
+      params: { name: 'comment_resolve_batch', arguments: { ids: 'abc' } }
+    }) as { error?: { message?: string } };
+
+    expect(result.error?.message).toBe('ids must be a string array');
   });
 });
 

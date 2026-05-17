@@ -14,6 +14,7 @@ export interface HookEvent {
 
 export interface CommentsBridgeLike {
   resolveComment(id: string): Promise<CommentsRpcResult>;
+  resolveCommentsBatch(ids: string[]): Promise<CommentsRpcResult>;
 }
 
 export interface SoloeMcpServerOptions {
@@ -102,6 +103,18 @@ const TOOLS: McpTool[] = [
       type: 'object',
       required: ['id'],
       properties: { id: { type: 'string' } }
+    }
+  },
+  {
+    name: 'comment_resolve_batch',
+    description:
+      'Mark several Soloe diff comments as resolved in a single call. Each id is the value embedded in a [soloe-comment:<id>] tag at the top of the prompt that delivered that comment.',
+    inputSchema: {
+      type: 'object',
+      required: ['ids'],
+      properties: {
+        ids: { type: 'array', items: { type: 'string' }, minItems: 1 }
+      }
     }
   }
 ];
@@ -308,6 +321,12 @@ export class SoloeMcpServer {
         }
         return this.opts.commentsBridge.resolveComment(requiredString(args, 'id'));
       }
+      case 'comment_resolve_batch': {
+        if (!this.opts.commentsBridge) {
+          throw new Error('comments bridge not available');
+        }
+        return this.opts.commentsBridge.resolveCommentsBatch(requiredStringArray(args, 'ids'));
+      }
       default:
         throw new Error(`unknown tool: ${name}`);
     }
@@ -377,6 +396,18 @@ function stringField(args: Record<PropertyKey, unknown>, key: string): string | 
 function numberField(args: Record<PropertyKey, unknown>, key: string): number | undefined {
   const value = args[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function requiredStringArray(args: Record<PropertyKey, unknown>, key: string): string[] {
+  const value = args[key];
+  if (!Array.isArray(value)) throw new Error(`${key} must be a string array`);
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim()) throw new Error(`${key} must be a string array`);
+    out.push(item);
+  }
+  if (out.length === 0) throw new Error(`${key} is required`);
+  return out;
 }
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {

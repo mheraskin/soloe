@@ -49,15 +49,22 @@ export class CommentsBridge {
     return this.send({ op: 'resolve', args: { id } });
   }
 
-  private send(payload: { op: 'resolve'; args: { id: string } }): Promise<CommentsRpcResult> {
+  resolveCommentsBatch(ids: string[]): Promise<CommentsRpcResult> {
+    return this.send({ op: 'resolve_batch', args: { ids } });
+  }
+
+  private send(
+    payload:
+      | { op: 'resolve'; args: { id: string } }
+      | { op: 'resolve_batch'; args: { ids: string[] } }
+  ): Promise<CommentsRpcResult> {
     const target = this.firstLiveWindow();
     if (!target) return Promise.resolve({ ok: false, error: 'no window available' });
     const requestId = randomUUID();
     const request: CommentsRpcRequest = {
       requestId,
-      op: payload.op,
-      args: payload.args
-    };
+      ...payload
+    } as CommentsRpcRequest;
     return new Promise<CommentsRpcResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);

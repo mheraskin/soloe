@@ -1,10 +1,8 @@
-export type CommentsRpcOp = 'resolve';
+export type CommentsRpcOp = 'resolve' | 'resolve_batch';
 
-export interface CommentsRpcRequest {
-  requestId: string;
-  op: CommentsRpcOp;
-  args: { id: string };
-}
+export type CommentsRpcRequest =
+  | { requestId: string; op: 'resolve'; args: { id: string } }
+  | { requestId: string; op: 'resolve_batch'; args: { ids: string[] } };
 
 export type CommentsRpcResult =
   | { ok: true }

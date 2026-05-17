@@ -30,7 +30,8 @@ function resolveFooter(ids: string[]): string {
   if (ids.length === 1) {
     return `When you have addressed this, call the soloe MCP tool comment_resolve with id="${ids[0]}".`;
   }
-  return 'When you finish each one, call the soloe MCP tool comment_resolve with the matching [soloe-comment:<id>] value.';
+  const list = ids.map((id) => `"${id}"`).join(', ');
+  return `When you have addressed these, call the soloe MCP tool comment_resolve_batch with ids=[${list}].`;
 }
 
 // Build the prompt body delivered to the target. The leading [soloe-comment:<id>]

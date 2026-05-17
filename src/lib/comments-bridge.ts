@@ -32,8 +32,14 @@ async function dispatch(req: CommentsRpcRequest): Promise<CommentsRpcResult> {
       diffComments.setResolved(req.args.id, true);
       return { ok: true };
     }
+    case 'resolve_batch': {
+      const known = req.args.ids.filter((id) => diffComments.byId(id));
+      if (known.length === 0) return { ok: false, error: 'no comments found' };
+      diffComments.setResolvedMany(known, true);
+      return { ok: true };
+    }
     default: {
-      const op: never = req.op;
+      const op: never = req;
       return { ok: false, error: `unknown op: ${String(op)}` };
     }
   }
