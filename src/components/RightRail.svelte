@@ -51,7 +51,14 @@
   // diff requests across worktree hops.
   let diffMounted = $derived(rightRail.diffMountedCwds.length > 0);
   let diffVisible = $derived(rightRail.open && rightRail.activeTab === 'diff');
-  let nonDiffVisible = $derived(rightRail.open && rightRail.activeTab !== 'diff');
+  // Same trick for the files tab — keeps the file tree + editor mounted so
+  // unsaved edits, expansion state, and scroll positions all survive worktree
+  // hops. RailFilesTab is a singleton; per-cwd state lives in filesStore.
+  let filesMounted = $derived(rightRail.filesMountedCwds.length > 0);
+  let filesVisible = $derived(rightRail.open && rightRail.activeTab === 'files');
+  let otherTabVisible = $derived(
+    rightRail.open && rightRail.activeTab !== 'diff' && rightRail.activeTab !== 'files'
+  );
 
   onMount(() => {
     const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY));
@@ -174,12 +181,21 @@
     </div>
   {/if}
 
-  {#if nonDiffVisible}
+  {#if filesMounted}
+    <div
+      class={[
+        'min-w-0 flex-1 flex-col border-r border-border',
+        filesVisible ? 'flex' : 'hidden'
+      ]}
+    >
+      <RailFilesTab />
+    </div>
+  {/if}
+
+  {#if otherTabVisible}
     <div class="flex min-w-0 flex-1 flex-col border-r border-border">
       {#if rightRail.activeTab === 'notes'}
         <RailNotesTab />
-      {:else if rightRail.activeTab === 'files'}
-        <RailFilesTab />
       {:else}
         <ScrollArea class="min-h-0 flex-1">
           {#if rightRail.activeTab === 'inspector'}

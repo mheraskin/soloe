@@ -39,7 +39,10 @@ const EMPTY_TREE: TreeEntry = {
 class FilesStore {
   private contextByCwd = $state<Record<string, FilesContext>>({});
   private treeByCwd = $state<Record<string, TreeEntry>>({});
-  private openFileState = $state<OpenFile | null>(null);
+  // Open files are keyed by worktree cwd so a user bouncing between worktrees
+  // keeps each one's editor state — including in-progress unsaved edits.
+  // Mirrors workingDiff.selectedByCwd's per-cwd memory model.
+  private openFilesByCwd = $state<Record<string, OpenFile>>({});
 
   setContext(cwd: string, context: FilesContext): void {
     const prev = this.contextByCwd[cwd];
@@ -51,13 +54,13 @@ class FilesStore {
     return this.treeByCwd[cwd] ?? EMPTY_TREE;
   }
 
-  get openFile(): OpenFile | null {
-    return this.openFileState;
+  openFileFor(cwd: string): OpenFile | null {
+    return this.openFilesByCwd[cwd] ?? null;
   }
 
-  get dirty(): boolean {
-    const open = this.openFileState;
-    return open !== null && !open.binary && open.content !== open.baseline;
+  dirtyFor(cwd: string): boolean {
+    const open = this.openFilesByCwd[cwd];
+    return open !== undefined && !open.binary && open.content !== open.baseline;
   }
 
   async loadTree(cwd: string, opts: { force?: boolean } = {}): Promise<void> {
@@ -96,11 +99,11 @@ class FilesStore {
     if (!context) throw new Error('No file context for cwd; call setContext first');
     // If the same file is already open and unmodified, no-op. Picking the same
     // row in the tree shouldn't throw away in-progress unsaved edits either.
-    const current = this.openFileState;
-    if (current && current.cwd === cwd && current.relativePath === relativePath) {
-      if (this.dirty || !current.loading) return;
+    const current = this.openFilesByCwd[cwd];
+    if (current && current.relativePath === relativePath) {
+      if (this.dirtyFor(cwd) || !current.loading) return;
     }
-    this.openFileState = {
+    this.patchOpen(cwd, {
       cwd,
       relativePath,
       content: '',
@@ -111,7 +114,7 @@ class FilesStore {
       loading: true,
       saving: false,
       error: null
-    };
+    });
     try {
       const value = await ipc.files.readFile({
         cwd,
@@ -121,13 +124,10 @@ class FilesStore {
       });
       // A second openFileAt could land before this one resolves; drop the stale
       // response so we don't overwrite the newer pending state.
-      const stillCurrent =
-        this.openFileState &&
-        this.openFileState.cwd === cwd &&
-        this.openFileState.relativePath === relativePath;
+      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === relativePath;
       if (!stillCurrent) return;
       const truncated = value.size > 0 && value.content.length === 0 && !value.binary;
-      this.openFileState = {
+      this.patchOpen(cwd, {
         cwd,
         relativePath: value.relativePath,
         content: value.content,
@@ -138,74 +138,79 @@ class FilesStore {
         loading: false,
         saving: false,
         error: null
-      };
+      });
     } catch (err) {
-      const stillCurrent =
-        this.openFileState &&
-        this.openFileState.cwd === cwd &&
-        this.openFileState.relativePath === relativePath;
+      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === relativePath;
       if (!stillCurrent) return;
-      this.openFileState = {
-        ...this.openFileState!,
+      const existing = this.openFilesByCwd[cwd];
+      if (!existing) return;
+      this.patchOpen(cwd, {
+        ...existing,
         loading: false,
         error: err instanceof Error ? err.message : String(err)
-      };
+      });
     }
   }
 
-  setContent(content: string): void {
-    if (!this.openFileState) return;
-    if (this.openFileState.content === content) return;
-    this.openFileState = { ...this.openFileState, content };
+  setContent(cwd: string, content: string): void {
+    const current = this.openFilesByCwd[cwd];
+    if (!current) return;
+    if (current.content === content) return;
+    this.patchOpen(cwd, { ...current, content });
   }
 
-  closeFile(): void {
-    this.openFileState = null;
+  closeFile(cwd: string): void {
+    if (!(cwd in this.openFilesByCwd)) return;
+    const next = { ...this.openFilesByCwd };
+    delete next[cwd];
+    this.openFilesByCwd = next;
   }
 
-  async save(): Promise<void> {
-    const open = this.openFileState;
+  async save(cwd: string): Promise<void> {
+    const open = this.openFilesByCwd[cwd];
     if (!open || open.binary || open.saving) return;
     if (open.content === open.baseline) return;
-    const context = this.contextByCwd[open.cwd];
+    const context = this.contextByCwd[cwd];
     if (!context) throw new Error('No file context for cwd');
-    this.openFileState = { ...open, saving: true, error: null };
+    this.patchOpen(cwd, { ...open, saving: true, error: null });
     try {
       await ipc.files.writeFile({
-        cwd: open.cwd,
+        cwd,
         relativePath: open.relativePath,
         content: open.content,
         runMode: context.runMode,
         ...(context.wslDistro ? { wslDistro: context.wslDistro } : {})
       });
       // Same staleness guard as openFileAt — user may have switched files mid-save.
-      const stillCurrent =
-        this.openFileState &&
-        this.openFileState.cwd === open.cwd &&
-        this.openFileState.relativePath === open.relativePath;
+      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === open.relativePath;
       if (!stillCurrent) return;
-      this.openFileState = {
-        ...this.openFileState!,
+      const current = this.openFilesByCwd[cwd];
+      if (!current) return;
+      this.patchOpen(cwd, {
+        ...current,
         saving: false,
-        baseline: this.openFileState!.content,
+        baseline: current.content,
         error: null
-      };
+      });
     } catch (err) {
-      const stillCurrent =
-        this.openFileState &&
-        this.openFileState.cwd === open.cwd &&
-        this.openFileState.relativePath === open.relativePath;
+      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === open.relativePath;
       if (!stillCurrent) return;
-      this.openFileState = {
-        ...this.openFileState!,
+      const current = this.openFilesByCwd[cwd];
+      if (!current) return;
+      this.patchOpen(cwd, {
+        ...current,
         saving: false,
         error: err instanceof Error ? err.message : String(err)
-      };
+      });
     }
   }
 
   private patchTree(cwd: string, entry: TreeEntry): void {
     this.treeByCwd = { ...this.treeByCwd, [cwd]: entry };
+  }
+
+  private patchOpen(cwd: string, entry: OpenFile): void {
+    this.openFilesByCwd = { ...this.openFilesByCwd, [cwd]: entry };
   }
 }
 

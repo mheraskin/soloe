@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     AlertCircle,
     ArrowLeft,
@@ -20,6 +20,9 @@
   import FileTreeView from './FileTreeView.svelte';
   import FileEditor from './FileEditor.svelte';
 
+  let treeWrapperEl: HTMLDivElement | null = $state(null);
+  let editorWrapperEl: HTMLElement | null = $state(null);
+
   let selected = $derived(sessions.selected);
   let activeCwd = $derived.by<string | null>(() => {
     const cwd = selected?.cwd?.trim();
@@ -27,8 +30,8 @@
   });
 
   let tree = $derived(activeCwd ? filesStore.treeFor(activeCwd) : null);
-  let openFile = $derived(filesStore.openFile);
-  let dirty = $derived(filesStore.dirty);
+  let openFile = $derived(activeCwd ? filesStore.openFileFor(activeCwd) : null);
+  let dirty = $derived(activeCwd ? filesStore.dirtyFor(activeCwd) : false);
 
   // Map working-tree changes onto Pierre's status union. 'copied' isn't a
   // Pierre status — flag the destination as 'added' since that's the closest
@@ -109,32 +112,23 @@
     void workingDiff.loadChanges(cwd).catch(reportError);
   });
 
-  // Close any open file when the user switches worktrees — the path it points
-  // at almost certainly doesn't exist in the new tree.
-  let lastCwd: string | null = null;
-  $effect(() => {
-    const cwd = activeCwd;
-    if (cwd !== lastCwd) {
-      if (lastCwd !== null && filesStore.openFile) filesStore.closeFile();
-      lastCwd = cwd;
-    }
-  });
-
   function onSelectPath(path: string): void {
     if (!activeCwd) return;
     void filesStore.openFileAt(activeCwd, path).catch(reportError);
   }
 
   function onBack(): void {
+    if (!activeCwd) return;
     if (dirty) {
       const ok = window.confirm('Discard unsaved changes?');
       if (!ok) return;
     }
-    filesStore.closeFile();
+    filesStore.closeFile(activeCwd);
   }
 
   function onSave(): void {
-    void filesStore.save().catch(reportError);
+    if (!activeCwd) return;
+    void filesStore.save(activeCwd).catch(reportError);
   }
 
   function onRefresh(): void {
@@ -143,8 +137,122 @@
   }
 
   function onChange(next: string): void {
-    filesStore.setContent(next);
+    if (!activeCwd) return;
+    filesStore.setContent(activeCwd, next);
   }
+
+  // Per-cwd scroll persistence for both surfaces. Mirrors RailDiffTab's
+  // restore-with-retry pattern: the scroll container appears asynchronously
+  // (Pierre Trees mounts into a shadow root; CodeMirror mounts after its host
+  // is bound) and the target offset may exceed scrollHeight until content has
+  // hydrated. Each effect polls until the scroller is ready, then attaches a
+  // debounced save listener and tries to land the saved offset.
+  const SCROLL_SAVE_DEBOUNCE_MS = 150;
+  const RESTORE_POLL_MS = 80;
+  const RESTORE_TIMEOUT_MS = 3000;
+  const SCROLLER_POLL_MS = 50;
+
+  function findTreeScroller(): HTMLElement | null {
+    const host = treeWrapperEl?.querySelector<HTMLElement>('.soloe-tree-host');
+    return host?.shadowRoot?.querySelector<HTMLElement>(
+      '[data-file-tree-virtualized-scroll="true"]'
+    ) ?? null;
+  }
+
+  function findEditorScroller(): HTMLElement | null {
+    return editorWrapperEl?.querySelector<HTMLElement>('.cm-scroller') ?? null;
+  }
+
+  type ScrollWiring = {
+    save: (value: number) => void;
+    get: () => number;
+    find: () => HTMLElement | null;
+  };
+
+  function wireScrollPersistence(wiring: ScrollWiring): (() => void) | void {
+    const deadline = Date.now() + RESTORE_TIMEOUT_MS;
+    let scroller: HTMLElement | null = null;
+    let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+    let restoring = false;
+
+    const onScroll = () => {
+      // Programmatic restore writes shouldn't count as user input.
+      if (restoring) return;
+      if (scrollSaveTimer !== null) clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = setTimeout(() => {
+        scrollSaveTimer = null;
+        if (scroller) wiring.save(scroller.scrollTop);
+      }, SCROLL_SAVE_DEBOUNCE_MS);
+    };
+
+    const tryRestore = (target: number) => {
+      if (!scroller) return;
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      if (max >= target || Date.now() >= deadline) {
+        restoring = true;
+        scroller.scrollTop = Math.min(Math.max(0, target), Math.max(0, max));
+        // Let the scroll event fire and bail before re-enabling saves.
+        setTimeout(() => {
+          restoring = false;
+        }, 0);
+        restoreTimer = null;
+        return;
+      }
+      restoreTimer = setTimeout(() => tryRestore(target), RESTORE_POLL_MS);
+    };
+
+    const attach = () => {
+      scroller = wiring.find();
+      if (!scroller) {
+        if (Date.now() >= deadline) return;
+        pollTimer = setTimeout(attach, SCROLLER_POLL_MS);
+        return;
+      }
+      scroller.addEventListener('scroll', onScroll, { passive: true });
+      const target = untrack(wiring.get);
+      if (target > 0) tryRestore(target);
+    };
+
+    attach();
+
+    return () => {
+      if (pollTimer !== null) clearTimeout(pollTimer);
+      if (restoreTimer !== null) clearTimeout(restoreTimer);
+      if (scrollSaveTimer !== null) clearTimeout(scrollSaveTimer);
+      scroller?.removeEventListener('scroll', onScroll);
+    };
+  }
+
+  // Tree scroll: only meaningful when the file tree is visible (no file open).
+  $effect(() => {
+    const cwd = activeCwd;
+    const hasTree = !!treeWrapperEl;
+    if (!cwd || !hasTree) return;
+    return wireScrollPersistence({
+      get: () => rightRail.getFilesTreeScrollTop(cwd),
+      save: (v) => rightRail.setFilesTreeScrollTop(cwd, v),
+      find: findTreeScroller
+    });
+  });
+
+  // Editor scroll: keyed by (cwd, relativePath) so opening a second file in
+  // the same worktree doesn't restore the previous file's offset into
+  // unrelated content. Re-runs when the file changes so the scroller-find
+  // polling picks up a freshly mounted CodeMirror after a file swap.
+  $effect(() => {
+    const cwd = activeCwd;
+    const path = openFile?.relativePath ?? null;
+    const hasEditor = !!editorWrapperEl;
+    if (!cwd || !path || !hasEditor) return;
+    const key = `${cwd}::${path}`;
+    return wireScrollPersistence({
+      get: () => rightRail.getFilesEditorScrollTop(key),
+      save: (v) => rightRail.setFilesEditorScrollTop(key, v),
+      find: findEditorScroller
+    });
+  });
 
   onMount(() => {
     const onRefocus = () => {
@@ -189,7 +297,7 @@
       Select a session to browse its files.
     </div>
   {:else if openFile}
-    <section class="flex min-h-0 flex-1 flex-col">
+    <section bind:this={editorWrapperEl} class="flex min-h-0 flex-1 flex-col">
       <div class="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
         <Button
           variant="ghost"
@@ -276,7 +384,7 @@
       <span>No files in this worktree.</span>
     </div>
   {:else if tree}
-    <div class="flex min-h-0 flex-1 flex-col">
+    <div bind:this={treeWrapperEl} class="flex min-h-0 flex-1 flex-col">
       <FileTreeView paths={tree.paths} gitStatus={gitStatus} onSelect={onSelectPath} />
       {#if tree.truncated}
         <div class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">

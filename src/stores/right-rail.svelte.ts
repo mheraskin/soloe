@@ -19,6 +19,7 @@ const DEFAULT_STATE: RailState = {
 const NO_WORKTREE_KEY = '__none__';
 const STORAGE_KEY = 'soloe.rightRail.v1';
 const DIFF_SCROLL_KEY = 'soloe.diffScroll.v1';
+const FILES_SCROLL_KEY = 'soloe.filesScroll.v1';
 
 function sanitize(value: Partial<RailState> | undefined): RailState {
   const raw = value?.activeTab;
@@ -45,6 +46,12 @@ class RightRailStore {
   // don't want any subscribers reacting to that.
   private diffScrollByCwd: Record<string, number> = {};
 
+  // Same idea for the files tab — but split by surface: the file tree's
+  // scroll (no file open) and the editor's scroll (file open) are recorded
+  // independently so coming back to either restores the right offset.
+  private filesTreeScrollByCwd: Record<string, number> = {};
+  private filesEditorScrollByCwd: Record<string, number> = {};
+
   constructor() {
     if (typeof localStorage === 'undefined') return;
     try {
@@ -70,6 +77,28 @@ class RightRailStore {
           if (Number.isFinite(n) && n >= 0) next[key] = n;
         }
         this.diffScrollByCwd = next;
+      }
+    } catch {
+      // Ignore — scroll position is recoverable.
+    }
+    try {
+      const raw = localStorage.getItem(FILES_SCROLL_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          tree?: Record<string, unknown>;
+          editor?: Record<string, unknown>;
+        };
+        const sanitize = (rec: Record<string, unknown> | undefined): Record<string, number> => {
+          const next: Record<string, number> = {};
+          if (!rec) return next;
+          for (const [key, value] of Object.entries(rec)) {
+            const n = typeof value === 'number' ? value : Number(value);
+            if (Number.isFinite(n) && n >= 0) next[key] = n;
+          }
+          return next;
+        };
+        this.filesTreeScrollByCwd = sanitize(parsed.tree);
+        this.filesEditorScrollByCwd = sanitize(parsed.editor);
       }
     } catch {
       // Ignore — scroll position is recoverable.
@@ -147,6 +176,18 @@ class RightRailStore {
     return out;
   }
 
+  // Same mount-keep-alive idea for the files tab: any worktree whose
+  // persisted choice is 'files' keeps RailFilesTab in the DOM so the tree's
+  // expansion + the editor's scroll/cursor survive worktree hops.
+  get filesMountedCwds(): string[] {
+    const out: string[] = [];
+    for (const [key, value] of Object.entries(this.stateByCwd)) {
+      if (key === NO_WORKTREE_KEY) continue;
+      if (value.open && value.activeTab === 'files') out.push(key);
+    }
+    return out;
+  }
+
   openTab(tab: RailTabId): void {
     this.patch({ activeTab: tab, open: true });
   }
@@ -195,6 +236,47 @@ class RightRailStore {
       localStorage.setItem(DIFF_SCROLL_KEY, JSON.stringify(this.diffScrollByCwd));
     } catch {
       // Quota — ignore; in-memory map still works for the session.
+    }
+  }
+
+  getFilesTreeScrollTop(cwd: string | null | undefined): number {
+    if (!cwd) return 0;
+    return this.filesTreeScrollByCwd[cwd] ?? 0;
+  }
+
+  setFilesTreeScrollTop(cwd: string | null | undefined, value: number): void {
+    if (!cwd) return;
+    const clamped = Math.max(0, Math.round(value));
+    if (this.filesTreeScrollByCwd[cwd] === clamped) return;
+    this.filesTreeScrollByCwd[cwd] = clamped;
+    this.persistFilesScroll();
+  }
+
+  // Editor scroll is keyed by both cwd and relativePath so opening a second
+  // file in the same worktree doesn't try to restore the first file's offset
+  // into unrelated content. Callers compose the key as `${cwd}::${path}`.
+  getFilesEditorScrollTop(key: string | null | undefined): number {
+    if (!key) return 0;
+    return this.filesEditorScrollByCwd[key] ?? 0;
+  }
+
+  setFilesEditorScrollTop(key: string | null | undefined, value: number): void {
+    if (!key) return;
+    const clamped = Math.max(0, Math.round(value));
+    if (this.filesEditorScrollByCwd[key] === clamped) return;
+    this.filesEditorScrollByCwd[key] = clamped;
+    this.persistFilesScroll();
+  }
+
+  private persistFilesScroll(): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(
+        FILES_SCROLL_KEY,
+        JSON.stringify({ tree: this.filesTreeScrollByCwd, editor: this.filesEditorScrollByCwd })
+      );
+    } catch {
+      // Quota — ignore.
     }
   }
 }
