@@ -1,5 +1,5 @@
 import type { ProjectId } from '@shared/types/projects.js';
-import type { NoteSummary } from '@shared/types/notes.js';
+import type { NoteImage, NoteImagePayload, NoteSummary } from '@shared/types/notes.js';
 import { ipc } from '../lib/ipc';
 import { sessions } from './sessions.svelte';
 
@@ -161,6 +161,7 @@ class NotesStoreClass {
     delete next[id];
     this.draftsByProject = next;
     clearStoredDraft(id);
+    void this.cleanupImages(id);
   }
 
   updateDraftContent(content: string): void {
@@ -179,6 +180,7 @@ class NotesStoreClass {
     if (this.view === null) {
       this.draftsByProject = { ...this.draftsByProject, [id]: '' };
       clearStoredDraft(id);
+      void this.cleanupImages(id);
     } else {
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       const status = this.statusByProject[id];
@@ -290,6 +292,34 @@ class NotesStoreClass {
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
+    }
+    await this.cleanupImages(id);
+  }
+
+  async pasteImages(payloads: NoteImagePayload[]): Promise<NoteImage[]> {
+    const id = this.activeProjectId;
+    if (!id) return [];
+    const saved: NoteImage[] = [];
+    for (const p of payloads) {
+      const image = await ipc.notes.saveImage(id, p.mimeType, p.dataBase64);
+      saved.push(image);
+    }
+    return saved;
+  }
+
+  // Sweep unreferenced images for the current project (or a specified one).
+  // The backend reads saved-note bodies on its own; we hand it the in-memory
+  // draft so still-unsaved references aren't treated as orphans.
+  async cleanupImages(projectId?: ProjectId): Promise<void> {
+    const id = projectId ?? this.activeProjectId;
+    if (!id) return;
+    const draft = this.draftsByProject[id];
+    const extras: string[] = [];
+    if (draft && draft.length > 0) extras.push(draft);
+    try {
+      await ipc.notes.cleanupImages(id, extras);
+    } catch {
+      // best-effort — leaving an orphan is harmless
     }
   }
 }

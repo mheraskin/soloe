@@ -170,6 +170,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.notes.rename, projectId, oldName, newName),
     delete: (projectId: ProjectId, filename: string) =>
       ipcRenderer.invoke(IpcChannels.notes.delete, projectId, filename),
+    saveImage: (projectId: ProjectId, mimeType: string, dataBase64: string) =>
+      ipcRenderer.invoke(IpcChannels.notes.saveImage, projectId, mimeType, dataBase64),
+    cleanupImages: (projectId: ProjectId, extraReferences: string[]) =>
+      ipcRenderer.invoke(IpcChannels.notes.cleanupImages, projectId, extraReferences),
     onChange: (cb: (event: NotesChangeEvent) => void) =>
       subscribe<NotesChangeEvent>(IpcChannels.notes.change, cb)
   },

@@ -157,6 +157,10 @@ export const ipc = {
       unwrap(await c.notes.rename(projectId, oldName, newName)),
     delete: async (projectId: ProjectId, filename: string) =>
       unwrap(await c.notes.delete(projectId, filename)),
+    saveImage: async (projectId: ProjectId, mimeType: string, dataBase64: string) =>
+      unwrap(await c.notes.saveImage(projectId, mimeType, dataBase64)),
+    cleanupImages: async (projectId: ProjectId, extraReferences: string[]) =>
+      unwrap(await c.notes.cleanupImages(projectId, [...extraReferences])),
     onChange: (cb: (event: NotesChangeEvent) => void) => c.notes.onChange(cb)
   },
   git: {

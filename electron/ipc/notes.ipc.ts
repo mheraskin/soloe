@@ -47,6 +47,18 @@ export class NotesIpc {
       })
     );
 
+    ipcMain.handle(
+      IpcChannels.notes.saveImage,
+      (_e, projectId: ProjectId, mimeType: string, dataBase64: string) =>
+        ipcInvoke(() => this.opts.store.saveImage(projectId, mimeType, dataBase64))
+    );
+
+    ipcMain.handle(
+      IpcChannels.notes.cleanupImages,
+      (_e, projectId: ProjectId, extraReferences: string[]) =>
+        ipcInvoke(() => this.opts.store.cleanupImages(projectId, extraReferences))
+    );
+
     this.detachListener = this.opts.store.onChange((event: NotesChangeEvent) => {
       for (const win of this.opts.getWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IpcChannels.notes.change, event);
@@ -61,6 +73,8 @@ export class NotesIpc {
     ipcMain.removeHandler(IpcChannels.notes.write);
     ipcMain.removeHandler(IpcChannels.notes.rename);
     ipcMain.removeHandler(IpcChannels.notes.delete);
+    ipcMain.removeHandler(IpcChannels.notes.saveImage);
+    ipcMain.removeHandler(IpcChannels.notes.cleanupImages);
     this.detachListener?.();
     this.detachListener = null;
     this.registered = false;

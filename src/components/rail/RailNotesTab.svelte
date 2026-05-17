@@ -100,6 +100,60 @@
     }
   }
 
+  function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error('Failed to read pasted image'));
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        resolve(result.replace(/^data:[^,]*,/u, ''));
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function onTextareaPaste(event: ClipboardEvent): Promise<void> {
+    const data = event.clipboardData;
+    if (!data) return;
+    const files: File[] = [];
+    for (const item of Array.from(data.items)) {
+      if (item.kind !== 'file') continue;
+      if (!item.type.startsWith('image/')) continue;
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+    if (files.length === 0) return;
+    event.preventDefault();
+    const target = event.currentTarget as HTMLTextAreaElement;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const before = target.value.substring(0, start);
+    const after = target.value.substring(end);
+    try {
+      const payloads = await Promise.all(
+        files.map(async (file) => ({
+          mimeType: file.type,
+          dataBase64: await blobToBase64(file)
+        }))
+      );
+      const saved = await notes.pasteImages(payloads);
+      if (saved.length === 0) return;
+      const insertedText = saved.map((img) => img.absolutePath).join(' ');
+      const newValue = before + insertedText + after;
+      if (notes.isDraft) {
+        notes.updateDraftContent(newValue);
+      } else {
+        notes.updateSavedContent(newValue);
+      }
+      await tick();
+      const cursor = start + insertedText.length;
+      target.setSelectionRange(cursor, cursor);
+      target.focus();
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
   function onTextareaKeydown(event: KeyboardEvent): void {
     const ctrlOrCmd = event.metaKey || event.ctrlKey;
     if (ctrlOrCmd && !event.altKey && event.key === 'Enter') {
@@ -487,6 +541,7 @@
               onselect={updateSelection}
               onfocus={updateSelection}
               onblur={updateSelection}
+              onpaste={(e) => void onTextareaPaste(e)}
               disabled={editorDisabled}
               spellcheck="false"
               class="flex-1 resize-none border-0 bg-transparent px-4 py-3 font-mono text-xs leading-relaxed outline-none placeholder:text-muted-foreground/70"

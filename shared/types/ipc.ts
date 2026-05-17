@@ -58,7 +58,12 @@ import type {
 } from './sessions.js';
 import type { Settings, SettingsUpdate } from './settings.js';
 import type { CommentsRpcRequest, CommentsRpcResponse } from './comments-rpc.js';
-import type { NoteContent, NoteSummary, NotesChangeEvent } from './notes.js';
+import type {
+  NoteContent,
+  NoteImage,
+  NoteSummary,
+  NotesChangeEvent
+} from './notes.js';
 import type {
   SpawnSpec,
   TerminalDimensions,
@@ -138,6 +143,8 @@ export const IpcChannels = {
     write: 'notes:write',
     rename: 'notes:rename',
     delete: 'notes:delete',
+    saveImage: 'notes:save-image',
+    cleanupImages: 'notes:cleanup-images',
     change: 'notes:change'
   },
   git: {
@@ -313,6 +320,15 @@ export interface NotesApi {
     newName: string
   ): Promise<IpcResult<NoteSummary>>;
   delete(projectId: ProjectId, filename: string): Promise<IpcResult<true>>;
+  saveImage(
+    projectId: ProjectId,
+    mimeType: string,
+    dataBase64: string
+  ): Promise<IpcResult<NoteImage>>;
+  cleanupImages(
+    projectId: ProjectId,
+    extraReferences: string[]
+  ): Promise<IpcResult<{ deleted: number }>>;
   onChange(listener: (event: NotesChangeEvent) => void): () => void;
 }
 

@@ -4,12 +4,22 @@ import { randomBytes } from 'node:crypto';
 import type { ProjectId } from '@shared/types/projects.js';
 import type {
   NoteContent,
+  NoteImage,
   NoteSummary,
   NotesChangeEvent
 } from '@shared/types/notes.js';
 
 const FORBIDDEN_CHARS = /[\\/:*?"<>|\x00-\x1f]/g;
 const MAX_FILENAME_LENGTH = 120;
+const IMAGES_DIR_NAME = 'images';
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const IMAGE_EXTENSIONS_BY_MIME: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp'
+};
 
 export class NotesStore {
   private listeners = new Set<(event: NotesChangeEvent) => void>();
@@ -97,6 +107,61 @@ export class NotesStore {
     await this.broadcast(projectId);
   }
 
+  async saveImage(
+    projectId: ProjectId,
+    mimeType: string,
+    dataBase64: string
+  ): Promise<NoteImage> {
+    const buffer = Buffer.from(dataBase64, 'base64');
+    if (buffer.length === 0) throw new Error('Image is empty');
+    if (buffer.length > MAX_IMAGE_BYTES) throw new Error('Image exceeds 20 MB limit');
+    const ext = IMAGE_EXTENSIONS_BY_MIME[mimeType.toLowerCase()] ?? 'png';
+    const dir = await this.ensureImagesDir(projectId);
+    const filename = `soloe-img-${Date.now()}-${randomBytes(4).toString('hex')}.${ext}`;
+    const absolutePath = path.join(dir, filename);
+    assertWithin(dir, absolutePath);
+    await fs.writeFile(absolutePath, buffer);
+    return { filename, absolutePath, mimeType };
+  }
+
+  // Sweep images that are no longer referenced anywhere. Reads every saved
+  // note's body plus the renderer-supplied draft text, then unlinks any image
+  // whose filename doesn't appear in that combined haystack. Conservative by
+  // design — anything referenced anywhere stays.
+  async cleanupImages(
+    projectId: ProjectId,
+    extraReferences: readonly string[]
+  ): Promise<{ deleted: number }> {
+    const dir = await this.ensureImagesDir(projectId);
+    const entries = await safeReaddir(dir);
+    if (entries.length === 0) return { deleted: 0 };
+    const noteDir = await this.ensureProjectDir(projectId);
+    const noteEntries = await safeReaddir(noteDir);
+    const haystackParts: string[] = [...extraReferences];
+    for (const entry of noteEntries) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.toLowerCase().endsWith('.md')) continue;
+      try {
+        haystackParts.push(await fs.readFile(path.join(noteDir, entry.name), 'utf8'));
+      } catch {
+        // skip unreadable note; treat as if empty
+      }
+    }
+    const haystack = haystackParts.join('\n');
+    let deleted = 0;
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (haystack.includes(entry.name)) continue;
+      try {
+        await fs.unlink(path.join(dir, entry.name));
+        deleted += 1;
+      } catch {
+        // best-effort; ignore
+      }
+    }
+    return { deleted };
+  }
+
   onChange(fn: (event: NotesChangeEvent) => void): () => void {
     this.listeners.add(fn);
     return () => {
@@ -116,6 +181,13 @@ export class NotesStore {
   private async ensureProjectDir(projectId: ProjectId): Promise<string> {
     const safeId = sanitizeProjectId(projectId);
     const dir = path.join(this.rootDir, safeId);
+    await fs.mkdir(dir, { recursive: true });
+    return dir;
+  }
+
+  private async ensureImagesDir(projectId: ProjectId): Promise<string> {
+    const projectDir = await this.ensureProjectDir(projectId);
+    const dir = path.join(projectDir, IMAGES_DIR_NAME);
     await fs.mkdir(dir, { recursive: true });
     return dir;
   }

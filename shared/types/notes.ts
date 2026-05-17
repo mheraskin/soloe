@@ -16,3 +16,14 @@ export interface NotesChangeEvent {
   projectId: ProjectId;
   notes: NoteSummary[];
 }
+
+export interface NoteImage {
+  filename: string;
+  absolutePath: string;
+  mimeType: string;
+}
+
+export interface NoteImagePayload {
+  mimeType: string;
+  dataBase64: string;
+}
