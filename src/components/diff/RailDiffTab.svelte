@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     GitCompare,
+    GitCommit as GitCommitIcon,
     Loader2,
     AlertCircle,
     RefreshCw,
@@ -12,6 +13,7 @@
     Minus,
     Maximize2,
     Minimize2,
+    MoreHorizontal,
     WrapText,
     MessageSquare,
     ChevronsUp,
@@ -21,7 +23,8 @@
     ChevronRight,
     RotateCcw,
     FoldVertical,
-    UnfoldVertical
+    UnfoldVertical,
+    X
   } from '@lucide/svelte';
   import { onMount, untrack } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
@@ -35,10 +38,13 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import * as Popover from '$lib/components/ui/popover';
   import ChangeRow from './ChangeRow.svelte';
   import VirtualDiffBody from './VirtualDiffBody.svelte';
   import RailCommentsPanel from './RailCommentsPanel.svelte';
   import DiffSelectionMenu from './DiffSelectionMenu.svelte';
+  import CommitPicker from './CommitPicker.svelte';
 
   let diffRootEl: HTMLDivElement | null = $state(null);
   let diffViewportEl: HTMLElement | null = $state(null);
@@ -59,13 +65,19 @@
   let resizeStartHeight = 0;
   let diffExpanded = $state(false);
 
-  type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked';
+  type FilterValue = 'all' | 'staged' | 'unstaged' | 'untracked' | 'wt' | 'committed';
 
-  const filterOptions: ReadonlyArray<{ id: FilterValue; label: string }> = [
+  const WT_FILTER_OPTIONS: ReadonlyArray<{ id: FilterValue; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'staged', label: 'Staged' },
     { id: 'unstaged', label: 'Unstaged' },
     { id: 'untracked', label: 'New' }
+  ];
+
+  const RANGE_FILTER_OPTIONS: ReadonlyArray<{ id: FilterValue; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'wt', label: 'Working tree' },
+    { id: 'committed', label: 'Commits' }
   ];
 
   let selected = $derived(sessions.selected);
@@ -115,12 +127,64 @@
   let changesEntry = $derived(activeCwd ? workingDiff.changesFor(activeCwd) : null);
   let filteredChanges = $derived(activeCwd ? workingDiff.filteredChangesFor(activeCwd) : []);
   let totalChangeCount = $derived(changesEntry?.result?.changes.length ?? 0);
-  let stagedChanges = $derived(filteredChanges.filter((c) => c.staged));
-  let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged));
-  let showGroups = $derived(workingDiff.filter === 'all' && (stagedChanges.length > 0 || unstagedChanges.length > 0));
-  // Stack order mirrors the file list under the "All" filter (staged then
-  // unstaged) so clicking a row scrolls to the same index in the diff.
-  let stackChanges = $derived(showGroups ? [...stagedChanges, ...unstagedChanges] : filteredChanges);
+  let stagedChanges = $derived(filteredChanges.filter((c) => c.staged && c.section !== 'committed'));
+  let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged && c.section !== 'committed'));
+
+  let reviewMode = $derived(
+    activeCwd ? workingDiff.reviewModeFor(activeCwd) : ({ kind: 'working-tree' } as const)
+  );
+  let isRangeMode = $derived(reviewMode.kind === 'range');
+  let filterOptions = $derived(isRangeMode ? RANGE_FILTER_OPTIONS : WT_FILTER_OPTIONS);
+
+  // In range mode the file list groups by section (Working tree vs Commits);
+  // in working-tree mode the original staged/unstaged grouping kicks in only
+  // when the user is on the "all" pill (otherwise the list is already filtered).
+  let wtSectionChanges = $derived(
+    filteredChanges.filter((c) => c.section !== 'committed')
+  );
+  let committedSectionChanges = $derived(
+    filteredChanges.filter((c) => c.section === 'committed')
+  );
+  let showRangeGroups = $derived(isRangeMode);
+  let showWtModeGroups = $derived(
+    !isRangeMode &&
+      workingDiff.filter === 'all' &&
+      (stagedChanges.length > 0 || unstagedChanges.length > 0)
+  );
+
+  // Stack order mirrors the file list ordering so clicking a row scrolls to
+  // the same index in the diff. In range mode we go working tree first, then
+  // committed; in WT mode we keep the staged → unstaged grouping.
+  let stackChanges = $derived(
+    showRangeGroups
+      ? [...wtSectionChanges, ...committedSectionChanges]
+      : showWtModeGroups
+        ? [...stagedChanges, ...unstagedChanges]
+        : filteredChanges
+  );
+
+  let commitScopeText = $derived.by<string>(() => {
+    if (reviewMode.kind !== 'range') return 'Working tree';
+    const n = reviewMode.commits.length;
+    const shortBase = reviewMode.base.slice(0, 7);
+    const shortHead = reviewMode.head.slice(0, 7);
+    return `${n} commit${n === 1 ? '' : 's'} · ${shortBase}…${shortHead}`;
+  });
+  let chipFilterShort = $derived(
+    reviewMode.kind === 'range' && reviewMode.chipFilter ? reviewMode.chipFilter.slice(0, 7) : null
+  );
+
+  let pickerOpen = $state(false);
+
+  function clearChipFilter(): void {
+    if (!activeCwd) return;
+    workingDiff.setChipFilter(activeCwd, null);
+  }
+
+  function pickCommitChip(sha: string): void {
+    if (!activeCwd) return;
+    workingDiff.setChipFilter(activeCwd, reviewMode.kind === 'range' && reviewMode.chipFilter === sha ? null : sha);
+  }
 
   let storedSelected = $derived(activeCwd ? workingDiff.selectedFilePath(activeCwd) : null);
   // Multi-file viewer renders the filtered set as a scroll stack; the
@@ -361,9 +425,11 @@
     if (count === 0) return MIN_LIST_HEIGHT;
     const visibleRows = Math.min(count, 4);
     const peek = count > 4 ? 0.5 : 0;
-    const headerCount = showGroups
-      ? (stagedChanges.length > 0 ? 1 : 0) + (unstagedChanges.length > 0 ? 1 : 0)
-      : 0;
+    const headerCount = showRangeGroups
+      ? (wtSectionChanges.length > 0 ? 1 : 0) + (committedSectionChanges.length > 0 ? 1 : 0)
+      : showWtModeGroups
+        ? (stagedChanges.length > 0 ? 1 : 0) + (unstagedChanges.length > 0 ? 1 : 0)
+        : 0;
     return Math.round(
       LIST_VERTICAL_PADDING_PX
         + visibleRows * ROW_HEIGHT_PX
@@ -632,6 +698,53 @@
           <span>Comments ({totalCommentCount})</span>
         </Button>
       {/if}
+      <Popover.Root bind:open={pickerOpen}>
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant={isRangeMode ? 'outline' : 'ghost'}
+              size="xs"
+              class="gap-1"
+              aria-label="Choose review range"
+              title={isRangeMode
+                ? `Review range — ${commitScopeText}`
+                : 'Pick commits to review'}
+              disabled={!activeCwd}
+            >
+              {#if isRangeMode}
+                <GitCommitIcon class="size-3" />
+              {:else}
+                <GitCompare class="size-3" />
+              {/if}
+              <span class="max-w-[180px] truncate font-mono text-[10px]">
+                {commitScopeText}
+              </span>
+              {#if chipFilterShort}
+                <span class="rounded bg-muted px-1 font-mono text-[10px] text-muted-foreground">
+                  filtered: {chipFilterShort}
+                </span>
+              {/if}
+            </Button>
+          {/snippet}
+        </Popover.Trigger>
+        <Popover.Content align="start" class="w-auto p-0">
+          {#if activeCwd}
+            <CommitPicker cwd={activeCwd} onClose={() => (pickerOpen = false)} />
+          {/if}
+        </Popover.Content>
+      </Popover.Root>
+      {#if chipFilterShort}
+        <Button
+          variant="ghost"
+          size="xs"
+          onclick={clearChipFilter}
+          aria-label="Clear commit filter"
+          title="Clear commit filter"
+        >
+          <X class="size-3" />
+        </Button>
+      {/if}
       <Button
         variant="ghost"
         size="xs"
@@ -656,21 +769,6 @@
           <Columns class="size-3" />
         {:else}
           <Rows class="size-3" />
-        {/if}
-      </Button>
-      <Button
-        variant="ghost"
-        size="xs"
-        onclick={toggleAllCollapsed}
-        aria-pressed={allCollapsed}
-        aria-label={allCollapsed ? 'Expand all files' : 'Collapse all files'}
-        title={allCollapsed ? 'Expand all' : 'Collapse all'}
-        disabled={!activeCwd || stackChanges.length === 0}
-      >
-        {#if allCollapsed}
-          <UnfoldVertical class="size-3" />
-        {:else}
-          <FoldVertical class="size-3" />
         {/if}
       </Button>
       <Button
@@ -702,20 +800,47 @@
           <Maximize2 class="size-3" />
         {/if}
       </Button>
-      <Button
-        variant="ghost"
-        size="xs"
-        onclick={() => void refresh()}
-        aria-label="Refresh changes"
-        title="Refresh"
-        disabled={!activeCwd || changesEntry?.loading}
-      >
-        {#if changesEntry?.loading}
-          <Loader2 class="size-3 animate-spin" />
-        {:else}
-          <RefreshCw class="size-3" />
-        {/if}
-      </Button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant="ghost"
+              size="xs"
+              aria-label="More diff actions"
+              title="More"
+              disabled={!activeCwd}
+            >
+              <MoreHorizontal class="size-3" />
+            </Button>
+          {/snippet}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="end" class="w-48">
+          <DropdownMenu.Item
+            disabled={!activeCwd || stackChanges.length === 0}
+            onSelect={toggleAllCollapsed}
+          >
+            {#if allCollapsed}
+              <UnfoldVertical class="size-3" />
+              <span>Expand all</span>
+            {:else}
+              <FoldVertical class="size-3" />
+              <span>Collapse all</span>
+            {/if}
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            disabled={!activeCwd || changesEntry?.loading}
+            onSelect={() => void refresh()}
+          >
+            {#if changesEntry?.loading}
+              <Loader2 class="size-3 animate-spin" />
+            {:else}
+              <RefreshCw class="size-3" />
+            {/if}
+            <span>Refresh</span>
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
     </div>
   </header>
 
@@ -784,6 +909,51 @@
       </div>
     </div>
 
+    {#snippet wtChangeRow(change: WorkingChange)}
+      <ChangeRow
+        {change}
+        selected={change.path === effectiveSelected}
+        pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
+        onpick={() => pickChange(change.path)}
+        onstage={!change.staged ? () => void stageFile(change.path).catch(reportError) : undefined}
+        onunstage={change.staged ? () => void unstageFile(change.path).catch(reportError) : undefined}
+        ondiscard={() => void discardChange(change)}
+      />
+    {/snippet}
+    {#snippet committedChangeRow(change: WorkingChange)}
+      <div class="flex flex-col">
+        <ChangeRow
+          {change}
+          selected={change.path === effectiveSelected}
+          onpick={() => pickChange(change.path)}
+        />
+        {#if change.commitsTouching && change.commitsTouching.length > 0}
+          <div class="flex flex-wrap gap-1 px-2 pb-1 pl-8">
+            {#each change.commitsTouching as sha (sha)}
+              {@const short = sha.slice(0, 7)}
+              {@const activeChip = reviewMode.kind === 'range' && reviewMode.chipFilter === sha}
+              <button
+                type="button"
+                class={[
+                  'rounded px-1 py-px font-mono text-[10px] transition-colors',
+                  activeChip
+                    ? 'bg-primary/15 text-primary'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                ]}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  pickCommitChip(sha);
+                }}
+                title={activeChip ? 'Clear commit filter' : `Filter list to commit ${short}`}
+              >
+                {short}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/snippet}
+
     <ScrollArea
       class={['shrink-0', diffExpanded && 'hidden']}
       style="height: {listHeight}px"
@@ -802,12 +972,37 @@
         {:else if filteredChanges.length === 0}
           <div class="px-2 py-3 text-xs text-muted-foreground">
             {#if totalChangeCount === 0}
-              Working tree is clean.
+              {#if isRangeMode}
+                No files changed in this range.
+              {:else}
+                Working tree is clean.
+              {/if}
             {:else}
               Nothing matches the current filter.
             {/if}
           </div>
-        {:else if showGroups}
+        {:else if showRangeGroups}
+          {#if wtSectionChanges.length > 0}
+            <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+              <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                Working tree ({wtSectionChanges.length})
+              </span>
+            </div>
+            {#each wtSectionChanges as change (change.path)}
+              {@render wtChangeRow(change)}
+            {/each}
+          {/if}
+          {#if committedSectionChanges.length > 0}
+            <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+              <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+                Commits ({committedSectionChanges.length})
+              </span>
+            </div>
+            {#each committedSectionChanges as change (change.path)}
+              {@render committedChangeRow(change)}
+            {/each}
+          {/if}
+        {:else if showWtModeGroups}
           {#if stagedChanges.length > 0}
             <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
               <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
@@ -824,14 +1019,7 @@
               </button>
             </div>
             {#each stagedChanges as change (change.path)}
-              <ChangeRow
-                {change}
-                selected={change.path === effectiveSelected}
-                pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
-                onpick={() => pickChange(change.path)}
-                onunstage={() => void unstageFile(change.path).catch(reportError)}
-                ondiscard={() => void discardChange(change)}
-              />
+              {@render wtChangeRow(change)}
             {/each}
           {/if}
           {#if unstagedChanges.length > 0}
@@ -850,27 +1038,12 @@
               </button>
             </div>
             {#each unstagedChanges as change (change.path)}
-              <ChangeRow
-                {change}
-                selected={change.path === effectiveSelected}
-                pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
-                onpick={() => pickChange(change.path)}
-                onstage={() => void stageFile(change.path).catch(reportError)}
-                ondiscard={() => void discardChange(change)}
-              />
+              {@render wtChangeRow(change)}
             {/each}
           {/if}
         {:else}
           {#each filteredChanges as change (change.path)}
-            <ChangeRow
-              {change}
-              selected={change.path === effectiveSelected}
-              pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
-              onpick={() => pickChange(change.path)}
-              onstage={!change.staged ? () => void stageFile(change.path).catch(reportError) : undefined}
-              onunstage={change.staged ? () => void unstageFile(change.path).catch(reportError) : undefined}
-              ondiscard={() => void discardChange(change)}
-            />
+            {@render wtChangeRow(change)}
           {/each}
         {/if}
       </div>
@@ -903,8 +1076,11 @@
             class="flex flex-col"
             style:overflow-anchor="none"
           >
-            {#each stackChanges as change (change.path)}
-              {@const entry = workingDiff.diffEntryFor(activeCwd!, change.path)}
+            {#each stackChanges as change (change.path + '::' + (change.section ?? 'wt'))}
+              {@const isCommitted = change.section === 'committed'}
+              {@const rangeBase = isCommitted && reviewMode.kind === 'range' ? reviewMode.base : null}
+              {@const rangeHead = isCommitted && reviewMode.kind === 'range' ? reviewMode.head : null}
+              {@const entry = workingDiff.diffEntryFor(activeCwd!, change.path, rangeBase, rangeHead)}
               {@const fileDiff = entry?.diff ?? null}
               {@const gapPath = fileDiff?.fromPath ?? change.path}
               {@const canExpand = fileDiff ? fileDiff.kind !== 'added' && fileDiff.kind !== 'untracked' : false}
@@ -959,54 +1135,56 @@
                     <span class="font-mono text-[10px] text-muted-foreground uppercase">
                       {fileDiff?.kind ?? change.kind}
                     </span>
-                    <button
-                      type="button"
-                      class="flex size-4 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        void discardChange(change);
-                      }}
-                      title="Discard changes"
-                      aria-label="Discard changes to {change.path}"
-                    >
-                      <RotateCcw class="size-3" />
-                    </button>
-                    {#if change.staged}
+                    {#if !isCommitted}
                       <button
                         type="button"
-                        class="flex size-4 items-center justify-center rounded text-rose-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        class="flex size-4 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500"
                         onclick={(e) => {
                           e.stopPropagation();
-                          void unstageFile(change.path).catch(reportError);
+                          void discardChange(change);
                         }}
-                        disabled={stagePending}
-                        title="Unstage"
-                        aria-label="Unstage {change.path}"
+                        title="Discard changes"
+                        aria-label="Discard changes to {change.path}"
                       >
-                        {#if stagePending}
-                          <Loader2 class="size-3 animate-spin" />
-                        {:else}
-                          <Minus class="size-3" />
-                        {/if}
+                        <RotateCcw class="size-3" />
                       </button>
-                    {:else}
-                      <button
-                        type="button"
-                        class="flex size-4 items-center justify-center rounded text-emerald-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          void stageFile(change.path).catch(reportError);
-                        }}
-                        disabled={stagePending}
-                        title="Stage"
-                        aria-label="Stage {change.path}"
-                      >
-                        {#if stagePending}
-                          <Loader2 class="size-3 animate-spin" />
-                        {:else}
-                          <Plus class="size-3" />
-                        {/if}
-                      </button>
+                      {#if change.staged}
+                        <button
+                          type="button"
+                          class="flex size-4 items-center justify-center rounded text-rose-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            void unstageFile(change.path).catch(reportError);
+                          }}
+                          disabled={stagePending}
+                          title="Unstage"
+                          aria-label="Unstage {change.path}"
+                        >
+                          {#if stagePending}
+                            <Loader2 class="size-3 animate-spin" />
+                          {:else}
+                            <Minus class="size-3" />
+                          {/if}
+                        </button>
+                      {:else}
+                        <button
+                          type="button"
+                          class="flex size-4 items-center justify-center rounded text-emerald-500/70 transition-colors hover:bg-muted-foreground/20 hover:text-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            void stageFile(change.path).catch(reportError);
+                          }}
+                          disabled={stagePending}
+                          title="Stage"
+                          aria-label="Stage {change.path}"
+                        >
+                          {#if stagePending}
+                            <Loader2 class="size-3 animate-spin" />
+                          {:else}
+                            <Plus class="size-3" />
+                          {/if}
+                        </button>
+                      {/if}
                     {/if}
                   </div>
                 </header>
@@ -1034,7 +1212,7 @@
                       <DiffSelectionMenu
                         cwd={activeCwd!}
                         filePath={fileDiff.path}
-                        rootEl={sectionEls[change.path]}
+                        rootEl={sectionEls[change.path] ?? null}
                         diff={fileDiff}
                       />
                       <VirtualDiffBody

@@ -1,11 +1,25 @@
 import type {
+  BlameLine,
   FileDiff,
+  GitCommit,
+  RangeChange,
   WorkingChange,
   WorkingChangesResult
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
 import { git } from './git.svelte';
+
+export type ReviewMode =
+  | { kind: 'working-tree' }
+  | {
+      kind: 'range';
+      base: string;          // canonical 40-char SHA (parent of earliest commit)
+      head: string;          // canonical 40-char SHA (newest commit)
+      commits: GitCommit[];  // oldest-first, topologically ordered
+      includeWorkingTree: boolean;
+      chipFilter: string | null; // 40-char SHA when filtering by one commit
+    };
 
 interface RepoContext {
   runMode?: RunMode;
@@ -39,16 +53,30 @@ interface FileLinesEntry {
   error: string | null;
 }
 
+interface BlameEntry {
+  // Sparse per-line attribution, indexed by new-side line number (1-based).
+  // Slot 0 is unused so callers can read by lineNo directly without a -1.
+  byLine: (BlameLine | undefined)[];
+  loading: boolean;
+  error: string | null;
+}
+
 const DEFAULT_CONTEXT_LINES = 3;
+
+const WT_MARKER = 'WT';
 
 class WorkingDiffStore {
   // Keyed by working-tree cwd (a session/worktree path), since selection
   // and diff caches are per-worktree, not per repoPath.
   changesByCwd = $state<Record<string, ChangesEntry>>({});
 
-  // Diff entries are keyed by `${cwd}::${filePath}` so two worktrees of the
-  // same repo don't trample each other.
+  // Diff entries are keyed by `${cwd}::${filePath}::${base}::${head}` so the
+  // working-tree diff and the range diff for the same file don't collide.
+  // base/head are the literal 'WT' string for working-tree-mode entries.
   diffsByKey = $state<Record<string, DiffEntry>>({});
+
+  // Per-cwd review mode. Absence ⇒ working-tree mode (the default).
+  reviewModeByCwd = $state<Record<string, ReviewMode>>({});
 
   // The path of the file currently being inspected, per-cwd. Persists across
   // refreshes so the user doesn't lose their place when files shuffle.
@@ -65,8 +93,9 @@ class WorkingDiffStore {
 
   wordWrap = $state<boolean>(true);
 
-  // 'all' | 'staged' | 'unstaged' | 'untracked' — coarse filter.
-  filter = $state<'all' | 'staged' | 'unstaged' | 'untracked'>('all');
+  // 'all' | 'staged' | 'unstaged' | 'untracked' in working-tree mode; the
+  // RailDiffTab swaps in the {all,wt,committed} triplet when in range mode.
+  filter = $state<'all' | 'staged' | 'unstaged' | 'untracked' | 'wt' | 'committed'>('all');
 
   query = $state<string>('');
 
@@ -77,6 +106,11 @@ class WorkingDiffStore {
   // entries are dropped on file invalidation alongside the diff cache.
   fileLinesByKey = $state<Record<string, FileLinesEntry>>({});
 
+  // Blame attribution keyed by `${cwd}::${path}::${head}`. Loaded lazily when
+  // a file becomes visible in range mode; survives until the cwd invalidates
+  // or the file's head moves.
+  blamesByKey = $state<Record<string, BlameEntry>>({});
+
   private contextByCwd = new Map<string, RepoContext>();
   private inflightChanges = new Map<string, Promise<WorkingChangesResult | null>>();
   // Per-key in-flight diff fetches — selection clicks and the eager prefetch
@@ -84,6 +118,7 @@ class WorkingDiffStore {
   // the other.
   private inflightDiffs = new Map<string, Promise<FileDiff | null>>();
   private inflightFileLines = new Map<string, Promise<FileLinesEntry>>();
+  private inflightBlames = new Map<string, Promise<BlameEntry>>();
   private detachers: Array<() => void> = [];
   private generationCounter = 0;
   // `git diff HEAD` ignores the index, so stage/unstage events don't need a
@@ -118,10 +153,17 @@ class WorkingDiffStore {
   filteredChangesFor(cwd: string): WorkingChange[] {
     const all = this.changesFor(cwd).result?.changes ?? [];
     const q = this.query.trim().toLowerCase();
+    const mode = this.reviewModeByCwd[cwd];
+    const chipFilter = mode?.kind === 'range' ? mode.chipFilter : null;
     return all.filter((change) => {
       if (this.filter === 'staged' && !change.staged) return false;
       if (this.filter === 'unstaged' && (change.staged || change.kind === 'untracked')) return false;
       if (this.filter === 'untracked' && change.kind !== 'untracked') return false;
+      if (this.filter === 'wt' && change.section !== 'wt') return false;
+      if (this.filter === 'committed' && change.section !== 'committed') return false;
+      if (chipFilter && change.section === 'committed') {
+        if (!change.commitsTouching?.includes(chipFilter)) return false;
+      }
       if (q) {
         const hay = `${change.path} ${change.fromPath ?? ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -134,15 +176,92 @@ class WorkingDiffStore {
     return this.selectedByCwd[cwd] ?? null;
   }
 
-  // Compose the diffs cache key. Exported via a helper so components can read
-  // out specific entries without colliding with other worktrees.
-  diffKey(cwd: string, filePath: string): string {
-    return `${cwd}::${filePath}`;
+  reviewModeFor(cwd: string): ReviewMode {
+    return this.reviewModeByCwd[cwd] ?? { kind: 'working-tree' };
   }
 
-  diffEntryFor(cwd: string, filePath: string): DiffEntry {
+  setReviewMode(cwd: string, mode: ReviewMode): void {
+    const trimmed = cwd.trim();
+    if (!trimmed) return;
+    const prev = this.reviewModeByCwd[trimmed] ?? { kind: 'working-tree' };
+    // Identity-by-content guard: a no-op set (re-applying the same mode)
+    // shouldn't blow caches or refresh.
+    if (sameReviewMode(prev, mode)) return;
+    if (mode.kind === 'working-tree') {
+      const next = { ...this.reviewModeByCwd };
+      delete next[trimmed];
+      this.reviewModeByCwd = next;
+    } else {
+      this.reviewModeByCwd = { ...this.reviewModeByCwd, [trimmed]: mode };
+    }
+    // The set of files in view + the per-file diff payload both change when
+    // mode flips. Drop both caches scoped to this cwd so the next read fetches
+    // fresh content under the new mode's keys.
+    this.invalidate(trimmed);
+    // Reset filter to 'all' on mode change — 'staged'/'unstaged' don't make
+    // sense in range mode, and 'wt'/'committed' don't in working-tree mode.
+    this.filter = 'all';
+  }
+
+  clearReviewMode(cwd: string): void {
+    this.setReviewMode(cwd, { kind: 'working-tree' });
+  }
+
+  setChipFilter(cwd: string, sha: string | null): void {
+    const mode = this.reviewModeByCwd[cwd];
+    if (!mode || mode.kind !== 'range') return;
+    if (mode.chipFilter === sha) return;
+    this.reviewModeByCwd = {
+      ...this.reviewModeByCwd,
+      [cwd]: { ...mode, chipFilter: sha }
+    };
+  }
+
+  setIncludeWorkingTree(cwd: string, include: boolean): void {
+    const mode = this.reviewModeByCwd[cwd];
+    if (!mode || mode.kind !== 'range') return;
+    if (mode.includeWorkingTree === include) return;
+    this.reviewModeByCwd = {
+      ...this.reviewModeByCwd,
+      [cwd]: { ...mode, includeWorkingTree: include }
+    };
+  }
+
+  // Compose the diffs cache key. Mode-aware so working-tree-vs-HEAD and a
+  // base..head range diff for the same file can co-exist in the cache.
+  diffKey(cwd: string, filePath: string, base?: string | null, head?: string | null): string {
+    return `${cwd}::${filePath}::${base ?? WT_MARKER}::${head ?? WT_MARKER}`;
+  }
+
+  // Pick the appropriate base/head for the given file under the current mode.
+  // WT-only mode and the WT section of a range mode both render the same
+  // working-tree diff (and share the same cache key).
+  diffKeyForFile(cwd: string, change: WorkingChange): string {
+    if (change.section === 'committed') {
+      const mode = this.reviewModeByCwd[cwd];
+      if (mode && mode.kind === 'range') {
+        return this.diffKey(cwd, change.path, mode.base, mode.head);
+      }
+    }
+    return this.diffKey(cwd, change.path);
+  }
+
+  diffEntryFor(cwd: string, filePath: string, base?: string | null, head?: string | null): DiffEntry {
+    let resolvedBase = base ?? null;
+    let resolvedHead = head ?? null;
+    // When base/head aren't explicitly supplied, infer the right (base, head)
+    // from the change's section so committed-section files in range mode hit
+    // their range cache slot rather than the empty WT slot.
+    if (resolvedBase === null && resolvedHead === null) {
+      const change = this.changesFor(cwd).result?.changes.find((c) => c.path === filePath);
+      const mode = this.reviewModeByCwd[cwd];
+      if (change?.section === 'committed' && mode?.kind === 'range') {
+        resolvedBase = mode.base;
+        resolvedHead = mode.head;
+      }
+    }
     return (
-      this.diffsByKey[this.diffKey(cwd, filePath)] ?? {
+      this.diffsByKey[this.diffKey(cwd, filePath, resolvedBase, resolvedHead)] ?? {
         diff: null,
         loading: false,
         error: null,
@@ -167,7 +286,10 @@ class WorkingDiffStore {
 
   // Fetch the working-tree changes for a worktree. Coalesces concurrent
   // callers so a flurry of repaints + git events don't spawn duplicate
-  // git invocations.
+  // git invocations. In range mode, also fetches the committed file list
+  // for the active base..head and merges both lists into a single result;
+  // each entry carries `section` ('wt' | 'committed') so the UI can split
+  // them under separate headers.
   async loadChanges(cwd: string): Promise<WorkingChangesResult | null> {
     const trimmed = cwd.trim();
     if (!trimmed) return null;
@@ -185,13 +307,44 @@ class WorkingDiffStore {
       }
     };
 
-    const request = ipc.git
-      .workingChanges({
-        cwd: trimmed,
-        ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
-      })
-      .then((result) => {
+    const mode = this.reviewModeByCwd[trimmed];
+    const fetchWt = !mode || mode.kind !== 'range' || mode.includeWorkingTree;
+    const fetchRange = mode?.kind === 'range';
+
+    const wtPromise = fetchWt
+      ? ipc.git.workingChanges({
+          cwd: trimmed,
+          ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        })
+      : Promise.resolve<WorkingChangesResult>({
+          repoPath: previous?.result?.repoPath ?? null,
+          isRepo: previous?.result?.isRepo ?? true,
+          changes: []
+        });
+    const rangePromise = fetchRange && mode?.kind === 'range'
+      ? ipc.git.rangeChanges({
+          cwd: trimmed,
+          base: mode.base,
+          head: mode.head,
+          ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        })
+      : null;
+
+    const request = Promise.all([wtPromise, rangePromise])
+      .then(([wt, range]): WorkingChangesResult => {
+        const merged: WorkingChange[] = wt.changes.map((c) => ({ ...c, section: 'wt' as const }));
+        if (range) {
+          for (const r of range.changes) {
+            merged.push(rangeChangeToWorking(r));
+          }
+        }
+        const result: WorkingChangesResult = {
+          repoPath: wt.repoPath ?? previous?.result?.repoPath ?? null,
+          isRepo: wt.isRepo || (previous?.result?.isRepo ?? false),
+          changes: merged
+        };
         this.changesByCwd = {
           ...this.changesByCwd,
           [trimmed]: { result, loading: false, error: null }
@@ -200,8 +353,8 @@ class WorkingDiffStore {
         // pane doesn't show stale content. Pick the first available change
         // as a fallback so the user can keep reviewing.
         const selected = this.selectedByCwd[trimmed];
-        if (selected && !result.changes.some((c) => c.path === selected)) {
-          const fallback = result.changes[0]?.path ?? null;
+        if (selected && !merged.some((c) => c.path === selected)) {
+          const fallback = merged[0]?.path ?? null;
           this.setSelected(trimmed, fallback);
         }
         return result;
@@ -231,7 +384,17 @@ class WorkingDiffStore {
   async loadDiff(cwd: string, filePath: string): Promise<FileDiff | null> {
     const trimmedCwd = cwd.trim();
     if (!trimmedCwd || !filePath) return null;
-    const key = this.diffKey(trimmedCwd, filePath);
+    // Selection lives at (cwd, path) granularity; the section discriminator
+    // determines which base/head pair to fetch. Resolve the section from the
+    // changes list, then key everything by the full quadruple.
+    const change = this.changesFor(trimmedCwd).result?.changes.find(
+      (c) => c.path === filePath
+    );
+    const mode = this.reviewModeByCwd[trimmedCwd];
+    const isCommitted = change?.section === 'committed';
+    const base = isCommitted && mode?.kind === 'range' ? mode.base : null;
+    const head = isCommitted && mode?.kind === 'range' ? mode.head : null;
+    const key = this.diffKey(trimmedCwd, filePath, base, head);
 
     // If another caller is already fetching this exact file, ride along on
     // their promise. Selection clicks and the eager prefetch all funnel
@@ -245,7 +408,7 @@ class WorkingDiffStore {
     const cached = this.diffsByKey[key];
     if (cached?.diff && !cached.error) return cached.diff;
 
-    const promise = this.fetchDiff(trimmedCwd, filePath, key);
+    const promise = this.fetchDiff(trimmedCwd, filePath, key, change, base, head);
     this.inflightDiffs.set(key, promise);
     void promise.finally(() => {
       if (this.inflightDiffs.get(key) === promise) {
@@ -258,7 +421,10 @@ class WorkingDiffStore {
   private async fetchDiff(
     trimmedCwd: string,
     filePath: string,
-    key: string
+    key: string,
+    change: WorkingChange | undefined,
+    base: string | null,
+    head: string | null
   ): Promise<FileDiff | null> {
     const ctx = this.contextByCwd.get(trimmedCwd) ?? {};
     const generation = ++this.generationCounter;
@@ -274,15 +440,14 @@ class WorkingDiffStore {
     };
 
     try {
-      const change = this.changesFor(trimmedCwd).result?.changes.find(
-        (c) => c.path === filePath
-      );
       const fromPath = change?.fromPath ?? null;
       const diff = await ipc.git.fileDiff({
         cwd: trimmedCwd,
         path: filePath,
         fromPath,
         contextLines: this.contextLines,
+        ...(base ? { base } : {}),
+        ...(head ? { head } : {}),
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
         ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
       });
@@ -348,7 +513,12 @@ class WorkingDiffStore {
   }
 
   fileLinesKey(cwd: string, filePath: string, startLine: number, endLine: number): string {
-    return `${cwd}::${filePath}::${startLine}-${endLine}`;
+    // The trailing head-marker keeps WT-mode gaps and range-mode gaps in
+    // separate cache slots. Range mode reads the same on-disk content today
+    // but the key shape is forward-compatible with a `--at <head>` fetch.
+    const mode = this.reviewModeByCwd[cwd];
+    const headMarker = mode?.kind === 'range' ? mode.head : WT_MARKER;
+    return `${cwd}::${filePath}::${startLine}-${endLine}::${headMarker}`;
   }
 
   fileLinesEntry(
@@ -427,6 +597,124 @@ class WorkingDiffStore {
 
     this.inflightFileLines.set(key, request);
     return request;
+  }
+
+  blameKey(cwd: string, filePath: string, head: string): string {
+    return `${cwd}::${filePath}::${head}`;
+  }
+
+  blameEntry(cwd: string, filePath: string, head: string): BlameEntry {
+    return (
+      this.blamesByKey[this.blameKey(cwd, filePath, head)] ?? {
+        byLine: [],
+        loading: false,
+        error: null
+      }
+    );
+  }
+
+  async loadBlame(cwd: string, filePath: string, head: string): Promise<BlameEntry> {
+    const trimmed = cwd.trim();
+    const idle: BlameEntry = { byLine: [], loading: false, error: null };
+    if (!trimmed || !filePath || !head) return idle;
+    const key = this.blameKey(trimmed, filePath, head);
+    const existing = this.blamesByKey[key];
+    if (existing && !existing.error && existing.byLine.length > 0) return existing;
+    const inflight = this.inflightBlames.get(key);
+    if (inflight) return inflight;
+
+    const ctx = this.contextByCwd.get(trimmed) ?? {};
+    this.blamesByKey = {
+      ...this.blamesByKey,
+      [key]: { byLine: existing?.byLine ?? [], loading: true, error: null }
+    };
+
+    const request = ipc.git
+      .fileBlame({
+        cwd: trimmed,
+        path: filePath,
+        head,
+        ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+      })
+      .then((result): BlameEntry => {
+        const byLine: (BlameLine | undefined)[] = [];
+        for (const line of result.lines) {
+          byLine[line.lineNo] = line;
+        }
+        const entry: BlameEntry = { byLine, loading: false, error: null };
+        this.blamesByKey = { ...this.blamesByKey, [key]: entry };
+        return entry;
+      })
+      .catch((err: unknown): BlameEntry => {
+        const message = err instanceof Error ? err.message : String(err);
+        const entry: BlameEntry = {
+          byLine: existing?.byLine ?? [],
+          loading: false,
+          error: message
+        };
+        this.blamesByKey = { ...this.blamesByKey, [key]: entry };
+        return entry;
+      })
+      .finally(() => {
+        if (this.inflightBlames.get(key) === request) {
+          this.inflightBlames.delete(key);
+        }
+      });
+
+    this.inflightBlames.set(key, request);
+    return request;
+  }
+
+  // Resolve the new-side SHAs attributed to a [startLine..endLine] range on
+  // `side`. For 'new', look up blame directly. For 'old', map each oldLine to
+  // its newLine via the cached diff; lines that don't exist on the new side
+  // are skipped (the line is gone, so there's no blame target). The result is
+  // intersected with the active reviewMode's selected commits so chips never
+  // surface SHAs the user didn't pick.
+  attributedCommitsFor(
+    cwd: string,
+    filePath: string,
+    head: string,
+    side: 'old' | 'new',
+    startLine: number,
+    endLine: number
+  ): string[] {
+    const mode = this.reviewModeByCwd[cwd];
+    if (!mode || mode.kind !== 'range') return [];
+    const selected = new Set(mode.commits.map((c) => c.hash));
+    const blame = this.blameEntry(cwd, filePath, head).byLine;
+    if (blame.length === 0) return [];
+
+    const newLines: number[] = [];
+    if (side === 'new') {
+      for (let n = startLine; n <= endLine; n += 1) newLines.push(n);
+    } else {
+      // Map old-side lines through the diff. Only context rows carry both
+      // sides, so we mostly recover pairs there; remove-only lines have no
+      // new-side counterpart and are intentionally dropped.
+      const diff = this.diffEntryFor(cwd, filePath, mode.base, mode.head).diff;
+      if (!diff) return [];
+      for (const hunk of diff.hunks) {
+        for (const line of hunk.lines) {
+          if (line.oldLine === null || line.newLine === null) continue;
+          if (line.oldLine < startLine || line.oldLine > endLine) continue;
+          newLines.push(line.newLine);
+        }
+      }
+    }
+
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const n of newLines) {
+      const entry = blame[n];
+      if (!entry) continue;
+      if (!selected.has(entry.sha)) continue;
+      if (seen.has(entry.sha)) continue;
+      seen.add(entry.sha);
+      out.push(entry.sha);
+    }
+    return out;
   }
 
   async stageFiles(cwd: string, paths: string[]): Promise<void> {
@@ -613,6 +901,23 @@ class WorkingDiffStore {
       if (key.startsWith(prefix)) this.inflightDiffs.delete(key);
     }
     this.dropFileLines(prefix);
+    this.dropBlames(prefix);
+  }
+
+  private dropBlames(prefix: string): void {
+    const remaining: Record<string, BlameEntry> = {};
+    let touched = false;
+    for (const [key, entry] of Object.entries(this.blamesByKey)) {
+      if (key.startsWith(prefix)) {
+        touched = true;
+        continue;
+      }
+      remaining[key] = entry;
+    }
+    if (touched) this.blamesByKey = remaining;
+    for (const key of Array.from(this.inflightBlames.keys())) {
+      if (key.startsWith(prefix)) this.inflightBlames.delete(key);
+    }
   }
 
   private dropFileLines(prefix: string): void {
@@ -715,6 +1020,34 @@ class WorkingDiffStore {
     for (const off of this.detachers) off();
     this.detachers = [];
   }
+}
+
+function sameReviewMode(a: ReviewMode, b: ReviewMode): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'working-tree') return true;
+  if (b.kind !== 'range') return false;
+  if (a.base !== b.base || a.head !== b.head) return false;
+  if (a.includeWorkingTree !== b.includeWorkingTree) return false;
+  if (a.chipFilter !== b.chipFilter) return false;
+  if (a.commits.length !== b.commits.length) return false;
+  for (let i = 0; i < a.commits.length; i += 1) {
+    if (a.commits[i]?.hash !== b.commits[i]?.hash) return false;
+  }
+  return true;
+}
+
+function rangeChangeToWorking(r: RangeChange): WorkingChange {
+  return {
+    path: r.path,
+    fromPath: r.fromPath,
+    kind: r.kind,
+    staged: false,
+    insertions: r.insertions,
+    deletions: r.deletions,
+    binary: r.binary,
+    section: 'committed',
+    commitsTouching: r.commitsTouching
+  };
 }
 
 export const workingDiff = new WorkingDiffStore();
