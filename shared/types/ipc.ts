@@ -8,6 +8,10 @@ import type {
   WorkerStatusResult
 } from './agents.js';
 import type {
+  CommitsBetweenRequest,
+  CommitsBetweenResult,
+  FileBlameRequest,
+  FileBlameResult,
   FileDiff,
   FileDiffRequest,
   FileLinesRequest,
@@ -24,6 +28,10 @@ import type {
   GitStatus,
   GitStatusRequest,
   GitWorktree,
+  RangeChangesRequest,
+  RangeChangesResult,
+  ResolveRefsRequest,
+  ResolveRefsResult,
   StageFilesRequest,
   DiscardFilesRequest,
   WorkingChangesRequest,
@@ -160,9 +168,13 @@ export const IpcChannels = {
     worktrees: 'git:worktrees',
     branches: 'git:branches',
     recentCommits: 'git:recent-commits',
+    commitsBetween: 'git:commits-between',
+    rangeChanges: 'git:range-changes',
+    resolveRefs: 'git:resolve-refs',
     checkout: 'git:checkout',
     workingChanges: 'git:working-changes',
     fileDiff: 'git:file-diff',
+    fileBlame: 'git:file-blame',
     fileLines: 'git:file-lines',
     stageFiles: 'git:stage-files',
     unstageFiles: 'git:unstage-files',
@@ -348,9 +360,13 @@ export interface GitApi {
   worktrees(request: GitRepoRequest): Promise<IpcResult<GitWorktree[]>>;
   branches(request: GitRepoRequest): Promise<IpcResult<GitBranch[]>>;
   recentCommits(request: GitRecentCommitsRequest): Promise<IpcResult<GitCommit[]>>;
+  commitsBetween(request: CommitsBetweenRequest): Promise<IpcResult<CommitsBetweenResult>>;
+  rangeChanges(request: RangeChangesRequest): Promise<IpcResult<RangeChangesResult>>;
+  resolveRefs(request: ResolveRefsRequest): Promise<IpcResult<ResolveRefsResult>>;
   checkout(request: GitCheckoutRequest): Promise<IpcResult<GitStatus>>;
   workingChanges(request: WorkingChangesRequest): Promise<IpcResult<WorkingChangesResult>>;
   fileDiff(request: FileDiffRequest): Promise<IpcResult<FileDiff>>;
+  fileBlame(request: FileBlameRequest): Promise<IpcResult<FileBlameResult>>;
   fileLines(request: FileLinesRequest): Promise<IpcResult<FileLinesResult>>;
   stageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
   unstageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;

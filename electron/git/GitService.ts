@@ -2,10 +2,12 @@ import { spawn } from 'node:child_process';
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import * as path from 'node:path';
 import type {
+  BlameLine,
   DiffHunk,
   DiffLine,
   DiffLineKind,
   DiscardFileEntry,
+  FileBlameResult,
   FileDiff,
   GitAheadBehind,
   GitBranch,
@@ -14,6 +16,7 @@ import type {
   GitShortstat,
   GitStatus,
   GitWorktree,
+  RangeChange,
   WorkingChange,
   WorkingChangeKind,
   WorkingChangesResult
@@ -63,6 +66,10 @@ const EMPTY_COUNTS = {
   unstaged: 0,
   untracked: 0
 };
+
+// Soft ceiling on `git log <base>..<head>` to protect the renderer from a
+// 10k-commit accidental range. The picker warns when truncation hits.
+const COMMITS_BETWEEN_CAP = 500;
 
 export class GitService {
   private readonly caches = new Map<string, RepoCache>();
@@ -447,6 +454,11 @@ export class GitService {
     options: {
       fromPath?: string | null;
       contextLines?: number;
+      // When both `base` and `head` are set, diff against `<base>..<head>`
+      // instead of the default working-tree-vs-HEAD diff. The untracked
+      // fallback is suppressed since the path must exist in the range.
+      base?: string;
+      head?: string;
       context?: GitRepoContext;
     } = {}
   ): Promise<FileDiff> {
@@ -464,12 +476,14 @@ export class GitService {
     }
 
     const contextLines = Math.max(0, Math.trunc(options.contextLines ?? 3));
+    const rangeMode = !!(options.base && options.head);
+    const rangeArg = rangeMode ? `${options.base}..${options.head}` : 'HEAD';
     const args = [
       'diff',
       '--no-color',
       '--no-ext-diff',
       `--unified=${contextLines}`,
-      'HEAD',
+      rangeArg,
       '--',
       ...(options.fromPath ? [options.fromPath] : []),
       targetPath
@@ -478,7 +492,7 @@ export class GitService {
     let output = await this.runInRepo(info, args);
     let mode: 'tracked' | 'untracked-fallback' = 'tracked';
 
-    if (output.code !== 0 || !output.stdout.trim()) {
+    if (!rangeMode && (output.code !== 0 || !output.stdout.trim())) {
       // No commit yet, or path is untracked: try the new-file fallback.
       const untrackedArgs = [
         'diff',
@@ -537,6 +551,162 @@ export class GitService {
     if (insRaw === '-' || trailer === '-') return { lines: 0, binary: true };
     const lines = Number(insRaw);
     return { lines: Number.isFinite(lines) ? lines : 0, binary: false };
+  }
+
+  // Walk the commits reachable from `head` but not `base`, oldest first.
+  // Topological order is mandatory — author-date sort breaks under rebase.
+  async getCommitsBetween(
+    cwd: string,
+    base: string,
+    head: string,
+    context: GitRepoContext = {}
+  ): Promise<{ commits: GitCommit[]; truncated: boolean }> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return { commits: [], truncated: false };
+    const range = `${base}..${head}`;
+    const result = await this.runInRepo(info, [
+      'log',
+      '--topo-order',
+      '--reverse',
+      `-${COMMITS_BETWEEN_CAP + 1}`,
+      '--pretty=format:%H%x00%h%x00%an%x00%aI%x00%s',
+      range
+    ]);
+    if (result.code !== 0) return { commits: [], truncated: false };
+    const parsed = parseCommits(result.stdout);
+    const truncated = parsed.length > COMMITS_BETWEEN_CAP;
+    return {
+      commits: truncated ? parsed.slice(0, COMMITS_BETWEEN_CAP) : parsed,
+      truncated
+    };
+  }
+
+  // Enumerate every file touched in `base..head` with net per-file delta and
+  // the per-commit attribution map (`commitsTouching`). Three git calls in
+  // parallel: name-status drives the final kind + rename mapping, numstat
+  // gives insertions/deletions, and a single `log --name-only` walk fills
+  // commitsTouching. Rename detection (-M -C) is on everywhere so attribution
+  // follows the destination path.
+  async getRangeChanges(
+    cwd: string,
+    base: string,
+    head: string,
+    context: GitRepoContext = {}
+  ): Promise<RangeChange[]> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return [];
+    const range = `${base}..${head}`;
+    const [nameStatus, numstat, perCommit] = await Promise.all([
+      this.runInRepo(info, ['diff', '--name-status', '-z', '-M', '-C', range]),
+      this.runInRepo(info, ['diff', '--numstat', '-z', '-M', '-C', range]),
+      this.runInRepo(info, [
+        'log',
+        '--topo-order',
+        '--reverse',
+        '--name-only',
+        '-z',
+        '--pretty=format:%x01%H',
+        range
+      ])
+    ]);
+    if (nameStatus.code !== 0) return [];
+    const statusEntries = parseNameStatusZ(nameStatus.stdout);
+    const numstatEntries = numstat.code === 0 ? parseNumstatZ(numstat.stdout) : [];
+    const touchingByPath = perCommit.code === 0
+      ? parseLogNameOnlyZ(perCommit.stdout)
+      : new Map<string, string[]>();
+
+    // Numstat keys by destination path (rename-aware). Build lookup.
+    const numByPath = new Map<string, { insertions: number; deletions: number; binary: boolean }>();
+    for (const n of numstatEntries) {
+      numByPath.set(n.path, {
+        insertions: n.insertions,
+        deletions: n.deletions,
+        binary: n.binary
+      });
+    }
+
+    const out: RangeChange[] = [];
+    for (const entry of statusEntries) {
+      const num = numByPath.get(entry.path);
+      // `commitsTouching` is keyed by destination path. For renames, also
+      // merge anything that referenced the original path before the rename
+      // landed — log --name-only emits the historical name for those revs.
+      const merged: string[] = [];
+      const seen = new Set<string>();
+      const pushAll = (shas: string[] | undefined): void => {
+        if (!shas) return;
+        for (const sha of shas) {
+          if (seen.has(sha)) continue;
+          seen.add(sha);
+          merged.push(sha);
+        }
+      };
+      pushAll(touchingByPath.get(entry.path));
+      if (entry.fromPath) pushAll(touchingByPath.get(entry.fromPath));
+      out.push({
+        path: entry.path,
+        fromPath: entry.fromPath,
+        kind: entry.kind,
+        insertions: num?.insertions ?? 0,
+        deletions: num?.deletions ?? 0,
+        binary: num?.binary ?? false,
+        commitsTouching: merged
+      });
+    }
+    out.sort((a, b) => a.path.localeCompare(b.path));
+    return out;
+  }
+
+  // Blame a file at a specific revision. Whitespace, rename, and copy
+  // detection are all on so mid-feature renames don't smear attribution onto
+  // the rename commit. Full 40-char SHAs keep equality stable across packfile
+  // growth — short SHA collisions are rare but real in monorepos.
+  async getFileBlame(
+    cwd: string,
+    targetPath: string,
+    head: string,
+    context: GitRepoContext = {}
+  ): Promise<FileBlameResult> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return { path: targetPath, head, lines: [] };
+    const args = [
+      'blame',
+      '--line-porcelain',
+      '-w',
+      '-M',
+      '-C',
+      '--abbrev=40',
+      head,
+      '--',
+      targetPath
+    ];
+    const result = await this.runInRepo(info, args);
+    if (result.code !== 0) return { path: targetPath, head, lines: [] };
+    return { path: targetPath, head, lines: parseLinePorcelain(result.stdout) };
+  }
+
+  // Map each input ref to a canonical 40-char SHA. Unresolvable refs come back
+  // as null at the same index — callers decide whether to error or skip.
+  async resolveCommitRefs(
+    cwd: string,
+    refs: string[],
+    context: GitRepoContext = {}
+  ): Promise<(string | null)[]> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return refs.map(() => null);
+    const out: (string | null)[] = new Array(refs.length).fill(null);
+    await Promise.all(
+      refs.map(async (ref, i) => {
+        const trimmed = ref.trim();
+        if (!trimmed) return;
+        const result = await this.runInRepo(info, ['rev-parse', '--verify', `${trimmed}^{commit}`]);
+        if (result.code !== 0) return;
+        const sha = result.stdout.trim();
+        if (/^[0-9a-f]{40}$/.test(sha)) out[i] = sha;
+      })
+    );
+    return out;
   }
 
   onChange(listener: (repoPath: string) => void): () => void {
@@ -832,6 +1002,39 @@ function parseCommits(output: string): GitCommit[] {
     .filter((commit) => commit.hash.length > 0);
 }
 
+// `git blame --line-porcelain` emits one record per output line. Each record
+// starts with a header `<sha> <orig-line> <final-line> [group-size]` then a
+// series of `key value` metadata lines, and ends with a tab-prefixed content
+// line. We only need sha + final line number + summary; the content line is
+// in the diff already.
+function parseLinePorcelain(output: string): BlameLine[] {
+  const lines = output.split('\n');
+  const out: BlameLine[] = [];
+  let currentSha = '';
+  let currentLineNo = 0;
+  let currentSummary = '';
+  for (const raw of lines) {
+    if (raw.length === 0) continue;
+    if (raw.startsWith('\t')) {
+      if (currentSha && currentLineNo > 0) {
+        out.push({ lineNo: currentLineNo, sha: currentSha, summary: currentSummary });
+      }
+      currentSummary = '';
+      continue;
+    }
+    if (/^[0-9a-f]{40} /.test(raw)) {
+      const parts = raw.split(' ');
+      currentSha = parts[0] ?? '';
+      currentLineNo = Number(parts[2] ?? parts[1] ?? 0);
+      continue;
+    }
+    if (raw.startsWith('summary ')) {
+      currentSummary = raw.slice('summary '.length);
+    }
+  }
+  return out;
+}
+
 function runGit(bin: string, cwd: string, args: string[]): Promise<GitResult> {
   return new Promise((resolve) => {
     let settled = false;
@@ -963,6 +1166,88 @@ function classifyByDelta(
   if (insertions > 0 && deletions === 0) return 'added';
   if (insertions === 0 && deletions > 0) return 'deleted';
   return 'modified';
+}
+
+interface NameStatusEntry {
+  path: string;
+  fromPath: string | null;
+  kind: WorkingChangeKind;
+}
+
+// `git diff --name-status -z` emits records terminated by NUL. Each record
+// starts with a single status letter (A/M/D/T) or a similarity-scored R<NN>/
+// C<NN> for renames/copies. Rename and copy entries are followed by two extra
+// NUL-separated tokens (from-path, to-path); plain entries inline the path
+// after the status code joined by TAB.
+function parseNameStatusZ(output: string): NameStatusEntry[] {
+  const tokens = output.split('\0');
+  const out: NameStatusEntry[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const head = tokens[i];
+    if (!head) {
+      i += 1;
+      continue;
+    }
+    const code = head[0] ?? '';
+    if (code === 'R' || code === 'C') {
+      const fromPath = tokens[i + 1] ?? '';
+      const toPath = tokens[i + 2] ?? '';
+      if (toPath) {
+        out.push({
+          path: toPath,
+          fromPath: fromPath || null,
+          kind: code === 'R' ? 'renamed' : 'copied'
+        });
+      }
+      i += 3;
+      continue;
+    }
+    // Plain entries: "<code>\t<path>"
+    const tabIdx = head.indexOf('\t');
+    const inlinePath = tabIdx >= 0 ? head.slice(tabIdx + 1) : '';
+    if (inlinePath) {
+      let kind: WorkingChangeKind = 'modified';
+      if (code === 'A') kind = 'added';
+      else if (code === 'D') kind = 'deleted';
+      else if (code === 'M' || code === 'T') kind = 'modified';
+      out.push({ path: inlinePath, fromPath: null, kind });
+    }
+    i += 1;
+  }
+  return out;
+}
+
+// `git log --name-only -z --pretty=format:%x01%H` interleaves commit headers
+// (a 0x01 byte followed by a 40-char SHA) with NUL-terminated file paths. The
+// 0x01 sentinel sidesteps confusion with paths that contain newlines or other
+// odd characters. Returns a map: path → ordered list of SHAs that touched it.
+function parseLogNameOnlyZ(output: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  if (!output) return out;
+  // Split on the SOH sentinel; each chunk starts with the SHA, then NUL-
+  // separated paths trailing it.
+  const chunks = output.split('\x01');
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    const tokens = chunk.split('\0');
+    const sha = (tokens[0] ?? '').trim();
+    if (!/^[0-9a-f]{40}$/.test(sha)) continue;
+    for (let i = 1; i < tokens.length; i += 1) {
+      const filePath = tokens[i];
+      if (!filePath) continue;
+      // git emits a trailing newline before the next SOH; strip leading \n.
+      const cleaned = filePath.startsWith('\n') ? filePath.slice(1) : filePath;
+      if (!cleaned) continue;
+      let list = out.get(cleaned);
+      if (!list) {
+        list = [];
+        out.set(cleaned, list);
+      }
+      list.push(sha);
+    }
+  }
+  return out;
 }
 
 function parsePorcelainV1Flags(

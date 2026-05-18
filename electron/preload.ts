@@ -36,6 +36,8 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  CommitsBetweenRequest,
+  FileBlameRequest,
   FileDiffRequest,
   DiscardFilesRequest,
   FileLinesRequest,
@@ -44,6 +46,8 @@ import type {
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitStatusRequest,
+  RangeChangesRequest,
+  ResolveRefsRequest,
   StageFilesRequest,
   WorkingChangesRequest
 } from '@shared/types/git.js';
@@ -190,11 +194,19 @@ const soloe: SoloeApi = {
     branches: (request: GitRepoRequest) => ipcRenderer.invoke(IpcChannels.git.branches, request),
     recentCommits: (request: GitRecentCommitsRequest) =>
       ipcRenderer.invoke(IpcChannels.git.recentCommits, request),
+    commitsBetween: (request: CommitsBetweenRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.commitsBetween, request),
+    rangeChanges: (request: RangeChangesRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.rangeChanges, request),
+    resolveRefs: (request: ResolveRefsRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.resolveRefs, request),
     checkout: (request: GitCheckoutRequest) => ipcRenderer.invoke(IpcChannels.git.checkout, request),
     workingChanges: (request: WorkingChangesRequest) =>
       ipcRenderer.invoke(IpcChannels.git.workingChanges, request),
     fileDiff: (request: FileDiffRequest) =>
       ipcRenderer.invoke(IpcChannels.git.fileDiff, request),
+    fileBlame: (request: FileBlameRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.fileBlame, request),
     fileLines: (request: FileLinesRequest) =>
       ipcRenderer.invoke(IpcChannels.git.fileLines, request),
     stageFiles: (request: StageFilesRequest) =>

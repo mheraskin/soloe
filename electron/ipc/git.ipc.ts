@@ -1,13 +1,17 @@
 import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
+  CommitsBetweenRequest,
   DiscardFilesRequest,
+  FileBlameRequest,
   FileDiffRequest,
   FileLinesRequest,
   GitCheckoutRequest,
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitStatusRequest,
+  RangeChangesRequest,
+  ResolveRefsRequest,
   StageFilesRequest,
   WorkingChangesRequest
 } from '@shared/types/git.js';
@@ -85,6 +89,42 @@ export class GitIpc {
         })
       )
     );
+    ipcMain.handle(IpcChannels.git.commitsBetween, (_e, request: CommitsBetweenRequest) =>
+      ipcInvoke(async () => {
+        const { commits, truncated } = await this.opts.service.getCommitsBetween(
+          request.cwd,
+          request.base,
+          request.head,
+          {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          }
+        );
+        return { base: request.base, head: request.head, commits, truncated };
+      })
+    );
+    ipcMain.handle(IpcChannels.git.rangeChanges, (_e, request: RangeChangesRequest) =>
+      ipcInvoke(async () => {
+        const changes = await this.opts.service.getRangeChanges(
+          request.cwd,
+          request.base,
+          request.head,
+          {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          }
+        );
+        return { base: request.base, head: request.head, changes };
+      })
+    );
+    ipcMain.handle(IpcChannels.git.resolveRefs, (_e, request: ResolveRefsRequest) =>
+      ipcInvoke(async () => ({
+        resolved: await this.opts.service.resolveCommitRefs(request.cwd, request.refs, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      }))
+    );
     ipcMain.handle(IpcChannels.git.checkout, (_e, request: GitCheckoutRequest) =>
       ipcInvoke(() =>
         this.opts.service.checkout(request.repoPath, request.ref, request.force, {
@@ -106,10 +146,20 @@ export class GitIpc {
         this.opts.service.getFileDiff(request.cwd, request.path, {
           fromPath: request.fromPath ?? null,
           contextLines: request.contextLines,
+          base: request.base,
+          head: request.head,
           context: {
             runMode: request.runMode,
             wslDistro: request.wslDistro
           }
+        })
+      )
+    );
+    ipcMain.handle(IpcChannels.git.fileBlame, (_e, request: FileBlameRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.getFileBlame(request.cwd, request.path, request.head ?? 'HEAD', {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
         })
       )
     );
@@ -168,9 +218,13 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.worktrees);
     ipcMain.removeHandler(IpcChannels.git.branches);
     ipcMain.removeHandler(IpcChannels.git.recentCommits);
+    ipcMain.removeHandler(IpcChannels.git.commitsBetween);
+    ipcMain.removeHandler(IpcChannels.git.rangeChanges);
+    ipcMain.removeHandler(IpcChannels.git.resolveRefs);
     ipcMain.removeHandler(IpcChannels.git.checkout);
     ipcMain.removeHandler(IpcChannels.git.workingChanges);
     ipcMain.removeHandler(IpcChannels.git.fileDiff);
+    ipcMain.removeHandler(IpcChannels.git.fileBlame);
     ipcMain.removeHandler(IpcChannels.git.fileLines);
     ipcMain.removeHandler(IpcChannels.git.stageFiles);
     ipcMain.removeHandler(IpcChannels.git.unstageFiles);

@@ -18,7 +18,9 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  CommitsBetweenRequest,
   DiscardFilesRequest,
+  FileBlameRequest,
   FileDiffRequest,
   FileLinesRequest,
   GitCheckoutRequest,
@@ -26,6 +28,8 @@ import type {
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitStatusRequest,
+  RangeChangesRequest,
+  ResolveRefsRequest,
   StageFilesRequest,
   WorkingChangesRequest
 } from '@shared/types/git.js';
@@ -185,6 +189,14 @@ export const ipc = {
       unwrap(await c.git.checkout(toIpcPayload(request))),
     workingChanges: async (request: WorkingChangesRequest) =>
       unwrap(await c.git.workingChanges(toIpcPayload(request))),
+    rangeChanges: async (request: RangeChangesRequest) =>
+      unwrap(await c.git.rangeChanges(toIpcPayload(request))),
+    commitsBetween: async (request: CommitsBetweenRequest) =>
+      unwrap(await c.git.commitsBetween(toIpcPayload(request))),
+    resolveRefs: async (request: ResolveRefsRequest) =>
+      unwrap(await c.git.resolveRefs(toIpcPayload(request))),
+    fileBlame: async (request: FileBlameRequest) =>
+      unwrap(await c.git.fileBlame(toIpcPayload(request))),
     fileDiff: async (request: FileDiffRequest) =>
       unwrap(await c.git.fileDiff(toIpcPayload(request))),
     fileLines: async (request: FileLinesRequest) =>
