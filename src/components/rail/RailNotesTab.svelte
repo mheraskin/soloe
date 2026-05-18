@@ -324,7 +324,15 @@
 
   async function onSelectNote(filename: string): Promise<void> {
     try {
-      await notes.selectNote(filename);
+      if (notes.selectedFilename === filename) {
+        // Re-clicking the active saved note returns to the draft view so an
+        // in-progress untitled draft (preserved in the store) is reachable
+        // again — otherwise selecting a saved note hides the draft with no UI
+        // path back short of the New button's discard prompt.
+        notes.newDraft();
+      } else {
+        await notes.selectNote(filename);
+      }
       void tick().then(() => textareaEl?.focus());
     } catch (err) {
       reportError(err);
@@ -422,6 +430,7 @@
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                     }`}
+                    title={selected ? 'Click again to return to the untitled draft' : note.filename}
                     onclick={() => void onSelectNote(note.filename)}
                   >
                     <span class="truncate">{note.filename}</span>
