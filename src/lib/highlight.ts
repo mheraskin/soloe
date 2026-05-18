@@ -1,4 +1,5 @@
-import hljs from 'highlight.js/lib/common';
+import { hljs } from './hljs';
+import { applyRuneHighlights } from './highlight-svelte';
 
 const EXTENSION_TO_LANG: Record<string, string> = {
   js: 'javascript',
@@ -10,7 +11,7 @@ const EXTENSION_TO_LANG: Record<string, string> = {
   html: 'xml',
   htm: 'xml',
   xml: 'xml',
-  svelte: 'xml',
+  svelte: 'svelte',
   vue: 'xml',
   css: 'css',
   scss: 'scss',
@@ -82,6 +83,11 @@ export function highlightLine(text: string, language: string | null): string {
   let html: string;
   try {
     html = hljs.highlight(text, { language, ignoreIllegals: true }).value;
+    // Runes (`$state`, `$derived`, …) appear inside script blocks delegated
+    // to the JS sub-language, which doesn't know about them. Wrap them here.
+    if (language === 'svelte' || language === 'javascript' || language === 'typescript') {
+      html = applyRuneHighlights(html);
+    }
   } catch {
     html = escapeHtml(text);
   }

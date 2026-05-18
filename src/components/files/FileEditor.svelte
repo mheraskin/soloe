@@ -27,10 +27,21 @@
   // dynamic import; we don't want to re-trigger it for each keystroke.
   const langCache = new Map<string, Extension>();
 
+  // Svelte isn't in @codemirror/language-data. Fall back to HTML, whose
+  // mixed mode already covers nested script and style blocks — close enough
+  // to read Svelte 5 source without a dedicated Lezer grammar.
+  const SVELTE_LANG = LanguageDescription.of({
+    name: 'Svelte',
+    alias: ['svelte'],
+    extensions: ['svelte'],
+    load: () => import('@codemirror/lang-html').then((m) => m.html({ matchClosingTags: true, autoCloseTags: true }))
+  });
+  const matchableLanguages = [SVELTE_LANG, ...languages];
+
   async function languageFor(path: string): Promise<Extension | null> {
     const cached = langCache.get(path);
     if (cached) return cached;
-    const desc = LanguageDescription.matchFilename(languages, path.split('/').pop() ?? path);
+    const desc = LanguageDescription.matchFilename(matchableLanguages, path.split('/').pop() ?? path);
     if (!desc) return null;
     try {
       const support = await desc.load();
