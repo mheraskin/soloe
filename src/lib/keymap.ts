@@ -79,9 +79,8 @@ export const Keymap = {
   deleteSelectedSession: {
     id: 'session.delete-selected',
     description: 'Delete selected session',
-    keys: ['Del'],
-    match: (e: KeyboardEvent) =>
-      !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'Delete'
+    keys: ['Ctrl', 'Del'],
+    match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && e.key === 'Delete'
   },
   cycleNext: {
     id: 'tabs.cycle-next',

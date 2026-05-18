@@ -493,7 +493,7 @@
             >
               <Trash2 />
             </Button>
-            <KbdHint keys={['Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
+            <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
           </span>
         </div>
       </div>
