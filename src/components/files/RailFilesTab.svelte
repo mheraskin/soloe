@@ -22,6 +22,7 @@
   import FileTreeView from './FileTreeView.svelte';
   import FileEditor from './FileEditor.svelte';
   import EditorSelectionMenu from './EditorSelectionMenu.svelte';
+  import EditorContextMenu from './EditorContextMenu.svelte';
 
   let rootEl: HTMLDivElement | null = $state(null);
   let treeWrapperEl: HTMLDivElement | null = $state(null);
@@ -435,12 +436,21 @@
               File too large to open in the in-rail editor.
             </div>
           {:else}
-            <FileEditor
-              value={openFile.content}
+            <EditorContextMenu
               relativePath={openFile.relativePath}
-              onChange={onChange}
-              onSave={onSave}
-            />
+              rootEl={editorWrapperEl}
+            >
+              {#snippet children()}
+                <div class="flex min-h-0 flex-1">
+                  <FileEditor
+                    value={openFile.content}
+                    relativePath={openFile.relativePath}
+                    onChange={onChange}
+                    onSave={onSave}
+                  />
+                </div>
+              {/snippet}
+            </EditorContextMenu>
             <EditorSelectionMenu
               relativePath={openFile.relativePath}
               rootEl={editorWrapperEl}

@@ -20,7 +20,18 @@
   import { reportError, toasts } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import { Loader2, X } from '@lucide/svelte';
+  import * as ContextMenu from '$lib/components/ui/context-menu';
+  import {
+    ClipboardPaste,
+    Copy,
+    Loader2,
+    MessageSquarePlus,
+    MousePointer,
+    Scissors,
+    Send,
+    X
+  } from '@lucide/svelte';
+  import AskAgentPopover from './ask-agent/AskAgentPopover.svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
   import {
     AGENT_IMAGE_PASTE_SEQUENCE,
@@ -44,6 +55,20 @@
   let findOpen = $state(false);
   let findQuery = $state('');
   let ready = $state(false);
+  // Floating "Ask Agent" chip state. Tracks the current terminal selection
+  // (text + a screen anchor) so the chip can render near the cursor on
+  // mouseup. The chip and the popover share the same anchor element so
+  // bits-ui's Popover.Content auto-flips against the viewport edge.
+  let selectionText = $state<string>('');
+  let chipAnchor = $state<{ top: number; left: number } | null>(null);
+  let chipEl: HTMLButtonElement | null = $state(null);
+  let askOpen = $state(false);
+  // Captured selection text at the moment the popover opens — independent
+  // of `selectionText`, which clears as soon as the user clicks the chip
+  // and xterm drops its highlight.
+  let askSelection = $state<string>('');
+  // Context menu enabled-state mirror. Re-read when the menu opens.
+  let menuHasSelection = $state(false);
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
   let search: SearchAddon | null = null;
@@ -153,6 +178,100 @@
       };
       reader.readAsDataURL(blob);
     });
+  }
+
+  // Re-read xterm's selection text and update the chip's enabled state.
+  // `term.hasSelection()` covers both mouse-drag and keyboard selections.
+  function refreshSelection(): void {
+    const t = term;
+    if (!t || !t.hasSelection()) {
+      selectionText = '';
+      chipAnchor = null;
+      return;
+    }
+    selectionText = t.getSelection();
+  }
+
+  // Anchor the floating chip near the user's last mouseup so it doesn't
+  // sit at a random fixed corner. xterm renders the selection via WebGL,
+  // so we can't query window.getSelection — fall back to the pointer.
+  function anchorChipAtPointer(clientX: number, clientY: number): void {
+    if (!selectionText) {
+      chipAnchor = null;
+      return;
+    }
+    const buttonW = 112;
+    const buttonH = 28;
+    const margin = 8;
+    let top = clientY + 12;
+    let left = clientX - buttonW;
+    if (top + buttonH + margin > window.innerHeight) {
+      top = clientY - buttonH - 12;
+    }
+    if (left < margin) left = margin;
+    if (left + buttonW + margin > window.innerWidth) {
+      left = window.innerWidth - buttonW - margin;
+    }
+    chipAnchor = { top, left };
+  }
+
+  function openAskFromChip(e: MouseEvent): void {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectionText) return;
+    askSelection = selectionText;
+    askOpen = true;
+  }
+
+  function onAskOpenChange(next: boolean): void {
+    askOpen = next;
+    if (!next) {
+      askSelection = '';
+      // Re-focus the terminal so the user can keep typing.
+      term?.focus();
+    }
+  }
+
+  function onMenuOpenChange(open: boolean): void {
+    if (!open) return;
+    menuHasSelection = !!term && term.hasSelection();
+  }
+
+  function ctxAskAgent(): void {
+    const t = term;
+    if (!t || !t.hasSelection()) return;
+    askSelection = t.getSelection();
+    askOpen = true;
+  }
+
+  async function ctxCopy(): Promise<void> {
+    const t = term;
+    if (!t || !t.hasSelection()) return;
+    try {
+      await navigator.clipboard.writeText(t.getSelection());
+      t.clearSelection();
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  async function ctxCut(): Promise<void> {
+    // xterm has no concept of "cut" — its buffer is read-only output.
+    // Mirror Copy so right-click → Cut at least preserves the clipboard.
+    await ctxCopy();
+  }
+
+  async function ctxPaste(): Promise<void> {
+    const t = term;
+    if (!t) return;
+    await pasteFromClipboard(t).catch(reportError);
+  }
+
+  function ctxSelectAll(): void {
+    const t = term;
+    if (!t) return;
+    t.selectAll();
+    refreshSelection();
   }
 
   async function pasteFromClipboard(t: Terminal): Promise<void> {
@@ -406,6 +525,26 @@
       });
     });
 
+    // Selection chip lifecycle: xterm emits selection-change after every
+    // drag/keyboard update. We hide the chip whenever the selection clears
+    // (e.g. clicking away in the buffer) and resync the text otherwise. The
+    // chip's *position* still comes from the last mouseup so it lands near
+    // the user's pointer, not at a stale rect.
+    const onSelectionChange = t.onSelectionChange(() => {
+      refreshSelection();
+      if (!selectionText) askOpen = false;
+    });
+    const onHostMouseUp = (e: MouseEvent) => {
+      // Defer one frame so xterm has committed the selection by the time we
+      // read it (onSelectionChange fires async after the drag-end).
+      requestAnimationFrame(() => {
+        refreshSelection();
+        if (!selectionText) return;
+        anchorChipAtPointer(e.clientX, e.clientY);
+      });
+    };
+    host?.addEventListener('mouseup', onHostMouseUp);
+
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
@@ -440,6 +579,8 @@
       window.removeEventListener('soloe:terminal-copy-buffer', onCopy);
       window.removeEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
       window.removeEventListener('soloe:refocus-terminal', onRefocus);
+      host?.removeEventListener('mouseup', onHostMouseUp);
+      onSelectionChange.dispose();
       ro.disconnect();
       onInput.dispose();
       offOutput();
@@ -540,8 +681,66 @@
       </Button>
     </div>
   {/if}
-  <div class="h-full w-full" bind:this={host}></div>
+  <ContextMenu.Root onOpenChange={onMenuOpenChange}>
+    <ContextMenu.Trigger>
+      {#snippet child({ props })}
+        <div {...props} class="h-full w-full" bind:this={host}></div>
+      {/snippet}
+    </ContextMenu.Trigger>
+    <ContextMenu.Content class="w-52">
+      <ContextMenu.Item disabled={!menuHasSelection} onclick={ctxAskAgent}>
+        <MessageSquarePlus class="size-3.5" />
+        Ask Agent
+      </ContextMenu.Item>
+      <ContextMenu.Separator />
+      <ContextMenu.Item disabled={!menuHasSelection} onclick={() => void ctxCopy()}>
+        <Copy class="size-3.5" />
+        Copy
+      </ContextMenu.Item>
+      <ContextMenu.Item disabled={!menuHasSelection} onclick={() => void ctxCut()}>
+        <Scissors class="size-3.5" />
+        Cut
+      </ContextMenu.Item>
+      <ContextMenu.Item onclick={() => void ctxPaste()}>
+        <ClipboardPaste class="size-3.5" />
+        Paste
+      </ContextMenu.Item>
+      <ContextMenu.Separator />
+      <ContextMenu.Item onclick={ctxSelectAll}>
+        <MousePointer class="size-3.5" />
+        Select All
+      </ContextMenu.Item>
+    </ContextMenu.Content>
+  </ContextMenu.Root>
 </div>
+
+{#if chipAnchor || askOpen}
+  <button
+    bind:this={chipEl}
+    type="button"
+    class="fixed z-50 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 font-sans text-[11px] text-popover-foreground shadow-md hover:bg-accent hover:text-accent-foreground"
+    style:top="{chipAnchor?.top ?? 0}px"
+    style:left="{chipAnchor?.left ?? 0}px"
+    style:visibility={chipAnchor ? 'visible' : 'hidden'}
+    onmousedown={openAskFromChip}
+    aria-label="Ask Agent about selection"
+    title="Ask Agent about selection"
+  >
+    <Send class="size-3.5" />
+    <span>Ask Agent</span>
+  </button>
+{/if}
+
+{#if askSelection.length > 0}
+  <AskAgentPopover
+    open={askOpen}
+    onOpenChange={onAskOpenChange}
+    selectionText={askSelection}
+    anchorEl={chipEl}
+    side="top"
+    align="end"
+  />
+{/if}
 
 <style>
   :global(.xterm) {
