@@ -2,6 +2,7 @@ import type { Session, SessionId } from '@shared/types/sessions.js';
 import type { ProjectId } from '@shared/types/projects.js';
 import { sessions } from './sessions.svelte';
 import { projects } from './projects.svelte';
+import { sidebarExpansion } from './sidebar-expansion.svelte';
 import { reportError } from './toast.svelte';
 import { confirmDeleteSession } from '../lib/session-delete-confirmation';
 
@@ -62,11 +63,18 @@ class NavStore {
 
   activeProjectId = $derived<ProjectId | null>(sessions.selected?.projectId ?? null);
 
+  // Only the sessions that are actually visible in the sidebar — i.e. live in
+  // an expanded worktree group. Sessions in collapsed worktrees are dropped so
+  // the Ctrl+1..9 numbering renumbers to what the user can actually see.
+  // Standalone sessions (no projectId) aren't grouped by a WorktreeGroup, so
+  // there's nothing to collapse there and they always pass through.
   flatActiveProject = $derived.by<Session[]>(() => {
     const projectId = this.activeProjectId;
     const all = this.flat;
     if (!projectId) return all.filter((s) => !s.projectId);
-    return all.filter((s) => s.projectId === projectId);
+    return all.filter(
+      (s) => s.projectId === projectId && !sidebarExpansion.isCollapsed(s.cwd)
+    );
   });
 
   activeIndex = $derived.by<number>(() => {

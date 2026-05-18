@@ -4,6 +4,7 @@
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
   import { git } from '../stores/git.svelte';
+  import { sidebarExpansion } from '../stores/sidebar-expansion.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
@@ -37,7 +38,7 @@
       | null;
   } = $props();
 
-  let expanded = $state(true);
+  let expanded = $derived(sidebarExpansion.isExpanded(cwd));
   let overviewOpen = $state(false);
 
   let trimmedFilter = $derived(filter.trim());
@@ -78,7 +79,7 @@
 
   function onGroupOpenChange(open: boolean) {
     if (isFiltering) return;
-    expanded = open;
+    sidebarExpansion.setExpanded(cwd, open);
   }
 
   function onSessionDrop(args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) {
