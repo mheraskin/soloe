@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { DiffHunk, DiffLine, FileDiff } from '@shared/types/git.js';
+  import type { BlameLine, DiffHunk, DiffLine, FileDiff } from '@shared/types/git.js';
   import type { DiffComment, DiffSide } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
   import {
@@ -56,6 +56,74 @@
   let language = $derived(languageForPath(filePath));
   let fontSize = $derived(settings.current.diff.fontSize);
   let bodyStyle = $derived(`font-size: ${fontSize}px;`);
+
+  // Range-mode blame state. When the active review is a base..head range,
+  // surface a leftmost gutter column with a colored dot per new-side line
+  // whose originating commit is in the picker selection.
+  let reviewMode = $derived(workingDiff.reviewModeFor(cwd));
+  let isRangeMode = $derived(reviewMode.kind === 'range');
+  let blameHead = $derived(reviewMode.kind === 'range' ? reviewMode.head : null);
+  let blameByLine = $derived<(BlameLine | undefined)[]>(
+    isRangeMode && blameHead ? workingDiff.blameEntry(cwd, filePath, blameHead).byLine : []
+  );
+  let activeChipFilter = $derived(
+    reviewMode.kind === 'range' ? reviewMode.chipFilter : null
+  );
+
+  // Lazy-load blame on mount + whenever the active head moves. Dedupe is in
+  // the store's inflightBlames map so a parallel prefetch and this lazy fetch
+  // don't double up.
+  $effect(() => {
+    const head = blameHead;
+    if (!head) return;
+    void workingDiff.loadBlame(cwd, filePath, head);
+  });
+
+  function blameFor(
+    newLine: number | null
+  ): { sha: string; short: string; subject: string; color: string } | null {
+    if (!isRangeMode || newLine === null) return null;
+    if (reviewMode.kind !== 'range') return null;
+    const entry = blameByLine[newLine];
+    if (!entry) return null;
+    const commit = reviewMode.commits.find((c) => c.hash === entry.sha);
+    if (!commit) return null;
+    return {
+      sha: entry.sha,
+      short: commit.shortHash,
+      subject: commit.subject,
+      color: colorForSha(entry.sha)
+    };
+  }
+
+  // FNV-1a 32-bit → HSL hue. Hue alone keeps chips visually distinct without
+  // varying saturation/lightness — picking the same color twice in a 5-commit
+  // review is rare, and a missed match is harmless (the SHA tooltip resolves).
+  function colorForSha(sha: string): string {
+    let h = 2166136261;
+    for (let i = 0; i < sha.length; i += 1) {
+      h ^= sha.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    const hue = (h >>> 0) % 360;
+    return `hsl(${hue}, 65%, 52%)`;
+  }
+
+  function onBlameChipClick(e: MouseEvent, sha: string): void {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!isRangeMode) return;
+    workingDiff.setChipFilter(cwd, activeChipFilter === sha ? null : sha);
+  }
+
+  function blameTitle(short: string, subject: string): string {
+    return `${short} · ${subject}`;
+  }
+
+  const BLAME_GUTTER_WIDTH_CH = 1;
+  function blameGutterStyle(): string {
+    return `min-width: calc(${BLAME_GUTTER_WIDTH_CH}ch + 12px);`;
+  }
 
   type GapButtonRow = {
     kind: 'gap-button';
@@ -865,6 +933,7 @@
         {@const anchorSide = line.kind === 'remove' ? 'old' : 'new'}
         {@const anchorLine = anchorSide === 'old' ? line.oldLine : line.newLine}
         {@const flashing = rowMatchesHighlight(item.row)}
+        {@const blame = blameFor(line.newLine)}
         <div
           style={bodyStyle}
           class={[
@@ -875,6 +944,26 @@
             flashing && 'diff-comment-flash'
           ]}
         >
+          {#if isRangeMode}
+            <span
+              class="relative flex shrink-0 items-center justify-center border-r border-border/60 select-none"
+              style={blameGutterStyle()}
+            >
+              {#if blame}
+                <button
+                  type="button"
+                  class={[
+                    'h-2 w-2 rounded-full transition-transform hover:scale-125',
+                    activeChipFilter === blame.sha && 'ring-1 ring-offset-1 ring-foreground/60'
+                  ]}
+                  style:background-color={blame.color}
+                  onclick={(e) => onBlameChipClick(e, blame.sha)}
+                  title={blameTitle(blame.short, blame.subject)}
+                  aria-label="Filter by commit {blame.short}"
+                ></button>
+              {/if}
+            </span>
+          {/if}
           <span
             class={gutterClass('old', line.oldLine, line.newLine)}
             style={gutterStyle(gutterWidth)}
@@ -928,13 +1017,35 @@
         {@const oldAnchorSide = row.isContext ? 'new' : 'old'}
         {@const oldAnchorLine = row.isContext ? row.new : row.old}
         {@const flashing = rowMatchesHighlight(item.row)}
+        {@const blame = blameFor(row.new)}
         <div
           class={[
-            'group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono leading-[1.55]',
+            'group/diffrow flex font-mono leading-[1.55]',
             flashing && 'diff-comment-flash'
           ]}
           style={bodyStyle}
         >
+          {#if isRangeMode}
+            <span
+              class="relative flex shrink-0 items-center justify-center border-r border-border/60 bg-background select-none"
+              style={blameGutterStyle()}
+            >
+              {#if blame}
+                <button
+                  type="button"
+                  class={[
+                    'h-2 w-2 rounded-full transition-transform hover:scale-125',
+                    activeChipFilter === blame.sha && 'ring-1 ring-offset-1 ring-foreground/60'
+                  ]}
+                  style:background-color={blame.color}
+                  onclick={(e) => onBlameChipClick(e, blame.sha)}
+                  title={blameTitle(blame.short, blame.subject)}
+                  aria-label="Filter by commit {blame.short}"
+                ></button>
+              {/if}
+            </span>
+          {/if}
+          <div class="grid min-w-0 grow grid-cols-2 gap-px bg-border/50">
           <div
             class={[
               'flex min-h-[1.45em] bg-background',
@@ -999,6 +1110,7 @@
               {/if}
             </span>
           </div>
+          </div>
         </div>
       {:else if item.row.kind === 'split-meta'}
         <div
@@ -1010,8 +1122,29 @@
         {@const oldLine = item.row.oldLine}
         {@const newLine = item.row.newLine}
         {@const text = item.row.text}
+        {@const blame = blameFor(newLine)}
         {#if mode === 'unified'}
           <div class="group/diffrow flex min-h-[1.45em] gap-0 font-mono leading-[1.55]" style={bodyStyle}>
+            {#if isRangeMode}
+              <span
+                class="relative flex shrink-0 items-center justify-center border-r border-border/60 select-none"
+                style={blameGutterStyle()}
+              >
+                {#if blame}
+                  <button
+                    type="button"
+                    class={[
+                      'h-2 w-2 rounded-full transition-transform hover:scale-125',
+                      activeChipFilter === blame.sha && 'ring-1 ring-offset-1 ring-foreground/60'
+                    ]}
+                    style:background-color={blame.color}
+                    onclick={(e) => onBlameChipClick(e, blame.sha)}
+                    title={blameTitle(blame.short, blame.subject)}
+                    aria-label="Filter by commit {blame.short}"
+                  ></button>
+                {/if}
+              </span>
+            {/if}
             <span
               class={gapGutterClass('old', oldLine, newLine)}
               style={gutterStyle(gutterWidth)}
@@ -1047,44 +1180,66 @@
               >{@html renderText(text, 'context')}</span>
           </div>
         {:else}
-          <div class="group/diffrow grid grid-cols-2 gap-px bg-border/50 font-mono leading-[1.55]" style={bodyStyle}>
-            <div class="flex min-h-[1.45em] bg-background">
+          <div class="group/diffrow flex font-mono leading-[1.55]" style={bodyStyle}>
+            {#if isRangeMode}
               <span
-                class={gapGutterClass('old', oldLine, newLine)}
-                style={gutterStyle(gutterWidth)}
-                onmousedown={(e) => onGapGutterMousedown(e, newLine)}
-                onmouseenter={(e) => {
-                  onGapGutterEnter(oldLine, newLine);
-                  scheduleHover('old', oldLine, newLine, e.currentTarget);
-                }}
-                onmouseleave={softCloseHover}
-                role="presentation"
+                class="relative flex shrink-0 items-center justify-center border-r border-border/60 bg-background select-none"
+                style={blameGutterStyle()}
               >
-                {oldLine}
-                <CommentMarker
-                  starting={commentsStartingAt('new', newLine)}
-                  continuing={commentsContinuingAt('new', newLine)}
-                />
+                {#if blame}
+                  <button
+                    type="button"
+                    class={[
+                      'h-2 w-2 rounded-full transition-transform hover:scale-125',
+                      activeChipFilter === blame.sha && 'ring-1 ring-offset-1 ring-foreground/60'
+                    ]}
+                    style:background-color={blame.color}
+                    onclick={(e) => onBlameChipClick(e, blame.sha)}
+                    title={blameTitle(blame.short, blame.subject)}
+                    aria-label="Filter by commit {blame.short}"
+                  ></button>
+                {/if}
               </span>
-              <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
-                >{@html renderText(text, 'context')}</span>
-            </div>
-            <div class="flex min-h-[1.45em] bg-background">
-              <span
-                class={gapGutterClass('new', oldLine, newLine)}
-                style={gutterStyle(gutterWidth)}
-                onmousedown={(e) => onGapGutterMousedown(e, newLine)}
-                onmouseenter={(e) => {
-                  onGapGutterEnter(oldLine, newLine);
-                  scheduleHover('new', oldLine, newLine, e.currentTarget);
-                }}
-                onmouseleave={softCloseHover}
-                role="presentation"
-              >
-                {newLine}
-              </span>
-              <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
-                >{@html renderText(text, 'context')}</span>
+            {/if}
+            <div class="grid min-w-0 grow grid-cols-2 gap-px bg-border/50">
+              <div class="flex min-h-[1.45em] bg-background">
+                <span
+                  class={gapGutterClass('old', oldLine, newLine)}
+                  style={gutterStyle(gutterWidth)}
+                  onmousedown={(e) => onGapGutterMousedown(e, newLine)}
+                  onmouseenter={(e) => {
+                    onGapGutterEnter(oldLine, newLine);
+                    scheduleHover('old', oldLine, newLine, e.currentTarget);
+                  }}
+                  onmouseleave={softCloseHover}
+                  role="presentation"
+                >
+                  {oldLine}
+                  <CommentMarker
+                    starting={commentsStartingAt('new', newLine)}
+                    continuing={commentsContinuingAt('new', newLine)}
+                  />
+                </span>
+                <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
+                  >{@html renderText(text, 'context')}</span>
+              </div>
+              <div class="flex min-h-[1.45em] bg-background">
+                <span
+                  class={gapGutterClass('new', oldLine, newLine)}
+                  style={gutterStyle(gutterWidth)}
+                  onmousedown={(e) => onGapGutterMousedown(e, newLine)}
+                  onmouseenter={(e) => {
+                    onGapGutterEnter(oldLine, newLine);
+                    scheduleHover('new', oldLine, newLine, e.currentTarget);
+                  }}
+                  onmouseleave={softCloseHover}
+                  role="presentation"
+                >
+                  {newLine}
+                </span>
+                <span class={splitTextCls} data-diff-side="new" data-diff-line={newLine}
+                  >{@html renderText(text, 'context')}</span>
+              </div>
             </div>
           </div>
         {/if}
