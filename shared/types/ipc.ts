@@ -71,6 +71,7 @@ import type {
 } from './sessions.js';
 import type { Settings, SettingsUpdate } from './settings.js';
 import type { CommentsRpcRequest, CommentsRpcResponse } from './comments-rpc.js';
+import type { DiffRpcRequest, DiffRpcResponse } from './diff-rpc.js';
 import type {
   NoteContent,
   NoteImage,
@@ -223,6 +224,10 @@ export const IpcChannels = {
   comments: {
     rpcRequest: 'comments:rpc:request',
     rpcResponse: 'comments:rpc:response'
+  },
+  diff: {
+    rpcRequest: 'diff:rpc:request',
+    rpcResponse: 'diff:rpc:response'
   }
 } as const;
 
@@ -241,7 +246,8 @@ export type IpcChannel =
   | (typeof IpcChannels.agentIntegration)[keyof typeof IpcChannels.agentIntegration]
   | (typeof IpcChannels.notify)[keyof typeof IpcChannels.notify]
   | (typeof IpcChannels.overview)[keyof typeof IpcChannels.overview]
-  | (typeof IpcChannels.comments)[keyof typeof IpcChannels.comments];
+  | (typeof IpcChannels.comments)[keyof typeof IpcChannels.comments]
+  | (typeof IpcChannels.diff)[keyof typeof IpcChannels.diff];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -477,6 +483,11 @@ export interface CommentsApi {
   sendRpcResponse(response: CommentsRpcResponse): void;
 }
 
+export interface DiffBridgeApi {
+  onRpcRequest(listener: (request: DiffRpcRequest) => void): () => void;
+  sendRpcResponse(response: DiffRpcResponse): void;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -493,6 +504,7 @@ export interface SoloeApi {
   notify: NotifyApi;
   overview: OverviewApi;
   comments: CommentsApi;
+  diff: DiffBridgeApi;
 }
 
 declare global {

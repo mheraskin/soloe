@@ -11,9 +11,11 @@ import '@fontsource/cascadia-code/400.css';
 import '@fontsource/cascadia-code/700.css';
 import App from './App.svelte';
 import { initCommentsBridge } from './lib/comments-bridge';
+import { initDiffBridge } from './lib/diff-bridge-handler';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('Missing #app root element');
 
 initCommentsBridge();
+initDiffBridge();
 mount(App, { target });

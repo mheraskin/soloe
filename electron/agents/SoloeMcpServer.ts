@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto';
 import type { AgentRuntimeManager } from './AgentRuntimeManager.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { CommentsRpcResult } from '@shared/types/comments-rpc.js';
+import type { DiffRpcResult } from '@shared/types/diff-rpc.js';
+import type { GitService } from '../git/GitService.js';
 
 export type HookProvider = 'claude_code' | 'codex';
 
@@ -17,6 +19,17 @@ export interface CommentsBridgeLike {
   resolveCommentsBatch(ids: string[]): Promise<CommentsRpcResult>;
 }
 
+export interface DiffBridgeLike {
+  openForCommits(args: {
+    cwd: string;
+    base: string;
+    head: string;
+    commits: string[];
+    includeWorkingTree: boolean;
+    focusPath?: string;
+  }): Promise<DiffRpcResult>;
+}
+
 export interface SoloeMcpServerOptions {
   observer: AgentObserverManager;
   runtime: AgentRuntimeManager;
@@ -25,6 +38,12 @@ export interface SoloeMcpServerOptions {
   token?: string;
   onHookEvent?: (event: HookEvent) => void | Promise<void>;
   commentsBridge?: CommentsBridgeLike;
+  diffBridge?: DiffBridgeLike;
+  git?: GitService;
+  // sessionId → cwd lookup. Required for the open_diff_for_commits MCP tool
+  // when the caller passes a sessionId instead of cwd directly. Returns null
+  // when the id doesn't match any persisted session.
+  resolveSessionCwd?: (sessionId: string) => Promise<string | null>;
 }
 
 export interface SoloeMcpServerInfo {
@@ -114,6 +133,24 @@ const TOOLS: McpTool[] = [
       required: ['ids'],
       properties: {
         ids: { type: 'array', items: { type: 'string' }, minItems: 1 }
+      }
+    }
+  },
+  {
+    name: 'open_diff_for_commits',
+    description:
+      'Open the Soloe diff viewer with a set of commits selected for review. Either cwd or sessionId must be provided; sessionId is resolved against the open sessions list. The commits array may contain SHAs, short SHAs, or refs (HEAD~3, branch names); each is resolved before opening. Base is computed as the parent of the earliest commit unless overridden.',
+    inputSchema: {
+      type: 'object',
+      required: ['commits'],
+      properties: {
+        commits: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        cwd: { type: 'string' },
+        sessionId: { type: 'string' },
+        head: { type: 'string' },
+        base: { type: 'string' },
+        focusPath: { type: 'string' },
+        includeWorkingTree: { type: 'boolean' }
       }
     }
   }
@@ -327,9 +364,89 @@ export class SoloeMcpServer {
         }
         return this.opts.commentsBridge.resolveCommentsBatch(requiredStringArray(args, 'ids'));
       }
+      case 'open_diff_for_commits':
+        return this.openDiffForCommits(args);
       default:
         throw new Error(`unknown tool: ${name}`);
     }
+  }
+
+  // Resolve cwd, refs, base/head, then dispatch to the renderer through the
+  // diff bridge. Input `commits` follows the newest-first convention used by
+  // listRecentCommits and the UI's CommitPicker — the last entry is the
+  // topologically earliest commit, and base defaults to that commit's parent.
+  private async openDiffForCommits(args: Record<PropertyKey, unknown>): Promise<unknown> {
+    if (!this.opts.diffBridge) throw new Error('diff bridge not available');
+    if (!this.opts.git) throw new Error('git service not available');
+    const git = this.opts.git;
+    const commitsInput = requiredStringArray(args, 'commits');
+    const explicitCwd = stringField(args, 'cwd');
+    const sessionId = stringField(args, 'sessionId');
+    const headRef = stringField(args, 'head') ?? 'HEAD';
+    const baseOverride = stringField(args, 'base');
+    const focusPath = stringField(args, 'focusPath');
+    const includeWorkingTree = booleanField(args, 'includeWorkingTree') ?? true;
+
+    let cwd = explicitCwd ?? null;
+    if (!cwd && sessionId) {
+      if (!this.opts.resolveSessionCwd) {
+        throw new Error('sessionId lookup not configured');
+      }
+      cwd = await this.opts.resolveSessionCwd(sessionId);
+      if (!cwd) throw new Error(`unknown sessionId: ${sessionId}`);
+    }
+    if (!cwd) throw new Error('cwd or sessionId is required');
+
+    // Resolve every ref the caller passed plus the head reference. Order:
+    // [head, ...commits, optional base].
+    const refsToResolve = [headRef, ...commitsInput];
+    if (baseOverride) refsToResolve.push(baseOverride);
+    const resolved = await git.resolveCommitRefs(cwd, refsToResolve);
+    const resolvedHead = resolved[0];
+    if (!resolvedHead) throw new Error(`could not resolve head ref: ${headRef}`);
+    const commitShas: string[] = [];
+    for (let i = 0; i < commitsInput.length; i += 1) {
+      const sha = resolved[i + 1];
+      if (!sha) throw new Error(`could not resolve commit ref: ${commitsInput[i]}`);
+      commitShas.push(sha);
+    }
+    let baseSha: string;
+    if (baseOverride) {
+      const candidate = resolved[refsToResolve.length - 1];
+      if (!candidate) throw new Error(`could not resolve base ref: ${baseOverride}`);
+      baseSha = candidate;
+    } else {
+      const earliest = commitShas[commitShas.length - 1];
+      if (!earliest) throw new Error('commits array empty after resolution');
+      const parentResolved = await git.resolveCommitRefs(cwd, [`${earliest}~1`]);
+      const parentSha = parentResolved[0];
+      if (!parentSha) throw new Error(`could not resolve parent of ${earliest}`);
+      baseSha = parentSha;
+    }
+
+    const between = await git.getCommitsBetween(cwd, baseSha, resolvedHead);
+    if (between.commits.length === 0) {
+      throw new Error('resolved range is empty');
+    }
+    const rangeShas = between.commits.map((c) => c.hash);
+
+    const result = await this.opts.diffBridge.openForCommits({
+      cwd,
+      base: baseSha,
+      head: resolvedHead,
+      commits: rangeShas,
+      includeWorkingTree,
+      ...(focusPath ? { focusPath } : {})
+    });
+    if (!result.ok) throw new Error(result.error);
+    return {
+      ok: true,
+      cwd: result.cwd,
+      base: result.base,
+      head: result.head,
+      commitCount: result.commitCount,
+      truncated: between.truncated
+    };
   }
 }
 
@@ -396,6 +513,11 @@ function stringField(args: Record<PropertyKey, unknown>, key: string): string | 
 function numberField(args: Record<PropertyKey, unknown>, key: string): number | undefined {
   const value = args[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanField(args: Record<PropertyKey, unknown>, key: string): boolean | undefined {
+  const value = args[key];
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function requiredStringArray(args: Record<PropertyKey, unknown>, key: string): string[] {

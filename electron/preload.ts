@@ -14,6 +14,10 @@ import type {
   CommentsRpcResponse
 } from '@shared/types/comments-rpc.js';
 import type {
+  DiffRpcRequest,
+  DiffRpcResponse
+} from '@shared/types/diff-rpc.js';
+import type {
   CreateWorkerSessionRequest,
   ListObserverEventsRequest,
   ObservedAgentSnapshot,
@@ -277,6 +281,12 @@ const soloe: SoloeApi = {
       subscribe<CommentsRpcRequest>(IpcChannels.comments.rpcRequest, cb),
     sendRpcResponse: (response: CommentsRpcResponse) =>
       ipcRenderer.send(IpcChannels.comments.rpcResponse, response)
+  },
+  diff: {
+    onRpcRequest: (cb: (request: DiffRpcRequest) => void) =>
+      subscribe<DiffRpcRequest>(IpcChannels.diff.rpcRequest, cb),
+    sendRpcResponse: (response: DiffRpcResponse) =>
+      ipcRenderer.send(IpcChannels.diff.rpcResponse, response)
   }
 };
 

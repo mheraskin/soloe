@@ -18,6 +18,7 @@ import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer
 import { AgentHookDispatcher } from './agents/AgentHookDispatcher.js';
 import { AutoRenameService } from './agents/AutoRenameService.js';
 import { CommentsBridge } from './comments/CommentsBridge.js';
+import { DiffBridge } from './agents/DiffBridge.js';
 import { BridgePersistence, type BridgeConfig } from './integrations/BridgePersistence.js';
 import { Notifier } from './notify/Notifier.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
@@ -56,6 +57,7 @@ interface AppServices {
   runtime: AgentRuntimeManager;
   mcp: SoloeMcpServer;
   commentsBridge: CommentsBridge;
+  diffBridge: DiffBridge;
   git: GitService;
   files: FileSearchService;
   diagnostics: DiagnosticsService;
@@ -78,6 +80,19 @@ interface AppServices {
 let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
+
+interface DiffIntent {
+  commits?: string[];
+  base?: string;
+  head?: string;
+  cwd?: string;
+  focusPath?: string;
+}
+
+// Populated when soloe is launched with `--diff …` argv. Drained after the
+// renderer signals it's ready (via did-finish-load on the main window) so the
+// diff bridge can route the intent through MCP-style dispatch.
+let pendingDiffIntent: DiffIntent | null = null;
 
 const PACKAGED_APP_ID = 'com.soloe.app';
 
@@ -231,6 +246,15 @@ async function setupServices(): Promise<AppServices> {
     getWindows: () => BrowserWindow.getAllWindows()
   });
   commentsBridge.start();
+  const diffBridge = new DiffBridge({
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  diffBridge.start();
+  // Built early so the MCP server can call into it for open_diff_for_commits.
+  // The GitIpc wrapper is constructed later once windows are available.
+  const git = new GitService({
+    getGitBinary: async () => (await settings.get()).binaries.git
+  });
 
   const initialBridgeConfig = await bridgePersistence.loadOrCreate();
   const { mcp, info: startedInfo, config: effectiveBridgeConfig } = await startMcp({
@@ -238,6 +262,12 @@ async function setupServices(): Promise<AppServices> {
     runtime,
     onHookEvent: (event) => hookDispatcher.dispatch(event),
     commentsBridge,
+    diffBridge,
+    git,
+    resolveSessionCwd: async (id) => {
+      const session = await store.get(id);
+      return session ? session.cwd : null;
+    },
     initialConfig: initialBridgeConfig
   });
   if (effectiveBridgeConfig.port !== initialBridgeConfig.port) {
@@ -280,9 +310,6 @@ async function setupServices(): Promise<AppServices> {
   const notesIpc = new NotesIpc({
     store: notes,
     getWindows: () => BrowserWindow.getAllWindows()
-  });
-  const git = new GitService({
-    getGitBinary: async () => (await settings.get()).binaries.git
   });
   const gitIpc = new GitIpc({
     service: git,
@@ -374,6 +401,7 @@ async function setupServices(): Promise<AppServices> {
     runtime,
     mcp,
     commentsBridge,
+    diffBridge,
     git,
     files,
     diagnostics,
@@ -399,6 +427,9 @@ interface StartMcpDeps {
   runtime: AgentRuntimeManager;
   onHookEvent: (event: import('./agents/SoloeMcpServer.js').HookEvent) => void | Promise<void>;
   commentsBridge: CommentsBridge;
+  diffBridge: DiffBridge;
+  git: GitService;
+  resolveSessionCwd: (sessionId: string) => Promise<string | null>;
   initialConfig: BridgeConfig;
 }
 
@@ -418,6 +449,9 @@ async function startMcp(deps: StartMcpDeps): Promise<StartMcpResult> {
       runtime: deps.runtime,
       onHookEvent: deps.onHookEvent,
       commentsBridge: deps.commentsBridge,
+      diffBridge: deps.diffBridge,
+      git: deps.git,
+      resolveSessionCwd: deps.resolveSessionCwd,
       port,
       token: deps.initialConfig.token
     });
@@ -542,6 +576,7 @@ async function cleanup(): Promise<void> {
     await services.pty.dispose();
     await services.runtime.dispose();
     services.commentsBridge.stop();
+    services.diffBridge.stop();
     await services.mcp.stop();
     services = null;
   }
@@ -553,20 +588,33 @@ function ensureSingleInstance(): boolean {
     app.quit();
     return false;
   }
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
+    const intent = parseDiffArgv(argv);
+    if (intent) void applyDiffIntent(intent);
   });
   return true;
 }
 
 if (ensureSingleInstance()) {
+  pendingDiffIntent = parseDiffArgv(process.argv);
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     ensureWindowsDevShellShortcut(resolveAppIcon());
     services = await setupServices();
     mainWindow = await createWindow();
+    if (pendingDiffIntent) {
+      const intent = pendingDiffIntent;
+      pendingDiffIntent = null;
+      // Defer until after the renderer has mounted and registered the diff
+      // bridge listener. did-finish-load is the latest reliable signal we
+      // get from the main-process side of the bridge boundary.
+      mainWindow.webContents.once('did-finish-load', () => {
+        void applyDiffIntent(intent);
+      });
+    }
 
     app.on('activate', async () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -602,4 +650,93 @@ async function writeCrashLog(err: unknown): Promise<void> {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const message = err instanceof Error ? `${err.stack ?? err.message}\n` : `${String(err)}\n`;
   await fs.writeFile(path.join(crashDir, `${stamp}.log`), message, 'utf8');
+}
+
+// Minimal argv parser for `--diff` invocations. Accepts either:
+//   --diff --commits <csv-of-shas-or-refs>
+//   --diff --range <base>..<head>
+// optionally with --cwd <path> and --focus <path>. Returns null when --diff
+// isn't present, so the normal launch path runs unchanged.
+function parseDiffArgv(argv: string[]): DiffIntent | null {
+  if (!argv.includes('--diff')) return null;
+  const intent: DiffIntent = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    const next = argv[i + 1];
+    if (arg === '--commits' && next) {
+      intent.commits = next.split(',').map((s) => s.trim()).filter(Boolean);
+      i += 1;
+    } else if (arg === '--range' && next) {
+      const dots = next.indexOf('..');
+      if (dots > 0) {
+        intent.base = next.slice(0, dots).trim();
+        intent.head = next.slice(dots + 2).trim();
+      }
+      i += 1;
+    } else if (arg === '--cwd' && next) {
+      intent.cwd = next;
+      i += 1;
+    } else if (arg === '--focus' && next) {
+      intent.focusPath = next;
+      i += 1;
+    }
+  }
+  if (!intent.commits && !(intent.base && intent.head)) return null;
+  return intent;
+}
+
+// Route a parsed CLI intent through the same MCP-style handler the renderer
+// uses. Falls back to the first open session's cwd when none is provided.
+async function applyDiffIntent(intent: DiffIntent): Promise<void> {
+  if (!services) return;
+  const { diffBridge, git, store } = services;
+  let cwd = intent.cwd ?? null;
+  if (!cwd) {
+    const list = await store.list();
+    cwd = list[0]?.cwd ?? null;
+  }
+  if (!cwd) {
+    console.warn('[diff-intent] no cwd available; skipping');
+    return;
+  }
+  try {
+    let baseSha: string | null = null;
+    let headSha: string | null = null;
+    let commitShas: string[] = [];
+    if (intent.base && intent.head) {
+      const resolved = await git.resolveCommitRefs(cwd, [intent.base, intent.head]);
+      baseSha = resolved[0] ?? null;
+      headSha = resolved[1] ?? null;
+    } else if (intent.commits && intent.commits.length > 0) {
+      const headRef = 'HEAD';
+      const refs = [headRef, ...intent.commits];
+      const resolved = await git.resolveCommitRefs(cwd, refs);
+      headSha = resolved[0] ?? null;
+      commitShas = resolved.slice(1).filter((s): s is string => !!s);
+      const earliest = commitShas[commitShas.length - 1];
+      if (earliest) {
+        const parent = await git.resolveCommitRefs(cwd, [`${earliest}~1`]);
+        baseSha = parent[0] ?? null;
+      }
+    }
+    if (!baseSha || !headSha) {
+      console.warn('[diff-intent] could not resolve base/head from argv');
+      return;
+    }
+    const between = await git.getCommitsBetween(cwd, baseSha, headSha);
+    if (between.commits.length === 0) {
+      console.warn('[diff-intent] resolved range is empty');
+      return;
+    }
+    await diffBridge.openForCommits({
+      cwd,
+      base: baseSha,
+      head: headSha,
+      commits: between.commits.map((c) => c.hash),
+      includeWorkingTree: true,
+      ...(intent.focusPath ? { focusPath: intent.focusPath } : {})
+    });
+  } catch (err) {
+    console.warn('[diff-intent] failed:', err);
+  }
 }
