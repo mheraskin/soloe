@@ -14,6 +14,28 @@ function rangeLabel(comment: DiffComment): string {
     : `L${comment.startLine}–${comment.endLine}`;
 }
 
+function shortSha(sha: string): string {
+  return sha.slice(0, 7);
+}
+
+// Renders the "Review scope" preamble for a comment authored under a range
+// review. Returns null for working-tree comments or comments whose range info
+// is missing — older records persisted before this work.
+function scopePreamble(comment: DiffComment): string | null {
+  const range = comment.reviewRange;
+  if (!range || range.commits.length === 0) return null;
+  const noun = range.commits.length === 1 ? 'commit' : 'commits';
+  const list = range.commits.map(shortSha).join(' ');
+  return `Review scope: ${range.commits.length} ${noun} between ${shortSha(range.base)} and ${shortSha(range.head)}.\nCommits in scope: ${list}.`;
+}
+
+function attributionLine(comment: DiffComment): string | null {
+  const attr = comment.attributedCommits;
+  if (!attr || attr.length === 0) return null;
+  const pairs = attr.map((c) => `${c.short}:${c.subject}`).join(', ');
+  return `Originated in: ${pairs}`;
+}
+
 // Default framing prepended to every send. Without it agents tend to implement
 // questions ("why is this here?") instead of answering them.
 const INTERPRETATION_GUIDANCE =
@@ -36,13 +58,12 @@ function resolveFooter(ids: string[]): string {
 // single tool call.
 function buildPrompt(comment: DiffComment): string {
   const header = `Re: ${comment.filePath} (${comment.side === 'old' ? 'before' : 'after'} ${rangeLabel(comment)})`;
-  const parts = [
-    `[soloe-comment:${comment.id}]`,
-    INTERPRETATION_GUIDANCE,
-    header,
-    comment.text,
-    resolveFooter([comment.id])
-  ];
+  const scope = scopePreamble(comment);
+  const attribution = attributionLine(comment);
+  const body = attribution ? `${comment.text}\n\n${attribution}` : comment.text;
+  const parts: string[] = [`[soloe-comment:${comment.id}]`, INTERPRETATION_GUIDANCE];
+  if (scope) parts.push(scope);
+  parts.push(header, body, resolveFooter([comment.id]));
   return parts.join('\n\n');
 }
 
@@ -60,11 +81,18 @@ function buildBatchPrompt(comments: DiffComment[], preamble?: string): string {
   const sections = comments.map((c) => {
     const sideLabel = c.side === 'old' ? 'before' : 'after';
     const header = `[soloe-comment:${c.id}] ${c.filePath} (${sideLabel} ${rangeLabel(c)})`;
-    return `${header}\n${c.text}`;
+    const attribution = attributionLine(c);
+    return attribution ? `${header}\n${c.text}\n${attribution}` : `${header}\n${c.text}`;
   });
+  // A batch typically comes from a single review session, so all comments
+  // share the same range — render that scope once. The first range we hit
+  // wins; outliers from cross-mode multi-select would still be carried via
+  // their per-comment "Originated in:" lines.
+  const scope = comments.map(scopePreamble).find((p): p is string => p !== null) ?? null;
   const noun = comments.length === 1 ? 'review comment' : 'review comments';
   const intro = `${comments.length} ${noun} to address:`;
   const parts = [INTERPRETATION_GUIDANCE];
+  if (scope) parts.push(scope);
   if (preamble) parts.push(preamble);
   parts.push(intro);
   parts.push(sections.join('\n\n'));

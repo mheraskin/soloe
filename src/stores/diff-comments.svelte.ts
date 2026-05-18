@@ -1,7 +1,27 @@
 import type { FileDiff } from '@shared/types/git.js';
+import { workingDiff, type ReviewMode } from './working-diff.svelte';
 
 export type DiffSide = 'new' | 'old';
 export type AnchorLineKind = 'context' | 'add' | 'remove';
+export type DiffCommentMode = 'wt' | 'range';
+
+// A snapshot of the commits that introduced the line(s) this comment is
+// anchored to. Stamped once at create-time so the prompt sent to the agent
+// can reference precise SHAs even after the active review range moves on.
+export interface AttributedCommit {
+  sha: string;
+  short: string;
+  subject: string;
+}
+
+// A snapshot of the review range active when the comment was created. The
+// scope preamble in the agent prompt is built from this — it tells the agent
+// which set of commits the human reviewer was looking at.
+export interface CommentReviewRange {
+  base: string;
+  head: string;
+  commits: string[];
+}
 
 // Snapshot of the diff lines a comment was anchored to at creation. Mirrors
 // GitHub's diff_hunk + original_position model: when a later edit changes the
@@ -37,6 +57,11 @@ export interface DiffComment {
   // Optional — older comments persisted before anchors were introduced are
   // grandfathered as fresh and never flagged outdated.
   anchor?: DiffCommentAnchor;
+  // Absent ⇒ legacy comment from before multi-commit review existed; treated
+  // as 'wt' for backwards compatibility.
+  mode?: DiffCommentMode;
+  reviewRange?: CommentReviewRange;
+  attributedCommits?: AttributedCommit[];
 }
 
 export interface DiffSelection {
@@ -113,6 +138,20 @@ export function buildAnchorFromDiff(
   return { text: covered, contextBefore: before, contextAfter: after, kinds };
 }
 
+// True when the comment's recorded review mode matches the current one. A
+// comment created in working-tree mode is in-view only when the current mode
+// is working-tree; a range-mode comment matches only when both base and head
+// align with the active range. Legacy comments (no `mode` field) are treated
+// as working-tree by convention.
+function commentInMode(comment: DiffComment, mode: ReviewMode): boolean {
+  const commentMode: DiffCommentMode = comment.mode ?? 'wt';
+  if (mode.kind === 'working-tree') return commentMode === 'wt';
+  if (commentMode !== 'range') return false;
+  const range = comment.reviewRange;
+  if (!range) return false;
+  return range.base === mode.base && range.head === mode.head;
+}
+
 // A comment is outdated when the live diff carries different text at its
 // anchored coordinates. Lines that aren't present in any hunk match HEAD by
 // definition — we treat that as fresh, since the snapshot was taken from the
@@ -184,12 +223,32 @@ class DiffCommentsStore {
     return this.byKey[fileKey(cwd, filePath)] ?? [];
   }
 
-  // Default to active (unresolved + not-outdated) comments. The diff gutter
-  // calls this to decide what to render — resolved ones live in the rail's
-  // resolved panel, outdated ones in the rail's outdated panel.
+  // Default to active (unresolved + not-outdated + in-view) comments. The diff
+  // gutter calls this to decide what to render — resolved ones live in the
+  // rail's resolved panel, outdated ones in the rail's outdated panel, and
+  // off-mode comments stay off the gutter so a range-mode comment's anchor
+  // doesn't mis-map onto WT-mode lines.
   activeForFile(cwd: string, filePath: string): DiffComment[] {
+    const mode = workingDiff.reviewModeFor(cwd);
     return this.forFile(cwd, filePath).filter(
-      (c) => !c.resolvedAt && !this.outdatedIds.has(c.id)
+      (c) => !c.resolvedAt && !this.outdatedIds.has(c.id) && commentInMode(c, mode)
+    );
+  }
+
+  // Comments persisted for the worktree but not visible in the current review
+  // mode. Used by the rail panel to grey them out — they aren't outdated, just
+  // tied to a different review.
+  outOfViewForFile(cwd: string, filePath: string): DiffComment[] {
+    const mode = workingDiff.reviewModeFor(cwd);
+    return this.forFile(cwd, filePath).filter(
+      (c) => !c.resolvedAt && !commentInMode(c, mode)
+    );
+  }
+
+  outOfViewForWorktree(cwd: string): DiffComment[] {
+    const mode = workingDiff.reviewModeFor(cwd);
+    return this.forWorktree(cwd).filter(
+      (c) => !c.resolvedAt && !commentInMode(c, mode)
     );
   }
 
@@ -207,16 +266,20 @@ class DiffCommentsStore {
   }
 
   // Outdated, but not resolved — a resolved comment lives in the resolved
-  // panel regardless of whether the line was later edited away.
+  // panel regardless of whether the line was later edited away. Off-mode
+  // comments are excluded so flipping mode doesn't mass-flip them into the
+  // outdated panel.
   outdatedForFile(cwd: string, filePath: string): DiffComment[] {
+    const mode = workingDiff.reviewModeFor(cwd);
     return this.forFile(cwd, filePath).filter(
-      (c) => !c.resolvedAt && this.outdatedIds.has(c.id)
+      (c) => !c.resolvedAt && this.outdatedIds.has(c.id) && commentInMode(c, mode)
     );
   }
 
   outdatedForWorktree(cwd: string): DiffComment[] {
+    const mode = workingDiff.reviewModeFor(cwd);
     return this.forWorktree(cwd).filter(
-      (c) => !c.resolvedAt && this.outdatedIds.has(c.id)
+      (c) => !c.resolvedAt && this.outdatedIds.has(c.id) && commentInMode(c, mode)
     );
   }
 
@@ -273,6 +336,40 @@ class DiffCommentsStore {
     const anchor = diff
       ? buildAnchorFromDiff(diff, sel.side, sel.startLine, sel.endLine)
       : null;
+    const mode = workingDiff.reviewModeFor(sel.cwd);
+    let modeField: DiffCommentMode = 'wt';
+    let reviewRange: CommentReviewRange | undefined;
+    let attributedCommits: AttributedCommit[] | undefined;
+    if (mode.kind === 'range') {
+      modeField = 'range';
+      reviewRange = {
+        base: mode.base,
+        head: mode.head,
+        commits: mode.commits.map((c) => c.hash)
+      };
+      const shas = workingDiff.attributedCommitsFor(
+        sel.cwd,
+        sel.filePath,
+        mode.head,
+        sel.side,
+        sel.startLine,
+        sel.endLine
+      );
+      if (shas.length > 0) {
+        const bySha = new Map(mode.commits.map((c) => [c.hash, c]));
+        attributedCommits = shas
+          .map((sha) => {
+            const commit = bySha.get(sha);
+            if (!commit) return null;
+            return {
+              sha: commit.hash,
+              short: commit.shortHash,
+              subject: commit.subject
+            };
+          })
+          .filter((entry): entry is AttributedCommit => entry !== null);
+      }
+    }
     const comment: DiffComment = {
       id: crypto.randomUUID(),
       cwd: sel.cwd,
@@ -283,7 +380,10 @@ class DiffCommentsStore {
       text: '',
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      ...(anchor ? { anchor } : {})
+      mode: modeField,
+      ...(anchor ? { anchor } : {}),
+      ...(reviewRange ? { reviewRange } : {}),
+      ...(attributedCommits ? { attributedCommits } : {})
     };
     this.add(comment);
     this.selection = null;
@@ -416,18 +516,24 @@ class DiffCommentsStore {
 
   // Reconcile the outdated set for a single file against its current diff.
   // Comments without an anchor (older records or gap-row drops) are never
-  // flagged. The effect calling this also reads `outdatedIds` (we iterate it
-  // here), so a same-contents-new-Set write would re-fire the effect in a
-  // loop — only assign when the set's contents have actually changed.
+  // flagged. Off-mode comments are skipped entirely — they aren't outdated,
+  // they're just out-of-view, and running the anchor check against a diff
+  // from a different mode would mass-flip them.
+  //
+  // The effect calling this also reads `outdatedIds` (we iterate it here), so
+  // a same-contents-new-Set write would re-fire the effect in a loop — only
+  // assign when the set's contents have actually changed.
   recomputeOutdated(cwd: string, filePath: string, diff: FileDiff | null): void {
     const fileComments = this.forFile(cwd, filePath);
     if (fileComments.length === 0) return;
+    const mode = workingDiff.reviewModeFor(cwd);
     const fileIds = new Set(fileComments.map((c) => c.id));
     const next = new Set<string>();
     for (const id of this.outdatedIds) {
       if (!fileIds.has(id)) next.add(id);
     }
     for (const c of fileComments) {
+      if (!commentInMode(c, mode)) continue;
       if (isCommentOutdated(c, diff)) next.add(c.id);
     }
     if (next.size === this.outdatedIds.size) {
