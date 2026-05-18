@@ -18,6 +18,7 @@
   import { confirmStore } from '../../stores/confirm.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
+  import { sendBracketedPaste } from '../../lib/terminal-paste';
   import { kbdHints } from '../../stores/kbd-hints.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -26,9 +27,6 @@
   import { Kbd } from '$lib/components/ui/kbd';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
-
-  const PASTE_START = '\x1b[200~';
-  const PASTE_END = '\x1b[201~';
 
   type DialogState =
     | { kind: 'save-draft'; name: string }
@@ -198,8 +196,7 @@
     const id = activeTerminalId;
     if (!id) return;
     try {
-      const suffix = submit ? '\r' : '';
-      await ipc.terminal.input(id, PASTE_START + text + PASTE_END + suffix);
+      await sendBracketedPaste(id, text, submit);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
     } catch (err) {
       reportError(err);

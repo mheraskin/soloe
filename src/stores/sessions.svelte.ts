@@ -19,6 +19,7 @@ import { settings } from './settings.svelte';
 import { randomName } from '../lib/random-name';
 import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelte';
 import { rightRail } from './right-rail.svelte';
+import { sendBracketedPaste } from '../lib/terminal-paste';
 
 const LAST_SELECTED_KEY = 'soloe.lastSelectedByProject.v1';
 const STANDALONE_KEY = '__standalone__';
@@ -368,9 +369,10 @@ class SessionsStore {
     });
     const terminalId = await this.waitForTerminalId(created.id, 5000);
     if (terminalId) {
-      await ipc.terminal.input(
+      await sendBracketedPaste(
         terminalId,
-        bracketedPaste(continuationPrompt(origin, this.observationFor(origin.id)))
+        continuationPrompt(origin, this.observationFor(origin.id)),
+        true
       );
     }
     return created;
@@ -650,10 +652,6 @@ class SessionsStore {
 }
 
 export const sessions = new SessionsStore();
-
-function bracketedPaste(text: string): string {
-  return `\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~\r`;
-}
 
 function continuationPrompt(
   origin: Session,

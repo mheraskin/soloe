@@ -6,14 +6,7 @@ import {
   type CommentAgent
 } from '../stores/comment-agents.svelte';
 import { sessions } from '../stores/sessions.svelte';
-import { ipc } from './ipc';
-
-// Send protocol for sessions: bracketed paste so the agent receives the
-// payload as a single user prompt instead of being interpreted line-by-line.
-// The trailing CR submits it (Claude/Codex both treat 201~ + \r as enter).
-function bracketedPaste(text: string): string {
-  return `\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~\r`;
-}
+import { sendBracketedPaste } from './terminal-paste';
 
 function rangeLabel(comment: DiffComment): string {
   return comment.endLine === comment.startLine
@@ -136,7 +129,7 @@ async function waitForTerminalId(sessionId: string, timeoutMs: number): Promise<
 async function deliverToSession(sessionId: string, payload: string): Promise<void> {
   const terminalId = await waitForTerminalId(sessionId, 5000);
   if (!terminalId) throw new Error('terminal not ready');
-  await ipc.terminal.input(terminalId, bracketedPaste(payload));
+  await sendBracketedPaste(terminalId, payload, true);
 }
 
 // Sends a comment. With mentions, fans out to each resolved agent's session,
@@ -175,7 +168,7 @@ export async function sendComment(commentId: string): Promise<SendCommentResult>
         errors.push(`Session ${selected.name} has no running terminal`);
       } else {
         try {
-          await ipc.terminal.input(terminalId, bracketedPaste(payload));
+          await sendBracketedPaste(terminalId, payload, true);
           delivered += 1;
         } catch (err) {
           errors.push((err as Error).message);

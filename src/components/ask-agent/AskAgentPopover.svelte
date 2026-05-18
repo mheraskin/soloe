@@ -4,10 +4,10 @@
   import { ArrowLeftToLine, Loader2, Send, X } from '@lucide/svelte';
   import * as Popover from '$lib/components/ui/popover';
   import { Button } from '$lib/components/ui/button';
-  import { ipc } from '../../lib/ipc';
   import { sessions } from '../../stores/sessions.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
+  import { sendBracketedPaste } from '../../lib/terminal-paste';
 
   interface Props {
     open: boolean;
@@ -36,12 +36,6 @@
     side = 'top',
     align = 'start'
   }: Props = $props();
-
-  // Bracketed paste envelope — same one the notes tab and comment sender use;
-  // CR suffix turns "paste" into "paste + submit" so the agent treats it as
-  // one user turn instead of leaving text in its prompt buffer.
-  const PASTE_START = '\x1b[200~';
-  const PASTE_END = '\x1b[201~';
 
   let prompt = $state('');
   let sending = $state(false);
@@ -80,8 +74,7 @@
     // the user lands back on the pane that's about to consume the input.
     if (submit && rightRail.fullscreen) rightRail.fullscreen = false;
     try {
-      const suffix = submit ? '\r' : '';
-      await ipc.terminal.input(id, PASTE_START + buildPayload() + PASTE_END + suffix);
+      await sendBracketedPaste(id, buildPayload(), submit);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
       onOpenChange(false);
     } catch (err) {
