@@ -98,7 +98,7 @@ const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
 // Bumping forces a one-time reinstall on next boot, which is how soloe picks up
 // the [hooks.state] pre-trust entries codex 0.129+ requires.
-export const SOLOE_HOOK_VERSION = 12;
+export const SOLOE_HOOK_VERSION = 13;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
