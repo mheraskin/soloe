@@ -244,9 +244,9 @@ export class FeatureService {
         kind: 'artifact',
         relativePath: `.scratch/${slug}/${PLAYWRIGHT_FILE}`,
         name: 'playwright-e2e',
-        displayName: 'playwright.md',
+        displayName: PLAYWRIGHT_FILE,
         number: null,
-        title: 'playwright.md',
+        title: playwright.title ?? PLAYWRIGHT_FILE,
         status: null,
         isPlaywright: true
       });
