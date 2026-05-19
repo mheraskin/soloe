@@ -55,6 +55,39 @@ describe('AutoRenameService', () => {
     expect(spawnImpl).toHaveBeenCalledTimes(1);
     expect((await sessionStore.get(session.id))?.name).toBe('analytics-docs');
   });
+
+  it('does not clobber a manual rename that happens while the agent spawn is in flight', async () => {
+    const session = await sessionStore.create({
+      name: 'new codex',
+      cwd: tmpDir,
+      runMode: 'windows',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    });
+    const children: FakeChild[] = [];
+    const spawnImpl = vi.fn((..._args: Parameters<typeof spawn>) => {
+      const child = new FakeChild();
+      children.push(child);
+      return child;
+    }) as unknown as typeof spawn;
+    const service = new AutoRenameService({
+      sessionStore,
+      settings: settingsStore,
+      spawnImpl
+    });
+
+    const pending = service.maybeRename({ sessionId: session.id, firstPrompt: 'build analytics docs' });
+    await waitFor(() => children.length === 1);
+
+    // User manually renames mid-flight — this is what SessionItem does on commit.
+    await sessionStore.update(session.id, { name: 'my-cool-name', autoNamed: false });
+
+    children[0]!.succeed('analytics-docs\n');
+    await pending;
+
+    const final = await sessionStore.get(session.id);
+    expect(final?.name).toBe('my-cool-name');
+    expect(final?.autoNamed).toBe(false);
+  });
 });
 
 class FakeChild extends EventEmitter {

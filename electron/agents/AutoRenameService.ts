@@ -119,7 +119,21 @@ export class AutoRenameService {
       this.opts.log?.('auto-rename produced empty output', { sessionId: session.id });
       return;
     }
-    if (name === session.name) {
+    // Re-check the session right before persisting: the agent spawn can take
+    // many seconds, during which the user may have manually renamed it (which
+    // sets autoNamed=false). Without this guard we'd clobber the manual name.
+    const latest = await this.opts.sessionStore.get(session.id);
+    if (!latest) {
+      console.log(`[soloe-rename] service: skip — session vanished for ${input.sessionId}`);
+      return;
+    }
+    if (latest.autoNamed === false) {
+      console.log(
+        `[soloe-rename] service: skip — autoNamed=false for ${input.sessionId} (renamed during spawn)`
+      );
+      return;
+    }
+    if (name === latest.name) {
       console.log(
         `[soloe-rename] service: skip — proposed name "${name}" matches existing for ${input.sessionId}`
       );
