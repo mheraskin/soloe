@@ -74,20 +74,37 @@
 </script>
 
 <Collapsible.Root {open} onOpenChange={onOpenChange} class="rounded-md border border-border">
-  <Collapsible.Trigger
-    class="group flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs font-medium hover:bg-muted/40"
-  >
-    <span class="flex items-center gap-1.5">
-      <ChevronRight
-        class="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
-      />
-      <span class="font-medium text-foreground">Issues</span>
-      {#if tracker.provider === 'github'}
-        <span class="text-[10px] text-amber-500">(GitHub — coming soon)</span>
-      {/if}
-    </span>
-    <span class="text-[11px] font-semibold text-foreground">{visibleIssues.length}/{issueRows.length}</span>
-  </Collapsible.Trigger>
+  <div class="flex items-center gap-2 px-2.5 py-2 hover:bg-muted/40">
+    <Collapsible.Trigger
+      class="group flex min-w-0 flex-1 items-center justify-between gap-2 text-left text-xs font-medium"
+    >
+      <span class="flex min-w-0 items-center gap-1.5">
+        <ChevronRight
+          class="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
+        />
+        <span class="font-medium text-foreground">Issues</span>
+        {#if tracker.provider === 'github'}
+          <span class="text-[10px] text-amber-500">(GitHub — coming soon)</span>
+        {/if}
+      </span>
+      <span class="flex shrink-0 items-baseline gap-1.5">
+        <span class="text-base font-semibold leading-none text-foreground">{visibleIssues.length}</span>
+        <span class="text-[10px] text-muted-foreground">/ {issueRows.length}</span>
+        {#if solvedCount > 0}
+          <span class="text-[10px] text-emerald-500">{solvedCount} solved</span>
+        {/if}
+      </span>
+    </Collapsible.Trigger>
+    {#if tracker.provider !== 'github' && issueRows.length > 0}
+      <label class="flex shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+        <Checkbox
+          checked={hideSolved}
+          onCheckedChange={(v) => featuresStore.setHideSolvedIssues(cwd, v === true)}
+        />
+        Hide solved
+      </label>
+    {/if}
+  </div>
   <Collapsible.Content class="border-t border-border">
     {#if tracker.provider === 'github'}
       <div class="px-3 py-3 text-[11px] text-muted-foreground">
@@ -99,24 +116,6 @@
         No issues yet. Use <span class="font-mono">/to-issues</span> from a plan to publish them.
       </div>
     {:else}
-      <div class="flex items-center justify-between gap-2 border-b border-border bg-muted/20 px-2.5 py-2">
-        <div class="flex min-w-0 items-baseline gap-1.5">
-          <span class="text-base font-semibold leading-none text-foreground">{issueRows.length}</span>
-          <span class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            issues
-          </span>
-          {#if solvedCount > 0}
-            <span class="text-[10px] text-emerald-500">{solvedCount} solved</span>
-          {/if}
-        </div>
-        <label class="flex shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-          <Checkbox
-            checked={hideSolved}
-            onCheckedChange={(v) => featuresStore.setHideSolvedIssues(cwd, v === true)}
-          />
-          Hide solved
-        </label>
-      </div>
       <ul class="divide-y divide-border">
         {#each visibleIssues as issue (issue.relativePath)}
           <li class="flex items-center gap-2 px-2.5 py-2 hover:bg-muted/40">
@@ -137,14 +136,14 @@
             </span>
             {#if !isSolved(issue.status)}
               <Button
-                variant="outline"
-                size="xs"
+                variant="ghost"
+                size="icon-xs"
                 disabled={updatingByPath[issue.relativePath] === true}
                 onclick={() => void markSolved(issue)}
+                aria-label="Mark issue as solved"
                 title="Mark as solved"
               >
                 <CircleCheck class="size-3" />
-                Solved
               </Button>
             {/if}
             <Button
