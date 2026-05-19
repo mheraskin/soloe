@@ -17,6 +17,7 @@
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import FeaturePicker from './FeaturePicker.svelte';
+  import FeatureHero from './FeatureHero.svelte';
   import CoverageMapSection from './CoverageMapSection.svelte';
   import PlansSection from './PlansSection.svelte';
   import IssuesSection from './IssuesSection.svelte';
@@ -120,7 +121,7 @@
         size="icon-xs"
         onclick={onRefresh}
         disabled={!activeCwd || state?.loading}
-        aria-label="Refresh grilling snapshot"
+        aria-label="Refresh feature snapshot"
         title="Refresh"
       >
         {#if state?.loading}
@@ -147,8 +148,11 @@
   </header>
 
   {#if !activeCwd}
-    <div class="flex flex-1 items-center justify-center px-4 text-center text-xs text-muted-foreground">
-      Select a session to inspect its grilling work.
+    <div class="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+      <Microscope class="size-6 text-muted-foreground/50" />
+      <span class="text-xs text-muted-foreground">
+        Select a session to inspect its features.
+      </span>
     </div>
   {:else if state?.error && !snapshot}
     <div class="flex flex-col items-center justify-center gap-2 px-3 py-6 text-center text-xs text-destructive">
@@ -179,7 +183,12 @@
         {/if}
 
         {#if selectedSlug}
-          {#key activeCwd}
+          {#key activeCwd + ':' + selectedSlug}
+            <FeatureHero
+              slug={selectedSlug}
+              snapshot={snapshot}
+              onOpenFile={onOpenFile}
+            />
             {#if snapshot.coverage}
               <CoverageMapSection
                 cwd={activeCwd}
@@ -198,14 +207,21 @@
             />
           {/key}
         {:else if snapshot.features.length === 0}
-          <div class="rounded-md border border-dashed border-border px-3 py-4 text-[11px] text-muted-foreground">
-            Nothing grilling yet. Run <span class="font-mono">/grill-with-docs</span> in a session to
-            seed <span class="font-mono">docs/grill/&lt;slug&gt;/</span>, <span class="font-mono">docs/plans/</span>,
-            and <span class="font-mono">.scratch/&lt;slug&gt;/</span> for this worktree.
+          <div class="flex flex-col items-center gap-2 rounded-md border border-dashed border-border px-3 py-6 text-center">
+            <Microscope class="size-5 text-muted-foreground/50" />
+            <div class="flex flex-col gap-1">
+              <span class="text-xs font-medium text-foreground">No features yet</span>
+              <span class="text-[11px] leading-snug text-muted-foreground">
+                Run <span class="font-mono">/grill-with-docs</span> in a session to seed
+                <span class="font-mono">docs/grill/&lt;slug&gt;/</span>,
+                <span class="font-mono">docs/plans/</span>, and
+                <span class="font-mono">.scratch/&lt;slug&gt;/</span> for this worktree.
+              </span>
+            </div>
           </div>
         {:else}
-          <div class="rounded-md border border-dashed border-border px-3 py-4 text-[11px] text-muted-foreground">
-            Pick a grilling session above to inspect its coverage map, plans, and issues.
+          <div class="rounded-md border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+            Pick a feature above to inspect its coverage map, plans, and issues.
           </div>
         {/if}
 
