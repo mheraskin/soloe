@@ -104,6 +104,7 @@
     onclick={toggle}
     aria-haspopup="listbox"
     aria-expanded={open}
+    data-feature-picker-trigger
   >
     <span class="min-w-0 flex-1 truncate font-mono">
       {value ?? 'Pick grilling…'}

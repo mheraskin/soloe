@@ -8,6 +8,7 @@
     Microscope
   } from '@lucide/svelte';
   import type { BranchStatus } from '@shared/types/features.js';
+  import { onMount } from 'svelte';
   import { sessions } from '../../stores/sessions.svelte';
   import { featuresStore, type FeatureContext } from '../../stores/features.svelte';
   import { filesStore } from '../../stores/files.svelte';
@@ -96,6 +97,15 @@
     if (!activeCwd) return;
     void featuresStore.refresh(activeCwd).catch(reportError);
   }
+
+  onMount(() => {
+    const onRefocus = () => {
+      if (rightRail.activeTab !== 'feature') return;
+      document.querySelector<HTMLElement>('[data-feature-picker-trigger]')?.focus();
+    };
+    window.addEventListener('soloe:refocus-rail', onRefocus);
+    return () => window.removeEventListener('soloe:refocus-rail', onRefocus);
+  });
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
