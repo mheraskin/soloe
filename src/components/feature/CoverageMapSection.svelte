@@ -119,7 +119,7 @@
               </span>
             </summary>
             <ul class="space-y-0.5 px-2 pb-2">
-              {#each section.entries as entry (entry.id)}
+              {#each section.entries as entry, entryIndex (`${section.id}:${entry.lineIndex}:${entry.id}:${entryIndex}`)}
                 <li class="flex items-start gap-2 rounded px-1.5 py-1 hover:bg-muted/40">
                   <button
                     type="button"
