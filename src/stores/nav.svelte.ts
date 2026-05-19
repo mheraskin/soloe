@@ -2,6 +2,7 @@ import type { Session, SessionId } from '@shared/types/sessions.js';
 import type { ProjectId } from '@shared/types/projects.js';
 import { sessions } from './sessions.svelte';
 import { projects } from './projects.svelte';
+import { git } from './git.svelte';
 import { sidebarExpansion } from './sidebar-expansion.svelte';
 import { reportError } from './toast.svelte';
 import { confirmDeleteSession } from '../lib/session-delete-confirmation';
@@ -28,17 +29,29 @@ class NavStore {
     const out: Session[] = [...sessions.standalone];
     for (const projectKey of projectOrder) {
       const list = grouped[projectKey] ?? [];
-      const cwdOrder: string[] = [];
+      const project = projects.get(projectKey as ProjectId);
+      // Build the natural order the same way ProjectSection does: git worktrees
+      // first (so empty worktrees still seed the order), then any session cwds
+      // that aren't git worktrees. Without the git-worktrees seed, the Ctrl+N
+      // numbering doesn't match what the user sees in the sidebar.
+      const naturalOrder: string[] = [];
       const buckets: Record<string, Session[]> = {};
+      const gitWorktrees = project ? git.worktreesFor(project.path) ?? [] : [];
+      for (const wt of gitWorktrees) {
+        const k = normPath(wt.path);
+        if (!buckets[k]) {
+          buckets[k] = [];
+          naturalOrder.push(k);
+        }
+      }
       for (const s of list) {
         const k = normPath(s.cwd);
         if (!buckets[k]) {
           buckets[k] = [];
-          cwdOrder.push(k);
+          naturalOrder.push(k);
         }
         buckets[k].push(s);
       }
-      const project = projects.get(projectKey as ProjectId);
       const userOrder = (project?.worktreeOrder ?? []).map(normPath);
       const seen = new Set<string>();
       const finalOrder: string[] = [];
@@ -48,7 +61,7 @@ class NavStore {
           finalOrder.push(key);
         }
       }
-      for (const key of cwdOrder) {
+      for (const key of naturalOrder) {
         if (!seen.has(key)) {
           seen.add(key);
           finalOrder.push(key);
