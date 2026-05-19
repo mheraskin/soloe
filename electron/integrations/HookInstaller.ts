@@ -96,9 +96,11 @@ const CODEX_EVENT_LABEL: Record<string, string> = {
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-// Bumping forces a one-time reinstall on next boot, which is how soloe picks up
-// the [hooks.state] pre-trust entries codex 0.129+ requires.
-export const SOLOE_HOOK_VERSION = 13;
+// Bumping forces a one-time reinstall on next boot. v14 migrates the Claude
+// MCP entry from ~/.claude/settings.json (where it never actually loaded —
+// Claude Code reads MCP servers from ~/.claude.json) to ~/.claude.json, and
+// scrubs the stale settings.json entry as a side effect.
+export const SOLOE_HOOK_VERSION = 14;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
@@ -192,7 +194,7 @@ export class HookInstaller {
           };
         }
         const [claude, codex] = await Promise.all([
-          this.claudeFileSoloeStatus(this.claudeUserPath(host)),
+          this.claudeHostSoloeStatus(host),
           this.codexFileSoloeStatus(this.codexConfigPath(host))
         ]);
         return { host, claude, codex };
@@ -201,25 +203,57 @@ export class HookInstaller {
     return { hosts };
   }
 
+  // Claude Code reads hooks from ~/.claude/settings.json but MCP servers from
+  // ~/.claude.json (a separate file). Hooks land in settings.json; the soloe
+  // MCP entry lands in claude.json. As a migration step we also scrub any
+  // stale mcpServers.soloe left behind in settings.json by ≤v13.
   async installClaude(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
-    const filePath = this.claudeUserPath(target);
-    const original = await readJsonOrNull(filePath);
-    let updated = mergeClaudeHooks(original ?? {}, HOOK_COMMAND_CLAUDE);
+
+    const settingsPath = this.claudeUserPath(target);
+    const settingsOriginal = await readJsonOrNull(settingsPath);
+    let settingsUpdated = mergeClaudeHooks(settingsOriginal ?? {}, HOOK_COMMAND_CLAUDE);
+    settingsUpdated = stripSoloeMcpEntry(settingsUpdated);
+    await this.writeAtomic(
+      settingsPath,
+      JSON.stringify(settingsUpdated, null, 2) + '\n',
+      settingsOriginal !== null
+    );
+
     if (this.bridge) {
+      const claudeJsonPath = this.claudeJsonPath(target);
+      const claudeJsonOriginal = await readJsonOrNull(claudeJsonPath);
       const url = await this.resolveMcpUrlForHost(target);
-      updated = mergeClaudeMcp(updated, { url, token: this.bridge.token });
+      const claudeJsonUpdated = mergeClaudeMcp(claudeJsonOriginal ?? {}, {
+        url,
+        token: this.bridge.token
+      });
+      await this.writeAtomic(
+        claudeJsonPath,
+        JSON.stringify(claudeJsonUpdated, null, 2) + '\n',
+        claudeJsonOriginal !== null
+      );
     }
-    await this.writeAtomic(filePath, JSON.stringify(updated, null, 2) + '\n', original !== null);
   }
 
   async uninstallClaude(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
-    const filePath = this.claudeUserPath(target);
-    const original = await readJsonOrNull(filePath);
-    if (!original) return;
-    const cleaned = removeSoloeFromClaude(original);
-    await this.writeAtomic(filePath, JSON.stringify(cleaned, null, 2) + '\n', false);
+
+    const settingsPath = this.claudeUserPath(target);
+    const settingsOriginal = await readJsonOrNull(settingsPath);
+    if (settingsOriginal) {
+      const cleaned = removeSoloeFromClaude(settingsOriginal);
+      await this.writeAtomic(settingsPath, JSON.stringify(cleaned, null, 2) + '\n', false);
+    }
+
+    const claudeJsonPath = this.claudeJsonPath(target);
+    const claudeJsonOriginal = await readJsonOrNull(claudeJsonPath);
+    if (claudeJsonOriginal) {
+      const cleaned = removeSoloeFromClaude(claudeJsonOriginal);
+      if (JSON.stringify(cleaned) !== JSON.stringify(claudeJsonOriginal)) {
+        await this.writeAtomic(claudeJsonPath, JSON.stringify(cleaned, null, 2) + '\n', false);
+      }
+    }
   }
 
   async installCodex(host: HookHostKey): Promise<void> {
@@ -276,10 +310,10 @@ export class HookInstaller {
 
   private async refreshClaudeHost(host: HookHost, key: HookHostKey, url: string): Promise<boolean> {
     if (!this.bridge) return false;
-    const filePath = this.claudeUserPath(host);
-    const original = await readJsonOrNull(filePath);
-    if (!original) return false;
-    const status = claudeSoloeStatus(original);
+    const settings = await readJsonOrNull(this.claudeUserPath(host));
+    const claudeJson = await readJsonOrNull(this.claudeJsonPath(host));
+    if (!settings && !claudeJson) return false;
+    const status = combineClaudeSoloeStatus(settings, claudeJson);
     if (!status.installed) return false;
     if (typeof status.version === 'number' && status.version < SOLOE_HOOK_VERSION) {
       await this.installClaude(key);
@@ -304,7 +338,7 @@ export class HookInstaller {
 
   private async refreshClaudeMcp(host: HookHost, url: string): Promise<boolean> {
     if (!this.bridge) return false;
-    const filePath = this.claudeUserPath(host);
+    const filePath = this.claudeJsonPath(host);
     const original = await readJsonOrNull(filePath);
     if (!original) return false;
     const servers = isObject(original['mcpServers']) ? original['mcpServers'] : null;
@@ -360,14 +394,23 @@ export class HookInstaller {
     return path.join(host.homeDir, '.claude', 'settings.json');
   }
 
+  // Claude Code's user-scope MCP server list lives here, not in
+  // ~/.claude/settings.json. Editing the wrong file is a silent failure —
+  // Claude Code launches without the soloe entry attached.
+  private claudeJsonPath(host: HookHost): string {
+    return path.join(host.homeDir, '.claude.json');
+  }
+
   private codexConfigPath(host: HookHost): string {
     return path.join(host.homeDir, '.codex', 'config.toml');
   }
 
-  private async claudeFileSoloeStatus(filePath: string): Promise<AgentIntegrationTargetStatus> {
-    const data = await readJsonOrNull(filePath);
-    if (!data) return emptyStatus();
-    return claudeSoloeStatus(data);
+  private async claudeHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
+    const [settings, claudeJson] = await Promise.all([
+      readJsonOrNull(this.claudeUserPath(host)),
+      readJsonOrNull(this.claudeJsonPath(host))
+    ]);
+    return combineClaudeSoloeStatus(settings, claudeJson);
   }
 
   private async codexFileSoloeStatus(filePath: string): Promise<AgentIntegrationTargetStatus> {
@@ -707,15 +750,50 @@ export function removeSoloeFromCodex(
   return next;
 }
 
-function claudeSoloeStatus(data: Record<string, unknown>): AgentIntegrationTargetStatus {
+// Strips just the soloe MCP entry — used as a one-shot migration when writing
+// settings.json on v14+, so any stale block left there by ≤v13 goes away.
+function stripSoloeMcpEntry(data: Record<string, unknown>): Record<string, unknown> {
+  if (!isObject(data['mcpServers'])) return data;
+  const servers: Record<string, unknown> = { ...data['mcpServers'] };
+  let removed = false;
+  for (const name of Object.keys(servers)) {
+    const entry = servers[name];
+    if (isObject(entry) && entry[SOLOE_MARKER] === true) {
+      delete servers[name];
+      removed = true;
+    }
+  }
+  if (!removed) return data;
+  const next: Record<string, unknown> = { ...data };
+  if (Object.keys(servers).length === 0) {
+    delete next['mcpServers'];
+  } else {
+    next['mcpServers'] = servers;
+  }
+  return next;
+}
+
+// Combines status across the two Claude config files. settings.json owns
+// hooks; claude.json owns the MCP entry. A host counts as installed if either
+// file has a soloe marker; the lowest version across both drives "current".
+function combineClaudeSoloeStatus(
+  settings: Record<string, unknown> | null,
+  claudeJson: Record<string, unknown> | null
+): AgentIntegrationTargetStatus {
   const versions: number[] = [];
+  if (settings) collectClaudeVersions(settings, versions);
+  if (claudeJson) collectClaudeVersions(claudeJson, versions);
+  return statusFromVersions(versions);
+}
+
+function collectClaudeVersions(data: Record<string, unknown>, out: number[]): void {
   const hooks = data['hooks'];
   if (isObject(hooks)) {
     for (const groups of Object.values(hooks)) {
       if (!Array.isArray(groups)) continue;
       for (const group of groups) {
         const version = soloeClaudeEntryVersion(group);
-        if (version !== null) versions.push(version);
+        if (version !== null) out.push(version);
       }
     }
   }
@@ -723,10 +801,9 @@ function claudeSoloeStatus(data: Record<string, unknown>): AgentIntegrationTarge
   if (isObject(servers)) {
     for (const entry of Object.values(servers)) {
       const version = soloeMcpEntryVersion(entry);
-      if (version !== null) versions.push(version);
+      if (version !== null) out.push(version);
     }
   }
-  return statusFromVersions(versions);
 }
 
 function codexSoloeStatus(data: Record<string, unknown>): AgentIntegrationTargetStatus {

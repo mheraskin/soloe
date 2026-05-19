@@ -675,13 +675,15 @@ describe('HookInstaller with bridge — MCP registration', () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
-  it('installClaude writes both hooks and MCP server entry', async () => {
+  it('installClaude writes hooks to settings.json and MCP to ~/.claude.json', async () => {
     await installer.installClaude(LOCAL);
-    const written = JSON.parse(
+    const settings = JSON.parse(
       await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
     );
-    expect(written.hooks).toBeDefined();
-    expect(written.mcpServers.soloe).toMatchObject({
+    expect(settings.hooks).toBeDefined();
+    expect(settings.mcpServers).toBeUndefined();
+    const claudeJson = JSON.parse(await fs.readFile(join(homeDir, '.claude.json'), 'utf8'));
+    expect(claudeJson.mcpServers.soloe).toMatchObject({
       _soloe: true,
       _soloe_version: SOLOE_HOOK_VERSION,
       type: 'http',
@@ -690,14 +692,16 @@ describe('HookInstaller with bridge — MCP registration', () => {
     });
   });
 
-  it('uninstallClaude strips both hooks and MCP entry', async () => {
+  it('uninstallClaude strips hooks from settings.json and MCP from ~/.claude.json', async () => {
     await installer.installClaude(LOCAL);
     await installer.uninstallClaude(LOCAL);
-    const written = JSON.parse(
+    const settings = JSON.parse(
       await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
     );
-    expect(written.hooks).toBeUndefined();
-    expect(written.mcpServers).toBeUndefined();
+    expect(settings.hooks).toBeUndefined();
+    expect(settings.mcpServers).toBeUndefined();
+    const claudeJson = JSON.parse(await fs.readFile(join(homeDir, '.claude.json'), 'utf8'));
+    expect(claudeJson.mcpServers).toBeUndefined();
   });
 
   it('installCodex writes both hooks and MCP server entry', async () => {
@@ -726,10 +730,8 @@ describe('HookInstaller with bridge — MCP registration', () => {
   it('reinstall replaces the MCP entry rather than stacking it', async () => {
     await installer.installClaude(LOCAL);
     await installer.installClaude(LOCAL);
-    const written = JSON.parse(
-      await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
-    );
-    expect(Object.keys(written.mcpServers)).toEqual(['soloe']);
+    const claudeJson = JSON.parse(await fs.readFile(join(homeDir, '.claude.json'), 'utf8'));
+    expect(Object.keys(claudeJson.mcpServers)).toEqual(['soloe']);
   });
 
   it('routes WSL host MCP URL through host.wsl.internal', async () => {
@@ -740,20 +742,19 @@ describe('HookInstaller with bridge — MCP registration', () => {
         bridge: { port: 17896, token: 'tok-123' }
       });
       await multi.installClaude({ kind: 'wsl', distro: 'Ubuntu' });
-      const written = JSON.parse(
-        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
+      const claudeJson = JSON.parse(
+        await fs.readFile(join(wslHomeDir, '.claude.json'), 'utf8')
       );
-      expect(written.mcpServers.soloe.url).toBe('http://host.wsl.internal:17896/mcp');
+      expect(claudeJson.mcpServers.soloe.url).toBe('http://host.wsl.internal:17896/mcp');
     } finally {
       rmSync(wslHomeDir, { recursive: true, force: true });
     }
   });
 
   it('status reports as not-current when MCP entry is at an older version', async () => {
-    const settingsPath = join(homeDir, '.claude', 'settings.json');
-    await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
+    const claudeJsonPath = join(homeDir, '.claude.json');
     await fs.writeFile(
-      settingsPath,
+      claudeJsonPath,
       JSON.stringify({
         mcpServers: {
           soloe: { _soloe: true, _soloe_version: 5, type: 'http', url: 'http://x' }
@@ -762,6 +763,51 @@ describe('HookInstaller with bridge — MCP registration', () => {
     );
     const s = await installer.status();
     expect(s.hosts[0]!.claude).toEqual({ installed: true, current: false, version: 5 });
+  });
+
+  it('install scrubs a stale mcpServers.soloe left in settings.json by ≤v13', async () => {
+    const settingsPath = join(homeDir, '.claude', 'settings.json');
+    await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        mcpServers: {
+          soloe: {
+            _soloe: true,
+            _soloe_version: 13,
+            type: 'http',
+            url: 'http://127.0.0.1:99999/mcp',
+            headers: { Authorization: 'Bearer stale' }
+          }
+        }
+      })
+    );
+    await installer.installClaude(LOCAL);
+    const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    expect(settings.mcpServers).toBeUndefined();
+    expect(settings.hooks).toBeDefined();
+    const claudeJson = JSON.parse(await fs.readFile(join(homeDir, '.claude.json'), 'utf8'));
+    expect(claudeJson.mcpServers.soloe._soloe_version).toBe(SOLOE_HOOK_VERSION);
+    expect(claudeJson.mcpServers.soloe.headers.Authorization).toBe('Bearer tok-123');
+  });
+
+  it('migration scrub preserves user-managed mcpServers entries in settings.json', async () => {
+    const settingsPath = join(homeDir, '.claude', 'settings.json');
+    await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        mcpServers: {
+          soloe: { _soloe: true, _soloe_version: 13, type: 'http', url: 'http://stale' },
+          other: { type: 'http', url: 'http://example.com' }
+        }
+      })
+    );
+    await installer.installClaude(LOCAL);
+    const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    expect(settings.mcpServers).toEqual({
+      other: { type: 'http', url: 'http://example.com' }
+    });
   });
 
   it('status reports as current when fully installed at the latest version', async () => {
@@ -795,11 +841,16 @@ describe('HookInstaller without bridge', () => {
   it('installClaude without bridge writes hooks but no MCP entry', async () => {
     const installer = new HookInstaller({ hosts: [localHost(homeDir)] });
     await installer.installClaude(LOCAL);
-    const written = JSON.parse(
+    const settings = JSON.parse(
       await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
     );
-    expect(written.hooks).toBeDefined();
-    expect(written.mcpServers).toBeUndefined();
+    expect(settings.hooks).toBeDefined();
+    expect(settings.mcpServers).toBeUndefined();
+    const claudeJsonExists = await fs
+      .stat(join(homeDir, '.claude.json'))
+      .then(() => true)
+      .catch(() => false);
+    expect(claudeJsonExists).toBe(false);
   });
 });
 
@@ -826,15 +877,15 @@ describe('refreshMcpForInstalledHosts', () => {
       bridge: { port: 17896, token: 'tok-123' }
     });
     await installer.installClaude(LOCAL);
-    const settingsPath = join(homeDir, '.claude', 'settings.json');
-    const original = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    const claudeJsonPath = join(homeDir, '.claude.json');
+    const original = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
     original.mcpServers.soloe.url = 'http://127.0.0.1:99999/mcp';
-    await fs.writeFile(settingsPath, JSON.stringify(original, null, 2));
+    await fs.writeFile(claudeJsonPath, JSON.stringify(original, null, 2));
 
     const res = await installer.refreshMcpForInstalledHosts();
     expect(res.errors).toEqual([]);
     expect(res.rewritten).toEqual([{ kind: 'windows' }]);
-    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    const after = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
     expect(after.mcpServers.soloe.url).toBe('http://127.0.0.1:17896/mcp');
   });
 
@@ -844,14 +895,14 @@ describe('refreshMcpForInstalledHosts', () => {
       bridge: { port: 17896, token: 'tok-NEW' }
     });
     await installer.installClaude(LOCAL);
-    const settingsPath = join(homeDir, '.claude', 'settings.json');
-    const original = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    const claudeJsonPath = join(homeDir, '.claude.json');
+    const original = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
     original.mcpServers.soloe.headers.Authorization = 'Bearer tok-OLD';
-    await fs.writeFile(settingsPath, JSON.stringify(original, null, 2));
+    await fs.writeFile(claudeJsonPath, JSON.stringify(original, null, 2));
 
     const res = await installer.refreshMcpForInstalledHosts();
     expect(res.rewritten).toEqual([{ kind: 'windows' }]);
-    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    const after = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
     expect(after.mcpServers.soloe.headers.Authorization).toBe('Bearer tok-NEW');
   });
 
@@ -883,16 +934,19 @@ describe('refreshMcpForInstalledHosts', () => {
     });
     await installer.installClaude(LOCAL);
     await installer.installCodex(LOCAL);
-    const claudeBefore = await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8');
+    const settingsBefore = await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8');
+    const claudeJsonBefore = await fs.readFile(join(homeDir, '.claude.json'), 'utf8');
     const codexBefore = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
 
     const res = await installer.refreshMcpForInstalledHosts();
     expect(res.rewritten).toEqual([]);
     expect(res.errors).toEqual([]);
 
-    const claudeAfter = await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8');
+    const settingsAfter = await fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8');
+    const claudeJsonAfter = await fs.readFile(join(homeDir, '.claude.json'), 'utf8');
     const codexAfter = await fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8');
-    expect(claudeAfter).toBe(claudeBefore);
+    expect(settingsAfter).toBe(settingsBefore);
+    expect(claudeJsonAfter).toBe(claudeJsonBefore);
     expect(codexAfter).toBe(codexBefore);
   });
 
@@ -901,10 +955,9 @@ describe('refreshMcpForInstalledHosts', () => {
       hosts: [localHost(homeDir)],
       bridge: { port: 17896, token: 'tok-123' }
     });
-    const settingsPath = join(homeDir, '.claude', 'settings.json');
-    await fs.mkdir(join(homeDir, '.claude'), { recursive: true });
+    const claudeJsonPath = join(homeDir, '.claude.json');
     await fs.writeFile(
-      settingsPath,
+      claudeJsonPath,
       JSON.stringify({
         mcpServers: {
           soloe: { type: 'http', url: 'http://user.example.com/mcp' }
@@ -914,7 +967,7 @@ describe('refreshMcpForInstalledHosts', () => {
 
     const res = await installer.refreshMcpForInstalledHosts();
     expect(res.rewritten).toEqual([]);
-    const after = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    const after = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
     expect(after.mcpServers.soloe.url).toBe('http://user.example.com/mcp');
   });
 
@@ -942,28 +995,20 @@ describe('refreshMcpForInstalledHosts', () => {
       });
       // Install with the probe → URL written uses the probed IP.
       await installer.installClaude({ kind: 'wsl', distro: 'Ubuntu' });
-      const installed = JSON.parse(
-        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
-      );
+      const claudeJsonPath = join(wslHomeDir, '.claude.json');
+      const installed = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
       expect(installed.mcpServers.soloe.url).toBe('http://172.21.0.1:17896/mcp');
 
       // Simulate a reboot where the IP drifted to a new value.
-      const drifted = JSON.parse(
-        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
-      );
+      const drifted = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
       drifted.mcpServers.soloe.url = 'http://172.99.0.1:17896/mcp';
-      await fs.writeFile(
-        join(wslHomeDir, '.claude', 'settings.json'),
-        JSON.stringify(drifted, null, 2)
-      );
+      await fs.writeFile(claudeJsonPath, JSON.stringify(drifted, null, 2));
 
       const res = await installer.refreshMcpForInstalledHosts();
       expect(res.errors).toEqual([]);
       expect(res.rewritten).toEqual([{ kind: 'wsl', distro: 'Ubuntu' }]);
       expect(probed).toContain('Ubuntu');
-      const after = JSON.parse(
-        await fs.readFile(join(wslHomeDir, '.claude', 'settings.json'), 'utf8')
-      );
+      const after = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
       expect(after.mcpServers.soloe.url).toBe('http://172.21.0.1:17896/mcp');
     } finally {
       rmSync(wslHomeDir, { recursive: true, force: true });
@@ -982,15 +1027,14 @@ describe('refreshMcpForInstalledHosts', () => {
       });
       // Local install + drift so there's something to refresh on the windows side.
       await installer.installClaude(LOCAL);
-      const settingsPath = join(homeDir, '.claude', 'settings.json');
-      const original = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+      const claudeJsonPath = join(homeDir, '.claude.json');
+      const original = JSON.parse(await fs.readFile(claudeJsonPath, 'utf8'));
       original.mcpServers.soloe.url = 'http://127.0.0.1:99999/mcp';
-      await fs.writeFile(settingsPath, JSON.stringify(original, null, 2));
+      await fs.writeFile(claudeJsonPath, JSON.stringify(original, null, 2));
 
       // Pre-seed a stale WSL config to give the refresher something to attempt.
-      await fs.mkdir(join(wslHomeDir, '.claude'), { recursive: true });
       await fs.writeFile(
-        join(wslHomeDir, '.claude', 'settings.json'),
+        join(wslHomeDir, '.claude.json'),
         JSON.stringify({
           mcpServers: {
             soloe: {
