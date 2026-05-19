@@ -23,12 +23,6 @@ import { sendBracketedPaste } from '../lib/terminal-paste';
 
 const LAST_SELECTED_KEY = 'soloe.lastSelectedByProject.v1';
 const STANDALONE_KEY = '__standalone__';
-const HANDOFF_READY_TIMEOUT_MS = 10_000;
-const HANDOFF_READY_POLL_MS = 100;
-const HANDOFF_STARTUP_FALLBACK_MS: Record<AgentRuntimeProvider, number> = {
-  claude_code: 2_000,
-  codex: 4_000
-};
 
 function readLastSelectedMap(): Record<string, SessionId> {
   try {
@@ -375,7 +369,6 @@ class SessionsStore {
     });
     const terminalId = await this.waitForTerminalId(created.id, 5000);
     if (!terminalId) throw new Error(`Terminal did not start for ${created.name}`);
-    await this.waitForAgentHandoffReady(created.id, provider);
     await this.pasteContinuationPrompt(origin, terminalId);
     return created;
   }
@@ -403,12 +396,7 @@ class SessionsStore {
       throw new Error('Choose a Claude Code or Codex session');
     }
 
-    const alreadyRunning = this.terminalIdFor(target.id) !== null;
     const terminalId = await this.ensureTerminalId(target.id);
-    if (!alreadyRunning) {
-      const provider = this.agentProviderFor(target);
-      if (provider) await this.waitForAgentHandoffReady(target.id, provider);
-    }
     await this.pasteContinuationPrompt(origin, terminalId);
     this.select(target.id);
     return target;
@@ -675,38 +663,6 @@ class SessionsStore {
       continuationPrompt(origin, this.observationFor(origin.id)),
       true
     );
-  }
-
-  private async waitForAgentHandoffReady(
-    id: SessionId,
-    provider: AgentRuntimeProvider
-  ): Promise<void> {
-    const deadline = Date.now() + HANDOFF_READY_TIMEOUT_MS;
-    const fallbackAt = Date.now() + HANDOFF_STARTUP_FALLBACK_MS[provider];
-    while (Date.now() < deadline) {
-      if (this.hasAgentReadySignal(id, provider)) return;
-      if (Date.now() >= fallbackAt && this.terminalIdFor(id)) return;
-      await new Promise((resolve) => setTimeout(resolve, HANDOFF_READY_POLL_MS));
-    }
-  }
-
-  private hasAgentReadySignal(id: SessionId, provider: AgentRuntimeProvider): boolean {
-    const observed = this.observationFor(id);
-    if (
-      observed?.provider === provider
-      && observed.providerThreadId
-      && observed.state !== 'exited'
-      && observed.state !== 'failed'
-      && observed.state !== 'usage_limited'
-    ) {
-      return true;
-    }
-
-    const session = this.sessions.find((s) => s.id === id);
-    const runtime = session?.currentAgentRuntime;
-    return runtime?.provider === provider
-      && runtime.status === 'active'
-      && Boolean(runtime.providerThreadId);
   }
 
   private isSameWorktree(a: Session, b: Session): boolean {
