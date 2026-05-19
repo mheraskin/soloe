@@ -42,7 +42,8 @@ import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
   FeatureChangeEvent,
   FeatureScanRequest,
-  FeatureSetBranchStatusRequest
+  FeatureSetBranchStatusRequest,
+  FeatureSetIssueStatusRequest
 } from '@shared/types/features.js';
 import type {
   CommitsBetweenRequest,
@@ -297,6 +298,8 @@ const soloe: SoloeApi = {
     scan: (request: FeatureScanRequest) => ipcRenderer.invoke(IpcChannels.features.scan, request),
     setBranchStatus: (request: FeatureSetBranchStatusRequest) =>
       ipcRenderer.invoke(IpcChannels.features.setBranchStatus, request),
+    setIssueStatus: (request: FeatureSetIssueStatusRequest) =>
+      ipcRenderer.invoke(IpcChannels.features.setIssueStatus, request),
     subscribe: (request) => ipcRenderer.invoke(IpcChannels.features.subscribe, request),
     unsubscribe: (request) => ipcRenderer.invoke(IpcChannels.features.unsubscribe, request),
     onChange: (cb: (event: FeatureChangeEvent) => void) =>

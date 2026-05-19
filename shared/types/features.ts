@@ -44,9 +44,13 @@ export interface FeaturePlanEntry {
 }
 
 export interface FeatureIssueEntry {
+  kind: 'issue' | 'artifact';
   relativePath: string;
   // Filename without the `.md` extension, e.g. "01-backend-permissions-and-role-seeds".
   name: string;
+  // UI label for non-issue artifacts where the raw filename is the meaningful
+  // thing to show, e.g. "playwright.md".
+  displayName: string;
   // Numeric prefix parsed from the filename if present, used for ordering.
   number: number | null;
   // First line of the file (typically "# Title") with the leading `#` stripped.
@@ -124,6 +128,14 @@ export interface FeatureSetBranchStatusRequest {
   // The branch id, e.g. "1A". Matched against the entry id parsed from the file.
   branchId: string;
   status: BranchStatus;
+}
+
+export interface FeatureSetIssueStatusRequest {
+  cwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
+  relativePath: string;
+  status: string;
 }
 
 export interface FeatureChangeEvent {

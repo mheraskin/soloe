@@ -54,8 +54,10 @@ import type { CrashLogSummary, DiagnosticItem } from './diagnostics.js';
 import type {
   CoverageMapSnapshot,
   FeatureChangeEvent,
+  FeatureIssueEntry,
   FeatureScanRequest,
   FeatureSetBranchStatusRequest,
+  FeatureSetIssueStatusRequest,
   FeatureSnapshot
 } from './features.js';
 import type {
@@ -239,6 +241,7 @@ export const IpcChannels = {
   features: {
     scan: 'features:scan',
     setBranchStatus: 'features:set-branch-status',
+    setIssueStatus: 'features:set-issue-status',
     subscribe: 'features:subscribe',
     unsubscribe: 'features:unsubscribe',
     change: 'features:change'
@@ -508,6 +511,7 @@ export interface FeaturesApi {
   setBranchStatus(
     request: FeatureSetBranchStatusRequest
   ): Promise<IpcResult<CoverageMapSnapshot>>;
+  setIssueStatus(request: FeatureSetIssueStatusRequest): Promise<IpcResult<FeatureIssueEntry>>;
   subscribe(request: {
     cwd: string;
     runMode: 'windows' | 'wsl';

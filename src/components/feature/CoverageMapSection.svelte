@@ -1,16 +1,23 @@
 <script lang="ts">
   import { ChevronRight, ExternalLink } from '@lucide/svelte';
   import type { BranchStatus, CoverageMapSnapshot } from '@shared/types/features.js';
+  import { featuresStore } from '../../stores/features.svelte';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import { Button } from '$lib/components/ui/button';
 
   interface Props {
+    cwd: string;
     coverage: CoverageMapSnapshot;
     onToggleBranch: (branchId: string, next: BranchStatus) => void;
     onOpenFile: (relativePath: string) => void;
   }
 
-  let { coverage, onToggleBranch, onOpenFile }: Props = $props();
+  let { cwd, coverage, onToggleBranch, onOpenFile }: Props = $props();
+  let open = $derived(featuresStore.sectionOpenFor(cwd, 'coverage', true));
+
+  function onOpenChange(nextOpen: boolean): void {
+    featuresStore.setSectionOpen(cwd, 'coverage', nextOpen);
+  }
 
   let total = $derived(
     coverage.counts.todo +
@@ -41,7 +48,7 @@
   };
 </script>
 
-<Collapsible.Root open={true} class="rounded-md border border-border">
+<Collapsible.Root {open} onOpenChange={onOpenChange} class="rounded-md border border-border">
   <Collapsible.Trigger
     class="group flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs font-medium hover:bg-muted/40"
   >

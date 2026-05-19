@@ -1,5 +1,6 @@
 import type {
   BranchStatus,
+  FeatureIssueEntry,
   FeatureSnapshot
 } from '@shared/types/features.js';
 import type { RunMode } from '@shared/types/sessions.js';
@@ -26,6 +27,12 @@ interface CwdState {
 }
 
 const SELECTED_SLUG_KEY = 'soloe.featureSelectedSlug.v1';
+const FEATURE_UI_KEY = 'soloe.featureUi.v1';
+
+interface FeatureUiState {
+  hideSolvedIssues?: boolean;
+  collapsed?: Record<string, boolean>;
+}
 
 function emptyState(context: FeatureContext): CwdState {
   return {
@@ -48,6 +55,8 @@ class FeaturesStore {
   // mirror so subscribers re-derive after writes.
   private selectedSlugByCwdRaw: Record<string, string | null> = {};
   private selectedSlugByCwd = $state<Record<string, string | null>>({});
+  private uiByCwdRaw: Record<string, FeatureUiState> = {};
+  private uiByCwd = $state<Record<string, FeatureUiState>>({});
 
   constructor() {
     if (typeof localStorage === 'undefined') return;
@@ -64,6 +73,16 @@ class FeaturesStore {
       }
     } catch {
       // ignore corrupt persisted state — restart with empty selection.
+    }
+    try {
+      const raw = localStorage.getItem(FEATURE_UI_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, FeatureUiState>;
+        this.uiByCwdRaw = parsed && typeof parsed === 'object' ? parsed : {};
+        this.uiByCwd = { ...this.uiByCwdRaw };
+      }
+    } catch {
+      // ignore corrupt persisted UI state.
     }
   }
 
@@ -91,6 +110,43 @@ class FeaturesStore {
   selectedSlugFor(cwd: string | null | undefined): string | null {
     if (!cwd) return null;
     return this.selectedSlugByCwd[cwd] ?? null;
+  }
+
+  hideSolvedIssuesFor(cwd: string | null | undefined): boolean {
+    if (!cwd) return false;
+    return this.uiByCwd[cwd]?.hideSolvedIssues ?? false;
+  }
+
+  setHideSolvedIssues(cwd: string, value: boolean): void {
+    if (!cwd) return;
+    untrack(() => {
+      const prev = this.uiByCwdRaw[cwd] ?? {};
+      if ((prev.hideSolvedIssues ?? false) === value) return;
+      this.uiByCwdRaw[cwd] = { ...prev, hideSolvedIssues: value };
+      this.uiByCwd = { ...this.uiByCwd, [cwd]: this.uiByCwdRaw[cwd] };
+      this.persistUi();
+    });
+  }
+
+  sectionOpenFor(cwd: string | null | undefined, section: string, fallback = true): boolean {
+    if (!cwd) return fallback;
+    const collapsed = this.uiByCwd[cwd]?.collapsed?.[section];
+    return collapsed === undefined ? fallback : !collapsed;
+  }
+
+  setSectionOpen(cwd: string, section: string, open: boolean): void {
+    if (!cwd || !section) return;
+    untrack(() => {
+      const prev = this.uiByCwdRaw[cwd] ?? {};
+      const collapsed = { ...(prev.collapsed ?? {}) };
+      const wasOpen = collapsed[section] !== true;
+      if (wasOpen === open) return;
+      if (open) delete collapsed[section];
+      else collapsed[section] = true;
+      this.uiByCwdRaw[cwd] = { ...prev, collapsed };
+      this.uiByCwd = { ...this.uiByCwd, [cwd]: this.uiByCwdRaw[cwd] };
+      this.persistUi();
+    });
   }
 
   setSelectedSlug(cwd: string, slug: string | null): void {
@@ -198,6 +254,42 @@ class FeaturesStore {
     }
   }
 
+  async setIssueStatus(
+    cwd: string,
+    relativePath: string,
+    status: string
+  ): Promise<FeatureIssueEntry | null> {
+    const state = this.stateByCwd[cwd];
+    if (!state) return null;
+    try {
+      const issue = await ipc.features.setIssueStatus({
+        cwd,
+        runMode: state.context.runMode,
+        ...(state.context.wslDistro ? { wslDistro: state.context.wslDistro } : {}),
+        relativePath,
+        status
+      });
+      const current = this.stateByCwd[cwd];
+      if (current?.snapshot) {
+        this.patch(cwd, {
+          snapshot: {
+            ...current.snapshot,
+            issues: current.snapshot.issues.map((item) =>
+              item.relativePath === issue.relativePath ? issue : item
+            )
+          }
+        });
+      }
+      void this.refresh(cwd).catch(() => undefined);
+      return issue;
+    } catch (err) {
+      this.patch(cwd, {
+        error: err instanceof Error ? err.message : String(err)
+      });
+      return null;
+    }
+  }
+
   async subscribe(cwd: string): Promise<void> {
     const request = untrack(() => {
       const state = this.stateByCwd[cwd];
@@ -255,6 +347,15 @@ class FeaturesStore {
     if (typeof localStorage === 'undefined') return;
     try {
       localStorage.setItem(SELECTED_SLUG_KEY, JSON.stringify(this.selectedSlugByCwdRaw));
+    } catch {
+      // Quota — ignore.
+    }
+  }
+
+  private persistUi(): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(FEATURE_UI_KEY, JSON.stringify(this.uiByCwdRaw));
     } catch {
       // Quota — ignore.
     }

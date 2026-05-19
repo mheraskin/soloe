@@ -1,17 +1,24 @@
 <script lang="ts">
   import { ChevronRight, FileText } from '@lucide/svelte';
   import type { FeaturePlanEntry } from '@shared/types/features.js';
+  import { featuresStore } from '../../stores/features.svelte';
   import * as Collapsible from '$lib/components/ui/collapsible';
 
   interface Props {
+    cwd: string;
     plans: FeaturePlanEntry[];
     onOpenFile: (relativePath: string) => void;
   }
 
-  let { plans, onOpenFile }: Props = $props();
+  let { cwd, plans, onOpenFile }: Props = $props();
+  let open = $derived(featuresStore.sectionOpenFor(cwd, 'plans', plans.length > 0));
+
+  function onOpenChange(nextOpen: boolean): void {
+    featuresStore.setSectionOpen(cwd, 'plans', nextOpen);
+  }
 </script>
 
-<Collapsible.Root open={plans.length > 0} class="rounded-md border border-border">
+<Collapsible.Root {open} onOpenChange={onOpenChange} class="rounded-md border border-border">
   <Collapsible.Trigger
     class="group flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs font-medium hover:bg-muted/40"
   >

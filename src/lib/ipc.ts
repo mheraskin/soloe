@@ -20,7 +20,8 @@ import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
   FeatureChangeEvent,
   FeatureScanRequest,
-  FeatureSetBranchStatusRequest
+  FeatureSetBranchStatusRequest,
+  FeatureSetIssueStatusRequest
 } from '@shared/types/features.js';
 import type {
   CommitsBetweenRequest,
@@ -273,6 +274,8 @@ export const ipc = {
       unwrap(await c.features.scan(toIpcPayload(request))),
     setBranchStatus: async (request: FeatureSetBranchStatusRequest) =>
       unwrap(await c.features.setBranchStatus(toIpcPayload(request))),
+    setIssueStatus: async (request: FeatureSetIssueStatusRequest) =>
+      unwrap(await c.features.setIssueStatus(toIpcPayload(request))),
     subscribe: async (request: {
       cwd: string;
       runMode: 'windows' | 'wsl';

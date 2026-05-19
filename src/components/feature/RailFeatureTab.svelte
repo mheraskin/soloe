@@ -71,7 +71,11 @@
   }
 
   function onOpenFile(relativePath: string): void {
-    if (!activeCwd) return;
+    if (!activeCwd || !activeContext) return;
+    filesStore.setContext(activeCwd, {
+      runMode: activeContext.runMode,
+      ...(activeContext.wslDistro ? { wslDistro: activeContext.wslDistro } : {})
+    });
     void filesStore
       .openFileAt(activeCwd, relativePath)
       .then(() => rightRail.openTab('files'))
@@ -81,6 +85,11 @@
   function onToggleBranch(branchId: string, next: BranchStatus): void {
     if (!activeCwd) return;
     void featuresStore.setBranchStatus(activeCwd, branchId, next).catch(reportError);
+  }
+
+  async function onSetIssueStatus(relativePath: string, status: string): Promise<void> {
+    if (!activeCwd) return;
+    await featuresStore.setIssueStatus(activeCwd, relativePath, status);
   }
 
   function onRefresh(): void {
@@ -159,21 +168,25 @@
           />
         {/if}
 
-        {#if selectedSlug && snapshot.coverage}
-          <CoverageMapSection
-            coverage={snapshot.coverage}
-            onToggleBranch={onToggleBranch}
-            onOpenFile={onOpenFile}
-          />
-        {/if}
-
         {#if selectedSlug}
-          <PlansSection plans={snapshot.plans} onOpenFile={onOpenFile} />
-          <IssuesSection
-            issues={snapshot.issues}
-            tracker={snapshot.tracker}
-            onOpenFile={onOpenFile}
-          />
+          {#key activeCwd}
+            {#if snapshot.coverage}
+              <CoverageMapSection
+                cwd={activeCwd}
+                coverage={snapshot.coverage}
+                onToggleBranch={onToggleBranch}
+                onOpenFile={onOpenFile}
+              />
+            {/if}
+            <PlansSection cwd={activeCwd} plans={snapshot.plans} onOpenFile={onOpenFile} />
+            <IssuesSection
+              cwd={activeCwd}
+              issues={snapshot.issues}
+              tracker={snapshot.tracker}
+              onOpenFile={onOpenFile}
+              onSetStatus={onSetIssueStatus}
+            />
+          {/key}
         {:else if snapshot.features.length === 0}
           <div class="rounded-md border border-dashed border-border px-3 py-4 text-[11px] text-muted-foreground">
             Nothing grilling yet. Run <span class="font-mono">/grill-with-docs</span> in a session to

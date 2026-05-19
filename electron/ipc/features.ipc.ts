@@ -3,7 +3,8 @@ import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   FeatureChangeEvent,
   FeatureScanRequest,
-  FeatureSetBranchStatusRequest
+  FeatureSetBranchStatusRequest,
+  FeatureSetIssueStatusRequest
 } from '@shared/types/features.js';
 import type { FeatureService } from '../features/FeatureService.js';
 import type { FeatureWatcher } from '../features/FeatureWatcher.js';
@@ -40,6 +41,10 @@ export class FeaturesIpc {
       ipcInvoke(() => this.opts.service.writeBranchStatus(request))
     );
 
+    ipcMain.handle(IpcChannels.features.setIssueStatus, (_e, request: FeatureSetIssueStatusRequest) =>
+      ipcInvoke(() => this.opts.service.writeIssueStatus(request))
+    );
+
     ipcMain.handle(
       IpcChannels.features.subscribe,
       (_e, request: { cwd: string; runMode: 'windows' | 'wsl'; wslDistro?: string }) =>
@@ -74,6 +79,7 @@ export class FeaturesIpc {
     if (!this.registered) return;
     ipcMain.removeHandler(IpcChannels.features.scan);
     ipcMain.removeHandler(IpcChannels.features.setBranchStatus);
+    ipcMain.removeHandler(IpcChannels.features.setIssueStatus);
     ipcMain.removeHandler(IpcChannels.features.subscribe);
     ipcMain.removeHandler(IpcChannels.features.unsubscribe);
     for (const sub of this.active.values()) sub.release();

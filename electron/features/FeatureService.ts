@@ -10,6 +10,7 @@ import type {
   FeaturePlanEntry,
   FeatureScanRequest,
   FeatureSetBranchStatusRequest,
+  FeatureSetIssueStatusRequest,
   FeatureSetupStatus,
   FeatureSlug,
   FeatureSnapshot,
@@ -118,6 +119,31 @@ export class FeatureService {
     return this.snapshotCoverage(request.slug, lines);
   }
 
+  async writeIssueStatus(request: FeatureSetIssueStatusRequest): Promise<FeatureIssueEntry> {
+    if (!request.cwd?.trim()) throw new Error('cwd is required');
+    if (!request.relativePath?.trim()) throw new Error('relativePath is required');
+    const host = hostPathFor(request.cwd, request.runMode, request.wslDistro);
+    const normalized = request.relativePath.replace(/\\/g, '/');
+    if (path.isAbsolute(normalized) || normalized.includes('..')) {
+      throw new Error('Issue path must be relative to the worktree');
+    }
+    const filePath = joinPath(host, ...normalized.split('/'));
+    const original = await fs.readFile(filePath, 'utf8');
+    const lines = original.split('\n');
+    const status = request.status.trim() || 'solved';
+    const statusIndex = lines.findIndex((line) => /^Status:\s*/i.test(line));
+    if (statusIndex >= 0) {
+      lines[statusIndex] = `Status: ${status}`;
+    } else {
+      const titleIndex = lines.findIndex((line) => /^#\s+/.test(line));
+      const insertAt = titleIndex >= 0 ? titleIndex + 1 : 0;
+      lines.splice(insertAt, 0, `Status: ${status}`);
+    }
+    const next = lines.join('\n');
+    if (next !== original) await fs.writeFile(filePath, next, 'utf8');
+    return issueEntryFromFile(normalized, await readIssueHead(filePath));
+  }
+
   isSelfWrite(absolutePath: string, mtimeMs: number, graceMs = 1500): boolean {
     const at = this.selfWriteAt.get(absolutePath);
     if (at === undefined) return false;
@@ -197,38 +223,35 @@ export class FeatureService {
     const issuesDir = joinPath(scratchDir, 'issues');
     const issueEntries = await safeReaddir(issuesDir);
     const numbered: FeatureIssueEntry[] = [];
+    const artifacts: FeatureIssueEntry[] = [];
     for (const entry of issueEntries) {
       if (!entry.isFile()) continue;
       if (!entry.name.toLowerCase().endsWith('.md')) continue;
       const filePath = joinPath(issuesDir, entry.name);
       const parsed = await readIssueHead(filePath);
       const relativePath = `.scratch/${slug}/issues/${entry.name}`;
-      const stem = entry.name.replace(/\.md$/i, '');
-      const numMatch = /^(\d+)/.exec(stem);
-      numbered.push({
-        relativePath,
-        name: stem,
-        number: numMatch ? Number(numMatch[1]) : null,
-        title: parsed.title ?? stem,
-        status: parsed.status,
-        isPlaywright: false
-      });
+      const issue = issueEntryFromFile(relativePath, parsed);
+      if (issue.kind === 'issue') numbered.push(issue);
+      else artifacts.push(issue);
     }
     numbered.sort(issueComparator);
+    artifacts.sort((a, b) => a.name.localeCompare(b.name));
 
     const playwrightPath = joinPath(scratchDir, PLAYWRIGHT_FILE);
     const playwright = await readIssueHeadIfExists(playwrightPath);
     if (playwright) {
-      numbered.push({
+      artifacts.push({
+        kind: 'artifact',
         relativePath: `.scratch/${slug}/${PLAYWRIGHT_FILE}`,
         name: 'playwright-e2e',
+        displayName: 'playwright.md',
         number: null,
-        title: playwright.title ?? 'Playwright end-to-end',
-        status: playwright.status,
+        title: 'playwright.md',
+        status: null,
         isPlaywright: true
       });
     }
-    return numbered;
+    return [...numbered, ...artifacts];
   }
 
   private async discoverFeatures(host: string): Promise<FeatureSlug[]> {
@@ -471,6 +494,27 @@ export function parseIssueHead(raw: string): { title: string | null; status: str
     if (title && status) break;
   }
   return { title, status };
+}
+
+function issueEntryFromFile(
+  relativePath: string,
+  parsed: { title: string | null; status: string | null }
+): FeatureIssueEntry {
+  const filename = relativePath.split('/').pop() ?? relativePath;
+  const stem = filename.replace(/\.md$/i, '');
+  const numMatch = /^(\d+)/.exec(stem);
+  const isIssue = Boolean(numMatch);
+  const displayName = isIssue ? stem : filename;
+  return {
+    kind: isIssue ? 'issue' : 'artifact',
+    relativePath,
+    name: stem,
+    displayName,
+    number: numMatch ? Number(numMatch[1]) : null,
+    title: parsed.title ?? displayName,
+    status: isIssue ? parsed.status : null,
+    isPlaywright: false
+  };
 }
 
 function planMatchesSlug(planStem: string, slug: string): boolean {
