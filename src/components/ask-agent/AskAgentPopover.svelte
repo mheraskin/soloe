@@ -89,9 +89,11 @@
       onOpenChange(false);
       return;
     }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    // Enter submits; Shift+Enter inserts a newline. No draft persistence
+    // here, so plain Enter can't lose any user work.
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
-      void send(!e.shiftKey);
+      void send(true);
     }
   }
 
@@ -187,7 +189,7 @@
           size="xs"
           onclick={() => void send(true)}
           disabled={sending || !canSend}
-          title="Ask (Cmd/Ctrl+Enter)"
+          title="Ask (Enter)"
         >
           {#if sending}
             <Loader2 class="size-3 animate-spin" />
