@@ -18,6 +18,11 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  FeatureChangeEvent,
+  FeatureScanRequest,
+  FeatureSetBranchStatusRequest
+} from '@shared/types/features.js';
+import type {
   CommitsBetweenRequest,
   DiscardFilesRequest,
   FileBlameRequest,
@@ -262,5 +267,22 @@ export const ipc = {
       unwrap(await c.overview.askStart(toIpcPayload(request))),
     askCancel: async (requestId: string) => unwrap(await c.overview.askCancel(requestId)),
     onChunk: (cb: (chunk: AskFollowUpChunk) => void) => c.overview.onChunk(cb)
+  },
+  features: {
+    scan: async (request: FeatureScanRequest) =>
+      unwrap(await c.features.scan(toIpcPayload(request))),
+    setBranchStatus: async (request: FeatureSetBranchStatusRequest) =>
+      unwrap(await c.features.setBranchStatus(toIpcPayload(request))),
+    subscribe: async (request: {
+      cwd: string;
+      runMode: 'windows' | 'wsl';
+      wslDistro?: string;
+    }) => unwrap(await c.features.subscribe(toIpcPayload(request))),
+    unsubscribe: async (request: {
+      cwd: string;
+      runMode: 'windows' | 'wsl';
+      wslDistro?: string;
+    }) => unwrap(await c.features.unsubscribe(toIpcPayload(request))),
+    onChange: (cb: (event: FeatureChangeEvent) => void) => c.features.onChange(cb)
   }
 };

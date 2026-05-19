@@ -1,8 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Activity, NotebookPen, GitCompare, ArrowLeftRight, FolderTree } from '@lucide/svelte';
+  import {
+    Activity,
+    NotebookPen,
+    GitCompare,
+    ArrowLeftRight,
+    FolderTree,
+    Sparkles
+  } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
+  import { sessions } from '../stores/sessions.svelte';
+  import { featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
   import { kbdHints } from '../stores/kbd-hints.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -13,6 +22,7 @@
   import RailNotesTab from './rail/RailNotesTab.svelte';
   import RailDiffTab from './diff/RailDiffTab.svelte';
   import RailFilesTab from './files/RailFilesTab.svelte';
+  import RailFeatureTab from './feature/RailFeatureTab.svelte';
 
   interface Tab {
     id: RailTabId;
@@ -25,6 +35,7 @@
     { id: 'inspector', label: 'Inspector', icon: Activity },
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
     { id: 'files', label: 'Files', icon: FolderTree },
+    { id: 'feature', label: 'Feature', icon: Sparkles },
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
@@ -57,8 +68,32 @@
   let filesMounted = $derived(rightRail.filesMountedCwds.length > 0);
   let filesVisible = $derived(rightRail.open && rightRail.activeTab === 'files');
   let otherTabVisible = $derived(
-    rightRail.open && rightRail.activeTab !== 'diff' && rightRail.activeTab !== 'files'
+    rightRail.open &&
+      rightRail.activeTab !== 'diff' &&
+      rightRail.activeTab !== 'files' &&
+      rightRail.activeTab !== 'feature'
   );
+
+  // The feature tab subscribes to a polling watcher and keeps a slug picker per
+  // worktree; stay mounted while the rail is on the 'feature' tab in any
+  // worktree so worktree hops don't tear down the watcher subscription. Unlike
+  // diff/files there's no scroll position to preserve across hops, but the
+  // subscription teardown cost is what we're avoiding here.
+  let featureMounted = $derived(rightRail.open && rightRail.activeTab === 'feature');
+  let featureVisible = $derived(rightRail.open && rightRail.activeTab === 'feature');
+
+  // Notification dot driver for the feature tab icon. Surfaces when the active
+  // worktree has no `## Agent skills` block, so the user sees there's a setup
+  // step waiting for them without having to open the tab.
+  let activeCwd = $derived.by<string | null>(() => {
+    const cwd = sessions.selected?.cwd?.trim();
+    return cwd && cwd.length > 0 ? cwd : null;
+  });
+  let featureNeedsSetup = $derived.by<boolean>(() => {
+    if (!activeCwd) return false;
+    const snap = featuresStore.stateFor(activeCwd)?.snapshot;
+    return snap ? !snap.setup.hasAgentSkillsBlock : false;
+  });
 
   onMount(() => {
     const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY));
@@ -103,6 +138,7 @@
     <nav class="flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = rightRail.open && rightRail.activeTab === tab.id}
+        {@const showDot = tab.id === 'feature' && featureNeedsSetup && !isActive}
         <Tooltip.Root disabled={kbdHints.altHeld}>
           <Tooltip.Trigger>
             {#snippet child({ props })}
@@ -121,6 +157,12 @@
                 >
                   <tab.icon class="size-4" />
                 </button>
+                {#if showDot}
+                  <span
+                    class="pointer-events-none absolute top-1 right-1 size-1.5 rounded-full bg-amber-500 ring-1 ring-sidebar"
+                    aria-hidden="true"
+                  ></span>
+                {/if}
                 {#if kbdHints.altHeld && !isActive}
                   <div
                     class="pointer-events-none absolute top-1/2 right-full z-50 mr-2 -translate-y-1/2 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-foreground px-3 py-1.5 text-xs text-background shadow-md"
@@ -189,6 +231,17 @@
       ]}
     >
       <RailFilesTab />
+    </div>
+  {/if}
+
+  {#if featureMounted}
+    <div
+      class={[
+        'min-w-0 flex-1 flex-col border-r border-border',
+        featureVisible ? 'flex' : 'hidden'
+      ]}
+    >
+      <RailFeatureTab />
     </div>
   {/if}
 

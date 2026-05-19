@@ -1,4 +1,4 @@
-export type RailTabId = 'inspector' | 'notes' | 'diff' | 'files';
+export type RailTabId = 'inspector' | 'notes' | 'diff' | 'files' | 'feature';
 
 interface RailState {
   activeTab: RailTabId;
@@ -24,7 +24,7 @@ const FILES_SCROLL_KEY = 'soloe.filesScroll.v1';
 function sanitize(value: Partial<RailState> | undefined): RailState {
   const raw = value?.activeTab;
   const tab: RailTabId =
-    raw === 'notes' || raw === 'diff' || raw === 'files' ? raw : 'inspector';
+    raw === 'notes' || raw === 'diff' || raw === 'files' || raw === 'feature' ? raw : 'inspector';
   return {
     activeTab: tab,
     open: typeof value?.open === 'boolean' ? value.open : false,

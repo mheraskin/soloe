@@ -45,6 +45,9 @@ import { WorktreeFactsCollector } from './overview/WorktreeFactsCollector.js';
 import { SummaryCacheStore } from './overview/SummaryCacheStore.js';
 import { WorktreeOverviewService } from './overview/WorktreeOverviewService.js';
 import { OverviewIpc } from './ipc/overview.ipc.js';
+import { FeatureService } from './features/FeatureService.js';
+import { FeatureWatcher } from './features/FeatureWatcher.js';
+import { FeaturesIpc } from './ipc/features.ipc.js';
 
 interface AppServices {
   store: SessionStore;
@@ -75,6 +78,9 @@ interface AppServices {
   agentIntegrationIpc: AgentIntegrationIpc;
   overviewService: WorktreeOverviewService;
   overviewIpc: OverviewIpc;
+  features: FeatureService;
+  featureWatcher: FeatureWatcher;
+  featuresIpc: FeaturesIpc;
 }
 
 let services: AppServices | null = null;
@@ -376,6 +382,14 @@ async function setupServices(): Promise<AppServices> {
     getWindows: () => BrowserWindow.getAllWindows()
   });
 
+  const features = new FeatureService();
+  const featureWatcher = new FeatureWatcher();
+  const featuresIpc = new FeaturesIpc({
+    service: features,
+    watcher: featureWatcher,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+
   sessionsIpc.register();
   terminalIpc.register();
   observerIpc.register();
@@ -389,6 +403,7 @@ async function setupServices(): Promise<AppServices> {
   windowIpc.register();
   agentIntegrationIpc.register();
   overviewIpc.register();
+  featuresIpc.register();
 
   return {
     store,
@@ -418,7 +433,10 @@ async function setupServices(): Promise<AppServices> {
     windowIpc,
     agentIntegrationIpc,
     overviewService,
-    overviewIpc
+    overviewIpc,
+    features,
+    featureWatcher,
+    featuresIpc
   };
 }
 
@@ -570,6 +588,8 @@ async function cleanup(): Promise<void> {
     services.windowIpc.dispose();
     services.agentIntegrationIpc.dispose();
     services.overviewIpc.dispose();
+    services.featuresIpc.dispose();
+    services.featureWatcher.dispose();
     services.git.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);

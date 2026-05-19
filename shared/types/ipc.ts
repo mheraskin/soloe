@@ -52,6 +52,13 @@ import type {
 } from './files.js';
 import type { CrashLogSummary, DiagnosticItem } from './diagnostics.js';
 import type {
+  CoverageMapSnapshot,
+  FeatureChangeEvent,
+  FeatureScanRequest,
+  FeatureSetBranchStatusRequest,
+  FeatureSnapshot
+} from './features.js';
+import type {
   Project,
   ProjectDetectResult,
   ProjectDraft,
@@ -228,6 +235,13 @@ export const IpcChannels = {
   diff: {
     rpcRequest: 'diff:rpc:request',
     rpcResponse: 'diff:rpc:response'
+  },
+  features: {
+    scan: 'features:scan',
+    setBranchStatus: 'features:set-branch-status',
+    subscribe: 'features:subscribe',
+    unsubscribe: 'features:unsubscribe',
+    change: 'features:change'
   }
 } as const;
 
@@ -247,7 +261,8 @@ export type IpcChannel =
   | (typeof IpcChannels.notify)[keyof typeof IpcChannels.notify]
   | (typeof IpcChannels.overview)[keyof typeof IpcChannels.overview]
   | (typeof IpcChannels.comments)[keyof typeof IpcChannels.comments]
-  | (typeof IpcChannels.diff)[keyof typeof IpcChannels.diff];
+  | (typeof IpcChannels.diff)[keyof typeof IpcChannels.diff]
+  | (typeof IpcChannels.features)[keyof typeof IpcChannels.features];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -488,6 +503,24 @@ export interface DiffBridgeApi {
   sendRpcResponse(response: DiffRpcResponse): void;
 }
 
+export interface FeaturesApi {
+  scan(request: FeatureScanRequest): Promise<IpcResult<FeatureSnapshot>>;
+  setBranchStatus(
+    request: FeatureSetBranchStatusRequest
+  ): Promise<IpcResult<CoverageMapSnapshot>>;
+  subscribe(request: {
+    cwd: string;
+    runMode: 'windows' | 'wsl';
+    wslDistro?: string;
+  }): Promise<IpcResult<true>>;
+  unsubscribe(request: {
+    cwd: string;
+    runMode: 'windows' | 'wsl';
+    wslDistro?: string;
+  }): Promise<IpcResult<true>>;
+  onChange(listener: (event: FeatureChangeEvent) => void): () => void;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -505,6 +538,7 @@ export interface SoloeApi {
   overview: OverviewApi;
   comments: CommentsApi;
   diff: DiffBridgeApi;
+  features: FeaturesApi;
 }
 
 declare global {

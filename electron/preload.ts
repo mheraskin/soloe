@@ -40,6 +40,11 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  FeatureChangeEvent,
+  FeatureScanRequest,
+  FeatureSetBranchStatusRequest
+} from '@shared/types/features.js';
+import type {
   CommitsBetweenRequest,
   FileBlameRequest,
   FileDiffRequest,
@@ -287,6 +292,15 @@ const soloe: SoloeApi = {
       subscribe<DiffRpcRequest>(IpcChannels.diff.rpcRequest, cb),
     sendRpcResponse: (response: DiffRpcResponse) =>
       ipcRenderer.send(IpcChannels.diff.rpcResponse, response)
+  },
+  features: {
+    scan: (request: FeatureScanRequest) => ipcRenderer.invoke(IpcChannels.features.scan, request),
+    setBranchStatus: (request: FeatureSetBranchStatusRequest) =>
+      ipcRenderer.invoke(IpcChannels.features.setBranchStatus, request),
+    subscribe: (request) => ipcRenderer.invoke(IpcChannels.features.subscribe, request),
+    unsubscribe: (request) => ipcRenderer.invoke(IpcChannels.features.unsubscribe, request),
+    onChange: (cb: (event: FeatureChangeEvent) => void) =>
+      subscribe<FeatureChangeEvent>(IpcChannels.features.change, cb)
   }
 };
 
