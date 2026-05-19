@@ -1,13 +1,15 @@
+<img src="./build/icon.svg" alt="Soloe" width="96" />
+
 # Soloe
 
-A Windows + WSL IDE for the CLI agents you already use.
+A Windows + WSL Agent Development Environment (ADE) for the CLI agents you already use.
 
-Soloe drives your installed **Claude Code** and **Codex CLI** sessions directly — your subscription, your harness, your hooks. No API key. No agent SDK in between. On top of that, it adds the cockpit features the CLIs don't have on their own: multi-commit diff review, line comments you can tag agents into, and per-feature worktree management.
+Soloe drives your installed **Claude Code** and **Codex CLI** sessions directly in *interactive CLI mode* — same subscription, same harness, same hooks as running them yourself in a terminal. Not the Anthropic Agent SDK. Not `claude -p`. On top of that, it adds the workflow features the CLIs don't have on their own: multi-commit diff review, line comments you can tag agents into, and per-feature worktree management.
 
 [![CI](https://github.com/mheraskin/soloe/actions/workflows/ci.yml/badge.svg)](https://github.com/mheraskin/soloe/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
-> **Status: public beta, Windows + WSL.** Local-only. No telemetry. No cloud.
+> **Status: public alpha, Windows + WSL.** Local-only. No telemetry. No cloud.
 
 ![Soloe screenshot](./docs/media/hero.png)
 
@@ -24,13 +26,13 @@ I work in WSL. I run two or three serious feature worktrees at a time, each with
 - drop line comments on those diffs and tag an agent to resolve them,
 - come back a week later and remember what happened.
 
-I tried the existing tools. Conductor was the only one that really clicked for me — but it's Mac-only. Superset, Paseo, T3 Code: none of them ran natively on Windows + WSL the way I work. And most of them re-implement the agent loop on top of an SDK, which means a different harness from the CLI I already use and trust, and a separate billing path for tokens.
+I tried the existing tools. None of them worked out of the box on Windows + WSL the way I do. The other thing that nagged me: most of them lead with a GUI chat in front of the agent. Chat is great for ideation and brainstorming, but the actual work — running things, editing, reading output — belongs in the CLI. And most of these tools drive the agent programmatically — through the Anthropic Agent SDK or `claude -p` — rather than the interactive CLI path I already use myself in a terminal every day.
 
-So I built Soloe for myself. It runs on Windows, drives my existing WSL `claude` and `codex` installs through `node-pty`, and adds the workflow features those CLIs don't have on their own. I use it every day.
+So I built Soloe for myself. It runs on Windows, drives my existing WSL `claude` and `codex` installs through `node-pty` in interactive mode, and adds the workflow features those CLIs don't have on their own. Same subscription. Same harness. Same hooks. I use it every day.
 
 ## What Soloe does
 
-- **Wraps the CLIs you already use.** Soloe shells out to your installed `claude` and `codex` binaries — Windows-native or wrapped through WSL. Your subscription, your harness, your hooks. No separate API key. No agent SDK in between.
+- **Wraps the CLIs you already use.** Soloe shells out to your installed `claude` and `codex` binaries in *interactive mode* — Windows-native or wrapped through WSL. Same subscription, same harness, same hooks as typing `claude` yourself. Not the Anthropic Agent SDK. Not `claude -p`.
 - **Project → worktree → session.** Add a repo, see its worktrees, launch Claude Code / Codex CLI / standard terminal sessions per worktree. Sessions persist across app restarts; resume them without re-typing session IDs.
 - **Multi-commit diff review.** Don't just look at the working tree — pick a range of commits and review the whole feature. Line-level commit attribution so you can see which hunk came from you vs. which agent.
 - **Tag agents from diff comments.** Drop a line comment, mention the agent that's running in that worktree, and Soloe's local MCP bridge delivers it to the session. The agent reads, fixes, marks resolved.
@@ -38,15 +40,15 @@ So I built Soloe for myself. It runs on Windows, drives my existing WSL `claude`
 
 ## How Soloe differs
 
-There are several good tools in this space, and Soloe doesn't try to replace any of them. **Conductor** is excellent on Mac but doesn't run on Windows. **Superset** and **Paseo** are worktree-aware but didn't work out of the box for me on WSL. **T3 Code** is a minimal GUI over the CLIs; Soloe leans further into the IDE-cockpit direction — diffs across commits, line comments routed to agents, worktree-aware session memory. Most of these tools also drive agents through their own SDK; Soloe deliberately doesn't. It runs the real CLIs so you keep the same harness, the same hooks, and the same subscription you already pay for.
+There are several good tools in this space, and Soloe doesn't try to replace any of them. The gap I kept hitting: none of them ran out of the box on Windows + WSL, and most lead with a GUI chat in front of the agent. Chat-in-a-window is fine for ideation; the actual work belongs in the CLI. The other split is *how* the agent gets driven: many tools route through the Anthropic Agent SDK or `claude -p` programmatically — a different path from the interactive subscription you use when you type `claude` yourself. Soloe drives the real `claude` and `codex` binaries in interactive mode, so the harness, the hooks, and the subscription path stay the same as if you'd typed `claude` yourself. On top of that it adds the ADE-level workflow — diffs across a range of commits, line comments routed to agents, worktree-aware session memory.
 
 ## Status & known limitations
 
 - **Windows + WSL is the supported target.** macOS and Linux builds aren't published yet.
-- **Unsigned beta.** Windows SmartScreen will warn the first time you run the installer. Click "More info" → "Run anyway."
+- **Unsigned alpha.** Windows SmartScreen will warn the first time you run the installer. Click "More info" → "Run anyway."
 - **No auto-update yet.** Watch the [Releases](https://github.com/mheraskin/soloe/releases) page for new versions.
 - **Worktree per feature today; per-session worktrees are coming.**
-- **Things will break.** This is a beta — please file issues.
+- **Things will break.** This is an alpha — please file issues.
 
 ## Requirements
 
