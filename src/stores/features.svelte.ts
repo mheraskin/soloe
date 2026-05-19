@@ -3,6 +3,7 @@ import type {
   FeatureSnapshot
 } from '@shared/types/features.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import { untrack } from 'svelte';
 import { ipc } from '../lib/ipc';
 
 export interface FeatureContext {
@@ -68,16 +69,18 @@ class FeaturesStore {
 
   setContext(cwd: string, context: FeatureContext): void {
     if (!cwd) return;
-    const prev = this.stateByCwd[cwd];
-    if (
-      prev &&
-      prev.context.runMode === context.runMode &&
-      prev.context.wslDistro === context.wslDistro
-    ) {
-      return;
-    }
-    const next = prev ? { ...prev, context } : emptyState(context);
-    this.stateByCwd = { ...this.stateByCwd, [cwd]: next };
+    untrack(() => {
+      const prev = this.stateByCwd[cwd];
+      if (
+        prev &&
+        prev.context.runMode === context.runMode &&
+        prev.context.wslDistro === context.wslDistro
+      ) {
+        return;
+      }
+      const next = prev ? { ...prev, context } : emptyState(context);
+      this.stateByCwd = { ...this.stateByCwd, [cwd]: next };
+    });
   }
 
   stateFor(cwd: string | null | undefined): CwdState | null {
@@ -93,33 +96,45 @@ class FeaturesStore {
   setSelectedSlug(cwd: string, slug: string | null): void {
     if (!cwd) return;
     const trimmed = slug?.trim() || null;
-    if (this.selectedSlugByCwd[cwd] === trimmed) return;
-    this.selectedSlugByCwdRaw[cwd] = trimmed;
-    this.selectedSlugByCwd = { ...this.selectedSlugByCwd, [cwd]: trimmed };
-    this.persistSelected();
+    const changed = untrack(() => {
+      if (this.selectedSlugByCwd[cwd] === trimmed) return false;
+      this.selectedSlugByCwdRaw[cwd] = trimmed;
+      this.selectedSlugByCwd = { ...this.selectedSlugByCwd, [cwd]: trimmed };
+      this.persistSelected();
+      return true;
+    });
+    if (!changed) return;
     void this.refresh(cwd).catch(() => undefined);
   }
 
   async refresh(cwd: string): Promise<void> {
-    const state = this.stateByCwd[cwd];
-    if (!state) return;
-    const slug = this.selectedSlugByCwd[cwd] ?? null;
-    const gen = state.generation + 1;
-    this.patch(cwd, { loading: true, error: null, generation: gen });
+    const request = untrack(() => {
+      const state = this.stateByCwd[cwd];
+      if (!state) return null;
+      const slug = this.selectedSlugByCwd[cwd] ?? null;
+      const gen = state.generation + 1;
+      this.patch(cwd, { loading: true, error: null, generation: gen });
+      return {
+        gen,
+        slug,
+        context: { ...state.context }
+      };
+    });
+    if (!request) return;
     try {
       const snapshot = await ipc.features.scan({
         cwd,
-        runMode: state.context.runMode,
-        ...(state.context.wslDistro ? { wslDistro: state.context.wslDistro } : {}),
-        ...(slug ? { slug } : {})
+        runMode: request.context.runMode,
+        ...(request.context.wslDistro ? { wslDistro: request.context.wslDistro } : {}),
+        ...(request.slug ? { slug: request.slug } : {})
       });
       const current = this.stateByCwd[cwd];
-      if (!current || current.generation !== gen) return;
+      if (!current || current.generation !== request.gen) return;
       // Auto-pick a slug if none chosen yet and the worktree has features —
       // bias toward a feature with both coverage and issues, then any with
       // coverage, then the first slug. Keeps the rail useful on first open
       // without forcing the user to interact with the picker.
-      if (!slug && snapshot.features.length > 0) {
+      if (!request.slug && snapshot.features.length > 0) {
         const best =
           snapshot.features.find((f) => f.hasCoverage && f.hasIssues) ??
           snapshot.features.find((f) => f.hasCoverage) ??
@@ -147,7 +162,7 @@ class FeaturesStore {
       });
     } catch (err) {
       const current = this.stateByCwd[cwd];
-      if (!current || current.generation !== gen) return;
+      if (!current || current.generation !== request.gen) return;
       this.patch(cwd, {
         loading: false,
         error: err instanceof Error ? err.message : String(err)
@@ -184,30 +199,38 @@ class FeaturesStore {
   }
 
   async subscribe(cwd: string): Promise<void> {
-    const state = this.stateByCwd[cwd];
-    if (!state || state.subscribed) return;
+    const request = untrack(() => {
+      const state = this.stateByCwd[cwd];
+      if (!state || state.subscribed) return null;
+      return { ...state.context };
+    });
+    if (!request) return;
     try {
       await ipc.features.subscribe({
         cwd,
-        runMode: state.context.runMode,
-        ...(state.context.wslDistro ? { wslDistro: state.context.wslDistro } : {})
+        runMode: request.runMode,
+        ...(request.wslDistro ? { wslDistro: request.wslDistro } : {})
       });
-      this.patch(cwd, { subscribed: true });
+      untrack(() => this.patch(cwd, { subscribed: true }));
     } catch {
       // Subscribe failures are non-fatal — refresh button still works without it.
     }
   }
 
   async unsubscribe(cwd: string): Promise<void> {
-    const state = this.stateByCwd[cwd];
-    if (!state || !state.subscribed) return;
+    const request = untrack(() => {
+      const state = this.stateByCwd[cwd];
+      if (!state || !state.subscribed) return null;
+      return { ...state.context };
+    });
+    if (!request) return;
     try {
       await ipc.features.unsubscribe({
         cwd,
-        runMode: state.context.runMode,
-        ...(state.context.wslDistro ? { wslDistro: state.context.wslDistro } : {})
+        runMode: request.runMode,
+        ...(request.wslDistro ? { wslDistro: request.wslDistro } : {})
       });
-      this.patch(cwd, { subscribed: false });
+      untrack(() => this.patch(cwd, { subscribed: false }));
     } catch {
       // ignore — main-process unsubscribe is best-effort.
     }

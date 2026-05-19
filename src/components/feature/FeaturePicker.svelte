@@ -106,14 +106,14 @@
     aria-expanded={open}
   >
     <span class="min-w-0 flex-1 truncate font-mono">
-      {value ?? 'Pick a feature…'}
+      {value ?? 'Pick grilling…'}
     </span>
     <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
   </button>
   {#if value}
     <button
       type="button"
-      aria-label="Clear feature"
+      aria-label="Clear grilling selection"
       class="shrink-0 rounded border border-border bg-background p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
       onclick={clear}
     >
@@ -141,14 +141,14 @@
       <ul
         class="max-h-64 overflow-y-auto py-1"
         role="listbox"
-        aria-label="Features"
+        aria-label="Grilling sessions"
       >
         {#if filtered.length === 0}
           <li class="px-3 py-2 text-[11px] text-muted-foreground">
             {#if features.length === 0}
-              No features yet. Run <span class="font-mono">/grill-with-docs</span> in a session to start one.
+              Nothing grilling yet. Run <span class="font-mono">/grill-with-docs</span> in a session to start.
             {:else}
-              No features match "{query}".
+              No grilling sessions match "{query}".
             {/if}
           </li>
         {/if}

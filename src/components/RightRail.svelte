@@ -6,7 +6,7 @@
     GitCompare,
     ArrowLeftRight,
     FolderTree,
-    Sparkles
+    Beaker
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
@@ -35,7 +35,7 @@
     { id: 'inspector', label: 'Inspector', icon: Activity },
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
     { id: 'files', label: 'Files', icon: FolderTree },
-    { id: 'feature', label: 'Feature', icon: Sparkles },
+    { id: 'feature', label: 'Feature Lab', icon: Beaker },
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 

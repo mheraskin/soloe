@@ -26,7 +26,7 @@
   <Collapsible.Content class="border-t border-border">
     {#if plans.length === 0}
       <div class="px-3 py-3 text-[11px] text-muted-foreground">
-        No plans matching this feature.
+        No plans matching this grilling session.
       </div>
     {:else}
       <ul class="divide-y divide-border">

@@ -68,7 +68,7 @@
     {#if !coverage.exists}
       <div class="px-3 py-3 text-[11px] text-muted-foreground">
         No coverage map at <span class="font-mono">{coverage.relativePath}</span>. Use
-        <span class="font-mono">/grill-with-docs</span> to start grilling this feature.
+        <span class="font-mono">/grill-with-docs</span> to start grilling this thread.
       </div>
     {:else if coverage.error}
       <div class="px-3 py-3 text-[11px] text-destructive">

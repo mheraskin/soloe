@@ -47,7 +47,7 @@
     {#if tracker.provider === 'github'}
       <div class="px-3 py-3 text-[11px] text-muted-foreground">
         GitHub issues integration is coming soon. For now, track issues as local markdown
-        in <span class="font-mono">.scratch/&lt;feature&gt;/issues/</span>.
+        in <span class="font-mono">.scratch/&lt;slug&gt;/issues/</span>.
       </div>
     {:else if issues.length === 0}
       <div class="px-3 py-3 text-[11px] text-muted-foreground">

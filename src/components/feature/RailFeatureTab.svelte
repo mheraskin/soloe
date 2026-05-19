@@ -5,11 +5,11 @@
     Maximize2,
     Minimize2,
     RefreshCw,
-    Sparkles
+    Beaker
   } from '@lucide/svelte';
   import type { BranchStatus } from '@shared/types/features.js';
   import { sessions } from '../../stores/sessions.svelte';
-  import { featuresStore } from '../../stores/features.svelte';
+  import { featuresStore, type FeatureContext } from '../../stores/features.svelte';
   import { filesStore } from '../../stores/files.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
@@ -26,23 +26,30 @@
     const cwd = selected?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
   });
+  let activeContext = $derived.by<(FeatureContext & { cwd: string }) | null>(() => {
+    if (!activeCwd || !selected) return null;
+    return {
+      cwd: activeCwd,
+      runMode: selected.runMode,
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+    };
+  });
 
   let state = $derived(activeCwd ? featuresStore.stateFor(activeCwd) : null);
   let snapshot = $derived(state?.snapshot ?? null);
   let selectedSlug = $derived(activeCwd ? featuresStore.selectedSlugFor(activeCwd) : null);
 
   $effect(() => {
-    if (!activeCwd || !selected) return;
-    featuresStore.setContext(activeCwd, {
-      runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+    if (!activeContext) return;
+    featuresStore.setContext(activeContext.cwd, {
+      runMode: activeContext.runMode,
+      ...(activeContext.wslDistro ? { wslDistro: activeContext.wslDistro } : {})
     });
   });
 
   $effect(() => {
-    const cwd = activeCwd;
-    if (!cwd) return;
-    void featuresStore.refresh(cwd).catch(reportError);
+    if (!activeContext) return;
+    void featuresStore.refresh(activeContext.cwd).catch(reportError);
   });
 
   // Subscribe to the main-process watcher for the active worktree; cleanup
@@ -50,8 +57,8 @@
   // subscribers per cwd, so concurrent visibility from another mount point
   // doesn't drop the watcher when this effect re-runs.
   $effect(() => {
-    const cwd = activeCwd;
-    if (!cwd) return;
+    if (!activeContext) return;
+    const cwd = activeContext.cwd;
     void featuresStore.subscribe(cwd).catch(() => undefined);
     return () => {
       void featuresStore.unsubscribe(cwd).catch(() => undefined);
@@ -85,8 +92,8 @@
 <div class="flex min-h-0 flex-1 flex-col">
   <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 items-center gap-1.5">
-      <Sparkles class="size-3.5 text-muted-foreground" />
-      <span class="text-[10px] font-medium tracking-wider uppercase text-muted-foreground">Feature</span>
+      <Beaker class="size-3.5 text-muted-foreground" />
+      <span class="text-[10px] font-medium tracking-wider uppercase text-muted-foreground">Feature Lab</span>
     </div>
     <div class="flex items-center gap-1">
       <Button
@@ -94,7 +101,7 @@
         size="icon-xs"
         onclick={onRefresh}
         disabled={!activeCwd || state?.loading}
-        aria-label="Refresh feature snapshot"
+        aria-label="Refresh grilling snapshot"
         title="Refresh"
       >
         {#if state?.loading}
@@ -122,7 +129,7 @@
 
   {#if !activeCwd}
     <div class="flex flex-1 items-center justify-center px-4 text-center text-xs text-muted-foreground">
-      Select a session to inspect its features.
+      Select a session to inspect its grilling work.
     </div>
   {:else if state?.error && !snapshot}
     <div class="flex flex-col items-center justify-center gap-2 px-3 py-6 text-center text-xs text-destructive">
@@ -169,13 +176,13 @@
           />
         {:else if snapshot.features.length === 0}
           <div class="rounded-md border border-dashed border-border px-3 py-4 text-[11px] text-muted-foreground">
-            No features yet. Run <span class="font-mono">/grill-with-docs</span> in a session to
+            Nothing grilling yet. Run <span class="font-mono">/grill-with-docs</span> in a session to
             seed <span class="font-mono">docs/grill/&lt;slug&gt;/</span>, <span class="font-mono">docs/plans/</span>,
             and <span class="font-mono">.scratch/&lt;slug&gt;/</span> for this worktree.
           </div>
         {:else}
           <div class="rounded-md border border-dashed border-border px-3 py-4 text-[11px] text-muted-foreground">
-            Pick a feature above to inspect its coverage map, plans, and issues.
+            Pick a grilling session above to inspect its coverage map, plans, and issues.
           </div>
         {/if}
 
