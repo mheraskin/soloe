@@ -1,8 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import {
-    Archive,
-    ArchiveRestore,
     Loader2,
     Pencil,
     FolderOpen,
@@ -188,18 +186,6 @@
     const ok = await confirmDeleteSession(session);
     if (!ok) return;
     try { await sessions.remove(session.id); } catch (err) { reportError(err); }
-  }
-  async function archive(e?: Event) {
-    e?.stopPropagation();
-    try { await sessions.archive(session.id); } catch (err) { reportError(err); }
-  }
-  async function restore(e?: Event) {
-    e?.stopPropagation();
-    try { await sessions.restore(session.id); } catch (err) { reportError(err); }
-  }
-  function restoreFromButton(e: Event) {
-    e.stopPropagation();
-    void restore();
   }
   function removeFromButton(e: Event) {
     e.stopPropagation();
@@ -458,30 +444,6 @@
           <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
         {/if}
         <div class="flex shrink-0 items-center gap-0.5">
-          {#if session.projectId && !session.archivedAt}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              class="text-muted-foreground hover:text-foreground"
-              onclick={archive}
-              title="Archive session"
-              aria-label={`Archive ${session.name || 'session'}`}
-            >
-              <Archive />
-            </Button>
-          {/if}
-          {#if session.archivedAt}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              class="text-muted-foreground hover:text-foreground"
-              onclick={restoreFromButton}
-              title="Restore session"
-              aria-label={`Restore ${session.name || 'session'}`}
-            >
-              <ArchiveRestore />
-            </Button>
-          {/if}
           <span class="relative flex size-7 shrink-0 items-center justify-center">
             <Button
               variant="ghost"
@@ -582,19 +544,9 @@
       </button>
     </div>
     <ContextMenu.Separator />
-    {#if session.projectId && !session.archivedAt}
-      <ContextMenu.Item onSelect={() => void archive()}>
-        <Archive /> <span>Archive</span>
-      </ContextMenu.Item>
-    {/if}
-    {#if session.archivedAt}
-      <ContextMenu.Item onSelect={() => void restore()}>
-        <ArchiveRestore /> <span>Restore</span>
-      </ContextMenu.Item>
-    {/if}
     <ContextMenu.Item variant="destructive" onSelect={remove}>
       <Trash2 /> <span>Delete</span>
-      <ContextMenu.Shortcut>Del</ContextMenu.Shortcut>
+      <ContextMenu.Shortcut>Ctrl+Del</ContextMenu.Shortcut>
     </ContextMenu.Item>
   </ContextMenu.Content>
 </ContextMenu.Root>
