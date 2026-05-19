@@ -21,16 +21,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import * as ContextMenu from '$lib/components/ui/context-menu';
-  import {
-    ClipboardPaste,
-    Copy,
-    Loader2,
-    MessageSquarePlus,
-    MousePointer,
-    Scissors,
-    Send,
-    X
-  } from '@lucide/svelte';
+  import { Copy, Loader2, MessageSquarePlus, Send, X } from '@lucide/svelte';
   import AskAgentPopover from './ask-agent/AskAgentPopover.svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
   import {
@@ -55,17 +46,18 @@
   let findOpen = $state(false);
   let findQuery = $state('');
   let ready = $state(false);
-  // Floating "Ask Agent" chip state. Tracks the current terminal selection
-  // (text + a screen anchor) so the chip can render near the cursor on
-  // mouseup. The chip and the popover share the same anchor element so
-  // bits-ui's Popover.Content auto-flips against the viewport edge.
-  let selectionText = $state<string>('');
+  // Floating "Ask Agent" chip state. We snapshot the selected text into
+  // `chipText` at mouseup time and keep the chip visible from that snapshot
+  // — not from `term.hasSelection()`. Claude's TUI mode redraws the screen
+  // every frame, which makes xterm drop its native selection almost
+  // immediately; reading the live selection would hide the chip before the
+  // user can click it. The chip is dismissed on: new mousedown in the
+  // terminal, click outside the terminal+chip, Escape, or after the
+  // popover handles it.
+  let chipText = $state<string>('');
   let chipAnchor = $state<{ top: number; left: number } | null>(null);
   let chipEl: HTMLButtonElement | null = $state(null);
   let askOpen = $state(false);
-  // Captured selection text at the moment the popover opens — independent
-  // of `selectionText`, which clears as soon as the user clicks the chip
-  // and xterm drops its highlight.
   let askSelection = $state<string>('');
   // Context menu enabled-state mirror. Re-read when the menu opens.
   let menuHasSelection = $state(false);
@@ -180,26 +172,15 @@
     });
   }
 
-  // Re-read xterm's selection text and update the chip's enabled state.
-  // `term.hasSelection()` covers both mouse-drag and keyboard selections.
-  function refreshSelection(): void {
-    const t = term;
-    if (!t || !t.hasSelection()) {
-      selectionText = '';
-      chipAnchor = null;
-      return;
-    }
-    selectionText = t.getSelection();
+  function clearChip(): void {
+    chipText = '';
+    chipAnchor = null;
   }
 
   // Anchor the floating chip near the user's last mouseup so it doesn't
   // sit at a random fixed corner. xterm renders the selection via WebGL,
   // so we can't query window.getSelection — fall back to the pointer.
   function anchorChipAtPointer(clientX: number, clientY: number): void {
-    if (!selectionText) {
-      chipAnchor = null;
-      return;
-    }
     const buttonW = 112;
     const buttonH = 28;
     const margin = 8;
@@ -218,8 +199,8 @@
   function openAskFromChip(e: MouseEvent): void {
     e.preventDefault();
     e.stopPropagation();
-    if (!selectionText) return;
-    askSelection = selectionText;
+    if (!chipText) return;
+    askSelection = chipText;
     askOpen = true;
   }
 
@@ -253,25 +234,6 @@
     } catch (err) {
       reportError(err);
     }
-  }
-
-  async function ctxCut(): Promise<void> {
-    // xterm has no concept of "cut" — its buffer is read-only output.
-    // Mirror Copy so right-click → Cut at least preserves the clipboard.
-    await ctxCopy();
-  }
-
-  async function ctxPaste(): Promise<void> {
-    const t = term;
-    if (!t) return;
-    await pasteFromClipboard(t).catch(reportError);
-  }
-
-  function ctxSelectAll(): void {
-    const t = term;
-    if (!t) return;
-    t.selectAll();
-    refreshSelection();
   }
 
   async function pasteFromClipboard(t: Terminal): Promise<void> {
@@ -525,25 +487,53 @@
       });
     });
 
-    // Selection chip lifecycle: xterm emits selection-change after every
-    // drag/keyboard update. We hide the chip whenever the selection clears
-    // (e.g. clicking away in the buffer) and resync the text otherwise. The
-    // chip's *position* still comes from the last mouseup so it lands near
-    // the user's pointer, not at a stale rect.
-    const onSelectionChange = t.onSelectionChange(() => {
-      refreshSelection();
-      if (!selectionText) askOpen = false;
-    });
+    // Selection chip lifecycle: snapshot the selected text into `chipText`
+    // on mouseup so the chip survives Claude TUI's screen redraws, which
+    // otherwise wipe xterm's native selection before the user can click.
+    // The chip is dismissed by:
+    //  - a new mousedown in the terminal (starts a fresh drag)
+    //  - a mousedown outside the terminal (also clears xterm's highlight)
+    //  - Escape
+    //  - opening the popover (which takes the captured text)
     const onHostMouseUp = (e: MouseEvent) => {
       // Defer one frame so xterm has committed the selection by the time we
-      // read it (onSelectionChange fires async after the drag-end).
+      // read it (selection commits async after the drag-end).
       requestAnimationFrame(() => {
-        refreshSelection();
-        if (!selectionText) return;
+        const t2 = term;
+        if (!t2) return;
+        const text = t2.getSelection();
+        if (!text) return; // empty drag — leave any existing chip alone
+        chipText = text;
         anchorChipAtPointer(e.clientX, e.clientY);
       });
     };
+    const onHostMouseDown = () => {
+      if (askOpen) return;
+      clearChip();
+    };
     host?.addEventListener('mouseup', onHostMouseUp);
+    host?.addEventListener('mousedown', onHostMouseDown);
+
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (askOpen) return;
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (host && host.contains(target)) return;
+      if (chipEl && chipEl.contains(target)) return;
+      clearChip();
+      // Also drop xterm's highlight so the "selection" visually goes with
+      // the chip — matches "click in another place clears the selection".
+      term?.clearSelection();
+    };
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (askOpen) return;
+      if (!chipText) return;
+      clearChip();
+      term?.clearSelection();
+    };
+    window.addEventListener('mousedown', onDocMouseDown, true);
+    window.addEventListener('keydown', onDocKeyDown);
 
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -580,7 +570,9 @@
       window.removeEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
       window.removeEventListener('soloe:refocus-terminal', onRefocus);
       host?.removeEventListener('mouseup', onHostMouseUp);
-      onSelectionChange.dispose();
+      host?.removeEventListener('mousedown', onHostMouseDown);
+      window.removeEventListener('mousedown', onDocMouseDown, true);
+      window.removeEventListener('keydown', onDocKeyDown);
       ro.disconnect();
       onInput.dispose();
       offOutput();
@@ -687,34 +679,20 @@
         <div {...props} class="h-full w-full" bind:this={host}></div>
       {/snippet}
     </ContextMenu.Trigger>
-    <ContextMenu.Content class="w-52">
+    <ContextMenu.Content class="w-44">
       <ContextMenu.Item disabled={!menuHasSelection} onclick={ctxAskAgent}>
         <MessageSquarePlus class="size-3.5" />
         Ask Agent
       </ContextMenu.Item>
-      <ContextMenu.Separator />
       <ContextMenu.Item disabled={!menuHasSelection} onclick={() => void ctxCopy()}>
         <Copy class="size-3.5" />
         Copy
-      </ContextMenu.Item>
-      <ContextMenu.Item disabled={!menuHasSelection} onclick={() => void ctxCut()}>
-        <Scissors class="size-3.5" />
-        Cut
-      </ContextMenu.Item>
-      <ContextMenu.Item onclick={() => void ctxPaste()}>
-        <ClipboardPaste class="size-3.5" />
-        Paste
-      </ContextMenu.Item>
-      <ContextMenu.Separator />
-      <ContextMenu.Item onclick={ctxSelectAll}>
-        <MousePointer class="size-3.5" />
-        Select All
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
 </div>
 
-{#if chipAnchor || askOpen}
+{#if chipText || askOpen}
   <button
     bind:this={chipEl}
     type="button"

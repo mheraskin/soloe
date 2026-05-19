@@ -441,14 +441,12 @@
               rootEl={editorWrapperEl}
             >
               {#snippet children()}
-                <div class="flex min-h-0 flex-1">
-                  <FileEditor
-                    value={openFile.content}
-                    relativePath={openFile.relativePath}
-                    onChange={onChange}
-                    onSave={onSave}
-                  />
-                </div>
+                <FileEditor
+                  value={openFile.content}
+                  relativePath={openFile.relativePath}
+                  onChange={onChange}
+                  onSave={onSave}
+                />
               {/snippet}
             </EditorContextMenu>
             <EditorSelectionMenu

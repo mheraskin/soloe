@@ -667,9 +667,15 @@
 <div class="flex min-h-0 flex-1 flex-col" class:select-none={resizingList}>
   <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 flex-col" class:hidden={diffExpanded}>
-      <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-        Working tree
-      </span>
+      <button
+        type="button"
+        class="self-start text-[10px] font-medium tracking-wider text-muted-foreground uppercase hover:text-foreground disabled:cursor-default disabled:hover:text-muted-foreground"
+        onclick={() => (pickerOpen = true)}
+        disabled={!activeCwd}
+        title={isRangeMode ? 'Switch review range' : 'Pick commits to review'}
+      >
+        {isRangeMode ? 'Commits' : 'Working tree'}
+      </button>
       <span class="truncate text-xs text-foreground">
         {selected ? selected.name : 'No session selected'}
       </span>
@@ -748,47 +754,6 @@
       <Button
         variant="ghost"
         size="xs"
-        onclick={() => (workingDiff.wordWrap = !workingDiff.wordWrap)}
-        aria-label={workingDiff.wordWrap ? 'Disable word wrap' : 'Enable word wrap'}
-        title={workingDiff.wordWrap ? 'No wrap' : 'Wrap lines'}
-        aria-pressed={workingDiff.wordWrap}
-        disabled={!activeCwd}
-      >
-        <WrapText class="size-3" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="xs"
-        onclick={() =>
-          (workingDiff.viewMode = workingDiff.viewMode === 'unified' ? 'split' : 'unified')}
-        aria-label={workingDiff.viewMode === 'unified' ? 'Switch to split view' : 'Switch to unified view'}
-        title={workingDiff.viewMode === 'unified' ? 'Split view' : 'Unified view'}
-        disabled={!activeCwd}
-      >
-        {#if workingDiff.viewMode === 'unified'}
-          <Columns class="size-3" />
-        {:else}
-          <Rows class="size-3" />
-        {/if}
-      </Button>
-      <Button
-        variant="ghost"
-        size="xs"
-        onclick={() => (diffExpanded = !diffExpanded)}
-        aria-pressed={diffExpanded}
-        aria-label={diffExpanded ? 'Show file list' : 'Hide file list'}
-        title={diffExpanded ? 'Show file list' : 'Hide file list'}
-        disabled={!activeCwd}
-      >
-        {#if diffExpanded}
-          <ChevronsDown class="size-3" />
-        {:else}
-          <ChevronsUp class="size-3" />
-        {/if}
-      </Button>
-      <Button
-        variant="ghost"
-        size="xs"
         onclick={() => rightRail.toggleFullscreen()}
         aria-label={rightRail.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
         title={rightRail.fullscreen ? 'Exit fullscreen (Ctrl+Shift+M)' : 'Fullscreen (Ctrl+Shift+M)'}
@@ -815,7 +780,40 @@
             </Button>
           {/snippet}
         </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-48">
+        <DropdownMenu.Content align="end" class="w-52">
+          <DropdownMenu.Item
+            disabled={!activeCwd}
+            onSelect={() =>
+              (workingDiff.viewMode = workingDiff.viewMode === 'unified' ? 'split' : 'unified')}
+          >
+            {#if workingDiff.viewMode === 'unified'}
+              <Columns class="size-3" />
+              <span>Split view</span>
+            {:else}
+              <Rows class="size-3" />
+              <span>Unified view</span>
+            {/if}
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            disabled={!activeCwd}
+            onSelect={() => (workingDiff.wordWrap = !workingDiff.wordWrap)}
+          >
+            <WrapText class="size-3" />
+            <span>{workingDiff.wordWrap ? 'No wrap' : 'Wrap lines'}</span>
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            disabled={!activeCwd}
+            onSelect={() => (diffExpanded = !diffExpanded)}
+          >
+            {#if diffExpanded}
+              <ChevronsDown class="size-3" />
+              <span>Show file list</span>
+            {:else}
+              <ChevronsUp class="size-3" />
+              <span>Hide file list</span>
+            {/if}
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
           <DropdownMenu.Item
             disabled={!activeCwd || stackChanges.length === 0}
             onSelect={toggleAllCollapsed}

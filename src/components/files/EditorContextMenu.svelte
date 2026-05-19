@@ -113,7 +113,11 @@
 
 <ContextMenu.Root onOpenChange={onMenuOpenChange}>
   <ContextMenu.Trigger>
-    {@render children()}
+    {#snippet child({ props })}
+      <div {...props} class="flex min-h-0 flex-1">
+        {@render children()}
+      </div>
+    {/snippet}
   </ContextMenu.Trigger>
   <ContextMenu.Content class="w-52">
     <ContextMenu.Item disabled={!hasSelection} onclick={askAgent}>
