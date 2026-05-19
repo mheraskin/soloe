@@ -7,7 +7,9 @@ import type {
   FileDiffRequest,
   FileLinesRequest,
   GitCheckoutRequest,
+  GitCommitRequest,
   GitRecentCommitsRequest,
+  GitRemoteOpRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
@@ -201,6 +203,41 @@ export class GitIpc {
         }).then(() => true as const)
       )
     );
+    ipcMain.handle(IpcChannels.git.commit, (_e, request: GitCommitRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.commit(request.cwd, request.message, request.stageAll ?? false, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
+    );
+    ipcMain.handle(IpcChannels.git.push, (_e, request: GitRemoteOpRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.push(
+          request.cwd,
+          request.remote,
+          request.branch,
+          request.setUpstream ?? false,
+          { runMode: request.runMode, wslDistro: request.wslDistro }
+        )
+      )
+    );
+    ipcMain.handle(IpcChannels.git.pull, (_e, request: GitRemoteOpRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.pull(request.cwd, request.remote, request.branch, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
+    );
+    ipcMain.handle(IpcChannels.git.fetch, (_e, request: GitRemoteOpRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.fetch(request.cwd, request.remote, {
+          runMode: request.runMode,
+          wslDistro: request.wslDistro
+        })
+      )
+    );
 
     this.detachListener = this.opts.service.onChange((repoPath) => {
       for (const win of this.opts.getWindows()) {
@@ -229,6 +266,10 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.stageFiles);
     ipcMain.removeHandler(IpcChannels.git.unstageFiles);
     ipcMain.removeHandler(IpcChannels.git.discardFiles);
+    ipcMain.removeHandler(IpcChannels.git.commit);
+    ipcMain.removeHandler(IpcChannels.git.push);
+    ipcMain.removeHandler(IpcChannels.git.pull);
+    ipcMain.removeHandler(IpcChannels.git.fetch);
     this.detachListener?.();
     this.detachListener = null;
     this.registered = false;

@@ -45,6 +45,7 @@
   import RailCommentsPanel from './RailCommentsPanel.svelte';
   import DiffSelectionMenu from './DiffSelectionMenu.svelte';
   import CommitPicker from './CommitPicker.svelte';
+  import CommitComposer from './CommitComposer.svelte';
 
   let diffRootEl: HTMLDivElement | null = $state(null);
   let diffViewportEl: HTMLElement | null = $state(null);
@@ -906,6 +907,12 @@
         </label>
       </div>
     </div>
+
+    {#if activeCwd && !isRangeMode}
+      {#key activeCwd}
+        <CommitComposer cwd={activeCwd} />
+      {/key}
+    {/if}
 
     {#snippet wtChangeRow(change: WorkingChange)}
       <ChangeRow

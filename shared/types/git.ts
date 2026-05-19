@@ -281,6 +281,33 @@ export interface FileLinesResult {
   totalLines: number;
 }
 
+export interface GitCommitRequest {
+  cwd: string;
+  message: string;
+  stageAll?: boolean;
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
+export interface GitCommitResult {
+  hash: string;
+  shortHash: string;
+}
+
+export interface GitRemoteOpRequest {
+  cwd: string;
+  remote?: string;
+  branch?: string;
+  setUpstream?: boolean;
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
+export interface GitRemoteOpResult {
+  stdout: string;
+  stderr: string;
+}
+
 export interface FileDiff {
   path: string;
   fromPath: string | null;

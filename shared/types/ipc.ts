@@ -35,7 +35,11 @@ import type {
   StageFilesRequest,
   DiscardFilesRequest,
   WorkingChangesRequest,
-  WorkingChangesResult
+  WorkingChangesResult,
+  GitCommitRequest,
+  GitCommitResult,
+  GitRemoteOpRequest,
+  GitRemoteOpResult
 } from './git.js';
 import type {
   FileOpenRequest,
@@ -189,6 +193,10 @@ export const IpcChannels = {
     stageFiles: 'git:stage-files',
     unstageFiles: 'git:unstage-files',
     discardFiles: 'git:discard-files',
+    commit: 'git:commit',
+    push: 'git:push',
+    pull: 'git:pull',
+    fetch: 'git:fetch',
     change: 'git:change'
   },
   files: {
@@ -395,6 +403,10 @@ export interface GitApi {
   stageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
   unstageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
   discardFiles(request: DiscardFilesRequest): Promise<IpcResult<true>>;
+  commit(request: GitCommitRequest): Promise<IpcResult<GitCommitResult>>;
+  push(request: GitRemoteOpRequest): Promise<IpcResult<GitRemoteOpResult>>;
+  pull(request: GitRemoteOpRequest): Promise<IpcResult<GitRemoteOpResult>>;
+  fetch(request: GitRemoteOpRequest): Promise<IpcResult<GitRemoteOpResult>>;
   onChange(listener: (event: GitChangeEvent) => void): () => void;
 }
 

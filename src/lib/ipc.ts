@@ -31,7 +31,9 @@ import type {
   FileLinesRequest,
   GitCheckoutRequest,
   GitChangeEvent,
+  GitCommitRequest,
   GitRecentCommitsRequest,
+  GitRemoteOpRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
@@ -213,6 +215,14 @@ export const ipc = {
       unwrap(await c.git.unstageFiles(toIpcPayload(request))),
     discardFiles: async (request: DiscardFilesRequest) =>
       unwrap(await c.git.discardFiles(toIpcPayload(request))),
+    commit: async (request: GitCommitRequest) =>
+      unwrap(await c.git.commit(toIpcPayload(request))),
+    push: async (request: GitRemoteOpRequest) =>
+      unwrap(await c.git.push(toIpcPayload(request))),
+    pull: async (request: GitRemoteOpRequest) =>
+      unwrap(await c.git.pull(toIpcPayload(request))),
+    fetch: async (request: GitRemoteOpRequest) =>
+      unwrap(await c.git.fetch(toIpcPayload(request))),
     onChange: (cb: (event: GitChangeEvent) => void) => c.git.onChange(cb)
   },
   files: {

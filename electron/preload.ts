@@ -53,7 +53,9 @@ import type {
   FileLinesRequest,
   GitCheckoutRequest,
   GitChangeEvent,
+  GitCommitRequest,
   GitRecentCommitsRequest,
+  GitRemoteOpRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
@@ -225,6 +227,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.git.unstageFiles, request),
     discardFiles: (request: DiscardFilesRequest) =>
       ipcRenderer.invoke(IpcChannels.git.discardFiles, request),
+    commit: (request: GitCommitRequest) => ipcRenderer.invoke(IpcChannels.git.commit, request),
+    push: (request: GitRemoteOpRequest) => ipcRenderer.invoke(IpcChannels.git.push, request),
+    pull: (request: GitRemoteOpRequest) => ipcRenderer.invoke(IpcChannels.git.pull, request),
+    fetch: (request: GitRemoteOpRequest) => ipcRenderer.invoke(IpcChannels.git.fetch, request),
     onChange: (cb: (event: GitChangeEvent) => void) =>
       subscribe<GitChangeEvent>(IpcChannels.git.change, cb)
   },

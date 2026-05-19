@@ -12,7 +12,9 @@ import type {
   GitAheadBehind,
   GitBranch,
   GitCommit,
+  GitCommitResult,
   GitDirty,
+  GitRemoteOpResult,
   GitShortstat,
   GitStatus,
   GitWorktree,
@@ -417,6 +419,75 @@ export class GitService {
     }
 
     this.invalidate(info.repoPath);
+  }
+
+  async commit(
+    cwd: string,
+    message: string,
+    stageAll: boolean,
+    context: GitRepoContext = {}
+  ): Promise<GitCommitResult> {
+    const trimmed = message.trim();
+    if (!trimmed) throw new Error('Commit message is required');
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const args = ['commit', '-m', trimmed];
+    if (stageAll) args.splice(1, 0, '-a');
+    const result = await this.runInRepo(info, args);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || result.stdout.trim() || 'git commit failed');
+    }
+    const head = await this.runInRepo(info, ['rev-parse', 'HEAD']);
+    const hash = head.stdout.trim();
+    this.invalidate(info.repoPath);
+    return { hash, shortHash: hash.slice(0, 7) };
+  }
+
+  async push(
+    cwd: string,
+    remote: string | undefined,
+    branch: string | undefined,
+    setUpstream: boolean,
+    context: GitRepoContext = {}
+  ): Promise<GitRemoteOpResult> {
+    return this.runRemoteOp(cwd, ['push', ...(setUpstream ? ['-u'] : [])], remote, branch, context);
+  }
+
+  async pull(
+    cwd: string,
+    remote: string | undefined,
+    branch: string | undefined,
+    context: GitRepoContext = {}
+  ): Promise<GitRemoteOpResult> {
+    return this.runRemoteOp(cwd, ['pull', '--ff-only'], remote, branch, context);
+  }
+
+  async fetch(
+    cwd: string,
+    remote: string | undefined,
+    context: GitRepoContext = {}
+  ): Promise<GitRemoteOpResult> {
+    return this.runRemoteOp(cwd, ['fetch', '--prune'], remote, undefined, context);
+  }
+
+  private async runRemoteOp(
+    cwd: string,
+    baseArgs: string[],
+    remote: string | undefined,
+    branch: string | undefined,
+    context: GitRepoContext
+  ): Promise<GitRemoteOpResult> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const args = [...baseArgs];
+    if (remote) args.push(remote);
+    if (branch) args.push(branch);
+    const result = await this.runInRepo(info, args);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${baseArgs[0]} failed`);
+    }
+    this.invalidate(info.repoPath);
+    return { stdout: result.stdout, stderr: result.stderr };
   }
 
   // Fetch a 1-based line range from HEAD's version of the file. Used by

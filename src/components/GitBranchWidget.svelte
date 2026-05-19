@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, GitBranch, GitCommitHorizontal } from '@lucide/svelte';
+  import { AlertCircle, Check, GitBranch, GitCommitHorizontal, Loader2 } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import type { GitBranch as GitBranchInfo, GitCommit } from '@shared/types/git.js';
   import { ipc } from '../lib/ipc';
@@ -19,6 +19,8 @@
   let commits = $state<GitCommit[]>([]);
   let commitLimit = $state<number | null>(INITIAL_COMMIT_LIMIT);
   let checkingOut = $state<string | null>(null);
+  let loading = $state(false);
+  let loadError = $state<string | null>(null);
 
   async function refresh(force = false): Promise<void> {
     const status = await git.loadStatus(cwd, force);
@@ -74,6 +76,7 @@
     if (!switcherOpen) {
       untrack(() => {
         commitLimit = INITIAL_COMMIT_LIMIT;
+        loadError = null;
       });
       return;
     }
@@ -81,6 +84,10 @@
     const repoPath = status.repoPath;
     const ctx = git.contextFor(cwd);
     const limit = commitLimit;
+    untrack(() => {
+      loading = true;
+      loadError = null;
+    });
     Promise.all([
       ipc.git.branches({ repoPath, force: true, ...ctx }),
       ipc.git.recentCommits({
@@ -93,8 +100,13 @@
       .then(([nextBranches, nextCommits]) => {
         branches = nextBranches;
         commits = nextCommits;
+        loading = false;
       })
-      .catch(reportError);
+      .catch((err) => {
+        loading = false;
+        loadError = err instanceof Error ? err.message : String(err);
+        reportError(err);
+      });
   });
 
   function loadAllCommits() {
@@ -159,7 +171,19 @@
           <Command.Root class="flex-1 rounded-none!">
             <Command.Input placeholder="Filter branches…" />
             <Command.List>
-              <Command.Empty>No branches</Command.Empty>
+              {#if loading && branches.length === 0}
+                <div class="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
+                  <Loader2 class="size-3 animate-spin" />
+                  Loading branches…
+                </div>
+              {:else if loadError && branches.length === 0}
+                <div class="flex items-start gap-2 px-3 py-4 text-xs text-destructive">
+                  <AlertCircle class="size-3 shrink-0" />
+                  <span class="break-words">{loadError}</span>
+                </div>
+              {:else}
+                <Command.Empty>No branches</Command.Empty>
+              {/if}
               {#if branches.length > 0}
                 <Command.Group heading="Branches">
                   {#each branches as branch (branch.name)}
@@ -184,7 +208,19 @@
           <Command.Root class="flex-1 rounded-none!">
             <Command.Input placeholder="Filter commits…" />
             <Command.List>
-              <Command.Empty>No commits</Command.Empty>
+              {#if loading && commits.length === 0}
+                <div class="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
+                  <Loader2 class="size-3 animate-spin" />
+                  Loading commits…
+                </div>
+              {:else if loadError && commits.length === 0}
+                <div class="flex items-start gap-2 px-3 py-4 text-xs text-destructive">
+                  <AlertCircle class="size-3 shrink-0" />
+                  <span class="break-words">{loadError}</span>
+                </div>
+              {:else}
+                <Command.Empty>No commits</Command.Empty>
+              {/if}
               {#if commits.length > 0}
                 <Command.Group heading="Recent commits">
                   {#each commits as commit (commit.hash)}
