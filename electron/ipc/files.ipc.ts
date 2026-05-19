@@ -139,7 +139,9 @@ export class FilesIpc {
       paths.push(joinProviderPath(target.providerDir, filename, session.runMode));
     }
 
-    const insertedText = paths.join(' ');
+    // Trailing space so the agent's prompt cursor sits past the path, ready
+    // for the user to keep typing without having to space first.
+    const insertedText = paths.join(' ') + ' ';
     this.opts.pty.write(request.terminalId, insertedText);
     return { paths, insertedText };
   }

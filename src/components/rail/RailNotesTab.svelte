@@ -136,7 +136,9 @@
       );
       const saved = await notes.pasteImages(payloads);
       if (saved.length === 0) return;
-      const insertedText = saved.map((img) => img.absolutePath).join(' ');
+      // Trailing space so the cursor lands ready for the user to keep typing
+      // after the path, without having to space first.
+      const insertedText = saved.map((img) => img.absolutePath).join(' ') + ' ';
       const newValue = before + insertedText + after;
       if (notes.isDraft) {
         notes.updateDraftContent(newValue);
