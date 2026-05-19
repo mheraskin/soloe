@@ -23,7 +23,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck:svelte": "svelte-check --tsconfig tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:svelte",
-    "package": "electron-vite build && electron-builder",
+    "package": "electron-vite build && electron-builder --publish never",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-builder install-app-deps",
     "test": "vitest run",
