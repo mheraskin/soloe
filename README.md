@@ -23,7 +23,7 @@ So I built Soloe. It runs on Windows, drives my existing WSL `claude` and `codex
 
 ## What Soloe does
 
-- **Wraps the CLIs you already use.** Shells out to your installed `claude` and `codex` binaries in *interactive mode* — Windows-native or wrapped through WSL. Same path as typing `claude` yourself.
+- **Wraps the CLIs you already use.** Shells out to your installed `claude` and `codex` binaries in *interactive mode*, inside WSL. Same path as running `claude` yourself in a WSL shell.
 - **Project → worktree → session.** Long-lived terminal, Claude Code, or Codex sessions per worktree. Resume across app restarts.
 - **Multi-commit diff review.** Pick a range of commits and review the whole feature. Line-level commit attribution.
 - **Tag agents from line comments.** A local MCP bridge (`127.0.0.1`, token-protected) delivers comments to the running session. The agent reads, fixes, marks resolved.
@@ -41,7 +41,7 @@ The other split is *how* the agent gets driven. Many tools route through the **A
 2. Run it. SmartScreen → "More info" → "Run anyway."
 3. Add a Git repo (Windows or WSL path) and launch a session.
 
-You need WSL with a Linux distro and either `claude` or `codex` installed (in WSL or Windows). No API key — Soloe uses whichever CLI you already have set up.
+You need WSL with a Linux distro and either `claude` or `codex` installed *inside that distro*. No API key — Soloe uses whichever CLI you already have set up. Windows-side project paths work too — they're accessed from WSL via `/mnt/c/...`.
 
 ## Contributing
 
