@@ -368,14 +368,38 @@ class SessionsStore {
       ...(origin.lastBranch ? { branch: origin.lastBranch } : {})
     });
     const terminalId = await this.waitForTerminalId(created.id, 5000);
-    if (terminalId) {
-      await sendBracketedPaste(
-        terminalId,
-        continuationPrompt(origin, this.observationFor(origin.id)),
-        true
-      );
-    }
+    if (!terminalId) throw new Error(`Terminal did not start for ${created.name}`);
+    await this.pasteContinuationPrompt(origin, terminalId);
     return created;
+  }
+
+  handoffTargetsFor(originId: SessionId, provider: AgentRuntimeProvider): Session[] {
+    const origin = this.sessions.find((s) => s.id === originId);
+    if (!origin) return [];
+    return this.sessions.filter((candidate) =>
+      candidate.id !== origin.id
+      && this.isSameWorktree(origin, candidate)
+      && this.agentProviderFor(candidate) === provider
+    );
+  }
+
+  async continueInSession(originId: SessionId, targetId: SessionId): Promise<Session> {
+    const origin = this.sessions.find((s) => s.id === originId);
+    if (!origin) throw new Error(`Session not found: ${originId}`);
+    const target = this.sessions.find((s) => s.id === targetId);
+    if (!target) throw new Error(`Session not found: ${targetId}`);
+    if (origin.id === target.id) throw new Error('Choose a different session to continue in');
+    if (!this.isSameWorktree(origin, target)) {
+      throw new Error('Choose a session in the same worktree');
+    }
+    if (!this.agentProviderFor(target)) {
+      throw new Error('Choose a Claude Code or Codex session');
+    }
+
+    const terminalId = await this.ensureTerminalId(target.id);
+    await this.pasteContinuationPrompt(origin, terminalId);
+    this.select(target.id);
+    return target;
   }
 
   private async createTypedWithDefaults(
@@ -617,6 +641,44 @@ class SessionsStore {
     return this.terminalIdFor(id);
   }
 
+  private async ensureTerminalId(id: SessionId): Promise<string> {
+    const terminalId = this.terminalIdFor(id);
+    if (terminalId) return terminalId;
+    if (this.statusFor(id) === 'starting') {
+      this.select(id);
+    } else {
+      await this.start(id);
+    }
+    const nextTerminalId = await this.waitForTerminalId(id, 5000);
+    if (!nextTerminalId) {
+      const session = this.sessions.find((s) => s.id === id);
+      throw new Error(`Terminal did not start for ${session?.name ?? id}`);
+    }
+    return nextTerminalId;
+  }
+
+  private async pasteContinuationPrompt(origin: Session, terminalId: string): Promise<void> {
+    await sendBracketedPaste(
+      terminalId,
+      continuationPrompt(origin, this.observationFor(origin.id)),
+      true
+    );
+  }
+
+  private isSameWorktree(a: Session, b: Session): boolean {
+    return a.cwd === b.cwd
+      && a.runMode === b.runMode
+      && (a.wslDistro ?? null) === (b.wslDistro ?? null);
+  }
+
+  private agentProviderFor(session: Session): AgentRuntimeProvider | null {
+    const observedProvider = this.observationFor(session.id)?.provider;
+    if (observedProvider === 'claude_code' || observedProvider === 'codex') {
+      return observedProvider;
+    }
+    return session.currentAgentRuntime?.provider ?? launchProvider(session);
+  }
+
   async stopWorker(workerId: string): Promise<void> {
     const status = await ipc.observer.stopWorkerSession(workerId);
     if (status.snapshot) {
@@ -657,9 +719,19 @@ function continuationPrompt(
   origin: Session,
   observed: ObservedAgentSnapshot | null
 ): string {
-  const provider = launchProvider(origin) ?? origin.currentAgentRuntime?.provider ?? 'terminal';
+  const provider = origin.currentAgentRuntime?.provider ?? launchProvider(origin) ?? 'terminal';
+  const handoffReason = (() => {
+    if (observed?.state === 'usage_limited') {
+      return 'The previous agent appears to have hit a usage limit.';
+    }
+    if (observed?.state === 'failed') {
+      return 'The previous tab stopped before completing the task.';
+    }
+    return 'The user requested this handoff from another Soloe tab.';
+  })();
   const lines = [
-    'We are continuing from a Soloe tab that hit a hard usage limit.',
+    'We are continuing from another Soloe tab.',
+    handoffReason,
     '',
     'Continue the same task from that session. Preserve the user intent and current course of work.',
     'First inspect the raw session artifact if it is available, then continue from the latest useful state.',

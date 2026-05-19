@@ -35,6 +35,7 @@
   import CommandPalette from './components/CommandPalette.svelte';
   import FilePalette from './components/FilePalette.svelte';
   import NewSessionPickerDialog from './components/NewSessionPickerDialog.svelte';
+  import SessionHandoffDialog from './components/SessionHandoffDialog.svelte';
   import AgentIntegrationSetupDialog from './components/AgentIntegrationSetupDialog.svelte';
   import AgentNotificationToasts from './components/AgentNotificationToasts.svelte';
   import appIconUrl from '../build/favicon.svg';
@@ -364,6 +365,7 @@
   <CommandPalette />
   <FilePalette />
   <NewSessionPickerDialog />
+  <SessionHandoffDialog />
   <ConfirmDialog />
   <AgentIntegrationSetupDialog />
   <SettingsDialog />

@@ -8,7 +8,8 @@
     Trash2,
     GitBranch,
     ChevronRight,
-    CircleSlash
+    CircleSlash,
+    ArrowRight
   } from '@lucide/svelte';
   import type {
     Session,
@@ -17,6 +18,7 @@
   } from '@shared/types/sessions.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { sessionHandoff } from '../stores/session-handoff.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { nav } from '../stores/nav.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -181,6 +183,9 @@
   }
   function edit() {
     modal.openEdit(session);
+  }
+  function continueElsewhere() {
+    sessionHandoff.open(session.id);
   }
   async function remove() {
     const ok = await confirmDeleteSession(session);
@@ -484,6 +489,9 @@
     </ContextMenu.Item>
     <ContextMenu.Item onSelect={copyCmd}>
       <Copy /> <span>Copy command</span>
+    </ContextMenu.Item>
+    <ContextMenu.Item onSelect={continueElsewhere}>
+      <ArrowRight /> <span>Continue in another session</span>
     </ContextMenu.Item>
     <ContextMenu.Separator />
     <div class="flex items-center gap-2 px-1 py-1">
