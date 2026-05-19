@@ -110,6 +110,20 @@ export const Keymap = {
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'd'
   },
+  toggleFilesRail: {
+    id: 'rail.toggle-files',
+    description: 'Toggle Files pane',
+    keys: ['Ctrl', 'Shift', 'E'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'e'
+  },
+  toggleFeatureRail: {
+    id: 'rail.toggle-feature',
+    description: 'Toggle Feature Lab pane',
+    keys: ['Ctrl', 'Shift', 'L'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'l'
+  },
   toggleRailFullscreen: {
     id: 'rail.fullscreen',
     description: 'Toggle right pane fullscreen',

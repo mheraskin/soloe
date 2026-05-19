@@ -34,8 +34,8 @@
   const tabs: Tab[] = [
     { id: 'inspector', label: 'Inspector', icon: Activity },
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
-    { id: 'files', label: 'Files', icon: FolderTree },
-    { id: 'feature', label: 'Feature Lab', icon: Microscope },
+    { id: 'files', label: 'Files', icon: FolderTree, shortcut: Keymap.toggleFilesRail.keys },
+    { id: 'feature', label: 'Feature Lab', icon: Microscope, shortcut: Keymap.toggleFeatureRail.keys },
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 

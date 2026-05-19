@@ -256,6 +256,16 @@
       rightRail.toggleTab('diff');
       return;
     }
+    if (Keymap.toggleFilesRail.match(e)) {
+      consume(e);
+      rightRail.toggleTab('files');
+      return;
+    }
+    if (Keymap.toggleFeatureRail.match(e)) {
+      consume(e);
+      rightRail.toggleTab('feature');
+      return;
+    }
     if (Keymap.toggleRailFullscreen.match(e)) {
       consume(e);
       // Toggle fullscreen on whichever tab is currently active. If the rail

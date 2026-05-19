@@ -361,10 +361,22 @@
         rightRail.toggleTab('diff');
         return false;
       }
+      if (Keymap.toggleFilesRail.match(e)) {
+        e.preventDefault();
+        rightRail.toggleTab('files');
+        return false;
+      }
+      if (Keymap.toggleFeatureRail.match(e)) {
+        e.preventDefault();
+        rightRail.toggleTab('feature');
+        return false;
+      }
       for (const binding of Object.values(Keymap)) {
         if (binding.id === Keymap.deleteSelectedSession.id) continue;
         if (binding.id === Keymap.toggleNotesRail.id) continue;
         if (binding.id === Keymap.toggleDiffRail.id) continue;
+        if (binding.id === Keymap.toggleFilesRail.id) continue;
+        if (binding.id === Keymap.toggleFeatureRail.id) continue;
         if (binding.match(e)) return false;
       }
 
