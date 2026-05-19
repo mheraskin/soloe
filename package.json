@@ -2,6 +2,16 @@
   "name": "soloe",
   "version": "0.1.0",
   "description": "Manage Claude Code, Codex CLI, and standard terminal sessions in one local desktop app",
+  "license": "Apache-2.0",
+  "author": "Mykhail Heraskin",
+  "homepage": "https://github.com/mheraskin/soloe",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mheraskin/soloe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mheraskin/soloe/issues"
+  },
   "private": true,
   "main": "out/main/main.js",
   "scripts": {
