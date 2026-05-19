@@ -535,7 +535,7 @@
       </div>
       <div class="flex items-center justify-between gap-3">
         <Label for="pref-confirm-delete-tabs" class="text-xs text-muted-foreground">
-          Confirm before closing sessions
+          Confirm when closing sessions via the trash icon
         </Label>
         <Switch
           id="pref-confirm-delete-tabs"

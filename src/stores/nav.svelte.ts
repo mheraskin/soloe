@@ -144,7 +144,9 @@ class NavStore {
     if (!id) return;
     const session = sessions.sessions.find((s) => s.id === id);
     if (!session) return;
-    const ok = await confirmDeleteSession(session);
+    // Keyboard-shortcut path: ignore the user's "don't ask again" preference so
+    // a stray Ctrl+Delete can't silently destroy a session.
+    const ok = await confirmDeleteSession(session, { alwaysConfirm: true });
     if (!ok) return;
     try {
       await sessions.remove(id);
