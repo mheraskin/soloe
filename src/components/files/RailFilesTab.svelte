@@ -296,7 +296,7 @@
   });
 </script>
 
-<div bind:this={rootEl} class="flex min-h-0 flex-1 flex-col">
+<div bind:this={rootEl} class="flex min-h-0 min-w-0 flex-1 flex-col">
   <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 flex-col">
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Files</span>
@@ -364,16 +364,16 @@
          wrappers stay in the DOM either way so FileTreeView/CodeMirror keep
          their internal state (expansion, selection, scroll) across mode and
          file-open transitions. -->
-    <div class="flex min-h-0 flex-1 flex-row">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-row">
       <section
         bind:this={editorWrapperEl}
         class={[
-          'min-h-0 flex-col',
+          'min-h-0 min-w-0 flex-col',
           isSplit ? 'flex flex-1' : openFile ? 'flex flex-1' : 'hidden'
         ]}
       >
         {#if openFile}
-          <div class="flex items-center gap-1.5 border-b border-border px-2 py-1.5">
+          <div class="flex min-w-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
             {#if !isSplit}
               <Button
                 variant="ghost"

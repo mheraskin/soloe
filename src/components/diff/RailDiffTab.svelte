@@ -665,8 +665,8 @@
   });
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col" class:select-none={resizingList}>
-  <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+<div class="flex min-h-0 min-w-0 flex-1 flex-col" class:select-none={resizingList}>
+  <header class="flex min-w-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 flex-1 flex-col" class:hidden={diffExpanded}>
       <Popover.Root bind:open={pickerOpen}>
         <Popover.Trigger>
@@ -1053,7 +1053,7 @@
       onpointerdown={startResizeList}
     ></button>
 
-    <section class="flex min-h-0 flex-1 flex-col">
+    <section class="flex min-h-0 min-w-0 flex-1 flex-col">
       {#if stackChanges.length === 0}
         <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
           <FileDiff class="size-4 shrink-0" />

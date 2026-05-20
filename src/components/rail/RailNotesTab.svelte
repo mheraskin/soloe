@@ -382,8 +382,8 @@
   });
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col">
-  <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+<div class="flex min-h-0 min-w-0 flex-1 flex-col">
+  <header class="flex min-w-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 flex-col">
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Notes</span>
       <span class="truncate text-xs text-foreground">
@@ -457,8 +457,8 @@
       </ul>
     </ScrollArea>
 
-    <section class="flex min-h-0 flex-1 flex-col">
-      <div class="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+    <section class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div class="flex min-w-0 items-center justify-between gap-2 border-b border-border px-4 py-2">
         <span class="truncate text-xs font-medium">
           {editorTitle || 'Pick a note or create a new one'}
         </span>

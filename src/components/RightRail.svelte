@@ -12,6 +12,7 @@
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { sidebar } from '../stores/sidebar.svelte';
   import { featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
   import { kbdHints } from '../stores/kbd-hints.svelte';
@@ -42,61 +43,62 @@
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
-  const RAIL_WIDTH_KEY = 'soloe.rightRailWidth.v1';
-  const MIN_WIDTH = 280;
-  const MAX_WIDTH = 640;
-  const DEFAULT_WIDTH = 320;
+  // Persisted widths per pane slot (position 1 / position 2). Each pane
+  // remembers its own width so opening a second pane doesn't shrink the
+  // first one — the rail grows instead, up to the available space.
+  const PANE_WIDTHS_KEY = 'soloe.rightRailPaneWidths.v1';
+  const LEGACY_WIDTH_KEY = 'soloe.rightRailWidth.v1';
+  const ICON_COL_WIDTH = 40;
+  const MIN_PANE_WIDTH = 220;
+  const TERMINAL_MIN_WIDTH = 220;
+  const DEFAULT_PANE_WIDTH = 320;
 
   interface Props {
-    // When true, the rail content (typically the diff tab) stretches to
-    // fill the entire main area; the resize handle is suppressed.
+    // True when the active rail pane fills the entire main area (terminal
+    // hidden). Suppresses the outer resize handle and the splitter.
     fullscreen?: boolean;
   }
 
   let { fullscreen = false }: Props = $props();
 
-  let width = $state(DEFAULT_WIDTH);
-  let resizing = $state(false);
+  let paneWidths = $state<[number, number]>([DEFAULT_PANE_WIDTH, DEFAULT_PANE_WIDTH]);
+  let resizing: 'outer' | 'splitter' | null = $state(null);
+  let asideEl: HTMLElement | null = $state(null);
 
-  // Keep RailDiffTab in the DOM across worktree switches as long as any
-  // worktree has it active in its persisted state. Switching to a worktree
-  // whose saved rail tab differs just hides the diff tab via CSS instead of
-  // tearing it down — preserves scroll state, search, and any in-flight
-  // diff requests across worktree hops.
-  let diffMounted = $derived(rightRail.diffMountedCwds.length > 0);
-  let diffVisible = $derived(rightRail.open && rightRail.activeTab === 'diff');
-  // Same trick for the files tab — keeps the file tree + editor mounted so
-  // unsaved edits, expansion state, and scroll positions all survive worktree
-  // hops. RailFilesTab is a singleton; per-cwd state lives in filesStore.
-  let filesMounted = $derived(rightRail.filesMountedCwds.length > 0);
-  let filesVisible = $derived(rightRail.open && rightRail.activeTab === 'files');
-  let otherTabVisible = $derived(
-    rightRail.open &&
-      rightRail.activeTab !== 'diff' &&
-      rightRail.activeTab !== 'files' &&
-      rightRail.activeTab !== 'feature' &&
-      rightRail.activeTab !== 'browser'
-  );
+  // Mount-keep-alive lookups. Diff and Files persist their state across
+  // worktree hops as long as some worktree has them open. Other tabs are
+  // mounted only while they're visible in the current worktree.
+  let diffMountedCwds = $derived(rightRail.diffMountedCwds);
+  let filesMountedCwds = $derived(rightRail.filesMountedCwds);
+  let diffMounted = $derived(diffMountedCwds.length > 0);
+  let filesMounted = $derived(filesMountedCwds.length > 0);
 
-  // The feature tab subscribes to a polling watcher and keeps a slug picker per
-  // worktree; stay mounted while the rail is on the 'feature' tab in any
-  // worktree so worktree hops don't tear down the watcher subscription. Unlike
-  // diff/files there's no scroll position to preserve across hops, but the
-  // subscription teardown cost is what we're avoiding here.
-  let featureMounted = $derived(rightRail.open && rightRail.activeTab === 'feature');
-  let featureVisible = $derived(rightRail.open && rightRail.activeTab === 'feature');
+  let openTabs = $derived(rightRail.openTabs);
+  let railOpen = $derived(openTabs.length > 0);
+  let fullscreenTab = $derived(rightRail.fullscreenTab);
+  let twoPane = $derived(openTabs.length === 2);
 
-  // Browser deliberately does NOT use the keep-alive pattern: mounting it
-  // spins up a Chromium subprocess (one per webview), so leaving it in the
-  // DOM while hidden would defeat the whole "minimal performance footprint"
-  // requirement. Switching away tears the webview down completely; switching
-  // back creates a fresh process. Per-tab URL + history live in the browser
-  // store, so the previous session restores on remount.
-  let browserVisible = $derived(rightRail.open && rightRail.activeTab === 'browser');
+  // Slot lookup: which position (0 = left, 1 = right) a tab occupies in
+  // the current worktree, or null if it isn't open here. Position 0 is
+  // the older click (leftmost), 1 is the newer (next to the icons).
+  function slotOf(id: RailTabId): 0 | 1 | null {
+    const idx = openTabs.indexOf(id);
+    if (idx === -1) return null;
+    return idx as 0 | 1;
+  }
 
-  // Notification dot driver for the feature tab icon. Surfaces when the active
-  // worktree has no `## Agent skills` block, so the user sees there's a setup
-  // step waiting for them without having to open the tab.
+  function tabVisible(id: RailTabId): boolean {
+    if (!railOpen) return false;
+    if (fullscreen) return fullscreenTab === id;
+    return openTabs.includes(id);
+  }
+
+  // Browser/feature don't keep-alive — see right-rail.svelte.ts.
+  let featureMountedHere = $derived(tabVisible('feature'));
+  let browserMountedHere = $derived(tabVisible('browser'));
+  let inspectorMountedHere = $derived(tabVisible('inspector'));
+  let notesMountedHere = $derived(tabVisible('notes'));
+
   let activeCwd = $derived.by<string | null>(() => {
     const cwd = sessions.selected?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
@@ -107,49 +109,269 @@
     return snap ? !snap.setup.hasAgentSkillsBlock : false;
   });
 
+  // How much horizontal space the rail's content area gets to fill.
+  // Single-pane uses paneWidths[0] only. Two-pane uses both. Fullscreen
+  // ignores the persisted widths and stretches to fill the main area.
+  let contentWidth = $derived(
+    fullscreen
+      ? 0
+      : openTabs.length === 0
+        ? 0
+        : openTabs.length === 1
+          ? paneWidths[0]
+          : paneWidths[0] + paneWidths[1] + 4 // +4 for the splitter
+  );
+  let asideWidth = $derived(contentWidth + ICON_COL_WIDTH);
+
   onMount(() => {
-    const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY));
-    if (Number.isFinite(stored)) width = clampWidth(stored);
+    try {
+      const raw = localStorage.getItem(PANE_WIDTHS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed) && parsed.length >= 2) {
+          const a = Number(parsed[0]);
+          const b = Number(parsed[1]);
+          paneWidths = [
+            Number.isFinite(a) ? Math.max(MIN_PANE_WIDTH, Math.round(a)) : DEFAULT_PANE_WIDTH,
+            Number.isFinite(b) ? Math.max(MIN_PANE_WIDTH, Math.round(b)) : DEFAULT_PANE_WIDTH
+          ];
+          return;
+        }
+      }
+      // Migrate v1 single-width to slot 0 so existing users keep their
+      // preferred pane size on first load after the upgrade.
+      const legacy = Number(localStorage.getItem(LEGACY_WIDTH_KEY));
+      if (Number.isFinite(legacy) && legacy >= MIN_PANE_WIDTH) {
+        paneWidths = [Math.round(legacy), DEFAULT_PANE_WIDTH];
+      }
+    } catch {
+      // Corrupt — fall back to defaults.
+    }
   });
 
-  function clampWidth(value: number): number {
-    return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)));
+  function persistPaneWidths(): void {
+    try {
+      localStorage.setItem(PANE_WIDTHS_KEY, JSON.stringify(paneWidths));
+    } catch {
+      // Quota — ignore.
+    }
   }
 
-  function startResize(event: PointerEvent) {
+  function maxContentWidth(): number {
+    const sidebarW = sidebar.effectiveWidth;
+    return Math.max(MIN_PANE_WIDTH, window.innerWidth - sidebarW - TERMINAL_MIN_WIDTH - ICON_COL_WIDTH);
+  }
+
+  function clampTotal(target: number, paneCount: number): number {
+    const splitter = paneCount === 2 ? 4 : 0;
+    const minTotal = paneCount === 2 ? MIN_PANE_WIDTH * 2 + splitter : MIN_PANE_WIDTH;
+    return Math.max(minTotal, Math.min(maxContentWidth(), Math.round(target)));
+  }
+
+  function startOuterResize(event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
-    resizing = true;
-    window.addEventListener('pointermove', resize);
-    window.addEventListener('pointerup', stopResize, { once: true });
+    resizing = 'outer';
+    window.addEventListener('pointermove', onOuterResize);
+    window.addEventListener('pointerup', stopOuterResize, { once: true });
   }
 
-  function resize(event: PointerEvent) {
-    width = clampWidth(window.innerWidth - event.clientX);
+  function onOuterResize(event: PointerEvent) {
+    // Outer handle sits at the rail's left edge. Dragging left grows
+    // the rail. Total content = window - clientX - icon column.
+    const targetContent = window.innerWidth - event.clientX - ICON_COL_WIDTH;
+    if (openTabs.length <= 1) {
+      paneWidths = [clampTotal(targetContent, 1), paneWidths[1]];
+      return;
+    }
+    const total = clampTotal(targetContent, 2) - 4; // discount splitter
+    const prevTotal = paneWidths[0] + paneWidths[1] || total;
+    const ratio = total / prevTotal;
+    let nextA = Math.max(MIN_PANE_WIDTH, Math.round(paneWidths[0] * ratio));
+    let nextB = Math.max(MIN_PANE_WIDTH, total - nextA);
+    if (nextA + nextB > total) nextA = total - nextB;
+    if (nextA < MIN_PANE_WIDTH) {
+      nextA = MIN_PANE_WIDTH;
+      nextB = Math.max(MIN_PANE_WIDTH, total - nextA);
+    }
+    paneWidths = [nextA, nextB];
   }
 
-  function stopResize() {
-    resizing = false;
-    window.removeEventListener('pointermove', resize);
-    localStorage.setItem(RAIL_WIDTH_KEY, String(width));
+  function stopOuterResize() {
+    resizing = null;
+    window.removeEventListener('pointermove', onOuterResize);
+    persistPaneWidths();
+  }
+
+  function startSplitterResize(event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resizing = 'splitter';
+    window.addEventListener('pointermove', onSplitterResize);
+    window.addEventListener('pointerup', stopSplitterResize, { once: true });
+  }
+
+  function onSplitterResize(event: PointerEvent) {
+    // Splitter sits between pane 1 (left) and pane 2 (right). Dragging
+    // right grows pane 1 at the expense of pane 2.
+    if (!asideEl) return;
+    const rect = asideEl.getBoundingClientRect();
+    const contentLeft = rect.left;
+    const contentRight = rect.right - ICON_COL_WIDTH;
+    const total = contentRight - contentLeft - 4; // discount splitter width
+    let nextA = event.clientX - contentLeft;
+    nextA = Math.max(MIN_PANE_WIDTH, Math.min(total - MIN_PANE_WIDTH, Math.round(nextA)));
+    paneWidths = [nextA, total - nextA];
+  }
+
+  function stopSplitterResize() {
+    resizing = null;
+    window.removeEventListener('pointermove', onSplitterResize);
+    persistPaneWidths();
+  }
+
+  // Re-clamp the rail when something off-rail shrinks our budget: the
+  // sidebar reappearing, or the window shrinking. Keeps the terminal at
+  // or above its minimum without manual intervention.
+  $effect(() => {
+    void sidebar.effectiveWidth;
+    if (typeof window === 'undefined') return;
+    if (openTabs.length === 0) return;
+    const max = maxContentWidth();
+    if (openTabs.length === 1) {
+      if (paneWidths[0] > max) paneWidths = [Math.max(MIN_PANE_WIDTH, max), paneWidths[1]];
+      return;
+    }
+    const total = paneWidths[0] + paneWidths[1];
+    if (total + 4 <= max) return;
+    const budget = max - 4;
+    const ratio = budget / total;
+    let nextA = Math.max(MIN_PANE_WIDTH, Math.round(paneWidths[0] * ratio));
+    let nextB = Math.max(MIN_PANE_WIDTH, budget - nextA);
+    if (nextA + nextB > budget) nextA = budget - nextB;
+    if (nextA < MIN_PANE_WIDTH) {
+      nextA = MIN_PANE_WIDTH;
+      nextB = Math.max(MIN_PANE_WIDTH, budget - nextA);
+    }
+    paneWidths = [nextA, nextB];
+  });
+
+  // Auto-collapse the sidebar when opening a second pane wouldn't fit at
+  // minimum widths. Keeps the click immediately useful instead of leaving
+  // the user to figure out why nothing visible changed.
+  $effect(() => {
+    if (openTabs.length < 2) return;
+    if (sidebar.hidden) return;
+    if (typeof window === 'undefined') return;
+    const needed = MIN_PANE_WIDTH * 2 + 4 + ICON_COL_WIDTH + TERMINAL_MIN_WIDTH;
+    const available = window.innerWidth - sidebar.effectiveWidth;
+    if (available < needed) sidebar.hide();
+  });
+
+  // Order class for a tab's pane wrapper. Slot 0 (older click, leftmost)
+  // gets order-1; slot 1 (newer click, next to icons) gets order-3. The
+  // splitter sits at order-2. The icon nav is order-99. Tabs not in the
+  // current worktree's open set are hidden so they stay mounted (for
+  // diff/files keep-alive) without occupying layout space.
+  function slotOrderClass(id: RailTabId): string {
+    const slot = slotOf(id);
+    if (slot === 0) return 'order-1';
+    if (slot === 1) return 'order-3';
+    return '';
+  }
+
+  function slotWidth(id: RailTabId): number {
+    const slot = slotOf(id);
+    if (slot === null) return 0;
+    return paneWidths[slot];
+  }
+
+  // In fullscreen the chosen pane stretches; otherwise the slot dictates
+  // the explicit width. Hidden mounted panes get display:none via the
+  // hidden class so their width is irrelevant.
+  function paneStyle(id: RailTabId): string | undefined {
+    if (fullscreen && fullscreenTab === id) return undefined;
+    if (slotOf(id) === null) return undefined;
+    return `width: ${slotWidth(id)}px`;
+  }
+
+  function paneClasses(id: RailTabId, baseExtra = ''): string[] {
+    const visible = tabVisible(id);
+    return [
+      'flex min-w-0 flex-col border-r border-border',
+      visible ? (fullscreen ? 'flex-1' : 'flex-shrink-0') : 'hidden',
+      visible ? slotOrderClass(id) : '',
+      baseExtra
+    ];
   }
 </script>
 
 <aside
+  bind:this={asideEl}
   class={[
-    'relative flex flex-row-reverse border-l border-border bg-sidebar',
+    'relative flex border-l border-border bg-sidebar',
     fullscreen ? 'min-w-0 flex-1' : 'flex-shrink-0',
-    !rightRail.open && 'w-10',
-    rightRail.open && 'overflow-hidden'
+    !railOpen && 'w-10',
+    railOpen && 'overflow-hidden'
   ]}
   class:select-none={resizing}
-  style={rightRail.open && !fullscreen ? `width: ${width}px` : undefined}
+  style={railOpen && !fullscreen ? `width: ${asideWidth}px` : undefined}
   aria-label="Session rail"
 >
+  <!-- Diff: kept mounted across worktree hops so its scroll/search/edits
+       survive switching between worktrees that have it open. -->
+  {#if diffMounted}
+    <div class={paneClasses('diff')} style={paneStyle('diff')}>
+      <RailDiffTab />
+    </div>
+  {/if}
+
+  <!-- Files: same keep-alive contract as diff. -->
+  {#if filesMounted}
+    <div class={paneClasses('files')} style={paneStyle('files')}>
+      <RailFilesTab />
+    </div>
+  {/if}
+
+  {#if featureMountedHere}
+    <div class={paneClasses('feature')} style={paneStyle('feature')}>
+      <RailFeatureTab />
+    </div>
+  {/if}
+
+  {#if browserMountedHere}
+    <div class={paneClasses('browser')} style={paneStyle('browser')}>
+      <RailBrowserTab />
+    </div>
+  {/if}
+
+  {#if inspectorMountedHere}
+    <div class={paneClasses('inspector')} style={paneStyle('inspector')}>
+      <ScrollArea class="min-h-0 flex-1">
+        <RailInspectorTab />
+      </ScrollArea>
+    </div>
+  {/if}
+
+  {#if notesMountedHere}
+    <div class={paneClasses('notes')} style={paneStyle('notes')}>
+      <RailNotesTab />
+    </div>
+  {/if}
+
+  {#if twoPane && !fullscreen}
+    <button
+      type="button"
+      class={`order-2 relative z-10 h-full w-1 flex-shrink-0 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'splitter' ? 'bg-ring/20' : 'bg-transparent'}`}
+      aria-label="Resize pane split"
+      onpointerdown={startSplitterResize}
+    ></button>
+  {/if}
+
   <Tooltip.Provider delayDuration={250}>
-    <nav class="flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
+    <nav class="order-[99] flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
-        {@const isActive = rightRail.open && rightRail.activeTab === tab.id}
+        {@const isActive = openTabs.includes(tab.id)}
         {@const showDot = tab.id === 'feature' && featureNeedsSetup && !isActive}
         <Tooltip.Root disabled={kbdHints.altHeld}>
           <Tooltip.Trigger>
@@ -224,65 +446,12 @@
     </nav>
   </Tooltip.Provider>
 
-  {#if diffMounted}
-    <div
-      class={[
-        'min-w-0 flex-1 flex-col border-r border-border',
-        diffVisible ? 'flex' : 'hidden'
-      ]}
-    >
-      <RailDiffTab />
-    </div>
-  {/if}
-
-  {#if filesMounted}
-    <div
-      class={[
-        'min-w-0 flex-1 flex-col border-r border-border',
-        filesVisible ? 'flex' : 'hidden'
-      ]}
-    >
-      <RailFilesTab />
-    </div>
-  {/if}
-
-  {#if featureMounted}
-    <div
-      class={[
-        'min-w-0 flex-1 flex-col border-r border-border',
-        featureVisible ? 'flex' : 'hidden'
-      ]}
-    >
-      <RailFeatureTab />
-    </div>
-  {/if}
-
-  {#if browserVisible}
-    <div class="flex min-w-0 flex-1 flex-col border-r border-border">
-      <RailBrowserTab />
-    </div>
-  {/if}
-
-  {#if otherTabVisible}
-    <div class="flex min-w-0 flex-1 flex-col border-r border-border">
-      {#if rightRail.activeTab === 'notes'}
-        <RailNotesTab />
-      {:else}
-        <ScrollArea class="min-h-0 flex-1">
-          {#if rightRail.activeTab === 'inspector'}
-            <RailInspectorTab />
-          {/if}
-        </ScrollArea>
-      {/if}
-    </div>
-  {/if}
-
-  {#if rightRail.open && !fullscreen}
+  {#if railOpen && !fullscreen}
     <button
       type="button"
-      class={`absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
+      class={`absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'outer' ? 'bg-ring/20' : 'bg-transparent'}`}
       aria-label="Resize rail"
-      onpointerdown={startResize}
+      onpointerdown={startOuterResize}
     >
       <span class="absolute bottom-1 left-1 block size-2 border-b border-l border-muted-foreground/60"></span>
     </button>

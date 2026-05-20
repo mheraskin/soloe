@@ -1,65 +1,99 @@
 export type RailTabId = 'inspector' | 'notes' | 'diff' | 'files' | 'feature' | 'browser';
 
+// Maximum number of rail panes that can be open simultaneously. Two panes
+// stack side-by-side in the rail; opening a third drops the oldest.
+const MAX_OPEN_TABS = 2;
+
 interface RailState {
-  activeTab: RailTabId;
-  open: boolean;
-  // When true, the active rail tab stretches across the main area and
-  // covers the terminal. Applies to whichever tab is active, not just diff.
+  // Ordered list of currently open panes. Index 0 is the older click
+  // (position 1, leftmost in the rail). Last entry is the most recent
+  // click (position 2, closest to the icon column on the right).
+  // Empty list means the rail is closed (only the icon column is visible).
+  openTabs: RailTabId[];
   fullscreen: boolean;
+  // Which pane the user is fullscreening. Always one of openTabs when
+  // fullscreen is true; null when no pane is fullscreened.
+  fullscreenTab: RailTabId | null;
 }
 
 const DEFAULT_STATE: RailState = {
-  activeTab: 'inspector',
-  open: false,
-  fullscreen: false
+  openTabs: [],
+  fullscreen: false,
+  fullscreenTab: null
 };
 
-// Bucket used when no worktree is active (e.g. no session selected). Lets the
-// rail still behave like a single global state in that edge case.
 const NO_WORKTREE_KEY = '__none__';
-const STORAGE_KEY = 'soloe.rightRail.v1';
+const STORAGE_KEY = 'soloe.rightRail.v2';
+const LEGACY_STORAGE_KEY = 'soloe.rightRail.v1';
 const DIFF_SCROLL_KEY = 'soloe.diffScroll.v1';
 const FILES_SCROLL_KEY = 'soloe.filesScroll.v1';
 
+const ALL_TABS: ReadonlySet<RailTabId> = new Set([
+  'inspector',
+  'notes',
+  'diff',
+  'files',
+  'feature',
+  'browser'
+]);
+
+function sanitizeTabs(raw: unknown): RailTabId[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RailTabId[] = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    if (!ALL_TABS.has(value as RailTabId)) continue;
+    if (out.includes(value as RailTabId)) continue;
+    out.push(value as RailTabId);
+    if (out.length >= MAX_OPEN_TABS) break;
+  }
+  return out;
+}
+
 function sanitize(value: Partial<RailState> | undefined): RailState {
-  const raw = value?.activeTab;
-  const tab: RailTabId =
-    raw === 'notes' ||
-    raw === 'diff' ||
-    raw === 'files' ||
-    raw === 'feature' ||
-    raw === 'browser'
-      ? raw
-      : 'inspector';
+  const openTabs = sanitizeTabs(value?.openTabs);
+  const fullscreenRaw = value?.fullscreenTab;
+  const fullscreenTab =
+    typeof fullscreenRaw === 'string' && openTabs.includes(fullscreenRaw as RailTabId)
+      ? (fullscreenRaw as RailTabId)
+      : null;
   return {
-    activeTab: tab,
-    open: typeof value?.open === 'boolean' ? value.open : false,
-    fullscreen: typeof value?.fullscreen === 'boolean' ? value.fullscreen : false
+    openTabs,
+    fullscreen: typeof value?.fullscreen === 'boolean' && openTabs.length > 0 ? value.fullscreen : false,
+    fullscreenTab: typeof value?.fullscreen === 'boolean' && value.fullscreen ? fullscreenTab : null
+  };
+}
+
+// One-shot migration from the v1 single-tab layout. The old shape was
+// { activeTab, open, fullscreen }; if `open` was true we seed openTabs with
+// that single tab so users don't lose their last selection on first load.
+function migrateLegacy(raw: unknown): RailState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const tab = obj.activeTab;
+  if (typeof tab !== 'string' || !ALL_TABS.has(tab as RailTabId)) return null;
+  const open = obj.open === true;
+  const fullscreen = obj.fullscreen === true;
+  if (!open) return { openTabs: [], fullscreen: false, fullscreenTab: null };
+  const openTabs: RailTabId[] = [tab as RailTabId];
+  return {
+    openTabs,
+    fullscreen,
+    fullscreenTab: fullscreen ? (tab as RailTabId) : null
   };
 }
 
 class RightRailStore {
-  // The store keys all of its visible state by worktree cwd. A consumer in
-  // App.svelte feeds the active cwd in as `sessions.selected` changes, so we
-  // don't have to import the sessions store from here (would be a cycle).
   private activeCwd = $state<string | null>(null);
   private stateByCwd = $state<Record<string, RailState>>({});
 
-  // Diff viewport scroll position per worktree. Kept here rather than in
-  // working-diff because the rail already owns per-cwd UI persistence and is
-  // localStorage-backed; the diff body restores from this on cwd switch.
-  // Plain (non-$state) record: writes happen on every scroll tick and we
-  // don't want any subscribers reacting to that.
   private diffScrollByCwd: Record<string, number> = {};
-
-  // Same idea for the files tab — but split by surface: the file tree's
-  // scroll (no file open) and the editor's scroll (file open) are recorded
-  // independently so coming back to either restores the right offset.
   private filesTreeScrollByCwd: Record<string, number> = {};
   private filesEditorScrollByCwd: Record<string, number> = {};
 
   constructor() {
     if (typeof localStorage === 'undefined') return;
+    let loaded = false;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -69,9 +103,27 @@ class RightRailStore {
           next[key] = sanitize(value);
         }
         this.stateByCwd = next;
+        loaded = true;
       }
     } catch {
-      // Corrupt entry — start fresh; not worth surfacing to the user.
+      // Corrupt entry — try legacy below.
+    }
+    if (!loaded) {
+      try {
+        const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const next: Record<string, RailState> = {};
+          for (const [key, value] of Object.entries(parsed)) {
+            const migrated = migrateLegacy(value);
+            if (migrated) next[key] = migrated;
+          }
+          this.stateByCwd = next;
+          this.persist();
+        }
+      } catch {
+        // No legacy data either — start fresh.
+      }
     }
     try {
       const raw = localStorage.getItem(DIFF_SCROLL_KEY);
@@ -141,86 +193,135 @@ class RightRailStore {
     }
   }
 
-  get activeTab(): RailTabId {
-    return this.current().activeTab;
+  // Convenience for consumers that only care whether the rail is showing
+  // any pane at all. Equivalent to openTabs.length > 0.
+  get open(): boolean {
+    return this.current().openTabs.length > 0;
   }
 
-  get open(): boolean {
-    return this.current().open;
+  get openTabs(): readonly RailTabId[] {
+    return this.current().openTabs;
   }
-  set open(value: boolean) {
-    // Closing the rail also clears fullscreen so reopening from a tab icon
-    // doesn't snap straight back into the terminal-hiding mode.
-    if (value) {
-      this.patch({ open: true });
-    } else {
-      this.patch({ open: false, fullscreen: false });
-    }
+
+  // The "primary" tab — the most-recently opened pane. Components that
+  // previously checked rightRail.activeTab can keep working; this points
+  // at whatever was last clicked, which matches the v1 behaviour when
+  // only one pane could ever be open.
+  get activeTab(): RailTabId {
+    const tabs = this.current().openTabs;
+    return tabs[tabs.length - 1] ?? 'inspector';
   }
 
   get fullscreen(): boolean {
     return this.current().fullscreen;
   }
   set fullscreen(value: boolean) {
+    const state = this.current();
     if (value) {
-      this.patch({ fullscreen: true, open: true });
+      // Entering fullscreen requires at least one pane. If none are open,
+      // promote inspector so the user has something to look at.
+      if (state.openTabs.length === 0) {
+        this.patch({ openTabs: ['inspector'], fullscreen: true, fullscreenTab: 'inspector' });
+        return;
+      }
+      // Fullscreen targets the latest pane by default.
+      const target = state.fullscreenTab ?? state.openTabs[state.openTabs.length - 1];
+      this.patch({ fullscreen: true, fullscreenTab: target });
     } else {
-      this.patch({ fullscreen: false });
+      this.patch({ fullscreen: false, fullscreenTab: null });
     }
   }
 
-  // Worktrees where the diff tab is the persisted active tab and the rail is
-  // open. Used to keep RailDiffTab mounted for those worktrees across
-  // worktree switches, so the diff body doesn't tear down and rebuild when
-  // jumping back and forth.
+  // The pane that is currently fullscreened, or null when not in fullscreen.
+  get fullscreenTab(): RailTabId | null {
+    const state = this.current();
+    return state.fullscreen ? state.fullscreenTab : null;
+  }
+
+  // Worktrees where the diff tab is in the open set. Used to keep
+  // RailDiffTab mounted across worktree switches so its scroll/search
+  // state survives.
   get diffMountedCwds(): string[] {
     const out: string[] = [];
     for (const [key, value] of Object.entries(this.stateByCwd)) {
       if (key === NO_WORKTREE_KEY) continue;
-      if (value.open && value.activeTab === 'diff') out.push(key);
+      if (value.openTabs.includes('diff')) out.push(key);
     }
     return out;
   }
 
-  // Same mount-keep-alive idea for the files tab: any worktree whose
-  // persisted choice is 'files' keeps RailFilesTab in the DOM so the tree's
-  // expansion + the editor's scroll/cursor survive worktree hops.
   get filesMountedCwds(): string[] {
     const out: string[] = [];
     for (const [key, value] of Object.entries(this.stateByCwd)) {
       if (key === NO_WORKTREE_KEY) continue;
-      if (value.open && value.activeTab === 'files') out.push(key);
+      if (value.openTabs.includes('files')) out.push(key);
     }
     return out;
   }
 
   openTab(tab: RailTabId): void {
-    this.patch({ activeTab: tab, open: true });
+    const state = this.current();
+    const idx = state.openTabs.indexOf(tab);
+    if (idx !== -1) {
+      // Already open — promote to "most recent" so the next fullscreen
+      // toggle targets it. Position rearranges if the user clicked an
+      // older pane to bring it forward.
+      const next = [...state.openTabs.filter((t) => t !== tab), tab];
+      this.patch({ openTabs: next });
+      return;
+    }
+    let next = [...state.openTabs, tab];
+    if (next.length > MAX_OPEN_TABS) next = next.slice(-MAX_OPEN_TABS);
+    this.patch({ openTabs: next });
   }
 
   toggleTab(tab: RailTabId): void {
     const state = this.current();
-    if (state.open && state.activeTab === tab) {
-      // Clicking the active tab in fullscreen drops back to the split
-      // layout so the terminal becomes visible again, instead of closing
-      // the rail outright.
-      if (state.fullscreen) {
-        this.patch({ fullscreen: false });
-        return;
-      }
-      this.patch({ open: false, fullscreen: false });
+    // Per user feedback (2026-05-20): clicking any rail icon while a pane
+    // is fullscreened closes the rail entirely rather than dropping back
+    // to the split view. The next click reopens in normal mode because
+    // openTabs starts empty.
+    if (state.fullscreen) {
+      this.patch({ openTabs: [], fullscreen: false, fullscreenTab: null });
       return;
     }
-    this.patch({ activeTab: tab, open: true });
+    const idx = state.openTabs.indexOf(tab);
+    if (idx !== -1) {
+      const next = state.openTabs.filter((t) => t !== tab);
+      this.patch({ openTabs: next });
+      return;
+    }
+    let next = [...state.openTabs, tab];
+    if (next.length > MAX_OPEN_TABS) next = next.slice(-MAX_OPEN_TABS);
+    this.patch({ openTabs: next });
   }
 
   close(): void {
-    this.patch({ open: false, fullscreen: false });
+    this.patch({ openTabs: [], fullscreen: false, fullscreenTab: null });
   }
 
   toggleFullscreen(): void {
     const state = this.current();
-    this.patch({ fullscreen: !state.fullscreen, open: true });
+    if (state.openTabs.length === 0) {
+      // No pane open — open inspector and fullscreen it so the keystroke
+      // produces a visible result instead of toggling invisibly.
+      this.patch({ openTabs: ['inspector'], fullscreen: true, fullscreenTab: 'inspector' });
+      return;
+    }
+    if (state.fullscreen) {
+      this.patch({ fullscreen: false, fullscreenTab: null });
+      return;
+    }
+    const target = state.openTabs[state.openTabs.length - 1];
+    this.patch({ fullscreen: true, fullscreenTab: target });
+  }
+
+  // Pick which pane to fullscreen when the user has two open and wants to
+  // promote one explicitly (e.g., via a per-pane fullscreen toggle).
+  setFullscreenTab(tab: RailTabId): void {
+    const state = this.current();
+    if (!state.openTabs.includes(tab)) return;
+    this.patch({ fullscreen: true, fullscreenTab: tab });
   }
 
   getDiffScrollTop(cwd: string | null | undefined): number {
@@ -258,9 +359,6 @@ class RightRailStore {
     this.persistFilesScroll();
   }
 
-  // Editor scroll is keyed by both cwd and relativePath so opening a second
-  // file in the same worktree doesn't try to restore the first file's offset
-  // into unrelated content. Callers compose the key as `${cwd}::${path}`.
   getFilesEditorScrollTop(key: string | null | undefined): number {
     if (!key) return 0;
     return this.filesEditorScrollByCwd[key] ?? 0;

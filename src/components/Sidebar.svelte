@@ -4,7 +4,11 @@
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
-  import { sidebar } from '../stores/sidebar.svelte';
+  import {
+    sidebar,
+    SIDEBAR_MIN_WIDTH,
+    SIDEBAR_MAX_WIDTH
+  } from '../stores/sidebar.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { rankMulti } from '../lib/fuzzy';
   import { Keymap } from '../lib/keymap';
@@ -17,9 +21,8 @@
   import ProjectSection from './ProjectSection.svelte';
   import SessionItem from './SessionItem.svelte';
 
-  const SIDEBAR_WIDTH_KEY = 'soloe.sidebarWidth.v1';
-  const MIN_WIDTH = 220;
-  const MAX_WIDTH = 460;
+  const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
+  const MAX_WIDTH = SIDEBAR_MAX_WIDTH;
   // Re-centre the target row a few times after the initial scroll. Async
   // content (git worktrees, project sections expanding) shifts heights for a
   // few hundred ms after mount; without this the row appears off-screen on
@@ -31,7 +34,6 @@
   const EDGE_SCROLL_MIN_SPEED = 4;
 
   let query = $state('');
-  let width = $state(260);
   let resizing = $state(false);
   let asideEl: HTMLElement | null = $state(null);
   let scrollViewport: HTMLElement | null = $state(null);
@@ -41,10 +43,9 @@
   let edgeScrollSpeed = 0;
   let edgeScrollFrame: number | null = null;
 
-  onMount(() => {
-    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    if (Number.isFinite(stored)) width = clampWidth(stored);
-  });
+  // Width comes from the sidebar store now so the rail can clamp against
+  // it without measuring the DOM. The store owns persistence too.
+  let width = $derived(sidebar.width);
 
   function clearSettleTimers() {
     for (const t of settleTimers) clearTimeout(t);
@@ -203,10 +204,6 @@
     return rankMulti(q, list, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
   });
 
-  function clampWidth(value: number): number {
-    return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)));
-  }
-
   function startResize(event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -216,13 +213,12 @@
   }
 
   function resize(event: PointerEvent) {
-    width = clampWidth(event.clientX);
+    sidebar.setWidth(event.clientX);
   }
 
   function stopResize() {
     resizing = false;
     window.removeEventListener('pointermove', resize);
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
   }
 </script>
 
