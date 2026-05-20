@@ -116,6 +116,34 @@
   // whichever tab is active (diff, notes, inspector).
   let railFullscreen = $derived(rightRail.open && rightRail.fullscreen);
 
+  // Subtle "you are here" reminder shown in the title bar when the sidebar
+  // is collapsed: project name and current worktree (branch when known,
+  // basename otherwise).
+  let collapsedHint = $derived.by<{ project: string; worktree: string } | null>(() => {
+    if (!sidebar.hidden) return null;
+    const sel = sessions.selected;
+    if (!sel) return null;
+    const project = sel.projectId ? projects.get(sel.projectId) : null;
+    const projectName = project?.name ?? null;
+    const cwd = sel.cwd?.trim() ?? '';
+    const branch = git.statusFor(cwd)?.branch ?? sel.lastBranch ?? null;
+    let worktree = branch;
+    if (!worktree && project) {
+      const projectPath = project.path.replace(/[/\\]+$/, '');
+      const normCwd = cwd.replace(/[/\\]+$/, '');
+      if (normCwd === projectPath) worktree = 'main';
+      else if (normCwd.startsWith(projectPath + '/') || normCwd.startsWith(projectPath + '\\')) {
+        worktree = normCwd.slice(projectPath.length + 1);
+      }
+    }
+    if (!worktree && cwd) {
+      const parts = cwd.split(/[/\\]/);
+      worktree = parts[parts.length - 1] || cwd;
+    }
+    if (!projectName && !worktree) return null;
+    return { project: projectName ?? '', worktree: worktree ?? '' };
+  });
+
   // Keep the rail store's notion of the active worktree in sync with the
   // selected session, so its per-worktree open/fullscreen/tab state can be
   // recalled when bouncing between worktrees.
@@ -413,11 +441,13 @@
     class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
     style="-webkit-app-region: drag"
   >
+    <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
+    <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
     {#if sidebar.hidden}
-      <div class="flex self-stretch" style="-webkit-app-region: no-drag">
+      <div class="ml-1 flex self-stretch" style="-webkit-app-region: no-drag">
         <Button
           variant="ghost"
-          class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+          class="h-full w-[28px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
           onclick={() => sidebar.show()}
           aria-label="Show sidebar"
           title="Show sidebar (Ctrl+B)"
@@ -425,9 +455,25 @@
           <PanelLeftOpen class="size-3.5" />
         </Button>
       </div>
+      {#if collapsedHint}
+        <span
+          class="ml-1 min-w-0 truncate text-[11px] tracking-wide"
+          title={collapsedHint.project && collapsedHint.worktree
+            ? `${collapsedHint.project} · ${collapsedHint.worktree}`
+            : collapsedHint.project || collapsedHint.worktree}
+        >
+          {#if collapsedHint.project}
+            <span class="text-muted-foreground/55">{collapsedHint.project}</span>
+          {/if}
+          {#if collapsedHint.project && collapsedHint.worktree}
+            <span class="mx-1 text-muted-foreground/35">·</span>
+          {/if}
+          {#if collapsedHint.worktree}
+            <span class="text-muted-foreground/80">{collapsedHint.worktree}</span>
+          {/if}
+        </span>
+      {/if}
     {/if}
-    <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
-    <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
     <div class="flex-1 self-stretch" aria-hidden="true"></div>
     <div class="flex self-stretch" style="-webkit-app-region: no-drag">
       <Button
