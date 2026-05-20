@@ -44,15 +44,73 @@
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
-  // Persisted widths per pane slot (position 1 / position 2). Each pane
-  // remembers its own width so opening a second pane doesn't shrink the
-  // first one — the rail grows instead, up to the available space.
-  const PANE_WIDTHS_KEY = 'soloe.rightRailPaneWidths.v1';
-  const LEGACY_WIDTH_KEY = 'soloe.rightRailWidth.v1';
+  // Per-scenario widths. Each of the three standard layouts has its own
+  // memory so dragging in one (e.g. sidebar visible + 1 rail) doesn't move
+  // the others. Defaults are ratios of viewport — see RATIO_* below.
+  //
+  //   A: sidebar visible + 1 rail pane → 30% rail (the 30/40/30 column feel)
+  //   B: sidebar hidden  + 1 rail pane → 50% rail (terminal/rail even split)
+  //   C: 2 rail panes (sidebar usually auto-collapses)
+  //         slot 0 (central, main)  → 55%
+  //         slot 1 (notes-style)    → pinned to MIN_PANE_WIDTH
+  const SCENARIO_KEY = 'soloe.rail.scenarioWidths.v1';
   const ICON_COL_WIDTH = 40;
   const MIN_PANE_WIDTH = 220;
   const TERMINAL_MIN_WIDTH = 220;
-  const DEFAULT_PANE_WIDTH = 320;
+  const FALLBACK_PANE_WIDTH = 480;
+
+  const RATIO_A = 0.30;
+  const RATIO_B = 0.50;
+  const RATIO_C0 = 0.55;
+
+  type ScenarioId = 'A' | 'B' | 'C';
+
+  interface ScenarioWidths {
+    A: number;
+    B: number;
+    C0: number;
+    C1: number;
+  }
+
+  function computeDefaultWidths(): ScenarioWidths {
+    if (typeof window === 'undefined') {
+      return {
+        A: FALLBACK_PANE_WIDTH,
+        B: FALLBACK_PANE_WIDTH,
+        C0: FALLBACK_PANE_WIDTH,
+        C1: MIN_PANE_WIDTH
+      };
+    }
+    const vp = window.innerWidth;
+    return {
+      A: Math.max(MIN_PANE_WIDTH, Math.round(vp * RATIO_A)),
+      B: Math.max(MIN_PANE_WIDTH, Math.round(vp * RATIO_B)),
+      C0: Math.max(MIN_PANE_WIDTH, Math.round(vp * RATIO_C0)),
+      C1: MIN_PANE_WIDTH
+    };
+  }
+
+  function loadScenarioWidths(): ScenarioWidths {
+    if (typeof localStorage === 'undefined') return computeDefaultWidths();
+    try {
+      const raw = localStorage.getItem(SCENARIO_KEY);
+      if (!raw) return computeDefaultWidths();
+      const parsed = JSON.parse(raw) as Partial<ScenarioWidths>;
+      const d = computeDefaultWidths();
+      const sanitize = (v: unknown, fallback: number) =>
+        typeof v === 'number' && Number.isFinite(v)
+          ? Math.max(MIN_PANE_WIDTH, Math.round(v))
+          : fallback;
+      return {
+        A: sanitize(parsed.A, d.A),
+        B: sanitize(parsed.B, d.B),
+        C0: sanitize(parsed.C0, d.C0),
+        C1: sanitize(parsed.C1, d.C1)
+      };
+    } catch {
+      return computeDefaultWidths();
+    }
+  }
 
   interface Props {
     // True when the active rail pane fills the entire main area (terminal
@@ -62,7 +120,7 @@
 
   let { fullscreen = false }: Props = $props();
 
-  let paneWidths = $state<[number, number]>([DEFAULT_PANE_WIDTH, DEFAULT_PANE_WIDTH]);
+  let scenarioWidths = $state<ScenarioWidths>(computeDefaultWidths());
   let resizing: 'outer' | 'splitter' | null = $state(null);
   let asideEl: HTMLElement | null = $state(null);
 
@@ -78,6 +136,33 @@
   let railOpen = $derived(openTabs.length > 0);
   let fullscreenTab = $derived(rightRail.fullscreenTab);
   let twoPane = $derived(openTabs.length === 2);
+
+  // The active scenario picks which scenarioWidths entry drives layout.
+  // Two open panes always use C (even if the sidebar is visible — the
+  // auto-collapse effect below normally hides the sidebar in that case).
+  let currentScenario = $derived.by<ScenarioId>(() => {
+    if (openTabs.length === 2) return 'C';
+    return sidebar.hidden ? 'B' : 'A';
+  });
+
+  // paneWidths is a thin view over scenarioWidths so every read of slot 0/1
+  // already reflects the active scenario. Drag handlers write back through
+  // setScenarioWidths so persistence stays scoped to one scenario at a time.
+  let paneWidths = $derived.by<[number, number]>(() => {
+    if (currentScenario === 'A') return [scenarioWidths.A, MIN_PANE_WIDTH];
+    if (currentScenario === 'B') return [scenarioWidths.B, MIN_PANE_WIDTH];
+    return [scenarioWidths.C0, scenarioWidths.C1];
+  });
+
+  function setScenarioWidths(slot0: number, slot1: number): void {
+    if (currentScenario === 'A') {
+      scenarioWidths = { ...scenarioWidths, A: slot0 };
+    } else if (currentScenario === 'B') {
+      scenarioWidths = { ...scenarioWidths, B: slot0 };
+    } else {
+      scenarioWidths = { ...scenarioWidths, C0: slot0, C1: slot1 };
+    }
+  }
 
   // Slot lookup: which position (0 = left, 1 = right) a tab occupies in
   // the current worktree, or null if it isn't open here. Position 0 is
@@ -125,34 +210,12 @@
   let asideWidth = $derived(contentWidth + ICON_COL_WIDTH);
 
   onMount(() => {
-    try {
-      const raw = localStorage.getItem(PANE_WIDTHS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as unknown;
-        if (Array.isArray(parsed) && parsed.length >= 2) {
-          const a = Number(parsed[0]);
-          const b = Number(parsed[1]);
-          paneWidths = [
-            Number.isFinite(a) ? Math.max(MIN_PANE_WIDTH, Math.round(a)) : DEFAULT_PANE_WIDTH,
-            Number.isFinite(b) ? Math.max(MIN_PANE_WIDTH, Math.round(b)) : DEFAULT_PANE_WIDTH
-          ];
-          return;
-        }
-      }
-      // Migrate v1 single-width to slot 0 so existing users keep their
-      // preferred pane size on first load after the upgrade.
-      const legacy = Number(localStorage.getItem(LEGACY_WIDTH_KEY));
-      if (Number.isFinite(legacy) && legacy >= MIN_PANE_WIDTH) {
-        paneWidths = [Math.round(legacy), DEFAULT_PANE_WIDTH];
-      }
-    } catch {
-      // Corrupt — fall back to defaults.
-    }
+    scenarioWidths = loadScenarioWidths();
   });
 
-  function persistPaneWidths(): void {
+  function persistScenarioWidths(): void {
     try {
-      localStorage.setItem(PANE_WIDTHS_KEY, JSON.stringify(paneWidths));
+      localStorage.setItem(SCENARIO_KEY, JSON.stringify(scenarioWidths));
     } catch {
       // Quota — ignore.
     }
@@ -190,7 +253,7 @@
     // the rail. Total content = window - clientX - icon column.
     const targetContent = window.innerWidth - event.clientX - ICON_COL_WIDTH;
     if (openTabs.length <= 1) {
-      paneWidths = [clampTotal(targetContent, 1), paneWidths[1]];
+      setScenarioWidths(clampTotal(targetContent, 1), paneWidths[1]);
       return;
     }
     const total = clampTotal(targetContent, 2) - 4; // discount splitter
@@ -203,14 +266,14 @@
       nextA = MIN_PANE_WIDTH;
       nextB = Math.max(MIN_PANE_WIDTH, total - nextA);
     }
-    paneWidths = [nextA, nextB];
+    setScenarioWidths(nextA, nextB);
   }
 
   function stopOuterResize() {
     resizing = null;
     window.removeEventListener('pointermove', onOuterResize);
     window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
-    persistPaneWidths();
+    persistScenarioWidths();
   }
 
   function startSplitterResize(event: PointerEvent) {
@@ -233,14 +296,14 @@
     const total = contentRight - contentLeft - 4; // discount splitter width
     let nextA = event.clientX - contentLeft;
     nextA = Math.max(MIN_PANE_WIDTH, Math.min(total - MIN_PANE_WIDTH, Math.round(nextA)));
-    paneWidths = [nextA, total - nextA];
+    setScenarioWidths(nextA, total - nextA);
   }
 
   function stopSplitterResize() {
     resizing = null;
     window.removeEventListener('pointermove', onSplitterResize);
     window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
-    persistPaneWidths();
+    persistScenarioWidths();
   }
 
   // Re-clamp the rail when something off-rail shrinks our budget: the
@@ -252,7 +315,7 @@
     if (openTabs.length === 0) return;
     const max = maxContentWidth();
     if (openTabs.length === 1) {
-      if (paneWidths[0] > max) paneWidths = [Math.max(MIN_PANE_WIDTH, max), paneWidths[1]];
+      if (paneWidths[0] > max) setScenarioWidths(Math.max(MIN_PANE_WIDTH, max), paneWidths[1]);
       return;
     }
     const total = paneWidths[0] + paneWidths[1];
@@ -266,7 +329,7 @@
       nextA = MIN_PANE_WIDTH;
       nextB = Math.max(MIN_PANE_WIDTH, budget - nextA);
     }
-    paneWidths = [nextA, nextB];
+    setScenarioWidths(nextA, nextB);
   });
 
   // Auto-collapse the sidebar when opening a second pane wouldn't fit at
