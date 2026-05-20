@@ -96,6 +96,12 @@ export const Keymap = {
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === '['
   },
+  toggleSidebar: {
+    id: 'sidebar.toggle',
+    description: 'Toggle sidebar',
+    keys: ['Ctrl', 'B'],
+    match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === 'b'
+  },
   toggleNotesRail: {
     id: 'rail.toggle-notes',
     description: 'Toggle Notes pane',

@@ -17,6 +17,7 @@
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
   import { rightRail } from '../stores/right-rail.svelte';
+  import { sidebar } from '../stores/sidebar.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -371,12 +372,18 @@
         rightRail.toggleTab('feature');
         return false;
       }
+      if (Keymap.toggleSidebar.match(e)) {
+        e.preventDefault();
+        sidebar.toggle();
+        return false;
+      }
       for (const binding of Object.values(Keymap)) {
         if (binding.id === Keymap.deleteSelectedSession.id) continue;
         if (binding.id === Keymap.toggleNotesRail.id) continue;
         if (binding.id === Keymap.toggleDiffRail.id) continue;
         if (binding.id === Keymap.toggleFilesRail.id) continue;
         if (binding.id === Keymap.toggleFeatureRail.id) continue;
+        if (binding.id === Keymap.toggleSidebar.id) continue;
         if (binding.match(e)) return false;
       }
 

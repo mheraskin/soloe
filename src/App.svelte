@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { ModeWatcher, setMode } from 'mode-watcher';
-  import { Maximize2, Minus, Settings, X } from '@lucide/svelte';
+  import { Maximize2, Minus, PanelLeftOpen, Settings, X } from '@lucide/svelte';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
@@ -12,6 +12,7 @@
   import { filePalette } from './stores/file-palette.svelte';
   import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
+  import { sidebar } from './stores/sidebar.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
@@ -266,6 +267,11 @@
       rightRail.toggleTab('feature');
       return;
     }
+    if (Keymap.toggleSidebar.match(e)) {
+      consume(e);
+      sidebar.toggle();
+      return;
+    }
     if (Keymap.toggleRailFullscreen.match(e)) {
       consume(e);
       // Toggle fullscreen on whichever tab is currently active. If the rail
@@ -362,8 +368,20 @@
       </Button>
     </div>
   </header>
-  <div class="flex min-h-0 flex-1">
-    <Sidebar />
+  <div class="relative flex min-h-0 flex-1">
+    {#if !sidebar.hidden}
+      <Sidebar />
+    {:else}
+      <button
+        type="button"
+        class="absolute top-2 left-2 z-20 flex size-7 items-center justify-center rounded-md border border-border bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
+        aria-label="Show sidebar"
+        title="Show sidebar (Ctrl+B)"
+        onclick={() => sidebar.show()}
+      >
+        <PanelLeftOpen class="size-4" />
+      </button>
+    {/if}
     <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
     <div class={railFullscreen ? 'hidden' : 'contents'}>
       <TerminalArea />

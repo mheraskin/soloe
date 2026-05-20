@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, Search, FolderOpen, X } from '@lucide/svelte';
+  import { Plus, Search, FolderOpen, X, PanelLeftClose } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
+  import { sidebar } from '../stores/sidebar.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { rankMulti } from '../lib/fuzzy';
   import { Keymap } from '../lib/keymap';
@@ -234,6 +235,39 @@
   ondragleave={onSidebarDragLeave}
 >
   <div class="flex flex-col gap-2 border-b border-border p-2.5">
+    <div class="flex items-center gap-1.5">
+      <div class="relative min-w-0 flex-1">
+        <Search class="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder="Filter sessions"
+          bind:value={query}
+          class="h-7 pr-7 pl-7 text-xs [&::-webkit-search-cancel-button]:hidden"
+          aria-label="Filter sessions"
+        />
+        {#if query}
+          <button
+            type="button"
+            class="absolute top-1/2 right-1.5 flex size-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="Clear filter"
+            title="Clear filter"
+            onclick={() => (query = '')}
+          >
+            <X class="size-3" />
+          </button>
+        {/if}
+      </div>
+      <button
+        type="button"
+        class="flex h-7 shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label="Hide sidebar"
+        title="Hide sidebar"
+        onclick={() => sidebar.hide()}
+      >
+        <PanelLeftClose class="size-3.5" />
+        <KbdHint keys={Keymap.toggleSidebar.keys} class="shrink-0" />
+      </button>
+    </div>
     <div class="grid grid-cols-2 gap-2">
       <Button
         variant="ghost"
@@ -255,27 +289,6 @@
         <span class="min-w-0 truncate">New session</span>
         <KbdHint keys={Keymap.newSession.keys} class="ml-0.5 shrink-0" />
       </Button>
-    </div>
-    <div class="relative">
-      <Search class="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
-      <Input
-        type="search"
-        placeholder="Filter sessions"
-        bind:value={query}
-        class="h-7 pr-7 pl-7 text-xs [&::-webkit-search-cancel-button]:hidden"
-        aria-label="Filter sessions"
-      />
-      {#if query}
-        <button
-          type="button"
-          class="absolute top-1/2 right-1.5 flex size-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Clear filter"
-          title="Clear filter"
-          onclick={() => (query = '')}
-        >
-          <X class="size-3" />
-        </button>
-      {/if}
     </div>
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
