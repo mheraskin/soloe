@@ -76,6 +76,12 @@ export const Keymap = {
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && !e.altKey && (key(e) === '-' || key(e) === '_')
   },
+  zoomReset: {
+    id: 'window.zoom-reset',
+    description: 'Reset zoom',
+    keys: ['Ctrl', '0'],
+    match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === '0'
+  },
   deleteSelectedSession: {
     id: 'session.delete-selected',
     description: 'Delete selected session',
@@ -129,6 +135,13 @@ export const Keymap = {
     keys: ['Ctrl', 'Shift', 'L'],
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'l'
+  },
+  toggleBrowserRail: {
+    id: 'rail.toggle-browser',
+    description: 'Toggle Browser pane',
+    keys: ['Ctrl', 'Shift', 'B'],
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 'b'
   },
   toggleRailFullscreen: {
     id: 'rail.fullscreen',

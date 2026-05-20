@@ -53,6 +53,13 @@ import type {
   VaultUpdateRequest
 } from '@shared/types/vault.js';
 import type {
+  AttachDevToolsRequest,
+  CloseDevToolsRequest,
+  DisableDeviceEmulationRequest,
+  EnableDeviceEmulationRequest,
+  SetUserAgentRequest
+} from '@shared/types/browser.js';
+import type {
   CommitsBetweenRequest,
   FileBlameRequest,
   FileDiffRequest,
@@ -325,6 +332,18 @@ const soloe: SoloeApi = {
     delete: (request: VaultDeleteRequest) => ipcRenderer.invoke(IpcChannels.vault.delete, request),
     getSecret: (request: VaultGetSecretRequest) =>
       ipcRenderer.invoke(IpcChannels.vault.getSecret, request)
+  },
+  browser: {
+    enableDeviceEmulation: (request: EnableDeviceEmulationRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.enableDeviceEmulation, request),
+    disableDeviceEmulation: (request: DisableDeviceEmulationRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.disableDeviceEmulation, request),
+    setUserAgent: (request: SetUserAgentRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.setUserAgent, request),
+    attachDevTools: (request: AttachDevToolsRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.attachDevTools, request),
+    closeDevTools: (request: CloseDevToolsRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.closeDevTools, request)
   }
 };
 

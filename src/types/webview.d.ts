@@ -36,4 +36,7 @@ export interface ElectronWebview extends HTMLElement {
   isDevToolsOpened(): boolean;
   isLoading(): boolean;
   executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
+  getWebContentsId(): number;
+  setZoomLevel(level: number): void;
+  getZoomLevel(): number;
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     ArrowLeft,
     ArrowRight,
@@ -11,20 +11,35 @@
     History,
     Maximize2,
     Minimize2,
-    KeyRound
+    KeyRound,
+    Smartphone,
+    Tablet,
+    Monitor
   } from '@lucide/svelte';
-  import { browserStore } from '../../stores/browser.svelte';
+  import { browserStore, type BrowserTabDevice } from '../../stores/browser.svelte';
+  import { findPreset } from '../../lib/browser-devices';
   import { rightRail } from '../../stores/right-rail.svelte';
+  import { reportError } from '../../stores/toast.svelte';
   import type { ElectronWebview } from '../../types/webview';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import * as Popover from '$lib/components/ui/popover';
   import BrowserAutofillPopover from './BrowserAutofillPopover.svelte';
+  import BrowserDeviceMenu from './BrowserDeviceMenu.svelte';
 
   let activeTab = $derived(browserStore.activeTab);
   let activeUrl = $derived(activeTab ? activeTab.history[activeTab.historyIndex] ?? '' : '');
   let canBack = $derived(activeTab ? browserStore.canGoBack(activeTab.id) : false);
   let canForward = $derived(activeTab ? browserStore.canGoForward(activeTab.id) : false);
+  let device = $derived(activeTab?.device);
+  // Width/height swap when rotated. `rotated` lives on the device so a single
+  // toggle can flip portrait↔landscape without rewriting the preset numbers.
+  let deviceWidth = $derived(
+    device ? (device.rotated ? device.height : device.width) : 0
+  );
+  let deviceHeight = $derived(
+    device ? (device.rotated ? device.width : device.height) : 0
+  );
 
   // Captured once at mount so the initial `src=` doesn't react. The effect
   // below takes over for subsequent navigations.
@@ -58,8 +73,10 @@
   });
 
   // Tab-switch reset: forces a fresh sync regardless of dirty state, since
-  // the typed-but-uncommitted text belonged to the previous tab.
-  let prevTabId: string | null = activeTab?.id ?? null;
+  // the typed-but-uncommitted text belonged to the previous tab. Seed value
+  // is intentionally a snapshot (not reactive) — the effect below tracks the
+  // live id.
+  let prevTabId: string | null = untrack(() => activeTab?.id ?? null);
   $effect(() => {
     const id = activeTab?.id ?? null;
     if (id === prevTabId) return;
@@ -229,13 +246,219 @@
     el.reload();
   }
 
-  function openDevTools() {
-    const el = webview;
-    if (!el || !domReady) return;
-    el.openDevTools();
+  let devToolsView = $state<ElectronWebview | null>(null);
+  let devToolsReady = $state(false);
+  let devToolsOpen = $state(false);
+  let devToolsHeight = $state(280);
+
+  // Track dom-ready on the DevTools host webview separately — DevTools UI
+  // only attaches once that contents exists.
+  $effect(() => {
+    const el = devToolsView;
+    if (!el) return;
+    devToolsReady = false;
+    const onReady = () => {
+      devToolsReady = true;
+    };
+    el.addEventListener('dom-ready', onReady);
+    return () => el.removeEventListener('dom-ready', onReady);
+  });
+
+  async function openDevTools() {
+    const main = webview;
+    const dev = devToolsView;
+    if (!main || !domReady) return;
+    if (!dev) return;
+    devToolsOpen = true;
+    // The DevTools host webview may not have fired dom-ready yet (we only
+    // just mounted/unhid it). Wait briefly — Electron rejects
+    // setDevToolsWebContents on a destroyed/uninitialized contents.
+    if (!devToolsReady) {
+      await waitForDevToolsReady();
+    }
+    try {
+      await window.soloe.browser.attachDevTools({
+        webContentsId: main.getWebContentsId(),
+        devToolsWebContentsId: dev.getWebContentsId()
+      });
+    } catch (err) {
+      reportError(err, 'Failed to open DevTools');
+      devToolsOpen = false;
+    }
+  }
+
+  function waitForDevToolsReady(): Promise<void> {
+    return new Promise((resolve) => {
+      if (devToolsReady) return resolve();
+      const start = Date.now();
+      const tick = () => {
+        if (devToolsReady) return resolve();
+        if (Date.now() - start > 2000) return resolve(); // give up; user can retry
+        setTimeout(tick, 50);
+      };
+      tick();
+    });
+  }
+
+  function closeDevTools() {
+    devToolsOpen = false;
+    const main = webview;
+    if (!main) return;
+    try {
+      void window.soloe.browser
+        .closeDevTools({ webContentsId: main.getWebContentsId() })
+        .catch((err) => reportError(err, 'Failed to close DevTools'));
+    } catch (err) {
+      reportError(err, 'Failed to close DevTools');
+    }
+  }
+
+  function toggleDevTools() {
+    if (devToolsOpen) closeDevTools();
+    else void openDevTools();
+  }
+
+  // Drag-to-resize the DevTools panel (Chrome-like). Math anchors to the
+  // outer container height so the panel grows up from the bottom edge.
+  let devToolsResizing = $state(false);
+  function startDevToolsResize(event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    devToolsResizing = true;
+    const startY = event.clientY;
+    const startHeight = devToolsHeight;
+    const onMove = (ev: PointerEvent) => {
+      const dy = ev.clientY - startY;
+      // Dragging up (negative dy) grows the panel; clamp to a sane range.
+      devToolsHeight = Math.min(Math.max(startHeight - dy, 120), 800);
+    };
+    const onUp = () => {
+      devToolsResizing = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   }
 
   let autofillOpen = $state(false);
+  let deviceMenuOpen = $state(false);
+
+  // Apply the active device's emulation settings to the underlying webContents
+  // whenever the device changes or the page reaches dom-ready. Tracks the
+  // last applied UA so we can force a reload when it changes (UA is consulted
+  // by the page at navigation time, not after the fact).
+  let lastAppliedUa = $state<string | null>(null);
+  let lastAppliedDeviceKey = $state<string | null>(null);
+
+  function deviceKey(d: BrowserTabDevice | undefined): string | null {
+    if (!d) return null;
+    const w = d.rotated ? d.height : d.width;
+    const h = d.rotated ? d.width : d.height;
+    return `${d.presetId}:${w}x${h}@${d.dpr}:${d.mobile ? 'm' : 'd'}:${d.ua}`;
+  }
+
+  async function applyEmulation(): Promise<void> {
+    const el = webview;
+    if (!el || !domReady) return;
+    let webContentsId: number;
+    try {
+      webContentsId = el.getWebContentsId();
+    } catch {
+      return;
+    }
+    if (!device) {
+      if (lastAppliedDeviceKey === null) return;
+      lastAppliedDeviceKey = null;
+      try {
+        await window.soloe.browser.disableDeviceEmulation({ webContentsId });
+        if (lastAppliedUa !== null) {
+          await window.soloe.browser.setUserAgent({ webContentsId, userAgent: null });
+          const previousUa = lastAppliedUa;
+          lastAppliedUa = null;
+          if (previousUa) el.reload();
+        }
+      } catch (err) {
+        reportError(err, 'Failed to disable device emulation');
+      }
+      return;
+    }
+    const key = deviceKey(device);
+    if (key === lastAppliedDeviceKey) return;
+    lastAppliedDeviceKey = key;
+    try {
+      await window.soloe.browser.enableDeviceEmulation({
+        webContentsId,
+        emulation: {
+          width: deviceWidth,
+          height: deviceHeight,
+          deviceScaleFactor: device.dpr,
+          mobile: device.mobile,
+          ...(device.ua ? { userAgent: device.ua } : {})
+        }
+      });
+      const nextUa = device.ua || null;
+      if (nextUa !== lastAppliedUa) {
+        const hadPreviousUa = lastAppliedUa !== null;
+        lastAppliedUa = nextUa;
+        if (nextUa || hadPreviousUa) el.reload();
+      }
+    } catch (err) {
+      reportError(err, 'Failed to enable device emulation');
+    }
+  }
+
+  // Re-apply when device changes or dom becomes ready (covers page reloads
+  // that drop emulation on the floor — Chromium clears it on cross-process
+  // navigation).
+  $effect(() => {
+    // Track all relevant inputs so the effect fires on any of them.
+    void device;
+    void deviceWidth;
+    void deviceHeight;
+    void domReady;
+    void applyEmulation();
+  });
+
+  function setDevice(next: BrowserTabDevice | null) {
+    const tab = browserStore.activeTab;
+    if (!tab) return;
+    browserStore.setDevice(tab.id, next);
+  }
+
+  function rotateDevice() {
+    const tab = browserStore.activeTab;
+    if (!tab) return;
+    browserStore.rotateDevice(tab.id);
+  }
+
+  function deviceIcon() {
+    if (!device) return Monitor;
+    const preset = findPreset(device.presetId);
+    if (preset?.kind === 'mobile') return Smartphone;
+    if (preset?.kind === 'tablet') return Tablet;
+    // For 'custom' use a phone icon if mobile flag set, else monitor — gives
+    // a quick visual hint about what flavor of viewport is active.
+    if (device.presetId === 'custom') return device.mobile ? Smartphone : Monitor;
+    return Monitor;
+  }
+
+  // Custom event from App.svelte: Ctrl+/-/0 while the browser tab is active.
+  onMount(() => {
+    const onZoom = (event: Event) => {
+      const direction = (event as CustomEvent<{ direction: 'in' | 'out' | 'reset' }>).detail
+        ?.direction;
+      if (!direction) return;
+      const el = webview;
+      if (!el || !domReady) return;
+      const current = el.getZoomLevel();
+      if (direction === 'reset') el.setZoomLevel(0);
+      else if (direction === 'in') el.setZoomLevel(Math.min(current + 0.5, 5));
+      else el.setZoomLevel(Math.max(current - 0.5, -5));
+    };
+    window.addEventListener('soloe:browser-zoom', onZoom);
+    return () => window.removeEventListener('soloe:browser-zoom', onZoom);
+  });
 
   // Inject a one-shot autofill into the loaded page. Returns whether a
   // username-like field was found alongside the password. The script uses
@@ -519,6 +742,35 @@
         </ul>
       {/if}
     </div>
+    <Popover.Root bind:open={deviceMenuOpen}>
+      <Popover.Trigger>
+        {#snippet child({ props })}
+          {@const Icon = deviceIcon()}
+          <Button
+            {...props}
+            type="button"
+            variant="ghost"
+            size="icon"
+            class={`size-7 ${device ? 'text-foreground' : ''}`}
+            aria-label="Responsive viewer"
+            title={device
+              ? `Device: ${findPreset(device.presetId)?.label ?? 'custom'} (${deviceWidth}×${deviceHeight})`
+              : 'Responsive viewer'}
+            aria-pressed={!!device}
+          >
+            <Icon class="size-3.5" />
+          </Button>
+        {/snippet}
+      </Popover.Trigger>
+      <Popover.Content align="end" class="w-auto p-0">
+        <BrowserDeviceMenu
+          {device}
+          onSelect={setDevice}
+          onRotate={rotateDevice}
+          onClose={() => (deviceMenuOpen = false)}
+        />
+      </Popover.Content>
+    </Popover.Root>
     <Popover.Root bind:open={autofillOpen}>
       <Popover.Trigger>
         {#snippet child({ props })}
@@ -547,10 +799,12 @@
       type="button"
       variant="ghost"
       size="icon"
-      class="size-7"
+      class={`size-7 ${devToolsOpen ? 'text-foreground' : ''}`}
       aria-label="DevTools"
+      title={devToolsOpen ? 'Close DevTools' : 'DevTools'}
+      aria-pressed={devToolsOpen}
       disabled={!activeTab}
-      onclick={openDevTools}
+      onclick={toggleDevTools}
     >
       <Bug class="size-3.5" />
     </Button>
@@ -598,14 +852,83 @@
   {/if}
 
   {#if activeTab}
-    <!-- svelte-ignore element_invalid_self_closing_tag -->
-    <webview
-      bind:this={webview}
-      src={initialUrl}
-      partition="persist:soloe-browser"
-      class="min-h-0 flex-1"
-      style="display: flex;"
-    ></webview>
+    {#if device}
+      <div class="flex shrink-0 items-center justify-center gap-2 border-b border-border bg-muted/60 px-2 py-1 text-[10px] text-muted-foreground">
+        <span class="rounded bg-background/80 px-1.5 py-0.5 font-mono">
+          {deviceWidth} × {deviceHeight}
+        </span>
+        <span>DPR {device.dpr}</span>
+        <button
+          type="button"
+          class="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-background/80"
+          onclick={rotateDevice}
+          title="Rotate"
+        >
+          <RotateCw class="size-3" />
+          Rotate
+        </button>
+        <button
+          type="button"
+          class="rounded px-1.5 py-0.5 hover:bg-background/80"
+          onclick={() => setDevice(null)}
+        >
+          Exit
+        </button>
+      </div>
+    {/if}
+    <!--
+      Keep a single <webview> element mounted across device toggles so the
+      page (cookies, scroll, in-page state, webContentsId) survives. Switching
+      between native/device modes flips only the wrapper's classes and the
+      device-box's inline size — the webview node itself never unmounts.
+    -->
+    <div
+      class={device
+        ? 'flex min-h-0 flex-1 items-start justify-center overflow-auto bg-muted/40 p-4'
+        : 'flex min-h-0 flex-1 flex-col'}
+    >
+      <div
+        class={device
+          ? 'shrink-0 overflow-hidden rounded border border-border bg-background shadow-lg'
+          : 'flex min-h-0 flex-1 flex-col'}
+        style={device ? `width: ${deviceWidth}px; height: ${deviceHeight}px;` : ''}
+      >
+        <!-- svelte-ignore element_invalid_self_closing_tag -->
+        <webview
+          bind:this={webview}
+          src={initialUrl}
+          partition="persist:soloe-browser"
+          class={device ? 'h-full w-full' : 'min-h-0 flex-1'}
+          style="display: flex;"
+        ></webview>
+      </div>
+    </div>
+    <!--
+      DevTools host: a second always-mounted <webview> that the main process
+      uses as the target for setDevToolsWebContents. Kept in the DOM so its
+      webContents id stays stable across toggles; collapsed to 0 height when
+      closed instead of removed.
+    -->
+    <div
+      class={`shrink-0 ${devToolsOpen ? 'flex flex-col border-t border-border' : 'hidden'}`}
+      style={devToolsOpen ? `height: ${devToolsHeight}px;` : ''}
+    >
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        class={`h-1 shrink-0 cursor-row-resize bg-border hover:bg-primary/40 ${
+          devToolsResizing ? 'bg-primary/40' : ''
+        }`}
+        onpointerdown={startDevToolsResize}
+      ></div>
+      <!-- svelte-ignore element_invalid_self_closing_tag -->
+      <webview
+        bind:this={devToolsView}
+        src="about:blank"
+        class="min-h-0 flex-1"
+        style="display: flex;"
+      ></webview>
+    </div>
   {:else}
     <div class="flex min-h-0 flex-1 items-center justify-center p-4 text-center text-xs text-muted-foreground">
       No browser tabs yet. Use the <Plus class="inline-block size-3" /> button above to open one.

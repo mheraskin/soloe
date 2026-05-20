@@ -112,6 +112,13 @@ import type {
   VaultSecret,
   VaultUpdateRequest
 } from './vault.js';
+import type {
+  AttachDevToolsRequest,
+  CloseDevToolsRequest,
+  DisableDeviceEmulationRequest,
+  EnableDeviceEmulationRequest,
+  SetUserAgentRequest
+} from './browser.js';
 
 export const IpcChannels = {
   sessions: {
@@ -269,6 +276,13 @@ export const IpcChannels = {
     update: 'vault:update',
     delete: 'vault:delete',
     getSecret: 'vault:get-secret'
+  },
+  browser: {
+    enableDeviceEmulation: 'browser:enable-device-emulation',
+    disableDeviceEmulation: 'browser:disable-device-emulation',
+    setUserAgent: 'browser:set-user-agent',
+    attachDevTools: 'browser:attach-devtools',
+    closeDevTools: 'browser:close-devtools'
   }
 } as const;
 
@@ -290,7 +304,8 @@ export type IpcChannel =
   | (typeof IpcChannels.comments)[keyof typeof IpcChannels.comments]
   | (typeof IpcChannels.diff)[keyof typeof IpcChannels.diff]
   | (typeof IpcChannels.features)[keyof typeof IpcChannels.features]
-  | (typeof IpcChannels.vault)[keyof typeof IpcChannels.vault];
+  | (typeof IpcChannels.vault)[keyof typeof IpcChannels.vault]
+  | (typeof IpcChannels.browser)[keyof typeof IpcChannels.browser];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -562,6 +577,14 @@ export interface VaultApi {
   getSecret(request: VaultGetSecretRequest): Promise<IpcResult<VaultSecret>>;
 }
 
+export interface BrowserApi {
+  enableDeviceEmulation(request: EnableDeviceEmulationRequest): Promise<IpcResult<true>>;
+  disableDeviceEmulation(request: DisableDeviceEmulationRequest): Promise<IpcResult<true>>;
+  setUserAgent(request: SetUserAgentRequest): Promise<IpcResult<true>>;
+  attachDevTools(request: AttachDevToolsRequest): Promise<IpcResult<true>>;
+  closeDevTools(request: CloseDevToolsRequest): Promise<IpcResult<true>>;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -581,6 +604,7 @@ export interface SoloeApi {
   diff: DiffBridgeApi;
   features: FeaturesApi;
   vault: VaultApi;
+  browser: BrowserApi;
 }
 
 declare global {

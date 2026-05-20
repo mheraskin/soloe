@@ -372,6 +372,11 @@
         rightRail.toggleTab('feature');
         return false;
       }
+      if (Keymap.toggleBrowserRail.match(e)) {
+        e.preventDefault();
+        rightRail.toggleTab('browser');
+        return false;
+      }
       if (Keymap.toggleSidebar.match(e)) {
         e.preventDefault();
         sidebar.toggle();
@@ -383,6 +388,7 @@
         if (binding.id === Keymap.toggleDiffRail.id) continue;
         if (binding.id === Keymap.toggleFilesRail.id) continue;
         if (binding.id === Keymap.toggleFeatureRail.id) continue;
+        if (binding.id === Keymap.toggleBrowserRail.id) continue;
         if (binding.id === Keymap.toggleSidebar.id) continue;
         if (binding.match(e)) return false;
       }

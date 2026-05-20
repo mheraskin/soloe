@@ -168,6 +168,18 @@
     return Boolean(target?.closest('.xterm'));
   }
 
+  // Ctrl+/-/0 should drive the rail browser's zoom whenever the browser tab
+  // is the active rail surface — independent of focus, since the URL bar and
+  // toolbar buttons live in the IDE chrome and aren't seen by the webview's
+  // own before-input-event hook.
+  function isBrowserTabActive(): boolean {
+    return rightRail.open && rightRail.activeTab === 'browser';
+  }
+
+  function dispatchBrowserZoom(direction: 'in' | 'out' | 'reset'): void {
+    window.dispatchEvent(new CustomEvent('soloe:browser-zoom', { detail: { direction } }));
+  }
+
   // Ctrl+; should ping-pong: if the rail is currently focused, snap back to
   // the terminal; otherwise jump into the rail's primary input. We probe
   // document.activeElement at keypress time rather than tracking focus in a
@@ -244,12 +256,29 @@
     }
     if (Keymap.zoomIn.match(e)) {
       consume(e);
-      void ipc.window.zoomIn().catch(reportError);
+      if (isBrowserTabActive()) {
+        dispatchBrowserZoom('in');
+      } else {
+        void ipc.window.zoomIn().catch(reportError);
+      }
       return;
     }
     if (Keymap.zoomOut.match(e)) {
       consume(e);
-      void ipc.window.zoomOut().catch(reportError);
+      if (isBrowserTabActive()) {
+        dispatchBrowserZoom('out');
+      } else {
+        void ipc.window.zoomOut().catch(reportError);
+      }
+      return;
+    }
+    if (Keymap.zoomReset.match(e)) {
+      consume(e);
+      if (isBrowserTabActive()) {
+        dispatchBrowserZoom('reset');
+      }
+      // No global "reset zoom" action — only forwarded when the browser is
+      // active, since the IDE chrome doesn't currently expose a reset.
       return;
     }
     if (Keymap.toggleNotesRail.match(e)) {
@@ -270,6 +299,11 @@
     if (Keymap.toggleFeatureRail.match(e)) {
       consume(e);
       rightRail.toggleTab('feature');
+      return;
+    }
+    if (Keymap.toggleBrowserRail.match(e)) {
+      consume(e);
+      rightRail.toggleTab('browser');
       return;
     }
     if (Keymap.toggleSidebar.match(e)) {

@@ -50,6 +50,7 @@ import { FeatureWatcher } from './features/FeatureWatcher.js';
 import { FeaturesIpc } from './ipc/features.ipc.js';
 import { VaultStore } from './vault/VaultStore.js';
 import { VaultIpc } from './ipc/vault.ipc.js';
+import { BrowserIpc } from './ipc/browser.ipc.js';
 
 interface AppServices {
   store: SessionStore;
@@ -85,6 +86,7 @@ interface AppServices {
   featuresIpc: FeaturesIpc;
   vault: VaultStore;
   vaultIpc: VaultIpc;
+  browserIpc: BrowserIpc;
 }
 
 let services: AppServices | null = null;
@@ -397,6 +399,7 @@ async function setupServices(): Promise<AppServices> {
 
   const vault = new VaultStore(vaultDir);
   const vaultIpc = new VaultIpc({ store: vault });
+  const browserIpc = new BrowserIpc();
 
   sessionsIpc.register();
   terminalIpc.register();
@@ -413,6 +416,7 @@ async function setupServices(): Promise<AppServices> {
   overviewIpc.register();
   featuresIpc.register();
   vaultIpc.register();
+  browserIpc.register();
 
   return {
     store,
@@ -447,7 +451,8 @@ async function setupServices(): Promise<AppServices> {
     featureWatcher,
     featuresIpc,
     vault,
-    vaultIpc
+    vaultIpc,
+    browserIpc
   };
 }
 
@@ -603,6 +608,7 @@ async function cleanup(): Promise<void> {
     services.featuresIpc.dispose();
     services.featureWatcher.dispose();
     services.vaultIpc.dispose();
+    services.browserIpc.dispose();
     services.git.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);

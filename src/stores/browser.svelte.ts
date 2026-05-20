@@ -1,3 +1,17 @@
+export interface BrowserTabDevice {
+  // Preset id from BROWSER_DEVICE_PRESETS, or 'custom' for ad-hoc sizes.
+  presetId: string;
+  // Logical (CSS-pixel) viewport, before rotation. `rotated` swaps these at
+  // apply time so the user can flip between portrait and landscape without
+  // editing the numbers themselves.
+  width: number;
+  height: number;
+  dpr: number;
+  mobile: boolean;
+  ua: string;
+  rotated: boolean;
+}
+
 export interface BrowserTab {
   id: string;
   title: string;
@@ -6,6 +20,8 @@ export interface BrowserTab {
   // history) so back/forward survive a full unmount of the browser tab.
   history: string[];
   historyIndex: number;
+  // Per-tab device emulation. Undefined = native (no emulation).
+  device?: BrowserTabDevice;
 }
 
 interface BrowserCwdState {
@@ -20,6 +36,20 @@ const MAX_HISTORY = 100;
 
 const EMPTY_STATE: BrowserCwdState = { tabs: [], activeTabId: null };
 
+function isDevice(value: unknown): value is BrowserTabDevice {
+  if (!value || typeof value !== 'object') return false;
+  const d = value as Record<string, unknown>;
+  return (
+    typeof d.presetId === 'string'
+    && typeof d.width === 'number' && Number.isFinite(d.width) && d.width > 0
+    && typeof d.height === 'number' && Number.isFinite(d.height) && d.height > 0
+    && typeof d.dpr === 'number' && Number.isFinite(d.dpr) && d.dpr > 0
+    && typeof d.mobile === 'boolean'
+    && typeof d.ua === 'string'
+    && typeof d.rotated === 'boolean'
+  );
+}
+
 function isTab(value: unknown): value is BrowserTab {
   if (!value || typeof value !== 'object') return false;
   const t = value as Record<string, unknown>;
@@ -27,6 +57,7 @@ function isTab(value: unknown): value is BrowserTab {
   if (!Array.isArray(t.history) || !t.history.every((s) => typeof s === 'string')) return false;
   if (typeof t.historyIndex !== 'number') return false;
   if (t.historyIndex < 0 || t.historyIndex >= t.history.length) return false;
+  if (t.device !== undefined && !isDevice(t.device)) return false;
   return true;
 }
 
@@ -209,6 +240,33 @@ class BrowserStore {
     if (prev.title === title) return;
     const tabs = state.tabs.slice();
     tabs[idx] = { ...prev, title };
+    this.write({ ...state, tabs });
+  }
+
+  setDevice(id: string, device: BrowserTabDevice | null): void {
+    const state = this.current();
+    const idx = state.tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const prev = state.tabs[idx]!;
+    const tabs = state.tabs.slice();
+    if (device == null) {
+      if (!prev.device) return;
+      const { device: _omit, ...rest } = prev;
+      tabs[idx] = rest;
+    } else {
+      tabs[idx] = { ...prev, device };
+    }
+    this.write({ ...state, tabs });
+  }
+
+  rotateDevice(id: string): void {
+    const state = this.current();
+    const idx = state.tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const prev = state.tabs[idx]!;
+    if (!prev.device) return;
+    const tabs = state.tabs.slice();
+    tabs[idx] = { ...prev, device: { ...prev.device, rotated: !prev.device.rotated } };
     this.write({ ...state, tabs });
   }
 
