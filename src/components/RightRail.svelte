@@ -15,6 +15,7 @@
   import { sidebar } from '../stores/sidebar.svelte';
   import { featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
+  import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import { kbdHints } from '../stores/kbd-hints.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -402,7 +403,7 @@
                       ? 'bg-muted text-foreground'
                       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                   }`}
-                  onclick={() => rightRail.toggleTab(tab.id)}
+                  onclick={() => toggleRailTabAndFocus(tab.id)}
                   aria-label={tab.label}
                   aria-pressed={isActive}
                 >

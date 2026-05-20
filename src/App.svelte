@@ -24,6 +24,7 @@
     shouldIgnoreInTextInput,
     tabIndexFromEvent
   } from './lib/keymap';
+  import { toggleRailTabAndFocus } from './lib/rail-focus';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
@@ -330,27 +331,27 @@
     }
     if (Keymap.toggleNotesRail.match(e)) {
       consume(e);
-      rightRail.toggleTab('notes');
+      void toggleRailTabAndFocus('notes');
       return;
     }
     if (Keymap.toggleDiffRail.match(e)) {
       consume(e);
-      rightRail.toggleTab('diff');
+      void toggleRailTabAndFocus('diff');
       return;
     }
     if (Keymap.toggleFilesRail.match(e)) {
       consume(e);
-      rightRail.toggleTab('files');
+      void toggleRailTabAndFocus('files');
       return;
     }
     if (Keymap.toggleFeatureRail.match(e)) {
       consume(e);
-      rightRail.toggleTab('feature');
+      void toggleRailTabAndFocus('feature');
       return;
     }
     if (Keymap.toggleBrowserRail.match(e)) {
       consume(e);
-      rightRail.toggleTab('browser');
+      void toggleRailTabAndFocus('browser');
       return;
     }
     if (Keymap.toggleSidebar.match(e)) {

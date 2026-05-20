@@ -25,6 +25,7 @@
   import { Copy, Loader2, MessageSquarePlus, Send, X } from '@lucide/svelte';
   import AskAgentPopover from './ask-agent/AskAgentPopover.svelte';
   import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
+  import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import {
     AGENT_IMAGE_PASTE_SEQUENCE,
     isClipboardPasteShortcut,
@@ -354,27 +355,27 @@
       }
       if (Keymap.toggleNotesRail.match(e)) {
         e.preventDefault();
-        rightRail.toggleTab('notes');
+        void toggleRailTabAndFocus('notes');
         return false;
       }
       if (Keymap.toggleDiffRail.match(e)) {
         e.preventDefault();
-        rightRail.toggleTab('diff');
+        void toggleRailTabAndFocus('diff');
         return false;
       }
       if (Keymap.toggleFilesRail.match(e)) {
         e.preventDefault();
-        rightRail.toggleTab('files');
+        void toggleRailTabAndFocus('files');
         return false;
       }
       if (Keymap.toggleFeatureRail.match(e)) {
         e.preventDefault();
-        rightRail.toggleTab('feature');
+        void toggleRailTabAndFocus('feature');
         return false;
       }
       if (Keymap.toggleBrowserRail.match(e)) {
         e.preventDefault();
-        rightRail.toggleTab('browser');
+        void toggleRailTabAndFocus('browser');
         return false;
       }
       if (Keymap.toggleSidebar.match(e)) {

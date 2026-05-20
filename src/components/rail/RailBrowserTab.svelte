@@ -884,7 +884,56 @@
     urlInputFocused && !suppressDropdown && suggestions.length > 0
   );
 
+  // Word-edit a URL input. Chromium's native Ctrl+Backspace handling can be
+  // platform-flaky inside Electron (and Ctrl+Alt+Backspace is eaten by some
+  // Linux DEs as the X "zap" combo), so we run the boundary walk ourselves
+  // and accept any of Ctrl/Alt/Meta as the word modifier — whichever the
+  // user reaches for ends up doing the same thing.
+  function deleteWordInUrlInput(direction: 'backward' | 'forward'): void {
+    const el = urlInputEl;
+    if (!el) return;
+    const value = el.value;
+    const selStart = el.selectionStart ?? value.length;
+    const selEnd = el.selectionEnd ?? value.length;
+    let nextValue: string;
+    let nextCaret: number;
+    if (selStart !== selEnd) {
+      nextValue = value.slice(0, selStart) + value.slice(selEnd);
+      nextCaret = selStart;
+    } else if (direction === 'backward') {
+      let i = selStart;
+      while (i > 0 && /\s/.test(value[i - 1]!)) i--;
+      if (i > 0) {
+        const wordish = /\w/.test(value[i - 1]!);
+        while (i > 0 && wordish === /\w/.test(value[i - 1]!) && !/\s/.test(value[i - 1]!)) i--;
+      }
+      nextValue = value.slice(0, i) + value.slice(selStart);
+      nextCaret = i;
+    } else {
+      let i = selStart;
+      while (i < value.length && /\s/.test(value[i]!)) i++;
+      if (i < value.length) {
+        const wordish = /\w/.test(value[i]!);
+        while (i < value.length && wordish === /\w/.test(value[i]!) && !/\s/.test(value[i]!)) i++;
+      }
+      nextValue = value.slice(0, selStart) + value.slice(i);
+      nextCaret = selStart;
+    }
+    if (nextValue === value) return;
+    urlInput = nextValue;
+    requestAnimationFrame(() => {
+      if (!el.isConnected) return;
+      el.selectionStart = el.selectionEnd = nextCaret;
+    });
+  }
+
   function onUrlKey(event: KeyboardEvent) {
+    const wordMod = event.ctrlKey || event.altKey || event.metaKey;
+    if (wordMod && (event.key === 'Backspace' || event.key === 'Delete')) {
+      event.preventDefault();
+      deleteWordInUrlInput(event.key === 'Backspace' ? 'backward' : 'forward');
+      return;
+    }
     if (event.key === 'Enter') {
       // Handle Enter explicitly so navigation doesn't rely on the form's
       // onsubmit firing (some Input wrappers or surrounding keyboard
