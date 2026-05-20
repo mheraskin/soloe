@@ -3,7 +3,7 @@
   import type { NotifyState } from '../stores/agent-notifications.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { sessions } from '../stores/sessions.svelte';
-  import { CheckCircle2, Gauge, MessageSquareText, ShieldAlert, XCircle } from '@lucide/svelte';
+  import { CheckCircle2, Gauge, MessageSquareText, ShieldAlert, X, XCircle } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import KindIcon from './KindIcon.svelte';
 
@@ -34,6 +34,14 @@
     sessions.select(sessionId);
     agentNotifications.dismissToast(sessionId);
   }
+
+  // Click handler for the row's close affordance. Stops propagation so the
+  // surrounding "activate session" button doesn't also fire — dismissing the
+  // toast is a distinct action from acknowledging it.
+  function dismiss(event: Event, sessionId: string): void {
+    event.stopPropagation();
+    agentNotifications.dismissToast(sessionId);
+  }
 </script>
 
 {#if agentNotifications.toasts.length > 0}
@@ -45,21 +53,34 @@
     {#each agentNotifications.toasts as toast (toast.sessionId)}
       {@const stateIcon = stateIcons[toast.state]}
       {@const StateIcon = stateIcon.icon}
-      <button
-        type="button"
-        class="pointer-events-auto grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 rounded-md border border-border bg-popover/95 px-3 py-2 text-left text-popover-foreground shadow-lg backdrop-blur transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        onclick={() => activate(toast.sessionId)}
-        aria-label={`${toast.sessionName}: ${toast.reason}`}
+      <div
+        class="pointer-events-auto relative rounded-md border border-border bg-popover/95 text-popover-foreground shadow-lg backdrop-blur transition-colors hover:bg-accent focus-within:ring-2 focus-within:ring-ring"
       >
-        <KindIcon kind={toast.sessionKind} size={14} />
-        <StateIcon class={cn('size-3.5', stateIcon.class)} />
-        <span class="grid min-w-0 gap-0.5">
-          <span class="truncate text-xs leading-4 font-medium">{toast.sessionName}</span>
-          <span class="truncate text-[11px] leading-3.5 text-muted-foreground">
-            {toast.reason}
+        <button
+          type="button"
+          class="grid w-full grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 px-3 py-2 pr-8 text-left focus-visible:outline-none"
+          onclick={() => activate(toast.sessionId)}
+          aria-label={`${toast.sessionName}: ${toast.reason}`}
+        >
+          <KindIcon kind={toast.sessionKind} size={14} />
+          <StateIcon class={cn('size-3.5', stateIcon.class)} />
+          <span class="grid min-w-0 gap-0.5">
+            <span class="truncate text-xs leading-4 font-medium">{toast.sessionName}</span>
+            <span class="truncate text-[11px] leading-3.5 text-muted-foreground">
+              {toast.reason}
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
+        <button
+          type="button"
+          class="absolute top-1.5 right-1.5 inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          onclick={(e) => dismiss(e, toast.sessionId)}
+          aria-label={`Dismiss notification for ${toast.sessionName}`}
+          title="Dismiss"
+        >
+          <X class="size-3" />
+        </button>
+      </div>
     {/each}
   </div>
 {/if}
