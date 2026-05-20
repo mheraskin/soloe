@@ -219,6 +219,12 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setNotesDraftsPerWorktree(value: boolean) {
+    try {
+      await settings.update({ notes: { draftsPerWorktree: value } });
+    } catch (e) { reportError(e); }
+  }
+
   const quickLaunchProviders: { value: AgentRuntimeProvider; label: string }[] = [
     { value: 'claude_code', label: 'Claude' },
     { value: 'codex', label: 'Codex' }
@@ -633,7 +639,21 @@
     </Tabs.Content>
 
     <Tabs.Content value="notes" class={contentClass}>
-      <p class="m-0 text-[11px] text-muted-foreground">No notes settings yet.</p>
+      <div class="flex items-center justify-between gap-3">
+        <Label for="pref-notes-drafts-per-worktree" class="text-xs text-muted-foreground">
+          Per-worktree drafts and saved-note selection
+        </Label>
+        <Switch
+          id="pref-notes-drafts-per-worktree"
+          checked={settings.current.notes.draftsPerWorktree}
+          onCheckedChange={setNotesDraftsPerWorktree}
+        />
+      </div>
+      <span class="text-[11px] text-muted-foreground">
+        When on, the untitled draft and the last-open saved note are remembered separately for each
+        worktree — switching worktrees swaps the whole notes view. When off, drafts are shared
+        across all worktrees in a project.
+      </span>
     </Tabs.Content>
   </ScrollArea>
 </Tabs.Root>

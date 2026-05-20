@@ -2,6 +2,7 @@ import type { ProjectId } from '@shared/types/projects.js';
 import type { NoteImage, NoteImagePayload, NoteSummary } from '@shared/types/notes.js';
 import { ipc } from '../lib/ipc';
 import { sessions } from './sessions.svelte';
+import { settings } from './settings.svelte';
 
 export type NotesStatus = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -9,7 +10,17 @@ export type NotesStatus = 'idle' | 'saving' | 'saved' | 'error';
 // restarts in localStorage so a half-written note isn't lost just because the
 // user closed the window before saving to disk. The key prefix is namespaced
 // so projects can't collide. Removed on save/discard.
-const DRAFT_KEY_PREFIX = 'soloe.notes.draft.';
+const DRAFT_KEY_PROJECT_PREFIX = 'soloe.notes.draft.';
+
+// Per-worktree draft persistence. Used when `settings.notes.draftsPerWorktree`
+// is on. Key composes projectId and cwd; treated as opaque (never split back).
+// Project IDs are slugged at creation, so this stays unambiguous even when cwd
+// contains spaces.
+const DRAFT_KEY_WORKTREE_PREFIX = 'soloe.notes.draftByWorktree.';
+
+function worktreeDraftStorageKey(projectId: ProjectId, cwd: string): string {
+  return `${projectId}::${cwd}`;
+}
 
 // Per-worktree memory of which saved note was last open. Notes live at the
 // project level (shared across worktrees) but each worktree should restore the
@@ -69,16 +80,18 @@ function persistViewSelection(
   }
 }
 
-function loadDraftsFromStorage(): Record<ProjectId, string> {
+function loadProjectDraftsFromStorage(): Record<ProjectId, string> {
   if (typeof localStorage === 'undefined') return {};
   const result: Record<ProjectId, string> = {};
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !key.startsWith(DRAFT_KEY_PREFIX)) continue;
+      if (!key || !key.startsWith(DRAFT_KEY_PROJECT_PREFIX)) continue;
+      // Skip the worktree prefix, which begins with the project prefix string.
+      if (key.startsWith(DRAFT_KEY_WORKTREE_PREFIX)) continue;
       const value = localStorage.getItem(key);
       if (value !== null && value.length > 0) {
-        const projectId = key.slice(DRAFT_KEY_PREFIX.length) as ProjectId;
+        const projectId = key.slice(DRAFT_KEY_PROJECT_PREFIX.length) as ProjectId;
         result[projectId] = value;
       }
     }
@@ -88,23 +101,64 @@ function loadDraftsFromStorage(): Record<ProjectId, string> {
   return result;
 }
 
-function persistDraft(projectId: ProjectId, content: string): void {
+function persistProjectDraft(projectId: ProjectId, content: string): void {
   if (typeof localStorage === 'undefined') return;
   try {
     if (content.length > 0) {
-      localStorage.setItem(DRAFT_KEY_PREFIX + projectId, content);
+      localStorage.setItem(DRAFT_KEY_PROJECT_PREFIX + projectId, content);
     } else {
-      localStorage.removeItem(DRAFT_KEY_PREFIX + projectId);
+      localStorage.removeItem(DRAFT_KEY_PROJECT_PREFIX + projectId);
     }
   } catch {
     // Quota / private mode — silently fall back to in-memory only.
   }
 }
 
-function clearStoredDraft(projectId: ProjectId): void {
+function clearStoredProjectDraft(projectId: ProjectId): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.removeItem(DRAFT_KEY_PREFIX + projectId);
+    localStorage.removeItem(DRAFT_KEY_PROJECT_PREFIX + projectId);
+  } catch {
+    // No-op.
+  }
+}
+
+function loadWorktreeDraftsFromStorage(): Record<string, string> {
+  if (typeof localStorage === 'undefined') return {};
+  const result: Record<string, string> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(DRAFT_KEY_WORKTREE_PREFIX)) continue;
+      const value = localStorage.getItem(key);
+      if (value !== null && value.length > 0) {
+        const storageKey = key.slice(DRAFT_KEY_WORKTREE_PREFIX.length);
+        if (storageKey.includes('::')) result[storageKey] = value;
+      }
+    }
+  } catch {
+    // Storage disabled. In-memory only.
+  }
+  return result;
+}
+
+function persistWorktreeDraft(storageKey: string, content: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (content.length > 0) {
+      localStorage.setItem(DRAFT_KEY_WORKTREE_PREFIX + storageKey, content);
+    } else {
+      localStorage.removeItem(DRAFT_KEY_WORKTREE_PREFIX + storageKey);
+    }
+  } catch {
+    // No-op.
+  }
+}
+
+function clearStoredWorktreeDraft(storageKey: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(DRAFT_KEY_WORKTREE_PREFIX + storageKey);
   } catch {
     // No-op.
   }
@@ -114,7 +168,11 @@ class NotesStoreClass {
   listsByProject = $state<Record<ProjectId, NoteSummary[]>>({});
   loadedProjects = $state<Record<ProjectId, boolean>>({});
 
-  draftsByProject = $state<Record<ProjectId, string>>(loadDraftsFromStorage());
+  draftsByProject = $state<Record<ProjectId, string>>(loadProjectDraftsFromStorage());
+
+  // Drafts persisted per (project, worktree-cwd) when settings.notes
+  // .draftsPerWorktree is on. Key = worktreeDraftStorageKey(projectId, cwd).
+  draftsByWorktree = $state<Record<string, string>>(loadWorktreeDraftsFromStorage());
 
   // null view = draft is showing, string = saved-note filename
   viewByProject = $state<Record<ProjectId, string | null>>({});
@@ -145,9 +203,7 @@ class NotesStoreClass {
 
   selectedFilename = $derived<string | null>(this.view);
 
-  draftContent = $derived<string>(
-    this.activeProjectId ? this.draftsByProject[this.activeProjectId] ?? '' : ''
-  );
+  draftContent = $derived<string>(this.readActiveDraft());
 
   savedContent = $derived<string>(
     this.activeProjectId ? this.savedContentByProject[this.activeProjectId] ?? '' : ''
@@ -218,27 +274,21 @@ class NotesStoreClass {
     this.viewByProject = { ...this.viewByProject, [id]: null };
     this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
     this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
-    if (this.draftsByProject[id] === undefined) {
-      this.draftsByProject = { ...this.draftsByProject, [id]: '' };
-    }
+    if (!this.hasActiveDraft()) this.writeActiveDraft('');
     this.rememberSelection(null);
   }
 
   discardDraft(): void {
     const id = this.activeProjectId;
     if (!id) return;
-    const next = { ...this.draftsByProject };
-    delete next[id];
-    this.draftsByProject = next;
-    clearStoredDraft(id);
+    this.clearActiveDraft();
     void this.cleanupImages(id);
   }
 
   updateDraftContent(content: string): void {
     const id = this.activeProjectId;
     if (!id) return;
-    this.draftsByProject = { ...this.draftsByProject, [id]: content };
-    persistDraft(id, content);
+    this.writeActiveDraft(content);
   }
 
   // Wipes whatever the editor is showing. Draft mode resets the draft;
@@ -248,8 +298,7 @@ class NotesStoreClass {
     const id = this.activeProjectId;
     if (!id) return;
     if (this.view === null) {
-      this.draftsByProject = { ...this.draftsByProject, [id]: '' };
-      clearStoredDraft(id);
+      this.writeActiveDraft('');
       void this.cleanupImages(id);
     } else {
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
@@ -295,14 +344,11 @@ class NotesStoreClass {
   async saveDraft(filename: string): Promise<void> {
     const id = this.activeProjectId;
     if (!id) return;
-    const content = this.draftsByProject[id] ?? '';
+    const content = this.readActiveDraft();
     this.statusByProject = { ...this.statusByProject, [id]: 'saving' };
     try {
       const note = await ipc.notes.write(id, filename, content);
-      const drafts = { ...this.draftsByProject };
-      delete drafts[id];
-      this.draftsByProject = drafts;
-      clearStoredDraft(id);
+      this.clearActiveDraft();
       this.viewByProject = { ...this.viewByProject, [id]: note.filename };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: note.content };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
@@ -467,17 +513,82 @@ class NotesStoreClass {
 
   // Sweep unreferenced images for the current project (or a specified one).
   // The backend reads saved-note bodies on its own; we hand it the in-memory
-  // draft so still-unsaved references aren't treated as orphans.
+  // drafts so still-unsaved references aren't treated as orphans. In
+  // per-worktree mode, every worktree's draft for this project contributes.
   async cleanupImages(projectId?: ProjectId): Promise<void> {
     const id = projectId ?? this.activeProjectId;
     if (!id) return;
-    const draft = this.draftsByProject[id];
     const extras: string[] = [];
-    if (draft && draft.length > 0) extras.push(draft);
+    const projectDraft = this.draftsByProject[id];
+    if (projectDraft && projectDraft.length > 0) extras.push(projectDraft);
+    const prefix = `${id}::`;
+    for (const [key, content] of Object.entries(this.draftsByWorktree)) {
+      if (!key.startsWith(prefix)) continue;
+      if (content && content.length > 0) extras.push(content);
+    }
     try {
       await ipc.notes.cleanupImages(id, extras);
     } catch {
       // best-effort — leaving an orphan is harmless
+    }
+  }
+
+  private get draftsPerWorktreeEnabled(): boolean {
+    return settings.current.notes?.draftsPerWorktree === true;
+  }
+
+  private activeDraftLocation():
+    | { kind: 'project'; projectId: ProjectId }
+    | { kind: 'worktree'; projectId: ProjectId; storageKey: string }
+    | null {
+    const id = this.activeProjectId;
+    if (!id) return null;
+    if (this.draftsPerWorktreeEnabled) {
+      const cwd = this.activeWorktreeCwd;
+      if (cwd) return { kind: 'worktree', projectId: id, storageKey: worktreeDraftStorageKey(id, cwd) };
+    }
+    return { kind: 'project', projectId: id };
+  }
+
+  private readActiveDraft(): string {
+    const loc = this.activeDraftLocation();
+    if (!loc) return '';
+    if (loc.kind === 'worktree') return this.draftsByWorktree[loc.storageKey] ?? '';
+    return this.draftsByProject[loc.projectId] ?? '';
+  }
+
+  private hasActiveDraft(): boolean {
+    const loc = this.activeDraftLocation();
+    if (!loc) return false;
+    if (loc.kind === 'worktree') return this.draftsByWorktree[loc.storageKey] !== undefined;
+    return this.draftsByProject[loc.projectId] !== undefined;
+  }
+
+  private writeActiveDraft(content: string): void {
+    const loc = this.activeDraftLocation();
+    if (!loc) return;
+    if (loc.kind === 'worktree') {
+      this.draftsByWorktree = { ...this.draftsByWorktree, [loc.storageKey]: content };
+      persistWorktreeDraft(loc.storageKey, content);
+    } else {
+      this.draftsByProject = { ...this.draftsByProject, [loc.projectId]: content };
+      persistProjectDraft(loc.projectId, content);
+    }
+  }
+
+  private clearActiveDraft(): void {
+    const loc = this.activeDraftLocation();
+    if (!loc) return;
+    if (loc.kind === 'worktree') {
+      const next = { ...this.draftsByWorktree };
+      delete next[loc.storageKey];
+      this.draftsByWorktree = next;
+      clearStoredWorktreeDraft(loc.storageKey);
+    } else {
+      const next = { ...this.draftsByProject };
+      delete next[loc.projectId];
+      this.draftsByProject = next;
+      clearStoredProjectDraft(loc.projectId);
     }
   }
 }

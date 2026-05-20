@@ -51,7 +51,8 @@ export class SettingsStore {
       binaries: mergeBinaries(this.cache!.binaries, patch.binaries),
       models: mergeModels(this.cache!.models, patch.models),
       quickLaunch: patch.quickLaunch ?? [...this.cache!.quickLaunch],
-      integrations: { ...this.cache!.integrations, ...(patch.integrations ?? {}) }
+      integrations: { ...this.cache!.integrations, ...(patch.integrations ?? {}) },
+      notes: { ...this.cache!.notes, ...(patch.notes ?? {}) }
     };
     validateSettings(next);
     this.cache = next;
@@ -215,10 +216,21 @@ function parseSettings(raw: unknown): Settings {
     binaries: filterStringRecord(binaries),
     models: parseModels(raw['models']),
     quickLaunch: parseQuickLaunch(raw['quickLaunch']),
-    integrations: parseIntegrations(raw['integrations'])
+    integrations: parseIntegrations(raw['integrations']),
+    notes: parseNotes(raw['notes'])
   };
   validateSettings(out);
   return out;
+}
+
+function parseNotes(raw: unknown): Settings['notes'] {
+  if (!isObject(raw)) return { ...DEFAULT_SETTINGS.notes };
+  return {
+    draftsPerWorktree: pickBoolean(
+      raw['draftsPerWorktree'],
+      DEFAULT_SETTINGS.notes.draftsPerWorktree
+    )
+  };
 }
 
 function parseIntegrations(raw: unknown): Settings['integrations'] {
@@ -345,6 +357,10 @@ function validateSettings(s: Settings): void {
   }
   if (typeof s.integrations.allowClaudeHeadless !== 'boolean') {
     throw new Error('integrations.allowClaudeHeadless must be a boolean');
+  }
+  if (!isObject(s.notes as unknown)) throw new Error('notes must be an object');
+  if (typeof s.notes.draftsPerWorktree !== 'boolean') {
+    throw new Error('notes.draftsPerWorktree must be a boolean');
   }
 }
 

@@ -81,6 +81,13 @@ export interface SettingsIntegrations {
   allowClaudeHeadless: boolean;
 }
 
+export interface SettingsNotes {
+  // When true, both the untitled draft buffer AND the last-open saved note
+  // are remembered per-worktree (not per-project). Switching worktrees swaps
+  // the whole notes view. Default false: drafts stay per-project.
+  draftsPerWorktree: boolean;
+}
+
 // Single source of truth for model selection across Settings (background
 // tasks), Quick Launch presets, and the @-mention picker. Refresh by checking
 // platform.claude.com/docs/en/about-claude/models/overview and
@@ -128,6 +135,7 @@ export interface Settings {
   models: SettingsModels;
   quickLaunch: QuickLaunchPreset[];
   integrations: SettingsIntegrations;
+  notes: SettingsNotes;
 }
 
 export type SettingsUpdate = {
@@ -140,6 +148,7 @@ export type SettingsUpdate = {
   models?: Partial<SettingsModels>;
   quickLaunch?: QuickLaunchPreset[];
   integrations?: Partial<SettingsIntegrations>;
+  notes?: Partial<SettingsNotes>;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -162,5 +171,6 @@ export const DEFAULT_SETTINGS: Settings = {
     worktreeOverview: DEFAULT_MODEL_CODEX
   },
   quickLaunch: [],
-  integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false }
+  integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false },
+  notes: { draftsPerWorktree: false }
 };
