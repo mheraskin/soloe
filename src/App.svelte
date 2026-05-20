@@ -362,10 +362,23 @@
 
 <div class="flex h-full flex-col overflow-hidden">
   <header
-    class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card pl-3 select-none"
+    class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
     style="-webkit-app-region: drag"
   >
-    <img src={appIconUrl} alt="" class="mr-1.5 size-3.5 flex-none" draggable="false" />
+    {#if sidebar.hidden}
+      <div class="flex self-stretch" style="-webkit-app-region: no-drag">
+        <Button
+          variant="ghost"
+          class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+          onclick={() => sidebar.show()}
+          aria-label="Show sidebar"
+          title="Show sidebar (Ctrl+B)"
+        >
+          <PanelLeftOpen class="size-3.5" />
+        </Button>
+      </div>
+    {/if}
+    <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
     <div class="flex-1 self-stretch" aria-hidden="true"></div>
     <div class="flex self-stretch" style="-webkit-app-region: no-drag">
@@ -410,16 +423,6 @@
   <div class="relative flex min-h-0 flex-1">
     {#if !sidebar.hidden}
       <Sidebar />
-    {:else}
-      <button
-        type="button"
-        class="absolute top-2 left-2 z-20 flex size-7 items-center justify-center rounded-md border border-border bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted hover:text-foreground"
-        aria-label="Show sidebar"
-        title="Show sidebar (Ctrl+B)"
-        onclick={() => sidebar.show()}
-      >
-        <PanelLeftOpen class="size-4" />
-      </button>
     {/if}
     <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
     <div class={railFullscreen ? 'hidden' : 'contents'}>
