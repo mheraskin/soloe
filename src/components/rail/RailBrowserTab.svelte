@@ -246,67 +246,119 @@
     el.reload();
   }
 
-  let devToolsView = $state<ElectronWebview | null>(null);
-  let devToolsReady = $state(false);
   let devToolsOpen = $state(false);
   let devToolsHeight = $state(280);
-
-  // Track dom-ready on the DevTools host webview separately — DevTools UI
-  // only attaches once that contents exists.
-  $effect(() => {
-    const el = devToolsView;
-    if (!el) return;
-    devToolsReady = false;
-    const onReady = () => {
-      devToolsReady = true;
-    };
-    el.addEventListener('dom-ready', onReady);
-    return () => el.removeEventListener('dom-ready', onReady);
-  });
+  let devToolsHost = $state<HTMLDivElement | null>(null);
+  // The DevTools panel is rendered by a main-process WebContentsView that
+  // floats over `devToolsHost`. <webview> can't be a DevTools container
+  // (Chromium disallows guest views — see electron/electron#14095), so the
+  // host lives in main and we just send it the placeholder's bounds.
+  let lastSentBounds: { x: number; y: number; width: number; height: number } | null = null;
+  let boundsRaf = 0;
 
   async function openDevTools() {
     const main = webview;
-    const dev = devToolsView;
     if (!main || !domReady) return;
-    if (!dev) return;
+    if (devToolsOpen) return;
     devToolsOpen = true;
-    // The DevTools host webview may not have fired dom-ready yet (we only
-    // just mounted/unhid it). Wait briefly — Electron rejects
-    // setDevToolsWebContents on a destroyed/uninitialized contents.
-    if (!devToolsReady) {
-      await waitForDevToolsReady();
+    // Defer one frame so the placeholder is laid out before we measure it.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve())
+    );
+    const bounds = computeBounds();
+    if (!bounds) {
+      devToolsOpen = false;
+      return;
     }
     try {
-      await window.soloe.browser.attachDevTools({
+      await window.soloe.browser.openDevTools({
         webContentsId: main.getWebContentsId(),
-        devToolsWebContentsId: dev.getWebContentsId()
+        bounds
       });
+      lastSentBounds = bounds;
+      startBoundsSync();
     } catch (err) {
       reportError(err, 'Failed to open DevTools');
       devToolsOpen = false;
     }
   }
 
-  function waitForDevToolsReady(): Promise<void> {
-    return new Promise((resolve) => {
-      if (devToolsReady) return resolve();
-      const start = Date.now();
-      const tick = () => {
-        if (devToolsReady) return resolve();
-        if (Date.now() - start > 2000) return resolve(); // give up; user can retry
-        setTimeout(tick, 50);
-      };
-      tick();
-    });
+  function computeBounds(): { x: number; y: number; width: number; height: number } | null {
+    const el = devToolsHost;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  }
+
+  function syncBoundsOnce() {
+    const main = webview;
+    if (!main || !devToolsOpen) return;
+    const bounds = computeBounds();
+    if (!bounds) return;
+    const prev = lastSentBounds;
+    if (
+      prev &&
+      prev.x === bounds.x &&
+      prev.y === bounds.y &&
+      prev.width === bounds.width &&
+      prev.height === bounds.height
+    ) {
+      return;
+    }
+    lastSentBounds = bounds;
+    try {
+      void window.soloe.browser
+        .setDevToolsBounds({ webContentsId: main.getWebContentsId(), bounds })
+        .catch(() => {
+          // bounds updates are fire-and-forget; ignore transient failures
+        });
+    } catch {
+      // ignore
+    }
+  }
+
+  function startBoundsSync() {
+    cancelBoundsSync();
+    const loop = () => {
+      if (!devToolsOpen) {
+        boundsRaf = 0;
+        return;
+      }
+      syncBoundsOnce();
+      boundsRaf = requestAnimationFrame(loop);
+    };
+    boundsRaf = requestAnimationFrame(loop);
+  }
+
+  function cancelBoundsSync() {
+    if (boundsRaf) {
+      cancelAnimationFrame(boundsRaf);
+      boundsRaf = 0;
+    }
   }
 
   function closeDevTools() {
+    if (!devToolsOpen) return;
     devToolsOpen = false;
+    cancelBoundsSync();
+    lastSentBounds = null;
     const main = webview;
     if (!main) return;
+    let webContentsId: number;
+    try {
+      webContentsId = main.getWebContentsId();
+    } catch {
+      return;
+    }
     try {
       void window.soloe.browser
-        .closeDevTools({ webContentsId: main.getWebContentsId() })
+        .closeDevTools({ webContentsId })
         .catch((err) => reportError(err, 'Failed to close DevTools'));
     } catch (err) {
       reportError(err, 'Failed to close DevTools');
@@ -457,7 +509,13 @@
       else el.setZoomLevel(Math.max(current - 0.5, -5));
     };
     window.addEventListener('soloe:browser-zoom', onZoom);
-    return () => window.removeEventListener('soloe:browser-zoom', onZoom);
+    return () => {
+      window.removeEventListener('soloe:browser-zoom', onZoom);
+      // Tear down DevTools when the rail unmounts. The main-side 'destroyed'
+      // listener also covers webview destruction, but cancelling the rAF
+      // loop here avoids a stray frame after the component is gone.
+      cancelBoundsSync();
+    };
   });
 
   // Inject a one-shot autofill into the loaded page. Returns whether a
@@ -666,7 +724,7 @@
   </div>
 
   <form
-    class="relative flex items-center gap-1 border-b border-border bg-sidebar px-1 py-1"
+    class="relative flex min-w-0 items-center gap-1 border-b border-border bg-sidebar px-1 py-1"
     onsubmit={submitUrl}
   >
     <Button
@@ -702,7 +760,7 @@
     >
       <RotateCw class={`size-3.5 ${isLoading ? 'animate-spin' : ''}`} />
     </Button>
-    <div class="relative flex-1">
+    <div class="relative min-w-0 flex-1">
       <Input
         bind:ref={urlInputEl}
         bind:value={urlInput}
@@ -904,31 +962,27 @@
       </div>
     </div>
     <!--
-      DevTools host: a second always-mounted <webview> that the main process
-      uses as the target for setDevToolsWebContents. Kept in the DOM so its
-      webContents id stays stable across toggles; collapsed to 0 height when
-      closed instead of removed.
+      DevTools panel: an empty placeholder div whose bounds are forwarded to
+      a main-process WebContentsView (the only DevTools host Chromium
+      accepts — guest views like <webview> render blank). The panel only
+      mounts while open so the WebContentsView is created lazily.
     -->
-    <div
-      class={`shrink-0 ${devToolsOpen ? 'flex flex-col border-t border-border' : 'hidden'}`}
-      style={devToolsOpen ? `height: ${devToolsHeight}px;` : ''}
-    >
+    {#if devToolsOpen}
       <div
-        role="separator"
-        aria-orientation="horizontal"
-        class={`h-1 shrink-0 cursor-row-resize bg-border hover:bg-primary/40 ${
-          devToolsResizing ? 'bg-primary/40' : ''
-        }`}
-        onpointerdown={startDevToolsResize}
-      ></div>
-      <!-- svelte-ignore element_invalid_self_closing_tag -->
-      <webview
-        bind:this={devToolsView}
-        src="about:blank"
-        class="min-h-0 flex-1"
-        style="display: flex;"
-      ></webview>
-    </div>
+        class="flex shrink-0 flex-col border-t border-border"
+        style={`height: ${devToolsHeight}px;`}
+      >
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          class={`h-1 shrink-0 cursor-row-resize bg-border hover:bg-primary/40 ${
+            devToolsResizing ? 'bg-primary/40' : ''
+          }`}
+          onpointerdown={startDevToolsResize}
+        ></div>
+        <div bind:this={devToolsHost} class="min-h-0 flex-1 bg-[#1e1e1e]"></div>
+      </div>
+    {/if}
   {:else}
     <div class="flex min-h-0 flex-1 items-center justify-center p-4 text-center text-xs text-muted-foreground">
       No browser tabs yet. Use the <Plus class="inline-block size-3" /> button above to open one.

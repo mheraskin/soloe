@@ -20,12 +20,24 @@ export interface SetUserAgentRequest {
   userAgent: string | null;
 }
 
-export interface AttachDevToolsRequest {
-  // The main page being inspected.
+// Bounds for the embedded DevTools host, in DIP coordinates relative to the
+// owning BrowserWindow's content area — same coordinate system the renderer
+// gets back from getBoundingClientRect().
+export interface DevToolsBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface OpenDevToolsRequest {
   webContentsId: number;
-  // A separate <webview> that will host the DevTools UI inside the app — the
-  // panel below the page — so DevTools doesn't pop a detached window.
-  devToolsWebContentsId: number;
+  bounds: DevToolsBounds;
+}
+
+export interface SetDevToolsBoundsRequest {
+  webContentsId: number;
+  bounds: DevToolsBounds;
 }
 
 export interface CloseDevToolsRequest {

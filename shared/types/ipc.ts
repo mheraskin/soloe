@@ -113,10 +113,11 @@ import type {
   VaultUpdateRequest
 } from './vault.js';
 import type {
-  AttachDevToolsRequest,
   CloseDevToolsRequest,
   DisableDeviceEmulationRequest,
   EnableDeviceEmulationRequest,
+  OpenDevToolsRequest,
+  SetDevToolsBoundsRequest,
   SetUserAgentRequest
 } from './browser.js';
 
@@ -281,7 +282,8 @@ export const IpcChannels = {
     enableDeviceEmulation: 'browser:enable-device-emulation',
     disableDeviceEmulation: 'browser:disable-device-emulation',
     setUserAgent: 'browser:set-user-agent',
-    attachDevTools: 'browser:attach-devtools',
+    openDevTools: 'browser:open-devtools',
+    setDevToolsBounds: 'browser:set-devtools-bounds',
     closeDevTools: 'browser:close-devtools'
   }
 } as const;
@@ -581,7 +583,8 @@ export interface BrowserApi {
   enableDeviceEmulation(request: EnableDeviceEmulationRequest): Promise<IpcResult<true>>;
   disableDeviceEmulation(request: DisableDeviceEmulationRequest): Promise<IpcResult<true>>;
   setUserAgent(request: SetUserAgentRequest): Promise<IpcResult<true>>;
-  attachDevTools(request: AttachDevToolsRequest): Promise<IpcResult<true>>;
+  openDevTools(request: OpenDevToolsRequest): Promise<IpcResult<true>>;
+  setDevToolsBounds(request: SetDevToolsBoundsRequest): Promise<IpcResult<true>>;
   closeDevTools(request: CloseDevToolsRequest): Promise<IpcResult<true>>;
 }
 

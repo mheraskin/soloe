@@ -53,10 +53,11 @@ import type {
   VaultUpdateRequest
 } from '@shared/types/vault.js';
 import type {
-  AttachDevToolsRequest,
   CloseDevToolsRequest,
   DisableDeviceEmulationRequest,
   EnableDeviceEmulationRequest,
+  OpenDevToolsRequest,
+  SetDevToolsBoundsRequest,
   SetUserAgentRequest
 } from '@shared/types/browser.js';
 import type {
@@ -340,8 +341,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.browser.disableDeviceEmulation, request),
     setUserAgent: (request: SetUserAgentRequest) =>
       ipcRenderer.invoke(IpcChannels.browser.setUserAgent, request),
-    attachDevTools: (request: AttachDevToolsRequest) =>
-      ipcRenderer.invoke(IpcChannels.browser.attachDevTools, request),
+    openDevTools: (request: OpenDevToolsRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.openDevTools, request),
+    setDevToolsBounds: (request: SetDevToolsBoundsRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.setDevToolsBounds, request),
     closeDevTools: (request: CloseDevToolsRequest) =>
       ipcRenderer.invoke(IpcChannels.browser.closeDevTools, request)
   }
