@@ -117,9 +117,14 @@
   let railFullscreen = $derived(rightRail.open && rightRail.fullscreen);
 
   // Subtle "you are here" reminder shown in the title bar when the sidebar
-  // is collapsed: project name and current worktree (branch when known,
-  // basename otherwise).
-  let collapsedHint = $derived.by<{ project: string; worktree: string } | null>(() => {
+  // is collapsed: project name, current worktree (branch when known, basename
+  // otherwise), and a numbered row of every session in this worktree so the
+  // user can see which Ctrl+N maps to what without re-opening the sidebar.
+  let collapsedHint = $derived.by<{
+    project: string;
+    worktree: string;
+    sessions: Array<{ id: string; name: string; index: number | null; active: boolean }>;
+  } | null>(() => {
     if (!sidebar.hidden) return null;
     const sel = sessions.selected;
     if (!sel) return null;
@@ -140,9 +145,32 @@
       const parts = cwd.split(/[/\\]/);
       worktree = parts[parts.length - 1] || cwd;
     }
-    if (!projectName && !worktree) return null;
-    return { project: projectName ?? '', worktree: worktree ?? '' };
+    const normSelCwd = cwd.replace(/[/\\]+$/, '');
+    // Order siblings the same way the sidebar (and Ctrl+N) does, so the
+    // numbers shown here line up with the actual hotkeys.
+    const ordered = nav.flatActiveProject.filter(
+      (s) => (s.cwd?.trim() ?? '').replace(/[/\\]+$/, '') === normSelCwd
+    );
+    const indexHints = nav.sessionIndexHints;
+    const sessionList = ordered.map((s) => ({
+      id: s.id,
+      name: s.name,
+      index: indexHints[s.id] ?? null,
+      active: s.id === sel.id
+    }));
+    if (!projectName && !worktree && sessionList.length === 0) return null;
+    return {
+      project: projectName ?? '',
+      worktree: worktree ?? '',
+      sessions: sessionList
+    };
   });
+
+  const SUPERSCRIPT_DIGITS = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+  function indexGlyph(n: number): string {
+    if (n < 0 || n > 9) return String(n);
+    return SUPERSCRIPT_DIGITS[n]!;
+  }
 
   // Keep the rail store's notion of the active worktree in sync with the
   // selected session, so its per-worktree open/fullscreen/tab state can be
@@ -457,7 +485,7 @@
       </div>
       {#if collapsedHint}
         <span
-          class="ml-1 min-w-0 truncate text-[11px] tracking-wide"
+          class="ml-1 min-w-0 shrink truncate text-[11px] tracking-wide"
           title={collapsedHint.project && collapsedHint.worktree
             ? `${collapsedHint.project} · ${collapsedHint.worktree}`
             : collapsedHint.project || collapsedHint.worktree}
@@ -472,6 +500,44 @@
             <span class="text-muted-foreground/80">{collapsedHint.worktree}</span>
           {/if}
         </span>
+        {#if collapsedHint.sessions.length > 0}
+          <span class="mx-1.5 shrink-0 text-muted-foreground/25" aria-hidden="true">·</span>
+          <div
+            class="flex min-w-0 shrink items-center gap-0.5"
+            style="-webkit-app-region: no-drag"
+            role="tablist"
+            aria-label="Sessions in this worktree"
+          >
+            {#each collapsedHint.sessions as s (s.id)}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={s.active}
+                class={`inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
+                  s.active
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground'
+                }`}
+                title={s.index !== null
+                  ? `${s.name} (Ctrl+${s.index})`
+                  : s.name}
+                onclick={() => sessions.select(s.id)}
+              >
+                {#if s.index !== null}
+                  <span
+                    class={`font-mono text-[10px] leading-none ${
+                      s.active ? 'text-muted-foreground' : 'text-muted-foreground/50'
+                    }`}
+                    aria-hidden="true"
+                  >
+                    {indexGlyph(s.index)}
+                  </span>
+                {/if}
+                <span class="min-w-0 truncate">{s.name}</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       {/if}
     {/if}
     <div class="flex-1 self-stretch" aria-hidden="true"></div>
