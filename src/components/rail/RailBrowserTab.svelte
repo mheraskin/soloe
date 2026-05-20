@@ -14,23 +14,34 @@
     KeyRound,
     Smartphone,
     Tablet,
-    Monitor
+    Monitor,
+    PowerOff,
+    Power
   } from '@lucide/svelte';
   import { browserStore, type BrowserTabDevice } from '../../stores/browser.svelte';
   import { findPreset } from '../../lib/browser-devices';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
+  import { settings } from '../../stores/settings.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
   import type { VaultEntry } from '../../../shared/types/vault';
   import type { ElectronWebview } from '../../types/webview';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import * as Popover from '$lib/components/ui/popover';
+  import * as ContextMenu from '$lib/components/ui/context-menu';
   import { toast } from 'svelte-sonner';
   import BrowserAutofillPopover from './BrowserAutofillPopover.svelte';
   import BrowserDeviceMenu from './BrowserDeviceMenu.svelte';
 
+  interface FailureSuggestion {
+    httpsUrl: string;
+    httpUrl: string;
+    reason: string;
+  }
+
   let activeTab = $derived(browserStore.activeTab);
+  let activeId = $derived(browserStore.activeTabId);
   let activeUrl = $derived(activeTab ? activeTab.history[activeTab.historyIndex] ?? '' : '');
   let canBack = $derived(activeTab ? browserStore.canGoBack(activeTab.id) : false);
   let canForward = $derived(activeTab ? browserStore.canGoForward(activeTab.id) : false);
@@ -44,10 +55,34 @@
     device ? (device.rotated ? device.width : device.height) : 0
   );
 
-  // Captured once at mount so the initial `src=` doesn't react. The effect
-  // below takes over for subsequent navigations.
-  const seededTab = browserStore.ensureSomeTab();
-  const initialUrl = seededTab.history[seededTab.historyIndex] ?? 'about:blank';
+  // Per-tab webview state. Each non-paused tab gets its own <webview> element
+  // so switching between tabs doesn't reload the page. Records are keyed by
+  // BrowserTab.id; entries are added by the attachment factory below and
+  // removed in its cleanup when the webview unmounts.
+  let webviewsById = $state<Record<string, ElectronWebview>>({});
+  let domReadyById = $state<Record<string, boolean>>({});
+  let isLoadingById = $state<Record<string, boolean>>({});
+  let lastLoadedById = $state<Record<string, string>>({});
+  let failureById = $state<Record<string, FailureSuggestion | null>>({});
+  let lastAppliedDeviceKeyById = $state<Record<string, string | null>>({});
+  let lastAppliedUaById = $state<Record<string, string | null>>({});
+
+  let activeWebview = $derived(activeId ? webviewsById[activeId] ?? null : null);
+  let activeDomReady = $derived(activeId ? !!domReadyById[activeId] : false);
+  let isLoading = $derived(activeId ? !!isLoadingById[activeId] : false);
+  let failureSuggestion = $derived(activeId ? failureById[activeId] ?? null : null);
+
+  // Only non-paused tabs get a <webview>. Paused tabs are kept in the strip
+  // (so the user can resume them) but their renderer process is gone.
+  let visibleTabs = $derived(browserStore.tabs.filter((t) => t.pausedAt === undefined));
+
+  // Make sure we have at least one tab so the URL bar has something to drive.
+  browserStore.ensureSomeTab();
+
+  function getActiveInitialUrl(): string {
+    const t = browserStore.activeTab;
+    return t ? t.history[t.historyIndex] ?? 'about:blank' : 'about:blank';
+  }
 
   // Chrome-like display: hide the http(s):// prefix when the URL bar isn't
   // focused. The full URL stays in `lastSyncedUrl` so we can restore it on
@@ -56,19 +91,16 @@
     return url.replace(/^https?:\/\//i, '');
   }
 
-  let webview = $state<ElectronWebview | null>(null);
-  let domReady = $state(false);
-  let lastLoadedUrl = $state(initialUrl);
-  let urlInput = $state(stripProtocol(initialUrl));
+  const initialActiveUrl = getActiveInitialUrl();
+  let urlInput = $state(stripProtocol(initialActiveUrl));
   let urlInputEl = $state<HTMLInputElement | null>(null);
-  let isLoading = $state(false);
-  let failureSuggestion = $state<{ httpsUrl: string; httpUrl: string; reason: string } | null>(null);
+  let urlInputFocused = $state(false);
 
   // Tracks the URL that the bar most recently auto-synced to. When the user
   // types into the bar, urlInput diverges from this value — that's our signal
   // that the bar is "dirty" and shouldn't be clobbered by auto-syncing.
   // Resets explicitly on submit, escape, and tab switch.
-  let lastSyncedUrl = $state(initialUrl);
+  let lastSyncedUrl = $state(initialActiveUrl);
   // Dirty when the bar matches neither the canonical URL nor its display form.
   // Comparing both forms lets the bar render the stripped variant without
   // appearing dirty to the auto-sync effect.
@@ -101,141 +133,198 @@
     suggestionIndex = -1;
   });
 
-  // Drive the webview to whatever the store currently points at. The guard
-  // prevents an in-page navigation that we just persisted (via did-navigate)
-  // from being re-loaded into the same page.
+  // Drive the active webview to whatever the store currently points at. The
+  // guard prevents an in-page navigation that we just persisted (via
+  // did-navigate) from being re-loaded into the same page. On tab switch the
+  // target matches lastLoadedById[newId] so no reload happens — that's the
+  // whole point of the per-tab webview architecture.
   $effect(() => {
+    const tabId = activeId;
+    if (!tabId) return;
     const target = activeUrl;
-    const el = webview;
-    if (!el || !domReady) return;
-    if (target === lastLoadedUrl) return;
-    lastLoadedUrl = target;
+    const el = webviewsById[tabId];
+    const ready = !!domReadyById[tabId];
+    if (!el || !ready) return;
+    if (target === lastLoadedById[tabId]) return;
+    lastLoadedById = { ...lastLoadedById, [tabId]: target };
     el.loadURL(target).catch(() => {
       // Some URLs (about:blank, blocked schemes) reject — ignore; the
       // webview's error page will still render.
     });
   });
 
-  // Attach Electron-webview events imperatively. Svelte's lowercased on:event
-  // syntax doesn't reach custom DOM events with dashes.
-  $effect(() => {
-    const el = webview;
-    if (!el) return;
-    domReady = false;
-    isLoading = false;
-    failureSuggestion = null;
-    const onDomReady = () => {
-      domReady = true;
-    };
-    const onNavigate = (e: Event) => {
-      const url = (e as Event & { url?: string }).url;
-      const tab = browserStore.activeTab;
-      if (!tab || !url) return;
-      failureSuggestion = null;
-      // Cross-page navigations invalidate the fill prompt (it referenced
-      // the previous page's password field). The save prompt is kept until
-      // the user acts on it — a form-submit-driven nav arrives right after
-      // the prompt appears and would otherwise dismiss it instantly.
-      fillPrompt = null;
-      if (url === lastLoadedUrl) return;
-      lastLoadedUrl = url;
-      browserStore.navigate(tab.id, url);
-    };
-    const onTitle = (e: Event) => {
-      const title = (e as Event & { title?: string }).title;
-      const tab = browserStore.activeTab;
-      if (!tab || !title) return;
-      browserStore.setTitle(tab.id, title);
-    };
-    const onLoadStart = () => {
-      isLoading = true;
-    };
-    const onLoadStop = () => {
-      isLoading = false;
-    };
-    const onFail = (e: Event) => {
-      const event = e as Event & {
-        errorCode?: number;
-        errorDescription?: string;
-        validatedURL?: string;
-        isMainFrame?: boolean;
+  // Captured src= for each tab's <webview>. Storing this in a Map keeps the
+  // attribute non-reactive after first mount; otherwise `tab.history`
+  // changing (from in-page navigation) would push a new src into the DOM and
+  // Chromium would treat it as a reload. Navigations after mount go through
+  // `el.loadURL()` via the reactive effect below, not through `src=`.
+  const initialUrlByTabId = new Map<string, string>();
+
+  function getOrCaptureInitialUrl(tabId: string, fallback: string): string {
+    const cached = initialUrlByTabId.get(tabId);
+    if (cached !== undefined) return cached;
+    initialUrlByTabId.set(tabId, fallback);
+    return fallback;
+  }
+
+  // Attachment factory: registers listeners on a freshly mounted <webview>
+  // and returns a cleanup that removes them when the element unmounts. The
+  // factory is cached per-tab so Svelte sees a stable function reference
+  // across re-renders (otherwise it would tear down and re-add listeners on
+  // every reactive update).
+  type AttachFn = (node: Element) => () => void;
+  const attachmentsByTabId = new Map<string, AttachFn>();
+
+  function attachWebview(tabId: string, initialUrl: string): AttachFn {
+    const cached = attachmentsByTabId.get(tabId);
+    if (cached) return cached;
+    const fn: AttachFn = (node) => {
+      const wv = node as unknown as ElectronWebview;
+      webviewsById = { ...webviewsById, [tabId]: wv };
+      domReadyById = { ...domReadyById, [tabId]: false };
+      isLoadingById = { ...isLoadingById, [tabId]: false };
+      lastLoadedById = { ...lastLoadedById, [tabId]: initialUrl };
+      failureById = { ...failureById, [tabId]: null };
+
+      const onDomReady = () => {
+        domReadyById = { ...domReadyById, [tabId]: true };
+        void applyEmulationFor(tabId);
       };
-      // -3 is ABORTED (user navigated away); ignore. Also ignore subframe
-      // errors so an ad iframe failing doesn't pop a misleading suggestion.
-      if (event.errorCode === -3) return;
-      if (event.isMainFrame === false) return;
-      const url = event.validatedURL ?? '';
-      if (!url.startsWith('https://')) return;
-      failureSuggestion = {
-        httpsUrl: url,
-        httpUrl: 'http://' + url.slice('https://'.length),
-        reason: event.errorDescription || 'Failed to load over HTTPS'
+      const onNavigate = (e: Event) => {
+        const url = (e as Event & { url?: string }).url;
+        if (!url) return;
+        failureById = { ...failureById, [tabId]: null };
+        // Cross-page navigations invalidate the fill prompt (it referenced
+        // the previous page's password field). Only the active tab owns the
+        // visible prompt, so don't clear it for background-tab navigations.
+        if (tabId === browserStore.activeTabId) {
+          fillPrompt = null;
+        }
+        if (url === lastLoadedById[tabId]) return;
+        lastLoadedById = { ...lastLoadedById, [tabId]: url };
+        browserStore.navigate(tabId, url);
+      };
+      const onTitle = (e: Event) => {
+        const title = (e as Event & { title?: string }).title;
+        if (!title) return;
+        browserStore.setTitle(tabId, title);
+      };
+      const onLoadStart = () => {
+        isLoadingById = { ...isLoadingById, [tabId]: true };
+      };
+      const onLoadStop = () => {
+        isLoadingById = { ...isLoadingById, [tabId]: false };
+      };
+      const onFail = (e: Event) => {
+        const event = e as Event & {
+          errorCode?: number;
+          errorDescription?: string;
+          validatedURL?: string;
+          isMainFrame?: boolean;
+        };
+        // -3 is ABORTED (user navigated away); ignore. Also ignore subframe
+        // errors so an ad iframe failing doesn't pop a misleading suggestion.
+        if (event.errorCode === -3) return;
+        if (event.isMainFrame === false) return;
+        const url = event.validatedURL ?? '';
+        if (!url.startsWith('https://')) return;
+        failureById = {
+          ...failureById,
+          [tabId]: {
+            httpsUrl: url,
+            httpUrl: 'http://' + url.slice('https://'.length),
+            reason: event.errorDescription || 'Failed to load over HTTPS'
+          }
+        };
+      };
+      // ipc-message fires when the webview preload calls
+      // ipcRenderer.sendToHost(). We only act on messages from the active
+      // tab — a backgrounded page triggering a password-focus shouldn't
+      // surface a popover the user can't see the source of.
+      const onIpcMessage = (event: Event) => {
+        if (tabId !== browserStore.activeTabId) return;
+        const e = event as Event & { channel?: string; args?: unknown[] };
+        if (e.channel === 'soloe:webview-shortcut') {
+          const payload = e.args?.[0] as
+            | {
+                key?: string;
+                code?: string;
+                ctrlKey?: boolean;
+                metaKey?: boolean;
+                shiftKey?: boolean;
+                altKey?: boolean;
+              }
+            | undefined;
+          if (!payload?.key) return;
+          const synthesized = new KeyboardEvent('keydown', {
+            key: payload.key,
+            code: payload.code ?? '',
+            ctrlKey: payload.ctrlKey ?? false,
+            metaKey: payload.metaKey ?? false,
+            shiftKey: payload.shiftKey ?? false,
+            altKey: payload.altKey ?? false,
+            bubbles: true,
+            cancelable: true
+          });
+          window.dispatchEvent(synthesized);
+          return;
+        }
+        if (e.channel === 'soloe:webview-password-focus') {
+          const payload = e.args?.[0] as { origin?: string } | undefined;
+          void handlePasswordFocus(payload?.origin ?? '');
+          return;
+        }
+        if (e.channel === 'soloe:webview-form-submit') {
+          const payload = e.args?.[0] as
+            | { origin?: string; username?: string; password?: string }
+            | undefined;
+          if (!payload?.origin || !payload.username || !payload.password) return;
+          void handleFormSubmit(payload.origin, payload.username, payload.password);
+          return;
+        }
+      };
+
+      wv.addEventListener('dom-ready', onDomReady);
+      wv.addEventListener('did-navigate', onNavigate);
+      wv.addEventListener('did-navigate-in-page', onNavigate);
+      wv.addEventListener('page-title-updated', onTitle);
+      wv.addEventListener('did-start-loading', onLoadStart);
+      wv.addEventListener('did-stop-loading', onLoadStop);
+      wv.addEventListener('did-fail-load', onFail);
+      wv.addEventListener('ipc-message', onIpcMessage);
+
+      return () => {
+        wv.removeEventListener('dom-ready', onDomReady);
+        wv.removeEventListener('did-navigate', onNavigate);
+        wv.removeEventListener('did-navigate-in-page', onNavigate);
+        wv.removeEventListener('page-title-updated', onTitle);
+        wv.removeEventListener('did-start-loading', onLoadStart);
+        wv.removeEventListener('did-stop-loading', onLoadStop);
+        wv.removeEventListener('did-fail-load', onFail);
+        wv.removeEventListener('ipc-message', onIpcMessage);
+        const { [tabId]: _w, ...restW } = webviewsById;
+        webviewsById = restW;
+        const { [tabId]: _dr, ...restDR } = domReadyById;
+        domReadyById = restDR;
+        const { [tabId]: _l, ...restL } = isLoadingById;
+        isLoadingById = restL;
+        const { [tabId]: _lu, ...restLU } = lastLoadedById;
+        lastLoadedById = restLU;
+        const { [tabId]: _f, ...restF } = failureById;
+        failureById = restF;
+        const { [tabId]: _dk, ...restDK } = lastAppliedDeviceKeyById;
+        lastAppliedDeviceKeyById = restDK;
+        const { [tabId]: _ua, ...restUA } = lastAppliedUaById;
+        lastAppliedUaById = restUA;
+        attachmentsByTabId.delete(tabId);
+        // Drop the captured src so a resumed tab loads its current URL
+        // rather than the URL it was on when first opened.
+        initialUrlByTabId.delete(tabId);
       };
     };
-    // ipc-message fires when the webview preload calls
-    // ipcRenderer.sendToHost(). We branch on the channel: shortcut forwarding
-    // synthesizes a host-side keydown so App.svelte's keymap sees it;
-    // password-focus and form-submit drive the inline autofill popovers.
-    const onIpcMessage = (event: Event) => {
-      const e = event as Event & { channel?: string; args?: unknown[] };
-      if (e.channel === 'soloe:webview-shortcut') {
-        const payload = e.args?.[0] as
-          | {
-              key?: string;
-              code?: string;
-              ctrlKey?: boolean;
-              metaKey?: boolean;
-              shiftKey?: boolean;
-              altKey?: boolean;
-            }
-          | undefined;
-        if (!payload?.key) return;
-        const synthesized = new KeyboardEvent('keydown', {
-          key: payload.key,
-          code: payload.code ?? '',
-          ctrlKey: payload.ctrlKey ?? false,
-          metaKey: payload.metaKey ?? false,
-          shiftKey: payload.shiftKey ?? false,
-          altKey: payload.altKey ?? false,
-          bubbles: true,
-          cancelable: true
-        });
-        window.dispatchEvent(synthesized);
-        return;
-      }
-      if (e.channel === 'soloe:webview-password-focus') {
-        const payload = e.args?.[0] as { origin?: string } | undefined;
-        void handlePasswordFocus(payload?.origin ?? '');
-        return;
-      }
-      if (e.channel === 'soloe:webview-form-submit') {
-        const payload = e.args?.[0] as
-          | { origin?: string; username?: string; password?: string }
-          | undefined;
-        if (!payload?.origin || !payload.username || !payload.password) return;
-        void handleFormSubmit(payload.origin, payload.username, payload.password);
-        return;
-      }
-    };
-    el.addEventListener('dom-ready', onDomReady);
-    el.addEventListener('did-navigate', onNavigate);
-    el.addEventListener('did-navigate-in-page', onNavigate);
-    el.addEventListener('page-title-updated', onTitle);
-    el.addEventListener('did-start-loading', onLoadStart);
-    el.addEventListener('did-stop-loading', onLoadStop);
-    el.addEventListener('did-fail-load', onFail);
-    el.addEventListener('ipc-message', onIpcMessage);
-    return () => {
-      el.removeEventListener('dom-ready', onDomReady);
-      el.removeEventListener('did-navigate', onNavigate);
-      el.removeEventListener('did-navigate-in-page', onNavigate);
-      el.removeEventListener('page-title-updated', onTitle);
-      el.removeEventListener('did-start-loading', onLoadStart);
-      el.removeEventListener('did-stop-loading', onLoadStop);
-      el.removeEventListener('did-fail-load', onFail);
-      el.removeEventListener('ipc-message', onIpcMessage);
-    };
-  });
+    attachmentsByTabId.set(tabId, fn);
+    return fn;
+  }
 
   // Localhost-ish hosts get http://; everything else defaults to https://.
   // Catches localhost, loopback, private network ranges, and bare ports
@@ -305,13 +394,14 @@
 
   function tryHttpFallback() {
     const suggestion = failureSuggestion;
-    if (!suggestion) return;
-    failureSuggestion = null;
+    if (!suggestion || !activeId) return;
+    failureById = { ...failureById, [activeId]: null };
     commitNavigation(suggestion.httpUrl);
   }
 
   function dismissFallback() {
-    failureSuggestion = null;
+    if (!activeId) return;
+    failureById = { ...failureById, [activeId]: null };
   }
 
   function goBack() {
@@ -327,8 +417,8 @@
   }
 
   function reload() {
-    const el = webview;
-    if (!el || !domReady) return;
+    const el = activeWebview;
+    if (!el || !activeDomReady) return;
     el.reload();
   }
 
@@ -342,9 +432,21 @@
   let lastSentBounds: { x: number; y: number; width: number; height: number } | null = null;
   let boundsRaf = 0;
 
+  // Closing DevTools on tab switch keeps things simple: the WebContentsView
+  // is bound to a specific webContents, and re-targeting it across tabs has
+  // ordering pitfalls (bounds vs. webContentsId vs. ready state). The user
+  // can reopen on the new tab if they want.
+  let lastActiveIdForDevtools: string | null = null;
+  $effect(() => {
+    const id = activeId;
+    if (id === lastActiveIdForDevtools) return;
+    lastActiveIdForDevtools = id;
+    if (devToolsOpen) closeDevTools();
+  });
+
   async function openDevTools() {
-    const main = webview;
-    if (!main || !domReady) return;
+    const main = activeWebview;
+    if (!main || !activeDomReady) return;
     if (devToolsOpen) return;
     devToolsOpen = true;
     // Defer one frame so the placeholder is laid out before we measure it.
@@ -383,7 +485,7 @@
   }
 
   function syncBoundsOnce() {
-    const main = webview;
+    const main = activeWebview;
     if (!main || !devToolsOpen) return;
     if (devToolsSuspended) return;
     const bounds = computeBounds();
@@ -435,7 +537,7 @@
     devToolsOpen = false;
     cancelBoundsSync();
     lastSentBounds = null;
-    const main = webview;
+    const main = activeWebview;
     if (!main) return;
     let webContentsId: number;
     try {
@@ -493,7 +595,7 @@
   let devToolsSuspended = $state(false);
   function suspendDevToolsView() {
     if (!devToolsOpen || devToolsSuspended) return;
-    const main = webview;
+    const main = activeWebview;
     if (!main) return;
     devToolsSuspended = true;
     try {
@@ -518,13 +620,6 @@
   let autofillOpen = $state(false);
   let deviceMenuOpen = $state(false);
 
-  // Apply the active device's emulation settings to the underlying webContents
-  // whenever the device changes or the page reaches dom-ready. Tracks the
-  // last applied UA so we can force a reload when it changes (UA is consulted
-  // by the page at navigation time, not after the fact).
-  let lastAppliedUa = $state<string | null>(null);
-  let lastAppliedDeviceKey = $state<string | null>(null);
-
   function deviceKey(d: BrowserTabDevice | undefined): string | null {
     if (!d) return null;
     const w = d.rotated ? d.height : d.width;
@@ -532,24 +627,31 @@
     return `${d.presetId}:${w}x${h}@${d.dpr}:${d.mobile ? 'm' : 'd'}:${d.ua}`;
   }
 
-  async function applyEmulation(): Promise<void> {
-    const el = webview;
-    if (!el || !domReady) return;
+  // Apply the per-tab device emulation. Called from the dom-ready handler
+  // for that tab and from an effect that watches the active tab's device.
+  // Inactive tabs keep their emulation applied as long as their webContents
+  // is alive — that way switching back doesn't trigger a UA-induced reload.
+  async function applyEmulationFor(tabId: string): Promise<void> {
+    const el = webviewsById[tabId];
+    if (!el || !domReadyById[tabId]) return;
+    const tab = browserStore.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const tabDevice = tab.device;
     let webContentsId: number;
     try {
       webContentsId = el.getWebContentsId();
     } catch {
       return;
     }
-    if (!device) {
-      if (lastAppliedDeviceKey === null) return;
-      lastAppliedDeviceKey = null;
+    if (!tabDevice) {
+      if ((lastAppliedDeviceKeyById[tabId] ?? null) === null) return;
+      lastAppliedDeviceKeyById = { ...lastAppliedDeviceKeyById, [tabId]: null };
       try {
         await window.soloe.browser.disableDeviceEmulation({ webContentsId });
-        if (lastAppliedUa !== null) {
+        if ((lastAppliedUaById[tabId] ?? null) !== null) {
           await window.soloe.browser.setUserAgent({ webContentsId, userAgent: null });
-          const previousUa = lastAppliedUa;
-          lastAppliedUa = null;
+          const previousUa = lastAppliedUaById[tabId] ?? null;
+          lastAppliedUaById = { ...lastAppliedUaById, [tabId]: null };
           if (previousUa) el.reload();
         }
       } catch (err) {
@@ -557,41 +659,43 @@
       }
       return;
     }
-    const key = deviceKey(device);
-    if (key === lastAppliedDeviceKey) return;
-    lastAppliedDeviceKey = key;
+    const key = deviceKey(tabDevice);
+    if (key === (lastAppliedDeviceKeyById[tabId] ?? null)) return;
+    lastAppliedDeviceKeyById = { ...lastAppliedDeviceKeyById, [tabId]: key };
+    const w = tabDevice.rotated ? tabDevice.height : tabDevice.width;
+    const h = tabDevice.rotated ? tabDevice.width : tabDevice.height;
     try {
       await window.soloe.browser.enableDeviceEmulation({
         webContentsId,
         emulation: {
-          width: deviceWidth,
-          height: deviceHeight,
-          deviceScaleFactor: device.dpr,
-          mobile: device.mobile,
-          ...(device.ua ? { userAgent: device.ua } : {})
+          width: w,
+          height: h,
+          deviceScaleFactor: tabDevice.dpr,
+          mobile: tabDevice.mobile,
+          ...(tabDevice.ua ? { userAgent: tabDevice.ua } : {})
         }
       });
-      const nextUa = device.ua || null;
-      if (nextUa !== lastAppliedUa) {
-        const hadPreviousUa = lastAppliedUa !== null;
-        lastAppliedUa = nextUa;
-        if (nextUa || hadPreviousUa) el.reload();
+      const nextUa = tabDevice.ua || null;
+      const prevUa = lastAppliedUaById[tabId] ?? null;
+      if (nextUa !== prevUa) {
+        lastAppliedUaById = { ...lastAppliedUaById, [tabId]: nextUa };
+        if (nextUa || prevUa !== null) el.reload();
       }
     } catch (err) {
       reportError(err, 'Failed to enable device emulation');
     }
   }
 
-  // Re-apply when device changes or dom becomes ready (covers page reloads
-  // that drop emulation on the floor — Chromium clears it on cross-process
-  // navigation).
+  // Re-apply emulation when the active tab's device changes. Switching tabs
+  // doesn't trigger this (each tab's emulation was set at its own dom-ready);
+  // only mutating the active tab's device does.
   $effect(() => {
-    // Track all relevant inputs so the effect fires on any of them.
-    void device;
+    const tab = activeTab;
+    if (!tab) return;
+    void tab.device;
     void deviceWidth;
     void deviceHeight;
-    void domReady;
-    void applyEmulation();
+    void applyEmulationFor(tab.id);
   });
 
   function setDevice(next: BrowserTabDevice | null) {
@@ -617,14 +721,30 @@
     return Monitor;
   }
 
+  // Auto-resume paused tabs whose pausedAt is older than the configured
+  // threshold. Runs once on mount (catches tabs paused in a previous session)
+  // and then on a 30s tick. Setting pauseAutoResumeMinutes to 0 disables
+  // auto-resume entirely.
+  let autoResumeTimer = 0;
+  function checkAutoResume() {
+    const minutes = settings.current.browser.pauseAutoResumeMinutes;
+    if (minutes <= 0) return;
+    const threshold = Date.now() - minutes * 60_000;
+    for (const tab of browserStore.tabs) {
+      if (tab.pausedAt !== undefined && tab.pausedAt <= threshold) {
+        browserStore.resumeTab(tab.id);
+      }
+    }
+  }
+
   // Custom event from App.svelte: Ctrl+/-/0 while the browser tab is active.
   onMount(() => {
     const onZoom = (event: Event) => {
       const direction = (event as CustomEvent<{ direction: 'in' | 'out' | 'reset' }>).detail
         ?.direction;
       if (!direction) return;
-      const el = webview;
-      if (!el || !domReady) return;
+      const el = activeWebview;
+      if (!el || !activeDomReady) return;
       const current = el.getZoomLevel();
       if (direction === 'reset') el.setZoomLevel(0);
       else if (direction === 'in') el.setZoomLevel(Math.min(current + 0.5, 5));
@@ -649,12 +769,20 @@
     window.addEventListener('soloe:rail-resize-end', onResizeEnd);
     window.addEventListener('soloe:focus-pane', onFocusPane);
     window.addEventListener('keydown', onAutofillEscape);
+
+    checkAutoResume();
+    autoResumeTimer = window.setInterval(checkAutoResume, 30_000);
+
     return () => {
       window.removeEventListener('soloe:browser-zoom', onZoom);
       window.removeEventListener('soloe:rail-resize-start', onResizeStart);
       window.removeEventListener('soloe:rail-resize-end', onResizeEnd);
       window.removeEventListener('soloe:focus-pane', onFocusPane);
       window.removeEventListener('keydown', onAutofillEscape);
+      if (autoResumeTimer) {
+        window.clearInterval(autoResumeTimer);
+        autoResumeTimer = 0;
+      }
       // Tear down DevTools when the rail unmounts. The main-side 'destroyed'
       // listener also covers webview destruction, but cancelling the rAF
       // loop here avoids a stray frame after the component is gone.
@@ -670,8 +798,8 @@
     username: string,
     password: string
   ): Promise<{ filledUser: boolean }> {
-    const el = webview;
-    if (!el || !domReady) {
+    const el = activeWebview;
+    if (!el || !activeDomReady) {
       throw new Error('Browser is not ready');
     }
     const script = `(function(u, p) {
@@ -830,12 +958,27 @@
   }
 
   function selectTab(id: string) {
+    // Clicking a paused tab resumes it. The webview will remount on the next
+    // render and load its persisted URL.
+    if (browserStore.isPaused(id)) {
+      browserStore.resumeTab(id);
+    }
     browserStore.selectTab(id);
   }
 
   function closeTab(id: string, event: MouseEvent) {
     event.stopPropagation();
     browserStore.closeTab(id);
+  }
+
+  function pauseTabAction(id: string) {
+    // Never pause the active tab — it would leave the browser pane blank.
+    if (id === browserStore.activeTabId) return;
+    browserStore.pauseTab(id);
+  }
+
+  function resumeTabAction(id: string) {
+    browserStore.resumeTab(id);
   }
 
   function tabLabel(t: { title: string; history: string[]; historyIndex: number }): string {
@@ -850,10 +993,13 @@
     }
   }
 
+  function tabInitialUrl(t: { history: string[]; historyIndex: number }): string {
+    return t.history[t.historyIndex] ?? 'about:blank';
+  }
+
   // Type-ahead dropdown sourced from all per-worktree tab histories.
   // Deduplicated, ranked by host-match-first then substring match.
   let suggestionIndex = $state(-1);
-  let urlInputFocused = $state(false);
   let suppressDropdown = $state(false);
 
   let allHistoryUrls = $derived.by<string[]>(() => {
@@ -992,35 +1138,70 @@
 <div class="flex h-full min-w-0 flex-col bg-background">
   <div class="flex items-center gap-0.5 overflow-x-auto border-b border-border bg-sidebar px-1 py-1">
     {#each browserStore.tabs as tab (tab.id)}
-      {@const isActive = tab.id === browserStore.activeTabId}
-      <button
-        type="button"
-        class={`group flex h-7 max-w-[160px] min-w-0 shrink-0 items-center gap-1 rounded-md px-2 text-xs transition-colors ${
-          isActive
-            ? 'bg-background text-foreground'
-            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-        }`}
-        onclick={() => selectTab(tab.id)}
-        title={tab.history[tab.historyIndex] ?? ''}
-      >
-        <Globe class="size-3 shrink-0" />
-        <span class="min-w-0 truncate">{tabLabel(tab)}</span>
-        <span
-          role="button"
-          tabindex="0"
-          aria-label="Close tab"
-          class="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded opacity-60 hover:bg-muted hover:opacity-100"
-          onclick={(e) => closeTab(tab.id, e)}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              closeTab(tab.id, e as unknown as MouseEvent);
-            }
-          }}
-        >
-          <X class="size-3" />
-        </span>
-      </button>
+      {@const isActive = tab.id === activeId}
+      {@const isPausedTab = tab.pausedAt !== undefined}
+      <ContextMenu.Root>
+        <ContextMenu.Trigger>
+          {#snippet child({ props })}
+            <button
+              {...props}
+              type="button"
+              class={`group flex h-7 max-w-[160px] min-w-0 shrink-0 items-center gap-1 rounded-md px-2 text-xs transition-colors ${
+                isActive
+                  ? 'bg-background text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+              } ${isPausedTab ? 'opacity-60' : ''}`}
+              onclick={() => selectTab(tab.id)}
+              title={tab.history[tab.historyIndex] ?? ''}
+            >
+              {#if isPausedTab}
+                <PowerOff class="size-3 shrink-0" />
+              {:else}
+                <Globe class="size-3 shrink-0" />
+              {/if}
+              <span class="min-w-0 truncate">{tabLabel(tab)}</span>
+              <span
+                role="button"
+                tabindex="0"
+                aria-label="Close tab"
+                class="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded opacity-60 hover:bg-muted hover:opacity-100"
+                onclick={(e) => closeTab(tab.id, e)}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    closeTab(tab.id, e as unknown as MouseEvent);
+                  }
+                }}
+              >
+                <X class="size-3" />
+              </span>
+            </button>
+          {/snippet}
+        </ContextMenu.Trigger>
+        <ContextMenu.Content class="w-44">
+          {#if isPausedTab}
+            <ContextMenu.Item onclick={() => resumeTabAction(tab.id)}>
+              <Power class="mr-2 size-3.5" />
+              Resume tab
+            </ContextMenu.Item>
+          {:else}
+            <ContextMenu.Item
+              disabled={isActive}
+              onclick={() => pauseTabAction(tab.id)}
+            >
+              <PowerOff class="mr-2 size-3.5" />
+              Pause tab
+            </ContextMenu.Item>
+          {/if}
+          <ContextMenu.Separator />
+          <ContextMenu.Item
+            onclick={(e) => closeTab(tab.id, e as unknown as MouseEvent)}
+          >
+            <X class="mr-2 size-3.5" />
+            Close tab
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Root>
     {/each}
     <button
       type="button"
@@ -1256,31 +1437,42 @@
       </div>
     {/if}
     <!--
-      Keep a single <webview> element mounted across device toggles so the
-      page (cookies, scroll, in-page state, webContentsId) survives. Switching
-      between native/device modes flips only the wrapper's classes and the
-      device-box's inline size — the webview node itself never unmounts.
+      One <webview> per non-paused tab. Inactive tabs use display:none so
+      their renderer keeps running (state preserved across tab switches) but
+      they don't consume layout space. Paused tabs are absent entirely; their
+      webview is unmounted to free memory until the user resumes them or the
+      auto-resume timer fires.
     -->
-    <div
-      class={device
-        ? 'relative flex min-h-0 flex-1 items-start justify-center overflow-auto bg-muted/40 p-4'
-        : 'relative flex min-h-0 flex-1 flex-col'}
-    >
-      <div
-        class={device
-          ? 'shrink-0 overflow-hidden rounded border border-border bg-background shadow-lg'
-          : 'flex min-h-0 flex-1 flex-col'}
-        style={device ? `width: ${deviceWidth}px; height: ${deviceHeight}px;` : ''}
-      >
-        <!-- svelte-ignore element_invalid_self_closing_tag -->
-        <webview
-          bind:this={webview}
-          src={initialUrl}
-          partition="persist:soloe-browser"
-          class={device ? 'h-full w-full' : 'min-h-0 flex-1'}
-          style="display: flex;"
-        ></webview>
-      </div>
+    <div class="relative flex min-h-0 flex-1 flex-col">
+      {#each visibleTabs as tab (tab.id)}
+        {@const isActive = tab.id === activeId}
+        {@const tabDevice = tab.device}
+        {@const tabW = tabDevice ? (tabDevice.rotated ? tabDevice.height : tabDevice.width) : 0}
+        {@const tabH = tabDevice ? (tabDevice.rotated ? tabDevice.width : tabDevice.height) : 0}
+        {@const initialUrl = getOrCaptureInitialUrl(tab.id, tabInitialUrl(tab))}
+        <div
+          class={tabDevice
+            ? 'absolute inset-0 flex items-start justify-center overflow-auto bg-muted/40 p-4'
+            : 'absolute inset-0 flex flex-col'}
+          style={isActive ? undefined : 'display: none;'}
+        >
+          <div
+            class={tabDevice
+              ? 'shrink-0 overflow-hidden rounded border border-border bg-background shadow-lg'
+              : 'flex min-h-0 flex-1 flex-col'}
+            style={tabDevice ? `width: ${tabW}px; height: ${tabH}px;` : ''}
+          >
+            <!-- svelte-ignore element_invalid_self_closing_tag -->
+            <webview
+              {@attach attachWebview(tab.id, initialUrl)}
+              src={initialUrl}
+              partition="persist:soloe-browser"
+              class={tabDevice ? 'h-full w-full' : 'min-h-0 flex-1'}
+              style="display: flex;"
+            ></webview>
+          </div>
+        </div>
+      {/each}
 
       {#if fillPrompt}
         <div
@@ -1369,7 +1561,8 @@
       DevTools panel: an empty placeholder div whose bounds are forwarded to
       a main-process WebContentsView (the only DevTools host Chromium
       accepts — guest views like <webview> render blank). The panel only
-      mounts while open so the WebContentsView is created lazily.
+      mounts while open so the WebContentsView is created lazily, and it
+      auto-closes on tab switch since it's bound to one webContents.
     -->
     {#if devToolsOpen}
       <div
