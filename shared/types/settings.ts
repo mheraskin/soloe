@@ -17,6 +17,12 @@ export interface SettingsDiff {
   fontSize: DiffFontSizePref;
 }
 
+export interface SettingsBrowser {
+  // Minutes to wait before automatically resuming a paused browser tab.
+  // 0 disables auto-resume entirely (the user has to resume manually).
+  pauseAutoResumeMinutes: number;
+}
+
 export interface SettingsDefaults {
   runMode: RunMode;
   wslDistro?: string;
@@ -116,6 +122,7 @@ export interface Settings {
   appearance: SettingsAppearance;
   terminal: SettingsTerminal;
   diff: SettingsDiff;
+  browser: SettingsBrowser;
   defaults: SettingsDefaults;
   binaries: SettingsBinaries;
   models: SettingsModels;
@@ -127,6 +134,7 @@ export type SettingsUpdate = {
   appearance?: Partial<SettingsAppearance>;
   terminal?: Partial<SettingsTerminal>;
   diff?: Partial<SettingsDiff>;
+  browser?: Partial<SettingsBrowser>;
   defaults?: Partial<SettingsDefaults>;
   binaries?: Partial<SettingsBinaries>;
   models?: Partial<SettingsModels>;
@@ -139,6 +147,7 @@ export const DEFAULT_SETTINGS: Settings = {
   appearance: { theme: 'dark' },
   terminal: { fontSize: 13, confirmDeleteTabs: true },
   diff: { fontSize: 13 },
+  browser: { pauseAutoResumeMinutes: 5 },
   defaults: {
     runMode: 'wsl',
     wslDistro: 'Ubuntu',

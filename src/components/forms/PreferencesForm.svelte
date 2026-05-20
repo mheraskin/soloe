@@ -1,6 +1,19 @@
 <script lang="ts">
   import { Tabs } from 'bits-ui';
-  import { Box, Cpu, Palette, PlugZap, Rocket, TerminalSquare, X } from '@lucide/svelte';
+  import {
+    Box,
+    Cpu,
+    Palette,
+    PlugZap,
+    Rocket,
+    TerminalSquare,
+    X,
+    GitCompare,
+    FolderTree,
+    Microscope,
+    Globe,
+    NotebookPen
+  } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import type {
     DiffFontSizePref,
@@ -64,14 +77,24 @@
     }
   ];
 
-  const tabs = [
-    { value: 'integration', label: 'Integration', icon: PlugZap },
-    { value: 'appearance', label: 'Appearance', icon: Palette },
-    { value: 'models', label: 'Models', icon: Cpu },
-    { value: 'quicklaunch', label: 'Quick Launch', icon: Rocket },
-    { value: 'terminal', label: 'Terminal', icon: TerminalSquare },
-    { value: 'binaries', label: 'Binaries', icon: Box }
-  ] as const;
+  type TabEntry =
+    | { kind: 'tab'; value: string; label: string; icon: typeof PlugZap }
+    | { kind: 'divider'; label: string };
+
+  const tabs: TabEntry[] = [
+    { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
+    { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
+    { kind: 'tab', value: 'models', label: 'Models', icon: Cpu },
+    { kind: 'tab', value: 'quicklaunch', label: 'Quick Launch', icon: Rocket },
+    { kind: 'tab', value: 'terminal', label: 'Terminal', icon: TerminalSquare },
+    { kind: 'tab', value: 'binaries', label: 'Binaries', icon: Box },
+    { kind: 'divider', label: 'Just a divider' },
+    { kind: 'tab', value: 'diff', label: 'Diff', icon: GitCompare },
+    { kind: 'tab', value: 'files', label: 'Files', icon: FolderTree },
+    { kind: 'tab', value: 'featurelab', label: 'Feature Lab', icon: Microscope },
+    { kind: 'tab', value: 'browser', label: 'Browser', icon: Globe },
+    { kind: 'tab', value: 'notes', label: 'Notes', icon: NotebookPen }
+  ];
 
   let activeTab = $state<string>('integration');
   let lastAppliedTabNonce = -1;
@@ -189,6 +212,13 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setBrowserAutoResumeMinutes(value: number) {
+    const clamped = Number.isFinite(value) && value >= 0 ? Math.min(Math.round(value), 1440) : 0;
+    try {
+      await settings.update({ browser: { pauseAutoResumeMinutes: clamped } });
+    } catch (e) { reportError(e); }
+  }
+
   const quickLaunchProviders: { value: AgentRuntimeProvider; label: string }[] = [
     { value: 'claude_code', label: 'Claude' },
     { value: 'codex', label: 'Codex' }
@@ -234,11 +264,19 @@
   <Tabs.List
     class="flex w-44 shrink-0 flex-col items-stretch gap-0.5 border-r border-border bg-muted/30 p-2"
   >
-    {#each tabs as tab (tab.value)}
-      <Tabs.Trigger value={tab.value} class={triggerClass}>
-        <tab.icon class="size-3.5 shrink-0" />
-        <span>{tab.label}</span>
-      </Tabs.Trigger>
+    {#each tabs as tab, i (tab.kind === 'tab' ? tab.value : `divider-${i}`)}
+      {#if tab.kind === 'tab'}
+        <Tabs.Trigger value={tab.value} class={triggerClass}>
+          <tab.icon class="size-3.5 shrink-0" />
+          <span>{tab.label}</span>
+        </Tabs.Trigger>
+      {:else}
+        <div
+          class="mt-2 mb-1 px-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70"
+        >
+          {tab.label}
+        </div>
+      {/if}
     {/each}
   </Tabs.List>
 
@@ -259,21 +297,6 @@
           <Select.Content>
             {#each themes as t (t)}
               <Select.Item value={t} label={t}>{t}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </div>
-      <div class="flex flex-col gap-1.5">
-        <Label class="text-xs text-muted-foreground">Diff font size</Label>
-        <Select.Root
-          type="single"
-          value={String(settings.current.diff.fontSize)}
-          onValueChange={(v) => setDiffFontSize(Number(v) as DiffFontSizePref)}
-        >
-          <Select.Trigger class="w-full">{settings.current.diff.fontSize}px</Select.Trigger>
-          <Select.Content>
-            {#each diffFontSizes as f (f)}
-              <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
             {/each}
           </Select.Content>
         </Select.Root>
@@ -559,6 +582,58 @@
           />
         </div>
       {/each}
+    </Tabs.Content>
+
+    <Tabs.Content value="diff" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Diff font size</Label>
+        <Select.Root
+          type="single"
+          value={String(settings.current.diff.fontSize)}
+          onValueChange={(v) => setDiffFontSize(Number(v) as DiffFontSizePref)}
+        >
+          <Select.Trigger class="w-full">{settings.current.diff.fontSize}px</Select.Trigger>
+          <Select.Content>
+            {#each diffFontSizes as f (f)}
+              <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="files" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">No file-tree settings yet.</p>
+    </Tabs.Content>
+
+    <Tabs.Content value="featurelab" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">No Feature Lab settings yet.</p>
+    </Tabs.Content>
+
+    <Tabs.Content value="browser" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="pref-browser-auto-resume">
+          Auto-resume paused tabs after (minutes)
+        </Label>
+        <Input
+          id="pref-browser-auto-resume"
+          type="number"
+          min="0"
+          max="1440"
+          step="1"
+          value={settings.current.browser.pauseAutoResumeMinutes}
+          onchange={(e) =>
+            setBrowserAutoResumeMinutes(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <span class="text-[11px] text-muted-foreground">
+          Paused tabs unmount their webview to free memory. Set to 0 to disable auto-resume — paused
+          tabs then stay paused until you click them.
+        </span>
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="notes" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">No notes settings yet.</p>
     </Tabs.Content>
   </ScrollArea>
 </Tabs.Root>

@@ -46,6 +46,7 @@ export class SettingsStore {
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
       terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
       diff: { ...this.cache!.diff, ...(patch.diff ?? {}) },
+      browser: { ...this.cache!.browser, ...(patch.browser ?? {}) },
       defaults: { ...this.cache!.defaults, ...(patch.defaults ?? {}) },
       binaries: mergeBinaries(this.cache!.binaries, patch.binaries),
       models: mergeModels(this.cache!.models, patch.models),
@@ -182,6 +183,7 @@ function parseSettings(raw: unknown): Settings {
   const appearance = isObject(raw['appearance']) ? raw['appearance'] : {};
   const terminal = isObject(raw['terminal']) ? raw['terminal'] : {};
   const diff = isObject(raw['diff']) ? raw['diff'] : {};
+  const browser = isObject(raw['browser']) ? raw['browser'] : {};
   const defaults = isObject(raw['defaults']) ? raw['defaults'] : {};
   const binaries = isObject(raw['binaries']) ? raw['binaries'] : {};
 
@@ -199,6 +201,9 @@ function parseSettings(raw: unknown): Settings {
     },
     diff: {
       fontSize: pickDiffFontSize(diff['fontSize'])
+    },
+    browser: {
+      pauseAutoResumeMinutes: pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes'])
     },
     defaults: {
       runMode: pickEnum(defaults['runMode'], VALID_RUN_MODES, DEFAULT_SETTINGS.defaults.runMode) as Settings['defaults']['runMode'],
@@ -244,6 +249,14 @@ function pickDiffFontSize(value: unknown): Settings['diff']['fontSize'] {
   return VALID_DIFF_FONT_SIZES.has(value as number)
     ? (value as Settings['diff']['fontSize'])
     : DEFAULT_SETTINGS.diff.fontSize;
+}
+
+function pickPauseAutoResumeMinutes(value: unknown): Settings['browser']['pauseAutoResumeMinutes'] {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return DEFAULT_SETTINGS.browser.pauseAutoResumeMinutes;
+  }
+  // Cap at 24h so a typo can't strand a tab forever.
+  return Math.min(Math.round(value), 1440);
 }
 
 function pickBoolean(value: unknown, fallback: boolean): boolean {

@@ -22,6 +22,10 @@ export interface BrowserTab {
   historyIndex: number;
   // Per-tab device emulation. Undefined = native (no emulation).
   device?: BrowserTabDevice;
+  // When set, the tab's <webview> is unmounted to release memory. Wallclock
+  // ms of when the user paused it; an auto-resume timer reads this against
+  // the configured threshold to decide when to remount.
+  pausedAt?: number;
 }
 
 interface BrowserCwdState {
@@ -58,6 +62,9 @@ function isTab(value: unknown): value is BrowserTab {
   if (typeof t.historyIndex !== 'number') return false;
   if (t.historyIndex < 0 || t.historyIndex >= t.history.length) return false;
   if (t.device !== undefined && !isDevice(t.device)) return false;
+  if (t.pausedAt !== undefined && (typeof t.pausedAt !== 'number' || !Number.isFinite(t.pausedAt))) {
+    return false;
+  }
   return true;
 }
 
@@ -268,6 +275,33 @@ class BrowserStore {
     const tabs = state.tabs.slice();
     tabs[idx] = { ...prev, device: { ...prev.device, rotated: !prev.device.rotated } };
     this.write({ ...state, tabs });
+  }
+
+  pauseTab(id: string): void {
+    const state = this.current();
+    const idx = state.tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const prev = state.tabs[idx]!;
+    if (prev.pausedAt !== undefined) return;
+    const tabs = state.tabs.slice();
+    tabs[idx] = { ...prev, pausedAt: Date.now() };
+    this.write({ ...state, tabs });
+  }
+
+  resumeTab(id: string): void {
+    const state = this.current();
+    const idx = state.tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    const prev = state.tabs[idx]!;
+    if (prev.pausedAt === undefined) return;
+    const tabs = state.tabs.slice();
+    const { pausedAt: _omit, ...rest } = prev;
+    tabs[idx] = rest;
+    this.write({ ...state, tabs });
+  }
+
+  isPaused(id: string): boolean {
+    return this.tabs.find((t) => t.id === id)?.pausedAt !== undefined;
   }
 
   // Convenience for callers that want a tab regardless of prior state. Used
