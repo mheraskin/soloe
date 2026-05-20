@@ -54,6 +54,17 @@
     void notes.ensureLoaded(id).catch(reportError);
   });
 
+  // Restore the saved-note selection for the active worktree whenever the
+  // user switches sessions. Each worktree remembers which file it had open
+  // (or that it was on the draft) so jumping between sibling worktrees feels
+  // like resuming work, not landing on a stale buffer from the other one.
+  $effect(() => {
+    const id = notes.activeProjectId;
+    const cwd = notes.activeWorktreeCwd;
+    if (!id || !cwd) return;
+    void notes.restoreForActiveWorktree().catch(reportError);
+  });
+
   // Debounced auto-save for the currently-open saved note.
   $effect(() => {
     if (!activeProjectId) return;

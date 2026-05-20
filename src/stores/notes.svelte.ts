@@ -11,6 +11,64 @@ export type NotesStatus = 'idle' | 'saving' | 'saved' | 'error';
 // so projects can't collide. Removed on save/discard.
 const DRAFT_KEY_PREFIX = 'soloe.notes.draft.';
 
+// Per-worktree memory of which saved note was last open. Notes live at the
+// project level (shared across worktrees) but each worktree should restore the
+// selection it had before the user navigated away. Keyed by cwd so the memory
+// is independent of any session id; pairs the filename with the projectId so a
+// stale entry (cwd later opened under a different project) can't surface the
+// wrong note.
+const VIEW_KEY_PREFIX = 'soloe.notes.viewByWorktree.';
+
+interface WorktreeViewEntry {
+  projectId: ProjectId;
+  filename: string;
+}
+
+function loadViewsFromStorage(): Record<string, WorktreeViewEntry> {
+  if (typeof localStorage === 'undefined') return {};
+  const result: Record<string, WorktreeViewEntry> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(VIEW_KEY_PREFIX)) continue;
+      const cwd = key.slice(VIEW_KEY_PREFIX.length);
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          typeof (parsed as { projectId?: unknown }).projectId === 'string' &&
+          typeof (parsed as { filename?: unknown }).filename === 'string'
+        ) {
+          const entry = parsed as WorktreeViewEntry;
+          result[cwd] = { projectId: entry.projectId, filename: entry.filename };
+        }
+      } catch {
+        // skip malformed entries
+      }
+    }
+  } catch {
+    // Storage disabled. Memory stays in-process only.
+  }
+  return result;
+}
+
+function persistViewSelection(
+  cwd: string,
+  entry: WorktreeViewEntry | null
+): void {
+  if (typeof localStorage === 'undefined') return;
+  const key = VIEW_KEY_PREFIX + cwd;
+  try {
+    if (entry) localStorage.setItem(key, JSON.stringify(entry));
+    else localStorage.removeItem(key);
+  } catch {
+    // Quota / private mode — best effort.
+  }
+}
+
 function loadDraftsFromStorage(): Record<ProjectId, string> {
   if (typeof localStorage === 'undefined') return {};
   const result: Record<ProjectId, string> = {};
@@ -61,6 +119,11 @@ class NotesStoreClass {
   // null view = draft is showing, string = saved-note filename
   viewByProject = $state<Record<ProjectId, string | null>>({});
 
+  // Persisted per-worktree memory of which saved note was last open. Read by
+  // restoreForActiveWorktree() to bring the editor back to the user's previous
+  // selection when they re-activate a worktree.
+  viewByWorktree = $state<Record<string, WorktreeViewEntry>>(loadViewsFromStorage());
+
   savedContentByProject = $state<Record<ProjectId, string>>({});
   savedDiskByProject = $state<Record<ProjectId, string>>({});
 
@@ -68,6 +131,7 @@ class NotesStoreClass {
   errorMessageByProject = $state<Record<ProjectId, string | null>>({});
 
   activeProjectId = $derived<ProjectId | null>(sessions.selected?.projectId ?? null);
+  activeWorktreeCwd = $derived<string | null>(sessions.selected?.cwd ?? null);
 
   notes = $derived<NoteSummary[]>(
     this.activeProjectId ? this.listsByProject[this.activeProjectId] ?? [] : []
@@ -116,13 +180,18 @@ class NotesStoreClass {
       ipc.notes.onChange((event) => {
         this.listsByProject = { ...this.listsByProject, [event.projectId]: event.notes };
         this.loadedProjects = { ...this.loadedProjects, [event.projectId]: true };
+        const known = new Set(event.notes.map((n) => n.filename));
         const activeFilename = this.viewByProject[event.projectId];
-        if (activeFilename && !event.notes.some((n) => n.filename === activeFilename)) {
+        if (activeFilename && !known.has(activeFilename)) {
           // selected note was deleted/renamed externally; revert to draft
           this.viewByProject = { ...this.viewByProject, [event.projectId]: null };
           this.savedContentByProject = { ...this.savedContentByProject, [event.projectId]: '' };
           this.savedDiskByProject = { ...this.savedDiskByProject, [event.projectId]: '' };
         }
+        // Drop any worktree memory pointing at notes that no longer exist for
+        // this project, so a future worktree switch doesn't try to reload a
+        // file that's gone.
+        this.dropWorktreeMemoryFor(event.projectId, (filename) => !known.has(filename));
       })
     );
   }
@@ -152,6 +221,7 @@ class NotesStoreClass {
     if (this.draftsByProject[id] === undefined) {
       this.draftsByProject = { ...this.draftsByProject, [id]: '' };
     }
+    this.rememberSelection(null);
   }
 
   discardDraft(): void {
@@ -208,6 +278,7 @@ class NotesStoreClass {
     this.viewByProject = { ...this.viewByProject, [id]: filename };
     this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
     this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
+    this.rememberSelection(filename);
     try {
       const note = await ipc.notes.read(id, filename);
       this.savedContentByProject = { ...this.savedContentByProject, [id]: note.content };
@@ -237,6 +308,7 @@ class NotesStoreClass {
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
       this.statusByProject = { ...this.statusByProject, [id]: 'saved' };
       this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
+      this.rememberSelection(note.filename);
       await this.refresh(id);
     } catch (err) {
       this.statusByProject = { ...this.statusByProject, [id]: 'error' };
@@ -282,6 +354,7 @@ class NotesStoreClass {
     if (this.viewByProject[id] === oldName) {
       this.viewByProject = { ...this.viewByProject, [id]: summary.filename };
     }
+    this.renameWorktreeMemoryFor(id, oldName, summary.filename);
   }
 
   async remove(filename: string): Promise<void> {
@@ -293,7 +366,92 @@ class NotesStoreClass {
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
     }
+    this.dropWorktreeMemoryFor(id, (name) => name === filename);
     await this.cleanupImages(id);
+  }
+
+  // Brings the editor back to whatever saved note this worktree had open the
+  // last time it was active. Called by RailNotesTab when the active worktree
+  // (or project) changes. No-op if the worktree never had a selection — that
+  // worktree just stays in draft mode.
+  async restoreForActiveWorktree(): Promise<void> {
+    const id = this.activeProjectId;
+    const cwd = this.activeWorktreeCwd;
+    if (!id || !cwd) return;
+    const entry = this.viewByWorktree[cwd];
+    const desired: string | null =
+      entry && entry.projectId === id ? entry.filename : null;
+    const currentView = this.viewByProject[id] ?? null;
+    if (currentView === desired) return;
+    // Flush any pending edits on the previous selection so its dirty buffer
+    // doesn't vanish when we swap to the new note.
+    await this.flushSaved().catch(() => {});
+    if (desired === null) {
+      this.viewByProject = { ...this.viewByProject, [id]: null };
+      this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
+      this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
+      this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
+      this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
+      return;
+    }
+    await this.ensureLoaded(id).catch(() => {});
+    const list = this.listsByProject[id] ?? [];
+    if (!list.some((n) => n.filename === desired)) {
+      this.dropWorktreeMemoryFor(id, (name) => name === desired);
+      this.viewByProject = { ...this.viewByProject, [id]: null };
+      this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
+      this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
+      return;
+    }
+    await this.selectNote(desired);
+  }
+
+  private rememberSelection(filename: string | null): void {
+    const cwd = this.activeWorktreeCwd;
+    const id = this.activeProjectId;
+    if (!cwd || !id) return;
+    const next = { ...this.viewByWorktree };
+    if (filename) {
+      next[cwd] = { projectId: id, filename };
+      persistViewSelection(cwd, next[cwd]);
+    } else {
+      delete next[cwd];
+      persistViewSelection(cwd, null);
+    }
+    this.viewByWorktree = next;
+  }
+
+  private dropWorktreeMemoryFor(
+    projectId: ProjectId,
+    matches: (filename: string) => boolean
+  ): void {
+    let changed = false;
+    const next = { ...this.viewByWorktree };
+    for (const [cwd, entry] of Object.entries(next)) {
+      if (entry.projectId !== projectId) continue;
+      if (!matches(entry.filename)) continue;
+      delete next[cwd];
+      persistViewSelection(cwd, null);
+      changed = true;
+    }
+    if (changed) this.viewByWorktree = next;
+  }
+
+  private renameWorktreeMemoryFor(
+    projectId: ProjectId,
+    oldName: string,
+    newName: string
+  ): void {
+    let changed = false;
+    const next = { ...this.viewByWorktree };
+    for (const [cwd, entry] of Object.entries(next)) {
+      if (entry.projectId !== projectId) continue;
+      if (entry.filename !== oldName) continue;
+      next[cwd] = { projectId, filename: newName };
+      persistViewSelection(cwd, next[cwd]);
+      changed = true;
+    }
+    if (changed) this.viewByWorktree = next;
   }
 
   async pasteImages(payloads: NoteImagePayload[]): Promise<NoteImage[]> {
