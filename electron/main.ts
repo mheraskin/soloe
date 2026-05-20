@@ -48,6 +48,8 @@ import { OverviewIpc } from './ipc/overview.ipc.js';
 import { FeatureService } from './features/FeatureService.js';
 import { FeatureWatcher } from './features/FeatureWatcher.js';
 import { FeaturesIpc } from './ipc/features.ipc.js';
+import { VaultStore } from './vault/VaultStore.js';
+import { VaultIpc } from './ipc/vault.ipc.js';
 
 interface AppServices {
   store: SessionStore;
@@ -81,6 +83,8 @@ interface AppServices {
   features: FeatureService;
   featureWatcher: FeatureWatcher;
   featuresIpc: FeaturesIpc;
+  vault: VaultStore;
+  vaultIpc: VaultIpc;
 }
 
 let services: AppServices | null = null;
@@ -184,6 +188,7 @@ async function setupServices(): Promise<AppServices> {
   const crashDir = path.join(userDataPath, 'crashes');
   const overviewCacheFile = path.join(userDataPath, 'overview-cache.json');
   const bridgeFile = path.join(userDataPath, 'bridge.json');
+  const vaultDir = path.join(userDataPath, 'vault');
   const bridgePersistence = new BridgePersistence(bridgeFile);
 
   const store = new SessionStore(sessionsFile);
@@ -390,6 +395,9 @@ async function setupServices(): Promise<AppServices> {
     getWindows: () => BrowserWindow.getAllWindows()
   });
 
+  const vault = new VaultStore(vaultDir);
+  const vaultIpc = new VaultIpc({ store: vault });
+
   sessionsIpc.register();
   terminalIpc.register();
   observerIpc.register();
@@ -404,6 +412,7 @@ async function setupServices(): Promise<AppServices> {
   agentIntegrationIpc.register();
   overviewIpc.register();
   featuresIpc.register();
+  vaultIpc.register();
 
   return {
     store,
@@ -436,7 +445,9 @@ async function setupServices(): Promise<AppServices> {
     overviewIpc,
     features,
     featureWatcher,
-    featuresIpc
+    featuresIpc,
+    vault,
+    vaultIpc
   };
 }
 
@@ -591,6 +602,7 @@ async function cleanup(): Promise<void> {
     services.overviewIpc.dispose();
     services.featuresIpc.dispose();
     services.featureWatcher.dispose();
+    services.vaultIpc.dispose();
     services.git.dispose();
     services.observerStore.dispose();
     await services.observerStore.persist(services.observer);
@@ -619,11 +631,38 @@ function ensureSingleInstance(): boolean {
   return true;
 }
 
+// Route Ctrl+/-/0 to the focused <webview>'s own zoom instead of letting the
+// keystroke bubble up to the main window. Without this, the rail browser has
+// no keyboard zoom at all (Electron doesn't wire it by default) and any host
+// keybindings on Ctrl+= run as if the user pressed them in the IDE.
+function installWebviewZoomHandler(): void {
+  app.on('web-contents-created', (_event, contents) => {
+    if (contents.getType() !== 'webview') return;
+    contents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      const modifierOk =
+        process.platform === 'darwin' ? input.meta && !input.control : input.control && !input.meta;
+      if (!modifierOk || input.alt) return;
+      const key = input.key;
+      const isZoomIn = key === '+' || key === '=';
+      const isZoomOut = key === '-' || key === '_';
+      const isZoomReset = key === '0';
+      if (!isZoomIn && !isZoomOut && !isZoomReset) return;
+      const current = contents.getZoomLevel();
+      if (isZoomReset) contents.setZoomLevel(0);
+      else if (isZoomIn) contents.setZoomLevel(Math.min(current + 0.5, 5));
+      else contents.setZoomLevel(Math.max(current - 0.5, -5));
+      event.preventDefault();
+    });
+  });
+}
+
 if (ensureSingleInstance()) {
   pendingDiffIntent = parseDiffArgv(process.argv);
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     ensureWindowsDevShellShortcut(resolveAppIcon());
+    installWebviewZoomHandler();
     services = await setupServices();
     mainWindow = await createWindow();
     if (pendingDiffIntent) {

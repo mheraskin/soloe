@@ -14,6 +14,7 @@
   import { rightRail } from './stores/right-rail.svelte';
   import { sidebar } from './stores/sidebar.svelte';
   import { browserStore } from './stores/browser.svelte';
+  import { vaultStore } from './stores/vault.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
@@ -109,6 +110,7 @@
     const cwd = sessions.selected?.cwd ?? null;
     rightRail.setActiveCwd(cwd);
     browserStore.setActiveCwd(cwd);
+    vaultStore.setActiveCwd(cwd);
   });
 
   // Poll git status/diff for every worktree of every known project at the

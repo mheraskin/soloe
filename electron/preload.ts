@@ -46,6 +46,13 @@ import type {
   FeatureSetIssueStatusRequest
 } from '@shared/types/features.js';
 import type {
+  VaultDeleteRequest,
+  VaultGetSecretRequest,
+  VaultListRequest,
+  VaultSaveRequest,
+  VaultUpdateRequest
+} from '@shared/types/vault.js';
+import type {
   CommitsBetweenRequest,
   FileBlameRequest,
   FileDiffRequest,
@@ -310,6 +317,14 @@ const soloe: SoloeApi = {
     unsubscribe: (request) => ipcRenderer.invoke(IpcChannels.features.unsubscribe, request),
     onChange: (cb: (event: FeatureChangeEvent) => void) =>
       subscribe<FeatureChangeEvent>(IpcChannels.features.change, cb)
+  },
+  vault: {
+    list: (request: VaultListRequest) => ipcRenderer.invoke(IpcChannels.vault.list, request),
+    save: (request: VaultSaveRequest) => ipcRenderer.invoke(IpcChannels.vault.save, request),
+    update: (request: VaultUpdateRequest) => ipcRenderer.invoke(IpcChannels.vault.update, request),
+    delete: (request: VaultDeleteRequest) => ipcRenderer.invoke(IpcChannels.vault.delete, request),
+    getSecret: (request: VaultGetSecretRequest) =>
+      ipcRenderer.invoke(IpcChannels.vault.getSecret, request)
   }
 };
 

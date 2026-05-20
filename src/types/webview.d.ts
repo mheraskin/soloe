@@ -35,4 +35,5 @@ export interface ElectronWebview extends HTMLElement {
   closeDevTools(): void;
   isDevToolsOpened(): boolean;
   isLoading(): boolean;
+  executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 }

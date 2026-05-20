@@ -103,6 +103,15 @@ import type {
   TerminalStatusEvent
 } from './terminal.js';
 import type { SystemUsageSnapshot } from './system.js';
+import type {
+  VaultDeleteRequest,
+  VaultEntry,
+  VaultGetSecretRequest,
+  VaultListRequest,
+  VaultSaveRequest,
+  VaultSecret,
+  VaultUpdateRequest
+} from './vault.js';
 
 export const IpcChannels = {
   sessions: {
@@ -253,6 +262,13 @@ export const IpcChannels = {
     subscribe: 'features:subscribe',
     unsubscribe: 'features:unsubscribe',
     change: 'features:change'
+  },
+  vault: {
+    list: 'vault:list',
+    save: 'vault:save',
+    update: 'vault:update',
+    delete: 'vault:delete',
+    getSecret: 'vault:get-secret'
   }
 } as const;
 
@@ -273,7 +289,8 @@ export type IpcChannel =
   | (typeof IpcChannels.overview)[keyof typeof IpcChannels.overview]
   | (typeof IpcChannels.comments)[keyof typeof IpcChannels.comments]
   | (typeof IpcChannels.diff)[keyof typeof IpcChannels.diff]
-  | (typeof IpcChannels.features)[keyof typeof IpcChannels.features];
+  | (typeof IpcChannels.features)[keyof typeof IpcChannels.features]
+  | (typeof IpcChannels.vault)[keyof typeof IpcChannels.vault];
 
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -537,6 +554,14 @@ export interface FeaturesApi {
   onChange(listener: (event: FeatureChangeEvent) => void): () => void;
 }
 
+export interface VaultApi {
+  list(request: VaultListRequest): Promise<IpcResult<VaultEntry[]>>;
+  save(request: VaultSaveRequest): Promise<IpcResult<VaultEntry>>;
+  update(request: VaultUpdateRequest): Promise<IpcResult<VaultEntry>>;
+  delete(request: VaultDeleteRequest): Promise<IpcResult<true>>;
+  getSecret(request: VaultGetSecretRequest): Promise<IpcResult<VaultSecret>>;
+}
+
 export interface SoloeApi {
   sessions: SessionsApi;
   terminal: TerminalApi;
@@ -555,6 +580,7 @@ export interface SoloeApi {
   comments: CommentsApi;
   diff: DiffBridgeApi;
   features: FeaturesApi;
+  vault: VaultApi;
 }
 
 declare global {
