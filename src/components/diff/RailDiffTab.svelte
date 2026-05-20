@@ -165,7 +165,7 @@
   );
 
   let commitScopeText = $derived.by<string>(() => {
-    if (reviewMode.kind !== 'range') return 'Working tree';
+    if (reviewMode.kind !== 'range') return 'Commits';
     const n = reviewMode.commits.length;
     const shortBase = reviewMode.base.slice(0, 7);
     const shortHead = reviewMode.head.slice(0, 7);
@@ -667,21 +667,46 @@
 
 <div class="flex min-h-0 flex-1 flex-col" class:select-none={resizingList}>
   <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-    <div class="flex min-w-0 flex-col" class:hidden={diffExpanded}>
-      <button
-        type="button"
-        class="self-start text-[10px] font-medium tracking-wider text-muted-foreground uppercase hover:text-foreground disabled:cursor-default disabled:hover:text-muted-foreground"
-        onclick={() => (pickerOpen = true)}
-        disabled={!activeCwd}
-        title={isRangeMode ? 'Switch review range' : 'Pick commits to review'}
-      >
-        {isRangeMode ? 'Commits' : 'Working tree'}
-      </button>
+    <div class="flex min-w-0 flex-1 flex-col" class:hidden={diffExpanded}>
+      <Popover.Root bind:open={pickerOpen}>
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant="ghost"
+              size="xs"
+              class="-ml-1.5 h-5 max-w-full min-w-0 justify-start gap-1 self-start px-1.5 text-[10px] font-medium tracking-wider text-muted-foreground uppercase hover:text-foreground"
+              aria-label="Choose review range"
+              title={isRangeMode
+                ? `Review range — ${commitScopeText}`
+                : 'Pick commits to review'}
+              disabled={!activeCwd}
+            >
+              {#if isRangeMode}
+                <GitCommitIcon class="size-3 shrink-0" />
+              {:else}
+                <GitCompare class="size-3 shrink-0" />
+              {/if}
+              <span class="min-w-0 truncate">{commitScopeText}</span>
+              {#if chipFilterShort}
+                <span class="shrink-0 rounded bg-muted px-1 font-mono text-[10px] normal-case tracking-normal text-muted-foreground">
+                  {chipFilterShort}
+                </span>
+              {/if}
+            </Button>
+          {/snippet}
+        </Popover.Trigger>
+        <Popover.Content align="start" class="w-auto p-0">
+          {#if activeCwd}
+            <CommitPicker cwd={activeCwd} onClose={() => (pickerOpen = false)} />
+          {/if}
+        </Popover.Content>
+      </Popover.Root>
       <span class="truncate text-xs text-foreground">
         {selected ? selected.name : 'No session selected'}
       </span>
     </div>
-    <div class="flex items-center gap-1" class:ml-auto={diffExpanded}>
+    <div class="flex shrink-0 items-center gap-1" class:ml-auto={diffExpanded}>
       {#if showComments}
         <Button
           variant="ghost"
@@ -705,42 +730,6 @@
           <span>Comments ({totalCommentCount})</span>
         </Button>
       {/if}
-      <Popover.Root bind:open={pickerOpen}>
-        <Popover.Trigger>
-          {#snippet child({ props })}
-            <Button
-              {...props}
-              variant={isRangeMode ? 'outline' : 'ghost'}
-              size="xs"
-              class="gap-1"
-              aria-label="Choose review range"
-              title={isRangeMode
-                ? `Review range — ${commitScopeText}`
-                : 'Pick commits to review'}
-              disabled={!activeCwd}
-            >
-              {#if isRangeMode}
-                <GitCommitIcon class="size-3" />
-              {:else}
-                <GitCompare class="size-3" />
-              {/if}
-              <span class="max-w-[180px] truncate font-mono text-[10px]">
-                {commitScopeText}
-              </span>
-              {#if chipFilterShort}
-                <span class="rounded bg-muted px-1 font-mono text-[10px] text-muted-foreground">
-                  filtered: {chipFilterShort}
-                </span>
-              {/if}
-            </Button>
-          {/snippet}
-        </Popover.Trigger>
-        <Popover.Content align="start" class="w-auto p-0">
-          {#if activeCwd}
-            <CommitPicker cwd={activeCwd} onClose={() => (pickerOpen = false)} />
-          {/if}
-        </Popover.Content>
-      </Popover.Root>
       {#if chipFilterShort}
         <Button
           variant="ghost"
@@ -867,7 +856,7 @@
           oninput={commitQuery}
           placeholder="Filter by path"
           aria-label="Filter changes"
-          class="h-7 pl-6 text-xs"
+          class="h-7 pl-6 text-[11px]"
         />
       </div>
       <div class="flex items-center justify-between gap-1.5 text-[10px]">

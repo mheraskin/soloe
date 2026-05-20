@@ -74,6 +74,32 @@
   let needsMessage = $derived(primary === 'commit' || primary === 'commit-push');
   let canRunPrimary = $derived(isRepo && (!needsMessage || message.trim().length > 0));
 
+  // Render the textarea whenever there's anything to commit, even before the
+  // user stages. Tying visibility to `primary === 'commit'` would pop the box
+  // in only after the optimistic stage flips the git status — that's the
+  // layout shift the user noticed mid-stage. The dropdown's "Commit" item
+  // auto-stages, so the box is still useful when nothing is staged yet.
+  let showMessageBox = $derived(staged + unstaged + untracked > 0);
+
+  // While an action is running, the button label should reflect what's
+  // actually happening rather than the resting primary. Otherwise picking
+  // "Commit" from the dropdown while primary is "Fetch" leaves the label
+  // saying "Fetch" with a spinner — confusing.
+  let busyLabel = $derived.by<string>(() => {
+    switch (busy) {
+      case 'commit':
+        return 'Committing…';
+      case 'push':
+        return 'Pushing…';
+      case 'pull':
+        return 'Pulling…';
+      case 'fetch':
+        return 'Fetching…';
+      case null:
+        return primaryLabel;
+    }
+  });
+
   // Parent re-keys this component on cwd change, so onMount is enough to
   // restore the saved draft — no need for an effect that fights with $state.
   onMount(() => {
@@ -200,7 +226,7 @@
 
 {#if isRepo}
   <div class="flex flex-col gap-1.5 border-b border-border bg-card/40 px-3 py-2">
-    {#if needsMessage}
+    {#if showMessageBox}
       <Textarea
         bind:ref={textareaEl}
         bind:value={message}
@@ -210,7 +236,7 @@
           ? `Message (Ctrl+Enter to ${primary === 'commit-push' ? 'commit & push' : 'commit'})`
           : 'Message (Ctrl+Enter to commit all changes)'}
         rows={2}
-        class="min-h-[44px] resize-none text-xs"
+        class="min-h-[44px] resize-none text-[11px]"
         aria-label="Commit message"
       />
     {/if}
@@ -222,7 +248,7 @@
         class="flex-1 gap-1.5"
         disabled={!canRunPrimary || busy !== null}
         onclick={() => void runPrimary()}
-        title={branch ? `${primaryLabel} on ${branch}` : primaryLabel}
+        title={branch ? `${busyLabel} on ${branch}` : busyLabel}
       >
         {#if busy !== null}
           <Loader2 class="animate-spin" />
@@ -237,7 +263,7 @@
         {:else}
           <RefreshCw />
         {/if}
-        <span class="truncate">{primaryLabel}</span>
+        <span class="truncate">{busyLabel}</span>
       </Button>
 
       <DropdownMenu.Root>
@@ -297,7 +323,7 @@
             {/if}
             <span>Fetch</span>
           </DropdownMenu.Item>
-          {#if needsMessage}
+          {#if showMessageBox}
             <DropdownMenu.Separator />
             <DropdownMenu.Item onSelect={() => void focusMessage()}>
               <span>Focus message</span>

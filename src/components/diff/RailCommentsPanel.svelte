@@ -312,7 +312,7 @@
                       void sendAllUnsent(preambleText);
                     }
                   }}
-                  class="min-h-[4rem] resize-none rounded-md font-mono text-xs leading-snug"
+                  class="min-h-[4rem] resize-none rounded-md font-mono text-[11px] leading-snug"
                 />
                 <div class="flex items-center justify-end">
                   <Button
