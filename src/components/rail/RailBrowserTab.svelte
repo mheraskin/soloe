@@ -66,11 +66,76 @@
   let failureById = $state<Record<string, FailureSuggestion | null>>({});
   let lastAppliedDeviceKeyById = $state<Record<string, string | null>>({});
   let lastAppliedUaById = $state<Record<string, string | null>>({});
+  // Per-tab page zoom factor (1.0 = 100%). Driven by Ctrl+/-/0 outside
+  // responsive mode; seeded from the webview's own zoom level on dom-ready.
+  let pageZoomFactorById = $state<Record<string, number>>({});
+  // Per-tab canvas zoom factor (1.0 = 100%). Applied as a CSS scale to the
+  // device frame in responsive mode so the user can zoom out and see the
+  // whole emulated viewport without changing the page's own zoom.
+  let canvasZoomById = $state<Record<string, number>>({});
 
   let activeWebview = $derived(activeId ? webviewsById[activeId] ?? null : null);
   let activeDomReady = $derived(activeId ? !!domReadyById[activeId] : false);
   let isLoading = $derived(activeId ? !!isLoadingById[activeId] : false);
   let failureSuggestion = $derived(activeId ? failureById[activeId] ?? null : null);
+  let activePageZoom = $derived(activeId ? pageZoomFactorById[activeId] ?? 1 : 1);
+  let activeCanvasZoom = $derived(activeId ? canvasZoomById[activeId] ?? 1 : 1);
+  // While a device is active Ctrl+/-/0 drives the canvas; otherwise the
+  // webview's page zoom. The indicator and reset button follow the same rule.
+  let activeZoomFactor = $derived(device ? activeCanvasZoom : activePageZoom);
+  let zoomPercent = $derived(Math.round(activeZoomFactor * 100));
+
+  // Chrome's standard zoom factor list. Both page and canvas zoom step
+  // through these so the user gets familiar increments instead of awkward
+  // 1.2^n values from Electron's native zoom level.
+  const ZOOM_FACTORS = [
+    0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5,
+    3.0, 4.0, 5.0
+  ];
+
+  function nextZoomFactor(current: number, direction: 'in' | 'out' | 'reset'): number {
+    if (direction === 'reset') return 1.0;
+    const tol = 0.001;
+    if (direction === 'in') {
+      for (const f of ZOOM_FACTORS) if (f > current + tol) return f;
+      return ZOOM_FACTORS[ZOOM_FACTORS.length - 1]!;
+    }
+    for (let i = ZOOM_FACTORS.length - 1; i >= 0; i--) {
+      const f = ZOOM_FACTORS[i]!;
+      if (f < current - tol) return f;
+    }
+    return ZOOM_FACTORS[0]!;
+  }
+
+  // Electron's setZoomLevel uses `factor = 1.2^level`. We track factors
+  // directly (for the indicator + Chrome-like steps) and convert on the way
+  // out to setZoomLevel.
+  function factorToLevel(factor: number): number {
+    return Math.log(factor) / Math.log(1.2);
+  }
+
+  function applyPageZoom(tabId: string, factor: number): void {
+    pageZoomFactorById = { ...pageZoomFactorById, [tabId]: factor };
+    const el = webviewsById[tabId];
+    if (!el || !domReadyById[tabId]) return;
+    try {
+      el.setZoomLevel(factorToLevel(factor));
+    } catch {
+      // Webview not ready or destroyed — value persists in our map and will
+      // be re-applied at the next dom-ready sync.
+    }
+  }
+
+  function applyCanvasZoom(tabId: string, factor: number): void {
+    canvasZoomById = { ...canvasZoomById, [tabId]: factor };
+  }
+
+  function resetActiveZoom(): void {
+    const tabId = activeId;
+    if (!tabId) return;
+    if (device) applyCanvasZoom(tabId, 1);
+    else applyPageZoom(tabId, 1);
+  }
 
   // Only non-paused tabs get a <webview>. Paused tabs are kept in the strip
   // (so the user can resume them) but their renderer process is gone.
@@ -131,6 +196,10 @@
     lastSyncedUrl = target;
     urlInput = untrack(() => urlInputFocused) ? target : stripProtocol(target);
     suggestionIndex = -1;
+    // The autofill rect refers to the prior tab's webview — dropping the
+    // popover avoids it floating against an unrelated page.
+    fillPrompt = null;
+    savePrompt = null;
   });
 
   // Drive the active webview to whatever the store currently points at. The
@@ -188,6 +257,18 @@
 
       const onDomReady = () => {
         domReadyById = { ...domReadyById, [tabId]: true };
+        // Re-apply any previously-set page zoom: a resumed tab has a fresh
+        // webContents whose zoom level resets to 0 (= 100%), so without this
+        // the indicator and the actual page would silently disagree.
+        const factor = pageZoomFactorById[tabId];
+        if (factor !== undefined && factor !== 1) {
+          try {
+            wv.setZoomLevel(factorToLevel(factor));
+          } catch {
+            // Webview destroyed between dom-ready firing and us applying —
+            // the next attach will re-try on the new webContents.
+          }
+        }
         void applyEmulationFor(tabId);
       };
       const onNavigate = (e: Event) => {
@@ -270,8 +351,22 @@
           return;
         }
         if (e.channel === 'soloe:webview-password-focus') {
-          const payload = e.args?.[0] as { origin?: string } | undefined;
-          void handlePasswordFocus(payload?.origin ?? '');
+          const payload = e.args?.[0] as
+            | { origin?: string; rect?: FieldRect | null }
+            | undefined;
+          void handlePasswordFocus(payload?.origin ?? '', payload?.rect ?? null);
+          return;
+        }
+        if (e.channel === 'soloe:webview-password-rect') {
+          // Scroll / layout updates: only nudge an already-visible popover —
+          // we don't want to re-summon one the user explicitly dismissed.
+          if (!fillPrompt) return;
+          const payload = e.args?.[0] as
+            | { origin?: string; rect?: FieldRect | null }
+            | undefined;
+          if (!payload || payload.origin !== fillPrompt.origin) return;
+          const rect = payload.rect ?? null;
+          fillPrompt = { ...fillPrompt, rect, anchor: computeFillAnchor(rect) };
           return;
         }
         if (e.channel === 'soloe:webview-form-submit') {
@@ -698,6 +793,15 @@
     void applyEmulationFor(tab.id);
   });
 
+  // Canvas zoom is a CSS transform, which doesn't fire ResizeObserver — but
+  // it does change the webview's visual rect, so an open autofill popover
+  // has to follow.
+  $effect(() => {
+    void activeCanvasZoom;
+    void activeId;
+    refreshFillAnchor();
+  });
+
   function setDevice(next: BrowserTabDevice | null) {
     const tab = browserStore.activeTab;
     if (!tab) return;
@@ -743,12 +847,23 @@
       const direction = (event as CustomEvent<{ direction: 'in' | 'out' | 'reset' }>).detail
         ?.direction;
       if (!direction) return;
-      const el = activeWebview;
-      if (!el || !activeDomReady) return;
-      const current = el.getZoomLevel();
-      if (direction === 'reset') el.setZoomLevel(0);
-      else if (direction === 'in') el.setZoomLevel(Math.min(current + 0.5, 5));
-      else el.setZoomLevel(Math.max(current - 0.5, -5));
+      const tabId = activeId;
+      if (!tabId) return;
+      const tab = browserStore.tabs.find((t) => t.id === tabId);
+      if (!tab) return;
+      // In responsive mode the keystrokes drive the canvas scale (so the
+      // user can see the whole emulated device), not the page's own zoom.
+      if (tab.device) {
+        const current = canvasZoomById[tabId] ?? 1;
+        const next = nextZoomFactor(current, direction);
+        if (next === current) return;
+        applyCanvasZoom(tabId, next);
+        return;
+      }
+      const current = pageZoomFactorById[tabId] ?? 1;
+      const next = nextZoomFactor(current, direction);
+      if (next === current) return;
+      applyPageZoom(tabId, next);
     };
     const onResizeStart = () => suspendDevToolsView();
     const onResizeEnd = () => resumeDevToolsView();
@@ -764,11 +879,19 @@
       fillPrompt = null;
       savePrompt = null;
     };
+    // Whenever the host layout shifts the popover's anchor goes stale —
+    // capture-phase scroll covers nested containers (responsive-mode
+    // wrapper, devtools resize), resize covers window changes, and the
+    // rail-resize-end fires when the user drops the splitter.
+    const onLayoutShift = () => refreshFillAnchor();
     window.addEventListener('soloe:browser-zoom', onZoom);
     window.addEventListener('soloe:rail-resize-start', onResizeStart);
     window.addEventListener('soloe:rail-resize-end', onResizeEnd);
+    window.addEventListener('soloe:rail-resize-end', onLayoutShift);
     window.addEventListener('soloe:focus-pane', onFocusPane);
     window.addEventListener('keydown', onAutofillEscape);
+    window.addEventListener('scroll', onLayoutShift, true);
+    window.addEventListener('resize', onLayoutShift);
 
     checkAutoResume();
     autoResumeTimer = window.setInterval(checkAutoResume, 30_000);
@@ -777,8 +900,11 @@
       window.removeEventListener('soloe:browser-zoom', onZoom);
       window.removeEventListener('soloe:rail-resize-start', onResizeStart);
       window.removeEventListener('soloe:rail-resize-end', onResizeEnd);
+      window.removeEventListener('soloe:rail-resize-end', onLayoutShift);
       window.removeEventListener('soloe:focus-pane', onFocusPane);
       window.removeEventListener('keydown', onAutofillEscape);
+      window.removeEventListener('scroll', onLayoutShift, true);
+      window.removeEventListener('resize', onLayoutShift);
       if (autoResumeTimer) {
         window.clearInterval(autoResumeTimer);
         autoResumeTimer = 0;
@@ -853,11 +979,63 @@
   // password field gaining focus AND the vault has entries for the page's
   // origin. The host owns the popover UI so the page can't observe or
   // restyle it. Dismissed on Esc, click outside, or after Fill.
+  interface FieldRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    viewportWidth: number;
+    viewportHeight: number;
+  }
   interface FillPrompt {
     origin: string;
     matches: VaultEntry[];
+    // Last rect reported by the preload (in page CSS pixels). Kept so we
+    // can re-derive the host-side anchor when the layout shifts without
+    // having to round-trip through the webview again.
+    rect: FieldRect | null;
+    // Computed viewport position for the popover; null falls back to the
+    // top-right corner of the webview area.
+    anchor: { left: number; top: number } | null;
   }
   let fillPrompt = $state<FillPrompt | null>(null);
+
+  const FILL_POPOVER_WIDTH = 288; // tailwind w-72
+
+  function computeFillAnchor(rect: FieldRect | null): { left: number; top: number } | null {
+    if (!rect) return null;
+    const wv = activeWebview;
+    if (!wv) return null;
+    const wvRect = wv.getBoundingClientRect();
+    if (wvRect.width <= 0 || wvRect.height <= 0) return null;
+    // The webview's outer size already reflects canvas zoom (transform:
+    // scale on the frame). Ratio of host-side size to page-side viewport
+    // gives us the conversion factor; with no canvas scaling it's 1.
+    const scaleX = rect.viewportWidth > 0 ? wvRect.width / rect.viewportWidth : 1;
+    const scaleY = rect.viewportHeight > 0 ? wvRect.height / rect.viewportHeight : 1;
+    const left = wvRect.left + rect.x * scaleX;
+    // 6px gap below the field — matches Chrome's autofill spacing.
+    const top = wvRect.top + (rect.y + rect.height) * scaleY + 6;
+    // Keep the popover inside the window horizontally. If the field is
+    // near the right edge, shift the popover left so it stays visible.
+    const clampedLeft = Math.min(Math.max(8, left), window.innerWidth - FILL_POPOVER_WIDTH - 8);
+    return { left: clampedLeft, top };
+  }
+
+  function refreshFillAnchor(): void {
+    if (!fillPrompt) return;
+    const anchor = computeFillAnchor(fillPrompt.rect);
+    if (
+      (anchor === null && fillPrompt.anchor === null) ||
+      (anchor !== null &&
+        fillPrompt.anchor !== null &&
+        anchor.left === fillPrompt.anchor.left &&
+        anchor.top === fillPrompt.anchor.top)
+    ) {
+      return;
+    }
+    fillPrompt = { ...fillPrompt, anchor };
+  }
 
   // Inline save prompt state: shown after a form submit when we detect
   // credentials that aren't already saved for that origin+username. The
@@ -870,8 +1048,18 @@
   let savePrompt = $state<SavePrompt | null>(null);
   let savePromptBusy = $state(false);
 
-  async function handlePasswordFocus(origin: string): Promise<void> {
+  async function handlePasswordFocus(
+    origin: string,
+    rect: FieldRect | null
+  ): Promise<void> {
     if (!origin) return;
+    // Updating an open popover's rect (scroll/layout shift) shouldn't have
+    // to wait on the vault — recompute the anchor immediately and bail
+    // before the async load if we already have the matches list.
+    if (fillPrompt && fillPrompt.origin === origin) {
+      fillPrompt = { ...fillPrompt, rect, anchor: computeFillAnchor(rect) };
+      return;
+    }
     try {
       await vaultStore.ensureLoaded();
     } catch {
@@ -883,7 +1071,7 @@
       fillPrompt = null;
       return;
     }
-    fillPrompt = { origin, matches };
+    fillPrompt = { origin, matches, rect, anchor: computeFillAnchor(rect) };
   }
 
   async function fillFromPrompt(entry: VaultEntry): Promise<void> {
@@ -1302,6 +1490,20 @@
         </ul>
       {/if}
     </div>
+    {#if zoomPercent !== 100}
+      <Button
+        type="button"
+        variant="ghost"
+        class="h-7 shrink-0 px-1.5 font-mono text-[10px] tabular-nums"
+        aria-label="Reset zoom"
+        title={device
+          ? `Canvas zoom ${zoomPercent}% — click to reset`
+          : `Page zoom ${zoomPercent}% — click to reset`}
+        onclick={resetActiveZoom}
+      >
+        {zoomPercent}%
+      </Button>
+    {/if}
     <Popover.Root bind:open={deviceMenuOpen}>
       <Popover.Trigger>
         {#snippet child({ props })}
@@ -1450,33 +1652,66 @@
         {@const tabW = tabDevice ? (tabDevice.rotated ? tabDevice.height : tabDevice.width) : 0}
         {@const tabH = tabDevice ? (tabDevice.rotated ? tabDevice.width : tabDevice.height) : 0}
         {@const initialUrl = getOrCaptureInitialUrl(tab.id, tabInitialUrl(tab))}
-        <div
-          class={tabDevice
-            ? 'absolute inset-0 flex items-start justify-center overflow-auto bg-muted/40 p-4'
-            : 'absolute inset-0 flex flex-col'}
-          style={isActive ? undefined : 'display: none;'}
-        >
+        {@const tabCanvasZoom = canvasZoomById[tab.id] ?? 1}
+        {#if tabDevice}
+          <!--
+            Responsive mode: an overflow-auto wrapper hosts a scaler whose
+            laid-out size equals the scaled device size, with the actual
+            device frame inside drawn at its native pixel size and
+            transform: scale()-d. Doing the scale this way (rather than
+            shrinking the frame directly) keeps the page rendering as if it
+            has its full emulated viewport — so the user is "zooming the
+            canvas" while the page itself stays at native resolution.
+          -->
           <div
-            class={tabDevice
-              ? 'shrink-0 overflow-hidden rounded border border-border bg-background shadow-lg'
-              : 'flex min-h-0 flex-1 flex-col'}
-            style={tabDevice ? `width: ${tabW}px; height: ${tabH}px;` : ''}
+            class="absolute inset-0 flex items-start justify-center overflow-auto bg-muted/40 p-4"
+            style={isActive ? undefined : 'display: none;'}
           >
-            <!-- svelte-ignore element_invalid_self_closing_tag -->
-            <webview
-              {@attach attachWebview(tab.id, initialUrl)}
-              src={initialUrl}
-              partition="persist:soloe-browser"
-              class={tabDevice ? 'h-full w-full' : 'min-h-0 flex-1'}
-              style="display: flex;"
-            ></webview>
+            <div
+              class="shrink-0"
+              style={`width: ${tabW * tabCanvasZoom}px; height: ${tabH * tabCanvasZoom}px;`}
+            >
+              <div
+                class="overflow-hidden rounded border border-border bg-background shadow-lg"
+                style={`width: ${tabW}px; height: ${tabH}px; transform: scale(${tabCanvasZoom}); transform-origin: top left;`}
+              >
+                <!-- svelte-ignore element_invalid_self_closing_tag -->
+                <webview
+                  {@attach attachWebview(tab.id, initialUrl)}
+                  src={initialUrl}
+                  partition="persist:soloe-browser"
+                  class="h-full w-full"
+                  style="display: flex;"
+                ></webview>
+              </div>
+            </div>
           </div>
-        </div>
+        {:else}
+          <div
+            class="absolute inset-0 flex flex-col"
+            style={isActive ? undefined : 'display: none;'}
+          >
+            <div class="flex min-h-0 flex-1 flex-col">
+              <!-- svelte-ignore element_invalid_self_closing_tag -->
+              <webview
+                {@attach attachWebview(tab.id, initialUrl)}
+                src={initialUrl}
+                partition="persist:soloe-browser"
+                class="min-h-0 flex-1"
+                style="display: flex;"
+              ></webview>
+            </div>
+          </div>
+        {/if}
       {/each}
 
       {#if fillPrompt}
+        {@const fillAnchor = fillPrompt.anchor}
         <div
-          class="absolute top-2 right-2 z-20 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg"
+          class={fillAnchor
+            ? 'fixed z-30 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'
+            : 'absolute top-2 right-2 z-20 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'}
+          style={fillAnchor ? `left: ${fillAnchor.left}px; top: ${fillAnchor.top}px;` : undefined}
           role="dialog"
           aria-label="Autofill suggestion"
         >

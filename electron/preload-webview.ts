@@ -88,6 +88,33 @@ function detectUsername(passwordEl: HTMLInputElement): string | null {
   return null;
 }
 
+// Track the currently-focused password field so we can keep its host-side
+// popover anchored as the page scrolls or the layout shifts. Cleared on
+// focusout/navigation; the host's popover dismissal is independent.
+let focusedPassword: HTMLInputElement | null = null;
+
+interface FieldRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
+function readRect(el: HTMLElement): FieldRect | null {
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return null;
+  return {
+    x: r.left,
+    y: r.top,
+    width: r.width,
+    height: r.height,
+    viewportWidth: window.innerWidth || document.documentElement.clientWidth,
+    viewportHeight: window.innerHeight || document.documentElement.clientHeight
+  };
+}
+
 document.addEventListener(
   'focusin',
   (e) => {
@@ -95,12 +122,47 @@ document.addEventListener(
     if (!target || !(target instanceof HTMLInputElement)) return;
     if (target.type !== 'password') return;
     if (target.disabled || target.readOnly) return;
+    focusedPassword = target;
+    // Fresh focus → host may (re-)show the popover even if previously
+    // dismissed for this origin.
     ipcRenderer.sendToHost('soloe:webview-password-focus', {
-      origin: pageOrigin()
+      origin: pageOrigin(),
+      rect: readRect(target)
     });
   },
   true
 );
+
+document.addEventListener(
+  'focusout',
+  (e) => {
+    const target = e.target as Element | null;
+    if (target && target === focusedPassword) {
+      focusedPassword = null;
+    }
+  },
+  true
+);
+
+// Scroll/resize updates use a separate channel so the host can keep an open
+// popover anchored without re-opening one the user already dismissed.
+let scrollEmitScheduled = false;
+function scheduleRectUpdate(): void {
+  if (scrollEmitScheduled) return;
+  scrollEmitScheduled = true;
+  requestAnimationFrame(() => {
+    scrollEmitScheduled = false;
+    const el = focusedPassword;
+    if (!el || !el.isConnected) return;
+    ipcRenderer.sendToHost('soloe:webview-password-rect', {
+      origin: pageOrigin(),
+      rect: readRect(el)
+    });
+  });
+}
+
+window.addEventListener('scroll', scheduleRectUpdate, true);
+window.addEventListener('resize', scheduleRectUpdate, true);
 
 // Listen at capture so we see the submit even if the page later calls
 // stopPropagation. We can't preventDefault here — the form must actually

@@ -351,3 +351,16 @@ const soloe: SoloeApi = {
 };
 
 contextBridge.exposeInMainWorld('soloe', soloe);
+
+// Ctrl+/-/0 inside a <webview> is consumed by Chromium's built-in zoom
+// accelerator before the page (or our preload) can preventDefault it. The
+// main process intercepts those keys at the webview's before-input-event
+// and re-emits them on this channel; here we translate to the same window
+// event the IDE chrome uses, so the rail's canvas-vs-page zoom router runs
+// regardless of where focus is.
+ipcRenderer.on(
+  'soloe:webview-zoom-key',
+  (_e: IpcRendererEvent, payload: { direction: 'in' | 'out' | 'reset' }) => {
+    window.dispatchEvent(new CustomEvent('soloe:browser-zoom', { detail: { direction: payload.direction } }));
+  }
+);

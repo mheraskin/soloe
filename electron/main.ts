@@ -649,38 +649,42 @@ function ensureSingleInstance(): boolean {
   return true;
 }
 
-// Route Ctrl+/-/0 to the focused <webview>'s own zoom instead of letting the
-// keystroke bubble up to the main window. Without this, the rail browser has
-// no keyboard zoom at all (Electron doesn't wire it by default) and any host
-// keybindings on Ctrl+= run as if the user pressed them in the IDE.
-function installWebviewZoomHandler(): void {
-  app.on('web-contents-created', (_event, contents) => {
-    if (contents.getType() !== 'webview') return;
-    contents.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown') return;
-      const modifierOk =
-        process.platform === 'darwin' ? input.meta && !input.control : input.control && !input.meta;
-      if (!modifierOk || input.alt) return;
-      const key = input.key;
-      const isZoomIn = key === '+' || key === '=';
-      const isZoomOut = key === '-' || key === '_';
-      const isZoomReset = key === '0';
-      if (!isZoomIn && !isZoomOut && !isZoomReset) return;
-      const current = contents.getZoomLevel();
-      if (isZoomReset) contents.setZoomLevel(0);
-      else if (isZoomIn) contents.setZoomLevel(Math.min(current + 0.5, 5));
-      else contents.setZoomLevel(Math.max(current - 0.5, -5));
-      event.preventDefault();
-    });
-  });
+// Chromium has a built-in accelerator for Ctrl+/-/0 in every webContents
+// (including <webview> guests) that fires before any renderer keydown
+// listener — preventDefault from the page or preload won't stop it. To keep
+// the rail's canvas-vs-page zoom routing working when focus is inside a
+// guest page, intercept the combo here and forward the intent to the host
+// window; the host renderer dispatches the same `soloe:browser-zoom` window
+// event the IDE chrome would.
+function zoomDirectionFromInput(input: Electron.Input): 'in' | 'out' | 'reset' | null {
+  if (input.type !== 'keyDown') return null;
+  if (!(input.control || input.meta)) return null;
+  if (input.alt) return null;
+  const k = input.key;
+  if (k === '=' || k === '+') return 'in';
+  if (k === '-' || k === '_') return 'out';
+  if (k === '0') return 'reset';
+  return null;
 }
+
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return;
+  contents.on('before-input-event', (event, input) => {
+    const direction = zoomDirectionFromInput(input);
+    if (!direction) return;
+    event.preventDefault();
+    const host = contents.hostWebContents;
+    if (host && !host.isDestroyed()) {
+      host.send('soloe:webview-zoom-key', { direction });
+    }
+  });
+});
 
 if (ensureSingleInstance()) {
   pendingDiffIntent = parseDiffArgv(process.argv);
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     ensureWindowsDevShellShortcut(resolveAppIcon());
-    installWebviewZoomHandler();
     services = await setupServices();
     mainWindow = await createWindow();
     if (pendingDiffIntent) {
