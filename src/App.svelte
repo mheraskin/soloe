@@ -13,6 +13,7 @@
   import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
   import { sidebar } from './stores/sidebar.svelte';
+  import { browserStore } from './stores/browser.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
@@ -105,7 +106,9 @@
   // selected session, so its per-worktree open/fullscreen/tab state can be
   // recalled when bouncing between worktrees.
   $effect(() => {
-    rightRail.setActiveCwd(sessions.selected?.cwd ?? null);
+    const cwd = sessions.selected?.cwd ?? null;
+    rightRail.setActiveCwd(cwd);
+    browserStore.setActiveCwd(cwd);
   });
 
   // Poll git status/diff for every worktree of every known project at the

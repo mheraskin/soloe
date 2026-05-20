@@ -6,7 +6,8 @@
     GitCompare,
     ArrowLeftRight,
     FolderTree,
-    Microscope
+    Microscope,
+    Globe
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
@@ -23,6 +24,7 @@
   import RailDiffTab from './diff/RailDiffTab.svelte';
   import RailFilesTab from './files/RailFilesTab.svelte';
   import RailFeatureTab from './feature/RailFeatureTab.svelte';
+  import RailBrowserTab from './rail/RailBrowserTab.svelte';
 
   interface Tab {
     id: RailTabId;
@@ -36,6 +38,7 @@
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
     { id: 'files', label: 'Files', icon: FolderTree, shortcut: Keymap.toggleFilesRail.keys },
     { id: 'feature', label: 'Feature Lab', icon: Microscope, shortcut: Keymap.toggleFeatureRail.keys },
+    { id: 'browser', label: 'Browser', icon: Globe },
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
@@ -71,7 +74,8 @@
     rightRail.open &&
       rightRail.activeTab !== 'diff' &&
       rightRail.activeTab !== 'files' &&
-      rightRail.activeTab !== 'feature'
+      rightRail.activeTab !== 'feature' &&
+      rightRail.activeTab !== 'browser'
   );
 
   // The feature tab subscribes to a polling watcher and keeps a slug picker per
@@ -81,6 +85,14 @@
   // subscription teardown cost is what we're avoiding here.
   let featureMounted = $derived(rightRail.open && rightRail.activeTab === 'feature');
   let featureVisible = $derived(rightRail.open && rightRail.activeTab === 'feature');
+
+  // Browser deliberately does NOT use the keep-alive pattern: mounting it
+  // spins up a Chromium subprocess (one per webview), so leaving it in the
+  // DOM while hidden would defeat the whole "minimal performance footprint"
+  // requirement. Switching away tears the webview down completely; switching
+  // back creates a fresh process. Per-tab URL + history live in the browser
+  // store, so the previous session restores on remount.
+  let browserVisible = $derived(rightRail.open && rightRail.activeTab === 'browser');
 
   // Notification dot driver for the feature tab icon. Surfaces when the active
   // worktree has no `## Agent skills` block, so the user sees there's a setup
@@ -242,6 +254,12 @@
       ]}
     >
       <RailFeatureTab />
+    </div>
+  {/if}
+
+  {#if browserVisible}
+    <div class="flex min-w-0 flex-1 flex-col border-r border-border">
+      <RailBrowserTab />
     </div>
   {/if}
 
