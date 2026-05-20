@@ -285,14 +285,26 @@
   });
 
   onMount(() => {
-    const onRefocus = () => {
-      if (rightRail.activeTab !== 'files') return;
+    const focusContent = () => {
       // Focus the editor's CodeMirror content if a file is open.
       const cm = document.querySelector<HTMLElement>('.soloe-cm-host .cm-content');
       cm?.focus();
     };
+    const onRefocus = () => {
+      if (rightRail.activeTab !== 'files') return;
+      focusContent();
+    };
+    const onFocusPane = (e: Event) => {
+      const detail = (e as CustomEvent<{ tabId: string }>).detail;
+      if (detail?.tabId !== 'files') return;
+      focusContent();
+    };
     window.addEventListener('soloe:refocus-rail', onRefocus);
-    return () => window.removeEventListener('soloe:refocus-rail', onRefocus);
+    window.addEventListener('soloe:focus-pane', onFocusPane);
+    return () => {
+      window.removeEventListener('soloe:refocus-rail', onRefocus);
+      window.removeEventListener('soloe:focus-pane', onFocusPane);
+    };
   });
 </script>
 

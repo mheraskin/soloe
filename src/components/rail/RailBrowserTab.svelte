@@ -20,10 +20,13 @@
   import { findPreset } from '../../lib/browser-devices';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
+  import { vaultStore } from '../../stores/vault.svelte';
+  import type { VaultEntry } from '../../../shared/types/vault';
   import type { ElectronWebview } from '../../types/webview';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import * as Popover from '$lib/components/ui/popover';
+  import { toast } from 'svelte-sonner';
   import BrowserAutofillPopover from './BrowserAutofillPopover.svelte';
   import BrowserDeviceMenu from './BrowserDeviceMenu.svelte';
 
@@ -46,10 +49,17 @@
   const seededTab = browserStore.ensureSomeTab();
   const initialUrl = seededTab.history[seededTab.historyIndex] ?? 'about:blank';
 
+  // Chrome-like display: hide the http(s):// prefix when the URL bar isn't
+  // focused. The full URL stays in `lastSyncedUrl` so we can restore it on
+  // focus and submit it correctly on Enter.
+  function stripProtocol(url: string): string {
+    return url.replace(/^https?:\/\//i, '');
+  }
+
   let webview = $state<ElectronWebview | null>(null);
   let domReady = $state(false);
   let lastLoadedUrl = $state(initialUrl);
-  let urlInput = $state(initialUrl);
+  let urlInput = $state(stripProtocol(initialUrl));
   let urlInputEl = $state<HTMLInputElement | null>(null);
   let isLoading = $state(false);
   let failureSuggestion = $state<{ httpsUrl: string; httpUrl: string; reason: string } | null>(null);
@@ -59,17 +69,21 @@
   // that the bar is "dirty" and shouldn't be clobbered by auto-syncing.
   // Resets explicitly on submit, escape, and tab switch.
   let lastSyncedUrl = $state(initialUrl);
-  let isDirty = $derived(urlInput !== lastSyncedUrl);
+  // Dirty when the bar matches neither the canonical URL nor its display form.
+  // Comparing both forms lets the bar render the stripped variant without
+  // appearing dirty to the auto-sync effect.
+  let isDirty = $derived(
+    urlInput !== lastSyncedUrl && urlInput !== stripProtocol(lastSyncedUrl)
+  );
 
   // Auto-sync the URL bar to the active page URL — but only when the user
   // isn't mid-edit. Same-tab in-page navigations (link clicks, redirects)
   // update the bar; user's pending typed text is preserved across blurs.
   $effect(() => {
     const target = activeUrl;
-    if (target === urlInput) return;
     if (untrack(() => isDirty)) return;
-    urlInput = target;
     lastSyncedUrl = target;
+    urlInput = untrack(() => urlInputFocused) ? target : stripProtocol(target);
   });
 
   // Tab-switch reset: forces a fresh sync regardless of dirty state, since
@@ -82,8 +96,8 @@
     if (id === prevTabId) return;
     prevTabId = id;
     const target = activeUrl;
-    urlInput = target;
     lastSyncedUrl = target;
+    urlInput = untrack(() => urlInputFocused) ? target : stripProtocol(target);
     suggestionIndex = -1;
   });
 
@@ -118,6 +132,11 @@
       const tab = browserStore.activeTab;
       if (!tab || !url) return;
       failureSuggestion = null;
+      // Cross-page navigations invalidate the fill prompt (it referenced
+      // the previous page's password field). The save prompt is kept until
+      // the user acts on it — a form-submit-driven nav arrives right after
+      // the prompt appears and would otherwise dismiss it instantly.
+      fillPrompt = null;
       if (url === lastLoadedUrl) return;
       lastLoadedUrl = url;
       browserStore.navigate(tab.id, url);
@@ -153,6 +172,51 @@
         reason: event.errorDescription || 'Failed to load over HTTPS'
       };
     };
+    // ipc-message fires when the webview preload calls
+    // ipcRenderer.sendToHost(). We branch on the channel: shortcut forwarding
+    // synthesizes a host-side keydown so App.svelte's keymap sees it;
+    // password-focus and form-submit drive the inline autofill popovers.
+    const onIpcMessage = (event: Event) => {
+      const e = event as Event & { channel?: string; args?: unknown[] };
+      if (e.channel === 'soloe:webview-shortcut') {
+        const payload = e.args?.[0] as
+          | {
+              key?: string;
+              code?: string;
+              ctrlKey?: boolean;
+              metaKey?: boolean;
+              shiftKey?: boolean;
+              altKey?: boolean;
+            }
+          | undefined;
+        if (!payload?.key) return;
+        const synthesized = new KeyboardEvent('keydown', {
+          key: payload.key,
+          code: payload.code ?? '',
+          ctrlKey: payload.ctrlKey ?? false,
+          metaKey: payload.metaKey ?? false,
+          shiftKey: payload.shiftKey ?? false,
+          altKey: payload.altKey ?? false,
+          bubbles: true,
+          cancelable: true
+        });
+        window.dispatchEvent(synthesized);
+        return;
+      }
+      if (e.channel === 'soloe:webview-password-focus') {
+        const payload = e.args?.[0] as { origin?: string } | undefined;
+        void handlePasswordFocus(payload?.origin ?? '');
+        return;
+      }
+      if (e.channel === 'soloe:webview-form-submit') {
+        const payload = e.args?.[0] as
+          | { origin?: string; username?: string; password?: string }
+          | undefined;
+        if (!payload?.origin || !payload.username || !payload.password) return;
+        void handleFormSubmit(payload.origin, payload.username, payload.password);
+        return;
+      }
+    };
     el.addEventListener('dom-ready', onDomReady);
     el.addEventListener('did-navigate', onNavigate);
     el.addEventListener('did-navigate-in-page', onNavigate);
@@ -160,6 +224,7 @@
     el.addEventListener('did-start-loading', onLoadStart);
     el.addEventListener('did-stop-loading', onLoadStop);
     el.addEventListener('did-fail-load', onFail);
+    el.addEventListener('ipc-message', onIpcMessage);
     return () => {
       el.removeEventListener('dom-ready', onDomReady);
       el.removeEventListener('did-navigate', onNavigate);
@@ -168,30 +233,51 @@
       el.removeEventListener('did-start-loading', onLoadStart);
       el.removeEventListener('did-stop-loading', onLoadStop);
       el.removeEventListener('did-fail-load', onFail);
+      el.removeEventListener('ipc-message', onIpcMessage);
     };
   });
 
   // Localhost-ish hosts get http://; everything else defaults to https://.
   // Catches localhost, loopback, private network ranges, and bare ports
-  // (":3000") which can only mean a local dev server.
+  // (":3000") which can only mean a local dev server. The host may carry a
+  // port (e.g. "localhost:3000") — strip it before matching so port-bearing
+  // hosts aren't accidentally treated as public.
   function looksLocal(host: string): boolean {
     if (!host) return false;
     if (host.startsWith(':')) return true;
+    // IPv6 in brackets: [::1] or [::1]:8080
+    if (host.startsWith('[')) {
+      const closing = host.indexOf(']');
+      if (closing < 0) return false;
+      return host.slice(1, closing).toLowerCase() === '::1';
+    }
     const lower = host.toLowerCase();
-    if (lower === 'localhost' || lower.endsWith('.localhost')) return true;
-    if (lower === '::1' || lower === '[::1]') return true;
-    if (/^127\./.test(lower)) return true;
-    if (/^10\./.test(lower)) return true;
-    if (/^192\.168\./.test(lower)) return true;
-    if (/^172\.(1[6-9]|2\d|3[01])\./.test(lower)) return true;
+    const hostname = lower.split(':')[0] ?? '';
+    if (!hostname) return false;
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
+    if (/^127\./.test(hostname)) return true;
+    if (/^10\./.test(hostname)) return true;
+    if (/^192\.168\./.test(hostname)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
     return false;
   }
 
   function normalizeUrl(input: string): string {
     const trimmed = input.trim();
     if (!trimmed) return 'about:blank';
+    // Already has a scheme (http:, https:, file:, about:, data:, …) — leave it.
     if (/^[a-z][a-z0-9+\-.]*:/i.test(trimmed)) return trimmed;
+    // No dot, no colon, no slash → not a URL, treat as a search query.
+    // Without this, "foo" would be navigated to as "https://foo" which
+    // produces a "site can't be reached" error instead of useful behavior.
+    if (!/[.:\/]/.test(trimmed) && !looksLocal(trimmed)) {
+      return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+    }
     const hostPart = trimmed.split(/[\/?#]/, 1)[0] ?? '';
+    // Bare port "/3000" or ":3000" → assume localhost on that port.
+    if (trimmed.startsWith(':')) {
+      return `http://localhost${trimmed}`;
+    }
     const scheme = looksLocal(hostPart) ? 'http' : 'https';
     return `${scheme}://${trimmed}`;
   }
@@ -299,6 +385,7 @@
   function syncBoundsOnce() {
     const main = webview;
     if (!main || !devToolsOpen) return;
+    if (devToolsSuspended) return;
     const bounds = computeBounds();
     if (!bounds) return;
     const prev = lastSentBounds;
@@ -372,11 +459,16 @@
 
   // Drag-to-resize the DevTools panel (Chrome-like). Math anchors to the
   // outer container height so the panel grows up from the bottom edge.
+  // Pointer capture + DevTools suspend keep the drag from sticking when the
+  // cursor crosses the page <webview> (above) or the DevTools WebContentsView
+  // (below). The native view ignores DOM pointer capture, so we hide it.
   let devToolsResizing = $state(false);
   function startDevToolsResize(event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     devToolsResizing = true;
+    suspendDevToolsView();
     const startY = event.clientY;
     const startHeight = devToolsHeight;
     const onMove = (ev: PointerEvent) => {
@@ -388,9 +480,39 @@
       devToolsResizing = false;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      resumeDevToolsView();
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+  }
+
+  // While suspended, the DevTools WebContentsView is moved offscreen so it
+  // can't eat pointer events during a drag. The rAF bounds sync skips its
+  // work, and `lastSentBounds` is cleared on resume so the next frame's
+  // sync re-pushes the real bounds even if they happened to match.
+  let devToolsSuspended = $state(false);
+  function suspendDevToolsView() {
+    if (!devToolsOpen || devToolsSuspended) return;
+    const main = webview;
+    if (!main) return;
+    devToolsSuspended = true;
+    try {
+      void window.soloe.browser
+        .setDevToolsBounds({
+          webContentsId: main.getWebContentsId(),
+          bounds: { x: -10000, y: -10000, width: 1, height: 1 }
+        })
+        .catch(() => {});
+    } catch {
+      // ignore
+    }
+  }
+
+  function resumeDevToolsView() {
+    if (!devToolsSuspended) return;
+    devToolsSuspended = false;
+    lastSentBounds = null;
+    syncBoundsOnce();
   }
 
   let autofillOpen = $state(false);
@@ -508,9 +630,31 @@
       else if (direction === 'in') el.setZoomLevel(Math.min(current + 0.5, 5));
       else el.setZoomLevel(Math.max(current - 0.5, -5));
     };
+    const onResizeStart = () => suspendDevToolsView();
+    const onResizeEnd = () => resumeDevToolsView();
+    const onFocusPane = (e: Event) => {
+      const detail = (e as CustomEvent<{ tabId: string }>).detail;
+      if (detail?.tabId !== 'browser') return;
+      urlInputEl?.focus();
+      requestAnimationFrame(() => urlInputEl?.select());
+    };
+    const onAutofillEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (!fillPrompt && !savePrompt) return;
+      fillPrompt = null;
+      savePrompt = null;
+    };
     window.addEventListener('soloe:browser-zoom', onZoom);
+    window.addEventListener('soloe:rail-resize-start', onResizeStart);
+    window.addEventListener('soloe:rail-resize-end', onResizeEnd);
+    window.addEventListener('soloe:focus-pane', onFocusPane);
+    window.addEventListener('keydown', onAutofillEscape);
     return () => {
       window.removeEventListener('soloe:browser-zoom', onZoom);
+      window.removeEventListener('soloe:rail-resize-start', onResizeStart);
+      window.removeEventListener('soloe:rail-resize-end', onResizeEnd);
+      window.removeEventListener('soloe:focus-pane', onFocusPane);
+      window.removeEventListener('keydown', onAutofillEscape);
       // Tear down DevTools when the rail unmounts. The main-side 'destroyed'
       // listener also covers webview destruction, but cancelling the rAF
       // loop here avoids a stray frame after the component is gone.
@@ -577,6 +721,110 @@
     return { filledUser: result.filledUser };
   }
 
+  // Inline autofill prompt state: shown when the guest page reports a
+  // password field gaining focus AND the vault has entries for the page's
+  // origin. The host owns the popover UI so the page can't observe or
+  // restyle it. Dismissed on Esc, click outside, or after Fill.
+  interface FillPrompt {
+    origin: string;
+    matches: VaultEntry[];
+  }
+  let fillPrompt = $state<FillPrompt | null>(null);
+
+  // Inline save prompt state: shown after a form submit when we detect
+  // credentials that aren't already saved for that origin+username. The
+  // user can save (writes to the vault) or dismiss.
+  interface SavePrompt {
+    origin: string;
+    username: string;
+    password: string;
+  }
+  let savePrompt = $state<SavePrompt | null>(null);
+  let savePromptBusy = $state(false);
+
+  async function handlePasswordFocus(origin: string): Promise<void> {
+    if (!origin) return;
+    try {
+      await vaultStore.ensureLoaded();
+    } catch {
+      // Vault load failure is non-fatal — just skip the prompt.
+      return;
+    }
+    const matches = vaultStore.matchesForOrigin(origin);
+    if (matches.length === 0) {
+      fillPrompt = null;
+      return;
+    }
+    fillPrompt = { origin, matches };
+  }
+
+  async function fillFromPrompt(entry: VaultEntry): Promise<void> {
+    try {
+      const secret = await vaultStore.getSecret(entry.id);
+      const result = await runAutofill(secret.username, secret.password);
+      if (!result.filledUser) {
+        toast.success('Filled password (no username field detected)');
+      } else {
+        toast.success('Filled');
+      }
+    } catch (err) {
+      reportError(err, 'Autofill failed');
+    } finally {
+      fillPrompt = null;
+    }
+  }
+
+  async function handleFormSubmit(
+    origin: string,
+    username: string,
+    password: string
+  ): Promise<void> {
+    try {
+      await vaultStore.ensureLoaded();
+    } catch {
+      return;
+    }
+    const matches = vaultStore.matchesForOrigin(origin);
+    // Already saved for this exact (origin, username) — don't nag the user
+    // again. We don't compare passwords here because matchesForOrigin
+    // returns metadata, not secrets; a stale password is the user's
+    // problem to update manually for now.
+    const alreadyKnown = matches.some(
+      (m) => m.username.toLowerCase() === username.toLowerCase()
+    );
+    if (alreadyKnown) {
+      savePrompt = null;
+      return;
+    }
+    savePrompt = { origin, username, password };
+  }
+
+  async function confirmSave(): Promise<void> {
+    if (!savePrompt || savePromptBusy) return;
+    savePromptBusy = true;
+    try {
+      await vaultStore.save({
+        origin: savePrompt.origin,
+        username: savePrompt.username,
+        password: savePrompt.password
+      });
+      toast.success('Password saved');
+      savePrompt = null;
+    } catch (err) {
+      reportError(err, 'Failed to save password');
+    } finally {
+      savePromptBusy = false;
+    }
+  }
+
+  function dismissFillPrompt(): void {
+    fillPrompt = null;
+  }
+
+  function dismissSavePrompt(): void {
+    savePrompt = null;
+  }
+
   function addTab() {
     browserStore.addTab();
   }
@@ -637,6 +885,18 @@
   );
 
   function onUrlKey(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      // Handle Enter explicitly so navigation doesn't rely on the form's
+      // onsubmit firing (some Input wrappers or surrounding keyboard
+      // handlers may swallow the default submit).
+      event.preventDefault();
+      if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
+        commitNavigation(suggestions[suggestionIndex]!);
+      } else {
+        commitNavigation(urlInput);
+      }
+      return;
+    }
     if (event.key === 'ArrowDown') {
       if (suggestions.length === 0) return;
       event.preventDefault();
@@ -767,9 +1027,21 @@
         onfocus={() => {
           urlInputFocused = true;
           suppressDropdown = false;
+          // Expand to full URL so the user sees the protocol while editing.
+          if (urlInput === stripProtocol(lastSyncedUrl) && urlInput !== lastSyncedUrl) {
+            urlInput = lastSyncedUrl;
+          }
+          // Select all on focus so the next keystroke replaces the URL —
+          // matching Chrome's omnibox behavior. Defer one frame so the value
+          // update above lands first.
+          requestAnimationFrame(() => urlInputEl?.select());
         }}
         onblur={() => {
           urlInputFocused = false;
+          // Collapse back to the stripped form if the user didn't edit.
+          if (urlInput === lastSyncedUrl) {
+            urlInput = stripProtocol(lastSyncedUrl);
+          }
         }}
         onkeydown={onUrlKey}
         placeholder="localhost:3000 or example.com"
@@ -942,8 +1214,8 @@
     -->
     <div
       class={device
-        ? 'flex min-h-0 flex-1 items-start justify-center overflow-auto bg-muted/40 p-4'
-        : 'flex min-h-0 flex-1 flex-col'}
+        ? 'relative flex min-h-0 flex-1 items-start justify-center overflow-auto bg-muted/40 p-4'
+        : 'relative flex min-h-0 flex-1 flex-col'}
     >
       <div
         class={device
@@ -960,6 +1232,89 @@
           style="display: flex;"
         ></webview>
       </div>
+
+      {#if fillPrompt}
+        <div
+          class="absolute top-2 right-2 z-20 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg"
+          role="dialog"
+          aria-label="Autofill suggestion"
+        >
+          <div class="flex items-center gap-2 pb-1">
+            <KeyRound class="size-3.5 text-muted-foreground" />
+            <span class="text-[11px] font-medium">Sign in with saved password</span>
+            <button
+              type="button"
+              class="ml-auto opacity-60 hover:opacity-100"
+              aria-label="Dismiss"
+              onclick={dismissFillPrompt}
+            >
+              <X class="size-3" />
+            </button>
+          </div>
+          {#each fillPrompt.matches as entry (entry.id)}
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 rounded border border-border/60 bg-muted/30 px-2 py-1.5 text-left hover:border-border hover:bg-muted/60"
+              onclick={() => fillFromPrompt(entry)}
+            >
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-xs">{entry.username}</div>
+                {#if entry.label}
+                  <div class="truncate text-[10px] text-muted-foreground">{entry.label}</div>
+                {/if}
+              </div>
+              <span class="text-[10px] text-muted-foreground">Fill</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      {#if savePrompt}
+        <div
+          class="absolute top-2 right-2 z-20 flex w-72 flex-col gap-2 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+          role="dialog"
+          aria-label="Save password"
+        >
+          <div class="flex items-center gap-2">
+            <KeyRound class="size-3.5 text-muted-foreground" />
+            <span class="text-[11px] font-medium">Save password?</span>
+            <button
+              type="button"
+              class="ml-auto opacity-60 hover:opacity-100"
+              aria-label="Dismiss"
+              onclick={dismissSavePrompt}
+            >
+              <X class="size-3" />
+            </button>
+          </div>
+          <div class="text-[11px] text-muted-foreground">
+            Save the password for <span class="font-mono">{savePrompt.username}</span> on
+            this site?
+          </div>
+          <div class="flex justify-end gap-2 pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              class="h-6 text-[11px]"
+              onclick={dismissSavePrompt}
+              disabled={savePromptBusy}
+            >
+              Not now
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              size="xs"
+              class="h-6 text-[11px]"
+              onclick={confirmSave}
+              disabled={savePromptBusy}
+            >
+              {savePromptBusy ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      {/if}
     </div>
     <!--
       DevTools panel: an empty placeholder div whose bounds are forwarded to

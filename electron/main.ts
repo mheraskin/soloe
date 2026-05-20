@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Notification, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, session, shell } from 'electron';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -547,6 +547,18 @@ async function createWindow(): Promise<BrowserWindow> {
       relaunchCommand: windowsRelaunchCommand(),
       relaunchDisplayName: app.isPackaged ? 'Soloe' : 'Soloe Dev'
     });
+  }
+
+  // Inject our shortcut-forwarding preload into the browser pane's session
+  // so it runs inside every <webview> guest under the same partition. The
+  // webview itself opts in via partition="persist:soloe-browser" in the
+  // renderer; keep this in sync if that partition name ever changes.
+  try {
+    const browserSession = session.fromPartition('persist:soloe-browser');
+    browserSession.setPreloads([path.join(__dirname, '../preload/preload-webview.js')]);
+  } catch {
+    // Session API can throw if the partition name is malformed; in that
+    // case shortcut forwarding is just inoperative — not fatal.
   }
 
   win.on('ready-to-show', () => win.show());

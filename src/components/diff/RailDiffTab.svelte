@@ -637,12 +637,21 @@
       }
     }
     workingDiff.attachListeners();
-    const onRefocus = () => {
-      if (rightRail.activeTab !== 'diff') return;
+    const focusSearch = () => {
       searchInputEl?.focus();
       searchInputEl?.select();
     };
+    const onRefocus = () => {
+      if (rightRail.activeTab !== 'diff') return;
+      focusSearch();
+    };
+    const onFocusPane = (e: Event) => {
+      const detail = (e as CustomEvent<{ tabId: string }>).detail;
+      if (detail?.tabId !== 'diff') return;
+      focusSearch();
+    };
     window.addEventListener('soloe:refocus-rail', onRefocus);
+    window.addEventListener('soloe:focus-pane', onFocusPane);
     // Single document-level mouseup finalizes any in-progress gutter drag
     // started inside a HunkBlock. Without this, releasing the cursor outside
     // a gutter cell would leave the selection stuck in dragging state.
@@ -659,6 +668,7 @@
     window.addEventListener('mouseup', onDocMouseup);
     return () => {
       window.removeEventListener('soloe:refocus-rail', onRefocus);
+      window.removeEventListener('soloe:focus-pane', onFocusPane);
       window.removeEventListener('mouseup', onDocMouseup);
       workingDiff.detach();
     };

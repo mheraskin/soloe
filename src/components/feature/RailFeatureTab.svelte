@@ -104,8 +104,17 @@
       if (rightRail.activeTab !== 'feature') return;
       document.querySelector<HTMLElement>('[data-feature-picker-trigger]')?.focus();
     };
+    const onFocusPane = (e: Event) => {
+      const detail = (e as CustomEvent<{ tabId: string }>).detail;
+      if (detail?.tabId !== 'feature') return;
+      document.querySelector<HTMLElement>('[data-feature-picker-trigger]')?.focus();
+    };
     window.addEventListener('soloe:refocus-rail', onRefocus);
-    return () => window.removeEventListener('soloe:refocus-rail', onRefocus);
+    window.addEventListener('soloe:focus-pane', onFocusPane);
+    return () => {
+      window.removeEventListener('soloe:refocus-rail', onRefocus);
+      window.removeEventListener('soloe:focus-pane', onFocusPane);
+    };
   });
 </script>
 

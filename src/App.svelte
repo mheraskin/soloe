@@ -61,8 +61,10 @@
     void loadInitialState();
     const detachKbdHints = kbdHints.attach();
     window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onClearPaneRing, true);
     return () => {
       window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keydown', onClearPaneRing, true);
       detachKbdHints();
       detachToast();
       sessions.detach();
@@ -72,6 +74,16 @@
       git.detach();
     };
   });
+
+  // Clears the pane focus ring on the next real keystroke after a Ctrl+;
+  // cycle. Ignores pure modifier presses and the cycle key itself so the
+  // ring survives long enough for the user to see which pane landed.
+  function onClearPaneRing(e: KeyboardEvent): void {
+    if (rightRail.focusedPaneSlot === null) return;
+    if (Keymap.toggleTerminalFocus.match(e)) return;
+    if (e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt' || e.key === 'Meta') return;
+    rightRail.focusedPaneSlot = null;
+  }
 
   async function loadInitialState(): Promise<void> {
     try {
@@ -180,29 +192,64 @@
     window.dispatchEvent(new CustomEvent('soloe:browser-zoom', { detail: { direction } }));
   }
 
-  // Ctrl+; should ping-pong: if the rail is currently focused, snap back to
-  // the terminal; otherwise jump into the rail's primary input. We probe
+  // Ctrl+; cycles focus: terminal → pane slot 0 → pane slot 1 (if open) →
+  // terminal. With one pane open it's a two-way toggle. We probe
   // document.activeElement at keypress time rather than tracking focus in a
   // store because the latter would need to wire into every focusable child.
+  // While cycling, rightRail.focusedPaneSlot drives an accent ring on the
+  // active pane; a one-shot keydown listener clears it on the next real
+  // keystroke so the ring doesn't linger while typing.
   async function toggleTerminalFocus(): Promise<void> {
     const active = document.activeElement as HTMLElement | null;
     const inRail = Boolean(active?.closest('aside[aria-label="Session rail"]'));
-    if (inRail) {
-      // Fullscreen covers the terminal; exit it so the refocus event has a
-      // pane to land on. The TerminalPane only attaches its listener on
-      // mount, so wait for the layout to flush before dispatching.
-      if (rightRail.fullscreen) {
-        rightRail.fullscreen = false;
-        await tick();
-      }
-      window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
-      return;
-    }
+    const openTabs = rightRail.openTabs;
+
     if (!rightRail.open) {
+      rightRail.focusedPaneSlot = null;
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
       return;
     }
-    window.dispatchEvent(new CustomEvent('soloe:refocus-rail'));
+
+    if (!inRail) {
+      await focusPaneSlot(0);
+      return;
+    }
+
+    // Currently in the rail — figure out which pane. Walk up to the
+    // nearest pane wrapper (each has a data-pane-slot attribute) so we
+    // honour the user's actual focus, not just whatever the last Ctrl+;
+    // set in the store. Fall back to the store if the DOM lookup fails.
+    const paneEl = active?.closest<HTMLElement>('[data-pane-slot]');
+    const domSlot = paneEl?.dataset.paneSlot;
+    const currentSlot: 0 | 1 | null =
+      domSlot === '0' ? 0 : domSlot === '1' ? 1 : rightRail.focusedPaneSlot;
+    if (currentSlot === 0 && openTabs.length === 2) {
+      await focusPaneSlot(1);
+      return;
+    }
+
+    // From slot 1, or slot 0 with only one pane open — back to terminal.
+    rightRail.focusedPaneSlot = null;
+    if (rightRail.fullscreen) {
+      rightRail.fullscreen = false;
+      await tick();
+    }
+    window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
+  }
+
+  async function focusPaneSlot(slot: 0 | 1): Promise<void> {
+    const tabs = rightRail.openTabs;
+    const tabId = tabs[slot];
+    if (!tabId) return;
+    // In fullscreen the non-fullscreened slot isn't mounted, so promote
+    // it first and wait for the layout to flush so its onMount-registered
+    // soloe:focus-pane listener exists by the time we dispatch.
+    if (rightRail.fullscreen && rightRail.fullscreenTab !== tabId) {
+      rightRail.setFullscreenTab(tabId);
+      await tick();
+    }
+    rightRail.focusedPaneSlot = slot;
+    window.dispatchEvent(new CustomEvent('soloe:focus-pane', { detail: { tabId } }));
   }
 
   function selectedSessionContext(): { projectId?: string; cwd?: string; branch?: string } {

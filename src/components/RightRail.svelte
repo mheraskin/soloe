@@ -168,10 +168,18 @@
     return Math.max(minTotal, Math.min(maxContentWidth(), Math.round(target)));
   }
 
+  // Pointer capture keeps drag events flowing to the handle even when the
+  // cursor crosses a <webview> (events would otherwise be eaten by the
+  // guest page). The window-level listeners still fire because captured
+  // events bubble. The matching `soloe:rail-resize-*` window events tell
+  // the browser tab to suspend its DevTools WebContentsView, which is a
+  // native overlay that pointer capture *can't* reach.
   function startOuterResize(event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
     resizing = 'outer';
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    window.dispatchEvent(new CustomEvent('soloe:rail-resize-start'));
     window.addEventListener('pointermove', onOuterResize);
     window.addEventListener('pointerup', stopOuterResize, { once: true });
   }
@@ -200,6 +208,7 @@
   function stopOuterResize() {
     resizing = null;
     window.removeEventListener('pointermove', onOuterResize);
+    window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
     persistPaneWidths();
   }
 
@@ -207,6 +216,8 @@
     if (event.button !== 0) return;
     event.preventDefault();
     resizing = 'splitter';
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    window.dispatchEvent(new CustomEvent('soloe:rail-resize-start'));
     window.addEventListener('pointermove', onSplitterResize);
     window.addEventListener('pointerup', stopSplitterResize, { once: true });
   }
@@ -227,6 +238,7 @@
   function stopSplitterResize() {
     resizing = null;
     window.removeEventListener('pointermove', onSplitterResize);
+    window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
     persistPaneWidths();
   }
 
@@ -297,10 +309,15 @@
 
   function paneClasses(id: RailTabId, baseExtra = ''): string[] {
     const visible = tabVisible(id);
+    const slot = slotOf(id);
+    const ringed = visible && slot !== null && rightRail.focusedPaneSlot === slot;
     return [
-      'flex min-w-0 flex-col border-r border-border',
+      'relative flex min-w-0 flex-col border-r border-border',
       visible ? (fullscreen ? 'flex-1' : 'flex-shrink-0') : 'hidden',
       visible ? slotOrderClass(id) : '',
+      // Inset ring so the accent appears inside the pane without nudging
+      // siblings; only applied to the focused slot during a Ctrl+; cycle.
+      ringed ? 'ring-2 ring-ring/70 ring-inset' : '',
       baseExtra
     ];
   }
@@ -321,32 +338,32 @@
   <!-- Diff: kept mounted across worktree hops so its scroll/search/edits
        survive switching between worktrees that have it open. -->
   {#if diffMounted}
-    <div class={paneClasses('diff')} style={paneStyle('diff')}>
+    <div class={paneClasses('diff')} style={paneStyle('diff')} data-pane-slot={slotOf('diff')}>
       <RailDiffTab />
     </div>
   {/if}
 
   <!-- Files: same keep-alive contract as diff. -->
   {#if filesMounted}
-    <div class={paneClasses('files')} style={paneStyle('files')}>
+    <div class={paneClasses('files')} style={paneStyle('files')} data-pane-slot={slotOf('files')}>
       <RailFilesTab />
     </div>
   {/if}
 
   {#if featureMountedHere}
-    <div class={paneClasses('feature')} style={paneStyle('feature')}>
+    <div class={paneClasses('feature')} style={paneStyle('feature')} data-pane-slot={slotOf('feature')}>
       <RailFeatureTab />
     </div>
   {/if}
 
   {#if browserMountedHere}
-    <div class={paneClasses('browser')} style={paneStyle('browser')}>
+    <div class={paneClasses('browser')} style={paneStyle('browser')} data-pane-slot={slotOf('browser')}>
       <RailBrowserTab />
     </div>
   {/if}
 
   {#if inspectorMountedHere}
-    <div class={paneClasses('inspector')} style={paneStyle('inspector')}>
+    <div class={paneClasses('inspector')} style={paneStyle('inspector')} data-pane-slot={slotOf('inspector')}>
       <ScrollArea class="min-h-0 flex-1">
         <RailInspectorTab />
       </ScrollArea>
@@ -354,7 +371,7 @@
   {/if}
 
   {#if notesMountedHere}
-    <div class={paneClasses('notes')} style={paneStyle('notes')}>
+    <div class={paneClasses('notes')} style={paneStyle('notes')} data-pane-slot={slotOf('notes')}>
       <RailNotesTab />
     </div>
   {/if}

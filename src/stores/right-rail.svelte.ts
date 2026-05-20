@@ -87,6 +87,12 @@ class RightRailStore {
   private activeCwd = $state<string | null>(null);
   private stateByCwd = $state<Record<string, RailState>>({});
 
+  // Transient: which pane slot (0 or 1) is currently highlighted by the
+  // Ctrl+; cycle. Set when the cycle lands on a pane, cleared on the next
+  // non-cycle keystroke so the ring doesn't linger while the user types.
+  // Not persisted — it's purely visual state for the active cycle gesture.
+  private focusedSlot = $state<0 | 1 | null>(null);
+
   private diffScrollByCwd: Record<string, number> = {};
   private filesTreeScrollByCwd: Record<string, number> = {};
   private filesEditorScrollByCwd: Record<string, number> = {};
@@ -314,6 +320,20 @@ class RightRailStore {
     }
     const target = state.openTabs[state.openTabs.length - 1];
     this.patch({ fullscreen: true, fullscreenTab: target });
+  }
+
+  get focusedPaneSlot(): 0 | 1 | null {
+    return this.focusedSlot;
+  }
+  set focusedPaneSlot(slot: 0 | 1 | null) {
+    if (slot !== null) {
+      const tabs = this.current().openTabs;
+      if (slot >= tabs.length) {
+        this.focusedSlot = null;
+        return;
+      }
+    }
+    this.focusedSlot = slot;
   }
 
   // Pick which pane to fullscreen when the user has two open and wants to

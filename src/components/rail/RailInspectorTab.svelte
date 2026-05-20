@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { AgentObservedState } from '@shared/types/sessions.js';
   import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
   import { sessions } from '../../stores/sessions.svelte';
@@ -6,6 +7,22 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
+
+  let rootEl: HTMLElement | null = $state(null);
+
+  onMount(() => {
+    const onFocusPane = (e: Event) => {
+      const detail = (e as CustomEvent<{ tabId: string }>).detail;
+      if (detail?.tabId !== 'inspector') return;
+      // Inspector has no primary input; focus the first interactive
+      // button so the ring isn't just visual — keyboard input has a real
+      // landing spot too.
+      const target = rootEl?.querySelector<HTMLElement>('button, [tabindex]');
+      target?.focus();
+    };
+    window.addEventListener('soloe:focus-pane', onFocusPane);
+    return () => window.removeEventListener('soloe:focus-pane', onFocusPane);
+  });
 
   let selected = $derived(sessions.selected);
   let observation = $derived(selected ? sessions.observationFor(selected.id) : null);
@@ -37,7 +54,7 @@
   }
 </script>
 
-<section class="flex flex-col gap-2 p-3">
+<section bind:this={rootEl} class="flex flex-col gap-2 p-3">
   <div class="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Session</div>
   {#if selected}
     <div class="grid grid-cols-[80px_minmax(0,1fr)] items-baseline gap-2 text-xs">
