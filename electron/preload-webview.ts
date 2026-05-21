@@ -51,10 +51,10 @@ window.addEventListener(
   true
 );
 
-// Password field telemetry: tell the host when a password input gains
-// focus so it can pop up a fill prompt, and forward the username/password
-// pair on submit so it can prompt to save. The host owns the popover UI;
-// this side just observes and reports.
+// Credential field telemetry: tell the host when a username/password input
+// gains focus so it can pop up a fill prompt, and forward the
+// username/password pair on submit so it can prompt to save. The host owns
+// the popover UI; this side just observes and reports.
 
 function pageOrigin(): string {
   try {
@@ -88,10 +88,40 @@ function detectUsername(passwordEl: HTMLInputElement): string | null {
   return null;
 }
 
-// Track the currently-focused password field so we can keep its host-side
+function credentialFieldSelector(): string {
+  return (
+    'input[type="email"]:not([disabled]):not([readonly]),' +
+    'input[type="tel"]:not([disabled]):not([readonly]),' +
+    'input[name*="user" i]:not([disabled]):not([readonly]),' +
+    'input[name*="email" i]:not([disabled]):not([readonly]),' +
+    'input[name*="login" i]:not([disabled]):not([readonly]),' +
+    'input[id*="user" i]:not([disabled]):not([readonly]),' +
+    'input[id*="email" i]:not([disabled]):not([readonly]),' +
+    'input[autocomplete*="username" i]:not([disabled]):not([readonly]),' +
+    'input[autocomplete*="email" i]:not([disabled]):not([readonly])'
+  );
+}
+
+function passwordFieldSelector(): string {
+  return 'input[type="password"]:not([disabled]):not([readonly])';
+}
+
+function hasRelatedPassword(input: HTMLInputElement): boolean {
+  const scope: ParentNode = input.closest('form') || document;
+  return !!scope.querySelector<HTMLInputElement>(passwordFieldSelector());
+}
+
+function isCredentialFocusTarget(input: HTMLInputElement): boolean {
+  if (input.disabled || input.readOnly) return false;
+  if (input.type === 'password') return true;
+  if (!hasRelatedPassword(input)) return false;
+  return input.matches(credentialFieldSelector());
+}
+
+// Track the currently-focused credential field so we can keep its host-side
 // popover anchored as the page scrolls or the layout shifts. Cleared on
 // focusout/navigation; the host's popover dismissal is independent.
-let focusedPassword: HTMLInputElement | null = null;
+let focusedCredentialField: HTMLInputElement | null = null;
 
 interface FieldRect {
   x: number;
@@ -120,9 +150,8 @@ document.addEventListener(
   (e) => {
     const target = e.target as Element | null;
     if (!target || !(target instanceof HTMLInputElement)) return;
-    if (target.type !== 'password') return;
-    if (target.disabled || target.readOnly) return;
-    focusedPassword = target;
+    if (!isCredentialFocusTarget(target)) return;
+    focusedCredentialField = target;
     // Fresh focus → host may (re-)show the popover even if previously
     // dismissed for this origin.
     ipcRenderer.sendToHost('soloe:webview-password-focus', {
@@ -137,8 +166,8 @@ document.addEventListener(
   'focusout',
   (e) => {
     const target = e.target as Element | null;
-    if (target && target === focusedPassword) {
-      focusedPassword = null;
+    if (target && target === focusedCredentialField) {
+      focusedCredentialField = null;
     }
   },
   true
@@ -152,7 +181,7 @@ function scheduleRectUpdate(): void {
   scrollEmitScheduled = true;
   requestAnimationFrame(() => {
     scrollEmitScheduled = false;
-    const el = focusedPassword;
+    const el = focusedCredentialField;
     if (!el || !el.isConnected) return;
     ipcRenderer.sendToHost('soloe:webview-password-rect', {
       origin: pageOrigin(),

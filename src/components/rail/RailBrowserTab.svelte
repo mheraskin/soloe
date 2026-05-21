@@ -945,7 +945,22 @@
       throw new Error('Browser is not ready');
     }
     const script = `(function(u, p) {
-      const pwd = document.querySelector('input[type="password"]:not([disabled]):not([readonly])');
+      const passwordSelector = 'input[type="password"]:not([disabled]):not([readonly])';
+      const active = document.activeElement;
+      function findPasswordField() {
+        if (active instanceof HTMLInputElement && active.type === 'password' && !active.disabled && !active.readOnly) {
+          return active;
+        }
+        if (active instanceof HTMLInputElement) {
+          const activeScope = active.closest('form');
+          if (activeScope) {
+            const scopedPassword = activeScope.querySelector(passwordSelector);
+            if (scopedPassword) return scopedPassword;
+          }
+        }
+        return document.querySelector(passwordSelector);
+      }
+      const pwd = findPasswordField();
       if (!pwd) return { ok: false, filledUser: false };
       function setValue(input, value) {
         const proto = input instanceof HTMLTextAreaElement
@@ -1015,8 +1030,11 @@
     anchor: { left: number; top: number } | null;
   }
   let fillPrompt = $state<FillPrompt | null>(null);
+  let suppressFillPromptOrigin = '';
+  let suppressFillPromptUntil = 0;
 
   const FILL_POPOVER_WIDTH = 288; // tailwind w-72
+  const FILL_PROMPT_SUPPRESS_MS = 1200;
 
   function computeFillAnchor(rect: FieldRect | null): { left: number; top: number } | null {
     if (!rect) return null;
@@ -1069,6 +1087,10 @@
     rect: FieldRect | null
   ): Promise<void> {
     if (!origin) return;
+    if (origin === suppressFillPromptOrigin && Date.now() < suppressFillPromptUntil) {
+      fillPrompt = null;
+      return;
+    }
     // Updating an open popover's rect (scroll/layout shift) shouldn't have
     // to wait on the vault — recompute the anchor immediately and bail
     // before the async load if we already have the matches list.
@@ -1091,8 +1113,17 @@
   }
 
   async function fillFromPrompt(entry: VaultEntry): Promise<void> {
+    const promptOrigin = fillPrompt?.origin ?? '';
+    const suppressPrompt = () => {
+      if (!promptOrigin) return;
+      suppressFillPromptOrigin = promptOrigin;
+      suppressFillPromptUntil = Date.now() + FILL_PROMPT_SUPPRESS_MS;
+    };
+    suppressPrompt();
+    fillPrompt = null;
     try {
       const secret = await vaultStore.getSecret(entry.id);
+      suppressPrompt();
       const result = await runAutofill(secret.username, secret.password);
       if (!result.filledUser) {
         toast.success('Filled password (no username field detected)');
@@ -1111,6 +1142,7 @@
     username: string,
     password: string
   ): Promise<void> {
+    fillPrompt = null;
     try {
       await vaultStore.ensureLoaded();
     } catch {
