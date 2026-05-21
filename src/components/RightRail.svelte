@@ -16,6 +16,7 @@
   import { featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
+  import { withScenarioWidths, type ScenarioId, type ScenarioWidths } from '../lib/rail-widths';
   import { kbdHints } from '../stores/kbd-hints.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -62,15 +63,6 @@
   const RATIO_A = 0.30;
   const RATIO_B = 0.50;
   const RATIO_C0 = 0.55;
-
-  type ScenarioId = 'A' | 'B' | 'C';
-
-  interface ScenarioWidths {
-    A: number;
-    B: number;
-    C0: number;
-    C1: number;
-  }
 
   function computeDefaultWidths(): ScenarioWidths {
     if (typeof window === 'undefined') {
@@ -155,13 +147,9 @@
   });
 
   function setScenarioWidths(slot0: number, slot1: number): void {
-    if (currentScenario === 'A') {
-      scenarioWidths = { ...scenarioWidths, A: slot0 };
-    } else if (currentScenario === 'B') {
-      scenarioWidths = { ...scenarioWidths, B: slot0 };
-    } else {
-      scenarioWidths = { ...scenarioWidths, C0: slot0, C1: slot1 };
-    }
+    const next = withScenarioWidths(currentScenario, scenarioWidths, slot0, slot1);
+    if (next === scenarioWidths) return;
+    scenarioWidths = next;
   }
 
   // Slot lookup: which position (0 = left, 1 = right) a tab occupies in

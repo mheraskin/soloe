@@ -7,7 +7,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@shared': resolve(__dirname, 'shared'),
-      '@': resolve(__dirname, 'src')
+      '@': resolve(__dirname, 'src'),
+      '$lib': resolve(__dirname, 'src/lib')
     }
   },
   test: {
