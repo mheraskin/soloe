@@ -85,6 +85,26 @@
   let activeZoomFactor = $derived(device ? activeCanvasZoom : activePageZoom);
   let zoomPercent = $derived(Math.round(activeZoomFactor * 100));
 
+  function setTabRecordValue<T>(
+    getRecord: () => Record<string, T>,
+    tabId: string,
+    value: T
+  ): Record<string, T> {
+    const current = untrack(getRecord);
+    if (current[tabId] === value) return current;
+    return { ...current, [tabId]: value };
+  }
+
+  function deleteTabRecordValue<T>(
+    getRecord: () => Record<string, T>,
+    tabId: string
+  ): Record<string, T> {
+    const current = untrack(getRecord);
+    if (!(tabId in current)) return current;
+    const { [tabId]: _removed, ...rest } = current;
+    return rest;
+  }
+
   // Chrome's standard zoom factor list. Both page and canvas zoom step
   // through these so the user gets familiar increments instead of awkward
   // 1.2^n values from Electron's native zoom level.
@@ -249,11 +269,11 @@
     if (cached) return cached;
     const fn: AttachFn = (node) => {
       const wv = node as unknown as ElectronWebview;
-      webviewsById = { ...webviewsById, [tabId]: wv };
-      domReadyById = { ...domReadyById, [tabId]: false };
-      isLoadingById = { ...isLoadingById, [tabId]: false };
-      lastLoadedById = { ...lastLoadedById, [tabId]: initialUrl };
-      failureById = { ...failureById, [tabId]: null };
+      webviewsById = setTabRecordValue(() => webviewsById, tabId, wv);
+      domReadyById = setTabRecordValue(() => domReadyById, tabId, false);
+      isLoadingById = setTabRecordValue(() => isLoadingById, tabId, false);
+      lastLoadedById = setTabRecordValue(() => lastLoadedById, tabId, initialUrl);
+      failureById = setTabRecordValue(() => failureById, tabId, null);
 
       const onDomReady = () => {
         domReadyById = { ...domReadyById, [tabId]: true };
@@ -397,20 +417,16 @@
         wv.removeEventListener('did-stop-loading', onLoadStop);
         wv.removeEventListener('did-fail-load', onFail);
         wv.removeEventListener('ipc-message', onIpcMessage);
-        const { [tabId]: _w, ...restW } = webviewsById;
-        webviewsById = restW;
-        const { [tabId]: _dr, ...restDR } = domReadyById;
-        domReadyById = restDR;
-        const { [tabId]: _l, ...restL } = isLoadingById;
-        isLoadingById = restL;
-        const { [tabId]: _lu, ...restLU } = lastLoadedById;
-        lastLoadedById = restLU;
-        const { [tabId]: _f, ...restF } = failureById;
-        failureById = restF;
-        const { [tabId]: _dk, ...restDK } = lastAppliedDeviceKeyById;
-        lastAppliedDeviceKeyById = restDK;
-        const { [tabId]: _ua, ...restUA } = lastAppliedUaById;
-        lastAppliedUaById = restUA;
+        webviewsById = deleteTabRecordValue(() => webviewsById, tabId);
+        domReadyById = deleteTabRecordValue(() => domReadyById, tabId);
+        isLoadingById = deleteTabRecordValue(() => isLoadingById, tabId);
+        lastLoadedById = deleteTabRecordValue(() => lastLoadedById, tabId);
+        failureById = deleteTabRecordValue(() => failureById, tabId);
+        lastAppliedDeviceKeyById = deleteTabRecordValue(
+          () => lastAppliedDeviceKeyById,
+          tabId
+        );
+        lastAppliedUaById = deleteTabRecordValue(() => lastAppliedUaById, tabId);
         attachmentsByTabId.delete(tabId);
         // Drop the captured src so a resumed tab loads its current URL
         // rather than the URL it was on when first opened.
