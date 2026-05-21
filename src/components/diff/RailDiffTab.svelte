@@ -165,7 +165,7 @@
   );
 
   let commitScopeText = $derived.by<string>(() => {
-    if (reviewMode.kind !== 'range') return 'Commits';
+    if (reviewMode.kind !== 'range') return 'Working tree';
     const n = reviewMode.commits.length;
     const shortBase = reviewMode.base.slice(0, 7);
     const shortHead = reviewMode.head.slice(0, 7);
@@ -677,7 +677,7 @@
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col" class:select-none={resizingList}>
   <header class="flex min-w-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
-    <div class="flex min-w-0 flex-1 flex-col" class:hidden={diffExpanded}>
+    <div class="flex min-w-0 flex-1 items-center">
       <Popover.Root bind:open={pickerOpen}>
         <Popover.Trigger>
           {#snippet child({ props })}
@@ -685,11 +685,11 @@
               {...props}
               variant="ghost"
               size="xs"
-              class="-ml-1.5 h-5 max-w-full min-w-0 justify-start gap-1 self-start px-1.5 text-[10px] font-medium tracking-wider text-muted-foreground uppercase hover:text-foreground"
+              class="min-w-0 justify-start gap-1.5"
               aria-label="Choose review range"
               title={isRangeMode
                 ? `Review range — ${commitScopeText}`
-                : 'Pick commits to review'}
+                : 'Working tree — pick commits to review'}
               disabled={!activeCwd}
             >
               {#if isRangeMode}
@@ -699,10 +699,11 @@
               {/if}
               <span class="min-w-0 truncate">{commitScopeText}</span>
               {#if chipFilterShort}
-                <span class="shrink-0 rounded bg-muted px-1 font-mono text-[10px] normal-case tracking-normal text-muted-foreground">
+                <span class="shrink-0 rounded bg-muted px-1 font-mono text-[10px] text-muted-foreground">
                   {chipFilterShort}
                 </span>
               {/if}
+              <ChevronDown class="size-3 shrink-0 opacity-60" />
             </Button>
           {/snippet}
         </Popover.Trigger>
@@ -712,11 +713,8 @@
           {/if}
         </Popover.Content>
       </Popover.Root>
-      <span class="truncate text-xs text-foreground">
-        {selected ? selected.name : 'No session selected'}
-      </span>
     </div>
-    <div class="flex shrink-0 items-center gap-1" class:ml-auto={diffExpanded}>
+    <div class="flex shrink-0 items-center gap-1">
       {#if showComments}
         <Button
           variant="ghost"
@@ -751,6 +749,21 @@
           <X class="size-3" />
         </Button>
       {/if}
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={() => (diffExpanded = !diffExpanded)}
+        aria-label={diffExpanded ? 'Show file list' : 'Hide file list'}
+        title={diffExpanded ? 'Show file list & commit' : 'Hide file list & commit'}
+        aria-pressed={diffExpanded}
+        disabled={!activeCwd}
+      >
+        {#if diffExpanded}
+          <ChevronsDown class="size-3" />
+        {:else}
+          <ChevronsUp class="size-3" />
+        {/if}
+      </Button>
       <Button
         variant="ghost"
         size="xs"
@@ -800,18 +813,6 @@
           >
             <WrapText class="size-3" />
             <span>{workingDiff.wordWrap ? 'No wrap' : 'Wrap lines'}</span>
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
-            disabled={!activeCwd}
-            onSelect={() => (diffExpanded = !diffExpanded)}
-          >
-            {#if diffExpanded}
-              <ChevronsDown class="size-3" />
-              <span>Show file list</span>
-            {:else}
-              <ChevronsUp class="size-3" />
-              <span>Hide file list</span>
-            {/if}
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.Item
@@ -908,9 +909,11 @@
     </div>
 
     {#if activeCwd && !isRangeMode}
-      {#key activeCwd}
-        <CommitComposer cwd={activeCwd} />
-      {/key}
+      <div class:hidden={diffExpanded}>
+        {#key activeCwd}
+          <CommitComposer cwd={activeCwd} />
+        {/key}
+      </div>
     {/if}
 
     {#snippet wtChangeRow(change: WorkingChange)}
