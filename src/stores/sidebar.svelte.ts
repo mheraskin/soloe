@@ -8,21 +8,26 @@ const WIDTH_KEY = 'soloe.sidebarWidth.v2';
 // own resize against the sidebar's effective width without measuring DOM.
 export const SIDEBAR_MIN_WIDTH = 220;
 export const SIDEBAR_MAX_WIDTH = 460;
-// Default sidebar width as a ratio of viewport, capped at SIDEBAR_MAX_WIDTH.
+// Default sidebar width as a ratio of viewport, capped below the manual max so
+// first-run layouts stay balanced on wide windows while user resizing can still
+// go larger.
 // Pairs with the rail's 30/40/30 default so the three columns feel balanced
 // on first run.
 const SIDEBAR_DEFAULT_RATIO = 0.30;
+const SIDEBAR_DEFAULT_MAX_WIDTH = 390;
 const SIDEBAR_FALLBACK_WIDTH = 320;
 
 function computeDefaultWidth(): number {
   if (typeof window === 'undefined') return SIDEBAR_FALLBACK_WIDTH;
   const target = Math.round(window.innerWidth * SIDEBAR_DEFAULT_RATIO);
-  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, target));
+  return Math.min(SIDEBAR_DEFAULT_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, target));
 }
 
 function readStoredWidth(): number {
   if (typeof localStorage === 'undefined') return computeDefaultWidth();
-  const raw = Number(localStorage.getItem(WIDTH_KEY));
+  const stored = localStorage.getItem(WIDTH_KEY);
+  if (stored === null || stored.trim() === '') return computeDefaultWidth();
+  const raw = Number(stored);
   if (!Number.isFinite(raw)) return computeDefaultWidth();
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(raw)));
 }
