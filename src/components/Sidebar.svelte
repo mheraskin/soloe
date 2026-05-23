@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, Search, FolderOpen, X, PanelLeftClose } from '@lucide/svelte';
+  import { Search, FolderOpen, X, PanelLeftClose } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
@@ -20,6 +20,7 @@
   import KbdHint from './KbdHint.svelte';
   import ProjectSection from './ProjectSection.svelte';
   import SessionItem from './SessionItem.svelte';
+  import AgentLaunchPopover from './AgentLaunchPopover.svelte';
 
   const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
   const MAX_WIDTH = SIDEBAR_MAX_WIDTH;
@@ -46,6 +47,14 @@
   // Width comes from the sidebar store now so the rail can clamp against
   // it without measuring the DOM. The store owns persistence too.
   let width = $derived(sidebar.width);
+  let newSessionContext = $derived.by(() => {
+    const selected = sessions.selected;
+    return {
+      ...(selected?.projectId ? { projectId: selected.projectId } : {}),
+      ...(selected?.cwd ? { cwd: selected.cwd } : {}),
+      ...(selected?.lastBranch ? { branch: selected.lastBranch } : {})
+    };
+  });
 
   function clearSettleTimers() {
     for (const t of settleTimers) clearTimeout(t);
@@ -275,16 +284,16 @@
         <span class="min-w-0 truncate">Open project</span>
         <KbdHint keys={Keymap.openProject.keys} class="ml-0.5 shrink-0" />
       </Button>
-      <Button
-        variant="outline"
-        size="sm"
+      <AgentLaunchPopover
+        projectId={newSessionContext.projectId ?? null}
+        cwd={newSessionContext.cwd}
+        branch={newSessionContext.branch}
+        side="bottom"
+        align="end"
         class="min-w-0 justify-center gap-1.5 px-2"
-        onclick={() => void sessions.createPreferredWithDefaults({}).catch(reportError)}
-      >
-        <Plus class="size-3.5" />
-        <span class="min-w-0 truncate">New session</span>
-        <KbdHint keys={Keymap.newSession.keys} class="ml-0.5 shrink-0" />
-      </Button>
+        title="New session"
+        ariaLabel="New session"
+      />
     </div>
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>

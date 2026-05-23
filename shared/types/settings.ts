@@ -71,6 +71,27 @@ export interface QuickLaunchPreset {
   extraArgs?: string;
 }
 
+export const DEFAULT_QUICK_LAUNCH_PRESETS: QuickLaunchPreset[] = [
+  {
+    id: 'claude-skip-permissions',
+    label: 'Claude danger',
+    provider: 'claude_code',
+    dangerouslySkipPermissions: true
+  },
+  {
+    id: 'claude-bypass-permissions',
+    label: 'Claude bypass',
+    provider: 'claude_code',
+    extraArgs: '--permission-mode bypassPermissions'
+  },
+  {
+    id: 'codex-yolo',
+    label: 'Codex YOLO',
+    provider: 'codex',
+    extraArgs: '--dangerously-bypass-approvals-and-sandbox'
+  }
+];
+
 export interface SettingsIntegrations {
   autoRefreshMcpUrl: boolean;
   // Opt-in for Soloe-dispatched tasks that spawn `claude -p` (worktree
@@ -134,6 +155,7 @@ export interface Settings {
   binaries: SettingsBinaries;
   models: SettingsModels;
   quickLaunch: QuickLaunchPreset[];
+  quickLaunchDefaultsSeeded: boolean;
   integrations: SettingsIntegrations;
   notes: SettingsNotes;
 }
@@ -147,6 +169,7 @@ export type SettingsUpdate = {
   binaries?: Partial<SettingsBinaries>;
   models?: Partial<SettingsModels>;
   quickLaunch?: QuickLaunchPreset[];
+  quickLaunchDefaultsSeeded?: boolean;
   integrations?: Partial<SettingsIntegrations>;
   notes?: Partial<SettingsNotes>;
 };
@@ -170,7 +193,8 @@ export const DEFAULT_SETTINGS: Settings = {
     gitCommitGeneration: DEFAULT_MODEL_CODEX,
     worktreeOverview: DEFAULT_MODEL_CODEX
   },
-  quickLaunch: [],
+  quickLaunch: DEFAULT_QUICK_LAUNCH_PRESETS,
+  quickLaunchDefaultsSeeded: true,
   integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false },
   notes: { draftsPerWorktree: false }
 };

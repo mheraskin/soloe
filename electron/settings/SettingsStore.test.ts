@@ -131,6 +131,37 @@ describe('SettingsStore — migration', () => {
     expect('density' in s.appearance).toBe(false);
     expect('fontSize' in s.appearance).toBe(false);
   });
+
+  it('seeds quick launch defaults for old empty settings once', async () => {
+    const onDisk = {
+      version: 1,
+      appearance: { theme: 'dark' },
+      defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
+      binaries: {},
+      quickLaunch: []
+    };
+    await fs.writeFile(storePath, JSON.stringify(onDisk), 'utf8');
+    const store = new SettingsStore(storePath);
+    const s = await store.get();
+    expect(s.quickLaunch.length).toBe(DEFAULT_SETTINGS.quickLaunch.length);
+    expect(s.quickLaunchDefaultsSeeded).toBe(true);
+  });
+
+  it('preserves an explicitly removed quick launch list after seeding', async () => {
+    const onDisk = {
+      version: 1,
+      appearance: { theme: 'dark' },
+      defaults: { runMode: 'wsl', wslDistro: 'Ubuntu', shell: 'auto', cwd: '~' },
+      binaries: {},
+      quickLaunch: [],
+      quickLaunchDefaultsSeeded: true
+    };
+    await fs.writeFile(storePath, JSON.stringify(onDisk), 'utf8');
+    const store = new SettingsStore(storePath);
+    const s = await store.get();
+    expect(s.quickLaunch).toEqual([]);
+    expect(s.quickLaunchDefaultsSeeded).toBe(true);
+  });
 });
 
 describe('SettingsStore — disk round-trip', () => {

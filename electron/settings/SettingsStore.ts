@@ -51,6 +51,9 @@ export class SettingsStore {
       binaries: mergeBinaries(this.cache!.binaries, patch.binaries),
       models: mergeModels(this.cache!.models, patch.models),
       quickLaunch: patch.quickLaunch ?? [...this.cache!.quickLaunch],
+      quickLaunchDefaultsSeeded: patch.quickLaunchDefaultsSeeded ?? (
+        patch.quickLaunch ? true : this.cache!.quickLaunchDefaultsSeeded
+      ),
       integrations: { ...this.cache!.integrations, ...(patch.integrations ?? {}) },
       notes: { ...this.cache!.notes, ...(patch.notes ?? {}) }
     };
@@ -188,6 +191,11 @@ function parseSettings(raw: unknown): Settings {
   const defaults = isObject(raw['defaults']) ? raw['defaults'] : {};
   const binaries = isObject(raw['binaries']) ? raw['binaries'] : {};
 
+  const hasQuickLaunch = Object.hasOwn(raw, 'quickLaunch');
+  const quickLaunchDefaultsSeeded = pickBoolean(
+    raw['quickLaunchDefaultsSeeded'],
+    hasQuickLaunch && Array.isArray(raw['quickLaunch']) && (raw['quickLaunch'] as unknown[]).length > 0
+  );
   const out: Settings = {
     version: 1,
     appearance: {
@@ -215,7 +223,8 @@ function parseSettings(raw: unknown): Settings {
     },
     binaries: filterStringRecord(binaries),
     models: parseModels(raw['models']),
-    quickLaunch: parseQuickLaunch(raw['quickLaunch']),
+    quickLaunch: parseQuickLaunch(raw['quickLaunch'], quickLaunchDefaultsSeeded),
+    quickLaunchDefaultsSeeded: true,
     integrations: parseIntegrations(raw['integrations']),
     notes: parseNotes(raw['notes'])
   };
@@ -294,8 +303,11 @@ function filterStringRecord(raw: Record<string, unknown>): Settings['binaries'] 
   return out;
 }
 
-function parseQuickLaunch(raw: unknown): QuickLaunchPreset[] {
-  if (!Array.isArray(raw)) return [];
+function parseQuickLaunch(raw: unknown, defaultsSeeded: boolean): QuickLaunchPreset[] {
+  if (Array.isArray(raw) && raw.length === 0 && !defaultsSeeded) {
+    return clone(DEFAULT_SETTINGS.quickLaunch);
+  }
+  if (!Array.isArray(raw)) return clone(DEFAULT_SETTINGS.quickLaunch);
   const out: QuickLaunchPreset[] = [];
   for (const item of raw) {
     if (!isObject(item)) continue;
@@ -346,6 +358,9 @@ function validateSettings(s: Settings): void {
     }
   }
   if (!Array.isArray(s.quickLaunch)) throw new Error('quickLaunch must be an array');
+  if (typeof s.quickLaunchDefaultsSeeded !== 'boolean') {
+    throw new Error('quickLaunchDefaultsSeeded must be a boolean');
+  }
   for (const p of s.quickLaunch) {
     if (typeof p.id !== 'string' || !p.id) throw new Error('quickLaunch preset requires an id');
     if (typeof p.label !== 'string' || !p.label) throw new Error('quickLaunch preset requires a label');

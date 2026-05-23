@@ -16,18 +16,22 @@
 
   let {
     projectId = null,
-    cwd,
+    cwd = undefined,
     branch,
     title = 'New session',
     ariaLabel = 'New session',
-    class: className = ''
+    class: className = '',
+    side = 'right',
+    align = 'end'
   }: {
     projectId?: ProjectId | null;
-    cwd: string;
+    cwd?: string;
     branch?: string;
     title?: string;
     ariaLabel?: string;
     class?: string;
+    side?: 'top' | 'right' | 'bottom' | 'left';
+    align?: 'start' | 'center' | 'end';
   } = $props();
 
   let open = $state(false);
@@ -89,7 +93,7 @@
     void sessions
       .createWithDefaults({
         ...(projectId ? { projectId } : {}),
-        cwd,
+        ...(cwd ? { cwd } : {}),
         ...(branch ? { branch } : {})
       })
       .catch(reportError);
@@ -100,7 +104,7 @@
     void sessions
       .createPreferredWithDefaults({
         ...(projectId ? { projectId } : {}),
-        cwd,
+        ...(cwd ? { cwd } : {}),
         ...(branch ? { branch } : {})
       })
       .catch(reportError);
@@ -111,7 +115,7 @@
     void sessions
       .createAgentWithDefaults(kind, {
         ...(projectId ? { projectId } : {}),
-        cwd,
+        ...(cwd ? { cwd } : {}),
         ...(branch ? { branch } : {})
       })
       .catch(reportError);
@@ -127,7 +131,7 @@
     void sessions
       .createAgentWithDefaults(preset.provider, {
         ...(projectId ? { projectId } : {}),
-        cwd,
+        ...(cwd ? { cwd } : {}),
         ...(branch ? { branch } : {}),
         ...(preset.model ? { model: preset.model } : {}),
         ...(args.length ? { extraArgs: args } : {})
@@ -159,8 +163,8 @@
     {/snippet}
   </Popover.Trigger>
   <Popover.Content
-    align="end"
-    side="right"
+    {align}
+    {side}
     sideOffset={8}
     class="z-40 w-48 rounded-md border-border bg-card p-1.5 shadow-md"
     onpointerenter={clearCloseTimer}
