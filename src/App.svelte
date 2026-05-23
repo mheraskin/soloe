@@ -578,6 +578,11 @@
     void closeCollapsedSession(session);
   }
 
+  function selectCollapsedSession(id: string): void {
+    rightRail.fullscreen = false;
+    sessions.select(id);
+  }
+
   function closeMenusFromTitleBar(node: HTMLElement): { destroy(): void } {
     function onPointerDown(e: PointerEvent): void {
       const target = e.target as HTMLElement | null;
@@ -820,7 +825,7 @@
     if (idx !== null) {
       consume(e);
       if (sidebar.hidden && collapsedNav?.sessions[idx]) {
-        sessions.select(collapsedNav.sessions[idx].id);
+        selectCollapsedSession(collapsedNav.sessions[idx].id);
       } else {
         nav.selectByIndex(idx);
       }
@@ -993,7 +998,7 @@
                     } ${isDraggingCollapsedSession(s.id) ? 'opacity-40' : ''}`}
                     title={s.index !== null ? `${s.name} (Ctrl+${s.index})` : s.name}
                     draggable="true"
-                    onclick={() => sessions.select(s.id)}
+                    onclick={() => selectCollapsedSession(s.id)}
                     onpointerdown={onCollapsedSessionPointerDown}
                     onauxclick={(e) => onCollapsedSessionAuxClick(e, s.session)}
                     ondragstart={(e) => onCollapsedSessionDragStart(e, s.session)}
