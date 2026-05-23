@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
   import {
     ArrowRight,
@@ -12,6 +13,7 @@
   import type { Session, SessionColor } from '@shared/types/sessions.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { sessionContextMenus } from '../stores/session-context-menus.svelte';
   import { sessionHandoff } from '../stores/session-handoff.svelte';
   import { modal } from '../stores/modal.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -56,6 +58,11 @@
       ? [...SESSION_COLOR_TOKENS]
       : SESSION_COLOR_TOKENS.filter((c) => QUICK_COLORS.includes(c) || c === session.color)
   );
+
+  onMount(() => sessionContextMenus.onCloseAll(() => {
+    menuOpen = false;
+    paletteExpanded = false;
+  }));
 
   async function start() {
     try { await sessions.start(session.id); } catch (err) { reportError(err); }

@@ -26,6 +26,7 @@
   import { filePalette } from './stores/file-palette.svelte';
   import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
+  import { sessionContextMenus } from './stores/session-context-menus.svelte';
   import { sidebar } from './stores/sidebar.svelte';
   import { browserStore } from './stores/browser.svelte';
   import { vaultStore } from './stores/vault.svelte';
@@ -487,6 +488,20 @@
     void closeCollapsedSession(session);
   }
 
+  function closeMenusFromTitleBar(node: HTMLElement): { destroy(): void } {
+    function onPointerDown(e: PointerEvent): void {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-session-context-trigger]')) return;
+      sessionContextMenus.closeAll();
+    }
+    node.addEventListener('pointerdown', onPointerDown);
+    return {
+      destroy() {
+        node.removeEventListener('pointerdown', onPointerDown);
+      }
+    };
+  }
+
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
       consume(e);
@@ -639,6 +654,7 @@
 
 <div class="flex h-full flex-col overflow-hidden">
   <header
+    use:closeMenusFromTitleBar
     class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
     style="-webkit-app-region: drag"
   >
@@ -775,12 +791,13 @@
                     type="button"
                     role="tab"
                     aria-selected={s.active}
+                    data-session-context-trigger="true"
                     data-chip-color={s.session.color ?? undefined}
                     data-chip-active={s.active ? 'true' : undefined}
                     style={s.session.color
                       ? `--chip-color: var(--session-${s.session.color});`
                       : undefined}
-                    class={`collapsed-session-chip inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm border border-transparent px-1.5 text-[11px] leading-none transition-colors ${
+                    class={`collapsed-session-chip inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
                       s.active
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground'
@@ -874,7 +891,6 @@
 <style>
   .collapsed-session-chip[data-chip-color] {
     background-color: color-mix(in oklab, var(--chip-color) 10%, transparent);
-    border-color: color-mix(in oklab, var(--chip-color) 28%, transparent);
     color: var(--foreground);
   }
   .collapsed-session-chip[data-chip-color]:hover {
@@ -882,6 +898,5 @@
   }
   .collapsed-session-chip[data-chip-color][data-chip-active='true'] {
     background-color: color-mix(in oklab, var(--chip-color) 24%, transparent);
-    border-color: color-mix(in oklab, var(--chip-color) 48%, transparent);
   }
 </style>
