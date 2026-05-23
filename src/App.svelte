@@ -15,7 +15,12 @@
   } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import type { GitWorktree } from '@shared/types/git.js';
-  import type { Session, SessionLaunchKind } from '@shared/types/sessions.js';
+  import type {
+    AgentObservedState,
+    Session,
+    SessionLaunchKind,
+    SessionStatus
+  } from '@shared/types/sessions.js';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
@@ -24,6 +29,7 @@
   import { nav } from './stores/nav.svelte';
   import { commandPalette } from './stores/command-palette.svelte';
   import { filePalette } from './stores/file-palette.svelte';
+  import { agentNotifications } from './stores/agent-notifications.svelte';
   import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
   import { sessionContextMenus } from './stores/session-context-menus.svelte';
@@ -42,6 +48,10 @@
   } from './lib/keymap';
   import { toggleRailTabAndFocus } from './lib/rail-focus';
   import { displaySessionKind } from './lib/session-agent';
+  import {
+    displayedAgentState as resolveDisplayedAgentState,
+    displayedAgentSummary
+  } from './lib/session-display-state';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
   import { toast } from 'svelte-sonner';
@@ -158,6 +168,11 @@
     sessionCount: number;
     firstSessionId: string | null;
   };
+  type CollapsedStatusTone = 'active' | 'done' | 'issue';
+  type CollapsedStatusDot = {
+    tone: CollapsedStatusTone;
+    title: string;
+  };
   type CollapsedNav = {
     projectId: ProjectId | null;
     project: string;
@@ -171,6 +186,7 @@
       name: string;
       index: number | null;
       kind: SessionLaunchKind;
+      statusDot: CollapsedStatusDot | null;
       active: boolean;
       session: Session;
     }>;
@@ -199,6 +215,78 @@
     return worktree.branch ?? (worktree.detached ? 'detached' : worktreeLabel(projectPath, worktree.path));
   }
 
+  function collapsedStatusDotClass(tone: CollapsedStatusTone): string {
+    const classes = {
+      active: 'bg-warning',
+      done: 'bg-success',
+      issue: 'bg-destructive'
+    } satisfies Record<CollapsedStatusTone, string>;
+    return classes[tone];
+  }
+
+  function agentStateStatusTone(state: AgentObservedState): CollapsedStatusTone {
+    if (state === 'completed' || state === 'exited') return 'done';
+    if (state === 'failed' || state === 'waiting_for_approval') return 'issue';
+    return 'active';
+  }
+
+  function runtimeStatusTone(status: SessionStatus): CollapsedStatusTone | null {
+    if (status === 'running' || status === 'starting') return 'active';
+    if (status === 'exited') return 'done';
+    if (status === 'error') return 'issue';
+    return null;
+  }
+
+  function statusTitle(label: string, summary: string | null): string {
+    return summary ? `${label} · ${summary}` : label;
+  }
+
+  function stateLabel(state: AgentObservedState | SessionStatus): string {
+    return state.replaceAll('_', ' ');
+  }
+
+  function buildCollapsedStatusDot(session: Session): CollapsedStatusDot | null {
+    const status = sessions.statusFor(session.id);
+    const observed = sessions.observationFor(session.id);
+    const latestEvent = sessions.eventsFor(session.id)[0] ?? null;
+    const observedSummary = latestEvent?.state === observed?.state
+      ? latestEvent?.summary ?? null
+      : observed?.resultSummary ?? observed?.promptSummary ?? null;
+    if (observed?.state === 'completed' || observed?.state === 'exited') {
+      return {
+        tone: 'done',
+        title: statusTitle(stateLabel(observed.state), observedSummary)
+      };
+    }
+    if (observed?.state === 'failed' || observed?.state === 'waiting_for_approval') {
+      return {
+        tone: 'issue',
+        title: statusTitle(stateLabel(observed.state), observedSummary)
+      };
+    }
+    const displayedState = resolveDisplayedAgentState({
+      observed,
+      status,
+      hasRuntime: sessions.runtime[session.id] !== undefined,
+      hasNotificationMarker: agentNotifications.markerFor(session.id) !== null
+    });
+
+    if (displayedState) {
+      const summary = displayedAgentSummary(observed, displayedState, observedSummary);
+      return {
+        tone: agentStateStatusTone(displayedState),
+        title: statusTitle(stateLabel(displayedState), summary)
+      };
+    }
+
+    const runtimeTone = runtimeStatusTone(status);
+    if (!runtimeTone) return null;
+    return {
+      tone: runtimeTone,
+      title: stateLabel(status)
+    };
+  }
+
   let collapsedNav = $derived.by<CollapsedNav | null>(() => {
     if (!sidebar.hidden) return null;
     const sel = sessions.selected;
@@ -225,6 +313,7 @@
       name: s.name,
       index: i < 9 ? i + 1 : null,
       kind: displaySessionKind(s, sessions.observationFor(s.id)),
+      statusDot: buildCollapsedStatusDot(s),
       active: s.id === sel.id,
       session: s
     }));
@@ -934,6 +1023,13 @@
                       </span>
                     {/if}
                     <KindIcon kind={s.kind} size={12} />
+                    {#if s.statusDot}
+                      <span
+                        class={`size-1.5 shrink-0 rounded-full ${collapsedStatusDotClass(s.statusDot.tone)}`}
+                        title={s.statusDot.title}
+                        aria-label={s.statusDot.title}
+                      ></span>
+                    {/if}
                     <span class="min-w-0 truncate">{s.name}</span>
                   </button>
                 {/snippet}
