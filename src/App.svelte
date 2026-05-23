@@ -4,24 +4,18 @@
   import {
     Check,
     ChevronDown,
-    Copy,
     FolderGit2,
     FolderOpen,
     Maximize2,
     Minus,
     PanelLeftOpen,
-    Pencil,
     Plus,
-    Play,
-    RotateCcw,
     Settings,
-    Square,
-    Trash2,
     X
   } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
   import type { GitWorktree } from '@shared/types/git.js';
-  import type { Session, SessionStatus } from '@shared/types/sessions.js';
+  import type { Session, SessionLaunchKind } from '@shared/types/sessions.js';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { projects } from './stores/projects.svelte';
@@ -33,12 +27,10 @@
   import { newSessionPicker } from './stores/new-session-picker.svelte';
   import { rightRail } from './stores/right-rail.svelte';
   import { sidebar } from './stores/sidebar.svelte';
-  import { modal } from './stores/modal.svelte';
   import { browserStore } from './stores/browser.svelte';
   import { vaultStore } from './stores/vault.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
-  import { confirmDeleteSession } from './lib/session-delete-confirmation';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import {
     Keymap,
@@ -47,10 +39,10 @@
     tabIndexFromEvent
   } from './lib/keymap';
   import { toggleRailTabAndFocus } from './lib/rail-focus';
+  import { displaySessionKind } from './lib/session-agent';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
-  import * as ContextMenu from '$lib/components/ui/context-menu';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Toaster } from '$lib/components/ui/sonner';
   import Sidebar from './components/Sidebar.svelte';
@@ -67,6 +59,8 @@
   import AgentIntegrationSetupDialog from './components/AgentIntegrationSetupDialog.svelte';
   import AgentNotificationToasts from './components/AgentNotificationToasts.svelte';
   import AgentLaunchPopover from './components/AgentLaunchPopover.svelte';
+  import SessionContextMenu from './components/SessionContextMenu.svelte';
+  import KindIcon from './components/KindIcon.svelte';
   import appIconUrl from '../build/favicon.svg';
 
   let appliedTheme: string | null = null;
@@ -173,9 +167,9 @@
       id: string;
       name: string;
       index: number | null;
+      kind: SessionLaunchKind;
       active: boolean;
       session: Session;
-      status: SessionStatus;
     }>;
   };
 
@@ -218,19 +212,18 @@
       worktree = basename(cwd);
     }
     const normSelCwd = normPath(cwd);
-    // Order siblings the same way the sidebar (and Ctrl+N) does, so the
-    // numbers shown here line up with the actual hotkeys.
+    // Order siblings the same way the sidebar does, then number them inside
+    // the active worktree. With the sidebar hidden, Ctrl+N follows this list.
     const ordered = nav.flatActiveProject.filter(
       (s) => normPath(s.cwd?.trim() ?? '') === normSelCwd
     );
-    const indexHints = nav.sessionIndexHints;
-    const sessionList = ordered.map((s) => ({
+    const sessionList = ordered.map((s, i) => ({
       id: s.id,
       name: s.name,
-      index: indexHints[s.id] ?? null,
+      index: i < 9 ? i + 1 : null,
+      kind: displaySessionKind(s, sessions.observationFor(s.id)),
       active: s.id === sel.id,
-      session: s,
-      status: sessions.statusFor(s.id)
+      session: s
     }));
     const projectOptions = projects.recents.map((p) => ({
       id: p.id,
@@ -303,12 +296,6 @@
       sessions: sessionList
     };
   });
-
-  const SUPERSCRIPT_DIGITS = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
-  function indexGlyph(n: number): string {
-    if (n < 0 || n > 9) return String(n);
-    return SUPERSCRIPT_DIGITS[n]!;
-  }
 
   // Keep the rail store's notion of the active worktree in sync with the
   // selected session, so its per-worktree open/fullscreen/tab state can be
@@ -477,61 +464,6 @@
     });
   }
 
-  function renameSession(session: Session): void {
-    modal.openEdit(session);
-  }
-
-  async function startSession(session: Session): Promise<void> {
-    try {
-      await sessions.start(session.id);
-    } catch (err) {
-      reportError(err);
-    }
-  }
-
-  async function stopSession(session: Session): Promise<void> {
-    try {
-      await sessions.stop(session.id);
-    } catch (err) {
-      reportError(err);
-    }
-  }
-
-  async function restartSession(session: Session): Promise<void> {
-    try {
-      await sessions.restart(session.id);
-    } catch (err) {
-      reportError(err);
-    }
-  }
-
-  async function openSessionCwd(session: Session): Promise<void> {
-    try {
-      await ipc.system.openPath(session.id);
-    } catch (err) {
-      reportError(err);
-    }
-  }
-
-  async function copySessionCommand(session: Session): Promise<void> {
-    try {
-      const spec = await ipc.sessions.previewCommand(session.id);
-      await navigator.clipboard.writeText(spec.description);
-    } catch (err) {
-      reportError(err);
-    }
-  }
-
-  async function deleteSession(session: Session): Promise<void> {
-    const ok = await confirmDeleteSession(session);
-    if (!ok) return;
-    try {
-      await sessions.remove(session.id);
-    } catch (err) {
-      reportError(err);
-    }
-  }
-
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
       consume(e);
@@ -660,7 +592,11 @@
     const idx = tabIndexFromEvent(e);
     if (idx !== null) {
       consume(e);
-      nav.selectByIndex(idx);
+      if (sidebar.hidden && collapsedNav?.sessions[idx]) {
+        sessions.select(collapsedNav.sessions[idx].id);
+      } else {
+        nav.selectByIndex(idx);
+      }
       return;
     }
     if (Keymap.cycleNext.match(e)) {
@@ -809,73 +745,39 @@
             aria-label="Sessions in this worktree"
           >
             {#each collapsedNav.sessions as s (s.id)}
-              <ContextMenu.Root>
-                <ContextMenu.Trigger>
-                  {#snippet child({ props })}
-                    <button
-                      {...props}
-                      type="button"
-                      role="tab"
-                      aria-selected={s.active}
-                      class={`inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
-                        s.active
-                          ? 'bg-muted text-foreground'
-                          : 'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground'
-                      }`}
-                      title={s.index !== null
-                        ? `${s.name} (Ctrl+${s.index})`
-                        : s.name}
-                      onclick={() => sessions.select(s.id)}
-                    >
-                      {#if s.index !== null}
-                        <span
-                          class={`font-mono text-[10px] leading-none ${
-                            s.active ? 'text-muted-foreground' : 'text-muted-foreground/50'
-                          }`}
-                          aria-hidden="true"
-                        >
-                          {indexGlyph(s.index)}
-                        </span>
-                      {/if}
-                      <span class="min-w-0 truncate">{s.name}</span>
-                    </button>
-                  {/snippet}
-                </ContextMenu.Trigger>
-                <ContextMenu.Content class="w-56">
-                  {#if s.status === 'stopped' || s.status === 'exited' || s.status === 'error'}
-                    <ContextMenu.Item onSelect={() => void startSession(s.session)}>
-                      <Play /> <span>Start</span>
-                    </ContextMenu.Item>
-                  {/if}
-                  {#if s.status === 'running' || s.status === 'starting'}
-                    <ContextMenu.Item onSelect={() => void stopSession(s.session)}>
-                      <Square /> <span>Stop</span>
-                    </ContextMenu.Item>
-                  {/if}
-                  {#if s.status === 'running'}
-                    <ContextMenu.Item onSelect={() => void restartSession(s.session)}>
-                      <RotateCcw /> <span>Restart</span>
-                    </ContextMenu.Item>
-                  {/if}
-                  <ContextMenu.Separator />
-                  <ContextMenu.Item onSelect={() => renameSession(s.session)}>
-                    <Pencil /> <span>Rename...</span>
-                  </ContextMenu.Item>
-                  <ContextMenu.Item onSelect={() => renameSession(s.session)}>
-                    <Pencil /> <span>Edit...</span>
-                  </ContextMenu.Item>
-                  <ContextMenu.Item onSelect={() => void openSessionCwd(s.session)}>
-                    <FolderOpen /> <span>Open cwd</span>
-                  </ContextMenu.Item>
-                  <ContextMenu.Item onSelect={() => void copySessionCommand(s.session)}>
-                    <Copy /> <span>Copy command</span>
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator />
-                  <ContextMenu.Item variant="destructive" onSelect={() => void deleteSession(s.session)}>
-                    <Trash2 /> <span>Delete</span>
-                  </ContextMenu.Item>
-                </ContextMenu.Content>
-              </ContextMenu.Root>
+              <SessionContextMenu session={s.session}>
+                {#snippet trigger({ props })}
+                  <button
+                    {...props}
+                    type="button"
+                    role="tab"
+                    aria-selected={s.active}
+                    data-chip-color={s.session.color ?? undefined}
+                    data-chip-active={s.active ? 'true' : undefined}
+                    style={s.session.color
+                      ? `--chip-color: var(--session-${s.session.color});`
+                      : undefined}
+                    class={`collapsed-session-chip inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm border border-transparent px-1.5 text-[11px] leading-none transition-colors ${
+                      s.active
+                        ? 'bg-muted text-foreground'
+                        : 'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground'
+                    }`}
+                    title={s.index !== null ? `${s.name} (Ctrl+${s.index})` : s.name}
+                    onclick={() => sessions.select(s.id)}
+                  >
+                    {#if s.index !== null}
+                      <span
+                        class="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border/60 bg-background/40 px-0.5 font-mono text-[9px] leading-none text-muted-foreground"
+                        aria-hidden="true"
+                      >
+                        {s.index}
+                      </span>
+                    {/if}
+                    <KindIcon kind={s.kind} size={12} />
+                    <span class="min-w-0 truncate">{s.name}</span>
+                  </button>
+                {/snippet}
+              </SessionContextMenu>
             {/each}
           </div>
         {/if}
@@ -943,3 +845,18 @@
   <AgentNotificationToasts />
   <Toaster richColors closeButton />
 </div>
+
+<style>
+  .collapsed-session-chip[data-chip-color] {
+    background-color: color-mix(in oklab, var(--chip-color) 10%, transparent);
+    border-color: color-mix(in oklab, var(--chip-color) 28%, transparent);
+    color: var(--foreground);
+  }
+  .collapsed-session-chip[data-chip-color]:hover {
+    background-color: color-mix(in oklab, var(--chip-color) 18%, transparent);
+  }
+  .collapsed-session-chip[data-chip-color][data-chip-active='true'] {
+    background-color: color-mix(in oklab, var(--chip-color) 24%, transparent);
+    border-color: color-mix(in oklab, var(--chip-color) 48%, transparent);
+  }
+</style>

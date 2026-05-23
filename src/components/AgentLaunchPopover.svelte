@@ -22,7 +22,7 @@
     ariaLabel = 'New session',
     class: className = '',
     side = 'right',
-    align = 'end'
+    align = 'start'
   }: {
     projectId?: ProjectId | null;
     cwd?: string;
