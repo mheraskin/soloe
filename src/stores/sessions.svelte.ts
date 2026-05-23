@@ -575,14 +575,14 @@ class SessionsStore {
   private pickNextAfterRemoval(removedId: SessionId): SessionId | null {
     const removedIndex = this.sessions.findIndex((s) => s.id === removedId);
     if (removedIndex < 0) return null;
-    const projectKey = this.sessions[removedIndex]!.projectId ?? null;
+    const removed = this.sessions[removedIndex]!;
     for (let i = removedIndex + 1; i < this.sessions.length; i += 1) {
       const s = this.sessions[i]!;
-      if ((s.projectId ?? null) === projectKey) return s.id;
+      if (this.isSameWorktree(removed, s)) return s.id;
     }
     for (let i = removedIndex - 1; i >= 0; i -= 1) {
       const s = this.sessions[i]!;
-      if ((s.projectId ?? null) === projectKey) return s.id;
+      if (this.isSameWorktree(removed, s)) return s.id;
     }
     return null;
   }

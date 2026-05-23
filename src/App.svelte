@@ -31,6 +31,7 @@
   import { vaultStore } from './stores/vault.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc } from './lib/ipc';
+  import { confirmDeleteSession } from './lib/session-delete-confirmation';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import {
     Keymap,
@@ -464,6 +465,28 @@
     });
   }
 
+  async function closeCollapsedSession(session: Session): Promise<void> {
+    const ok = await confirmDeleteSession(session);
+    if (!ok) return;
+    try {
+      await sessions.remove(session.id);
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  function onCollapsedSessionPointerDown(e: PointerEvent): void {
+    if (e.button !== 1) return;
+    e.preventDefault();
+  }
+
+  function onCollapsedSessionAuxClick(e: MouseEvent, session: Session): void {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void closeCollapsedSession(session);
+  }
+
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
       consume(e);
@@ -764,6 +787,8 @@
                     }`}
                     title={s.index !== null ? `${s.name} (Ctrl+${s.index})` : s.name}
                     onclick={() => sessions.select(s.id)}
+                    onpointerdown={onCollapsedSessionPointerDown}
+                    onauxclick={(e) => onCollapsedSessionAuxClick(e, s.session)}
                   >
                     {#if s.index !== null}
                       <span
