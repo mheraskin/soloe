@@ -43,6 +43,7 @@
   import { toggleRailTabAndFocus } from './lib/rail-focus';
   import { displaySessionKind } from './lib/session-agent';
   import { kbdHints } from './stores/kbd-hints.svelte';
+  import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -502,6 +503,105 @@
     };
   }
 
+  function sameOrder(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function horizontalDropPositionFromEvent(event: DragEvent, el: HTMLElement): DropPosition {
+    const rect = el.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    return offsetX < rect.width / 2 ? 'before' : 'after';
+  }
+
+  function reorderCollapsedSession(args: {
+    draggedId: string;
+    targetId: string;
+    position: DropPosition;
+  }): void {
+    const list = collapsedNav?.sessions.map((s) => s.session) ?? [];
+    const ids = list.map((s) => s.id);
+    if (!ids.includes(args.draggedId) || !ids.includes(args.targetId)) return;
+    const without = ids.filter((id) => id !== args.draggedId);
+    let insertAt = without.indexOf(args.targetId);
+    if (insertAt < 0) insertAt = without.length;
+    if (args.position === 'after') insertAt += 1;
+    const newSubset = [
+      ...without.slice(0, insertAt),
+      args.draggedId,
+      ...without.slice(insertAt)
+    ];
+    if (sameOrder(ids, newSubset)) return;
+    const subsetSet = new Set(ids);
+    const queue = [...newSubset];
+    const allIds = sessions.sessions.map((s) => {
+      if (subsetSet.has(s.id)) return queue.shift() ?? s.id;
+      return s.id;
+    });
+    void sessions.reorder(allIds).catch(reportError);
+  }
+
+  function onCollapsedSessionDragStart(e: DragEvent, session: Session): void {
+    if (!e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DND_MIME.session, session.id);
+    dnd.begin({
+      kind: 'session',
+      id: session.id,
+      projectId: session.projectId ?? null,
+      worktreeCwd: session.cwd
+    });
+    sessionContextMenus.closeAll();
+  }
+
+  function onCollapsedSessionDragOver(e: DragEvent, session: Session, el: HTMLElement): void {
+    if (dnd.drag?.kind !== 'session') return;
+    const current = collapsedNav;
+    if (!current) return;
+    if (dnd.drag.id === session.id) return;
+    if ((dnd.drag.projectId ?? null) !== (session.projectId ?? null)) return;
+    if (normPath(dnd.drag.worktreeCwd ?? '') !== normPath(session.cwd)) return;
+    if (normPath(session.cwd) !== normPath(current.cwd)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const position = horizontalDropPositionFromEvent(e, el);
+    if (
+      dnd.target?.kind !== 'session'
+      || dnd.target.id !== session.id
+      || dnd.target.position !== position
+    ) {
+      dnd.setTarget({ kind: 'session', id: session.id, position });
+    }
+  }
+
+  function onCollapsedSessionDrop(e: DragEvent, session: Session): void {
+    if (dnd.drag?.kind !== 'session') return;
+    const draggedId = dnd.drag.id;
+    if (draggedId === session.id) return;
+    e.preventDefault();
+    const position = dnd.target?.kind === 'session' && dnd.target.id === session.id
+      ? dnd.target.position
+      : 'after';
+    reorderCollapsedSession({ draggedId, targetId: session.id, position });
+    dnd.end();
+  }
+
+  function onCollapsedSessionDragEnd(): void {
+    dnd.end();
+  }
+
+  function collapsedSessionDropPosition(id: string): DropPosition | null {
+    const target = dnd.target;
+    if (!target || target.kind !== 'session' || target.id !== id) return null;
+    if (dnd.drag?.id === id) return null;
+    return target.position;
+  }
+
+  function isDraggingCollapsedSession(id: string): boolean {
+    return dnd.drag?.kind === 'session' && dnd.drag.id === id;
+  }
+
   function onKey(e: KeyboardEvent) {
     if (Keymap.commandPalette.match(e)) {
       consume(e);
@@ -797,16 +897,34 @@
                     style={s.session.color
                       ? `--chip-color: var(--session-${s.session.color});`
                       : undefined}
-                    class={`collapsed-session-chip inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
+                    class={`collapsed-session-chip relative inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
                       s.active
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground'
-                    }`}
+                    } ${isDraggingCollapsedSession(s.id) ? 'opacity-40' : ''}`}
                     title={s.index !== null ? `${s.name} (Ctrl+${s.index})` : s.name}
+                    draggable="true"
                     onclick={() => sessions.select(s.id)}
                     onpointerdown={onCollapsedSessionPointerDown}
                     onauxclick={(e) => onCollapsedSessionAuxClick(e, s.session)}
+                    ondragstart={(e) => onCollapsedSessionDragStart(e, s.session)}
+                    ondragover={(e) =>
+                      onCollapsedSessionDragOver(e, s.session, e.currentTarget as HTMLElement)}
+                    ondrop={(e) => onCollapsedSessionDrop(e, s.session)}
+                    ondragend={onCollapsedSessionDragEnd}
                   >
+                    {#if collapsedSessionDropPosition(s.id) === 'before'}
+                      <span
+                        class="pointer-events-none absolute top-0 bottom-0 left-0 z-10 w-0.5 rounded-full bg-primary"
+                        aria-hidden="true"
+                      ></span>
+                    {/if}
+                    {#if collapsedSessionDropPosition(s.id) === 'after'}
+                      <span
+                        class="pointer-events-none absolute top-0 right-0 bottom-0 z-10 w-0.5 rounded-full bg-primary"
+                        aria-hidden="true"
+                      ></span>
+                    {/if}
                     {#if s.index !== null}
                       <span
                         class="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border/60 bg-background/40 px-0.5 font-mono text-[9px] leading-none text-muted-foreground"
