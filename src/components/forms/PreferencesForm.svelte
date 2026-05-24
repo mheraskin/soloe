@@ -98,6 +98,7 @@
 
   let activeTab = $state<string>('integration');
   let lastAppliedTabNonce = -1;
+  let draftPreset: QuickLaunchPreset | null = $state(null);
 
   // React to settings.openDialog('integration') and similar by jumping to
   // the requested tab. The nonce changes on every call so reopening with
@@ -234,14 +235,40 @@
     return `ql_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   }
 
-  async function addPreset(): Promise<void> {
-    const next: QuickLaunchPreset[] = [
-      ...settings.current.quickLaunch,
-      { id: generatePresetId(), label: '', provider: 'claude_code' }
-    ];
+  function addPreset(): void {
+    draftPreset ??= {
+      id: generatePresetId(),
+      label: 'New preset',
+      provider: 'claude_code'
+    };
+  }
+
+  function updateDraftPreset(patch: Partial<QuickLaunchPreset>): void {
+    if (!draftPreset) return;
+    draftPreset = { ...draftPreset, ...patch };
+  }
+
+  async function saveDraftPreset(): Promise<void> {
+    if (!draftPreset) return;
+    const label = draftPreset.label.trim();
+    if (!label) return;
+    const nextPreset: QuickLaunchPreset = {
+      id: draftPreset.id,
+      label,
+      provider: draftPreset.provider,
+      ...(draftPreset.model ? { model: draftPreset.model } : {}),
+      ...(draftPreset.dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+      ...(draftPreset.extraArgs?.trim() ? { extraArgs: draftPreset.extraArgs.trim() } : {})
+    };
+    const next: QuickLaunchPreset[] = [...settings.current.quickLaunch, nextPreset];
     try {
       await settings.update({ quickLaunch: next });
+      draftPreset = null;
     } catch (e) { reportError(e); }
+  }
+
+  function cancelDraftPreset(): void {
+    draftPreset = null;
   }
 
   async function removePreset(id: string): Promise<void> {
@@ -468,6 +495,136 @@
           </div>
         </div>
       {/each}
+      {#if draftPreset}
+        {@const draftModelOptions = modelCatalogFor(presetProviderToModel(draftPreset.provider))}
+        {@const draftSelectedModel = draftModelOptions.find((m) => m.id === draftPreset?.model)}
+        <div class="flex flex-col gap-2 rounded-md border border-primary/40 bg-primary/5 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <KindIcon kind={draftPreset.provider} size={16} />
+              <span class="text-sm font-medium">
+                {draftPreset.label.trim() || '(new preset)'}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="size-6 shrink-0 text-muted-foreground hover:text-destructive"
+              title="Cancel preset"
+              onclick={cancelDraftPreset}
+            >
+              <X class="size-3.5" />
+            </Button>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-label-${draftPreset.id}`}>Label</Label>
+            <Input
+              id={`ql-label-${draftPreset.id}`}
+              type="text"
+              placeholder="e.g. Claude danger"
+              value={draftPreset.label}
+              oninput={(e) =>
+                updateDraftPreset({ label: (e.currentTarget as HTMLInputElement).value })}
+            />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Provider</Label>
+            <Select.Root
+              type="single"
+              value={draftPreset.provider}
+              onValueChange={(v) =>
+                updateDraftPreset({
+                  provider: v as AgentRuntimeProvider,
+                  model: undefined,
+                  dangerouslySkipPermissions: undefined
+                })}
+            >
+              <Select.Trigger class="w-full">
+                {quickLaunchProviders.find((p) => p.value === draftPreset?.provider)?.label ?? draftPreset.provider}
+              </Select.Trigger>
+              <Select.Content>
+                {#each quickLaunchProviders as p (p.value)}
+                  <Select.Item value={p.value} label={p.label}>{p.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Model</Label>
+            <Select.Root
+              type="single"
+              value={draftPreset.model ?? '__default__'}
+              onValueChange={(v) =>
+                updateDraftPreset({ model: v === '__default__' ? undefined : v })}
+            >
+              <Select.Trigger class="w-full">
+                <span class="flex items-center gap-2">
+                  {#if draftPreset.model}
+                    <KindIcon kind={draftPreset.provider} size={14} />
+                  {/if}
+                  <span>{draftSelectedModel?.label ?? (draftPreset.model || '(CLI default)')}</span>
+                </span>
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="__default__" label="(CLI default)">
+                  (CLI default)
+                </Select.Item>
+                {#each draftModelOptions as entry (entry.id)}
+                  <Select.Item value={entry.id} label={entry.label}>
+                    <span class="flex items-center gap-2">
+                      <KindIcon kind={providerKind(entry.provider)} size={14} />
+                      <span>{entry.label}</span>
+                    </span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          {#if draftPreset.provider === 'claude_code'}
+            <div class="flex items-center gap-2">
+              <Checkbox
+                id={`ql-skip-perms-${draftPreset.id}`}
+                checked={draftPreset.dangerouslySkipPermissions ?? false}
+                onCheckedChange={(v) =>
+                  updateDraftPreset({ dangerouslySkipPermissions: v === true || undefined })}
+              />
+              <Label for={`ql-skip-perms-${draftPreset.id}`} class="text-sm text-foreground">
+                --dangerously-skip-permissions
+              </Label>
+            </div>
+          {/if}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-args-${draftPreset.id}`}>
+              Extra CLI args
+            </Label>
+            <Input
+              id={`ql-args-${draftPreset.id}`}
+              type="text"
+              placeholder={draftPreset.provider === 'claude_code'
+                ? '--verbose --allowedTools bash,computer'
+                : '--full-auto'}
+              value={draftPreset.extraArgs ?? ''}
+              oninput={(e) =>
+                updateDraftPreset({ extraArgs: (e.currentTarget as HTMLInputElement).value })}
+            />
+            <span class="text-[11px] text-muted-foreground">
+              Space-separated flags appended to the CLI command.
+            </span>
+          </div>
+          <div class="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onclick={cancelDraftPreset}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!draftPreset.label.trim()}
+              onclick={() => void saveDraftPreset()}
+            >
+              Save preset
+            </Button>
+          </div>
+        </div>
+      {/if}
       <Button variant="outline" class="w-full" onclick={addPreset}>
         Add preset
       </Button>
