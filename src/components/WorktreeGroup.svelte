@@ -16,7 +16,6 @@
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
   import WorktreeOverviewDialog from './WorktreeOverviewDialog.svelte';
-  import KbdHint from './KbdHint.svelte';
 
   let {
     title,
@@ -227,7 +226,13 @@
           {items.length}
         </Badge>
         {#if kbdIndex !== null}
-          <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
+          <span
+            class="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border/60 bg-background/40 px-0.5 font-mono text-[9px] leading-none text-muted-foreground"
+            title={`Ctrl+Shift+${kbdIndex}`}
+            aria-label={`Ctrl+Shift+${kbdIndex}`}
+          >
+            {kbdIndex}
+          </span>
         {/if}
       </Collapsible.Trigger>
       <Button
