@@ -26,7 +26,7 @@
   import { projects } from './stores/projects.svelte';
   import { notes } from './stores/notes.svelte';
   import { git } from './stores/git.svelte';
-  import { nav } from './stores/nav.svelte';
+  import { nav, type WorktreeIndexTarget } from './stores/nav.svelte';
   import { commandPalette } from './stores/command-palette.svelte';
   import { filePalette } from './stores/file-palette.svelte';
   import { agentNotifications } from './stores/agent-notifications.svelte';
@@ -42,9 +42,9 @@
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import {
     Keymap,
-    projectIndexFromEvent,
     shouldIgnoreInTextInput,
-    tabIndexFromEvent
+    tabIndexFromEvent,
+    worktreeIndexFromEvent
   } from './lib/keymap';
   import { toggleRailTabAndFocus } from './lib/rail-focus';
   import { displaySessionKind } from './lib/session-agent';
@@ -556,6 +556,19 @@
     });
   }
 
+  function selectWorktreeTarget(target: WorktreeIndexTarget): void {
+    rightRail.fullscreen = false;
+    if (target.firstSessionId) {
+      sessions.select(target.firstSessionId);
+      return;
+    }
+    newSessionPicker.open({
+      projectId: target.projectId,
+      cwd: target.cwd,
+      ...(target.branch ? { branch: target.branch } : {})
+    });
+  }
+
   async function closeCollapsedSession(session: Session): Promise<void> {
     const ok = await confirmDeleteSession(session);
     if (!ok) return;
@@ -815,10 +828,11 @@
       void nav.closeActive();
       return;
     }
-    const projectIdx = projectIndexFromEvent(e);
-    if (projectIdx !== null) {
+    const worktreeIdx = worktreeIndexFromEvent(e);
+    if (worktreeIdx !== null) {
       consume(e);
-      nav.selectProjectByIndex(projectIdx);
+      const target = nav.worktreeByIndex(worktreeIdx);
+      if (target) selectWorktreeTarget(target);
       return;
     }
     const idx = tabIndexFromEvent(e);

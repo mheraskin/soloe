@@ -27,7 +27,6 @@
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
-  import KbdHint from './KbdHint.svelte';
   import SessionItem from './SessionItem.svelte';
   import WorktreeGroup from './WorktreeGroup.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
@@ -158,7 +157,6 @@
       .filter((wt) => normPath(wt.path) !== normPath(project.path))
       .map(gitWorktreeLabel)
   );
-  let kbdIndex = $derived(nav.projectIndexHints[project.id] ?? null);
   let containsSelectedSession = $derived.by(() => {
     const selId = sessions.selectedId;
     if (!selId) return false;
@@ -412,9 +410,6 @@
                   {project.path}
                 </span>
               </span>
-              {#if kbdIndex !== null}
-                <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
-              {/if}
             </Collapsible.Trigger>
             <DropdownMenu.Root onOpenChange={onFaviconMenuOpenChange}>
               <DropdownMenu.Trigger>

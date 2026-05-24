@@ -3,6 +3,7 @@
   import type { Session, SessionId } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { nav } from '../stores/nav.svelte';
   import { git } from '../stores/git.svelte';
   import { sidebarExpansion } from '../stores/sidebar-expansion.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -15,6 +16,7 @@
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
   import WorktreeOverviewDialog from './WorktreeOverviewDialog.svelte';
+  import KbdHint from './KbdHint.svelte';
 
   let {
     title,
@@ -71,6 +73,7 @@
   let hasDiff = $derived(
     !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
   );
+  let kbdIndex = $derived(nav.worktreeIndexHints[cwd] ?? null);
   let diffTitle = $derived.by<string>(() => {
     if (!shortstat || !shortstat.isRepo) return '';
     if (shortstat.insertions === 0 && shortstat.deletions === 0) return 'no changes';
@@ -223,6 +226,9 @@
         <Badge variant="secondary" class="h-4 rounded-full bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
           {items.length}
         </Badge>
+        {#if kbdIndex !== null}
+          <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
+        {/if}
       </Collapsible.Trigger>
       <Button
         variant="ghost"

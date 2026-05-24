@@ -167,7 +167,7 @@ export function tabIndexFromEvent(e: KeyboardEvent): number | null {
   return null;
 }
 
-export function projectIndexFromEvent(e: KeyboardEvent): number | null {
+export function worktreeIndexFromEvent(e: KeyboardEvent): number | null {
   if (!isCtrlOrCmd(e) || e.altKey || !e.shiftKey) return null;
   const m = e.code.match(/^Digit([1-9])$/);
   if (!m) return null;

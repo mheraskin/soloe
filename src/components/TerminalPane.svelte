@@ -24,7 +24,7 @@
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import { Copy, Loader2, MessageSquarePlus, Send, X } from '@lucide/svelte';
   import AskAgentPopover from './ask-agent/AskAgentPopover.svelte';
-  import { Keymap, projectIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
+  import { Keymap, tabIndexFromEvent, worktreeIndexFromEvent } from '../lib/keymap';
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import {
     AGENT_IMAGE_PASTE_SEQUENCE,
@@ -347,7 +347,7 @@
       if (e.type !== 'keydown') return true;
 
       if (tabIndexFromEvent(e) !== null) return false;
-      if (projectIndexFromEvent(e) !== null) return false;
+      if (worktreeIndexFromEvent(e) !== null) return false;
       if (Keymap.deleteSelectedSession.match(e)) {
         e.preventDefault();
         void nav.closeActive();

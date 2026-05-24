@@ -11,8 +11,31 @@ function normPath(p: string): string {
   return p.replace(/[/\\]+$/, '');
 }
 
+function basename(p: string): string {
+  const parts = normPath(p).split(/[/\\]/);
+  return parts[parts.length - 1] || p;
+}
+
+function worktreeLabel(projectPath: string, cwd: string): string {
+  const projectRoot = normPath(projectPath);
+  const worktreePath = normPath(cwd);
+  if (worktreePath === projectRoot) return 'main';
+  if (worktreePath.startsWith(projectRoot + '/') || worktreePath.startsWith(projectRoot + '\\')) {
+    return worktreePath.slice(projectRoot.length + 1);
+  }
+  return basename(worktreePath);
+}
+
 const STANDALONE_KEY = '__standalone__';
 const HINT_LIMIT = 9;
+
+export interface WorktreeIndexTarget {
+  projectId: ProjectId;
+  cwd: string;
+  label: string;
+  branch?: string;
+  firstSessionId: SessionId | null;
+}
 
 class NavStore {
   flat = $derived.by<Session[]>(() => {
@@ -105,11 +128,68 @@ class NavStore {
     return out;
   });
 
-  projectIndexHints = $derived.by<Record<string, number>>(() => {
+  activeProjectWorktrees = $derived.by<WorktreeIndexTarget[]>(() => {
+    const projectId = this.activeProjectId;
+    if (!projectId) return [];
+    const project = projects.get(projectId);
+    if (!project) return [];
+
+    const buckets = new Map<string, { firstSessionId: SessionId | null }>();
+    const naturalOrder: string[] = [];
+    function ensureBucket(path: string): { firstSessionId: SessionId | null } {
+      const key = normPath(path);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { firstSessionId: null };
+        buckets.set(key, bucket);
+        naturalOrder.push(key);
+      }
+      return bucket;
+    }
+
+    const gitWorktrees = git.worktreesFor(project.path) ?? [];
+    for (const wt of gitWorktrees) {
+      ensureBucket(wt.path);
+    }
+    for (const s of sessions.byProject[project.id] ?? []) {
+      const bucket = ensureBucket(s.cwd);
+      bucket.firstSessionId ??= s.id;
+    }
+
+    const userOrder = (project.worktreeOrder ?? []).map(normPath);
+    const seen = new Set<string>();
+    const finalOrder: string[] = [];
+    for (const key of userOrder) {
+      if (buckets.has(key) && !seen.has(key)) {
+        seen.add(key);
+        finalOrder.push(key);
+      }
+    }
+    for (const key of naturalOrder) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        finalOrder.push(key);
+      }
+    }
+
+    return finalOrder.map((cwd) => {
+      const gitWorktree = gitWorktrees.find((wt) => normPath(wt.path) === cwd);
+      return {
+        projectId,
+        cwd,
+        label: gitWorktree?.branch
+          ?? (gitWorktree?.detached ? 'detached' : worktreeLabel(project.path, cwd)),
+        ...(gitWorktree?.branch ? { branch: gitWorktree.branch } : {}),
+        firstSessionId: buckets.get(cwd)?.firstSessionId ?? null
+      };
+    });
+  });
+
+  worktreeIndexHints = $derived.by<Record<string, number>>(() => {
     const out: Record<string, number> = {};
-    const list = projects.recents;
+    const list = this.activeProjectWorktrees;
     for (let i = 0; i < Math.min(HINT_LIMIT, list.length); i += 1) {
-      out[list[i]!.id] = i + 1;
+      out[list[i]!.cwd] = i + 1;
     }
     return out;
   });
@@ -120,10 +200,8 @@ class NavStore {
     if (target) sessions.select(target.id);
   }
 
-  selectProjectByIndex(n: number): void {
-    const project = projects.recents[n];
-    if (!project) return;
-    this.focusProject(project.id);
+  worktreeByIndex(n: number): WorktreeIndexTarget | null {
+    return this.activeProjectWorktrees[n] ?? null;
   }
 
   focusProject(projectId: ProjectId): void {
