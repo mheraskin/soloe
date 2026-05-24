@@ -9,6 +9,7 @@ import type {
   SessionRuntimeState,
   SessionLaunchKind,
   AgentRuntimeProvider,
+  RunMode,
   SessionStatus,
   SessionUpdate
 } from '@shared/types/sessions.js';
@@ -21,12 +22,17 @@ import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelt
 import { rightRail } from './right-rail.svelte';
 import { sendBracketedPaste } from '../lib/terminal-paste';
 
-const LAST_SELECTED_KEY = 'soloe.lastSelectedByProject.v1';
+const LAST_SELECTED_BY_PROJECT_KEY = 'soloe.lastSelectedByProject.v1';
+const LAST_SELECTED_BY_WORKTREE_KEY = 'soloe.lastSelectedByWorktree.v1';
 const STANDALONE_KEY = '__standalone__';
 
-function readLastSelectedMap(): Record<string, SessionId> {
+function normPath(p: string): string {
+  return p.replace(/[/\\]+$/, '');
+}
+
+function readLastSelectedMap(storageKey: string): Record<string, SessionId> {
   try {
-    const raw = localStorage.getItem(LAST_SELECTED_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -42,12 +48,41 @@ function readLastSelectedMap(): Record<string, SessionId> {
   return {};
 }
 
-function writeLastSelectedMap(map: Record<string, SessionId>): void {
+function writeLastSelectedMap(storageKey: string, map: Record<string, SessionId>): void {
   try {
-    localStorage.setItem(LAST_SELECTED_KEY, JSON.stringify(map));
+    localStorage.setItem(storageKey, JSON.stringify(map));
   } catch {
     // ignore
   }
+}
+
+function worktreeSelectionKey(args: {
+  projectId?: string | null;
+  cwd: string;
+  runMode: RunMode;
+  wslDistro?: string | null;
+}): string {
+  return [
+    args.projectId ?? STANDALONE_KEY,
+    normPath(args.cwd),
+    args.runMode,
+    args.wslDistro ?? ''
+  ].join('\u001f');
+}
+
+function dropSelectedId(
+  map: Record<string, SessionId>,
+  id: SessionId
+): { next: Record<string, SessionId>; changed: boolean } {
+  const next = { ...map };
+  let changed = false;
+  for (const [key, sessionId] of Object.entries(next)) {
+    if (sessionId === id) {
+      delete next[key];
+      changed = true;
+    }
+  }
+  return { next, changed };
 }
 
 interface RuntimeEntry extends SessionRuntimeState {
@@ -109,7 +144,12 @@ class SessionsStore {
     return out;
   });
 
-  lastSelectedByProject = $state<Record<string, SessionId>>(readLastSelectedMap());
+  lastSelectedByProject = $state<Record<string, SessionId>>(
+    readLastSelectedMap(LAST_SELECTED_BY_PROJECT_KEY)
+  );
+  lastSelectedByWorktree = $state<Record<string, SessionId>>(
+    readLastSelectedMap(LAST_SELECTED_BY_WORKTREE_KEY)
+  );
 
   private detachers: Array<() => void> = [];
   private locationVersions = new Map<SessionId, number>();
@@ -188,19 +228,47 @@ class SessionsStore {
 
   private pruneLastSelected(): void {
     const ids = new Set(this.sessions.map((s) => s.id));
-    let changed = false;
-    const next: Record<string, SessionId> = {};
-    for (const [projectKey, sessionId] of Object.entries(this.lastSelectedByProject)) {
-      if (ids.has(sessionId)) {
-        next[projectKey] = sessionId;
-      } else {
-        changed = true;
+    const pruneMap = (map: Record<string, SessionId>): {
+      next: Record<string, SessionId>;
+      changed: boolean;
+    } => {
+      let changed = false;
+      const next: Record<string, SessionId> = {};
+      for (const [key, sessionId] of Object.entries(map)) {
+        if (ids.has(sessionId)) {
+          next[key] = sessionId;
+        } else {
+          changed = true;
+        }
       }
+      return { next, changed };
+    };
+
+    const project = pruneMap(this.lastSelectedByProject);
+    if (project.changed) {
+      this.lastSelectedByProject = project.next;
+      writeLastSelectedMap(LAST_SELECTED_BY_PROJECT_KEY, project.next);
     }
-    if (changed) {
-      this.lastSelectedByProject = next;
-      writeLastSelectedMap(next);
+    const worktree = pruneMap(this.lastSelectedByWorktree);
+    if (worktree.changed) {
+      this.lastSelectedByWorktree = worktree.next;
+      writeLastSelectedMap(LAST_SELECTED_BY_WORKTREE_KEY, worktree.next);
     }
+  }
+
+  lastSelectedIdForWorktree(args: { projectId?: string | null; cwd: string }): SessionId | null {
+    const projectId = args.projectId ?? null;
+    const cwd = normPath(args.cwd);
+    const candidates = this.sessions.filter(
+      (s) => (s.projectId ?? null) === projectId && normPath(s.cwd) === cwd
+    );
+    if (candidates.length === 0) return null;
+    const candidateIds = new Set(candidates.map((s) => s.id));
+    for (const candidate of candidates) {
+      const stored = this.lastSelectedByWorktree[worktreeSelectionKey(candidate)];
+      if (stored && candidateIds.has(stored)) return stored;
+    }
+    return null;
   }
 
   attachListeners(): void {
@@ -516,20 +584,10 @@ class SessionsStore {
       if (snapshot.originSessionId === id) delete observed[snapshot.id];
     }
     this.observed = observed;
-    const lastMap = { ...this.lastSelectedByProject };
-    let changed = false;
-    for (const [projectKey, sid] of Object.entries(lastMap)) {
-      if (sid === id) {
-        delete lastMap[projectKey];
-        changed = true;
-      }
-    }
-    if (changed) {
-      this.lastSelectedByProject = lastMap;
-      writeLastSelectedMap(lastMap);
-    }
+    this.forgetLastSelectedId(id);
     if (this.selectedId === id) {
-      this.selectedId = nextSelectedId;
+      if (nextSelectedId) this.select(nextSelectedId);
+      else this.selectedId = null;
     }
   }
 
@@ -555,20 +613,23 @@ class SessionsStore {
     const next = { ...this.runtime };
     delete next[id];
     this.runtime = next;
-    const lastMap = { ...this.lastSelectedByProject };
-    let changed = false;
-    for (const [projectKey, sid] of Object.entries(lastMap)) {
-      if (sid === id) {
-        delete lastMap[projectKey];
-        changed = true;
-      }
-    }
-    if (changed) {
-      this.lastSelectedByProject = lastMap;
-      writeLastSelectedMap(lastMap);
-    }
+    this.forgetLastSelectedId(id);
     if (this.selectedId === id) {
-      this.selectedId = nextSelectedId;
+      if (nextSelectedId) this.select(nextSelectedId);
+      else this.selectedId = null;
+    }
+  }
+
+  private forgetLastSelectedId(id: SessionId): void {
+    const project = dropSelectedId(this.lastSelectedByProject, id);
+    if (project.changed) {
+      this.lastSelectedByProject = project.next;
+      writeLastSelectedMap(LAST_SELECTED_BY_PROJECT_KEY, project.next);
+    }
+    const worktree = dropSelectedId(this.lastSelectedByWorktree, id);
+    if (worktree.changed) {
+      this.lastSelectedByWorktree = worktree.next;
+      writeLastSelectedMap(LAST_SELECTED_BY_WORKTREE_KEY, worktree.next);
     }
   }
 
@@ -703,7 +764,12 @@ class SessionsStore {
         const key = session.projectId ?? STANDALONE_KEY;
         const nextMap = { ...this.lastSelectedByProject, [key]: id };
         this.lastSelectedByProject = nextMap;
-        writeLastSelectedMap(nextMap);
+        writeLastSelectedMap(LAST_SELECTED_BY_PROJECT_KEY, nextMap);
+
+        const worktreeKey = worktreeSelectionKey(session);
+        const nextWorktreeMap = { ...this.lastSelectedByWorktree, [worktreeKey]: id };
+        this.lastSelectedByWorktree = nextWorktreeMap;
+        writeLastSelectedMap(LAST_SELECTED_BY_WORKTREE_KEY, nextWorktreeMap);
       }
     }
   }

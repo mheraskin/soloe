@@ -166,6 +166,7 @@
     isMain: boolean;
     active: boolean;
     sessionCount: number;
+    selectedSessionId: string | null;
     firstSessionId: string | null;
   };
   type CollapsedStatusTone = 'active' | 'done' | 'issue';
@@ -372,6 +373,9 @@
           isMain: gitWorktree?.isMain ?? normPath(project.path) === key,
           active: key === normSelCwd,
           sessionCount: bucket.count,
+          selectedSessionId:
+            sessions.lastSelectedIdForWorktree({ projectId: project.id, cwd: key })
+            ?? bucket.firstId,
           firstSessionId: bucket.firstId
         });
       }
@@ -545,8 +549,8 @@
   }
 
   function selectCollapsedWorktree(option: CollapsedWorktreeOption): void {
-    if (option.firstSessionId) {
-      sessions.select(option.firstSessionId);
+    if (option.selectedSessionId) {
+      sessions.select(option.selectedSessionId);
       return;
     }
     newSessionPicker.open({
@@ -558,8 +562,8 @@
 
   function selectWorktreeTarget(target: WorktreeIndexTarget): void {
     rightRail.fullscreen = false;
-    if (target.firstSessionId) {
-      sessions.select(target.firstSessionId);
+    if (target.selectedSessionId) {
+      sessions.select(target.selectedSessionId);
       return;
     }
     newSessionPicker.open({

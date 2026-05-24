@@ -34,6 +34,7 @@ export interface WorktreeIndexTarget {
   cwd: string;
   label: string;
   branch?: string;
+  selectedSessionId: SessionId | null;
   firstSessionId: SessionId | null;
 }
 
@@ -180,6 +181,9 @@ class NavStore {
         label: gitWorktree?.branch
           ?? (gitWorktree?.detached ? 'detached' : worktreeLabel(project.path, cwd)),
         ...(gitWorktree?.branch ? { branch: gitWorktree.branch } : {}),
+        selectedSessionId: sessions.lastSelectedIdForWorktree({ projectId, cwd })
+          ?? buckets.get(cwd)?.firstSessionId
+          ?? null,
         firstSessionId: buckets.get(cwd)?.firstSessionId ?? null
       };
     });
