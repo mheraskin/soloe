@@ -2,6 +2,13 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 :root {
   --background: oklch(1.0000 0 0);
   --foreground: oklch(0.2007 0.0302 263.5405);

@@ -1237,7 +1237,7 @@
         {#if collapsedNav.sessions.length > 0}
           <span class="mx-1.5 shrink-0 text-muted-foreground/25" aria-hidden="true">·</span>
           <div
-            class="flex min-w-0 shrink items-center gap-0.5"
+            class="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto no-scrollbar"
             style="-webkit-app-region: no-drag"
             role="tablist"
             aria-label="Sessions in this worktree"
@@ -1256,7 +1256,7 @@
                     style={s.session.color
                       ? `--chip-color: var(--session-${s.session.color});`
                       : undefined}
-                    class={`collapsed-session-chip relative inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
+                    class={`collapsed-session-chip relative inline-flex h-5 max-w-[160px] shrink-0 items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
                       s.active
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground'
@@ -1310,7 +1310,7 @@
       {/if}
     {/if}
     <div class="flex-1 self-stretch" aria-hidden="true"></div>
-    <div class="flex self-stretch" style="-webkit-app-region: no-drag">
+    <div class="flex shrink-0 self-stretch" style="-webkit-app-region: no-drag">
       <Button
         variant="ghost"
         class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
