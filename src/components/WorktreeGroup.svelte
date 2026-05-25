@@ -191,13 +191,22 @@
     >
       <Collapsible.Trigger
         class={cn(
-          'flex flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1 text-left transition-colors',
+          'relative flex flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1 text-left transition-colors',
           highlightWhenCollapsed
             ? 'bg-accent/60 border-border text-foreground'
             : 'text-muted-foreground hover:bg-muted hover:text-foreground'
         )}
         aria-label={`Toggle worktree ${title}`}
       >
+        {#if kbdIndex !== null}
+          <span
+            class="pointer-events-none absolute top-0.5 left-0.5 font-mono text-[9px] leading-none text-muted-foreground/55"
+            title={`Ctrl+Shift+${kbdIndex}`}
+            aria-label={`Ctrl+Shift+${kbdIndex}`}
+          >
+            {kbdIndex}
+          </span>
+        {/if}
         {#if effectiveExpanded}
           <ChevronDown class="size-3 shrink-0" />
         {:else}
@@ -225,15 +234,6 @@
         <Badge variant="secondary" class="h-4 rounded-full bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
           {items.length}
         </Badge>
-        {#if kbdIndex !== null}
-          <span
-            class="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border/60 bg-background/40 px-0.5 font-mono text-[9px] leading-none text-muted-foreground"
-            title={`Ctrl+Shift+${kbdIndex}`}
-            aria-label={`Ctrl+Shift+${kbdIndex}`}
-          >
-            {kbdIndex}
-          </span>
-        {/if}
       </Collapsible.Trigger>
       <Button
         variant="ghost"

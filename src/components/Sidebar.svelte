@@ -262,6 +262,26 @@
           </button>
         {/if}
       </div>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        class="size-7 shrink-0"
+        onclick={() => commandPalette.open('open-project')}
+        aria-label="Open project"
+        title="Open project"
+      >
+        <FolderOpen class="size-3.5" />
+      </Button>
+      <AgentLaunchPopover
+        projectId={newSessionContext.projectId ?? null}
+        cwd={newSessionContext.cwd}
+        branch={newSessionContext.branch}
+        side="bottom"
+        align="end"
+        class="size-7"
+        title="New session"
+        ariaLabel="New session"
+      />
       <button
         type="button"
         class="flex h-7 shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -272,28 +292,6 @@
         <PanelLeftClose class="size-3.5" />
         <KbdHint keys={Keymap.toggleSidebar.keys} class="shrink-0" />
       </button>
-    </div>
-    <div class="grid grid-cols-2 gap-2">
-      <Button
-        variant="ghost"
-        size="sm"
-        class="min-w-0 justify-center gap-1.5 px-2"
-        onclick={() => commandPalette.open('open-project')}
-      >
-        <FolderOpen class="size-3.5" />
-        <span class="min-w-0 truncate">Open project</span>
-        <KbdHint keys={Keymap.openProject.keys} class="ml-0.5 shrink-0" />
-      </Button>
-      <AgentLaunchPopover
-        projectId={newSessionContext.projectId ?? null}
-        cwd={newSessionContext.cwd}
-        branch={newSessionContext.branch}
-        side="bottom"
-        align="end"
-        class="min-w-0 justify-center gap-1.5 px-2"
-        title="New session"
-        ariaLabel="New session"
-      />
     </div>
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>

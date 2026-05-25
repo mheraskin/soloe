@@ -77,6 +77,7 @@
   import appIconUrl from '../build/favicon.svg';
 
   let appliedTheme: string | null = null;
+  let suppressCollapsedDropdownSelect = false;
 
   onMount(() => {
     sessions.attachListeners();
@@ -168,6 +169,7 @@
     sessionCount: number;
     selectedSessionId: string | null;
     firstSessionId: string | null;
+    shortcutIndex: number | null;
   };
   type CollapsedStatusTone = 'active' | 'done' | 'issue';
   type CollapsedStatusDot = {
@@ -304,10 +306,13 @@
       worktree = basename(cwd);
     }
     const normSelCwd = normPath(cwd);
-    // Order siblings the same way the sidebar does, then number them inside
-    // the active worktree. With the sidebar hidden, Ctrl+N follows this list.
-    const ordered = nav.flatActiveProject.filter(
-      (s) => normPath(s.cwd?.trim() ?? '') === normSelCwd
+    // Order siblings the same way the sidebar does, but do not inherit the
+    // sidebar's collapsed-worktree filtering. The top bar has its own visibility
+    // contract when the sidebar is hidden.
+    const ordered = nav.flat.filter(
+      (s) =>
+        (s.projectId ?? null) === (sel.projectId ?? null)
+        && normPath(s.cwd?.trim() ?? '') === normSelCwd
     );
     const sessionList = ordered.map((s, i) => ({
       id: s.id,
@@ -376,7 +381,8 @@
           selectedSessionId:
             sessions.lastSelectedIdForWorktree({ projectId: project.id, cwd: key })
             ?? bucket.firstId,
-          firstSessionId: bucket.firstId
+          firstSessionId: bucket.firstId,
+          shortcutIndex: worktreeOptions.length < 9 ? worktreeOptions.length + 1 : null
         });
       }
     }
@@ -560,6 +566,22 @@
     });
   }
 
+  function onCollapsedProjectSelect(e: Event, projectId: ProjectId): void {
+    if (suppressCollapsedDropdownSelect) {
+      e.preventDefault();
+      return;
+    }
+    selectCollapsedProject(projectId);
+  }
+
+  function onCollapsedWorktreeSelect(e: Event, worktree: CollapsedWorktreeOption): void {
+    if (suppressCollapsedDropdownSelect) {
+      e.preventDefault();
+      return;
+    }
+    selectCollapsedWorktree(worktree);
+  }
+
   function selectWorktreeTarget(target: WorktreeIndexTarget): void {
     rightRail.fullscreen = false;
     if (target.selectedSessionId) {
@@ -624,6 +646,172 @@
     const rect = el.getBoundingClientRect();
     const offsetX = event.clientX - rect.left;
     return offsetX < rect.width / 2 ? 'before' : 'after';
+  }
+
+  function verticalDropPositionFromEvent(event: DragEvent, el: HTMLElement): DropPosition {
+    const rect = el.getBoundingClientRect();
+    const offsetY = event.clientY - rect.top;
+    return offsetY < rect.height / 2 ? 'before' : 'after';
+  }
+
+  function reorderCollapsedProject(args: {
+    draggedId: string;
+    targetId: string;
+    position: DropPosition;
+  }): void {
+    const ids = collapsedNav?.projects.map((p) => p.id) ?? [];
+    if (!ids.includes(args.draggedId) || !ids.includes(args.targetId)) return;
+    const without = ids.filter((id) => id !== args.draggedId);
+    let insertAt = without.indexOf(args.targetId);
+    if (insertAt < 0) insertAt = without.length;
+    if (args.position === 'after') insertAt += 1;
+    const next = [...without.slice(0, insertAt), args.draggedId, ...without.slice(insertAt)];
+    if (sameOrder(ids, next)) return;
+    void projects.reorder(next).catch(reportError);
+  }
+
+  function onCollapsedProjectDragStart(e: DragEvent, project: CollapsedProjectOption): void {
+    if (!e.dataTransfer) return;
+    suppressCollapsedDropdownSelect = true;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DND_MIME.project, project.id);
+    dnd.begin({ kind: 'project', id: project.id, projectId: project.id, worktreeCwd: null });
+  }
+
+  function onCollapsedProjectDragOver(
+    e: DragEvent,
+    project: CollapsedProjectOption,
+    el: HTMLElement
+  ): void {
+    if (dnd.drag?.kind !== 'project') return;
+    if (dnd.drag.id === project.id) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const position = verticalDropPositionFromEvent(e, el);
+    if (
+      dnd.target?.kind !== 'project'
+      || dnd.target.id !== project.id
+      || dnd.target.position !== position
+    ) {
+      dnd.setTarget({ kind: 'project', id: project.id, position });
+    }
+  }
+
+  function onCollapsedProjectDrop(e: DragEvent, project: CollapsedProjectOption): void {
+    if (dnd.drag?.kind !== 'project') return;
+    const draggedId = dnd.drag.id;
+    if (draggedId === project.id) return;
+    e.preventDefault();
+    const position = dnd.target?.kind === 'project' && dnd.target.id === project.id
+      ? dnd.target.position
+      : 'after';
+    reorderCollapsedProject({ draggedId, targetId: project.id, position });
+    dnd.end();
+  }
+
+  function onCollapsedProjectDragEnd(): void {
+    dnd.end();
+    setTimeout(() => {
+      suppressCollapsedDropdownSelect = false;
+    }, 0);
+  }
+
+  function collapsedProjectDropPosition(id: string): DropPosition | null {
+    const target = dnd.target;
+    if (!target || target.kind !== 'project' || target.id !== id) return null;
+    if (dnd.drag?.id === id) return null;
+    return target.position;
+  }
+
+  function isDraggingCollapsedProject(id: string): boolean {
+    return dnd.drag?.kind === 'project' && dnd.drag.id === id;
+  }
+
+  function reorderCollapsedWorktree(args: {
+    draggedCwd: string;
+    targetCwd: string;
+    position: DropPosition;
+  }): void {
+    const current = collapsedNav;
+    if (!current?.projectId) return;
+    const ids = current.worktrees.map((w) => w.cwd);
+    if (!ids.includes(args.draggedCwd) || !ids.includes(args.targetCwd)) return;
+    const without = ids.filter((id) => id !== args.draggedCwd);
+    let insertAt = without.indexOf(args.targetCwd);
+    if (insertAt < 0) insertAt = without.length;
+    if (args.position === 'after') insertAt += 1;
+    const next = [...without.slice(0, insertAt), args.draggedCwd, ...without.slice(insertAt)];
+    if (sameOrder(ids, next)) return;
+    void projects.update(current.projectId, { worktreeOrder: next }).catch(reportError);
+  }
+
+  function onCollapsedWorktreeDragStart(e: DragEvent, worktree: CollapsedWorktreeOption): void {
+    const current = collapsedNav;
+    if (!current?.projectId || !e.dataTransfer) return;
+    suppressCollapsedDropdownSelect = true;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(DND_MIME.worktree, worktree.cwd);
+    dnd.begin({
+      kind: 'worktree',
+      id: worktree.cwd,
+      projectId: current.projectId,
+      worktreeCwd: worktree.cwd
+    });
+  }
+
+  function onCollapsedWorktreeDragOver(
+    e: DragEvent,
+    worktree: CollapsedWorktreeOption,
+    el: HTMLElement
+  ): void {
+    const current = collapsedNav;
+    if (!current?.projectId) return;
+    if (dnd.drag?.kind !== 'worktree') return;
+    if (dnd.drag.projectId !== current.projectId) return;
+    if (dnd.drag.id === worktree.cwd) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const position = verticalDropPositionFromEvent(e, el);
+    if (
+      dnd.target?.kind !== 'worktree'
+      || dnd.target.id !== worktree.cwd
+      || dnd.target.position !== position
+    ) {
+      dnd.setTarget({ kind: 'worktree', id: worktree.cwd, position });
+    }
+  }
+
+  function onCollapsedWorktreeDrop(e: DragEvent, worktree: CollapsedWorktreeOption): void {
+    const current = collapsedNav;
+    if (!current?.projectId) return;
+    if (dnd.drag?.kind !== 'worktree') return;
+    if (dnd.drag.projectId !== current.projectId) return;
+    const draggedCwd = dnd.drag.id;
+    if (draggedCwd === worktree.cwd) return;
+    e.preventDefault();
+    const position = dnd.target?.kind === 'worktree' && dnd.target.id === worktree.cwd
+      ? dnd.target.position
+      : 'after';
+    reorderCollapsedWorktree({ draggedCwd, targetCwd: worktree.cwd, position });
+    dnd.end();
+  }
+
+  function onCollapsedWorktreeDragEnd(): void {
+    dnd.end();
+    setTimeout(() => {
+      suppressCollapsedDropdownSelect = false;
+    }, 0);
+  }
+
+  function collapsedWorktreeDropPosition(cwd: string): DropPosition | null {
+    const target = dnd.target;
+    if (!target || target.kind !== 'worktree' || target.id !== cwd) return null;
+    if (dnd.drag?.id === cwd) return null;
+    return target.position;
+  }
+
+  function isDraggingCollapsedWorktree(cwd: string): boolean {
+    return dnd.drag?.kind === 'worktree' && dnd.drag.id === cwd;
   }
 
   function reorderCollapsedSession(args: {
@@ -909,7 +1097,28 @@
             <DropdownMenu.Content align="start" class="w-72">
               <DropdownMenu.Label>Project</DropdownMenu.Label>
               {#each collapsedNav.projects as project (project.id)}
-                <DropdownMenu.Item onSelect={() => selectCollapsedProject(project.id)}>
+                <DropdownMenu.Item
+                  class={`relative ${isDraggingCollapsedProject(project.id) ? 'opacity-40' : ''}`}
+                  draggable="true"
+                  onSelect={(e) => onCollapsedProjectSelect(e, project.id)}
+                  ondragstart={(e) => onCollapsedProjectDragStart(e, project)}
+                  ondragover={(e) =>
+                    onCollapsedProjectDragOver(e, project, e.currentTarget as HTMLElement)}
+                  ondrop={(e) => onCollapsedProjectDrop(e, project)}
+                  ondragend={onCollapsedProjectDragEnd}
+                >
+                  {#if collapsedProjectDropPosition(project.id) === 'before'}
+                    <span
+                      class="pointer-events-none absolute top-0 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
+                  {#if collapsedProjectDropPosition(project.id) === 'after'}
+                    <span
+                      class="pointer-events-none absolute right-1 bottom-0 left-1 z-10 h-0.5 rounded-full bg-primary"
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
                   <FolderOpen />
                   <span class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate">{project.name}</span>
@@ -955,7 +1164,37 @@
             <DropdownMenu.Content align="start" class="w-72">
               <DropdownMenu.Label>Worktree</DropdownMenu.Label>
               {#each collapsedNav.worktrees as worktree (worktree.cwd)}
-                <DropdownMenu.Item onSelect={() => selectCollapsedWorktree(worktree)}>
+                <DropdownMenu.Item
+                  class={`relative ${isDraggingCollapsedWorktree(worktree.cwd) ? 'opacity-40' : ''}`}
+                  draggable="true"
+                  onSelect={(e) => onCollapsedWorktreeSelect(e, worktree)}
+                  ondragstart={(e) => onCollapsedWorktreeDragStart(e, worktree)}
+                  ondragover={(e) =>
+                    onCollapsedWorktreeDragOver(e, worktree, e.currentTarget as HTMLElement)}
+                  ondrop={(e) => onCollapsedWorktreeDrop(e, worktree)}
+                  ondragend={onCollapsedWorktreeDragEnd}
+                >
+                  {#if collapsedWorktreeDropPosition(worktree.cwd) === 'before'}
+                    <span
+                      class="pointer-events-none absolute top-0 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
+                  {#if collapsedWorktreeDropPosition(worktree.cwd) === 'after'}
+                    <span
+                      class="pointer-events-none absolute right-1 bottom-0 left-1 z-10 h-0.5 rounded-full bg-primary"
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
+                  {#if worktree.shortcutIndex !== null}
+                    <span
+                      class="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border/60 bg-background/40 px-0.5 font-mono text-[9px] leading-none text-muted-foreground"
+                      title={`Ctrl+Shift+${worktree.shortcutIndex}`}
+                      aria-label={`Ctrl+Shift+${worktree.shortcutIndex}`}
+                    >
+                      {worktree.shortcutIndex}
+                    </span>
+                  {/if}
                   <FolderGit2 />
                   <span class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate">
