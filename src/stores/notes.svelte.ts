@@ -29,6 +29,7 @@ function worktreeDraftStorageKey(projectId: ProjectId, cwd: string): string {
 // stale entry (cwd later opened under a different project) can't surface the
 // wrong note.
 const VIEW_KEY_PREFIX = 'soloe.notes.viewByWorktree.';
+const SAVED_NOTE_DEBOUNCE_MS = 500;
 
 interface WorktreeViewEntry {
   projectId: ProjectId;
@@ -229,6 +230,9 @@ class NotesStoreClass {
   );
 
   private detachers: Array<() => void> = [];
+  private savedFlushTimers = new Map<ProjectId, ReturnType<typeof setTimeout>>();
+  private savedFlushInFlight = new Set<ProjectId>();
+  private savedFlushQueued = new Set<ProjectId>();
 
   attachListeners(): void {
     this.detach();
@@ -255,6 +259,8 @@ class NotesStoreClass {
   detach(): void {
     for (const off of this.detachers) off();
     this.detachers = [];
+    for (const timer of this.savedFlushTimers.values()) clearTimeout(timer);
+    this.savedFlushTimers.clear();
   }
 
   async ensureLoaded(projectId: ProjectId): Promise<void> {
@@ -271,6 +277,7 @@ class NotesStoreClass {
   newDraft(): void {
     const id = this.activeProjectId;
     if (!id) return;
+    if (this.viewByProject[id]) void this.flushSaved(id).catch(() => {});
     this.viewByProject = { ...this.viewByProject, [id]: null };
     this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
     this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
@@ -307,6 +314,7 @@ class NotesStoreClass {
         this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
         this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
       }
+      this.scheduleSavedFlush(id);
     }
   }
 
@@ -319,11 +327,16 @@ class NotesStoreClass {
       this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
       this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
     }
+    this.scheduleSavedFlush(id);
   }
 
   async selectNote(filename: string): Promise<void> {
     const id = this.activeProjectId;
     if (!id) return;
+    const currentFilename = this.viewByProject[id];
+    if (currentFilename && currentFilename !== filename) {
+      await this.flushSaved(id).catch(() => {});
+    }
     this.viewByProject = { ...this.viewByProject, [id]: filename };
     this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
     this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
@@ -366,30 +379,73 @@ class NotesStoreClass {
     }
   }
 
-  async flushSaved(): Promise<void> {
-    const id = this.activeProjectId;
+  async flushSaved(projectId?: ProjectId): Promise<void> {
+    const id = projectId ?? this.activeProjectId;
     if (!id) return;
-    const filename = this.viewByProject[id];
-    if (!filename) return;
-    const content = this.savedContentByProject[id] ?? '';
-    if (content === (this.savedDiskByProject[id] ?? '')) return;
-    this.statusByProject = { ...this.statusByProject, [id]: 'saving' };
+    this.clearSavedFlushTimer(id);
+    if (this.savedFlushInFlight.has(id)) {
+      this.savedFlushQueued.add(id);
+      return;
+    }
+    this.savedFlushInFlight.add(id);
     try {
-      const note = await ipc.notes.write(id, filename, content);
-      this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
-      // Only mark saved if the current buffer matches what we wrote — otherwise more typing happened
-      if ((this.savedContentByProject[id] ?? '') === note.content) {
-        this.statusByProject = { ...this.statusByProject, [id]: 'saved' };
+      let canContinue = true;
+      do {
+        this.savedFlushQueued.delete(id);
+        canContinue = await this.flushSavedOnce(id);
+      } while (
+        canContinue
+        && (
+          this.savedFlushQueued.has(id)
+          || (this.savedContentByProject[id] ?? '') !== (this.savedDiskByProject[id] ?? '')
+        )
+      );
+    } finally {
+      this.savedFlushInFlight.delete(id);
+    }
+  }
+
+  private scheduleSavedFlush(projectId: ProjectId): void {
+    this.clearSavedFlushTimer(projectId);
+    const timer = setTimeout(() => {
+      this.savedFlushTimers.delete(projectId);
+      void this.flushSaved(projectId);
+    }, SAVED_NOTE_DEBOUNCE_MS);
+    this.savedFlushTimers.set(projectId, timer);
+  }
+
+  private clearSavedFlushTimer(projectId: ProjectId): void {
+    const timer = this.savedFlushTimers.get(projectId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.savedFlushTimers.delete(projectId);
+  }
+
+  private async flushSavedOnce(projectId: ProjectId): Promise<boolean> {
+    const filename = this.viewByProject[projectId];
+    if (!filename) return true;
+    const content = this.savedContentByProject[projectId] ?? '';
+    if (content === (this.savedDiskByProject[projectId] ?? '')) return true;
+    this.statusByProject = { ...this.statusByProject, [projectId]: 'saving' };
+    try {
+      const note = await ipc.notes.write(projectId, filename, content);
+      this.savedDiskByProject = { ...this.savedDiskByProject, [projectId]: note.content };
+      // Only mark saved if the current buffer matches what we wrote; otherwise
+      // the outer flush loop will immediately write the newer text.
+      if ((this.savedContentByProject[projectId] ?? '') === note.content) {
+        this.statusByProject = { ...this.statusByProject, [projectId]: 'saved' };
       } else {
-        this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
+        this.statusByProject = { ...this.statusByProject, [projectId]: 'idle' };
       }
-      this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
+      this.errorMessageByProject = { ...this.errorMessageByProject, [projectId]: null };
+      return true;
     } catch (err) {
-      this.statusByProject = { ...this.statusByProject, [id]: 'error' };
+      this.statusByProject = { ...this.statusByProject, [projectId]: 'error' };
       this.errorMessageByProject = {
         ...this.errorMessageByProject,
-        [id]: err instanceof Error ? err.message : String(err)
+        [projectId]: err instanceof Error ? err.message : String(err)
       };
+      return false;
     }
   }
 
@@ -431,7 +487,7 @@ class NotesStoreClass {
     if (currentView === desired) return;
     // Flush any pending edits on the previous selection so its dirty buffer
     // doesn't vanish when we swap to the new note.
-    await this.flushSaved().catch(() => {});
+    await this.flushSaved(id).catch(() => {});
     if (desired === null) {
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };

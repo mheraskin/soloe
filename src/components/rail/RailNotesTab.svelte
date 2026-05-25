@@ -65,17 +65,6 @@
     void notes.restoreForActiveWorktree().catch(reportError);
   });
 
-  // Debounced auto-save for the currently-open saved note.
-  $effect(() => {
-    if (!activeProjectId) return;
-    if (notes.isDraft) return;
-    if (!notes.savedDirty) return;
-    const timer = setTimeout(() => {
-      void notes.flushSaved().catch(reportError);
-    }, 400);
-    return () => clearTimeout(timer);
-  });
-
   let editorValue = $derived(notes.isDraft ? notes.draftContent : notes.savedContent);
   let editorPlaceholder = $derived(
     notes.isDraft ? 'Start typing… save when you want to keep it.' : ''
