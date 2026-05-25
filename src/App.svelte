@@ -1013,6 +1013,14 @@
     }
     if (commandPalette.isOpen || filePalette.open) return;
     if (
+      Keymap.splitTerminal.match(e)
+      && (!shouldIgnoreInTextInput(e) || isTerminalKeyTarget(e))
+    ) {
+      consume(e);
+      void sessions.splitNewTerminal().catch(reportError);
+      return;
+    }
+    if (
       Keymap.deleteSelectedSession.match(e)
       && (!shouldIgnoreInTextInput(e) || isTerminalKeyTarget(e))
     ) {

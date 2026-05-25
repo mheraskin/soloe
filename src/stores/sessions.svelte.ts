@@ -26,6 +26,32 @@ const LAST_SELECTED_BY_PROJECT_KEY = 'soloe.lastSelectedByProject.v1';
 const LAST_SELECTED_BY_WORKTREE_KEY = 'soloe.lastSelectedByWorktree.v1';
 const STANDALONE_KEY = '__standalone__';
 
+const SPLIT_RATIO_KEY = 'soloe.terminalSplitRatio.v1';
+const SPLIT_RATIO_MIN = 0.2;
+const SPLIT_RATIO_MAX = 0.8;
+
+function clampSplitRatio(value: number): number {
+  if (!Number.isFinite(value)) return 0.5;
+  return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, value));
+}
+
+function readSplitRatio(): number {
+  try {
+    const raw = localStorage.getItem(SPLIT_RATIO_KEY);
+    return raw ? clampSplitRatio(Number(raw)) : 0.5;
+  } catch {
+    return 0.5;
+  }
+}
+
+function writeSplitRatio(value: number): void {
+  try {
+    localStorage.setItem(SPLIT_RATIO_KEY, String(value));
+  } catch {
+    // ignore
+  }
+}
+
 function normPath(p: string): string {
   return p.replace(/[/\\]+$/, '');
 }
@@ -99,9 +125,50 @@ class SessionsStore {
   loading = $state(false);
   showArchivedFor = $state<Record<string, boolean>>({});
 
+  // Terminal split: the focused pane is always `selected`; `splitCompanionId`
+  // is the other half. `splitCompanionSide` is the side the companion sits on
+  // so focus can swap between panes without either jumping across the divider.
+  splitCompanionId = $state<SessionId | null>(null);
+  splitCompanionSide = $state<'left' | 'right'>('right');
+  splitRatio = $state<number>(readSplitRatio());
+
   selected = $derived(
     this.selectedId ? this.sessions.find((s) => s.id === this.selectedId) ?? null : null
   );
+
+  // Resolves the companion relationship into concrete left/right panes, but
+  // only when both sessions are live in the same worktree. Anything stale
+  // (a removed/stopped companion, a focus switch to another worktree) yields
+  // null so the area falls back to a single pane.
+  activeSplit = $derived.by<{
+    leftId: SessionId;
+    rightId: SessionId;
+    focusedId: SessionId;
+    leftTerminalId: string;
+    rightTerminalId: string;
+    ratio: number;
+  } | null>(() => {
+    const focused = this.selected;
+    const companionId = this.splitCompanionId;
+    if (!focused || !companionId || companionId === focused.id) return null;
+    const companion = this.sessions.find((s) => s.id === companionId);
+    if (!companion || !this.isSameWorktree(focused, companion)) return null;
+    if (!this.isLive(focused.id) || !this.isLive(companionId)) return null;
+    const companionLeft = this.splitCompanionSide === 'left';
+    const leftId = companionLeft ? companionId : focused.id;
+    const rightId = companionLeft ? focused.id : companionId;
+    const leftTerminalId = this.runtime[leftId]?.terminalId ?? null;
+    const rightTerminalId = this.runtime[rightId]?.terminalId ?? null;
+    if (!leftTerminalId || !rightTerminalId) return null;
+    return {
+      leftId,
+      rightId,
+      focusedId: focused.id,
+      leftTerminalId,
+      rightTerminalId,
+      ratio: this.splitRatio
+    };
+  });
 
   groups = $derived({
     claude: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'claude_code'),
@@ -407,6 +474,8 @@ class SessionsStore {
     projectId?: string;
     cwd?: string;
     branch?: string;
+    runMode?: RunMode;
+    wslDistro?: string;
   } = {}): Promise<Session> {
     return this.createTypedWithDefaults(settings.current.defaults.newSessionKind, opts);
   }
@@ -478,13 +547,19 @@ class SessionsStore {
       branch?: string;
       model?: string;
       extraArgs?: string[];
+      runMode?: RunMode;
+      wslDistro?: string;
     } = {}
   ): Promise<Session> {
     const defaults = settings.current.defaults;
     const project = opts.projectId ? projects.get(opts.projectId) : null;
-    const runMode = project?.defaultRunMode ?? defaults.runMode;
+    // Explicit runMode/wslDistro (passed when splitting beside an existing
+    // session) win over project/defaults so the new terminal lands in the
+    // exact same worktree as its companion.
+    const runMode = opts.runMode ?? project?.defaultRunMode ?? defaults.runMode;
     const cwd = opts.cwd ?? project?.path ?? normalizedDefaultCwd(defaults.cwd, runMode);
     const wslDistro = (() => {
+      if (opts.wslDistro) return opts.wslDistro;
       if (project?.defaultWslDistro) return project.defaultWslDistro;
       return defaults.wslDistro ?? 'Ubuntu';
     })();
@@ -563,6 +638,7 @@ class SessionsStore {
   }
 
   async remove(id: SessionId): Promise<void> {
+    this.clearSplitIfInvolves(id);
     const rt = this.runtime[id];
     if (rt && rt.terminalId && (rt.status === 'running' || rt.status === 'starting')) {
       try {
@@ -592,6 +668,7 @@ class SessionsStore {
   }
 
   async archive(id: SessionId): Promise<void> {
+    this.clearSplitIfInvolves(id);
     const session = this.sessions.find((s) => s.id === id);
     if (!session?.projectId) {
       await this.remove(id);
@@ -658,8 +735,10 @@ class SessionsStore {
     this.sessions = [...this.sessions.filter((s) => s.id !== id), updated];
   }
 
-  async start(id: SessionId): Promise<void> {
-    this.select(id);
+  async start(id: SessionId, opts: { focus?: boolean } = {}): Promise<void> {
+    // `focus: false` starts a session without making it the focused pane —
+    // used when adding a companion to the split so the current pane keeps focus.
+    if (opts.focus !== false) this.select(id);
     this.runtime = {
       ...this.runtime,
       [id]: {
@@ -747,8 +826,132 @@ class SessionsStore {
     }
   }
 
+  private isLive(id: SessionId): boolean {
+    const rt = this.runtime[id];
+    return !!rt?.terminalId && (rt.status === 'running' || rt.status === 'starting');
+  }
+
+  // Ctrl+Shift+/ — open a second pane running a new default-provider terminal
+  // in the focused session's worktree. The existing session stays on the left
+  // (it was already filling the area); the new one takes focus on the right.
+  async splitNewTerminal(): Promise<Session> {
+    const focused = this.selected;
+    const canPair = !!focused && this.isLive(focused.id);
+    const opts = focused
+      ? {
+          ...(focused.projectId ? { projectId: focused.projectId } : {}),
+          cwd: focused.cwd,
+          runMode: focused.runMode,
+          ...(focused.wslDistro ? { wslDistro: focused.wslDistro } : {}),
+          ...(focused.lastBranch ? { branch: focused.lastBranch } : {})
+        }
+      : {};
+    const created = await this.createPreferredWithDefaults(opts);
+    if (focused && canPair && created.id !== focused.id) {
+      this.splitCompanionId = focused.id;
+      this.splitCompanionSide = 'left';
+    }
+    return created;
+  }
+
+  // "Open beside current": keep the focused pane where it is and place the
+  // target session in the right half, starting it if needed without stealing
+  // focus.
+  async addToSplit(targetId: SessionId): Promise<void> {
+    const focused = this.selected;
+    if (!focused || focused.id === targetId) return;
+    const target = this.sessions.find((s) => s.id === targetId);
+    if (!target || !this.isSameWorktree(focused, target)) return;
+    if (!this.isLive(focused.id)) {
+      this.select(targetId);
+      return;
+    }
+    if (!this.isLive(targetId)) {
+      await this.start(targetId, { focus: false });
+    }
+    this.splitCompanionId = targetId;
+    this.splitCompanionSide = 'right';
+  }
+
+  // Collapse back to a single pane. Removing the focused half promotes the
+  // companion to the sole, focused pane; removing the companion just drops it.
+  removeFromSplit(id: SessionId): void {
+    const companionId = this.splitCompanionId;
+    if (!companionId) return;
+    if (id === companionId) {
+      this.clearSplitCompanion();
+      return;
+    }
+    if (id === this.selectedId) {
+      this.clearSplitCompanion();
+      this.select(companionId);
+    }
+  }
+
+  isInActiveSplit(id: SessionId): boolean {
+    const split = this.activeSplit;
+    return !!split && (split.leftId === id || split.rightId === id);
+  }
+
+  canAddToSplit(id: SessionId): boolean {
+    const focused = this.selected;
+    if (!focused || focused.id === id) return false;
+    if (this.splitCompanionId === id) return false;
+    if (!this.isLive(focused.id)) return false;
+    const target = this.sessions.find((s) => s.id === id);
+    if (!target) return false;
+    return this.isSameWorktree(focused, target);
+  }
+
+  setSplitRatio(value: number): void {
+    const next = clampSplitRatio(value);
+    this.splitRatio = next;
+    writeSplitRatio(next);
+  }
+
+  private clearSplitCompanion(): void {
+    if (this.splitCompanionId === null) return;
+    this.splitCompanionId = null;
+    this.splitCompanionSide = 'right';
+  }
+
+  // Drop the split when either pane's session is being removed/archived so a
+  // stale companion can't later resurrect a phantom split.
+  private clearSplitIfInvolves(id: SessionId): void {
+    if (this.splitCompanionId === id || this.selectedId === id) {
+      this.clearSplitCompanion();
+    }
+  }
+
+  // Keep the companion consistent as focus moves: selecting the companion
+  // swaps the two panes (flipping the side so neither jumps); selecting a
+  // session in another worktree drops the split entirely.
+  private reconcileSplitOnSelect(prevId: SessionId | null, nextId: SessionId | null): void {
+    const companionId = this.splitCompanionId;
+    if (!companionId) return;
+    if (nextId === null) {
+      this.clearSplitCompanion();
+      return;
+    }
+    if (nextId === companionId) {
+      if (prevId && prevId !== companionId) {
+        this.splitCompanionId = prevId;
+        this.splitCompanionSide = this.splitCompanionSide === 'left' ? 'right' : 'left';
+      } else {
+        this.clearSplitCompanion();
+      }
+      return;
+    }
+    const next = this.sessions.find((s) => s.id === nextId);
+    const companion = this.sessions.find((s) => s.id === companionId);
+    if (!next || !companion || !this.isSameWorktree(next, companion)) {
+      this.clearSplitCompanion();
+    }
+  }
+
   select(id: SessionId | null): void {
     const prevId = this.selectedId;
+    this.reconcileSplitOnSelect(prevId, id);
     this.selectedId = id;
     // Any sidebar click should drop fullscreen so the user gets back to the
     // normal split-pane view — the rail covers the terminal when fullscreen

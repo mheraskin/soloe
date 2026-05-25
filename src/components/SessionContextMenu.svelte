@@ -5,6 +5,7 @@
     ArrowRight,
     ChevronRight,
     CircleSlash,
+    Columns2,
     Copy,
     FolderOpen,
     Pencil,
@@ -82,6 +83,14 @@
 
   function continueElsewhere() {
     sessionHandoff.open(session.id);
+  }
+
+  function openBeside() {
+    void sessions.addToSplit(session.id).catch(reportError);
+  }
+
+  function removeFromSplit() {
+    sessions.removeFromSplit(session.id);
   }
 
   async function rename() {
@@ -164,6 +173,15 @@
     <ContextMenu.Item onSelect={continueElsewhere}>
       <ArrowRight /> <span>Continue in another session</span>
     </ContextMenu.Item>
+    {#if sessions.isInActiveSplit(session.id)}
+      <ContextMenu.Item onSelect={removeFromSplit}>
+        <Columns2 /> <span>Remove from split</span>
+      </ContextMenu.Item>
+    {:else if sessions.canAddToSplit(session.id)}
+      <ContextMenu.Item onSelect={openBeside}>
+        <Columns2 /> <span>Open beside current</span>
+      </ContextMenu.Item>
+    {/if}
     <ContextMenu.Separator />
     <div class="flex items-center gap-2 px-1 py-1">
       <div

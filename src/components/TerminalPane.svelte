@@ -35,11 +35,20 @@
   } from '../lib/terminal-input';
   import type { ClipboardImagePayload } from '@shared/types/files.js';
 
+  // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
+  // a split simultaneously; `focused` drives keyboard concerns (xterm focus,
+  // find bar, buffer copy) and is true for only one pane at a time.
   let {
     terminalId,
     sessionId,
-    active
-  }: { terminalId: TerminalId; sessionId: SessionId; active: boolean } = $props();
+    visible,
+    focused
+  }: {
+    terminalId: TerminalId;
+    sessionId: SessionId;
+    visible: boolean;
+    focused: boolean;
+  } = $props();
 
   let fontSize = $derived(settings.current.terminal.fontSize);
 
@@ -112,13 +121,13 @@
   }
 
   function openFind(): void {
-    if (!active) return;
+    if (!focused) return;
     findOpen = true;
     requestAnimationFrame(() => findInput?.focus());
   }
 
   async function saveBuffer(): Promise<void> {
-    if (!active) return;
+    if (!focused) return;
     await ipc.system.saveText({
       defaultPath: `${terminalId}.log`,
       content: bufferText()
@@ -126,13 +135,13 @@
   }
 
   async function copyBuffer(): Promise<void> {
-    if (!active) return;
+    if (!focused) return;
     await navigator.clipboard.writeText(bufferText());
     toasts.push('Copied terminal buffer', 'info');
   }
 
   async function copyMarkdown(): Promise<void> {
-    if (!active) return;
+    if (!focused) return;
     const session = sessions.sessions.find((item) => item.id === sessionId);
     const header = session
       ? `# ${session.name || session.id}\n\n- cwd: ${session.cwd}\n- launch: ${launchKind(session)}\n- run mode: ${session.runMode}\n\n`
@@ -481,7 +490,7 @@
     document.fonts.addEventListener('loadingdone', dropAtlasAndRepaint);
 
     requestAnimationFrame(() => {
-      if (!active) return;
+      if (!visible) return;
       try {
         f.fit();
         // Sync PTY immediately so the first output isn't wrapped at the
@@ -564,7 +573,7 @@
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
-      if (!active) return;
+      if (!visible) return;
       const { width, height } = entry.contentRect;
       if (width < 4 || height < 4) return; // hidden / collapsed
       try {
@@ -580,7 +589,7 @@
     const onSave = () => { void saveBuffer().catch(reportError); };
     const onCopy = () => { void copyBuffer().catch(reportError); };
     const onCopyMarkdown = () => { void copyMarkdown().catch(reportError); };
-    const onRefocus = () => { if (active) term?.focus(); };
+    const onRefocus = () => { if (focused) term?.focus(); };
     window.addEventListener('soloe:terminal-find', onFind);
     window.addEventListener('soloe:terminal-save-buffer', onSave);
     window.addEventListener('soloe:terminal-copy-buffer', onCopy);
@@ -632,13 +641,14 @@
     });
   });
 
-  // When this pane becomes active, refit, focus, and evict the glyph atlas.
-  // While hidden (opacity-0), the WebGL texture atlas can accumulate stale
+  // When this pane becomes visible, refit and evict the glyph atlas. While
+  // hidden (opacity-0), the WebGL texture atlas can accumulate stale
   // fallback-font glyphs (lazy font subsets loaded after the terminal last
   // painted). Clearing it here forces a full re-rasterisation with the
-  // correct fonts on every tab switch.
+  // correct fonts. This runs for both halves of a split, so it deliberately
+  // does not touch focus — that is the focused effect's job.
   $effect(() => {
-    if (!active || !term || !fit || !host) return;
+    if (!visible || !term || !fit || !host) return;
     if (renderer && 'clearTextureAtlas' in renderer) {
       renderer.clearTextureAtlas();
     }
@@ -649,14 +659,21 @@
       if (rect.width < 4 || rect.height < 4) return;
       try {
         fit?.fit();
-        term?.focus();
         if (term) {
           void ipc.terminal.resize(terminalId, term.cols, term.rows).catch(() => {});
         }
       } catch (err) {
-        console.warn('[DEBUG-xterm] active fit failed', { terminalId, sessionId, err });
+        console.warn('[DEBUG-xterm] visible fit failed', { terminalId, sessionId, err });
       }
     });
+  });
+
+  // Only the focused pane takes keyboard focus. Deferring a frame lets the
+  // visible effect's fit settle first when a pane becomes visible and focused
+  // in the same tick.
+  $effect(() => {
+    if (!focused || !term) return;
+    requestAnimationFrame(() => term?.focus());
   });
 </script>
 
@@ -678,7 +695,7 @@
       </div>
     </div>
   {/if}
-  {#if findOpen && active}
+  {#if findOpen && focused}
     <div class="absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
       <Input
         bind:ref={findInput}

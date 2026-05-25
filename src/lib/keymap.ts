@@ -155,6 +155,14 @@ export const Keymap = {
     description: 'Toggle focus between terminal and right pane',
     keys: ['Ctrl', ';'],
     match: (e: KeyboardEvent) => isPlainCtrlOrCmd(e) && key(e) === ';'
+  },
+  splitTerminal: {
+    id: 'terminal.split',
+    description: 'Split terminal',
+    keys: ['Ctrl', 'Shift', '/'],
+    // Shift+/ resolves to "?" in `e.key`, so match on the physical key code.
+    match: (e: KeyboardEvent) =>
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && e.code === 'Slash'
   }
 } as const satisfies Record<string, KeymapBinding>;
 
