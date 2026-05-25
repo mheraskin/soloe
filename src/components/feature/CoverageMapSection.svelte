@@ -58,6 +58,26 @@
     resolved: 'text-emerald-500 border-emerald-500/40 bg-emerald-500/5',
     deferred: 'text-slate-400 border-slate-400/40 bg-slate-400/5'
   };
+
+  function sectionUiKey(sectionId: string): string {
+    return `coverage:${coverage.relativePath}:${sectionId}`;
+  }
+
+  function sectionComplete(section: CoverageMapSnapshot['sections'][number]): boolean {
+    return section.entries.length > 0
+      && section.entries.every((entry) => entry.status === 'resolved' || entry.status === 'deferred');
+  }
+
+  function sectionOpen(section: CoverageMapSnapshot['sections'][number]): boolean {
+    return featuresStore.sectionOpenFor(cwd, sectionUiKey(section.id), !sectionComplete(section));
+  }
+
+  function onSectionOpenChange(
+    section: CoverageMapSnapshot['sections'][number],
+    nextOpen: boolean
+  ): void {
+    featuresStore.setSectionOpen(cwd, sectionUiKey(section.id), nextOpen, !sectionComplete(section));
+  }
 </script>
 
 <Collapsible.Root {open} onOpenChange={onOpenChange} class="rounded-md border border-border">
@@ -153,13 +173,16 @@
         {#each coverage.sections as section (section.id)}
           {@const resolvedInSection = section.entries.filter((e) => e.status === 'resolved' || e.status === 'deferred').length}
           {@const sectionPercent = section.entries.length > 0 ? Math.round((resolvedInSection / section.entries.length) * 100) : 0}
-          <details class="group" open>
-            <summary
-              class="flex cursor-pointer items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted/40"
+          <Collapsible.Root
+            open={sectionOpen(section)}
+            onOpenChange={(nextOpen) => onSectionOpenChange(section, nextOpen)}
+          >
+            <Collapsible.Trigger
+              class="group flex w-full cursor-pointer items-center justify-between gap-2 px-2.5 py-1.5 text-left text-[11px] font-medium text-foreground hover:bg-muted/40"
             >
               <span class="flex min-w-0 items-center gap-1.5">
                 <ChevronRight
-                  class="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+                  class="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
                 />
                 <span class="font-mono text-muted-foreground">{section.id}</span>
                 <span class="min-w-0 truncate">{section.title}</span>
@@ -178,7 +201,8 @@
                   {resolvedInSection}/{section.entries.length}
                 </span>
               </span>
-            </summary>
+            </Collapsible.Trigger>
+            <Collapsible.Content>
             <ul class="space-y-0.5 px-2 pb-2">
               {#each section.entries as entry, entryIndex (`${section.id}:${entry.lineIndex}:${entry.id}:${entryIndex}`)}
                 {@const isCurrent = entry.status === 'in_progress'}
@@ -209,7 +233,8 @@
                 </li>
               {/each}
             </ul>
-          </details>
+            </Collapsible.Content>
+          </Collapsible.Root>
         {/each}
       </div>
     {/if}

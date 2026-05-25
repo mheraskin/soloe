@@ -134,15 +134,15 @@ class FeaturesStore {
     return collapsed === undefined ? fallback : !collapsed;
   }
 
-  setSectionOpen(cwd: string, section: string, open: boolean): void {
+  setSectionOpen(cwd: string, section: string, open: boolean, fallback = true): void {
     if (!cwd || !section) return;
     untrack(() => {
       const prev = this.uiByCwdRaw[cwd] ?? {};
       const collapsed = { ...(prev.collapsed ?? {}) };
-      const wasOpen = collapsed[section] !== true;
+      const wasOpen = collapsed[section] === undefined ? fallback : !collapsed[section];
       if (wasOpen === open) return;
-      if (open) delete collapsed[section];
-      else collapsed[section] = true;
+      if (open === fallback) delete collapsed[section];
+      else collapsed[section] = !open;
       this.uiByCwdRaw[cwd] = { ...prev, collapsed };
       this.uiByCwd = { ...this.uiByCwd, [cwd]: this.uiByCwdRaw[cwd] };
       this.persistUi();
