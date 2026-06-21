@@ -28,9 +28,19 @@ describe('NotesStore.readImage', () => {
     expect(read.dataBase64).toBe(PNG_BASE64);
   });
 
-  it('rejects a path that escapes the notes root', async () => {
-    const outside = path.join(tmpDir, '..', 'secret.png');
-    await expect(store.readImage(outside)).rejects.toThrow(/escapes/i);
+  it('rejects a symlink inside the notes root that points outside it', async () => {
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-outside-'));
+    try {
+      const secret = path.join(outsideDir, 'secret.png');
+      await fs.writeFile(secret, Buffer.from(PNG_BASE64, 'base64'));
+      const imagesDir = path.join(tmpDir, 'proj', 'images');
+      await fs.mkdir(imagesDir, { recursive: true });
+      const link = path.join(imagesDir, 'soloe-img-link.png');
+      await fs.symlink(secret, link);
+      await expect(store.readImage(link)).rejects.toThrow(/escapes/i);
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true });
+    }
   });
 
   it('rejects an unsupported extension', async () => {

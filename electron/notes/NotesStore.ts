@@ -137,18 +137,28 @@ export class NotesStore {
   // load it via file:// under the default webSecurity, so it round-trips the
   // bytes through here. Only paths inside the notes root are served.
   async readImage(absolutePath: string): Promise<NoteImageData> {
-    const resolved = path.resolve(absolutePath);
-    const root = path.resolve(this.rootDir);
-    const rel = path.relative(root, resolved);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
-      throw new Error('Image path escapes notes directory');
-    }
-    const ext = path.extname(resolved).slice(1).toLowerCase();
+    const ext = path.extname(absolutePath).slice(1).toLowerCase();
     const mimeType = MIME_BY_IMAGE_EXTENSION[ext];
     if (!mimeType) throw new Error('Unsupported image type');
-    const stat = await fs.stat(resolved);
+    // Resolve symlinks *before* the containment check: a lexical check (which
+    // only collapses `..`) would let a symlink planted inside the notes dir
+    // redirect readFile to an arbitrary file outside it. realpath follows the
+    // link, so the comparison runs against the true target.
+    let rootReal: string;
+    let resolvedReal: string;
+    try {
+      rootReal = await fs.realpath(this.rootDir);
+      resolvedReal = await fs.realpath(path.resolve(absolutePath));
+    } catch {
+      throw new Error('Image path not found');
+    }
+    const rel = path.relative(rootReal, resolvedReal);
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error('Image path escapes notes directory');
+    }
+    const stat = await fs.stat(resolvedReal);
     if (stat.size > MAX_IMAGE_BYTES) throw new Error('Image exceeds 20 MB limit');
-    const buffer = await fs.readFile(resolved);
+    const buffer = await fs.readFile(resolvedReal);
     return { mimeType, dataBase64: buffer.toString('base64') };
   }
 
