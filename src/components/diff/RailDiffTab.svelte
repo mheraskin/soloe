@@ -506,6 +506,32 @@
     }
   }
 
+  // Every working-tree change regardless of the active filter pill — "discard
+  // all" wipes the whole working tree, not just the currently-shown subset.
+  // Committed-section entries (range mode) are excluded; they aren't editable.
+  let allWtChanges = $derived(
+    (changesEntry?.result?.changes ?? []).filter((c) => c.section !== 'committed')
+  );
+
+  async function discardAll(): Promise<void> {
+    if (!activeCwd) return;
+    const targets = allWtChanges;
+    if (targets.length === 0) return;
+    const ok = await confirmStore.ask({
+      title: 'Discard all changes',
+      message: `Discard all ${targets.length} working-tree change${targets.length === 1 ? '' : 's'}? Tracked files revert to HEAD and new files are deleted. This cannot be undone.`,
+      confirmLabel: 'Discard all',
+      cancelLabel: 'Cancel',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    try {
+      await workingDiff.discardFiles(activeCwd, targets);
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
   async function refresh(): Promise<void> {
     if (!activeCwd) return;
     workingDiff.invalidate(activeCwd);
@@ -838,6 +864,15 @@
             {/if}
             <span>Refresh</span>
           </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+          <DropdownMenu.Item
+            disabled={!activeCwd || allWtChanges.length === 0}
+            class="text-destructive focus:text-destructive"
+            onSelect={() => void discardAll()}
+          >
+            <RotateCcw class="size-3" />
+            <span>Discard all changes</span>
+          </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Root>
     </div>
@@ -889,32 +924,48 @@
             </button>
           {/each}
         </div>
-        <label
-          class="flex items-center gap-1 text-muted-foreground"
-          title="Lines of unchanged context around each change"
-        >
-          <span>ctx</span>
-          <input
-            type="number"
-            min="0"
-            max="50"
-            value={workingDiff.contextLines}
-            oninput={(e) =>
-              setContextLines(Number((e.currentTarget as HTMLInputElement).value))}
-            class="h-5 w-9 rounded border border-input bg-transparent px-1 text-right font-mono text-[10px] outline-none focus:border-ring"
-            aria-label="Context lines"
-          />
-        </label>
+        <div class="flex items-center gap-1.5">
+          {#if activeCwd && !isRangeMode}
+            <Popover.Root>
+              <Popover.Trigger>
+                {#snippet child({ props })}
+                  <button
+                    {...props}
+                    type="button"
+                    class="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                    title="Commit, push, pull…"
+                  >
+                    <GitCommitIcon class="size-3" />
+                    <span>Commit</span>
+                  </button>
+                {/snippet}
+              </Popover.Trigger>
+              <Popover.Content align="end" class="w-80 p-0">
+                {#key activeCwd}
+                  <CommitComposer cwd={activeCwd} />
+                {/key}
+              </Popover.Content>
+            </Popover.Root>
+          {/if}
+          <label
+            class="flex items-center gap-1 text-muted-foreground"
+            title="Lines of unchanged context around each change"
+          >
+            <span>ctx</span>
+            <input
+              type="number"
+              min="0"
+              max="50"
+              value={workingDiff.contextLines}
+              oninput={(e) =>
+                setContextLines(Number((e.currentTarget as HTMLInputElement).value))}
+              class="h-5 w-9 rounded border border-input bg-transparent px-1 text-right font-mono text-[10px] outline-none focus:border-ring"
+              aria-label="Context lines"
+            />
+          </label>
+        </div>
       </div>
     </div>
-
-    {#if activeCwd && !isRangeMode}
-      <div class:hidden={diffExpanded}>
-        {#key activeCwd}
-          <CommitComposer cwd={activeCwd} />
-        {/key}
-      </div>
-    {/if}
 
     {#snippet wtChangeRow(change: WorkingChange)}
       <ChangeRow

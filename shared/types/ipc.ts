@@ -88,6 +88,7 @@ import type { DiffRpcRequest, DiffRpcResponse } from './diff-rpc.js';
 import type {
   NoteContent,
   NoteImage,
+  NoteImageData,
   NoteSummary,
   NotesChangeEvent
 } from './notes.js';
@@ -102,7 +103,7 @@ import type {
   TerminalStartResult,
   TerminalStatusEvent
 } from './terminal.js';
-import type { SystemUsageSnapshot } from './system.js';
+import type { PathExistsRequest, SystemUsageSnapshot } from './system.js';
 import type {
   VaultDeleteRequest,
   VaultEntry,
@@ -160,6 +161,7 @@ export const IpcChannels = {
     saveText: 'system:save-text',
     openExternal: 'system:open-external',
     listWslDistros: 'system:list-wsl-distros',
+    pathExists: 'system:path-exists',
     usage: 'system:usage'
   },
   settings: {
@@ -188,6 +190,7 @@ export const IpcChannels = {
     rename: 'notes:rename',
     delete: 'notes:delete',
     saveImage: 'notes:save-image',
+    readImage: 'notes:read-image',
     cleanupImages: 'notes:cleanup-images',
     change: 'notes:change'
   },
@@ -365,6 +368,7 @@ export interface SystemApi {
   saveText(request: { defaultPath?: string; content: string }): Promise<IpcResult<true>>;
   openExternal(url: string): Promise<IpcResult<true>>;
   listWslDistros(): Promise<IpcResult<string[]>>;
+  pathExists(requests: PathExistsRequest[]): Promise<IpcResult<boolean[]>>;
   usage(): Promise<IpcResult<SystemUsageSnapshot>>;
 }
 
@@ -411,6 +415,7 @@ export interface NotesApi {
     mimeType: string,
     dataBase64: string
   ): Promise<IpcResult<NoteImage>>;
+  readImage(absolutePath: string): Promise<IpcResult<NoteImageData>>;
   cleanupImages(
     projectId: ProjectId,
     extraReferences: string[]

@@ -27,3 +27,8 @@ export interface NoteImagePayload {
   mimeType: string;
   dataBase64: string;
 }
+
+export interface NoteImageData {
+  mimeType: string;
+  dataBase64: string;
+}

@@ -5,6 +5,7 @@ import type { ProjectId } from '@shared/types/projects.js';
 import type {
   NoteContent,
   NoteImage,
+  NoteImageData,
   NoteSummary,
   NotesChangeEvent
 } from '@shared/types/notes.js';
@@ -19,6 +20,13 @@ const IMAGE_EXTENSIONS_BY_MIME: Record<string, string> = {
   'image/jpg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp'
+};
+const MIME_BY_IMAGE_EXTENSION: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp'
 };
 
 export class NotesStore {
@@ -122,6 +130,26 @@ export class NotesStore {
     assertWithin(dir, absolutePath);
     await fs.writeFile(absolutePath, buffer);
     return { filename, absolutePath, mimeType };
+  }
+
+  // Read a note image back as base64 for inline rendering. Notes store the
+  // bare absolute path (so the agent can read the file); the renderer can't
+  // load it via file:// under the default webSecurity, so it round-trips the
+  // bytes through here. Only paths inside the notes root are served.
+  async readImage(absolutePath: string): Promise<NoteImageData> {
+    const resolved = path.resolve(absolutePath);
+    const root = path.resolve(this.rootDir);
+    const rel = path.relative(root, resolved);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error('Image path escapes notes directory');
+    }
+    const ext = path.extname(resolved).slice(1).toLowerCase();
+    const mimeType = MIME_BY_IMAGE_EXTENSION[ext];
+    if (!mimeType) throw new Error('Unsupported image type');
+    const stat = await fs.stat(resolved);
+    if (stat.size > MAX_IMAGE_BYTES) throw new Error('Image exceeds 20 MB limit');
+    const buffer = await fs.readFile(resolved);
+    return { mimeType, dataBase64: buffer.toString('base64') };
   }
 
   // Sweep images that are no longer referenced anywhere. Reads every saved

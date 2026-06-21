@@ -10,7 +10,8 @@
     ArrowLeftToLine,
     TextSelect,
     Send,
-    Eraser
+    Eraser,
+    Image as ImageIcon
   } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
   import { projects } from '../../stores/projects.svelte';
@@ -27,6 +28,7 @@
   import { Kbd } from '$lib/components/ui/kbd';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as ContextMenu from '$lib/components/ui/context-menu';
+  import * as Tooltip from '$lib/components/ui/tooltip';
 
   type DialogState =
     | { kind: 'save-draft'; name: string }
@@ -154,6 +156,49 @@
     }
   }
 
+  // Note image references render as link chips with a hover preview and a
+  // click-to-fullscreen lightbox. The bare path stays in the textarea (the
+  // agent reads it, and NotesStore.cleanupImages matches on filename); this is
+  // purely a viewer over whatever soloe-img-* paths the note text contains.
+  const IMAGE_REF_RE = /[^\s"'()]*soloe-img-[^\s"'()]*\.(?:png|jpe?g|gif|webp)/gi;
+  let imageRefs = $derived.by<string[]>(() => [...new Set(editorValue.match(IMAGE_REF_RE) ?? [])]);
+  let imageDataUrls = $state<Record<string, string>>({});
+  let lightboxPath = $state<string | null>(null);
+  // Non-reactive dedup so the loader effect doesn't re-fire on its own writes.
+  const requestedImageRefs = new Set<string>();
+
+  $effect(() => {
+    for (const ref of imageRefs) {
+      if (requestedImageRefs.has(ref)) continue;
+      requestedImageRefs.add(ref);
+      void ipc.notes
+        .readImage(ref)
+        .then((img) => {
+          imageDataUrls = {
+            ...imageDataUrls,
+            [ref]: `data:${img.mimeType};base64,${img.dataBase64}`
+          };
+        })
+        .catch(() => {
+          // Unreadable/moved image — leave the chip as a plain link.
+        });
+    }
+  });
+
+  // Escape closes the fullscreen lightbox (clicking it also closes).
+  $effect(() => {
+    if (!lightboxPath) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') lightboxPath = null;
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  function imageBaseName(p: string): string {
+    return p.split(/[\\/]/).pop() || p;
+  }
+
   function onTextareaKeydown(event: KeyboardEvent): void {
     const ctrlOrCmd = event.metaKey || event.ctrlKey;
     if (ctrlOrCmd && !event.altKey && event.key === 'Enter') {
@@ -197,8 +242,9 @@
     if (!text) return;
     const id = activeTerminalId;
     if (!id) return;
+    const sel = sessions.selected;
     try {
-      await sendBracketedPaste(id, text, submit);
+      await sendBracketedPaste(id, text, submit, sel ? sessions.providerFor(sel.id) : null);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
     } catch (err) {
       reportError(err);
@@ -596,9 +642,63 @@
           {/if}
         </ContextMenu.Content>
       </ContextMenu.Root>
+      {#if imageRefs.length > 0}
+        <Tooltip.Provider delayDuration={200}>
+          <div class="flex flex-wrap gap-1 border-t border-border px-3 py-1.5">
+            {#each imageRefs as ref (ref)}
+              <Tooltip.Root>
+                <Tooltip.Trigger>
+                  {#snippet child({ props })}
+                    <button
+                      {...props}
+                      type="button"
+                      class="flex max-w-full items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      onclick={() => (lightboxPath = ref)}
+                      title="Click to view full screen"
+                    >
+                      <ImageIcon class="size-3 shrink-0" />
+                      <span class="truncate">{imageBaseName(ref)}</span>
+                    </button>
+                  {/snippet}
+                </Tooltip.Trigger>
+                <Tooltip.Content side="top" class="max-w-none p-1">
+                  {#if imageDataUrls[ref]}
+                    <img
+                      src={imageDataUrls[ref]}
+                      alt={imageBaseName(ref)}
+                      class="max-h-48 max-w-[16rem] rounded object-contain"
+                    />
+                  {:else}
+                    <span class="text-[10px] text-muted-foreground">Loading…</span>
+                  {/if}
+                </Tooltip.Content>
+              </Tooltip.Root>
+            {/each}
+          </div>
+        </Tooltip.Provider>
+      {/if}
     </section>
   {/if}
 </div>
+
+{#if lightboxPath}
+  <button
+    type="button"
+    class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-6"
+    aria-label="Close image preview"
+    onclick={() => (lightboxPath = null)}
+  >
+    {#if imageDataUrls[lightboxPath]}
+      <img
+        src={imageDataUrls[lightboxPath]}
+        alt={imageBaseName(lightboxPath)}
+        class="max-h-full max-w-full object-contain"
+      />
+    {:else}
+      <span class="text-sm text-white/80">Loading…</span>
+    {/if}
+  </button>
+{/if}
 
 <Dialog.Root open={dialog !== null} onOpenChange={(open) => (dialog = open ? dialog : null)}>
   <Dialog.Content class="sm:max-w-sm">

@@ -157,7 +157,7 @@ async function waitForTerminalId(sessionId: string, timeoutMs: number): Promise<
 async function deliverToSession(sessionId: string, payload: string): Promise<void> {
   const terminalId = await waitForTerminalId(sessionId, 5000);
   if (!terminalId) throw new Error('terminal not ready');
-  await sendBracketedPaste(terminalId, payload, true);
+  await sendBracketedPaste(terminalId, payload, true, sessions.providerFor(sessionId));
 }
 
 // Sends a comment. With mentions, fans out to each resolved agent's session,
@@ -196,7 +196,7 @@ export async function sendComment(commentId: string): Promise<SendCommentResult>
         errors.push(`Session ${selected.name} has no running terminal`);
       } else {
         try {
-          await sendBracketedPaste(terminalId, payload, true);
+          await sendBracketedPaste(terminalId, payload, true, sessions.providerFor(selected.id));
           delivered += 1;
         } catch (err) {
           errors.push((err as Error).message);

@@ -24,7 +24,12 @@ import { sendBracketedPaste } from '../lib/terminal-paste';
 
 const LAST_SELECTED_BY_PROJECT_KEY = 'soloe.lastSelectedByProject.v1';
 const LAST_SELECTED_BY_WORKTREE_KEY = 'soloe.lastSelectedByWorktree.v1';
+const LAST_SELECTED_SESSION_KEY = 'soloe.lastSelectedSession.v1';
 const STANDALONE_KEY = '__standalone__';
+
+// Cadence for re-checking whether project-bound sessions' worktree folders
+// still exist on disk; missing ones are archived (data kept, hidden from UI).
+const MISSING_SWEEP_INTERVAL_MS = 20000;
 
 const SPLIT_RATIO_KEY = 'soloe.terminalSplitRatio.v1';
 const SPLIT_RATIO_MIN = 0.2;
@@ -77,6 +82,23 @@ function readLastSelectedMap(storageKey: string): Record<string, SessionId> {
 function writeLastSelectedMap(storageKey: string, map: Record<string, SessionId>): void {
   try {
     localStorage.setItem(storageKey, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+function readLastSelectedSession(): SessionId | null {
+  try {
+    return localStorage.getItem(LAST_SELECTED_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeLastSelectedSession(id: SessionId | null): void {
+  try {
+    if (id) localStorage.setItem(LAST_SELECTED_SESSION_KEY, id);
+    else localStorage.removeItem(LAST_SELECTED_SESSION_KEY);
   } catch {
     // ignore
   }
@@ -220,6 +242,13 @@ class SessionsStore {
 
   private detachers: Array<() => void> = [];
   private locationVersions = new Map<SessionId, number>();
+  // The single most-recently-focused session, persisted across restarts so the
+  // app reopens on the exact tab that was active when it closed — not just the
+  // first project's last-selected tab.
+  private lastSelectedSessionId: SessionId | null = readLastSelectedSession();
+  // Periodic sweep that archives sessions whose worktree folder is gone.
+  private missingSweepHandle: ReturnType<typeof setInterval> | null = null;
+  private sweepingMissing = false;
 
   statusFor(id: SessionId): SessionStatus {
     return this.runtime[id]?.status ?? 'stopped';
@@ -231,6 +260,13 @@ class SessionsStore {
 
   observationFor(id: string): ObservedAgentSnapshot | null {
     return this.observed[id] ?? null;
+  }
+
+  // Public accessor for the CLI behind a session — callers use it to tune
+  // bracketed-paste submit timing (Claude needs a longer yield than Codex).
+  providerFor(id: SessionId): AgentRuntimeProvider | null {
+    const session = this.sessions.find((s) => s.id === id);
+    return session ? this.agentProviderFor(session) : null;
   }
 
   usageLimitFor(id: SessionId): ObservedAgentSnapshot['usageLimit'] | null {
@@ -264,7 +300,12 @@ class SessionsStore {
       this.observed = Object.fromEntries(observed.map((s) => [s.id, s]));
       this.pruneLastSelected();
       if (!this.selectedId && list.length > 0) {
-        this.selectedId = this.pickInitialSelection(list);
+        const initial = this.pickInitialSelection(list);
+        this.selectedId = initial;
+        if (initial) {
+          this.lastSelectedSessionId = initial;
+          writeLastSelectedSession(initial);
+        }
       }
       for (const snapshot of observed) {
         const rowSessionId = rowSessionIdFor(snapshot);
@@ -273,9 +314,55 @@ class SessionsStore {
           : null;
         agentNotifications.primeSnapshot(snapshot, session, this.selectedId);
       }
+      // Catch sessions bound to a folder deleted while the app was closed, then
+      // keep watching for live deletions.
+      void this.pruneMissingWorktreeSessions();
+      this.startMissingWorktreeSweep();
     } finally {
       this.loading = false;
     }
+  }
+
+  // Archive sessions whose worktree folder no longer exists. Keeps the data
+  // (archive, not delete) but pulls them out of the active list so a deleted
+  // worktree stops fabricating a phantom group in the sidebar. Only confirmed-
+  // missing, project-bound sessions are touched; the backend probe returns
+  // "present" on any uncertain reading so a flaky filesystem/WSL can't trigger
+  // false archives.
+  private async pruneMissingWorktreeSessions(): Promise<void> {
+    if (this.sweepingMissing) return;
+    this.sweepingMissing = true;
+    try {
+      const candidates = this.sessions.filter(
+        (s) => s.projectId && s.cwd && s.cwd.trim().length > 0
+      );
+      if (candidates.length === 0) return;
+      const requests = candidates.map((s) => ({
+        path: s.cwd,
+        runMode: s.runMode,
+        ...(s.wslDistro ? { wslDistro: s.wslDistro } : {})
+      }));
+      const exists = await ipc.system.pathExists(requests);
+      for (let i = 0; i < candidates.length; i += 1) {
+        if (exists[i] !== false) continue;
+        try {
+          await this.archive(candidates[i]!.id);
+        } catch {
+          // best effort — retry on the next sweep
+        }
+      }
+    } catch {
+      // ignore — try again next sweep
+    } finally {
+      this.sweepingMissing = false;
+    }
+  }
+
+  private startMissingWorktreeSweep(): void {
+    if (this.missingSweepHandle) return;
+    this.missingSweepHandle = setInterval(() => {
+      void this.pruneMissingWorktreeSessions();
+    }, MISSING_SWEEP_INTERVAL_MS);
   }
 
   toggleArchivedFor(projectId: string): void {
@@ -286,6 +373,8 @@ class SessionsStore {
   }
 
   private pickInitialSelection(list: Session[]): SessionId | null {
+    const lastGlobal = this.lastSelectedSessionId;
+    if (lastGlobal && list.some((s) => s.id === lastGlobal)) return lastGlobal;
     const lastIds = Object.values(this.lastSelectedByProject);
     for (const id of lastIds) {
       if (list.some((s) => s.id === id)) return id;
@@ -295,6 +384,10 @@ class SessionsStore {
 
   private pruneLastSelected(): void {
     const ids = new Set(this.sessions.map((s) => s.id));
+    if (this.lastSelectedSessionId && !ids.has(this.lastSelectedSessionId)) {
+      this.lastSelectedSessionId = null;
+      writeLastSelectedSession(null);
+    }
     const pruneMap = (map: Record<string, SessionId>): {
       next: Record<string, SessionId>;
       changed: boolean;
@@ -698,6 +791,10 @@ class SessionsStore {
   }
 
   private forgetLastSelectedId(id: SessionId): void {
+    if (this.lastSelectedSessionId === id) {
+      this.lastSelectedSessionId = null;
+      writeLastSelectedSession(null);
+    }
     const project = dropSelectedId(this.lastSelectedByProject, id);
     if (project.changed) {
       this.lastSelectedByProject = project.next;
@@ -961,6 +1058,8 @@ class SessionsStore {
       rightRail.fullscreen = false;
     }
     if (id) {
+      this.lastSelectedSessionId = id;
+      writeLastSelectedSession(id);
       agentNotifications.markSessionOpened(id);
       const session = this.sessions.find((s) => s.id === id);
       if (session) {

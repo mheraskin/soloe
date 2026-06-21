@@ -40,6 +40,11 @@ interface RepoContext {
 
 const FAST_INTERVAL_MS = 5000;
 const SLOW_INTERVAL_MS = 30000;
+// External `git worktree add/remove` (run in a terminal or the OS) doesn't fire
+// any in-app git event, and the backend's fs.watch is unreliable (off on WSL).
+// So force a relist of every known project's worktrees on this cadence to keep
+// the sidebar in sync. Paused with the window.
+const WORKTREE_REFRESH_INTERVAL_MS = 7000;
 
 interface PollEntry {
   cwd: string;
@@ -67,6 +72,8 @@ class GitStore {
   private worktreeRequests = new Map<string, Promise<GitWorktree[]>>();
   private tickListeners = new Set<(cwd: string) => void>();
   private paused = false;
+  private lastProjectIntents: ProjectPollIntent[] = [];
+  private worktreeRefreshHandle: ReturnType<typeof setInterval> | null = null;
 
   statusFor(cwd: string): GitStatus | null {
     return this.statuses[cwd]?.status ?? null;
@@ -323,7 +330,8 @@ class GitStore {
   // Register every worktree of every known project for slow-tier polling so
   // sessionless worktrees still display +N −N. Fetches `git worktree list`
   // for each project; failures fall back to just the project root path.
-  async refreshProjectWorktrees(intents: ProjectPollIntent[]): Promise<void> {
+  async refreshProjectWorktrees(intents: ProjectPollIntent[], force = false): Promise<void> {
+    this.lastProjectIntents = intents;
     const seq = ++this.projectIntentSeq;
     const next = new Map<string, RepoContext>();
     await Promise.all(
@@ -333,7 +341,7 @@ class GitStore {
         const ctx: RepoContext = {};
         if (intent.runMode) ctx.runMode = intent.runMode;
         if (intent.wslDistro) ctx.wslDistro = intent.wslDistro;
-        const worktrees = await this.loadWorktrees(repoPath, false, ctx);
+        const worktrees = await this.loadWorktrees(repoPath, force, ctx);
         if (worktrees.length === 0) {
           next.set(repoPath, ctx);
           return;
@@ -423,6 +431,14 @@ class GitStore {
     document.addEventListener('visibilitychange', onVisibility);
     this.detachers.push(() => document.removeEventListener('visibilitychange', onVisibility));
     this.setPaused(document.visibilityState === 'hidden');
+
+    // Force a periodic worktree relist so external add/remove shows up without a
+    // manual refresh. No-op until the first refreshProjectWorktrees seeds the
+    // intents; skipped while the window is hidden.
+    this.worktreeRefreshHandle = setInterval(() => {
+      if (this.paused || this.lastProjectIntents.length === 0) return;
+      void this.refreshProjectWorktrees(this.lastProjectIntents, true);
+    }, WORKTREE_REFRESH_INTERVAL_MS);
   }
 
   detach(): void {
@@ -430,6 +446,10 @@ class GitStore {
     this.detachers = [];
     for (const entry of this.pollers.values()) clearInterval(entry.handle);
     this.pollers.clear();
+    if (this.worktreeRefreshHandle) {
+      clearInterval(this.worktreeRefreshHandle);
+      this.worktreeRefreshHandle = null;
+    }
   }
 }
 

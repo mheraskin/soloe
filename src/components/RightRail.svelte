@@ -16,7 +16,7 @@
   import { featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
-  import { withScenarioWidths, type ScenarioId, type ScenarioWidths } from '../lib/rail-widths';
+  import { clampSplitRatio, splitPaneWidths, type RailSize } from '../lib/rail-widths';
   import { kbdHints } from '../stores/kbd-hints.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -45,62 +45,42 @@
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
-  // Per-scenario widths. Each of the three standard layouts has its own
-  // memory so dragging in one (e.g. sidebar visible + 1 rail) doesn't move
-  // the others. Defaults are ratios of viewport — see RATIO_* below.
-  //
-  //   A: sidebar visible + 1 rail pane → 30% rail (the 30/40/30 column feel)
-  //   B: sidebar hidden  + 1 rail pane → 50% rail (terminal/rail even split)
-  //   C: 2 rail panes (sidebar usually auto-collapses)
-  //         slot 0 (central, main)  → 55%
-  //         slot 1 (notes-style)    → pinned to MIN_PANE_WIDTH
-  const SCENARIO_KEY = 'soloe.rail.scenarioWidths.v1';
+  // The rail tracks one content width plus a split ratio. A single pane fills
+  // railWidth; two panes divide it by splitRatio (slot 0 = left), defaulting to
+  // an even split. Sizing math lives in src/lib/rail-widths.ts so the drag
+  // handlers and render path agree.
+  const SIZE_KEY = 'soloe.rail.size.v1';
   const ICON_COL_WIDTH = 40;
   const MIN_PANE_WIDTH = 220;
   const TERMINAL_MIN_WIDTH = 220;
-  const FALLBACK_PANE_WIDTH = 480;
+  const FALLBACK_RAIL_WIDTH = 480;
+  const SPLITTER = 4;
+  const DEFAULT_RAIL_RATIO = 0.4;
 
-  const RATIO_A = 0.30;
-  const RATIO_B = 0.50;
-  const RATIO_C0 = 0.55;
-
-  function computeDefaultWidths(): ScenarioWidths {
-    if (typeof window === 'undefined') {
-      return {
-        A: FALLBACK_PANE_WIDTH,
-        B: FALLBACK_PANE_WIDTH,
-        C0: FALLBACK_PANE_WIDTH,
-        C1: MIN_PANE_WIDTH
-      };
-    }
-    const vp = window.innerWidth;
-    return {
-      A: Math.max(MIN_PANE_WIDTH, Math.round(vp * RATIO_A)),
-      B: Math.max(MIN_PANE_WIDTH, Math.round(vp * RATIO_B)),
-      C0: Math.max(MIN_PANE_WIDTH, Math.round(vp * RATIO_C0)),
-      C1: MIN_PANE_WIDTH
-    };
+  function computeDefaultSize(): RailSize {
+    const railWidth =
+      typeof window === 'undefined'
+        ? FALLBACK_RAIL_WIDTH
+        : Math.max(MIN_PANE_WIDTH, Math.round(window.innerWidth * DEFAULT_RAIL_RATIO));
+    return { railWidth, splitRatio: 0.5 };
   }
 
-  function loadScenarioWidths(): ScenarioWidths {
-    if (typeof localStorage === 'undefined') return computeDefaultWidths();
+  function loadSize(): RailSize {
+    const fallback = computeDefaultSize();
+    if (typeof localStorage === 'undefined') return fallback;
     try {
-      const raw = localStorage.getItem(SCENARIO_KEY);
-      if (!raw) return computeDefaultWidths();
-      const parsed = JSON.parse(raw) as Partial<ScenarioWidths>;
-      const d = computeDefaultWidths();
-      const sanitize = (v: unknown, fallback: number) =>
-        typeof v === 'number' && Number.isFinite(v)
-          ? Math.max(MIN_PANE_WIDTH, Math.round(v))
-          : fallback;
-      return {
-        A: sanitize(parsed.A, d.A),
-        B: sanitize(parsed.B, d.B),
-        C0: sanitize(parsed.C0, d.C0),
-        C1: sanitize(parsed.C1, d.C1)
-      };
+      const raw = localStorage.getItem(SIZE_KEY);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw) as Partial<RailSize>;
+      const railWidth =
+        typeof parsed.railWidth === 'number' && Number.isFinite(parsed.railWidth)
+          ? Math.max(MIN_PANE_WIDTH, Math.round(parsed.railWidth))
+          : fallback.railWidth;
+      const splitRatio =
+        typeof parsed.splitRatio === 'number' ? clampSplitRatio(parsed.splitRatio) : 0.5;
+      return { railWidth, splitRatio };
     } catch {
-      return computeDefaultWidths();
+      return fallback;
     }
   }
 
@@ -112,7 +92,7 @@
 
   let { fullscreen = false }: Props = $props();
 
-  let scenarioWidths = $state<ScenarioWidths>(computeDefaultWidths());
+  let size = $state<RailSize>(computeDefaultSize());
   let resizing: 'outer' | 'splitter' | null = $state(null);
   let asideEl: HTMLElement | null = $state(null);
 
@@ -129,28 +109,14 @@
   let fullscreenTab = $derived(rightRail.fullscreenTab);
   let twoPane = $derived(openTabs.length === 2);
 
-  // The active scenario picks which scenarioWidths entry drives layout.
-  // Two open panes always use C (even if the sidebar is visible — the
-  // auto-collapse effect below normally hides the sidebar in that case).
-  let currentScenario = $derived.by<ScenarioId>(() => {
-    if (openTabs.length === 2) return 'C';
-    return sidebar.hidden ? 'B' : 'A';
-  });
-
-  // paneWidths is a thin view over scenarioWidths so every read of slot 0/1
-  // already reflects the active scenario. Drag handlers write back through
-  // setScenarioWidths so persistence stays scoped to one scenario at a time.
+  // Per-pane widths derived from the single rail width + split ratio. One pane
+  // fills railWidth; two panes split it (50/50 by default — the drag handler
+  // adjusts the ratio). splitPaneWidths enforces the per-pane minimum and the
+  // splitter gap.
   let paneWidths = $derived.by<[number, number]>(() => {
-    if (currentScenario === 'A') return [scenarioWidths.A, MIN_PANE_WIDTH];
-    if (currentScenario === 'B') return [scenarioWidths.B, MIN_PANE_WIDTH];
-    return [scenarioWidths.C0, scenarioWidths.C1];
+    if (openTabs.length < 2) return [size.railWidth, MIN_PANE_WIDTH];
+    return splitPaneWidths(size.railWidth, size.splitRatio, MIN_PANE_WIDTH, SPLITTER);
   });
-
-  function setScenarioWidths(slot0: number, slot1: number): void {
-    const next = withScenarioWidths(currentScenario, scenarioWidths, slot0, slot1);
-    if (next === scenarioWidths) return;
-    scenarioWidths = next;
-  }
 
   // Slot lookup: which position (0 = left, 1 = right) a tab occupies in
   // the current worktree, or null if it isn't open here. Position 0 is
@@ -193,17 +159,17 @@
         ? 0
         : openTabs.length === 1
           ? paneWidths[0]
-          : paneWidths[0] + paneWidths[1] + 4 // +4 for the splitter
+          : paneWidths[0] + paneWidths[1] + SPLITTER
   );
   let asideWidth = $derived(contentWidth + ICON_COL_WIDTH);
 
   onMount(() => {
-    scenarioWidths = loadScenarioWidths();
+    size = loadSize();
   });
 
-  function persistScenarioWidths(): void {
+  function persistSize(): void {
     try {
-      localStorage.setItem(SCENARIO_KEY, JSON.stringify(scenarioWidths));
+      localStorage.setItem(SIZE_KEY, JSON.stringify(size));
     } catch {
       // Quota — ignore.
     }
@@ -215,7 +181,7 @@
   }
 
   function clampTotal(target: number, paneCount: number): number {
-    const splitter = paneCount === 2 ? 4 : 0;
+    const splitter = paneCount === 2 ? SPLITTER : 0;
     const minTotal = paneCount === 2 ? MIN_PANE_WIDTH * 2 + splitter : MIN_PANE_WIDTH;
     return Math.max(minTotal, Math.min(maxContentWidth(), Math.round(target)));
   }
@@ -237,31 +203,19 @@
   }
 
   function onOuterResize(event: PointerEvent) {
-    // Outer handle sits at the rail's left edge. Dragging left grows
-    // the rail. Total content = window - clientX - icon column.
+    // Outer handle sits at the rail's left edge; dragging left grows the rail.
+    // Total content = window - clientX - icon column. The split ratio is left
+    // untouched so both panes scale together.
     const targetContent = window.innerWidth - event.clientX - ICON_COL_WIDTH;
-    if (openTabs.length <= 1) {
-      setScenarioWidths(clampTotal(targetContent, 1), paneWidths[1]);
-      return;
-    }
-    const total = clampTotal(targetContent, 2) - 4; // discount splitter
-    const prevTotal = paneWidths[0] + paneWidths[1] || total;
-    const ratio = total / prevTotal;
-    let nextA = Math.max(MIN_PANE_WIDTH, Math.round(paneWidths[0] * ratio));
-    let nextB = Math.max(MIN_PANE_WIDTH, total - nextA);
-    if (nextA + nextB > total) nextA = total - nextB;
-    if (nextA < MIN_PANE_WIDTH) {
-      nextA = MIN_PANE_WIDTH;
-      nextB = Math.max(MIN_PANE_WIDTH, total - nextA);
-    }
-    setScenarioWidths(nextA, nextB);
+    const paneCount = openTabs.length >= 2 ? 2 : 1;
+    size = { ...size, railWidth: clampTotal(targetContent, paneCount) };
   }
 
   function stopOuterResize() {
     resizing = null;
     window.removeEventListener('pointermove', onOuterResize);
     window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
-    persistScenarioWidths();
+    persistSize();
   }
 
   function startSplitterResize(event: PointerEvent) {
@@ -275,49 +229,39 @@
   }
 
   function onSplitterResize(event: PointerEvent) {
-    // Splitter sits between pane 1 (left) and pane 2 (right). Dragging
-    // right grows pane 1 at the expense of pane 2.
+    // Splitter sits between slot 0 (left) and slot 1 (right). Dragging right
+    // grows slot 0; we store the result as a ratio of the usable width so the
+    // split survives rail-width changes.
     if (!asideEl) return;
     const rect = asideEl.getBoundingClientRect();
     const contentLeft = rect.left;
     const contentRight = rect.right - ICON_COL_WIDTH;
-    const total = contentRight - contentLeft - 4; // discount splitter width
-    let nextA = event.clientX - contentLeft;
-    nextA = Math.max(MIN_PANE_WIDTH, Math.min(total - MIN_PANE_WIDTH, Math.round(nextA)));
-    setScenarioWidths(nextA, total - nextA);
+    const usable = contentRight - contentLeft - SPLITTER;
+    if (usable <= 0) return;
+    size = { ...size, splitRatio: clampSplitRatio((event.clientX - contentLeft) / usable) };
   }
 
   function stopSplitterResize() {
     resizing = null;
     window.removeEventListener('pointermove', onSplitterResize);
     window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
-    persistScenarioWidths();
+    persistSize();
   }
 
   // Re-clamp the rail when something off-rail shrinks our budget: the
   // sidebar reappearing, or the window shrinking. Keeps the terminal at
   // or above its minimum without manual intervention.
+  // Keep railWidth within bounds when the budget changes: the sidebar
+  // reappearing or the window shrinking caps it, and opening a second pane
+  // raises the floor to fit two panes (clampTotal grows it if needed). The
+  // split ratio is preserved across all of these.
   $effect(() => {
     void sidebar.effectiveWidth;
     if (typeof window === 'undefined') return;
     if (openTabs.length === 0) return;
-    const max = maxContentWidth();
-    if (openTabs.length === 1) {
-      if (paneWidths[0] > max) setScenarioWidths(Math.max(MIN_PANE_WIDTH, max), paneWidths[1]);
-      return;
-    }
-    const total = paneWidths[0] + paneWidths[1];
-    if (total + 4 <= max) return;
-    const budget = max - 4;
-    const ratio = budget / total;
-    let nextA = Math.max(MIN_PANE_WIDTH, Math.round(paneWidths[0] * ratio));
-    let nextB = Math.max(MIN_PANE_WIDTH, budget - nextA);
-    if (nextA + nextB > budget) nextA = budget - nextB;
-    if (nextA < MIN_PANE_WIDTH) {
-      nextA = MIN_PANE_WIDTH;
-      nextB = Math.max(MIN_PANE_WIDTH, budget - nextA);
-    }
-    setScenarioWidths(nextA, nextB);
+    const paneCount = openTabs.length >= 2 ? 2 : 1;
+    const clamped = clampTotal(size.railWidth, paneCount);
+    if (clamped !== size.railWidth) size = { ...size, railWidth: clamped };
   });
 
   // Auto-collapse the sidebar when opening a second pane wouldn't fit at
@@ -327,7 +271,7 @@
     if (openTabs.length < 2) return;
     if (sidebar.hidden) return;
     if (typeof window === 'undefined') return;
-    const needed = MIN_PANE_WIDTH * 2 + 4 + ICON_COL_WIDTH + TERMINAL_MIN_WIDTH;
+    const needed = MIN_PANE_WIDTH * 2 + SPLITTER + ICON_COL_WIDTH + TERMINAL_MIN_WIDTH;
     const available = window.innerWidth - sidebar.effectiveWidth;
     if (available < needed) sidebar.hide();
   });

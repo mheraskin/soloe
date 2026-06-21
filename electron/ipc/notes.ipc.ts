@@ -53,6 +53,10 @@ export class NotesIpc {
         ipcInvoke(() => this.opts.store.saveImage(projectId, mimeType, dataBase64))
     );
 
+    ipcMain.handle(IpcChannels.notes.readImage, (_e, absolutePath: string) =>
+      ipcInvoke(() => this.opts.store.readImage(absolutePath))
+    );
+
     ipcMain.handle(
       IpcChannels.notes.cleanupImages,
       (_e, projectId: ProjectId, extraReferences: string[]) =>
@@ -74,6 +78,7 @@ export class NotesIpc {
     ipcMain.removeHandler(IpcChannels.notes.rename);
     ipcMain.removeHandler(IpcChannels.notes.delete);
     ipcMain.removeHandler(IpcChannels.notes.saveImage);
+    ipcMain.removeHandler(IpcChannels.notes.readImage);
     ipcMain.removeHandler(IpcChannels.notes.cleanupImages);
     this.detachListener?.();
     this.detachListener = null;

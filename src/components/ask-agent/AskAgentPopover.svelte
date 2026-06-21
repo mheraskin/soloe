@@ -73,8 +73,9 @@
     // Submitting hands off to the agent in the terminal — drop fullscreen so
     // the user lands back on the pane that's about to consume the input.
     if (submit && rightRail.fullscreen) rightRail.fullscreen = false;
+    const sel = sessions.selected;
     try {
-      await sendBracketedPaste(id, buildPayload(), submit);
+      await sendBracketedPaste(id, buildPayload(), submit, sel ? sessions.providerFor(sel.id) : null);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
       onOpenChange(false);
     } catch (err) {

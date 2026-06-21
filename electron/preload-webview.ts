@@ -22,10 +22,30 @@ function isCtrlOrCmd(e: KeyboardEvent): boolean {
   return e.ctrlKey || e.metaKey;
 }
 
+// Native clipboard / edit shortcuts the guest page must keep — forwarding
+// (and thus preventDefault-ing) these would kill Chromium's built-in
+// copy/paste/cut/select-all/undo/redo. None of these map to IDE actions in
+// src/lib/keymap.ts, so letting the page have them loses nothing.
+function isClipboardCombo(e: KeyboardEvent): boolean {
+  if (e.altKey) return false;
+  switch (e.key.toLowerCase()) {
+    case 'c':
+    case 'v':
+    case 'x':
+    case 'a':
+    case 'z':
+    case 'y':
+      return true;
+    default:
+      return false;
+  }
+}
+
 function shouldForward(e: KeyboardEvent): boolean {
   if (!isCtrlOrCmd(e)) return false;
   // Skip the modifier-only key events themselves.
   if (e.key === 'Control' || e.key === 'Meta' || e.key === 'Shift' || e.key === 'Alt') return false;
+  if (isClipboardCombo(e)) return false;
   return true;
 }
 

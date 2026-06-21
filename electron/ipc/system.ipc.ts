@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type { SessionId } from '@shared/types/sessions.js';
-import type { SystemUsageSnapshot } from '@shared/types/system.js';
+import type { PathExistsRequest, SystemUsageSnapshot } from '@shared/types/system.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import { ipcInvoke } from './result.js';
 
@@ -60,6 +60,10 @@ export class SystemIpc {
       ipcInvoke(() => listWslDistros())
     );
 
+    ipcMain.handle(IpcChannels.system.pathExists, (_e, requests: PathExistsRequest[]) =>
+      ipcInvoke(() => Promise.all(requests.map((req) => pathExists(req))))
+    );
+
     ipcMain.handle(IpcChannels.system.usage, () =>
       ipcInvoke(() => collectUsage())
     );
@@ -71,6 +75,7 @@ export class SystemIpc {
     ipcMain.removeHandler(IpcChannels.system.saveText);
     ipcMain.removeHandler(IpcChannels.system.openExternal);
     ipcMain.removeHandler(IpcChannels.system.listWslDistros);
+    ipcMain.removeHandler(IpcChannels.system.pathExists);
     ipcMain.removeHandler(IpcChannels.system.usage);
     this.registered = false;
   }
@@ -225,6 +230,49 @@ function parseWslDistros(output: string): string[] {
       .map((line) => line.trim().replace(/\s+\(Default\)$/i, ''))
       .filter(Boolean)
   )];
+}
+
+// Returns false only when a path is *confirmed* absent. Transient failures
+// (permissions, a stopped WSL distro) return true so a session is never
+// archived on a flaky reading.
+async function pathExists(req: PathExistsRequest): Promise<boolean> {
+  if (req.runMode === 'wsl' && process.platform === 'win32') {
+    if (!req.wslDistro) return true;
+    const probe = await wslPathProbe(req.wslDistro, req.path);
+    return probe !== 'missing';
+  }
+  try {
+    await fs.stat(req.path);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
+// Probe inside the distro itself rather than via \\wsl.localhost, which is
+// unreliable when the distro is asleep. Resolves 'unknown' when wsl can't
+// answer so the caller treats it as "present".
+function wslPathProbe(
+  distro: string,
+  linuxPath: string
+): Promise<'exists' | 'missing' | 'unknown'> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      'wsl.exe',
+      ['-d', distro, '--', 'sh', '-c', '[ -e "$1" ] && echo EXISTS || echo MISSING', 'sh', linuxPath],
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    let out = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString();
+    });
+    child.once('error', () => resolve('unknown'));
+    child.once('close', () => {
+      if (out.includes('MISSING')) resolve('missing');
+      else if (out.includes('EXISTS')) resolve('exists');
+      else resolve('unknown');
+    });
+  });
 }
 
 function openInWsl(distro: string, cwd: string): Promise<void> {
