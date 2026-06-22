@@ -103,7 +103,7 @@ import type {
   TerminalStartResult,
   TerminalStatusEvent
 } from './terminal.js';
-import type { PathExistsRequest, SystemUsageSnapshot } from './system.js';
+import type { SystemUsageSnapshot } from './system.js';
 import type {
   VaultDeleteRequest,
   VaultEntry,
@@ -161,7 +161,6 @@ export const IpcChannels = {
     saveText: 'system:save-text',
     openExternal: 'system:open-external',
     listWslDistros: 'system:list-wsl-distros',
-    pathExists: 'system:path-exists',
     usage: 'system:usage'
   },
   settings: {
@@ -368,7 +367,6 @@ export interface SystemApi {
   saveText(request: { defaultPath?: string; content: string }): Promise<IpcResult<true>>;
   openExternal(url: string): Promise<IpcResult<true>>;
   listWslDistros(): Promise<IpcResult<string[]>>;
-  pathExists(requests: PathExistsRequest[]): Promise<IpcResult<boolean[]>>;
   usage(): Promise<IpcResult<SystemUsageSnapshot>>;
 }
 

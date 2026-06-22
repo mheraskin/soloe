@@ -17,7 +17,6 @@ import type {
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
-import type { PathExistsRequest } from '@shared/types/system.js';
 import type {
   FeatureChangeEvent,
   FeatureScanRequest,
@@ -141,8 +140,6 @@ export const ipc = {
       unwrap(await c.system.saveText(toIpcPayload(request))),
     openExternal: async (url: string) => unwrap(await c.system.openExternal(url)),
     listWslDistros: async () => unwrap(await c.system.listWslDistros()),
-    pathExists: async (requests: PathExistsRequest[]) =>
-      unwrap(await c.system.pathExists(requests)),
     usage: async () => unwrap(await c.system.usage())
   },
   settings: {

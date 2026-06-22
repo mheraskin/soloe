@@ -16,6 +16,7 @@ import type {
 import { launchProvider } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
 import { projects } from './projects.svelte';
+import { git } from './git.svelte';
 import { settings } from './settings.svelte';
 import { randomName } from '../lib/random-name';
 import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelte';
@@ -27,9 +28,10 @@ const LAST_SELECTED_BY_WORKTREE_KEY = 'soloe.lastSelectedByWorktree.v1';
 const LAST_SELECTED_SESSION_KEY = 'soloe.lastSelectedSession.v1';
 const STANDALONE_KEY = '__standalone__';
 
-// Cadence for re-checking whether project-bound sessions' worktree folders
-// still exist on disk; missing ones are archived (data kept, hidden from UI).
-const MISSING_SWEEP_INTERVAL_MS = 20000;
+// Cadence for re-checking whether project-bound sessions still belong to a
+// listed git worktree; sessions whose worktree was removed are archived (data
+// kept, hidden from UI).
+const WORKTREE_SWEEP_INTERVAL_MS = 20000;
 
 const SPLIT_RATIO_KEY = 'soloe.terminalSplitRatio.v1';
 const SPLIT_RATIO_MIN = 0.2;
@@ -246,9 +248,9 @@ class SessionsStore {
   // app reopens on the exact tab that was active when it closed — not just the
   // first project's last-selected tab.
   private lastSelectedSessionId: SessionId | null = readLastSelectedSession();
-  // Periodic sweep that archives sessions whose worktree folder is gone.
-  private missingSweepHandle: ReturnType<typeof setInterval> | null = null;
-  private sweepingMissing = false;
+  // Periodic sweep that archives sessions whose git worktree was removed.
+  private worktreeSweepHandle: ReturnType<typeof setInterval> | null = null;
+  private sweepingWorktrees = false;
 
   statusFor(id: SessionId): SessionStatus {
     return this.runtime[id]?.status ?? 'stopped';
@@ -314,55 +316,74 @@ class SessionsStore {
           : null;
         agentNotifications.primeSnapshot(snapshot, session, this.selectedId);
       }
-      // Catch sessions bound to a folder deleted while the app was closed, then
-      // keep watching for live deletions.
-      void this.pruneMissingWorktreeSessions();
-      this.startMissingWorktreeSweep();
+      // Catch sessions whose worktree was removed while the app was closed,
+      // then keep watching for live removals.
+      void this.pruneRemovedWorktreeSessions();
+      this.startWorktreeSweep();
     } finally {
       this.loading = false;
     }
   }
 
-  // Archive sessions whose worktree folder no longer exists. Keeps the data
-  // (archive, not delete) but pulls them out of the active list so a deleted
-  // worktree stops fabricating a phantom group in the sidebar. Only confirmed-
-  // missing, project-bound sessions are touched; the backend probe returns
-  // "present" on any uncertain reading so a flaky filesystem/WSL can't trigger
-  // false archives.
-  private async pruneMissingWorktreeSessions(): Promise<void> {
-    if (this.sweepingMissing) return;
-    this.sweepingMissing = true;
+  // Archive sessions whose git worktree has been removed. The source of truth
+  // is `git worktree list` (mirrored by git.worktreesFor) — NOT raw folder
+  // existence — so `git worktree remove` drops a worktree's sessions out of the
+  // sidebar, while a session whose folder merely became briefly unreachable is
+  // left alone. Archive (not delete) keeps the data; matching mirrors how the
+  // sidebar groups sessions, so what gets archived is exactly what would
+  // otherwise show as an orphaned phantom group.
+  //
+  // Guards against false archives, in increasing caution:
+  //  - a project is only swept once its worktree list was fetched and is
+  //    non-empty (a healthy repo always lists its main worktree, so an empty
+  //    list means "couldn't enumerate" — treated as inconclusive);
+  //  - if NOT ONE of a project's sessions matches a listed worktree, that points
+  //    to a path-format mismatch rather than every worktree vanishing at once,
+  //    so the whole project is skipped.
+  private async pruneRemovedWorktreeSessions(): Promise<void> {
+    if (this.sweepingWorktrees) return;
+    this.sweepingWorktrees = true;
     try {
-      const candidates = this.sessions.filter(
-        (s) => s.projectId && s.cwd && s.cwd.trim().length > 0
-      );
-      if (candidates.length === 0) return;
-      const requests = candidates.map((s) => ({
-        path: s.cwd,
-        runMode: s.runMode,
-        ...(s.wslDistro ? { wslDistro: s.wslDistro } : {})
-      }));
-      const exists = await ipc.system.pathExists(requests);
-      for (let i = 0; i < candidates.length; i += 1) {
-        if (exists[i] !== false) continue;
-        try {
-          await this.archive(candidates[i]!.id);
-        } catch {
-          // best effort — retry on the next sweep
+      const byProject = new Map<string, Session[]>();
+      for (const s of this.sessions) {
+        if (!s.projectId || !s.cwd || s.cwd.trim().length === 0) continue;
+        const group = byProject.get(s.projectId) ?? [];
+        group.push(s);
+        byProject.set(s.projectId, group);
+      }
+      for (const [projectId, group] of byProject) {
+        const project = projects.get(projectId);
+        if (!project?.path) continue;
+        const sample = group[0]!;
+        const ctx = {
+          ...(sample.runMode ? { runMode: sample.runMode } : {}),
+          ...(sample.wslDistro ? { wslDistro: sample.wslDistro } : {})
+        };
+        const worktrees = await git
+          .loadWorktrees(project.path, false, ctx)
+          .catch(() => null);
+        if (!worktrees || worktrees.length === 0) continue;
+        const listed = new Set(worktrees.map((w) => normPath(w.path)));
+        const orphaned = group.filter((s) => !listed.has(normPath(s.cwd)));
+        if (orphaned.length === 0 || orphaned.length === group.length) continue;
+        for (const s of orphaned) {
+          try {
+            await this.archive(s.id);
+          } catch {
+            // best effort — retry on the next sweep
+          }
         }
       }
-    } catch {
-      // ignore — try again next sweep
     } finally {
-      this.sweepingMissing = false;
+      this.sweepingWorktrees = false;
     }
   }
 
-  private startMissingWorktreeSweep(): void {
-    if (this.missingSweepHandle) return;
-    this.missingSweepHandle = setInterval(() => {
-      void this.pruneMissingWorktreeSessions();
-    }, MISSING_SWEEP_INTERVAL_MS);
+  private startWorktreeSweep(): void {
+    if (this.worktreeSweepHandle) return;
+    this.worktreeSweepHandle = setInterval(() => {
+      void this.pruneRemovedWorktreeSessions();
+    }, WORKTREE_SWEEP_INTERVAL_MS);
   }
 
   toggleArchivedFor(projectId: string): void {

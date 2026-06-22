@@ -39,7 +39,6 @@ import type {
   ProjectUpdate
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
-import type { PathExistsRequest } from '@shared/types/system.js';
 import type {
   FeatureChangeEvent,
   FeatureScanRequest,
@@ -168,8 +167,6 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.system.saveText, request),
     openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.system.openExternal, url),
     listWslDistros: () => ipcRenderer.invoke(IpcChannels.system.listWslDistros),
-    pathExists: (requests: PathExistsRequest[]) =>
-      ipcRenderer.invoke(IpcChannels.system.pathExists, requests),
     usage: () => ipcRenderer.invoke(IpcChannels.system.usage)
   },
   settings: {
