@@ -10,6 +10,22 @@ export function posixToWslUnc(distro: string, posixPath: string): string {
     : `\\\\wsl.localhost\\${distro}\\`;
 }
 
+// Map a WSL DrvFs mount (/mnt/<drive>/...) to its native Windows path, e.g.
+// /mnt/d/projects -> D:\projects, /mnt/c -> C:\. Returns null for anything that
+// isn't a single-letter drive mount (so /mnt, /mnt/wsl, /home/... fall through).
+//
+// Needed because the \\wsl.localhost 9p share cannot enumerate into DrvFs
+// mounts: readdir on \\wsl.localhost\<distro>\mnt\d comes back empty, which
+// silently broke path suggestions below /mnt/<drive>. On a Windows host the
+// drive is reachable directly, so list it through the native path instead.
+export function mntPosixToWindows(posixPath: string): string | null {
+  const match = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(posixPath.replace(/\/+$/, ''));
+  if (!match) return null;
+  const drive = match[1]!.toUpperCase();
+  const rest = match[2] ? match[2].replace(/\//g, '\\') : '';
+  return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+}
+
 export function runWslCommand(distro: string, bashLine: string): Promise<string> {
   return new Promise((resolve) => {
     const child = spawn(

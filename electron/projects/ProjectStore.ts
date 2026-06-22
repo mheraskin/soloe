@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { posixToWslUnc, resolveWslHome } from '../runtime/wsl-paths.js';
+import { mntPosixToWindows, posixToWslUnc, resolveWslHome } from '../runtime/wsl-paths.js';
 import type {
   Project,
   ProjectDetectResult,
@@ -303,10 +303,16 @@ export class ProjectStore {
       ? expandWslHome(parsed.baseDir, home)
       : home;
     const fragment = parsed.fragment;
-    const unc = posixToWslUnc(distro, baseDir);
+    // On a Windows host, list /mnt/<drive> through the native drive path — the
+    // \\wsl.localhost share can't enumerate DrvFs mounts. Off Windows the distro
+    // is the host, so read the posix path directly.
+    const listTarget =
+      process.platform === 'win32'
+        ? mntPosixToWindows(baseDir) ?? posixToWslUnc(distro, baseDir)
+        : baseDir;
     let entries: Dirent[];
     try {
-      entries = await fs.readdir(unc, { withFileTypes: true });
+      entries = await fs.readdir(listTarget, { withFileTypes: true });
     } catch {
       return [];
     }
