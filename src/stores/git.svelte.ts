@@ -43,8 +43,10 @@ const SLOW_INTERVAL_MS = 30000;
 // External `git worktree add/remove` (run in a terminal or the OS) doesn't fire
 // any in-app git event, and the backend's fs.watch is unreliable (off on WSL).
 // So force a relist of every known project's worktrees on this cadence to keep
-// the sidebar in sync. Paused with the window.
-const WORKTREE_REFRESH_INTERVAL_MS = 7000;
+// the sidebar in sync. Paused with the window. Every relist forces one
+// `git worktree list` per project past the main-process cache — a `wsl.exe`
+// spawn each under WSL — so this cadence has to stay coarse.
+const WORKTREE_REFRESH_INTERVAL_MS = 60_000;
 
 interface PollEntry {
   cwd: string;
@@ -381,9 +383,14 @@ class GitStore {
     this.contextByCwd = ctxByCwd;
 
     // While paused (window hidden/minimized), tear down everything and
-    // create nothing. On resume, the second loop re-creates each poller
-    // and the immediate `void this.tick(cwd)` refreshes the UI.
+    // create nothing. On resume the second loop re-creates each poller.
     const effective = this.paused ? new Map<string, boolean>() : desired;
+
+    // A worktree whose only change is its tier still holds a fresh status, so
+    // the recreated poller must not re-tick. Without this, selecting a session
+    // costs two forced `git status` runs — one for the worktree entering the
+    // fast tier and one for the worktree leaving it.
+    const retiered = new Set<string>();
 
     for (const [cwd, entry] of this.pollers) {
       const next = effective.get(cwd);
@@ -395,13 +402,19 @@ class GitStore {
       if (next !== entry.fast) {
         clearInterval(entry.handle);
         this.pollers.delete(cwd);
+        retiered.add(cwd);
       }
     }
 
     for (const [cwd, fast] of effective) {
       if (this.pollers.has(cwd)) continue;
       const interval = fast ? FAST_INTERVAL_MS : SLOW_INTERVAL_MS;
-      void this.tick(cwd);
+      // Tick immediately only when the UI would otherwise show nothing (a
+      // worktree we've never polled) or when the user is looking at it. Idle
+      // worktrees that already have a status ride their interval, so resuming
+      // from a pause doesn't spawn one `git status` per known worktree at once.
+      const needsBadge = !this.statuses[cwd]?.status;
+      if (!retiered.has(cwd) && (fast || needsBadge)) void this.tick(cwd);
       const handle = setInterval(() => void this.tick(cwd), interval);
       this.pollers.set(cwd, { cwd, fast, handle });
     }
