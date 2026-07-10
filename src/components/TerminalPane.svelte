@@ -285,6 +285,48 @@
     }
   }
 
+  // A WebGL context is scarce — Chromium force-loses the oldest once a page
+  // holds roughly 16 — and losing one silently drops that terminal to xterm's
+  // DOM renderer, which cannot keep up with an agent TUI. Sessions stay mounted
+  // once started, so binding a context to every pane eventually starves the
+  // visible one. Only panes the user can see hold a renderer; hidden panes are
+  // paused by xterm's IntersectionObserver and have nothing to draw.
+  function attachRenderer(t: Terminal): void {
+    if (renderer) return;
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+        if (renderer === webgl) renderer = null;
+      });
+      t.loadAddon(webgl);
+      renderer = webgl;
+      return;
+    } catch (err) {
+      console.warn('[DEBUG-xterm] WebGL renderer unavailable, falling back to canvas', {
+        terminalId,
+        sessionId,
+        err
+      });
+    }
+    try {
+      const canvas = new CanvasAddon();
+      t.loadAddon(canvas);
+      renderer = canvas;
+    } catch (err) {
+      console.warn('[DEBUG-xterm] Canvas renderer unavailable, using DOM', {
+        terminalId,
+        sessionId,
+        err
+      });
+    }
+  }
+
+  function detachRenderer(): void {
+    renderer?.dispose();
+    renderer = null;
+  }
+
   $effect(() => {
     if (!host) return;
     const initFontSize = untrack(() => fontSize);
@@ -432,31 +474,6 @@
       return true;
     });
 
-    // Renderer: prefer WebGL, fall back to Canvas, then DOM.
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      t.loadAddon(webgl);
-      renderer = webgl;
-    } catch (err) {
-      console.warn('[DEBUG-xterm] WebGL renderer unavailable, falling back to canvas', {
-        terminalId,
-        sessionId,
-        err
-      });
-      try {
-        const canvas = new CanvasAddon();
-        t.loadAddon(canvas);
-        renderer = canvas;
-      } catch (err2) {
-        console.warn('[DEBUG-xterm] Canvas renderer unavailable, using DOM', {
-          terminalId,
-          sessionId,
-          err: err2
-        });
-      }
-    }
-
     // fontsource splits each weight into unicode-range subsets the browser
     // fetches lazily when a glyph in that range first renders. xterm-addon-webgl
     // caches measured glyphs in a texture atlas, so cells that fell back to the
@@ -468,6 +485,10 @@
     let fontsDisposed = false;
     const dropAtlasAndRepaint = () => {
       if (fontsDisposed) return;
+      // Every mounted pane hears this global event. Hidden ones hold no
+      // renderer and re-rasterise on reveal anyway, so skipping them keeps a
+      // single font subset from costing one atlas rebuild per open session.
+      if (!visible) return;
       if (renderer && 'clearTextureAtlas' in renderer) {
         renderer.clearTextureAtlas();
       }
@@ -611,7 +632,7 @@
       ro.disconnect();
       onInput.dispose();
       offOutput();
-      renderer?.dispose();
+      detachRenderer();
       clipboard.dispose();
       unicode11.dispose();
       t.dispose();
@@ -641,14 +662,15 @@
     });
   });
 
-  // When this pane becomes visible, refit and evict the glyph atlas. While
-  // hidden (opacity-0), the WebGL texture atlas can accumulate stale
-  // fallback-font glyphs (lazy font subsets loaded after the terminal last
-  // painted). Clearing it here forces a full re-rasterisation with the
-  // correct fonts. This runs for both halves of a split, so it deliberately
-  // does not touch focus — that is the focused effect's job.
+  // Owns the renderer for as long as this pane is on screen, then refits and
+  // evicts the glyph atlas. While hidden the terminal holds no GPU context and
+  // its atlas goes stale (lazy font subsets load after it last painted), so a
+  // reveal has to re-rasterise from scratch. This runs for both halves of a
+  // split, so it deliberately does not touch focus — that is the focused
+  // effect's job.
   $effect(() => {
     if (!visible || !term || !fit || !host) return;
+    attachRenderer(term);
     if (renderer && 'clearTextureAtlas' in renderer) {
       renderer.clearTextureAtlas();
     }
@@ -666,6 +688,7 @@
         console.warn('[DEBUG-xterm] visible fit failed', { terminalId, sessionId, err });
       }
     });
+    return () => detachRenderer();
   });
 
   // Only the focused pane takes keyboard focus. Deferring a frame lets the

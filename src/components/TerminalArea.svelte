@@ -90,7 +90,7 @@
 
 <section class="flex min-w-[220px] flex-1 flex-col bg-background">
   <SessionToolbar />
-  <div class="relative min-h-0 flex-1" bind:this={containerEl}>
+  <div class="relative min-h-0 flex-1 overflow-hidden" bind:this={containerEl}>
     {#each runningPanes as pane (pane.terminalId)}
       {@const role = split
         ? pane.sessionId === split.leftId
@@ -104,17 +104,27 @@
       {@const visible = role !== 'hidden'}
       {@const focused = split ? pane.sessionId === split.focusedId : role === 'full'}
       {@const ratio = split?.ratio ?? 0.5}
+      <!--
+        Hidden panes are pushed out of the viewport rather than faded out.
+        xterm pauses rendering via a viewport IntersectionObserver, and an
+        opacity-0 pane still intersects — so every backgrounded terminal kept
+        repainting an agent TUI every frame. Translating keeps the layout box
+        (display:none would zero it, and xterm's char measurement never
+        recovers, leaving fit() a permanent no-op for panes that mount hidden).
+      -->
       <div
         class={`group absolute inset-y-0 ${
-          visible ? 'z-10 opacity-100' : 'z-0 pointer-events-none opacity-0'
+          visible ? 'z-10' : 'z-0 pointer-events-none'
         } ${role === 'left' || role === 'right' ? '' : 'inset-x-0'} ${
           split && focused ? 'rounded-sm ring-1 ring-ring/70 ring-inset' : ''
         }`}
-        style={role === 'left'
-          ? `left:0;width:calc(${(ratio * 100).toFixed(3)}% - 2px)`
-          : role === 'right'
-            ? `right:0;width:calc(${((1 - ratio) * 100).toFixed(3)}% - 2px)`
-            : ''}
+        style={role === 'hidden'
+          ? 'transform:translateX(-200vw)'
+          : role === 'left'
+            ? `left:0;width:calc(${(ratio * 100).toFixed(3)}% - 2px)`
+            : role === 'right'
+              ? `right:0;width:calc(${((1 - ratio) * 100).toFixed(3)}% - 2px)`
+              : ''}
         onfocusin={() => {
           if (split && pane.sessionId !== split.focusedId) sessions.select(pane.sessionId);
         }}
