@@ -106,12 +106,12 @@ describe('SessionStore — update/delete', () => {
     expect((await store.get(created.id))?.name).toBe('Renamed');
   });
 
-  it('deletes a session and errors on a second delete', async () => {
+  it('deletes a session and treats a repeat delete as an idempotent no-op', async () => {
     const store = new SessionStore(storePath);
     const created = await store.create(standardDraft());
     await store.delete(created.id);
     expect(await store.list()).toHaveLength(0);
-    await expect(store.delete(created.id)).rejects.toThrow(/not found/);
+    await expect(store.delete(created.id)).resolves.toBeUndefined();
   });
 
   it('archives a session by hiding it from list while preserving it by id', async () => {

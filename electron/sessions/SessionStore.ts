@@ -116,10 +116,12 @@ export class SessionStore {
 
   async delete(id: SessionId): Promise<void> {
     await this.ensureLoaded();
-    if (!this.cache!.delete(id)) {
-      throw new Error(`Session not found: ${id}`);
+    // Idempotent: an absent session is already in the desired end-state (gone),
+    // so deletion succeeds as a no-op. Throwing here would abort the caller's
+    // teardown and strand a stale UI tab that can never be closed.
+    if (this.cache!.delete(id)) {
+      await this.persist();
     }
-    await this.persist();
   }
 
   async touch(id: SessionId): Promise<Session | null> {
