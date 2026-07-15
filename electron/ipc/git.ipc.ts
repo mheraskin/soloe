@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow } from 'electron';
+import { ipcMain, type BrowserWindow, type WebContents } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   CommitsBetweenRequest,
@@ -8,15 +8,19 @@ import type {
   FileLinesRequest,
   GitCheckoutRequest,
   GitCommitRequest,
+  GitObservationDemandRequest,
   GitRecentCommitsRequest,
   GitRemoteOpRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
+  ReviewDiffsRequest,
   ResolveRefsRequest,
   StageFilesRequest,
-  WorkingChangesRequest
+  WorkingChangesRequest,
+  WorkingTreeSnapshotRequest
 } from '@shared/types/git.js';
+import { worktreeIdentityKey } from '@shared/worktree-identity.js';
 import type { GitService } from '../git/GitService.js';
 import { ipcInvoke } from './result.js';
 
@@ -25,9 +29,20 @@ export interface GitIpcOptions {
   getWindows: () => BrowserWindow[];
 }
 
+interface ObservationDemandState {
+  desired: boolean;
+  release: (() => void) | null;
+  acquiring: Promise<void> | null;
+}
+
 export class GitIpc {
   private registered = false;
   private detachListener: (() => void) | null = null;
+  private observationDemandByWebContents = new Map<
+    number,
+    Map<string, ObservationDemandState>
+  >();
+  private observedDemandOwners = new WeakSet<WebContents>();
 
   constructor(private readonly opts: GitIpcOptions) {}
 
@@ -143,10 +158,41 @@ export class GitIpc {
         })
       )
     );
+    ipcMain.handle(
+      IpcChannels.git.workingTreeSnapshot,
+      (_e, request: WorkingTreeSnapshotRequest) =>
+        ipcInvoke(() =>
+          this.opts.service.getWorkingTreeSnapshot(request.cwd, request.force, {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          })
+        )
+    );
+    ipcMain.handle(
+      IpcChannels.git.observationDemand,
+      (event, request: GitObservationDemandRequest) =>
+        ipcInvoke(async () => {
+          await this.setObservationDemand(event.sender, request);
+          return true as const;
+        })
+    );
     ipcMain.handle(IpcChannels.git.fileDiff, (_e, request: FileDiffRequest) =>
       ipcInvoke(() =>
         this.opts.service.getFileDiff(request.cwd, request.path, {
           fromPath: request.fromPath ?? null,
+          contextLines: request.contextLines,
+          base: request.base,
+          head: request.head,
+          context: {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          }
+        })
+      )
+    );
+    ipcMain.handle(IpcChannels.git.reviewDiffs, (_e, request: ReviewDiffsRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.getReviewDiffs(request.cwd, request.files, {
           contextLines: request.contextLines,
           base: request.base,
           head: request.head,
@@ -173,8 +219,11 @@ export class GitIpc {
           request.startLine,
           request.endLine,
           {
-            runMode: request.runMode,
-            wslDistro: request.wslDistro
+            revision: request.revision,
+            context: {
+              runMode: request.runMode,
+              wslDistro: request.wslDistro
+            }
           }
         )
       )
@@ -239,9 +288,9 @@ export class GitIpc {
       )
     );
 
-    this.detachListener = this.opts.service.onChange((repoPath) => {
+    this.detachListener = this.opts.service.onChange((event) => {
       for (const win of this.opts.getWindows()) {
-        if (!win.isDestroyed()) win.webContents.send(IpcChannels.git.change, { repoPath });
+        if (!win.isDestroyed()) win.webContents.send(IpcChannels.git.change, event);
       }
     });
   }
@@ -260,7 +309,10 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.resolveRefs);
     ipcMain.removeHandler(IpcChannels.git.checkout);
     ipcMain.removeHandler(IpcChannels.git.workingChanges);
+    ipcMain.removeHandler(IpcChannels.git.workingTreeSnapshot);
+    ipcMain.removeHandler(IpcChannels.git.observationDemand);
     ipcMain.removeHandler(IpcChannels.git.fileDiff);
+    ipcMain.removeHandler(IpcChannels.git.reviewDiffs);
     ipcMain.removeHandler(IpcChannels.git.fileBlame);
     ipcMain.removeHandler(IpcChannels.git.fileLines);
     ipcMain.removeHandler(IpcChannels.git.stageFiles);
@@ -272,6 +324,90 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.fetch);
     this.detachListener?.();
     this.detachListener = null;
+    for (const states of this.observationDemandByWebContents.values()) {
+      this.releaseObservationStates(states);
+    }
+    this.observationDemandByWebContents.clear();
+    this.observedDemandOwners = new WeakSet<WebContents>();
     this.registered = false;
+  }
+
+  private async setObservationDemand(
+    owner: WebContents,
+    request: GitObservationDemandRequest
+  ): Promise<void> {
+    const cwd = request.cwd.trim();
+    if (!cwd) return;
+    const key = worktreeIdentityKey(cwd, request);
+    let states = this.observationDemandByWebContents.get(owner.id);
+    if (!states) {
+      if (!request.active) return;
+      states = new Map();
+      this.observationDemandByWebContents.set(owner.id, states);
+      this.observeDemandOwner(owner);
+    }
+
+    let state = states.get(key);
+    if (!request.active) {
+      if (!state) return;
+      state.desired = false;
+      state.release?.();
+      state.release = null;
+      if (!state.acquiring) states.delete(key);
+      if (states.size === 0) this.observationDemandByWebContents.delete(owner.id);
+      return;
+    }
+
+    if (!state) {
+      state = { desired: true, release: null, acquiring: null };
+      states.set(key, state);
+    } else {
+      state.desired = true;
+    }
+    if (state.release) return;
+    if (state.acquiring) return state.acquiring;
+
+    const targetState = state;
+    const targetStates = states;
+    const acquiring = this.opts.service.acquireObservation(cwd, {
+      runMode: request.runMode,
+      wslDistro: request.wslDistro
+    }).then((release) => {
+      targetState.acquiring = null;
+      if (targetState.desired && targetStates.get(key) === targetState) {
+        targetState.release = release;
+        return;
+      }
+      release();
+      if (targetStates.get(key) === targetState) targetStates.delete(key);
+      if (targetStates.size === 0) this.observationDemandByWebContents.delete(owner.id);
+    }).catch((error) => {
+      targetState.acquiring = null;
+      if (targetStates.get(key) === targetState) targetStates.delete(key);
+      if (targetStates.size === 0) this.observationDemandByWebContents.delete(owner.id);
+      throw error;
+    });
+    targetState.acquiring = acquiring;
+    return acquiring;
+  }
+
+  private observeDemandOwner(owner: WebContents): void {
+    if (this.observedDemandOwners.has(owner)) return;
+    this.observedDemandOwners.add(owner);
+    owner.once('destroyed', () => {
+      const states = this.observationDemandByWebContents.get(owner.id);
+      if (!states) return;
+      this.releaseObservationStates(states);
+      this.observationDemandByWebContents.delete(owner.id);
+    });
+  }
+
+  private releaseObservationStates(states: Map<string, ObservationDemandState>): void {
+    for (const state of states.values()) {
+      state.desired = false;
+      state.release?.();
+      state.release = null;
+    }
+    states.clear();
   }
 }

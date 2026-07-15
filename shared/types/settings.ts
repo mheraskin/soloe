@@ -18,6 +18,9 @@ export interface SettingsDiff {
 }
 
 export interface SettingsBrowser {
+  // Maximum number of browser tabs allowed to retain live Chromium webviews.
+  // The active tab always occupies one slot; older background tabs suspend.
+  maxResidentTabs: number;
   // Minutes to wait before automatically resuming a paused browser tab.
   // 0 disables auto-resume entirely (the user has to resume manually).
   pauseAutoResumeMinutes: number;
@@ -179,7 +182,7 @@ export const DEFAULT_SETTINGS: Settings = {
   appearance: { theme: 'dark' },
   terminal: { fontSize: 13, confirmDeleteTabs: true },
   diff: { fontSize: 13 },
-  browser: { pauseAutoResumeMinutes: 5 },
+  browser: { maxResidentTabs: 2, pauseAutoResumeMinutes: 5 },
   defaults: {
     runMode: 'wsl',
     wslDistro: 'Ubuntu',

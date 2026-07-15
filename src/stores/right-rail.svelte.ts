@@ -83,7 +83,7 @@ function migrateLegacy(raw: unknown): RailState | null {
   };
 }
 
-class RightRailStore {
+export class RightRailStore {
   private activeCwd = $state<string | null>(null);
   private stateByCwd = $state<Record<string, RailState>>({});
 
@@ -242,27 +242,6 @@ class RightRailStore {
   get fullscreenTab(): RailTabId | null {
     const state = this.current();
     return state.fullscreen ? state.fullscreenTab : null;
-  }
-
-  // Worktrees where the diff tab is in the open set. Used to keep
-  // RailDiffTab mounted across worktree switches so its scroll/search
-  // state survives.
-  get diffMountedCwds(): string[] {
-    const out: string[] = [];
-    for (const [key, value] of Object.entries(this.stateByCwd)) {
-      if (key === NO_WORKTREE_KEY) continue;
-      if (value.openTabs.includes('diff')) out.push(key);
-    }
-    return out;
-  }
-
-  get filesMountedCwds(): string[] {
-    const out: string[] = [];
-    for (const [key, value] of Object.entries(this.stateByCwd)) {
-      if (key === NO_WORKTREE_KEY) continue;
-      if (value.openTabs.includes('files')) out.push(key);
-    }
-    return out;
   }
 
   openTab(tab: RailTabId): void {

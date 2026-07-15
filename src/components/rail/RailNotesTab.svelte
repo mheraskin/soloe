@@ -62,8 +62,8 @@
   // like resuming work, not landing on a stale buffer from the other one.
   $effect(() => {
     const id = notes.activeProjectId;
-    const cwd = notes.activeWorktreeCwd;
-    if (!id || !cwd) return;
+    const identityKey = notes.activeWorktreeKey;
+    if (!id || !identityKey) return;
     void notes.restoreForActiveWorktree().catch(reportError);
   });
 
@@ -164,22 +164,39 @@
   let imageRefs = $derived.by<string[]>(() => [...new Set(editorValue.match(IMAGE_REF_RE) ?? [])]);
   let imageDataUrls = $state<Record<string, string>>({});
   let lightboxPath = $state<string | null>(null);
-  // Non-reactive dedup so the loader effect doesn't re-fire on its own writes.
-  const requestedImageRefs = new Set<string>();
+  // Non-reactive request ownership keeps stale image payloads from becoming
+  // resident after the editor moves to another note.
+  const imageRequests = new Map<string, number>();
+  let activeImageRefs = new Set<string>();
+  let nextImageRequest = 0;
 
   $effect(() => {
-    for (const ref of imageRefs) {
-      if (requestedImageRefs.has(ref)) continue;
-      requestedImageRefs.add(ref);
+    activeImageRefs = new Set(imageRefs);
+    const retained = Object.fromEntries(
+      Object.entries(imageDataUrls).filter(([ref]) => activeImageRefs.has(ref))
+    );
+    if (Object.keys(retained).length !== Object.keys(imageDataUrls).length) {
+      imageDataUrls = retained;
+    }
+    for (const ref of [...imageRequests.keys()]) {
+      if (!activeImageRefs.has(ref)) imageRequests.delete(ref);
+    }
+    for (const ref of activeImageRefs) {
+      if (imageDataUrls[ref] || imageRequests.has(ref)) continue;
+      const request = ++nextImageRequest;
+      imageRequests.set(ref, request);
       void ipc.notes
         .readImage(ref)
         .then((img) => {
+          if (imageRequests.get(ref) !== request || !activeImageRefs.has(ref)) return;
+          imageRequests.delete(ref);
           imageDataUrls = {
             ...imageDataUrls,
             [ref]: `data:${img.mimeType};base64,${img.dataBase64}`
           };
         })
         .catch(() => {
+          if (imageRequests.get(ref) === request) imageRequests.delete(ref);
           // Unreadable/moved image — leave the chip as a plain link.
         });
     }
@@ -289,7 +306,7 @@
       if (!ok) return;
       notes.discardDraft();
     }
-    notes.newDraft();
+    await notes.newDraft();
     void tick().then(() => textareaEl?.focus());
   }
 
@@ -374,7 +391,7 @@
         // in-progress untitled draft (preserved in the store) is reachable
         // again — otherwise selecting a saved note hides the draft with no UI
         // path back short of the New button's discard prompt.
-        notes.newDraft();
+        await notes.newDraft();
       } else {
         await notes.selectNote(filename);
       }

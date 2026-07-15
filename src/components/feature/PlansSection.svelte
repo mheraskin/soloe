@@ -1,21 +1,21 @@
 <script lang="ts">
   import { ChevronRight, FileText, ExternalLink } from '@lucide/svelte';
   import type { FeaturePlanEntry } from '@shared/types/features.js';
-  import { featuresStore } from '../../stores/features.svelte';
+  import { featuresStore, type FeatureScope } from '../../stores/features.svelte';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import { Button } from '$lib/components/ui/button';
 
   interface Props {
-    cwd: string;
+    scope: FeatureScope;
     plans: FeaturePlanEntry[];
     onOpenFile: (relativePath: string) => void;
   }
 
-  let { cwd, plans, onOpenFile }: Props = $props();
-  let open = $derived(featuresStore.sectionOpenFor(cwd, 'plans', plans.length > 0));
+  let { scope, plans, onOpenFile }: Props = $props();
+  let open = $derived(featuresStore.sectionOpenFor(scope, 'plans', plans.length > 0));
 
   function onOpenChange(nextOpen: boolean): void {
-    featuresStore.setSectionOpen(cwd, 'plans', nextOpen);
+    featuresStore.setSectionOpen(scope, 'plans', nextOpen);
   }
 </script>
 

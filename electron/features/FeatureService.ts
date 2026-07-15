@@ -1,6 +1,14 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import type { RunMode } from '@shared/types/sessions.js';
+import {
+  joinHostPath as joinPath,
+  worktreeHostPath as hostPathFor
+} from '../runtime/wsl-paths.js';
+import {
+  FeatureArtifactObservation,
+  type FeatureArtifactIndex,
+  type FeatureArtifactScope
+} from './FeatureArtifactObservation.js';
 import type {
   BranchStatus,
   CoverageBranchEntry,
@@ -12,7 +20,6 @@ import type {
   FeatureSetBranchStatusRequest,
   FeatureSetIssueStatusRequest,
   FeatureSetupStatus,
-  FeatureSlug,
   FeatureSnapshot,
   IssueTrackerConfig,
   IssueTrackerProvider
@@ -26,60 +33,53 @@ const STATUS_MARKERS: Record<BranchStatus, string> = {
   deferred: '[D]'
 };
 
-// Cross-WSL path translation. Mirrors the helper in files.ipc.ts; duplicated
-// here rather than re-exported because pulling files.ipc.ts as a dependency
-// would create a circular bind through ipc/result.ts.
-function hostPathFor(cwd: string, runMode: RunMode, wslDistro?: string): string {
-  if (runMode === 'wsl' && process.platform === 'win32') {
-    if (!wslDistro) throw new Error('WSL distro required to access worktree from Windows host');
-    const parts = cwd.split('/').filter(Boolean);
-    return ['\\\\wsl.localhost', wslDistro, ...parts].join('\\');
-  }
-  return cwd;
-}
-
-function joinPath(host: string, ...segments: string[]): string {
-  if (host.startsWith('\\\\')) {
-    return [host.replace(/\\$/u, ''), ...segments].join('\\');
-  }
-  return path.join(host, ...segments);
+export interface FeatureArtifactIndexSource {
+  observeNow(scope: FeatureArtifactScope): Promise<FeatureArtifactIndex>;
+  current(scope: FeatureArtifactScope, revision?: string): FeatureArtifactIndex | null;
 }
 
 export class FeatureService {
-  private selfWriteAt = new Map<string, number>();
+  private readonly mutationQueues = new Map<string, Promise<void>>();
+
+  constructor(
+    private readonly artifacts: FeatureArtifactIndexSource = new FeatureArtifactObservation()
+  ) {}
 
   async scan(request: FeatureScanRequest): Promise<FeatureSnapshot> {
     if (!request.cwd?.trim()) throw new Error('cwd is required');
+    const slug = request.slug?.trim() || null;
+    if (slug) assertFeatureSlug(slug);
     const host = hostPathFor(request.cwd, request.runMode, request.wslDistro);
-
-    const [features, setup, tracker] = await Promise.all([
-      this.discoverFeatures(host),
+    const cached = request.observedRevision
+      ? this.artifacts.current(request, request.observedRevision)
+      : null;
+    const [index, setup, tracker] = await Promise.all([
+      cached ?? this.artifacts.observeNow(request),
       this.detectSetup(host),
       this.detectTracker(host)
     ]);
-
-    const slug = request.slug?.trim() || null;
 
     let coverage: CoverageMapSnapshot | null = null;
     let plans: FeaturePlanEntry[] = [];
     let issues: FeatureIssueEntry[] = [];
     if (slug) {
       [coverage, plans, issues] = await Promise.all([
-        this.readCoverageMap(host, slug),
-        this.listPlans(host, slug),
-        this.listIssues(host, slug)
+        this.readCoverageMap(host, slug, index),
+        Promise.resolve(this.listPlans(index, slug)),
+        this.listIssues(host, slug, index)
       ]);
     }
 
     return {
       cwd: request.cwd,
-      features,
+      features: [...index.features],
       selectedSlug: slug,
       coverage,
       plans,
       issues,
       tracker,
       setup,
+      artifactRevision: index.revision,
       scannedAt: Date.now()
     };
   }
@@ -87,36 +87,35 @@ export class FeatureService {
   async writeBranchStatus(request: FeatureSetBranchStatusRequest): Promise<CoverageMapSnapshot> {
     if (!request.cwd?.trim()) throw new Error('cwd is required');
     if (!request.slug?.trim()) throw new Error('slug is required');
+    assertFeatureSlug(request.slug);
     if (!request.branchId?.trim()) throw new Error('branchId is required');
     const host = hostPathFor(request.cwd, request.runMode, request.wslDistro);
     const filePath = joinPath(host, 'docs', 'grill', request.slug, 'coverage-map.md');
-    const original = await fs.readFile(filePath, 'utf8');
-    const lines = original.split('\n');
-    const before = parseCoverageMap(lines);
-    let targetIndex = -1;
-    for (const section of before.sections) {
-      const hit = section.entries.find((e) => e.id === request.branchId);
-      if (hit) {
-        targetIndex = hit.lineIndex;
-        break;
+    return this.enqueueArtifactMutation(filePath, async () => {
+      const original = await fs.readFile(filePath, 'utf8');
+      const lines = original.split('\n');
+      const before = parseCoverageMap(lines);
+      let targetIndex = -1;
+      for (const section of before.sections) {
+        const hit = section.entries.find((e) => e.id === request.branchId);
+        if (hit) {
+          targetIndex = hit.lineIndex;
+          break;
+        }
       }
-    }
-    if (targetIndex < 0) {
-      throw new Error(`Branch ${request.branchId} not found in coverage map`);
-    }
-    const desiredMarker = STATUS_MARKERS[request.status];
-    const rewritten = replaceMarkerOnLine(lines[targetIndex] ?? '', desiredMarker);
-    if (!rewritten) {
-      throw new Error(`Failed to rewrite status marker on line ${targetIndex + 1}`);
-    }
-    lines[targetIndex] = rewritten;
-    const next = lines.join('\n');
-    if (next === original) {
+      if (targetIndex < 0) {
+        throw new Error(`Branch ${request.branchId} not found in coverage map`);
+      }
+      const desiredMarker = STATUS_MARKERS[request.status];
+      const rewritten = replaceMarkerOnLine(lines[targetIndex] ?? '', desiredMarker);
+      if (!rewritten) {
+        throw new Error(`Failed to rewrite status marker on line ${targetIndex + 1}`);
+      }
+      lines[targetIndex] = rewritten;
+      const next = lines.join('\n');
+      if (next !== original) await fs.writeFile(filePath, next, 'utf8');
       return this.snapshotCoverage(request.slug, lines);
-    }
-    this.selfWriteAt.set(filePath, Date.now());
-    await fs.writeFile(filePath, next, 'utf8');
-    return this.snapshotCoverage(request.slug, lines);
+    });
   }
 
   async writeIssueStatus(request: FeatureSetIssueStatusRequest): Promise<FeatureIssueEntry> {
@@ -124,30 +123,51 @@ export class FeatureService {
     if (!request.relativePath?.trim()) throw new Error('relativePath is required');
     const host = hostPathFor(request.cwd, request.runMode, request.wslDistro);
     const normalized = request.relativePath.replace(/\\/g, '/');
-    if (path.isAbsolute(normalized) || normalized.includes('..')) {
-      throw new Error('Issue path must be relative to the worktree');
+    const issueMatch = /^\.scratch\/([^/]+)\/issues\/([^/]+\.md)$/iu.exec(normalized);
+    if (path.isAbsolute(normalized) || normalized.includes('\0') || !issueMatch) {
+      throw new Error('Issue path must identify one indexed feature issue');
     }
+    const slug = issueMatch[1] ?? '';
+    assertFeatureSlug(slug);
+    const index = this.artifacts.current(request) ?? await this.artifacts.observeNow(request);
+    const isIndexed = index.scratch
+      .find((entry) => entry.slug === slug)
+      ?.issues.some((entry) => entry.relativePath === normalized) === true;
+    if (!isIndexed) throw new Error('Issue path is not part of the current Feature Artifact Index');
+
     const filePath = joinPath(host, ...normalized.split('/'));
-    const original = await fs.readFile(filePath, 'utf8');
-    const lines = original.split('\n');
-    const status = request.status.trim() || 'solved';
-    const statusIndex = lines.findIndex((line) => /^Status:\s*/i.test(line));
-    if (statusIndex >= 0) {
-      lines[statusIndex] = `Status: ${status}`;
-    } else {
-      const titleIndex = lines.findIndex((line) => /^#\s+/.test(line));
-      const insertAt = titleIndex >= 0 ? titleIndex + 1 : 0;
-      lines.splice(insertAt, 0, `Status: ${status}`);
-    }
-    const next = lines.join('\n');
-    if (next !== original) await fs.writeFile(filePath, next, 'utf8');
-    return issueEntryFromFile(normalized, await readIssueHead(filePath));
+    return this.enqueueArtifactMutation(filePath, async () => {
+      const original = await fs.readFile(filePath, 'utf8');
+      const lines = original.split('\n');
+      const status = request.status.trim() || 'solved';
+      const statusIndex = lines.findIndex((line) => /^Status:\s*/i.test(line));
+      if (statusIndex >= 0) {
+        lines[statusIndex] = `Status: ${status}`;
+      } else {
+        const titleIndex = lines.findIndex((line) => /^#\s+/.test(line));
+        const insertAt = titleIndex >= 0 ? titleIndex + 1 : 0;
+        lines.splice(insertAt, 0, `Status: ${status}`);
+      }
+      const next = lines.join('\n');
+      if (next !== original) await fs.writeFile(filePath, next, 'utf8');
+      return issueEntryFromFile(normalized, parseIssueHead(next));
+    });
   }
 
-  isSelfWrite(absolutePath: string, mtimeMs: number, graceMs = 1500): boolean {
-    const at = this.selfWriteAt.get(absolutePath);
-    if (at === undefined) return false;
-    return mtimeMs <= at + graceMs;
+  private enqueueArtifactMutation<TResult>(
+    artifactPath: string,
+    mutation: () => Promise<TResult>
+  ): Promise<TResult> {
+    const previous = this.mutationQueues.get(artifactPath) ?? Promise.resolve();
+    const result = previous.catch(() => undefined).then(mutation);
+    const settled = result.then(() => undefined, () => undefined);
+    this.mutationQueues.set(artifactPath, settled);
+    void settled.finally(() => {
+      if (this.mutationQueues.get(artifactPath) === settled) {
+        this.mutationQueues.delete(artifactPath);
+      }
+    });
+    return result;
   }
 
   private snapshotCoverage(slug: string, lines: string[]): CoverageMapSnapshot {
@@ -162,8 +182,23 @@ export class FeatureService {
     };
   }
 
-  private async readCoverageMap(host: string, slug: string): Promise<CoverageMapSnapshot> {
+  private async readCoverageMap(
+    host: string,
+    slug: string,
+    index: FeatureArtifactIndex
+  ): Promise<CoverageMapSnapshot> {
     const relativePath = `docs/grill/${slug}/coverage-map.md`;
+    const indexed = index.grill.find((entry) => entry.slug === slug);
+    if (!indexed || indexed.coverage.state === 'missing') {
+      return {
+        relativePath,
+        exists: false,
+        sections: [],
+        counts: { todo: 0, in_progress: 0, resolved: 0, deferred: 0 },
+        currentlyGrilling: null,
+        error: null
+      };
+    }
     const filePath = joinPath(host, 'docs', 'grill', slug, 'coverage-map.md');
     try {
       const raw = await fs.readFile(filePath, 'utf8');
@@ -199,37 +234,27 @@ export class FeatureService {
     }
   }
 
-  private async listPlans(host: string, slug: string): Promise<FeaturePlanEntry[]> {
-    const dir = joinPath(host, 'docs', 'plans');
-    const entries = await safeReaddir(dir);
-    const out: FeaturePlanEntry[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.toLowerCase().endsWith('.md')) continue;
-      if (entry.name.startsWith('grill-') && entry.name.includes('-migration.md')) continue;
-      const stem = entry.name.replace(/\.md$/i, '');
-      if (!planMatchesSlug(stem, slug)) continue;
-      out.push({
-        relativePath: `docs/plans/${entry.name}`,
-        name: stem
-      });
-    }
-    out.sort((a, b) => a.name.localeCompare(b.name));
-    return out;
+  private listPlans(index: FeatureArtifactIndex, slug: string): FeaturePlanEntry[] {
+    return index.plans
+      .filter((entry) => entry.slugs.includes(slug))
+      .map(({ relativePath, name }) => ({ relativePath, name }));
   }
 
-  private async listIssues(host: string, slug: string): Promise<FeatureIssueEntry[]> {
-    const scratchDir = joinPath(host, '.scratch', slug);
-    const issuesDir = joinPath(scratchDir, 'issues');
-    const issueEntries = await safeReaddir(issuesDir);
+  private async listIssues(
+    host: string,
+    slug: string,
+    index: FeatureArtifactIndex
+  ): Promise<FeatureIssueEntry[]> {
+    const indexed = index.scratch.find((entry) => entry.slug === slug);
+    if (!indexed) return [];
     const numbered: FeatureIssueEntry[] = [];
     const artifacts: FeatureIssueEntry[] = [];
-    for (const entry of issueEntries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.toLowerCase().endsWith('.md')) continue;
-      const filePath = joinPath(issuesDir, entry.name);
-      const parsed = await readIssueHead(filePath);
-      const relativePath = `.scratch/${slug}/issues/${entry.name}`;
+    const parsedIssues = await mapConcurrent(indexed.issues, 8, async (entry) => ({
+      entry,
+      parsed: await readIssueHead(joinPath(host, ...entry.relativePath.split('/')))
+    }));
+    for (const { entry, parsed } of parsedIssues) {
+      const relativePath = entry.relativePath;
       const issue = issueEntryFromFile(relativePath, parsed);
       if (issue.kind === 'issue') numbered.push(issue);
       else artifacts.push(issue);
@@ -237,12 +262,13 @@ export class FeatureService {
     numbered.sort(issueComparator);
     artifacts.sort((a, b) => a.name.localeCompare(b.name));
 
-    const playwrightPath = joinPath(scratchDir, PLAYWRIGHT_FILE);
-    const playwright = await readIssueHeadIfExists(playwrightPath);
-    if (playwright) {
+    if (indexed.playwright) {
+      const playwright = await readIssueHead(
+        joinPath(host, ...indexed.playwright.relativePath.split('/'))
+      );
       artifacts.push({
         kind: 'artifact',
-        relativePath: `.scratch/${slug}/${PLAYWRIGHT_FILE}`,
+        relativePath: indexed.playwright.relativePath,
         name: 'playwright-e2e',
         displayName: PLAYWRIGHT_FILE,
         number: null,
@@ -252,69 +278,6 @@ export class FeatureService {
       });
     }
     return [...numbered, ...artifacts];
-  }
-
-  private async discoverFeatures(host: string): Promise<FeatureSlug[]> {
-    const map = new Map<string, FeatureSlug>();
-    const ensure = (slug: string): FeatureSlug => {
-      let entry = map.get(slug);
-      if (!entry) {
-        entry = { slug, hasCoverage: false, hasIssues: false, hasPlans: false };
-        map.set(slug, entry);
-      }
-      return entry;
-    };
-
-    const grillEntries = await safeReaddir(joinPath(host, 'docs', 'grill'));
-    for (const entry of grillEntries) {
-      if (!entry.isDirectory()) continue;
-      const slug = entry.name;
-      try {
-        const stat = await fs.stat(joinPath(host, 'docs', 'grill', slug, 'coverage-map.md'));
-        if (stat.isFile()) ensure(slug).hasCoverage = true;
-      } catch {
-        ensure(slug);
-      }
-    }
-
-    const scratchEntries = await safeReaddir(joinPath(host, '.scratch'));
-    for (const entry of scratchEntries) {
-      if (!entry.isDirectory()) continue;
-      const slug = entry.name;
-      const issuesEntries = await safeReaddir(joinPath(host, '.scratch', slug, 'issues'));
-      const hasIssueFile = issuesEntries.some(
-        (e) => e.isFile() && e.name.toLowerCase().endsWith('.md')
-      );
-      let hasPlaywright = false;
-      try {
-        const stat = await fs.stat(joinPath(host, '.scratch', slug, PLAYWRIGHT_FILE));
-        hasPlaywright = stat.isFile();
-      } catch {
-        hasPlaywright = false;
-      }
-      if (hasIssueFile || hasPlaywright) ensure(slug).hasIssues = true;
-    }
-
-    const plansEntries = await safeReaddir(joinPath(host, 'docs', 'plans'));
-    for (const entry of plansEntries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.toLowerCase().endsWith('.md')) continue;
-      if (entry.name.startsWith('grill-') && entry.name.includes('-migration.md')) continue;
-      const stem = entry.name.replace(/\.md$/i, '');
-      let matched = false;
-      for (const slug of map.keys()) {
-        if (planMatchesSlug(stem, slug)) {
-          ensure(slug).hasPlans = true;
-          matched = true;
-        }
-      }
-      if (!matched) {
-        const candidate = guessSlugFromPlan(stem);
-        if (candidate) ensure(candidate).hasPlans = true;
-      }
-    }
-
-    return [...map.values()].sort((a, b) => a.slug.localeCompare(b.slug));
   }
 
   private async detectSetup(host: string): Promise<FeatureSetupStatus> {
@@ -466,18 +429,6 @@ async function readIssueHead(
   }
 }
 
-async function readIssueHeadIfExists(
-  filePath: string
-): Promise<{ title: string | null; status: string | null } | null> {
-  try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    return parseIssueHead(raw);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    return { title: null, status: null };
-  }
-}
-
 export function parseIssueHead(raw: string): { title: string | null; status: string | null } {
   const lines = raw.split('\n').slice(0, 30);
   let title: string | null = null;
@@ -517,20 +468,6 @@ function issueEntryFromFile(
   };
 }
 
-function planMatchesSlug(planStem: string, slug: string): boolean {
-  if (planStem === slug) return true;
-  if (planStem.startsWith(`${slug}-`)) return true;
-  if (planStem.startsWith(`${slug}_`)) return true;
-  return false;
-}
-
-function guessSlugFromPlan(stem: string): string | null {
-  if (!stem.includes('-')) return null;
-  const stripped = stem.replace(/-(feature|ux|spec|design|plan|notes)$/i, '');
-  if (stripped.includes(' ')) return null;
-  return stripped;
-}
-
 function issueComparator(a: FeatureIssueEntry, b: FeatureIssueEntry): number {
   const an = a.number;
   const bn = b.number;
@@ -540,10 +477,29 @@ function issueComparator(a: FeatureIssueEntry, b: FeatureIssueEntry): number {
   return a.name.localeCompare(b.name);
 }
 
-async function safeReaddir(dir: string): Promise<import('node:fs').Dirent[]> {
-  try {
-    return await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
+function assertFeatureSlug(slug: string): void {
+  if (!slug || slug === '.' || slug === '..' || /[\\/\0]/u.test(slug)) {
+    throw new Error('Feature slug must be one path segment');
   }
+}
+
+async function mapConcurrent<T, TResult>(
+  values: readonly T[],
+  concurrency: number,
+  work: (value: T) => Promise<TResult>
+): Promise<TResult[]> {
+  const results = new Array<TResult>(values.length);
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (cursor < values.length) {
+        const index = cursor;
+        cursor += 1;
+        results[index] = await work(values[index] as T);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
 }

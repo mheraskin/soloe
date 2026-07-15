@@ -2,6 +2,10 @@
   import type { Session, AgentRuntimeProvider } from '@shared/types/sessions.js';
   import type { ModelCatalogEntry } from '@shared/types/settings.js';
   import { MODEL_CATALOG } from '@shared/types/settings.js';
+  import {
+    sameWorktreeIdentity,
+    type WorktreeScope
+  } from '@shared/worktree-identity.js';
   import { commentAgents, type CommentAgent } from '../../stores/comment-agents.svelte';
   import { sessions } from '../../stores/sessions.svelte';
 
@@ -19,11 +23,11 @@
   // should display. Filters by case-insensitive substring on the visible
   // label. The list always carries at least one synthetic "new …" item so
   // the user can spawn an agent even with an empty cwd.
-  export function buildMentionItems(cwd: string, query: string): MentionItem[] {
+  export function buildMentionItems(scope: WorktreeScope, query: string): MentionItem[] {
     const items: MentionItem[] = [];
 
     // 1) Already-named agents for this worktree.
-    for (const agent of commentAgents.forCwd(cwd)) {
+    for (const agent of commentAgents.forScope(scope)) {
       const item: MentionItem = {
         kind: 'agent',
         agent,
@@ -37,10 +41,10 @@
     // 2) Active sessions whose cwd matches this worktree, that aren't already
     // wrapped in a CommentAgent above (compared by spawnedSessionId).
     const wrappedIds = new Set(
-      commentAgents.forCwd(cwd).map((a) => a.spawnedSessionId).filter((v): v is string => Boolean(v))
+      commentAgents.forScope(scope).map((a) => a.spawnedSessionId).filter((v): v is string => Boolean(v))
     );
     for (const s of sessions.sessions) {
-      if (s.cwd !== cwd) continue;
+      if (!sameWorktreeIdentity(scope.cwd, scope, s.cwd, s)) continue;
       if (wrappedIds.has(s.id)) continue;
       const provider: AgentRuntimeProvider | null =
         s.launch.type === 'agent' ? s.launch.provider : null;

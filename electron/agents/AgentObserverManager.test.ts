@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AgentObserverManager, terminalStatusToObservedState } from './AgentObserverManager.js';
 import type { Session } from '@shared/types/sessions.js';
 
@@ -82,5 +82,56 @@ describe('AgentObserverManager', () => {
 
     expect(worker.runtimeMode).toBe('sdk_worker');
     expect(observer.childWorkers(session.id).map((s) => s.id)).toEqual(['worker-1']);
+  });
+
+  it('publishes one semantic commit for a mutation that emits event and snapshot', () => {
+    const observer = new AgentObserverManager();
+    const commits = vi.fn();
+    const events = vi.fn();
+    const snapshots = vi.fn();
+    observer.on('commit', commits);
+    observer.on('event', events);
+    observer.on('snapshot', snapshots);
+
+    observer.registerTuiSession(session);
+
+    expect(events).toHaveBeenCalledTimes(1);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+    expect(commits).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits removal so durable state cannot outlive a deleted session', () => {
+    const observer = new AgentObserverManager();
+    observer.registerTuiSession(session);
+    const commits = vi.fn();
+    observer.on('commit', commits);
+
+    observer.removeSession(session.id);
+    observer.removeSession(session.id);
+
+    expect(observer.getSnapshot(session.id)).toBeNull();
+    expect(observer.listEvents(session.id)).toEqual([]);
+    expect(commits).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits a worker snapshot and event pair once while preserving publication order', () => {
+    const observer = new AgentObserverManager();
+    observer.registerWorker({
+      workerId: 'worker-1',
+      originSessionId: session.id,
+      provider: 'codex'
+    });
+    const order: string[] = [];
+    observer.on('snapshot', () => order.push('snapshot'));
+    observer.on('event', () => order.push('event'));
+    observer.on('commit', () => order.push('commit'));
+
+    observer.updateWorker(
+      'worker-1',
+      { state: 'working' },
+      { summary: 'prompt received' }
+    );
+
+    expect(order).toEqual(['snapshot', 'event', 'commit']);
   });
 });

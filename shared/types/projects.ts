@@ -9,7 +9,6 @@ export interface Project {
   defaultRunMode?: RunMode;
   defaultWslDistro?: string;
   accentColor?: string;
-  favicons?: ProjectFavicon[];
   selectedFaviconPath?: string;
   createdAt: string;
   lastOpenedAt: string;

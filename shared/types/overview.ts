@@ -54,6 +54,7 @@ export interface WorktreeFacts {
   branch: string | null;
   head: string | null;
   baseBranch: string | null;
+  baseOid: string | null;
   commitsAhead: number;
   commitsBehind: number;
   commitsAheadShas: string[];
@@ -61,6 +62,9 @@ export interface WorktreeFacts {
   mergedIntoBase: boolean;
   dirtyFiles: WorktreeDirtyFile[];
   dirtyHash: string;
+  evidenceFingerprint: string;
+  completeness: 'complete' | 'degraded';
+  diagnostics: string[];
   workingDiff: string;
   recentCommits: WorktreeRecentCommit[];
 }
@@ -83,7 +87,16 @@ export interface WorktreeRecentCommit {
 export type OverviewStatus = 'fresh' | 'cached' | 'stale' | 'missing';
 
 export interface OverviewWatermark {
-  perSession: { sessionFile: string; lastRecordKey: string }[];
+  // Order is significant: it mirrors the open-tab order used by the prompt.
+  perSession: {
+    sessionFile: string;
+    displayName?: string;
+    mtimeMs: number;
+    size: number;
+    lastRecordKey: string;
+  }[];
+  scopeKey: string;
+  evidenceFingerprint: string;
   headSha: string | null;
   dirtyHash: string;
 }

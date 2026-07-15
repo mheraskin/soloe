@@ -18,6 +18,10 @@ import type { TerminalStatusEvent } from '@shared/types/terminal.js';
 type AgentObserverEvents = {
   snapshot: [ObservedAgentSnapshot];
   event: [ObserverEvent];
+  // One notification per completed semantic mutation. Presentation channels
+  // above may both fire for one mutation; durability must not treat those as
+  // two independent write commands.
+  commit: [];
 };
 
 export interface AgentObserverManagerOptions {
@@ -75,8 +79,9 @@ export class AgentObserverManager extends EventEmitter {
   }
 
   removeSession(sessionId: SessionId): void {
-    this.snapshots.delete(sessionId);
-    this.eventsBySubject.delete(sessionId);
+    const removedSnapshot = this.snapshots.delete(sessionId);
+    const removedEvents = this.eventsBySubject.delete(sessionId);
+    if (removedSnapshot || removedEvents) this.emit('commit');
   }
 
   updateTuiStatus(event: TerminalStatusEvent): ObservedAgentSnapshot {
@@ -121,7 +126,7 @@ export class AgentObserverManager extends EventEmitter {
     };
     if (state !== 'usage_limited') delete snapshot.usageLimit;
     this.snapshots.set(sessionId, snapshot);
-    this.appendEvent({
+    this.appendEventInternal({
       subjectId: sessionId,
       subjectKind: snapshot.subjectKind,
       state,
@@ -129,6 +134,7 @@ export class AgentObserverManager extends EventEmitter {
       detail
     });
     this.emit('snapshot', snapshot);
+    this.emit('commit');
     return snapshot;
   }
 
@@ -147,7 +153,7 @@ export class AgentObserverManager extends EventEmitter {
       lastEventAt: usageLimit.detectedAt
     };
     this.snapshots.set(sessionId, snapshot);
-    this.appendEvent({
+    this.appendEventInternal({
       subjectId: sessionId,
       subjectKind: snapshot.subjectKind,
       state: 'usage_limited',
@@ -157,6 +163,7 @@ export class AgentObserverManager extends EventEmitter {
       detail: usageLimit.message
     });
     this.emit('snapshot', snapshot);
+    this.emit('commit');
     return snapshot;
   }
 
@@ -210,13 +217,14 @@ export class AgentObserverManager extends EventEmitter {
 
   updateWorker(
     workerId: string,
-    patch: Partial<Omit<ObservedAgentSnapshot, 'id' | 'runtimeMode' | 'subjectKind' | 'workerId'>>
+    patch: Partial<Omit<ObservedAgentSnapshot, 'id' | 'runtimeMode' | 'subjectKind' | 'workerId'>>,
+    event?: { summary: string; detail?: string }
   ): ObservedAgentSnapshot {
     const existing = this.snapshots.get(workerId);
     if (!existing || existing.subjectKind !== 'worker') {
       throw new Error(`Worker not found: ${workerId}`);
     }
-    return this.upsertSnapshot({
+    const snapshot: ObservedAgentSnapshot = {
       ...existing,
       ...patch,
       id: workerId,
@@ -224,10 +232,36 @@ export class AgentObserverManager extends EventEmitter {
       subjectKind: 'worker',
       workerId,
       lastEventAt: patch.lastEventAt ?? new Date().toISOString()
+    };
+    if (!event) return this.upsertSnapshot(snapshot);
+    // Worker runtime updates historically publish snapshot before event.
+    // Preserve that outward ordering while committing the pair once.
+    this.snapshots.set(workerId, snapshot);
+    this.emit('snapshot', snapshot);
+    this.appendEventInternal({
+      subjectId: workerId,
+      subjectKind: 'worker',
+      state: snapshot.state,
+      summary: event.summary,
+      detail: event.detail
     });
+    this.emit('commit');
+    return snapshot;
   }
 
   appendEvent(input: {
+    subjectId: string;
+    subjectKind: ObserverSubjectKind;
+    state: AgentObservedState;
+    summary: string;
+    detail?: string;
+  }): ObserverEvent {
+    const event = this.appendEventInternal(input);
+    this.emit('commit');
+    return event;
+  }
+
+  private appendEventInternal(input: {
     subjectId: string;
     subjectKind: ObserverSubjectKind;
     state: AgentObservedState;
@@ -283,7 +317,7 @@ export class AgentObserverManager extends EventEmitter {
   ): ObservedAgentSnapshot {
     this.snapshots.set(snapshot.id, snapshot);
     if (eventSummary) {
-      this.appendEvent({
+      this.appendEventInternal({
         subjectId: snapshot.id,
         subjectKind: snapshot.subjectKind,
         state: snapshot.state,
@@ -291,6 +325,7 @@ export class AgentObserverManager extends EventEmitter {
       });
     }
     this.emit('snapshot', snapshot);
+    this.emit('commit');
     return snapshot;
   }
 }

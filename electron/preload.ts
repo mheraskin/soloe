@@ -6,6 +6,7 @@ import type {
   AgentIntegrationStatus,
   SoloeApi,
   TerminalInputPayload,
+  TerminalOutputDemandPayload,
   TerminalResizePayload,
   ToastNotification
 } from '@shared/types/ipc.js';
@@ -31,6 +32,7 @@ import type {
   SessionUpdate
 } from '@shared/types/sessions.js';
 import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
+import type { SystemUsageRequest } from '@shared/types/system.js';
 import type {
   Project,
   ProjectDraft,
@@ -57,7 +59,7 @@ import type {
   DisableDeviceEmulationRequest,
   EnableDeviceEmulationRequest,
   OpenDevToolsRequest,
-  SetDevToolsBoundsRequest,
+  SetDevToolsLayoutRequest,
   SetUserAgentRequest
 } from '@shared/types/browser.js';
 import type {
@@ -70,13 +72,16 @@ import type {
   GitChangeEvent,
   GitCommitRequest,
   GitRecentCommitsRequest,
+  GitObservationDemandRequest,
   GitRemoteOpRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
+  ReviewDiffsRequest,
   ResolveRefsRequest,
   StageFilesRequest,
-  WorkingChangesRequest
+  WorkingChangesRequest,
+  WorkingTreeSnapshotRequest
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
@@ -135,6 +140,10 @@ const soloe: SoloeApi = {
     resize: (payload: TerminalResizePayload) =>
       ipcRenderer.invoke(IpcChannels.terminal.resize, payload),
     listRunning: () => ipcRenderer.invoke(IpcChannels.terminal.listRunning),
+    replay: (terminalId: TerminalId, afterSeq?: number) =>
+      ipcRenderer.invoke(IpcChannels.terminal.replay, terminalId, afterSeq),
+    setOutputDemand: (payload: TerminalOutputDemandPayload) =>
+      ipcRenderer.invoke(IpcChannels.terminal.outputDemand, payload),
     onOutput: (cb: (event: TerminalOutputEvent) => void) =>
       subscribe<TerminalOutputEvent>(IpcChannels.terminal.output, cb),
     onExit: (cb: (event: TerminalExitEvent) => void) =>
@@ -167,7 +176,7 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.system.saveText, request),
     openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.system.openExternal, url),
     listWslDistros: () => ipcRenderer.invoke(IpcChannels.system.listWslDistros),
-    usage: () => ipcRenderer.invoke(IpcChannels.system.usage)
+    usage: (request?: SystemUsageRequest) => ipcRenderer.invoke(IpcChannels.system.usage, request)
   },
   settings: {
     get: () => ipcRenderer.invoke(IpcChannels.settings.get),
@@ -188,6 +197,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.projects.reorder, orderedIds),
     refreshFavicons: (id: ProjectId) =>
       ipcRenderer.invoke(IpcChannels.projects.refreshFavicons, id),
+    readFavicon: (id: ProjectId, relativePath: string) =>
+      ipcRenderer.invoke(IpcChannels.projects.readFavicon, id, relativePath),
     detectFromPath: (p: string) => ipcRenderer.invoke(IpcChannels.projects.detectFromPath, p),
     suggestPaths: (query: string, options?: ProjectSuggestOptions) =>
       ipcRenderer.invoke(IpcChannels.projects.suggestPaths, query, options),
@@ -232,8 +243,14 @@ const soloe: SoloeApi = {
     checkout: (request: GitCheckoutRequest) => ipcRenderer.invoke(IpcChannels.git.checkout, request),
     workingChanges: (request: WorkingChangesRequest) =>
       ipcRenderer.invoke(IpcChannels.git.workingChanges, request),
+    workingTreeSnapshot: (request: WorkingTreeSnapshotRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.workingTreeSnapshot, request),
+    setObservationDemand: (request: GitObservationDemandRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.observationDemand, request),
     fileDiff: (request: FileDiffRequest) =>
       ipcRenderer.invoke(IpcChannels.git.fileDiff, request),
+    reviewDiffs: (request: ReviewDiffsRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.reviewDiffs, request),
     fileBlame: (request: FileBlameRequest) =>
       ipcRenderer.invoke(IpcChannels.git.fileBlame, request),
     fileLines: (request: FileLinesRequest) =>
@@ -345,8 +362,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.browser.setUserAgent, request),
     openDevTools: (request: OpenDevToolsRequest) =>
       ipcRenderer.invoke(IpcChannels.browser.openDevTools, request),
-    setDevToolsBounds: (request: SetDevToolsBoundsRequest) =>
-      ipcRenderer.invoke(IpcChannels.browser.setDevToolsBounds, request),
+    setDevToolsLayout: (request: SetDevToolsLayoutRequest) =>
+      ipcRenderer.invoke(IpcChannels.browser.setDevToolsLayout, request),
     closeDevTools: (request: CloseDevToolsRequest) =>
       ipcRenderer.invoke(IpcChannels.browser.closeDevTools, request)
   }

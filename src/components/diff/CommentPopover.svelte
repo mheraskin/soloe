@@ -50,7 +50,7 @@
 
   let mentionCtx = $derived(editing ? detectMentionAtCursor(draft, cursor) : null);
   let pickerItems = $derived<MentionItem[]>(
-    mentionCtx ? buildMentionItems(comment.cwd, mentionCtx.query) : []
+    mentionCtx ? buildMentionItems(comment.scope, mentionCtx.query) : []
   );
   let pickerOpen = $derived(mentionCtx !== null && pickerItems.length > 0);
 
@@ -155,11 +155,11 @@
       resolvedName = item.agent.name;
       agent = item.agent;
     } else if (item.kind === 'session') {
-      const existing = commentAgents.byName(comment.cwd, item.session.name);
+      const existing = commentAgents.byName(comment.scope, item.session.name);
       agent = existing
         ? existing
         : commentAgents.create({
-            cwd: comment.cwd,
+            scope: comment.scope,
             name: item.session.name,
             provider: item.provider,
             model: item.session.launch.type === 'agent' ? item.session.launch.model : undefined
@@ -172,9 +172,9 @@
       resolvedName = agent.name;
     } else {
       // new-provider or new-model: mint a fresh agent with a random handle.
-      const name = commentAgents.uniqueName(comment.cwd, randomName());
+      const name = commentAgents.uniqueName(comment.scope, randomName());
       agent = commentAgents.create({
-        cwd: comment.cwd,
+        scope: comment.scope,
         name,
         provider: item.provider,
         ...(item.kind === 'new-model' ? { model: item.model } : {})
@@ -200,12 +200,12 @@
   function pruneAgentsAfterSave(): void {
     // Recollect every mention used across the worktree's comments so we don't
     // drop agents that are still referenced elsewhere.
-    const all = diffComments.forWorktree(comment.cwd);
+    const all = diffComments.forWorktree(comment.scope);
     const names = new Set<string>();
     for (const c of all) {
       for (const m of parseMentions(c.text)) names.add(m);
     }
-    commentAgents.pruneUnreferenced(comment.cwd, [...names]);
+    commentAgents.pruneUnreferenced(comment.scope, [...names]);
   }
 
   function onKeydown(e: KeyboardEvent): void {
@@ -270,7 +270,7 @@
     const names = parseMentions(text);
     const out: CommentAgent[] = [];
     for (const name of names) {
-      const agent = commentAgents.byName(comment.cwd, name);
+      const agent = commentAgents.byName(comment.scope, name);
       if (agent) out.push(agent);
     }
     return out;

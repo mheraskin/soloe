@@ -10,8 +10,12 @@
   import type { BranchStatus } from '@shared/types/features.js';
   import { onMount } from 'svelte';
   import { sessions } from '../../stores/sessions.svelte';
-  import { featuresStore, type FeatureContext } from '../../stores/features.svelte';
-  import { filesStore } from '../../stores/files.svelte';
+  import {
+    createFeatureScope,
+    featuresStore,
+    type FeatureScope
+  } from '../../stores/features.svelte';
+  import { createFilesScope, filesStore } from '../../stores/files.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -28,30 +32,22 @@
     const cwd = selected?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
   });
-  let activeContext = $derived.by<(FeatureContext & { cwd: string }) | null>(() => {
+  let activeScope = $derived.by<FeatureScope | null>(() => {
     if (!activeCwd || !selected) return null;
-    return {
-      cwd: activeCwd,
+    return createFeatureScope(activeCwd, {
       runMode: selected.runMode,
       ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
-    };
-  });
-
-  let state = $derived(activeCwd ? featuresStore.stateFor(activeCwd) : null);
-  let snapshot = $derived(state?.snapshot ?? null);
-  let selectedSlug = $derived(activeCwd ? featuresStore.selectedSlugFor(activeCwd) : null);
-
-  $effect(() => {
-    if (!activeContext) return;
-    featuresStore.setContext(activeContext.cwd, {
-      runMode: activeContext.runMode,
-      ...(activeContext.wslDistro ? { wslDistro: activeContext.wslDistro } : {})
     });
   });
 
+  let state = $derived(featuresStore.stateFor(activeScope));
+  let snapshot = $derived(state?.snapshot ?? null);
+  let selectedSlug = $derived(featuresStore.selectedSlugFor(activeScope));
+
   $effect(() => {
-    if (!activeContext) return;
-    void featuresStore.refresh(activeContext.cwd).catch(reportError);
+    const scope = activeScope;
+    if (!scope) return;
+    void featuresStore.refresh(scope).catch(reportError);
   });
 
   // Subscribe to the main-process watcher for the active worktree; cleanup
@@ -59,44 +55,68 @@
   // subscribers per cwd, so concurrent visibility from another mount point
   // doesn't drop the watcher when this effect re-runs.
   $effect(() => {
-    if (!activeContext) return;
-    const cwd = activeContext.cwd;
-    void featuresStore.subscribe(cwd).catch(() => undefined);
+    const scope = activeScope;
+    if (!scope) return;
+    let owned = false;
+    const syncSubscription = () => {
+      if (!document.hidden && !owned) {
+        owned = true;
+        void featuresStore.subscribe(scope).catch(() => undefined);
+      } else if (document.hidden && owned) {
+        owned = false;
+        void featuresStore.unsubscribe(scope).catch(() => undefined);
+      }
+    };
+    document.addEventListener('visibilitychange', syncSubscription);
+    syncSubscription();
     return () => {
-      void featuresStore.unsubscribe(cwd).catch(() => undefined);
+      document.removeEventListener('visibilitychange', syncSubscription);
+      if (owned) {
+        owned = false;
+        void featuresStore.unsubscribe(scope).catch(() => undefined);
+      }
     };
   });
 
   function onPickSlug(slug: string | null): void {
-    if (!activeCwd) return;
-    featuresStore.setSelectedSlug(activeCwd, slug);
+    if (!activeScope) return;
+    featuresStore.setSelectedSlug(activeScope, slug);
   }
 
   function onOpenFile(relativePath: string): void {
-    if (!activeCwd || !activeContext) return;
-    filesStore.setContext(activeCwd, {
-      runMode: activeContext.runMode,
-      ...(activeContext.wslDistro ? { wslDistro: activeContext.wslDistro } : {})
+    if (!activeCwd || !activeScope) return;
+    const filesScope = createFilesScope(activeCwd, {
+      runMode: activeScope.runMode,
+      ...(activeScope.wslDistro ? { wslDistro: activeScope.wslDistro } : {})
     });
+    const current = filesStore.openFileFor(filesScope);
+    const discardingDirty = Boolean(
+      current
+      && current.relativePath !== relativePath
+      && filesStore.dirtyFor(filesScope)
+    );
+    if (discardingDirty && !window.confirm('Discard unsaved changes and open this file?')) return;
     void filesStore
-      .openFileAt(activeCwd, relativePath)
-      .then(() => rightRail.openTab('files'))
+      .openFileAt(filesScope, relativePath, { discardDirty: discardingDirty })
+      .then((opened) => {
+        if (opened) rightRail.openTab('files');
+      })
       .catch(reportError);
   }
 
   function onToggleBranch(branchId: string, next: BranchStatus): void {
-    if (!activeCwd) return;
-    void featuresStore.setBranchStatus(activeCwd, branchId, next).catch(reportError);
+    if (!activeScope) return;
+    void featuresStore.setBranchStatus(activeScope, branchId, next).catch(reportError);
   }
 
   async function onSetIssueStatus(relativePath: string, status: string): Promise<void> {
-    if (!activeCwd) return;
-    await featuresStore.setIssueStatus(activeCwd, relativePath, status);
+    if (!activeScope) return;
+    await featuresStore.setIssueStatus(activeScope, relativePath, status);
   }
 
   function onRefresh(): void {
-    if (!activeCwd) return;
-    void featuresStore.refresh(activeCwd).catch(reportError);
+    if (!activeScope) return;
+    void featuresStore.refresh(activeScope).catch(reportError);
   }
 
   onMount(() => {
@@ -200,15 +220,15 @@
             />
             {#if snapshot.coverage}
               <CoverageMapSection
-                cwd={activeCwd}
+                scope={activeScope!}
                 coverage={snapshot.coverage}
                 onToggleBranch={onToggleBranch}
                 onOpenFile={onOpenFile}
               />
             {/if}
-            <PlansSection cwd={activeCwd} plans={snapshot.plans} onOpenFile={onOpenFile} />
+            <PlansSection scope={activeScope!} plans={snapshot.plans} onOpenFile={onOpenFile} />
             <IssuesSection
-              cwd={activeCwd}
+              scope={activeScope!}
               issues={snapshot.issues}
               tracker={snapshot.tracker}
               onOpenFile={onOpenFile}

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mntPosixToWindows, posixToWslUnc, resolveWslHome } from '../runtime/wsl-paths.js';
+import { resolveWslHome, worktreeHostPath } from '../runtime/wsl-paths.js';
 import type {
   Project,
   ProjectDetectResult,
@@ -18,48 +18,47 @@ import type {
   ProjectSuggestResult,
   ProjectUpdate
 } from '@shared/types/projects.js';
+import {
+  ProjectFaviconCatalog,
+  type ProjectFaviconCatalogOptions
+} from './ProjectFaviconCatalog.js';
 
 interface StorageShape {
   version: number;
   projects: Project[];
 }
 
-const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 2;
 const VALID_RUN_MODES = new Set(['windows', 'wsl']);
-const MAX_FAVICON_BYTES = 512 * 1024;
-const MAX_FAVICON_RESULTS = 24;
-const FAVICON_EXTENSIONS = new Set(['.ico', '.png', '.svg', '.jpg', '.jpeg', '.webp']);
-const FAVICON_SKIP_DIRS = new Set([
-  '.git',
-  'node_modules',
-  'vendor',
-  'dist',
-  'out',
-  '.next',
-  '.svelte-kit',
-  'coverage'
-]);
 
 export interface ProjectStoreOptions {
   gitBinary?: string;
+  faviconCatalog?: ProjectFaviconCatalog;
+  faviconCatalogOptions?: ProjectFaviconCatalogOptions;
 }
 
 export class ProjectStore {
   private cache: Map<ProjectId, Project> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
   private listeners = new Set<(projects: Project[]) => void>();
+  private readonly faviconCatalog: ProjectFaviconCatalog;
+  private needsStorageRewrite = false;
 
   constructor(
     private readonly filePath: string,
     private readonly options: ProjectStoreOptions = {}
-  ) {}
+  ) {
+    this.faviconCatalog = options.faviconCatalog
+      ?? new ProjectFaviconCatalog(options.faviconCatalogOptions);
+  }
 
   async init(): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     if (this.cache) return;
     this.cache = await this.loadFromDisk();
-    if (this.assignMissingSortIndices()) {
+    if (this.assignMissingSortIndices() || this.needsStorageRewrite) {
       await this.persist();
+      this.needsStorageRewrite = false;
     }
   }
 
@@ -176,21 +175,14 @@ export class ProjectStore {
     await this.ensureLoaded();
     const existing = this.cache!.get(id);
     if (!existing) throw new Error(`Project not found: ${id}`);
-    const favicons = await discoverFavicons(existing);
-    const selectedFaviconPath = favicons.some((f) => f.path === existing.selectedFaviconPath)
-      ? existing.selectedFaviconPath
-      : favicons[0]?.path;
-    const updated: Project = {
-      ...existing,
-      favicons,
-      ...(selectedFaviconPath ? { selectedFaviconPath } : {})
-    };
-    if (!selectedFaviconPath) delete updated.selectedFaviconPath;
-    validateProject(updated);
-    this.cache!.set(id, updated);
-    await this.persist();
-    this.broadcast();
-    return favicons;
+    return this.faviconCatalog.discover(existing);
+  }
+
+  async readFavicon(id: ProjectId, relativePath: string): Promise<ProjectFavicon | null> {
+    await this.ensureLoaded();
+    const existing = this.cache!.get(id);
+    if (!existing) throw new Error(`Project not found: ${id}`);
+    return this.faviconCatalog.read(existing, relativePath);
   }
 
   async detectFromPath(input: string): Promise<ProjectDetectResult> {
@@ -306,10 +298,7 @@ export class ProjectStore {
     // On a Windows host, list /mnt/<drive> through the native drive path — the
     // \\wsl.localhost share can't enumerate DrvFs mounts. Off Windows the distro
     // is the host, so read the posix path directly.
-    const listTarget =
-      process.platform === 'win32'
-        ? mntPosixToWindows(baseDir) ?? posixToWslUnc(distro, baseDir)
-        : baseDir;
+    const listTarget = worktreeHostPath(baseDir, 'wsl', distro);
     let entries: Dirent[];
     try {
       entries = await fs.readdir(listTarget, { withFileTypes: true });
@@ -426,6 +415,8 @@ export class ProjectStore {
       return new Map();
     }
     const projects = parseStorage(parsed);
+    this.needsStorageRewrite = parsedStorageVersion(parsed) !== STORAGE_VERSION
+      || storageContainsLegacyFavicons(parsed);
     return new Map(projects.map((p) => [p.id, p]));
   }
 
@@ -513,130 +504,6 @@ function normalizePath(p: string): string {
 
 function inferNameFromPath(projectPath: string): string {
   return path.basename(projectPath.replace(/[/\\]+$/, '')) || projectPath;
-}
-
-async function discoverFavicons(project: Project): Promise<ProjectFavicon[]> {
-  const root = projectFsPath(project);
-  const candidates: Array<{ absolutePath: string; relativePath: string; score: number }> = [];
-  await walkFaviconCandidates(root, '', candidates, 0);
-  const seen = new Set<string>();
-  const favicons: ProjectFavicon[] = [];
-  for (const candidate of candidates.sort(compareFaviconCandidates)) {
-    if (seen.has(candidate.relativePath)) continue;
-    seen.add(candidate.relativePath);
-    const favicon = await readFavicon(candidate.absolutePath, candidate.relativePath);
-    if (favicon) favicons.push(favicon);
-    if (favicons.length >= MAX_FAVICON_RESULTS) break;
-  }
-  return favicons;
-}
-
-async function walkFaviconCandidates(
-  dir: string,
-  relativeDir: string,
-  out: Array<{ absolutePath: string; relativePath: string; score: number }>,
-  depth: number
-): Promise<void> {
-  if (depth > 5 || out.length >= MAX_FAVICON_RESULTS * 3) return;
-  let entries: Dirent[];
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
-    const absolutePath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (FAVICON_SKIP_DIRS.has(entry.name)) continue;
-      await walkFaviconCandidates(absolutePath, relativePath, out, depth + 1);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    const score = faviconScore(relativePath);
-    if (score === null) continue;
-    out.push({ absolutePath, relativePath, score });
-  }
-}
-
-function faviconScore(relativePath: string): number | null {
-  const normalized = relativePath.replace(/\\/g, '/');
-  const lower = normalized.toLowerCase();
-  const ext = path.extname(lower);
-  if (!FAVICON_EXTENSIONS.has(ext)) return null;
-  const base = path.basename(lower, ext);
-  const likely =
-    base === 'favicon'
-    || base.startsWith('favicon-')
-    || base.startsWith('apple-touch-icon')
-    || base.startsWith('android-chrome-')
-    || base.startsWith('mstile-')
-    || base === 'safari-pinned-tab'
-    || lower.includes('/favicons/');
-  if (!likely) return null;
-  let score = normalized.split('/').length * 10;
-  if (base === 'favicon') score -= 40;
-  if (ext === '.ico') score -= 10;
-  if (normalized.startsWith('public/')) score -= 8;
-  if (normalized.startsWith('static/')) score -= 7;
-  if (normalized.startsWith('src/')) score += 5;
-  return score;
-}
-
-function compareFaviconCandidates(
-  a: { relativePath: string; score: number },
-  b: { relativePath: string; score: number }
-): number {
-  if (a.score !== b.score) return a.score - b.score;
-  return a.relativePath.localeCompare(b.relativePath);
-}
-
-async function readFavicon(
-  absolutePath: string,
-  relativePath: string
-): Promise<ProjectFavicon | null> {
-  let stat;
-  try {
-    stat = await fs.stat(absolutePath);
-  } catch {
-    return null;
-  }
-  if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_FAVICON_BYTES) return null;
-  const ext = path.extname(relativePath).toLowerCase();
-  const mediaType = mediaTypeForFavicon(ext);
-  if (!mediaType) return null;
-  const data = await fs.readFile(absolutePath);
-  return {
-    path: relativePath.replace(/\\/g, '/'),
-    label: path.basename(relativePath),
-    mediaType,
-    dataUrl: `data:${mediaType};base64,${data.toString('base64')}`
-  };
-}
-
-function mediaTypeForFavicon(ext: string): string | null {
-  switch (ext) {
-    case '.ico':
-      return 'image/x-icon';
-    case '.png':
-      return 'image/png';
-    case '.svg':
-      return 'image/svg+xml';
-    case '.jpg':
-    case '.jpeg':
-      return 'image/jpeg';
-    case '.webp':
-      return 'image/webp';
-    default:
-      return null;
-  }
-}
-
-function projectFsPath(project: Project): string {
-  if (project.defaultRunMode === 'wsl' && project.path.startsWith('/')) {
-    return posixToWslUnc(project.defaultWslDistro ?? 'Ubuntu', project.path);
-  }
-  return project.path;
 }
 
 interface ParsedProjectQuery {
@@ -908,6 +775,16 @@ function parseStorage(raw: unknown): Project[] {
   return valid;
 }
 
+function parsedStorageVersion(raw: unknown): number | null {
+  if (!isObject(raw) || typeof raw['version'] !== 'number') return null;
+  return raw['version'];
+}
+
+function storageContainsLegacyFavicons(raw: unknown): boolean {
+  if (!isObject(raw) || !Array.isArray(raw['projects'])) return false;
+  return raw['projects'].some((project) => isObject(project) && 'favicons' in project);
+}
+
 function parseProject(raw: unknown): Project | null {
   if (!isObject(raw)) return null;
   if (typeof raw['id'] !== 'string') return null;
@@ -915,7 +792,10 @@ function parseProject(raw: unknown): Project | null {
   if (typeof raw['path'] !== 'string') return null;
   if (typeof raw['createdAt'] !== 'string') return null;
   if (typeof raw['lastOpenedAt'] !== 'string') return null;
-  const project = raw as unknown as Project;
+  // Storage v1 embedded base64 favicon candidates in every Project. Strip the
+  // legacy payload at the metadata boundary while retaining the selected path.
+  const { favicons: _legacyFavicons, ...metadata } = raw;
+  const project = metadata as unknown as Project;
   try {
     validateProject(project);
     return project;
@@ -937,20 +817,15 @@ function validateProject(p: Project): void {
   if (p.accentColor !== undefined && !p.accentColor.trim()) {
     throw new Error('accentColor must be non-empty when set');
   }
-  if (p.favicons !== undefined) {
-    if (!Array.isArray(p.favicons)) throw new Error('favicons must be an array when set');
-    for (const favicon of p.favicons) validateFavicon(favicon);
-  }
   if (p.selectedFaviconPath !== undefined) {
-    if (!p.selectedFaviconPath.trim()) {
-      throw new Error('selectedFaviconPath must be non-empty when set');
-    }
+    const selectedPath = p.selectedFaviconPath.trim().replace(/\\/g, '/');
     if (
-      p.favicons
-      && p.favicons.length > 0
-      && !p.favicons.some((f) => f.path === p.selectedFaviconPath)
+      !selectedPath
+      || selectedPath.startsWith('/')
+      || /^[a-zA-Z]:\//.test(selectedPath)
+      || selectedPath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
     ) {
-      throw new Error('selectedFaviconPath must reference a discovered favicon');
+      throw new Error('selectedFaviconPath must be a safe relative path when set');
     }
   }
   if (p.sortIndex !== undefined && !Number.isFinite(p.sortIndex)) {
@@ -960,16 +835,6 @@ function validateProject(p: Project): void {
     if (!Array.isArray(p.worktreeOrder) || p.worktreeOrder.some((s) => typeof s !== 'string')) {
       throw new Error('worktreeOrder must be an array of strings when set');
     }
-  }
-}
-
-function validateFavicon(favicon: ProjectFavicon): void {
-  if (!isObject(favicon)) throw new Error('favicon must be an object');
-  if (!favicon.path.trim()) throw new Error('favicon path is required');
-  if (!favicon.label.trim()) throw new Error('favicon label is required');
-  if (!favicon.mediaType.trim()) throw new Error('favicon mediaType is required');
-  if (!favicon.dataUrl.startsWith(`data:${favicon.mediaType};base64,`)) {
-    throw new Error('favicon dataUrl must be a matching base64 data URL');
   }
 }
 

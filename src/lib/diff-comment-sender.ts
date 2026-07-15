@@ -7,6 +7,11 @@ import {
 } from '../stores/comment-agents.svelte';
 import { sessions } from '../stores/sessions.svelte';
 import { sendBracketedPaste } from './terminal-paste';
+import {
+  sameWorktreeIdentity,
+  worktreeScopeKey,
+  type WorktreeScope
+} from '@shared/worktree-identity.js';
 
 function rangeLabel(comment: DiffComment): string {
   return comment.endLine === comment.startLine
@@ -114,22 +119,28 @@ async function resolveTargets(comment: DiffComment): Promise<{ targets: { agent:
   const names = parseMentions(comment.text);
 
   for (const name of names) {
-    const agent = commentAgents.byName(comment.cwd, name);
+    const agent = commentAgents.byName(comment.scope, name);
     if (!agent) continue; // unresolved mentions stay as plain text
 
     let sessionId = agent.spawnedSessionId ?? null;
     // If the agent thinks it's bound to a session that no longer exists, fall
     // through and spawn a fresh one.
-    if (sessionId && !sessions.sessions.some((s) => s.id === sessionId)) {
+    if (sessionId && !sessionMatchesScope(sessionId, comment.scope)) {
       sessionId = null;
+      commentAgents.update(agent.id, { spawnedSessionId: undefined });
     }
 
     if (!sessionId) {
       try {
         const created = await sessions.createAgentWithDefaults(agent.provider, {
-          cwd: comment.cwd,
-          ...(agent.model ? {} : {})
+          cwd: comment.scope.cwd,
+          ...(comment.scope.runMode ? { runMode: comment.scope.runMode } : {}),
+          ...(comment.scope.wslDistro ? { wslDistro: comment.scope.wslDistro } : {}),
+          ...(agent.model ? { model: agent.model } : {})
         });
+        if (!sameWorktreeIdentity(comment.scope.cwd, comment.scope, created.cwd, created)) {
+          throw new Error('spawned session belongs to a different Worktree');
+        }
         sessionId = created.id;
         commentAgents.update(agent.id, { spawnedSessionId: sessionId });
       } catch (err) {
@@ -154,9 +165,26 @@ async function waitForTerminalId(sessionId: string, timeoutMs: number): Promise<
   return sessions.terminalIdFor(sessionId);
 }
 
-async function deliverToSession(sessionId: string, payload: string): Promise<void> {
+function sessionMatchesScope(sessionId: string, scope: WorktreeScope): boolean {
+  const session = sessions.sessions.find((candidate) => candidate.id === sessionId);
+  return Boolean(
+    session && sameWorktreeIdentity(scope.cwd, scope, session.cwd, session)
+  );
+}
+
+async function deliverToSession(
+  sessionId: string,
+  payload: string,
+  scope: WorktreeScope
+): Promise<void> {
+  if (!sessionMatchesScope(sessionId, scope)) {
+    throw new Error('target session belongs to a different Worktree');
+  }
   const terminalId = await waitForTerminalId(sessionId, 5000);
   if (!terminalId) throw new Error('terminal not ready');
+  if (!sessionMatchesScope(sessionId, scope)) {
+    throw new Error('target session changed Worktree before delivery');
+  }
   await sendBracketedPaste(terminalId, payload, true, sessions.providerFor(sessionId));
 }
 
@@ -173,14 +201,14 @@ export async function sendComment(commentId: string): Promise<SendCommentResult>
   let delivered = 0;
 
   const mentions = parseMentions(comment.text);
-  const hasResolvedMention = mentions.some((n) => commentAgents.byName(comment.cwd, n));
+  const hasResolvedMention = mentions.some((n) => commentAgents.byName(comment.scope, n));
 
   if (hasResolvedMention) {
     const { targets, errors: resolveErrors } = await resolveTargets(comment);
     errors.push(...resolveErrors);
     for (const { agent, sessionId } of targets) {
       try {
-        await deliverToSession(sessionId, payload);
+        await deliverToSession(sessionId, payload, comment.scope);
         delivered += 1;
       } catch (err) {
         errors.push(`Send to @${agent.name} failed: ${(err as Error).message}`);
@@ -190,17 +218,14 @@ export async function sendComment(commentId: string): Promise<SendCommentResult>
     const selected = sessions.selected;
     if (!selected) {
       errors.push('No active session to receive the comment');
+    } else if (!sameWorktreeIdentity(comment.scope.cwd, comment.scope, selected.cwd, selected)) {
+      errors.push('Select a session in this Worktree to receive the comment');
     } else {
-      const terminalId = sessions.terminalIdFor(selected.id);
-      if (!terminalId) {
-        errors.push(`Session ${selected.name} has no running terminal`);
-      } else {
-        try {
-          await sendBracketedPaste(terminalId, payload, true, sessions.providerFor(selected.id));
-          delivered += 1;
-        } catch (err) {
-          errors.push((err as Error).message);
-        }
+      try {
+        await deliverToSession(selected.id, payload, comment.scope);
+        delivered += 1;
+      } catch (err) {
+        errors.push((err as Error).message);
       }
     }
   }
@@ -221,7 +246,7 @@ async function resolveSessionTargets(
   const errors: string[] = [];
   const sessionIds = new Set<string>();
   const mentions = parseMentions(comment.text);
-  const hasResolvedMention = mentions.some((n) => commentAgents.byName(comment.cwd, n));
+  const hasResolvedMention = mentions.some((n) => commentAgents.byName(comment.scope, n));
 
   if (hasResolvedMention) {
     const { targets, errors: resolveErrors } = await resolveTargets(comment);
@@ -231,6 +256,8 @@ async function resolveSessionTargets(
     const selected = sessions.selected;
     if (!selected) {
       errors.push('No active session to receive the comment');
+    } else if (!sameWorktreeIdentity(comment.scope.cwd, comment.scope, selected.cwd, selected)) {
+      errors.push('Select a session in this Worktree to receive the comment');
     } else {
       sessionIds.add(selected.id);
     }
@@ -282,7 +309,13 @@ export async function sendComments(
   for (const [sessionId, comments] of bySession) {
     const payload = buildBatchPrompt(comments, cleanPreamble);
     try {
-      await deliverToSession(sessionId, payload);
+      const first = comments[0];
+      if (!first) continue;
+      const scopeKey = worktreeScopeKey(first.scope);
+      if (comments.some((comment) => worktreeScopeKey(comment.scope) !== scopeKey)) {
+        throw new Error('batch contains comments from different Worktrees');
+      }
+      await deliverToSession(sessionId, payload, first.scope);
       for (const c of comments) deliveredIds.add(c.id);
     } catch (err) {
       errors.push(`Send to session failed: ${(err as Error).message}`);

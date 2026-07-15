@@ -1,6 +1,6 @@
 <script lang="ts">
   import { BookOpen, ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
-  import type { Session, SessionId } from '@shared/types/sessions.js';
+  import type { RunMode, Session, SessionId } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
@@ -22,6 +22,8 @@
     cwd,
     projectId,
     items,
+    runMode,
+    wslDistro,
     isMain = false,
     filter = '',
     forceShow = false,
@@ -31,6 +33,8 @@
     cwd: string;
     projectId: ProjectId | null;
     items: Session[];
+    runMode?: RunMode;
+    wslDistro?: string;
     isMain?: boolean;
     filter?: string;
     forceShow?: boolean;
@@ -68,7 +72,10 @@
   // header takes on the selected look so the user keeps a visual anchor.
   let highlightWhenCollapsed = $derived(containsSelected && !effectiveExpanded);
 
-  let shortstat = $derived(git.shortstatFor(cwd));
+  let shortstat = $derived(git.shortstatFor(cwd, {
+    ...(runMode ? { runMode } : {}),
+    ...(wslDistro ? { wslDistro } : {})
+  }));
   let hasDiff = $derived(
     !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
   );

@@ -17,6 +17,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "check:renderer-budget": "node scripts/check-renderer-entry-budget.mjs",
     "build:icon:win": "node scripts/generate-windows-icon.mjs",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -51,7 +52,6 @@
     "highlight.js": "^11.11.1",
     "marked": "^18.0.3",
     "node-pty": "^1.0.0",
-    "shiki": "^4.0.2",
     "smol-toml": "^1.6.1"
   },
   "devDependencies": {

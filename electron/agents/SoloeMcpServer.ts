@@ -3,7 +3,12 @@ import { randomBytes } from 'node:crypto';
 import type { AgentRuntimeManager } from './AgentRuntimeManager.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { CommentsRpcResult } from '@shared/types/comments-rpc.js';
-import type { DiffRpcResult } from '@shared/types/diff-rpc.js';
+import type {
+  DiffRpcResult,
+  DiffWorktreeTarget,
+  OpenForCommitsRequest
+} from '@shared/types/diff-rpc.js';
+import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
 import type { GitService } from '../git/GitService.js';
 
 export type HookProvider = 'claude_code' | 'codex';
@@ -20,14 +25,7 @@ export interface CommentsBridgeLike {
 }
 
 export interface DiffBridgeLike {
-  openForCommits(args: {
-    cwd: string;
-    base: string;
-    head: string;
-    commits: string[];
-    includeWorkingTree: boolean;
-    focusPath?: string;
-  }): Promise<DiffRpcResult>;
+  openForCommits(args: OpenForCommitsRequest): Promise<DiffRpcResult>;
 }
 
 export interface SoloeMcpServerOptions {
@@ -40,10 +38,10 @@ export interface SoloeMcpServerOptions {
   commentsBridge?: CommentsBridgeLike;
   diffBridge?: DiffBridgeLike;
   git?: GitService;
-  // sessionId → cwd lookup. Required for the open_diff_for_commits MCP tool
-  // when the caller passes a sessionId instead of cwd directly. Returns null
-  // when the id doesn't match any persisted session.
-  resolveSessionCwd?: (sessionId: string) => Promise<string | null>;
+  resolveDiffTarget?: (input: {
+    sessionId?: string;
+    cwd?: string;
+  }) => Promise<DiffWorktreeTarget>;
 }
 
 export interface SoloeMcpServerInfo {
@@ -387,21 +385,20 @@ export class SoloeMcpServer {
     const focusPath = stringField(args, 'focusPath');
     const includeWorkingTree = booleanField(args, 'includeWorkingTree') ?? true;
 
-    let cwd = explicitCwd ?? null;
-    if (!cwd && sessionId) {
-      if (!this.opts.resolveSessionCwd) {
-        throw new Error('sessionId lookup not configured');
-      }
-      cwd = await this.opts.resolveSessionCwd(sessionId);
-      if (!cwd) throw new Error(`unknown sessionId: ${sessionId}`);
-    }
-    if (!cwd) throw new Error('cwd or sessionId is required');
+    if (!explicitCwd && !sessionId) throw new Error('cwd or sessionId is required');
+    if (!this.opts.resolveDiffTarget) throw new Error('diff target lookup not configured');
+    const target = await this.opts.resolveDiffTarget({
+      ...(sessionId ? { sessionId } : {}),
+      ...(explicitCwd ? { cwd: explicitCwd } : {})
+    });
+    const { cwd } = target.scope;
+    const context = worktreeRuntimeContext(target.scope);
 
     // Resolve every ref the caller passed plus the head reference. Order:
     // [head, ...commits, optional base].
     const refsToResolve = [headRef, ...commitsInput];
     if (baseOverride) refsToResolve.push(baseOverride);
-    const resolved = await git.resolveCommitRefs(cwd, refsToResolve);
+    const resolved = await git.resolveCommitRefs(cwd, refsToResolve, context);
     const resolvedHead = resolved[0];
     if (!resolvedHead) throw new Error(`could not resolve head ref: ${headRef}`);
     const commitShas: string[] = [];
@@ -418,23 +415,21 @@ export class SoloeMcpServer {
     } else {
       const earliest = commitShas[commitShas.length - 1];
       if (!earliest) throw new Error('commits array empty after resolution');
-      const parentResolved = await git.resolveCommitRefs(cwd, [`${earliest}~1`]);
+      const parentResolved = await git.resolveCommitRefs(cwd, [`${earliest}~1`], context);
       const parentSha = parentResolved[0];
       if (!parentSha) throw new Error(`could not resolve parent of ${earliest}`);
       baseSha = parentSha;
     }
 
-    const between = await git.getCommitsBetween(cwd, baseSha, resolvedHead);
+    const between = await git.getCommitsBetween(cwd, baseSha, resolvedHead, context);
     if (between.commits.length === 0) {
       throw new Error('resolved range is empty');
     }
-    const rangeShas = between.commits.map((c) => c.hash);
-
     const result = await this.opts.diffBridge.openForCommits({
-      cwd,
+      target,
       base: baseSha,
       head: resolvedHead,
-      commits: rangeShas,
+      commits: between.commits,
       includeWorkingTree,
       ...(focusPath ? { focusPath } : {})
     });

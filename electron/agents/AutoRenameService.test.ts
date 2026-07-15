@@ -8,6 +8,7 @@ import { AutoRenameService } from './AutoRenameService.js';
 import { SessionStore } from '../sessions/SessionStore.js';
 import { SettingsStore } from '../settings/SettingsStore.js';
 import type { spawn } from 'node:child_process';
+import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
 
 let tmpDir: string;
 let sessionStore: SessionStore;
@@ -87,6 +88,65 @@ describe('AutoRenameService', () => {
     const final = await sessionStore.get(session.id);
     expect(final?.name).toBe('my-cool-name');
     expect(final?.autoNamed).toBe(false);
+  });
+
+  it('falls back to an explicitly available Claude binary when no model is configured', async () => {
+    const session = await sessionStore.create({
+      name: 'new agent',
+      cwd: tmpDir,
+      runMode: 'windows',
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
+    });
+    const child = new FakeChild();
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
+    const spawnImpl = spawnMock as unknown as typeof spawn;
+    const settings = {
+      get: async () => ({
+        ...DEFAULT_SETTINGS,
+        binaries: { claude: '/opt/claude' },
+        models: {},
+        integrations: { ...DEFAULT_SETTINGS.integrations, allowClaudeHeadless: true }
+      })
+    } as unknown as SettingsStore;
+    const service = new AutoRenameService({ sessionStore, settings, spawnImpl });
+
+    const pending = service.maybeRename({ sessionId: session.id, firstPrompt: 'fix provider fallback' });
+    await waitFor(() => spawnMock.mock.calls.length === 1);
+    expect(spawnMock.mock.calls[0]?.[0]).toBe('/opt/claude');
+    child.succeed('provider-fallback\n');
+    await pending;
+  });
+
+  it('serializes background renames across different sessions', async () => {
+    const created = await Promise.all(Array.from({ length: 3 }, (_, index) =>
+      sessionStore.create({
+        name: `new agent ${index}`,
+        cwd: tmpDir,
+        runMode: 'windows',
+        launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+      })));
+    const children: FakeChild[] = [];
+    const spawnImpl = vi.fn((..._args: Parameters<typeof spawn>) => {
+      const child = new FakeChild();
+      children.push(child);
+      return child;
+    }) as unknown as typeof spawn;
+    const service = new AutoRenameService({ sessionStore, settings: settingsStore, spawnImpl });
+
+    const pending = created.map((session, index) => service.maybeRename({
+      sessionId: session.id,
+      firstPrompt: `rename session ${index}`
+    }));
+    await waitFor(() => children.length >= 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(children).toHaveLength(1);
+
+    for (let index = 0; index < created.length; index += 1) {
+      children[index]!.succeed(`session-${index}\n`);
+      if (index < created.length - 1) await waitFor(() => children.length === index + 2);
+    }
+    await Promise.all(pending);
+    expect(spawnImpl).toHaveBeenCalledTimes(3);
   });
 });
 

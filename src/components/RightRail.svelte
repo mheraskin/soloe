@@ -13,7 +13,7 @@
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { sidebar } from '../stores/sidebar.svelte';
-  import { featuresStore } from '../stores/features.svelte';
+  import { createFeatureScope, featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import { clampSplitRatio, splitPaneWidths, type RailSize } from '../lib/rail-widths';
@@ -24,10 +24,12 @@
   import ProcessUsageWidget from './ProcessUsageWidget.svelte';
   import RailInspectorTab from './rail/RailInspectorTab.svelte';
   import RailNotesTab from './rail/RailNotesTab.svelte';
-  import RailDiffTab from './diff/RailDiffTab.svelte';
-  import RailFilesTab from './files/RailFilesTab.svelte';
-  import RailFeatureTab from './feature/RailFeatureTab.svelte';
-  import RailBrowserTab from './rail/RailBrowserTab.svelte';
+  import LazyRailContent from './rail/LazyRailContent.svelte';
+
+  const loadDiffTab = () => import('./diff/RailDiffTab.svelte');
+  const loadFilesTab = () => import('./files/RailFilesTab.svelte');
+  const loadFeatureTab = () => import('./feature/RailFeatureTab.svelte');
+  const loadBrowserTab = () => import('./rail/RailBrowserTab.svelte');
 
   interface Tab {
     id: RailTabId;
@@ -96,14 +98,6 @@
   let resizing: 'outer' | 'splitter' | null = $state(null);
   let asideEl: HTMLElement | null = $state(null);
 
-  // Mount-keep-alive lookups. Diff and Files persist their state across
-  // worktree hops as long as some worktree has them open. Other tabs are
-  // mounted only while they're visible in the current worktree.
-  let diffMountedCwds = $derived(rightRail.diffMountedCwds);
-  let filesMountedCwds = $derived(rightRail.filesMountedCwds);
-  let diffMounted = $derived(diffMountedCwds.length > 0);
-  let filesMounted = $derived(filesMountedCwds.length > 0);
-
   let openTabs = $derived(rightRail.openTabs);
   let railOpen = $derived(openTabs.length > 0);
   let fullscreenTab = $derived(rightRail.fullscreenTab);
@@ -133,7 +127,11 @@
     return openTabs.includes(id);
   }
 
-  // Browser/feature don't keep-alive — see right-rail.svelte.ts.
+  // A Rail Surface is resident only while visible. Store-owned state survives
+  // unmount, while hidden DOM, observers, timers, editors, and review prefetch
+  // release immediately on Worktree switches, close, and fullscreen hiding.
+  let diffMountedHere = $derived(tabVisible('diff'));
+  let filesMountedHere = $derived(tabVisible('files'));
   let featureMountedHere = $derived(tabVisible('feature'));
   let browserMountedHere = $derived(tabVisible('browser'));
   let inspectorMountedHere = $derived(tabVisible('inspector'));
@@ -144,8 +142,13 @@
     return cwd && cwd.length > 0 ? cwd : null;
   });
   let featureNeedsSetup = $derived.by<boolean>(() => {
-    if (!activeCwd) return false;
-    const snap = featuresStore.stateFor(activeCwd)?.snapshot;
+    const selected = sessions.selected;
+    if (!activeCwd || !selected) return false;
+    const scope = createFeatureScope(activeCwd, {
+      runMode: selected.runMode,
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+    });
+    const snap = featuresStore.stateFor(scope)?.snapshot;
     return snap ? !snap.setup.hasAgentSkillsBlock : false;
   });
 
@@ -162,9 +165,11 @@
           : paneWidths[0] + paneWidths[1] + SPLITTER
   );
   let asideWidth = $derived(contentWidth + ICON_COL_WIDTH);
+  let finishRailResize: (() => void) | null = null;
 
   onMount(() => {
     size = loadSize();
+    return () => finishRailResize?.();
   });
 
   function persistSize(): void {
@@ -195,11 +200,7 @@
   function startOuterResize(event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
-    resizing = 'outer';
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    window.dispatchEvent(new CustomEvent('soloe:rail-resize-start'));
-    window.addEventListener('pointermove', onOuterResize);
-    window.addEventListener('pointerup', stopOuterResize, { once: true });
+    beginRailResize(event, 'outer', onOuterResize);
   }
 
   function onOuterResize(event: PointerEvent) {
@@ -211,21 +212,10 @@
     size = { ...size, railWidth: clampTotal(targetContent, paneCount) };
   }
 
-  function stopOuterResize() {
-    resizing = null;
-    window.removeEventListener('pointermove', onOuterResize);
-    window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
-    persistSize();
-  }
-
   function startSplitterResize(event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
-    resizing = 'splitter';
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    window.dispatchEvent(new CustomEvent('soloe:rail-resize-start'));
-    window.addEventListener('pointermove', onSplitterResize);
-    window.addEventListener('pointerup', stopSplitterResize, { once: true });
+    beginRailResize(event, 'splitter', onSplitterResize);
   }
 
   function onSplitterResize(event: PointerEvent) {
@@ -241,11 +231,41 @@
     size = { ...size, splitRatio: clampSplitRatio((event.clientX - contentLeft) / usable) };
   }
 
-  function stopSplitterResize() {
-    resizing = null;
-    window.removeEventListener('pointermove', onSplitterResize);
-    window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
-    persistSize();
+  function beginRailResize(
+    event: PointerEvent,
+    kind: 'outer' | 'splitter',
+    move: (event: PointerEvent) => void
+  ): void {
+    finishRailResize?.();
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
+    resizing = kind;
+    window.dispatchEvent(new CustomEvent('soloe:rail-resize-start'));
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      resizing = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+      handle.removeEventListener('lostpointercapture', finish);
+      try {
+        if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      } catch {
+        // The rail may already be detached during application teardown.
+      }
+      if (finishRailResize === finish) finishRailResize = null;
+      window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
+      persistSize();
+    };
+    finishRailResize = finish;
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
+    handle.addEventListener('lostpointercapture', finish);
   }
 
   // Re-clamp the rail when something off-rail shrinks our budget: the
@@ -279,8 +299,7 @@
   // Order class for a tab's pane wrapper. Slot 0 (older click, leftmost)
   // gets order-1; slot 1 (newer click, next to icons) gets order-3. The
   // splitter sits at order-2. The icon nav is order-99. Tabs not in the
-  // current worktree's open set are hidden so they stay mounted (for
-  // diff/files keep-alive) without occupying layout space.
+  // current Worktree's open set are not resident.
   function slotOrderClass(id: RailTabId): string {
     const slot = slotOf(id);
     if (slot === 0) return 'order-1';
@@ -295,8 +314,7 @@
   }
 
   // In fullscreen the chosen pane stretches; otherwise the slot dictates
-  // the explicit width. Hidden mounted panes get display:none via the
-  // hidden class so their width is irrelevant.
+  // the explicit width.
   function paneStyle(id: RailTabId): string | undefined {
     if (fullscreen && fullscreenTab === id) return undefined;
     if (slotOf(id) === null) return undefined;
@@ -331,30 +349,27 @@
   style={railOpen && !fullscreen ? `width: ${asideWidth}px` : undefined}
   aria-label="Session rail"
 >
-  <!-- Diff: kept mounted across worktree hops so its scroll/search/edits
-       survive switching between worktrees that have it open. -->
-  {#if diffMounted}
+  {#if diffMountedHere}
     <div class={paneClasses('diff')} style={paneStyle('diff')} data-pane-slot={slotOf('diff')}>
-      <RailDiffTab />
+      <LazyRailContent label="working diff" load={loadDiffTab} />
     </div>
   {/if}
 
-  <!-- Files: same keep-alive contract as diff. -->
-  {#if filesMounted}
+  {#if filesMountedHere}
     <div class={paneClasses('files')} style={paneStyle('files')} data-pane-slot={slotOf('files')}>
-      <RailFilesTab />
+      <LazyRailContent label="files" load={loadFilesTab} />
     </div>
   {/if}
 
   {#if featureMountedHere}
     <div class={paneClasses('feature')} style={paneStyle('feature')} data-pane-slot={slotOf('feature')}>
-      <RailFeatureTab />
+      <LazyRailContent label="Feature Lab" load={loadFeatureTab} />
     </div>
   {/if}
 
   {#if browserMountedHere}
     <div class={paneClasses('browser')} style={paneStyle('browser')} data-pane-slot={slotOf('browser')}>
-      <RailBrowserTab />
+      <LazyRailContent label="browser" load={loadBrowserTab} />
     </div>
   {/if}
 

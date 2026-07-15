@@ -10,23 +10,28 @@
     Upload
   } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
+  import {
+    worktreeRuntimeContext,
+    worktreeScopeKey
+  } from '@shared/worktree-identity.js';
   import { ipc } from '../../lib/ipc';
   import { git } from '../../stores/git.svelte';
-  import { workingDiff } from '../../stores/working-diff.svelte';
+  import { workingDiff, type ReviewScope } from '../../stores/working-diff.svelte';
   import { reportError, toasts } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Textarea } from '$lib/components/ui/textarea';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 
-  let { cwd }: { cwd: string } = $props();
+  let { scope }: { scope: ReviewScope } = $props();
+  let cwd = $derived(scope.cwd);
 
-  const MESSAGE_KEY_PREFIX = 'soloe.commitMessage.v1::';
+  const MESSAGE_KEY_PREFIX = 'soloe.commitMessage.v2::';
 
   let message = $state('');
   let busy = $state<null | 'commit' | 'push' | 'pull' | 'fetch'>(null);
   let textareaEl: HTMLTextAreaElement | null = $state(null);
 
-  let status = $derived(git.statusFor(cwd));
+  let status = $derived(git.statusFor(scope));
   let isRepo = $derived(!!status?.isRepo);
   let staged = $derived(status?.staged ?? 0);
   let unstaged = $derived(status?.unstaged ?? 0);
@@ -104,18 +109,19 @@
   // restore the saved draft — no need for an effect that fights with $state.
   onMount(() => {
     if (!cwd) return;
-    const raw = localStorage.getItem(MESSAGE_KEY_PREFIX + cwd);
+    const raw = localStorage.getItem(MESSAGE_KEY_PREFIX + worktreeScopeKey(scope));
     if (raw) message = raw;
   });
 
   function persistMessage(): void {
     if (!cwd) return;
-    if (message) localStorage.setItem(MESSAGE_KEY_PREFIX + cwd, message);
-    else localStorage.removeItem(MESSAGE_KEY_PREFIX + cwd);
+    const key = MESSAGE_KEY_PREFIX + worktreeScopeKey(scope);
+    if (message) localStorage.setItem(key, message);
+    else localStorage.removeItem(key);
   }
 
   function ctx() {
-    return git.contextFor(cwd);
+    return worktreeRuntimeContext(scope);
   }
 
   async function runCommit(thenPush: boolean): Promise<void> {
@@ -131,7 +137,7 @@
       persistMessage();
       if (thenPush) await runPush();
       toasts.push('Committed', 'info');
-      void workingDiff.loadChanges(cwd);
+      void workingDiff.loadChanges(scope);
     } catch (err) {
       reportError(err);
     } finally {
@@ -139,29 +145,33 @@
     }
   }
 
-  async function runPush(): Promise<void> {
-    if (!isRepo) return;
+  async function runPush(): Promise<boolean> {
+    if (!isRepo) return false;
     busy = 'push';
     try {
       const setUpstream = !!status && status.branch !== null && status.ahead >= 0;
       await ipc.git.push({ cwd, setUpstream, ...ctx() });
       toasts.push('Pushed', 'info');
+      return true;
     } catch (err) {
       reportError(err);
+      return false;
     } finally {
       busy = null;
     }
   }
 
-  async function runPull(): Promise<void> {
-    if (!isRepo) return;
+  async function runPull(): Promise<boolean> {
+    if (!isRepo) return false;
     busy = 'pull';
     try {
       await ipc.git.pull({ cwd, ...ctx() });
       toasts.push('Pulled', 'info');
-      void workingDiff.loadChanges(cwd);
+      void workingDiff.loadChanges(scope);
+      return true;
     } catch (err) {
       reportError(err);
+      return false;
     } finally {
       busy = null;
     }
@@ -181,8 +191,8 @@
   }
 
   async function runSync(): Promise<void> {
-    await runPull();
-    if (busy === null) await runPush();
+    const pulled = await runPull();
+    if (pulled) await runPush();
   }
 
   async function runPrimary(): Promise<void> {

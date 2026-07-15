@@ -3,9 +3,14 @@
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { GitCommit } from '@shared/types/git.js';
+  import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
   import { ipc } from '../../lib/ipc';
   import { git } from '../../stores/git.svelte';
-  import { workingDiff, type ReviewMode } from '../../stores/working-diff.svelte';
+  import {
+    workingDiff,
+    type ReviewMode,
+    type ReviewScope
+  } from '../../stores/working-diff.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -14,23 +19,24 @@
   const RECENT_LIMIT = 50;
 
   let {
-    cwd,
+    scope,
     onClose
   }: {
-    cwd: string;
+    scope: ReviewScope;
     onClose: () => void;
   } = $props();
+  let cwd = $derived(scope.cwd);
 
   let commits = $state<GitCommit[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
 
-  let mode = $derived(workingDiff.reviewModeFor(cwd));
+  let mode = $derived(workingDiff.reviewModeFor(scope));
 
   // Snapshot the mode at mount so the picker's initial selection matches
   // whatever range is already active without becoming reactive to subsequent
   // store changes — the user is editing a draft inside the popover.
-  const initialMode = untrack(() => workingDiff.reviewModeFor(cwd));
+  const initialMode = untrack(() => workingDiff.reviewModeFor(scope));
   const selected = new SvelteSet<string>(
     initialMode.kind === 'range' ? initialMode.commits.map((c) => c.hash) : []
   );
@@ -44,7 +50,7 @@
   // Pull the repoPath from the git store; recentCommits is keyed by repo,
   // not cwd, so multiple worktrees of the same repo share commit history.
   $effect(() => {
-    const status = git.statusFor(cwd);
+    const status = git.statusFor(scope);
     const repoPath = status?.repoPath;
     if (!repoPath) {
       commits = [];
@@ -52,7 +58,7 @@
     }
     loading = true;
     error = null;
-    const ctx = git.contextFor(cwd);
+    const ctx = worktreeRuntimeContext(scope);
     ipc.git
       .recentCommits({
         repoPath,
@@ -94,7 +100,7 @@
     applying = true;
     resolveError = null;
     try {
-      const ctx = git.contextFor(cwd);
+      const ctx = worktreeRuntimeContext(scope);
       // Resolve the from-ref upfront so a bad input fails loudly. When the
       // user picks commits without a from-ref, base is the parent of the
       // oldest selection.
@@ -170,7 +176,7 @@
         includeWorkingTree: includeWt,
         chipFilter: null
       };
-      workingDiff.setReviewMode(cwd, next);
+      workingDiff.setReviewMode(scope, next);
       onClose();
     } catch (err) {
       reportError(err);
@@ -181,7 +187,7 @@
   }
 
   function reset(): void {
-    workingDiff.clearReviewMode(cwd);
+    workingDiff.clearReviewMode(scope);
     selected.clear();
     fromRef = '';
     resolveError = null;

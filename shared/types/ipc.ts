@@ -22,6 +22,7 @@ import type {
   GitChangeEvent,
   GitCommit,
   GitDirty,
+  GitObservationDemandRequest,
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitShortstat,
@@ -30,12 +31,15 @@ import type {
   GitWorktree,
   RangeChangesRequest,
   RangeChangesResult,
+  ReviewDiffsRequest,
   ResolveRefsRequest,
   ResolveRefsResult,
   StageFilesRequest,
   DiscardFilesRequest,
   WorkingChangesRequest,
   WorkingChangesResult,
+  WorkingTreeSnapshotRequest,
+  WorkingTreeSnapshot,
   GitCommitRequest,
   GitCommitResult,
   GitRemoteOpRequest,
@@ -103,7 +107,7 @@ import type {
   TerminalStartResult,
   TerminalStatusEvent
 } from './terminal.js';
-import type { SystemUsageSnapshot } from './system.js';
+import type { SystemUsageRequest, SystemUsageSnapshot } from './system.js';
 import type {
   VaultDeleteRequest,
   VaultEntry,
@@ -118,7 +122,7 @@ import type {
   DisableDeviceEmulationRequest,
   EnableDeviceEmulationRequest,
   OpenDevToolsRequest,
-  SetDevToolsBoundsRequest,
+  SetDevToolsLayoutRequest,
   SetUserAgentRequest
 } from './browser.js';
 
@@ -141,6 +145,8 @@ export const IpcChannels = {
     input: 'terminal:input',
     resize: 'terminal:resize',
     listRunning: 'terminal:list-running',
+    replay: 'terminal:replay',
+    outputDemand: 'terminal:output-demand',
     output: 'terminal:output',
     exit: 'terminal:exit',
     status: 'terminal:status',
@@ -178,6 +184,7 @@ export const IpcChannels = {
     touch: 'projects:touch',
     reorder: 'projects:reorder',
     refreshFavicons: 'projects:refresh-favicons',
+    readFavicon: 'projects:read-favicon',
     detectFromPath: 'projects:detect-from-path',
     suggestPaths: 'projects:suggest-paths',
     change: 'projects:change'
@@ -206,7 +213,10 @@ export const IpcChannels = {
     resolveRefs: 'git:resolve-refs',
     checkout: 'git:checkout',
     workingChanges: 'git:working-changes',
+    workingTreeSnapshot: 'git:working-tree-snapshot',
+    observationDemand: 'git:observation-demand',
     fileDiff: 'git:file-diff',
+    reviewDiffs: 'git:review-diffs',
     fileBlame: 'git:file-blame',
     fileLines: 'git:file-lines',
     stageFiles: 'git:stage-files',
@@ -285,7 +295,7 @@ export const IpcChannels = {
     disableDeviceEmulation: 'browser:disable-device-emulation',
     setUserAgent: 'browser:set-user-agent',
     openDevTools: 'browser:open-devtools',
-    setDevToolsBounds: 'browser:set-devtools-bounds',
+    setDevToolsLayout: 'browser:set-devtools-layout',
     closeDevTools: 'browser:close-devtools'
   }
 } as const;
@@ -336,6 +346,11 @@ export interface TerminalResizePayload {
   dimensions: TerminalDimensions;
 }
 
+export interface TerminalOutputDemandPayload {
+  terminalId: TerminalId;
+  active: boolean;
+}
+
 export interface TerminalApi {
   start(opts: TerminalStartOptions): Promise<IpcResult<TerminalStartResult>>;
   stop(terminalId: TerminalId): Promise<IpcResult<true>>;
@@ -343,6 +358,8 @@ export interface TerminalApi {
   input(payload: TerminalInputPayload): Promise<IpcResult<true>>;
   resize(payload: TerminalResizePayload): Promise<IpcResult<true>>;
   listRunning(): Promise<IpcResult<SessionRuntimeState[]>>;
+  replay(terminalId: TerminalId, afterSeq?: number): Promise<IpcResult<import('./terminal.js').TerminalReplaySnapshot | null>>;
+  setOutputDemand(payload: TerminalOutputDemandPayload): Promise<IpcResult<true>>;
 
   onOutput(listener: (event: TerminalOutputEvent) => void): () => void;
   onExit(listener: (event: TerminalExitEvent) => void): () => void;
@@ -367,7 +384,7 @@ export interface SystemApi {
   saveText(request: { defaultPath?: string; content: string }): Promise<IpcResult<true>>;
   openExternal(url: string): Promise<IpcResult<true>>;
   listWslDistros(): Promise<IpcResult<string[]>>;
-  usage(): Promise<IpcResult<SystemUsageSnapshot>>;
+  usage(request?: SystemUsageRequest): Promise<IpcResult<SystemUsageSnapshot>>;
 }
 
 export interface SettingsApi {
@@ -386,6 +403,7 @@ export interface ProjectsApi {
   touch(id: ProjectId): Promise<IpcResult<Project | null>>;
   reorder(orderedIds: ProjectId[]): Promise<IpcResult<Project[]>>;
   refreshFavicons(id: ProjectId): Promise<IpcResult<ProjectFavicon[]>>;
+  readFavicon(id: ProjectId, relativePath: string): Promise<IpcResult<ProjectFavicon | null>>;
   detectFromPath(path: string): Promise<IpcResult<ProjectDetectResult>>;
   suggestPaths(
     query: string,
@@ -434,7 +452,12 @@ export interface GitApi {
   resolveRefs(request: ResolveRefsRequest): Promise<IpcResult<ResolveRefsResult>>;
   checkout(request: GitCheckoutRequest): Promise<IpcResult<GitStatus>>;
   workingChanges(request: WorkingChangesRequest): Promise<IpcResult<WorkingChangesResult>>;
+  workingTreeSnapshot(
+    request: WorkingTreeSnapshotRequest
+  ): Promise<IpcResult<WorkingTreeSnapshot>>;
+  setObservationDemand(request: GitObservationDemandRequest): Promise<IpcResult<true>>;
   fileDiff(request: FileDiffRequest): Promise<IpcResult<FileDiff>>;
+  reviewDiffs(request: ReviewDiffsRequest): Promise<IpcResult<FileDiff[]>>;
   fileBlame(request: FileBlameRequest): Promise<IpcResult<FileBlameResult>>;
   fileLines(request: FileLinesRequest): Promise<IpcResult<FileLinesResult>>;
   stageFiles(request: StageFilesRequest): Promise<IpcResult<true>>;
@@ -587,7 +610,7 @@ export interface BrowserApi {
   disableDeviceEmulation(request: DisableDeviceEmulationRequest): Promise<IpcResult<true>>;
   setUserAgent(request: SetUserAgentRequest): Promise<IpcResult<true>>;
   openDevTools(request: OpenDevToolsRequest): Promise<IpcResult<true>>;
-  setDevToolsBounds(request: SetDevToolsBoundsRequest): Promise<IpcResult<true>>;
+  setDevToolsLayout(request: SetDevToolsLayoutRequest): Promise<IpcResult<true>>;
   closeDevTools(request: CloseDevToolsRequest): Promise<IpcResult<true>>;
 }
 

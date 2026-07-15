@@ -18,6 +18,7 @@ import type {
   TerminalId,
   TerminalLocationEvent,
   TerminalOutputEvent,
+  TerminalReplaySnapshot,
   TerminalStartOptions,
   TerminalStartResult,
   TerminalStatusEvent
@@ -27,7 +28,8 @@ import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
-import { detectUsageLimit, stripAnsi } from '../agents/UsageLimitDetector.js';
+import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
+import { detectUsageLimitPlainText, stripAnsi } from '../agents/UsageLimitDetector.js';
 import type { UsageLimitInfo } from '../agents/UsageLimitDetector.js';
 
 interface TerminalInstance {
@@ -42,6 +44,7 @@ interface TerminalInstance {
   startedAt: string;
   cwd: string;
   locationBuffer: string;
+  agentSignalTail: string;
   usageLimitBuffer: string;
   usageLimitDetected: boolean;
   agentProvider: AgentRuntimeProvider | null;
@@ -65,6 +68,7 @@ export interface PtyManagerOptions {
   observer?: AgentObserverManager;
   bridgeInfo?: () => { url: string; token: string } | null;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
+  replayBuffer?: TerminalReplayBuffer;
 }
 
 export declare interface PtyManager {
@@ -80,15 +84,32 @@ export class PtyManager extends EventEmitter {
   private readonly sessionToTerminal = new Map<SessionId, TerminalId>();
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly agentSpawnQueues = new Map<string, Promise<void>>();
+  private readonly replayBuffer: TerminalReplayBuffer;
   private disposed = false;
 
   constructor(private readonly opts: PtyManagerOptions) {
     super();
     this.baseEnv = opts.baseEnv ?? process.env;
+    this.replayBuffer = opts.replayBuffer ?? new TerminalReplayBuffer();
   }
 
   forwardBatchedOutput(events: TerminalOutputEvent[]): void {
-    for (const ev of events) this.emit('output', ev);
+    for (const ev of events) {
+      const instance = this.terminals.get(ev.terminalId);
+      if (instance?.sessionId === ev.sessionId) {
+        // Semantic observation follows the 16 ms output boundary instead of
+        // rescanning every raw node-pty chunk. Replay and publication still
+        // receive the exact same ordered bytes.
+        this.handleLocationSequences(instance, ev.data);
+        this.handleAgentOutput(instance, ev.data);
+      }
+      this.replayBuffer.append(ev);
+      this.emit('output', ev);
+    }
+  }
+
+  replay(terminalId: TerminalId, afterSeq = 0): TerminalReplaySnapshot | null {
+    return this.replayBuffer.snapshot(terminalId, afterSeq);
   }
 
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
@@ -153,6 +174,7 @@ export class PtyManager extends EventEmitter {
       startedAt: new Date().toISOString(),
       cwd: session.cwd,
       locationBuffer: '',
+      agentSignalTail: '',
       usageLimitBuffer: '',
       usageLimitDetected: false,
       agentProvider
@@ -160,9 +182,6 @@ export class PtyManager extends EventEmitter {
     this.terminals.set(terminalId, instance);
 
     proc.onData((data) => {
-      this.handleLocationSequences(instance, data);
-      this.handleAgentOutputState(instance, data);
-      this.handleUsageLimitOutput(instance, data);
       this.opts.batcher.push(terminalId, sessionId, data);
     });
 
@@ -247,6 +266,7 @@ export class PtyManager extends EventEmitter {
     const ids = [...this.terminals.keys()];
     await Promise.all(ids.map((id) => this.stopAndAwait(id, 1500)));
     this.opts.batcher.destroy();
+    this.replayBuffer.clear();
     this.removeAllListeners();
   }
 
@@ -310,6 +330,7 @@ export class PtyManager extends EventEmitter {
     this.emit('exit', { terminalId, sessionId, exitCode, signal });
     this.emitStatus(sessionId, terminalId, 'exited');
     this.terminals.delete(terminalId);
+    this.replayBuffer.remove(terminalId);
   }
 
   private emitStatus(
@@ -325,6 +346,13 @@ export class PtyManager extends EventEmitter {
   }
 
   private handleLocationSequences(instance: TerminalInstance, data: string): void {
+    if (!instance.locationBuffer && !data.includes('\x1b]')) {
+      // Preserve a split OSC opener without running two regex scans over
+      // ordinary ANSI redraws, which overwhelmingly contain CSI (`ESC [`)
+      // rather than shell-location OSC (`ESC ]`) sequences.
+      instance.locationBuffer = data.endsWith('\x1b') ? '\x1b' : '';
+      return;
+    }
     const text = instance.locationBuffer + data;
     const regex = /\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
     let match: RegExpExecArray | null;
@@ -338,7 +366,7 @@ export class PtyManager extends EventEmitter {
     if (lastStart >= 0 && !hasOscTerminator(text, lastStart)) {
       instance.locationBuffer = text.slice(lastStart, lastStart + 4096);
     } else {
-      instance.locationBuffer = '';
+      instance.locationBuffer = text.endsWith('\x1b') ? '\x1b' : '';
     }
   }
 
@@ -352,12 +380,34 @@ export class PtyManager extends EventEmitter {
     });
   }
 
-  private handleUsageLimitOutput(instance: TerminalInstance, data: string): void {
-    if (instance.usageLimitDetected) return;
-    const text = stripAnsi(data);
-    if (!text.trim()) return;
-    instance.usageLimitBuffer = `${instance.usageLimitBuffer}${text}`.slice(-4096);
-    const usageLimit = detectUsageLimit(instance.usageLimitBuffer);
+  private handleAgentOutput(instance: TerminalInstance, data: string): void {
+    if (!instance.agentProvider) return;
+
+    // Semantic scanning now runs once per 16 ms batch. Plain output needs no
+    // allocation; ANSI output is stripped before the visible tail/candidate
+    // gate so styling may safely split words such as `per…mission`.
+    const text = data.includes('\x1b') ? stripAnsi(data) : data;
+    if (!text) return;
+    const signalText = `${instance.agentSignalTail}${text}`;
+    instance.agentSignalTail = signalText.slice(-AGENT_SIGNAL_TAIL_LENGTH);
+    if (!AGENT_SIGNAL_CANDIDATE.test(signalText)) return;
+
+    const observedState = this.opts.observer?.getSnapshot(instance.sessionId)?.state;
+    if (
+      isApprovalPromptOutput(signalText)
+      && observedState !== 'waiting_for_approval'
+      && observedState !== 'usage_limited'
+    ) {
+      this.opts.observer?.setTuiObservedState(
+        instance.sessionId,
+        'waiting_for_approval',
+        'waiting for approval'
+      );
+    }
+
+    if (instance.usageLimitDetected || !USAGE_LIMIT_CANDIDATE.test(signalText)) return;
+    instance.usageLimitBuffer = `${instance.usageLimitBuffer}${signalText}`.slice(-4096);
+    const usageLimit = detectUsageLimitPlainText(instance.usageLimitBuffer);
     if (!usageLimit) return;
     instance.usageLimitDetected = true;
     void this.logUsageLimitDetection(instance, usageLimit, text);
@@ -400,17 +450,6 @@ export class PtyManager extends EventEmitter {
     });
   }
 
-  private handleAgentOutputState(instance: TerminalInstance, data: string): void {
-    if (!instance.agentProvider) return;
-    const text = stripAnsi(data);
-    if (!isApprovalPromptOutput(text)) return;
-    this.opts.observer?.setTuiObservedState(
-      instance.sessionId,
-      'waiting_for_approval',
-      'waiting for approval'
-    );
-  }
-
   private toRuntimeState(instance: TerminalInstance): SessionRuntimeState {
     const state: SessionRuntimeState = {
       sessionId: instance.sessionId,
@@ -428,6 +467,10 @@ export class PtyManager extends EventEmitter {
 }
 
 const noop = (): void => {};
+
+const AGENT_SIGNAL_TAIL_LENGTH = 256;
+const AGENT_SIGNAL_CANDIDATE = /allow|permission|approval|limit|credit/i;
+const USAGE_LIMIT_CANDIDATE = /limit|credit/i;
 
 function legacyAgentProvider(session: Session): AgentRuntimeProvider | null {
   const kind = (session as unknown as { kind?: unknown }).kind;

@@ -65,6 +65,10 @@ export class ProjectsIpc {
       ipcInvoke(() => this.opts.store.refreshFavicons(id))
     );
 
+    ipcMain.handle(IpcChannels.projects.readFavicon, (_e, id: ProjectId, relativePath: string) =>
+      ipcInvoke(() => this.opts.store.readFavicon(id, relativePath))
+    );
+
     ipcMain.handle(IpcChannels.projects.detectFromPath, (_e, p: string) =>
       ipcInvoke(() => this.opts.store.detectFromPath(p))
     );
@@ -93,6 +97,7 @@ export class ProjectsIpc {
     ipcMain.removeHandler(IpcChannels.projects.touch);
     ipcMain.removeHandler(IpcChannels.projects.reorder);
     ipcMain.removeHandler(IpcChannels.projects.refreshFavicons);
+    ipcMain.removeHandler(IpcChannels.projects.readFavicon);
     ipcMain.removeHandler(IpcChannels.projects.detectFromPath);
     ipcMain.removeHandler(IpcChannels.projects.suggestPaths);
     this.detachListener?.();

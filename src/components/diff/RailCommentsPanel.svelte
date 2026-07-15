@@ -16,7 +16,7 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import type { AnchorLineKind, DiffComment } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
-  import { workingDiff } from '../../stores/working-diff.svelte';
+  import { workingDiff, type ReviewScope } from '../../stores/working-diff.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError, toasts } from '../../stores/toast.svelte';
   import { sendComments } from '../../lib/diff-comment-sender';
@@ -30,12 +30,11 @@
   type Tab = 'active' | 'outdated' | 'resolved';
 
   interface Props {
-    cwd: string;
+    scope: ReviewScope;
     onClose: () => void;
   }
 
-  let { cwd, onClose }: Props = $props();
-
+  let { scope, onClose }: Props = $props();
   let tab = $state<Tab>('active');
   // Per-id "send in flight" flags. Reassigned on each toggle so derived reads
   // pick up the change — Svelte 5 doesn't track mutation of plain Records.
@@ -51,7 +50,8 @@
   // contextAfter so reviewers don't need to jump to the diff to read context.
   let expandedById = $state<Record<string, boolean>>({});
 
-  let allComments = $derived(diffComments.forWorktree(cwd));
+  let allComments = $derived(diffComments.forWorktree(scope));
+  let legacyComments = $derived(diffComments.legacyForWorktree(scope));
   let activeComments = $derived(
     allComments.filter((c) => !c.resolvedAt && !diffComments.outdatedIds.has(c.id))
   );
@@ -72,20 +72,28 @@
     activeComments.filter((c) => !c.sentAt && c.text.trim().length > 0)
   );
 
-  let grouped = $derived.by<{ filePath: string; comments: DiffComment[] }[]>(() => {
+  let grouped = $derived.by<{
+    key: string;
+    filePath: string;
+    mode: DiffComment['mode'];
+    comments: DiffComment[];
+  }[]>(() => {
     // Plain Map by design: this is a local helper inside a pure derived,
     // not reactive state. SvelteMap here loops because mutating it
     // invalidates the derived that's currently mutating it.
     const map = new Map<string, DiffComment[]>();
     for (const c of visible) {
-      const list = map.get(c.filePath) ?? [];
+      const key = `${c.mode ?? 'wt'}\0${c.filePath}`;
+      const list = map.get(key) ?? [];
       list.push(c);
-      map.set(c.filePath, list);
+      map.set(key, list);
     }
     return [...map.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([filePath, list]) => ({
-        filePath,
+      .map(([key, list]) => ({
+        key,
+        filePath: list[0]?.filePath ?? '',
+        mode: list[0]?.mode,
         comments: list.sort((a, b) => a.startLine - b.startLine)
       }));
   });
@@ -96,8 +104,8 @@
       : `L${c.startLine}–${c.endLine}`;
   }
 
-  function jumpTo(filePath: string): void {
-    workingDiff.setSelected(cwd, filePath);
+  function jumpTo(filePath: string, mode: DiffComment['mode']): void {
+    workingDiff.setSelected(scope, filePath, mode === 'range' ? 'committed' : 'wt');
     onClose();
   }
 
@@ -105,8 +113,15 @@
   // fires the highlight hint the diff viewer picks up to scroll into view
   // and flash the lines, then closes the panel so the diff is visible.
   function jumpToComment(c: DiffComment): void {
-    workingDiff.setSelected(cwd, c.filePath);
-    diffComments.highlightLines(c.cwd, c.filePath, c.side, c.startLine, c.endLine);
+    workingDiff.setSelected(scope, c.filePath, c.mode === 'range' ? 'committed' : 'wt');
+    diffComments.highlightLines(
+      c.scope,
+      c.filePath,
+      c.side,
+      c.startLine,
+      c.endLine,
+      c.mode === 'range' ? 'committed' : 'wt'
+    );
     onClose();
   }
 
@@ -186,10 +201,21 @@
     diffComments.remove(id);
   }
 
+  function adoptLegacyComments(): void {
+    const adopted = diffComments.adoptLegacy(scope);
+    commentAgents.adoptLegacy(scope);
+    if (adopted > 0) {
+      toasts.push(
+        `Moved ${adopted} legacy comment${adopted === 1 ? '' : 's'} to this Worktree`,
+        'info'
+      );
+    }
+  }
+
   function agentsFor(c: DiffComment): CommentAgent[] {
     const out: CommentAgent[] = [];
     for (const name of parseMentions(c.text)) {
-      const agent = commentAgents.byName(c.cwd, name);
+      const agent = commentAgents.byName(c.scope, name);
       if (agent) out.push(agent);
     }
     return out;
@@ -349,6 +375,22 @@
     {/if}
   </div>
 
+  {#if legacyComments.length > 0}
+    <div class="flex shrink-0 items-center justify-between gap-2 border-b border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+      <p class="min-w-0 text-[10px] leading-snug text-muted-foreground">
+        {legacyComments.length} path-only comment{legacyComments.length === 1 ? '' : 's'} need a runtime owner.
+      </p>
+      <Button
+        variant="outline"
+        size="xs"
+        onclick={adoptLegacyComments}
+        title="Assign these legacy comments to the current Worktree runtime"
+      >
+        Move here
+      </Button>
+    </div>
+  {/if}
+
   {#if visible.length === 0}
     <div
       class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground"
@@ -358,15 +400,18 @@
   {:else}
     <ScrollArea class="min-h-0 flex-1">
       <div class="flex flex-col gap-3 p-2">
-        {#each grouped as group (group.filePath)}
+        {#each grouped as group (group.key)}
           <section class="flex flex-col gap-1.5">
             <button
               type="button"
               class="sticky top-0 z-10 flex items-center gap-1 border-b border-border/60 bg-background/95 px-1 py-1 text-left text-[10px] font-medium tracking-wider text-muted-foreground uppercase backdrop-blur-sm hover:text-foreground"
-              onclick={() => jumpTo(group.filePath)}
+              onclick={() => jumpTo(group.filePath, group.mode)}
               title="Jump to {group.filePath}"
             >
               <span class="truncate font-mono normal-case">{group.filePath}</span>
+              <span class="shrink-0 rounded bg-muted px-1 text-[9px]">
+                {group.mode === 'range' ? 'Range' : 'WT'}
+              </span>
               <span class="shrink-0">({group.comments.length})</span>
             </button>
             {#each group.comments as c (c.id)}

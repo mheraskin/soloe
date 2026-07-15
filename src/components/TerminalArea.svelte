@@ -2,11 +2,22 @@
   import { X } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
-  import TerminalPane from './TerminalPane.svelte';
   import EmptyState from './EmptyState.svelte';
   import SessionToolbar from './SessionToolbar.svelte';
   import UsageLimitOverlay from './UsageLimitOverlay.svelte';
   import { displaySessionKind } from '../lib/session-agent';
+  import { LazyModule } from '../lib/lazy-module.svelte';
+  import { TerminalResidency } from '../lib/terminal-residency';
+
+  type TerminalPaneComponent = typeof import('./TerminalPane.svelte').default;
+
+  // Parsing xterm and its renderer stack used to block the shell even when
+  // there was no live terminal. Preload the module before starting a PTY so
+  // the output listener is ready before the first shell bytes can arrive.
+  const terminalPaneModule = new LazyModule<TerminalPaneComponent>(() =>
+    import('./TerminalPane.svelte').then((module) => module.default)
+  );
+  const terminalResidency = new TerminalResidency(4);
 
   let selected = $derived(sessions.selected);
   let split = $derived(sessions.activeSplit);
@@ -42,9 +53,48 @@
       ? { ...selectedRuntime, terminalId: selectedRuntime.terminalId }
       : null
   );
+  let visibleSessionIds = $derived.by<string[]>(() => {
+    if (split) {
+      const companion = split.focusedId === split.leftId ? split.rightId : split.leftId;
+      return [split.focusedId, companion];
+    }
+    return selectedPane ? [selectedPane.sessionId] : [];
+  });
+  let residentSessionIds = $state<string[]>([]);
+  let residentPanes = $derived(
+    runningPanes.filter((pane) => residentSessionIds.includes(pane.sessionId))
+  );
   let showEmpty = $derived(!selected || !selectedPane);
 
+  $effect(() => {
+    const next = terminalResidency.reconcile({
+      liveSessionIds: runningPanes.map((pane) => pane.sessionId),
+      visibleSessionIds
+    });
+    if (
+      next.length !== residentSessionIds.length
+      || next.some((id, index) => residentSessionIds[index] !== id)
+    ) {
+      residentSessionIds = next;
+    }
+  });
+
   const autoStarted = new Set<string>();
+
+  async function startAfterTerminalPaneLoads(id: string): Promise<void> {
+    const TerminalPane = await terminalPaneModule.load();
+    if (!TerminalPane || autoStarted.has(id)) return;
+    const currentStatus = sessions.statusFor(id);
+    const currentTerminal = sessions.terminalIdFor(id);
+    if (currentTerminal || currentStatus === 'starting' || currentStatus === 'running') return;
+    autoStarted.add(id);
+    try {
+      await sessions.start(id);
+    } catch (err) {
+      autoStarted.delete(id);
+      reportError(err);
+    }
+  }
 
   $effect(() => {
     if (!selected) return;
@@ -54,11 +104,7 @@
     if (hasTerminal) return;
     if (status === 'starting' || status === 'running') return;
     if (autoStarted.has(id)) return;
-    autoStarted.add(id);
-    void sessions.start(id).catch((err) => {
-      autoStarted.delete(id);
-      reportError(err);
-    });
+    void startAfterTerminalPaneLoads(id);
   });
 
   function dismissHandoffOverlay(): void {
@@ -91,7 +137,7 @@
 <section class="flex min-w-[220px] flex-1 flex-col bg-background">
   <SessionToolbar />
   <div class="relative min-h-0 flex-1 overflow-hidden" bind:this={containerEl}>
-    {#each runningPanes as pane (pane.terminalId)}
+    {#each residentPanes as pane (pane.terminalId)}
       {@const role = split
         ? pane.sessionId === split.leftId
           ? 'left'
@@ -105,7 +151,7 @@
       {@const focused = split ? pane.sessionId === split.focusedId : role === 'full'}
       {@const ratio = split?.ratio ?? 0.5}
       <!--
-        Hidden panes are pushed out of the viewport rather than faded out.
+        LRU-resident hidden panes are pushed out of the viewport rather than faded out.
         xterm pauses rendering via a viewport IntersectionObserver, and an
         opacity-0 pane still intersects — so every backgrounded terminal kept
         repainting an agent TUI every frame. Translating keeps the layout box
@@ -129,12 +175,28 @@
           if (split && pane.sessionId !== split.focusedId) sessions.select(pane.sessionId);
         }}
       >
-        <TerminalPane
-          terminalId={pane.terminalId}
-          sessionId={pane.sessionId}
-          {visible}
-          {focused}
-        />
+        {#if terminalPaneModule.value}
+          {@const TerminalPane = terminalPaneModule.value}
+          <TerminalPane
+            terminalId={pane.terminalId}
+            sessionId={pane.sessionId}
+            {visible}
+            {focused}
+          />
+        {:else if terminalPaneModule.error}
+          <div class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-destructive">
+            <span>Terminal renderer failed to load.</span>
+            <button
+              type="button"
+              class="rounded-md border border-border px-2 py-1 text-foreground hover:bg-muted"
+              onclick={() => void terminalPaneModule.load()}
+            >Retry</button>
+          </div>
+        {:else}
+          <div class="flex h-full items-center justify-center text-xs text-muted-foreground">
+            Loading terminal…
+          </div>
+        {/if}
         {#if split && visible}
           <button
             type="button"
@@ -160,7 +222,16 @@
         onpointerdown={startSplitResize}
       ></button>
     {/if}
-    {#if showEmpty}
+    {#if selected && terminalPaneModule.error}
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-xs text-destructive">
+        <span>Terminal renderer failed to load: {terminalPaneModule.error.message}</span>
+        <button
+          type="button"
+          class="rounded-md border border-border px-2 py-1 text-foreground hover:bg-muted"
+          onclick={() => void startAfterTerminalPaneLoads(selected.id)}
+        >Retry</button>
+      </div>
+    {:else if showEmpty}
       <div class="absolute inset-0">
         <EmptyState
           session={selected}

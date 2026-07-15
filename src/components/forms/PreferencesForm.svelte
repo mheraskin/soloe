@@ -220,6 +220,13 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setBrowserMaxResidentTabs(value: number) {
+    const clamped = Number.isFinite(value) ? Math.max(1, Math.min(Math.round(value), 10)) : 2;
+    try {
+      await settings.update({ browser: { maxResidentTabs: clamped } });
+    } catch (e) { reportError(e); }
+  }
+
   async function setNotesDraftsPerWorktree(value: boolean) {
     try {
       await settings.update({ notes: { draftsPerWorktree: value } });
@@ -774,6 +781,25 @@
     </Tabs.Content>
 
     <Tabs.Content value="browser" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="pref-browser-resident-tabs">
+          Maximum live browser tabs
+        </Label>
+        <Input
+          id="pref-browser-resident-tabs"
+          type="number"
+          min="1"
+          max="10"
+          step="1"
+          value={settings.current.browser.maxResidentTabs}
+          onchange={(e) =>
+            setBrowserMaxResidentTabs(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <span class="text-[11px] text-muted-foreground">
+          The active tab always stays live. Older background tabs suspend automatically and restore
+          from their saved URL when selected.
+        </span>
+      </div>
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground" for="pref-browser-auto-resume">
           Auto-resume paused tabs after (minutes)

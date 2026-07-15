@@ -171,17 +171,11 @@ export class AgentRuntimeManager {
     eventSummary?: string,
     detail?: string
   ): ObservedAgentSnapshot {
-    const snapshot = this.opts.observer.updateWorker(workerId, patch);
-    if (eventSummary) {
-      this.opts.observer.appendEvent({
-        subjectId: workerId,
-        subjectKind: 'worker',
-        state: snapshot.state,
-        summary: eventSummary,
-        detail
-      });
-    }
-    return snapshot;
+    return this.opts.observer.updateWorker(
+      workerId,
+      patch,
+      eventSummary ? { summary: eventSummary, detail } : undefined
+    );
   }
 }
 

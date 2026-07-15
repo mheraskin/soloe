@@ -33,6 +33,8 @@
   import { toast } from 'svelte-sonner';
   import BrowserAutofillPopover from './BrowserAutofillPopover.svelte';
   import BrowserDeviceMenu from './BrowserDeviceMenu.svelte';
+  import { ipc } from '../../lib/ipc';
+  import { BrowserDevToolsViewController } from '../../lib/browser-devtools-bounds';
 
   interface FailureSuggestion {
     httpsUrl: string;
@@ -157,9 +159,13 @@
     else applyPageZoom(tabId, 1);
   }
 
-  // Only non-paused tabs get a <webview>. Paused tabs are kept in the strip
-  // (so the user can resume them) but their renderer process is gone.
-  let visibleTabs = $derived(browserStore.tabs.filter((t) => t.pausedAt === undefined));
+  // BrowserStore owns the residency invariant: active is always live and the
+  // most-recent background tabs fill the configured remaining slots. Manual
+  // pauses and automatic suspension both unmount the Chromium webview.
+  let residentTabs = $derived(
+    browserStore.residentTabs(settings.current.browser.maxResidentTabs)
+  );
+  let residentTabIds = $derived(new Set(residentTabs.map((tab) => tab.id)));
 
   // Make sure we have at least one tab so the URL bar has something to drive.
   browserStore.ensureSomeTab();
@@ -263,19 +269,34 @@
   // every reactive update).
   type AttachFn = (node: Element) => () => void;
   const attachmentsByTabId = new Map<string, AttachFn>();
+  const attachmentGenerationByTabId = new Map<string, number>();
+  let attachmentGeneration = 0;
 
   function attachWebview(tabId: string, initialUrl: string): AttachFn {
     const cached = attachmentsByTabId.get(tabId);
     if (cached) return cached;
     const fn: AttachFn = (node) => {
       const wv = node as unknown as ElectronWebview;
+      const worktreeKey = browserStore.activeWorktreeKey;
+      const generation = ++attachmentGeneration;
+      attachmentGenerationByTabId.set(tabId, generation);
+      const isCurrentAttachment = () =>
+        browserStore.activeWorktreeKey === worktreeKey
+        && attachmentGenerationByTabId.get(tabId) === generation
+        && webviewsById[tabId] === wv;
       webviewsById = setTabRecordValue(() => webviewsById, tabId, wv);
       domReadyById = setTabRecordValue(() => domReadyById, tabId, false);
       isLoadingById = setTabRecordValue(() => isLoadingById, tabId, false);
       lastLoadedById = setTabRecordValue(() => lastLoadedById, tabId, initialUrl);
       failureById = setTabRecordValue(() => failureById, tabId, null);
+      lastAppliedDeviceKeyById = deleteTabRecordValue(
+        () => lastAppliedDeviceKeyById,
+        tabId
+      );
+      lastAppliedUaById = deleteTabRecordValue(() => lastAppliedUaById, tabId);
 
       const onDomReady = () => {
+        if (!isCurrentAttachment()) return;
         domReadyById = { ...domReadyById, [tabId]: true };
         // Re-apply any previously-set page zoom: a resumed tab has a fresh
         // webContents whose zoom level resets to 0 (= 100%), so without this
@@ -292,6 +313,7 @@
         void applyEmulationFor(tabId);
       };
       const onNavigate = (e: Event) => {
+        if (!isCurrentAttachment()) return;
         const url = (e as Event & { url?: string }).url;
         if (!url) return;
         failureById = { ...failureById, [tabId]: null };
@@ -306,17 +328,21 @@
         browserStore.navigate(tabId, url);
       };
       const onTitle = (e: Event) => {
+        if (!isCurrentAttachment()) return;
         const title = (e as Event & { title?: string }).title;
         if (!title) return;
         browserStore.setTitle(tabId, title);
       };
       const onLoadStart = () => {
+        if (!isCurrentAttachment()) return;
         isLoadingById = { ...isLoadingById, [tabId]: true };
       };
       const onLoadStop = () => {
+        if (!isCurrentAttachment()) return;
         isLoadingById = { ...isLoadingById, [tabId]: false };
       };
       const onFail = (e: Event) => {
+        if (!isCurrentAttachment()) return;
         const event = e as Event & {
           errorCode?: number;
           errorDescription?: string;
@@ -343,6 +369,7 @@
       // tab — a backgrounded page triggering a password-focus shouldn't
       // surface a popover the user can't see the source of.
       const onIpcMessage = (event: Event) => {
+        if (!isCurrentAttachment()) return;
         if (tabId !== browserStore.activeTabId) return;
         const e = event as Event & { channel?: string; args?: unknown[] };
         if (e.channel === 'soloe:webview-shortcut') {
@@ -417,6 +444,10 @@
         wv.removeEventListener('did-stop-loading', onLoadStop);
         wv.removeEventListener('did-fail-load', onFail);
         wv.removeEventListener('ipc-message', onIpcMessage);
+        // A replacement attachment for the same logical tab may already own
+        // these records. Old cleanup must not erase the new generation.
+        if (attachmentGenerationByTabId.get(tabId) !== generation) return;
+        attachmentGenerationByTabId.delete(tabId);
         webviewsById = deleteTabRecordValue(() => webviewsById, tabId);
         domReadyById = deleteTabRecordValue(() => domReadyById, tabId);
         isLoadingById = deleteTabRecordValue(() => isLoadingById, tabId);
@@ -540,8 +571,17 @@
   // floats over `devToolsHost`. <webview> can't be a DevTools container
   // (Chromium disallows guest views — see electron/electron#14095), so the
   // host lives in main and we just send it the placeholder's bounds.
-  let lastSentBounds: { x: number; y: number; width: number; height: number } | null = null;
-  let boundsRaf = 0;
+  const devToolsView = new BrowserDevToolsViewController({
+    open: async (webContentsId, bounds) => {
+      await ipc.browser.openDevTools({ webContentsId, bounds });
+    },
+    setLayout: async (webContentsId, layout) => {
+      await ipc.browser.setDevToolsLayout({ webContentsId, ...layout });
+    },
+    close: async (webContentsId) => {
+      await ipc.browser.closeDevTools({ webContentsId });
+    }
+  });
 
   // Closing DevTools on tab switch keeps things simple: the WebContentsView
   // is bound to a specific webContents, and re-targeting it across tabs has
@@ -555,114 +595,43 @@
     if (devToolsOpen) closeDevTools();
   });
 
-  async function openDevTools() {
+  // Pane order/fullscreen changes can move the placeholder without changing
+  // its size. ResizeObserver owns ordinary size changes; this explicit
+  // invalidation covers the position-only layout case.
+  $effect(() => {
+    const layoutIdentity = [
+      rightRail.openTabs.join(','),
+      rightRail.fullscreen ? 'fullscreen' : 'windowed',
+      rightRail.fullscreenTab ?? 'none'
+    ].join(':');
+    void layoutIdentity;
+    if (devToolsOpen) devToolsView.invalidate();
+  });
+
+  async function openDevTools(): Promise<void> {
     const main = activeWebview;
     if (!main || !activeDomReady) return;
     if (devToolsOpen) return;
-    devToolsOpen = true;
-    // Defer one frame so the placeholder is laid out before we measure it.
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => resolve())
-    );
-    const bounds = computeBounds();
-    if (!bounds) {
-      devToolsOpen = false;
-      return;
-    }
-    try {
-      await window.soloe.browser.openDevTools({
-        webContentsId: main.getWebContentsId(),
-        bounds
-      });
-      lastSentBounds = bounds;
-      startBoundsSync();
-    } catch (err) {
-      reportError(err, 'Failed to open DevTools');
-      devToolsOpen = false;
-    }
-  }
-
-  function computeBounds(): { x: number; y: number; width: number; height: number } | null {
-    const el = devToolsHost;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    return {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
-    };
-  }
-
-  function syncBoundsOnce() {
-    const main = activeWebview;
-    if (!main || !devToolsOpen) return;
-    if (devToolsSuspended) return;
-    const bounds = computeBounds();
-    if (!bounds) return;
-    const prev = lastSentBounds;
-    if (
-      prev &&
-      prev.x === bounds.x &&
-      prev.y === bounds.y &&
-      prev.width === bounds.width &&
-      prev.height === bounds.height
-    ) {
-      return;
-    }
-    lastSentBounds = bounds;
-    try {
-      void window.soloe.browser
-        .setDevToolsBounds({ webContentsId: main.getWebContentsId(), bounds })
-        .catch(() => {
-          // bounds updates are fire-and-forget; ignore transient failures
-        });
-    } catch {
-      // ignore
-    }
-  }
-
-  function startBoundsSync() {
-    cancelBoundsSync();
-    const loop = () => {
-      if (!devToolsOpen) {
-        boundsRaf = 0;
-        return;
-      }
-      syncBoundsOnce();
-      boundsRaf = requestAnimationFrame(loop);
-    };
-    boundsRaf = requestAnimationFrame(loop);
-  }
-
-  function cancelBoundsSync() {
-    if (boundsRaf) {
-      cancelAnimationFrame(boundsRaf);
-      boundsRaf = 0;
-    }
-  }
-
-  function closeDevTools() {
-    if (!devToolsOpen) return;
-    devToolsOpen = false;
-    cancelBoundsSync();
-    lastSentBounds = null;
-    const main = activeWebview;
-    if (!main) return;
     let webContentsId: number;
     try {
       webContentsId = main.getWebContentsId();
     } catch {
       return;
     }
+    devToolsOpen = true;
     try {
-      void window.soloe.browser
-        .closeDevTools({ webContentsId })
-        .catch((err) => reportError(err, 'Failed to close DevTools'));
+      const opened = await devToolsView.open(webContentsId, () => devToolsHost);
+      if (!opened) devToolsOpen = false;
     } catch (err) {
-      reportError(err, 'Failed to close DevTools');
+      reportError(err, 'Failed to open DevTools');
+      devToolsOpen = false;
     }
+  }
+
+  function closeDevTools() {
+    if (!devToolsOpen) return;
+    devToolsOpen = false;
+    void devToolsView.close().catch((err) => reportError(err, 'Failed to close DevTools'));
   }
 
   function toggleDevTools() {
@@ -676,10 +645,13 @@
   // cursor crosses the page <webview> (above) or the DevTools WebContentsView
   // (below). The native view ignores DOM pointer capture, so we hide it.
   let devToolsResizing = $state(false);
+  let finishDevToolsResize: (() => void) | null = null;
   function startDevToolsResize(event: PointerEvent) {
     if (event.button !== 0) return;
     event.preventDefault();
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    finishDevToolsResize?.();
+    const handle = event.currentTarget as HTMLElement;
+    handle.setPointerCapture(event.pointerId);
     devToolsResizing = true;
     suspendDevToolsView();
     const startY = event.clientY;
@@ -689,43 +661,41 @@
       // Dragging up (negative dy) grows the panel; clamp to a sane range.
       devToolsHeight = Math.min(Math.max(startHeight - dy, 120), 800);
     };
-    const onUp = () => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       devToolsResizing = false;
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+      handle.removeEventListener('lostpointercapture', finish);
+      try {
+        if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+      } catch {
+        // The handle may already be detached during rail teardown.
+      }
+      if (finishDevToolsResize === finish) finishDevToolsResize = null;
       resumeDevToolsView();
     };
+    finishDevToolsResize = finish;
     window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
+    handle.addEventListener('lostpointercapture', finish);
   }
 
-  // While suspended, the DevTools WebContentsView is moved offscreen so it
-  // can't eat pointer events during a drag. The rAF bounds sync skips its
-  // work, and `lastSentBounds` is cleared on resume so the next frame's
-  // sync re-pushes the real bounds even if they happened to match.
-  let devToolsSuspended = $state(false);
+  // While suspended, the native Browser DevTools View is hidden so it cannot
+  // consume pointer events during a drag. Resume atomically restores bounds
+  // and visibility after one forced measurement.
   function suspendDevToolsView() {
-    if (!devToolsOpen || devToolsSuspended) return;
-    const main = activeWebview;
-    if (!main) return;
-    devToolsSuspended = true;
-    try {
-      void window.soloe.browser
-        .setDevToolsBounds({
-          webContentsId: main.getWebContentsId(),
-          bounds: { x: -10000, y: -10000, width: 1, height: 1 }
-        })
-        .catch(() => {});
-    } catch {
-      // ignore
-    }
+    devToolsView.suspend();
   }
 
   function resumeDevToolsView() {
-    if (!devToolsSuspended) return;
-    devToolsSuspended = false;
-    lastSentBounds = null;
-    syncBoundsOnce();
+    devToolsView.resume();
   }
 
   let autofillOpen = $state(false);
@@ -745,6 +715,11 @@
   async function applyEmulationFor(tabId: string): Promise<void> {
     const el = webviewsById[tabId];
     if (!el || !domReadyById[tabId]) return;
+    const generation = attachmentGenerationByTabId.get(tabId);
+    if (generation === undefined) return;
+    const isCurrentAttachment = () =>
+      attachmentGenerationByTabId.get(tabId) === generation
+      && webviewsById[tabId] === el;
     const tab = browserStore.tabs.find((t) => t.id === tabId);
     if (!tab) return;
     const tabDevice = tab.device;
@@ -759,14 +734,16 @@
       lastAppliedDeviceKeyById = { ...lastAppliedDeviceKeyById, [tabId]: null };
       try {
         await window.soloe.browser.disableDeviceEmulation({ webContentsId });
+        if (!isCurrentAttachment()) return;
         if ((lastAppliedUaById[tabId] ?? null) !== null) {
           await window.soloe.browser.setUserAgent({ webContentsId, userAgent: null });
+          if (!isCurrentAttachment()) return;
           const previousUa = lastAppliedUaById[tabId] ?? null;
           lastAppliedUaById = { ...lastAppliedUaById, [tabId]: null };
           if (previousUa) el.reload();
         }
       } catch (err) {
-        reportError(err, 'Failed to disable device emulation');
+        if (isCurrentAttachment()) reportError(err, 'Failed to disable device emulation');
       }
       return;
     }
@@ -786,6 +763,7 @@
           ...(tabDevice.ua ? { userAgent: tabDevice.ua } : {})
         }
       });
+      if (!isCurrentAttachment()) return;
       const nextUa = tabDevice.ua || null;
       const prevUa = lastAppliedUaById[tabId] ?? null;
       if (nextUa !== prevUa) {
@@ -793,7 +771,7 @@
         if (nextUa || prevUa !== null) el.reload();
       }
     } catch (err) {
-      reportError(err, 'Failed to enable device emulation');
+      if (isCurrentAttachment()) reportError(err, 'Failed to enable device emulation');
     }
   }
 
@@ -841,10 +819,9 @@
     return Monitor;
   }
 
-  // Auto-resume paused tabs whose pausedAt is older than the configured
-  // threshold. Runs once on mount (catches tabs paused in a previous session)
-  // and then on a 30s tick. Setting pauseAutoResumeMinutes to 0 disables
-  // auto-resume entirely.
+  // Auto-resume paused tabs whose deadline has elapsed. A single timeout is
+  // scheduled for the nearest deadline; with no paused tabs there is no timer
+  // and therefore no periodic background wake-up.
   let autoResumeTimer = 0;
   function checkAutoResume() {
     const minutes = settings.current.browser.pauseAutoResumeMinutes;
@@ -852,10 +829,31 @@
     const threshold = Date.now() - minutes * 60_000;
     for (const tab of browserStore.tabs) {
       if (tab.pausedAt !== undefined && tab.pausedAt <= threshold) {
-        browserStore.resumeTab(tab.id);
+        // Expiry removes the explicit pause but does not allocate a hidden
+        // renderer. The tab becomes resident when the user selects it.
+        browserStore.resumeTab(tab.id, false);
       }
     }
   }
+
+  $effect(() => {
+    const minutes = settings.current.browser.pauseAutoResumeMinutes;
+    const pausedAt = browserStore.tabs
+      .map((tab) => tab.pausedAt)
+      .filter((value): value is number => value !== undefined);
+    if (minutes <= 0 || pausedAt.length === 0) return;
+    const nextDeadline = Math.min(...pausedAt) + minutes * 60_000;
+    const delay = Math.min(2_147_483_647, Math.max(0, nextDeadline - Date.now()));
+    const handle = window.setTimeout(() => {
+      if (autoResumeTimer === handle) autoResumeTimer = 0;
+      checkAutoResume();
+    }, delay);
+    autoResumeTimer = handle;
+    return () => {
+      window.clearTimeout(handle);
+      if (autoResumeTimer === handle) autoResumeTimer = 0;
+    };
+  });
 
   // Custom event from App.svelte: Ctrl+/-/0 while the browser tab is active.
   onMount(() => {
@@ -909,9 +907,6 @@
     window.addEventListener('scroll', onLayoutShift, true);
     window.addEventListener('resize', onLayoutShift);
 
-    checkAutoResume();
-    autoResumeTimer = window.setInterval(checkAutoResume, 30_000);
-
     return () => {
       window.removeEventListener('soloe:browser-zoom', onZoom);
       window.removeEventListener('soloe:rail-resize-start', onResizeStart);
@@ -921,14 +916,12 @@
       window.removeEventListener('keydown', onAutofillEscape);
       window.removeEventListener('scroll', onLayoutShift, true);
       window.removeEventListener('resize', onLayoutShift);
-      if (autoResumeTimer) {
-        window.clearInterval(autoResumeTimer);
-        autoResumeTimer = 0;
-      }
-      // Tear down DevTools when the rail unmounts. The main-side 'destroyed'
-      // listener also covers webview destruction, but cancelling the rAF
-      // loop here avoids a stray frame after the component is gone.
-      cancelBoundsSync();
+      browserStore.releaseResidents();
+      finishDevToolsResize?.();
+      // Invalidate pending opens and retire the native view immediately. The
+      // main-side target-destroyed listener remains a final safety net.
+      closeDevTools();
+      void devToolsView.dispose().catch(() => {});
     };
   });
 
@@ -1193,12 +1186,10 @@
     browserStore.addTab();
   }
 
+
   function selectTab(id: string) {
-    // Clicking a paused tab resumes it. The webview will remount on the next
-    // render and load its persisted URL.
-    if (browserStore.isPaused(id)) {
-      browserStore.resumeTab(id);
-    }
+    // Selection atomically resumes a manually-paused tab and promotes an
+    // automatically suspended tab into the resident set.
     browserStore.selectTab(id);
   }
 
@@ -1376,6 +1367,7 @@
     {#each browserStore.tabs as tab (tab.id)}
       {@const isActive = tab.id === activeId}
       {@const isPausedTab = tab.pausedAt !== undefined}
+      {@const isResidentTab = residentTabIds.has(tab.id)}
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           {#snippet child({ props })}
@@ -1386,11 +1378,17 @@
                 isActive
                   ? 'bg-background text-foreground'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-              } ${isPausedTab ? 'opacity-60' : ''}`}
+              } ${isPausedTab || !isResidentTab ? 'opacity-60' : ''}`}
               onclick={() => selectTab(tab.id)}
-              title={tab.history[tab.historyIndex] ?? ''}
+              title={`${tab.history[tab.historyIndex] ?? ''}${
+                isPausedTab
+                  ? ' — paused'
+                  : !isResidentTab
+                    ? ' — suspended to save memory'
+                    : ''
+              }`}
             >
-              {#if isPausedTab}
+              {#if isPausedTab || !isResidentTab}
                 <PowerOff class="size-3 shrink-0" />
               {:else}
                 <Globe class="size-3 shrink-0" />
@@ -1687,14 +1685,12 @@
       </div>
     {/if}
     <!--
-      One <webview> per non-paused tab. Inactive tabs use display:none so
-      their renderer keeps running (state preserved across tab switches) but
-      they don't consume layout space. Paused tabs are absent entirely; their
-      webview is unmounted to free memory until the user resumes them or the
-      auto-resume timer fires.
+      One <webview> per resident tab. Inactive residents use display:none so
+      their renderer preserves page state; older background tabs and manual
+      pauses are absent entirely. Selecting either remounts its current URL.
     -->
     <div class="relative flex min-h-0 flex-1 flex-col">
-      {#each visibleTabs as tab (tab.id)}
+      {#each residentTabs as tab (tab.id)}
         {@const isActive = tab.id === activeId}
         {@const tabDevice = tab.device}
         {@const tabW = tabDevice ? (tabDevice.rotated ? tabDevice.height : tabDevice.width) : 0}

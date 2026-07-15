@@ -212,6 +212,7 @@ function parseSettings(raw: unknown): Settings {
       fontSize: pickDiffFontSize(diff['fontSize'])
     },
     browser: {
+      maxResidentTabs: pickMaxResidentTabs(browser['maxResidentTabs']),
       pauseAutoResumeMinutes: pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes'])
     },
     defaults: {
@@ -280,6 +281,13 @@ function pickPauseAutoResumeMinutes(value: unknown): Settings['browser']['pauseA
   return Math.min(Math.round(value), 1440);
 }
 
+function pickMaxResidentTabs(value: unknown): Settings['browser']['maxResidentTabs'] {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.browser.maxResidentTabs;
+  }
+  return Math.max(1, Math.min(Math.round(value), 10));
+}
+
 function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
@@ -335,6 +343,16 @@ function validateSettings(s: Settings): void {
   }
   if (!VALID_DIFF_FONT_SIZES.has(s.diff.fontSize)) {
     throw new Error(`Invalid diff.fontSize: ${s.diff.fontSize}`);
+  }
+  if (!Number.isInteger(s.browser.maxResidentTabs)
+    || s.browser.maxResidentTabs < 1
+    || s.browser.maxResidentTabs > 10) {
+    throw new Error('Invalid browser.maxResidentTabs');
+  }
+  if (!Number.isInteger(s.browser.pauseAutoResumeMinutes)
+    || s.browser.pauseAutoResumeMinutes < 0
+    || s.browser.pauseAutoResumeMinutes > 1440) {
+    throw new Error('Invalid browser.pauseAutoResumeMinutes');
   }
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
   if (!VALID_SHELLS.has(s.defaults.shell)) throw new Error(`Invalid shell: ${s.defaults.shell}`);

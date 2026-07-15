@@ -3,6 +3,8 @@ import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { existsSync, mkdirSync } from 'node:fs';
 import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
+import type { DiffWorktreeTarget } from '@shared/types/diff-rpc.js';
+import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
 import { SessionStore } from './sessions/SessionStore.js';
 import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
 import { ShellDetector } from './terminal/ShellDetector.js';
@@ -17,8 +19,10 @@ import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
 import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
 import { AgentHookDispatcher } from './agents/AgentHookDispatcher.js';
 import { AutoRenameService } from './agents/AutoRenameService.js';
+import { BackgroundAgentExecution } from './agents/BackgroundAgentExecution.js';
 import { CommentsBridge } from './comments/CommentsBridge.js';
 import { DiffBridge } from './agents/DiffBridge.js';
+import { resolveDiffTarget } from './agents/DiffTargetResolver.js';
 import { BridgePersistence, type BridgeConfig } from './integrations/BridgePersistence.js';
 import { Notifier } from './notify/Notifier.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
@@ -46,7 +50,7 @@ import { SummaryCacheStore } from './overview/SummaryCacheStore.js';
 import { WorktreeOverviewService } from './overview/WorktreeOverviewService.js';
 import { OverviewIpc } from './ipc/overview.ipc.js';
 import { FeatureService } from './features/FeatureService.js';
-import { FeatureWatcher } from './features/FeatureWatcher.js';
+import { FeatureArtifactObservation } from './features/FeatureArtifactObservation.js';
 import { FeaturesIpc } from './ipc/features.ipc.js';
 import { VaultStore } from './vault/VaultStore.js';
 import { VaultIpc } from './ipc/vault.ipc.js';
@@ -82,7 +86,7 @@ interface AppServices {
   overviewService: WorktreeOverviewService;
   overviewIpc: OverviewIpc;
   features: FeatureService;
-  featureWatcher: FeatureWatcher;
+  featureArtifacts: FeatureArtifactObservation;
   featuresIpc: FeaturesIpc;
   vault: VaultStore;
   vaultIpc: VaultIpc;
@@ -241,9 +245,11 @@ async function setupServices(): Promise<AppServices> {
     getWindows: () => BrowserWindow.getAllWindows()
   });
 
+  const backgroundAgentExecution = new BackgroundAgentExecution();
   const autoRename = new AutoRenameService({
     sessionStore: store,
     settings,
+    execution: backgroundAgentExecution,
     notifier,
     onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[auto-rename] ${message}`, detail)
@@ -277,10 +283,7 @@ async function setupServices(): Promise<AppServices> {
     commentsBridge,
     diffBridge,
     git,
-    resolveSessionCwd: async (id) => {
-      const session = await store.get(id);
-      return session ? session.cwd : null;
-    },
+    resolveDiffTarget: (input) => resolveDiffTarget(store, input),
     initialConfig: initialBridgeConfig
   });
   if (effectiveBridgeConfig.port !== initialBridgeConfig.port) {
@@ -311,7 +314,17 @@ async function setupServices(): Promise<AppServices> {
     runtime,
     getWindows: () => BrowserWindow.getAllWindows()
   });
-  const systemIpc = new SystemIpc({ store });
+  const systemIpc = new SystemIpc({
+    store,
+    getRunningWslDistros: async () => {
+      const runningSessionIds = new Set(manager.listRunning().map((state) => state.sessionId));
+      const runningWslDistros = (await store.list())
+        .filter((session) => runningSessionIds.has(session.id) && session.runMode === 'wsl')
+        .map((session) => session.wslDistro?.trim())
+        .filter((distro): distro is string => Boolean(distro));
+      return [...new Set(runningWslDistros)];
+    }
+  });
   const settingsIpc = new SettingsIpc({
     store: settings,
     getWindows: () => BrowserWindow.getAllWindows()
@@ -382,19 +395,19 @@ async function setupServices(): Promise<AppServices> {
     reader: overviewReader,
     facts: overviewFacts,
     cache: overviewCache,
-    getSettings: () => settings.get()
+    getSettings: () => settings.get(),
+    execution: backgroundAgentExecution
   });
   const overviewIpc = new OverviewIpc({
     service: overviewService,
     getWindows: () => BrowserWindow.getAllWindows()
   });
 
-  const features = new FeatureService();
-  const featureWatcher = new FeatureWatcher();
+  const featureArtifacts = new FeatureArtifactObservation();
+  const features = new FeatureService(featureArtifacts);
   const featuresIpc = new FeaturesIpc({
     service: features,
-    watcher: featureWatcher,
-    getWindows: () => BrowserWindow.getAllWindows()
+    observation: featureArtifacts
   });
 
   const vault = new VaultStore(vaultDir);
@@ -448,7 +461,7 @@ async function setupServices(): Promise<AppServices> {
     overviewService,
     overviewIpc,
     features,
-    featureWatcher,
+    featureArtifacts,
     featuresIpc,
     vault,
     vaultIpc,
@@ -463,7 +476,7 @@ interface StartMcpDeps {
   commentsBridge: CommentsBridge;
   diffBridge: DiffBridge;
   git: GitService;
-  resolveSessionCwd: (sessionId: string) => Promise<string | null>;
+  resolveDiffTarget: (input: { sessionId?: string; cwd?: string }) => Promise<DiffWorktreeTarget>;
   initialConfig: BridgeConfig;
 }
 
@@ -485,7 +498,7 @@ async function startMcp(deps: StartMcpDeps): Promise<StartMcpResult> {
       commentsBridge: deps.commentsBridge,
       diffBridge: deps.diffBridge,
       git: deps.git,
-      resolveSessionCwd: deps.resolveSessionCwd,
+      resolveDiffTarget: deps.resolveDiffTarget,
       port,
       token: deps.initialConfig.token
     });
@@ -618,14 +631,16 @@ async function cleanup(): Promise<void> {
     services.agentIntegrationIpc.dispose();
     services.overviewIpc.dispose();
     services.featuresIpc.dispose();
-    services.featureWatcher.dispose();
+    services.featureArtifacts.dispose();
     services.vaultIpc.dispose();
     services.browserIpc.dispose();
     services.git.dispose();
-    services.observerStore.dispose();
-    await services.observerStore.persist(services.observer);
     await services.pty.dispose();
     await services.runtime.dispose();
+    // Terminal and worker shutdown can produce the final semantic observer
+    // commit. Keep durability attached until those producers have settled,
+    // then flush exactly the latest projection before releasing the Module.
+    await services.observerStore.dispose();
     services.commentsBridge.stop();
     services.diffBridge.stop();
     await services.mcp.stop();
@@ -772,32 +787,39 @@ function parseDiffArgv(argv: string[]): DiffIntent | null {
 async function applyDiffIntent(intent: DiffIntent): Promise<void> {
   if (!services) return;
   const { diffBridge, git, store } = services;
-  let cwd = intent.cwd ?? null;
-  if (!cwd) {
-    const list = await store.list();
-    cwd = list[0]?.cwd ?? null;
+  let target: DiffWorktreeTarget | null = null;
+  if (intent.cwd) {
+    target = await resolveDiffTarget(store, { cwd: intent.cwd }).catch((err) => {
+      console.warn('[diff-intent] target resolution failed:', err);
+      return null;
+    });
+  } else {
+    const first = (await store.list())[0];
+    if (first) target = await resolveDiffTarget(store, { sessionId: first.id });
   }
-  if (!cwd) {
+  if (!target) {
     console.warn('[diff-intent] no cwd available; skipping');
     return;
   }
+  const { cwd } = target.scope;
+  const context = worktreeRuntimeContext(target.scope);
   try {
     let baseSha: string | null = null;
     let headSha: string | null = null;
     let commitShas: string[] = [];
     if (intent.base && intent.head) {
-      const resolved = await git.resolveCommitRefs(cwd, [intent.base, intent.head]);
+      const resolved = await git.resolveCommitRefs(cwd, [intent.base, intent.head], context);
       baseSha = resolved[0] ?? null;
       headSha = resolved[1] ?? null;
     } else if (intent.commits && intent.commits.length > 0) {
       const headRef = 'HEAD';
       const refs = [headRef, ...intent.commits];
-      const resolved = await git.resolveCommitRefs(cwd, refs);
+      const resolved = await git.resolveCommitRefs(cwd, refs, context);
       headSha = resolved[0] ?? null;
       commitShas = resolved.slice(1).filter((s): s is string => !!s);
       const earliest = commitShas[commitShas.length - 1];
       if (earliest) {
-        const parent = await git.resolveCommitRefs(cwd, [`${earliest}~1`]);
+        const parent = await git.resolveCommitRefs(cwd, [`${earliest}~1`], context);
         baseSha = parent[0] ?? null;
       }
     }
@@ -805,16 +827,16 @@ async function applyDiffIntent(intent: DiffIntent): Promise<void> {
       console.warn('[diff-intent] could not resolve base/head from argv');
       return;
     }
-    const between = await git.getCommitsBetween(cwd, baseSha, headSha);
+    const between = await git.getCommitsBetween(cwd, baseSha, headSha, context);
     if (between.commits.length === 0) {
       console.warn('[diff-intent] resolved range is empty');
       return;
     }
     await diffBridge.openForCommits({
-      cwd,
+      target,
       base: baseSha,
       head: headSha,
-      commits: between.commits.map((c) => c.hash),
+      commits: between.commits,
       includeWorkingTree: true,
       ...(intent.focusPath ? { focusPath: intent.focusPath } : {})
     });

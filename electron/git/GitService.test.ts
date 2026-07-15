@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -32,6 +32,76 @@ describe.skipIf(!hasGit)('GitService', () => {
   it('status: returns isRepo=false for empty cwd', async () => {
     const status = await svc.getStatus('');
     expect(status.isRepo).toBe(false);
+  });
+
+  it('keeps passive repository reads watcher-free and observes only while leased', async () => {
+    await initRepo(tmpRoot);
+    const closes = [vi.fn(), vi.fn(), vi.fn()];
+    let watcherIndex = 0;
+    const watchImpl = vi.fn(() => ({
+      close: closes[watcherIndex++]!
+    }));
+    const observedSvc = new GitService({ watchImpl: watchImpl as never });
+
+    try {
+      await observedSvc.listWorktrees(tmpRoot, true);
+      await observedSvc.getWorkingTreeSnapshot(tmpRoot, true);
+      expect(watchImpl).not.toHaveBeenCalled();
+
+      const releaseFirst = await observedSvc.acquireObservation(tmpRoot);
+      const releaseSecond = await observedSvc.acquireObservation(tmpRoot);
+      expect(watchImpl).toHaveBeenCalledTimes(3);
+
+      releaseFirst();
+      expect(closes.every((close) => close.mock.calls.length === 0)).toBe(true);
+      releaseSecond();
+      expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true);
+
+      releaseSecond();
+      expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true);
+    } finally {
+      observedSvc.dispose();
+    }
+  });
+
+  it('keeps passive repository caches bounded by least-recent use', async () => {
+    const roots = await Promise.all(
+      ['one', 'two', 'three'].map(async (name) => {
+        const root = path.join(tmpRoot, name);
+        await fs.mkdir(root);
+        return root;
+      })
+    );
+    const worktreeLists: string[] = [];
+    const boundedSvc = new GitService({
+      maxRepoCaches: 2,
+      runGit: async (cwd, args) => {
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${cwd}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${path.join(cwd, '.git')}\n`, stderr: '' };
+        }
+        if (command === 'worktree list --porcelain') {
+          worktreeLists.push(cwd);
+          return {
+            code: 0,
+            stdout: `worktree ${cwd}\nHEAD ${'a'.repeat(40)}\nbranch refs/heads/main\n\n`,
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected: ${command}` };
+      }
+    });
+
+    try {
+      for (const root of roots) await boundedSvc.listWorktrees(root);
+      await boundedSvc.listWorktrees(roots[0]!);
+      expect(worktreeLists).toEqual([...roots, roots[0]]);
+    } finally {
+      boundedSvc.dispose();
+    }
   });
 
   it('status: reports branch and clean state for a committed repo', async () => {
@@ -85,6 +155,218 @@ describe.skipIf(!hasGit)('GitService', () => {
     const stat = await svc.getShortstat(tmpRoot, true);
     expect(stat.filesChanged).toBe(2);
     expect(stat.insertions).toBe(3);
+  });
+
+  it('shortstat: keeps WSL Git command count constant as untracked files grow', async () => {
+    const files = Array.from({ length: 40 }, (_, index) => `new-${index}.txt`);
+    await Promise.all(
+      files.map((file, index) =>
+        fs.writeFile(path.join(tmpRoot, file), `line ${index}\nsecond\n`, 'utf8')
+      )
+    );
+    const calls: string[] = [];
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        calls.push(command);
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${tmpRoot}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${path.join(tmpRoot, '.git')}\n`, stderr: '' };
+        }
+        if (command === 'status --porcelain=v2 --branch --untracked-files=all -z') {
+          return {
+            code: 0,
+            stdout: [...files.map((file) => `? ${file}`), ''].join('\0'),
+            stderr: ''
+          };
+        }
+        if (command.startsWith('diff --no-color --numstat -z --diff-filter=AMDRCT HEAD')) {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const stat = await wslSvc.getShortstat(tmpRoot, true, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+
+      expect(stat).toMatchObject({ filesChanged: 40, insertions: 80, deletions: 0 });
+      // Two repository-discovery commands, one tracked diff, and one untracked
+      // listing. Per-file measurement must not spawn another wsl.exe process.
+      expect(calls).toHaveLength(4);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
+  it('working snapshot: derives status, totals, and change rows from one generation', async () => {
+    await initRepo(tmpRoot);
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'a\nb\n', 'utf8');
+    await fs.writeFile(path.join(tmpRoot, 'new.txt'), 'one\ntwo', 'utf8');
+
+    const snapshot = await svc.getWorkingTreeSnapshot(tmpRoot, true);
+
+    expect(snapshot.status).toMatchObject({
+      cwd: tmpRoot,
+      repoPath: tmpRoot,
+      dirty: true,
+      unstaged: 1,
+      untracked: 1
+    });
+    expect(snapshot.shortstat).toMatchObject({
+      repoPath: tmpRoot,
+      filesChanged: 2,
+      insertions: 3,
+      deletions: 0
+    });
+    expect(snapshot.workingChanges.changes).toEqual([
+      expect.objectContaining({ path: 'a.txt', kind: 'modified', insertions: 1 }),
+      expect.objectContaining({ path: 'new.txt', kind: 'untracked', insertions: 2 })
+    ]);
+    expect(snapshot.generation).toBeGreaterThan(0);
+  });
+
+  it('working snapshot: coalesces concurrent WSL observations with constant process count', async () => {
+    const files = Array.from({ length: 30 }, (_, index) => `snapshot-${index}.txt`);
+    await Promise.all(
+      files.map((file) => fs.writeFile(path.join(tmpRoot, file), 'one\ntwo\n', 'utf8'))
+    );
+    const calls: string[] = [];
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        calls.push(command);
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${tmpRoot}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${path.join(tmpRoot, '.git')}\n`, stderr: '' };
+        }
+        if (command === 'status --porcelain=v2 --branch --untracked-files=all -z') {
+          return {
+            code: 0,
+            stdout: [
+              '# branch.oid abcdef',
+              '# branch.head main',
+              ...files.map((file) => `? ${file}`),
+              ''
+            ].join('\0'),
+            stderr: ''
+          };
+        }
+        if (command.startsWith('diff --no-color --numstat -z --diff-filter=AMDRCT HEAD')) {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const context = { runMode: 'wsl' as const, wslDistro: 'Ubuntu' };
+      const [first, joined] = await Promise.all([
+        wslSvc.getWorkingTreeSnapshot(tmpRoot, true, context),
+        wslSvc.getWorkingTreeSnapshot(tmpRoot, true, context)
+      ]);
+
+      expect(first.generation).toBe(joined.generation);
+      expect(first.shortstat).toMatchObject({ filesChanged: 30, insertions: 60 });
+      // Two coalesced discovery commands and two snapshot commands.
+      expect(calls).toHaveLength(4);
+
+      const cached = await wslSvc.getWorkingTreeSnapshot(tmpRoot, false, context);
+      expect(cached.generation).toBe(first.generation);
+      expect(calls).toHaveLength(4);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
+  it('working snapshot: retries a transient status spawn failure', async () => {
+    let statusAttempts = 0;
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${tmpRoot}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${path.join(tmpRoot, '.git')}\n`, stderr: '' };
+        }
+        if (command === 'status --porcelain=v2 --branch --untracked-files=all -z') {
+          statusAttempts += 1;
+          if (statusAttempts === 1) return { code: null, stdout: '', stderr: 'EAGAIN' };
+          return {
+            code: 0,
+            stdout: ['# branch.oid abcdef', '# branch.head main', ''].join('\0'),
+            stderr: ''
+          };
+        }
+        if (command.startsWith('diff --no-color --numstat -z --diff-filter=AMDRCT HEAD')) {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const snapshot = await wslSvc.getWorkingTreeSnapshot(tmpRoot, true, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+      expect(snapshot.status).toMatchObject({ isRepo: true, branch: 'main' });
+      expect(statusAttempts).toBe(2);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
+  it('working snapshot: retries a transient tracked-diff spawn failure', async () => {
+    let trackedAttempts = 0;
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${tmpRoot}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${path.join(tmpRoot, '.git')}\n`, stderr: '' };
+        }
+        if (command === 'status --porcelain=v2 --branch --untracked-files=all -z') {
+          return {
+            code: 0,
+            stdout: ['# branch.oid abcdef', '# branch.head main', ''].join('\0'),
+            stderr: ''
+          };
+        }
+        if (command.startsWith('diff --no-color --numstat -z --diff-filter=AMDRCT HEAD')) {
+          trackedAttempts += 1;
+          if (trackedAttempts === 1) {
+            return { code: null, stdout: '', stderr: 'EAGAIN: resource temporarily unavailable' };
+          }
+          return { code: 0, stdout: '1\t0\ta.txt\0', stderr: '' };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const snapshot = await wslSvc.getWorkingTreeSnapshot(tmpRoot, true, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+      expect(snapshot.shortstat).toMatchObject({ filesChanged: 1, insertions: 1 });
+      expect(snapshot.workingChanges.changes).toEqual([
+        expect.objectContaining({ path: 'a.txt', insertions: 1 })
+      ]);
+      expect(trackedAttempts).toBe(2);
+    } finally {
+      wslSvc.dispose();
+    }
   });
 
   it('branch and aheadBehind: read current branch counts', async () => {
@@ -193,6 +475,101 @@ describe.skipIf(!hasGit)('GitService', () => {
     }
   });
 
+  it('listWorktrees: reuses WSL repository identity across minute inventory cycles', async () => {
+    const repoPath = '/home/me/soloe';
+    const calls: string[] = [];
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        calls.push(command);
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${repoPath}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${repoPath}/.git\n`, stderr: '' };
+        }
+        if (command === 'worktree list --porcelain') {
+          return {
+            code: 0,
+            stdout: `worktree ${repoPath}\nHEAD ${'a'.repeat(40)}\nbranch refs/heads/main\n\n`,
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      await wslSvc.listWorktrees(repoPath, true, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+      now.mockReturnValue(1_060_000);
+      await wslSvc.listWorktrees(repoPath, true, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+
+      expect(calls.filter((command) => command === 'rev-parse --show-toplevel')).toHaveLength(1);
+      expect(calls.filter((command) => command === 'rev-parse --git-dir')).toHaveLength(1);
+      expect(calls.filter((command) => command === 'worktree list --porcelain')).toHaveLength(2);
+    } finally {
+      now.mockRestore();
+      wslSvc.dispose();
+    }
+  });
+
+  it('listWorktrees: isolates the same Linux path across WSL distributions', async () => {
+    const repoPath = '/soloe-identical-path/repo';
+    const calls: string[] = [];
+    const wslSvc = new GitService({
+      runWslGit: async (distro, _cwd, args) => {
+        calls.push(`${distro}:${args.join(' ')}`);
+        const command = args.join(' ');
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${repoPath}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${repoPath}/.git\n`, stderr: '' };
+        }
+        if (command === 'worktree list --porcelain') {
+          return {
+            code: 0,
+            stdout: [
+              `worktree ${repoPath}`,
+              `HEAD ${distro === 'Ubuntu' ? 'a' : 'b'}`.padEnd(45, distro === 'Ubuntu' ? 'a' : 'b'),
+              `branch refs/heads/${distro.toLowerCase()}`,
+              ''
+            ].join('\n'),
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const ubuntu = await wslSvc.listWorktrees(repoPath, false, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+      const debian = await wslSvc.listWorktrees(repoPath, false, {
+        runMode: 'wsl',
+        wslDistro: 'Debian'
+      });
+
+      expect(ubuntu[0]?.branch).toBe('ubuntu');
+      expect(debian[0]?.branch).toBe('debian');
+      expect(calls.filter((call) => call.endsWith('worktree list --porcelain'))).toEqual([
+        'Ubuntu:worktree list --porcelain',
+        'Debian:worktree list --porcelain'
+      ]);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
   it('checkout: switches branches when the repo is clean', async () => {
     await initRepo(tmpRoot);
     spawnSync('git', ['checkout', '-b', 'feature/demo'], { cwd: tmpRoot });
@@ -272,6 +649,53 @@ describe.skipIf(!hasGit)('GitService', () => {
     expect(adds[0]?.text).toBe('one');
   });
 
+  it('getReviewDiffs: materializes multiple tracked files with one repository patch', async () => {
+    await initRepo(tmpRoot);
+    await fs.writeFile(path.join(tmpRoot, 'b.txt'), 'before\n', 'utf8');
+    spawnSync('git', ['add', '.'], { cwd: tmpRoot });
+    spawnSync('git', ['commit', '-m', 'add b'], { cwd: tmpRoot });
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'after a\n', 'utf8');
+    await fs.writeFile(path.join(tmpRoot, 'b.txt'), 'after b\n', 'utf8');
+
+    const diffs = await svc.getReviewDiffs(tmpRoot, [
+      { path: 'a.txt' },
+      { path: 'b.txt' }
+    ]);
+
+    expect(diffs.map((diff) => diff.path)).toEqual(['a.txt', 'b.txt']);
+    expect(diffs.every((diff) => !diff.empty && diff.hunks.length > 0)).toBe(true);
+  });
+
+  it('getFileLines: reads the requested historical commit rather than current HEAD', async () => {
+    await initRepo(tmpRoot);
+    const base = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: tmpRoot,
+      encoding: 'utf8'
+    }).stdout.trim();
+    await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'head one\nhead two\n', 'utf8');
+    spawnSync('git', ['add', 'a.txt'], { cwd: tmpRoot });
+    spawnSync('git', ['commit', '-m', 'head version'], { cwd: tmpRoot });
+
+    await expect(
+      svc.getFileLines(tmpRoot, 'a.txt', 1, 5, {
+        revision: { kind: 'commit', sha: base }
+      })
+    ).resolves.toEqual({ lines: ['a'], totalLines: 1 });
+    await expect(svc.getFileLines(tmpRoot, 'a.txt', 1, 5)).resolves.toEqual({
+      lines: ['head one', 'head two'],
+      totalLines: 2
+    });
+  });
+
+  it('getFileLines: rejects ambiguous historical revision names', async () => {
+    await initRepo(tmpRoot);
+    await expect(
+      svc.getFileLines(tmpRoot, 'a.txt', 1, 1, {
+        revision: { kind: 'commit', sha: 'HEAD~1' }
+      })
+    ).rejects.toThrow('canonical commit SHA');
+  });
+
   it('listWorkingChanges: routes through WSL git for POSIX worktree paths', async () => {
     const calls: string[] = [];
     const wslSvc = new GitService({
@@ -287,11 +711,17 @@ describe.skipIf(!hasGit)('GitService', () => {
         if (command.startsWith('diff --no-color --numstat -z --diff-filter=AMDRCT HEAD')) {
           return { code: 0, stdout: '2\t1\tsrc/a.ts\0', stderr: '' };
         }
-        if (command === 'status --porcelain=v1 -z') {
-          return { code: 0, stdout: ' M src/a.ts\0', stderr: '' };
-        }
-        if (command === 'ls-files --others --exclude-standard -z') {
-          return { code: 0, stdout: '', stderr: '' };
+        if (command === 'status --porcelain=v2 --branch --untracked-files=all -z') {
+          return {
+            code: 0,
+            stdout: [
+              '# branch.oid abcdef',
+              '# branch.head main',
+              `1 .M N... 100644 100644 100644 ${'a'.repeat(40)} ${'a'.repeat(40)} src/a.ts`,
+              ''
+            ].join('\0'),
+            stderr: ''
+          };
         }
         return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
       }
@@ -310,6 +740,54 @@ describe.skipIf(!hasGit)('GitService', () => {
       ]);
       // Every git invocation must have been dispatched through the WSL stub.
       expect(calls.length).toBeGreaterThan(0);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
+  it('listWorkingChanges: avoids per-file WSL Git processes for untracked files', async () => {
+    const files = Array.from({ length: 20 }, (_, index) => `fresh-${index}.txt`);
+    await Promise.all(
+      files.map((file) => fs.writeFile(path.join(tmpRoot, file), 'one\ntwo\n', 'utf8'))
+    );
+    const calls: string[] = [];
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        calls.push(command);
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: `${tmpRoot}\n`, stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: `${path.join(tmpRoot, '.git')}\n`, stderr: '' };
+        }
+        if (command.startsWith('diff --no-color --numstat -z --diff-filter=AMDRCT HEAD')) {
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        if (command === 'status --porcelain=v2 --branch --untracked-files=all -z') {
+          return {
+            code: 0,
+            stdout: [...files.map((file) => `? ${file}`), ''].join('\0'),
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const result = await wslSvc.listWorkingChanges(tmpRoot, {
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu'
+      });
+
+      expect(result.changes).toHaveLength(files.length);
+      expect(result.changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: files[0], insertions: 2, binary: false })
+        ])
+      );
+      expect(calls).toHaveLength(4);
     } finally {
       wslSvc.dispose();
     }
@@ -358,6 +836,62 @@ describe.skipIf(!hasGit)('GitService', () => {
       expect(diff.hunks).toHaveLength(1);
       const adds = diff.hunks[0]!.lines.filter((l) => l.kind === 'add');
       expect(adds.map((l) => l.text)).toEqual(['one', 'two']);
+    } finally {
+      wslSvc.dispose();
+    }
+  });
+
+  it('getReviewDiffs: keeps WSL command count constant as file count grows', async () => {
+    const calls: string[] = [];
+    const wslSvc = new GitService({
+      runWslGit: async (_distro, _cwd, args) => {
+        const command = args.join(' ');
+        calls.push(command);
+        if (command === 'rev-parse --show-toplevel') {
+          return { code: 0, stdout: '/home/me/repo\n', stderr: '' };
+        }
+        if (command === 'rev-parse --git-dir') {
+          return { code: 0, stdout: '/home/me/repo/.git\n', stderr: '' };
+        }
+        if (command.startsWith('-c core.quotePath=false diff ')) {
+          return {
+            code: 0,
+            stdout: [
+              'diff --git a/src/file-0.ts b/src/file-0.ts',
+              '--- a/src/file-0.ts',
+              '+++ b/src/file-0.ts',
+              '@@ -1 +1 @@',
+              '-old',
+              '+new',
+              ''
+            ].join('\n'),
+            stderr: ''
+          };
+        }
+        return { code: 1, stdout: '', stderr: `unexpected git command: ${command}` };
+      }
+    });
+
+    try {
+      const files = Array.from({ length: 50 }, (_, index) => ({
+        path: `src/file-${index}.ts`
+      }));
+      const diffs = await wslSvc.getReviewDiffs('/home/me/repo', files, {
+        context: { runMode: 'wsl', wslDistro: 'Ubuntu' }
+      });
+
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0]?.path).toBe('src/file-0.ts');
+      // Two discovery commands plus one repository-level diff, independent
+      // of whether the review contains 5, 50, or 200 tracked files.
+      expect(calls).toHaveLength(3);
+
+      await wslSvc.getReviewDiffs('/home/me/repo', files, {
+        context: { runMode: 'wsl', wslDistro: 'Ubuntu' }
+      });
+      // A refresh only adds the useful diff command; repository discovery is
+      // reused across the polling window.
+      expect(calls).toHaveLength(4);
     } finally {
       wslSvc.dispose();
     }

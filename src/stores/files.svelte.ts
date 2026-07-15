@@ -1,9 +1,20 @@
 import type { RunMode } from '@shared/types/sessions.js';
+import {
+  worktreeScope,
+  worktreeScopeKey,
+  type WorktreeScope
+} from '@shared/worktree-identity.js';
 import { ipc } from '../lib/ipc';
 
 export interface FilesContext {
   runMode: RunMode;
   wslDistro?: string;
+}
+
+export type FilesScope = WorktreeScope & { runMode: RunMode };
+
+export function createFilesScope(cwd: string, context: FilesContext): FilesScope {
+  return worktreeScope(cwd, context) as FilesScope;
 }
 
 interface TreeEntry {
@@ -36,47 +47,62 @@ const EMPTY_TREE: TreeEntry = {
   error: null
 };
 
-class FilesStore {
-  private contextByCwd = $state<Record<string, FilesContext>>({});
+// A clean file can hold two copies of up to 5 MiB (content + baseline), while
+// one tree can retain 20,000 paths. Keep only a very small warm set once no
+// Files Rail Surface owns the scope. Dirty/saving buffers are continuity, not
+// cache, and are therefore protected independently from this limit.
+const MAX_RECENT_CLEAN_SCOPES = 2;
+
+export class FilesStore {
   private treeByCwd = $state<Record<string, TreeEntry>>({});
   // Open files are keyed by worktree cwd so a user bouncing between worktrees
   // keeps each one's editor state — including in-progress unsaved edits.
   // Mirrors workingDiff.selectedByCwd's per-cwd memory model.
   private openFilesByCwd = $state<Record<string, OpenFile>>({});
+  private residencyByScope = new Map<string, number>();
+  private recentReleasedScopes = new Map<string, true>();
 
-  setContext(cwd: string, context: FilesContext): void {
-    const prev = this.contextByCwd[cwd];
-    if (prev && prev.runMode === context.runMode && prev.wslDistro === context.wslDistro) return;
-    this.contextByCwd = { ...this.contextByCwd, [cwd]: context };
+  acquirePayloadResidency(scope: FilesScope): () => void {
+    const key = worktreeScopeKey(scope);
+    this.residencyByScope.set(key, (this.residencyByScope.get(key) ?? 0) + 1);
+    this.recentReleasedScopes.delete(key);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.residencyByScope.get(key) ?? 1) - 1;
+      if (remaining > 0) this.residencyByScope.set(key, remaining);
+      else this.residencyByScope.delete(key);
+      this.reconcileReleasedPayload(key);
+    };
   }
 
-  treeFor(cwd: string): TreeEntry {
-    return this.treeByCwd[cwd] ?? EMPTY_TREE;
+  treeFor(scope: FilesScope): TreeEntry {
+    return this.treeByCwd[worktreeScopeKey(scope)] ?? EMPTY_TREE;
   }
 
-  openFileFor(cwd: string): OpenFile | null {
-    return this.openFilesByCwd[cwd] ?? null;
+  openFileFor(scope: FilesScope): OpenFile | null {
+    return this.openFilesByCwd[worktreeScopeKey(scope)] ?? null;
   }
 
-  dirtyFor(cwd: string): boolean {
-    const open = this.openFilesByCwd[cwd];
+  dirtyFor(scope: FilesScope): boolean {
+    const open = this.openFilesByCwd[worktreeScopeKey(scope)];
     return open !== undefined && !open.binary && open.content !== open.baseline;
   }
 
-  async loadTree(cwd: string, opts: { force?: boolean } = {}): Promise<void> {
-    const context = this.contextByCwd[cwd];
-    if (!context) throw new Error('No file context for cwd; call setContext first');
-    const existing = this.treeByCwd[cwd];
+  async loadTree(scope: FilesScope, opts: { force?: boolean } = {}): Promise<void> {
+    const key = worktreeScopeKey(scope);
+    const existing = this.treeByCwd[key];
     if (existing?.loading) return;
     if (!opts.force && existing && !existing.error) return;
-    this.patchTree(cwd, { ...(existing ?? EMPTY_TREE), loading: true, error: null });
+    this.patchTree(key, { ...(existing ?? EMPTY_TREE), loading: true, error: null });
     try {
       const result = await ipc.files.listTree({
-        cwd,
-        runMode: context.runMode,
-        ...(context.wslDistro ? { wslDistro: context.wslDistro } : {})
+        cwd: scope.cwd,
+        runMode: scope.runMode,
+        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
       });
-      this.patchTree(cwd, {
+      this.patchTree(key, {
         paths: result.paths,
         truncated: result.truncated,
         isRepo: result.isRepo,
@@ -84,7 +110,7 @@ class FilesStore {
         error: null
       });
     } catch (err) {
-      this.patchTree(cwd, {
+      this.patchTree(key, {
         paths: existing?.paths ?? [],
         truncated: existing?.truncated ?? false,
         isRepo: existing?.isRepo ?? false,
@@ -94,17 +120,29 @@ class FilesStore {
     }
   }
 
-  async openFileAt(cwd: string, relativePath: string): Promise<void> {
-    const context = this.contextByCwd[cwd];
-    if (!context) throw new Error('No file context for cwd; call setContext first');
+  async openFileAt(
+    scope: FilesScope,
+    relativePath: string,
+    opts: { discardDirty?: boolean } = {}
+  ): Promise<boolean> {
+    const key = worktreeScopeKey(scope);
     // If the same file is already open and unmodified, no-op. Picking the same
     // row in the tree shouldn't throw away in-progress unsaved edits either.
-    const current = this.openFilesByCwd[cwd];
+    const current = this.openFilesByCwd[key];
     if (current && current.relativePath === relativePath) {
-      if (this.dirtyFor(cwd) || !current.loading) return;
+      if ((!current.binary && current.content !== current.baseline) || !current.loading) return true;
     }
-    this.patchOpen(cwd, {
-      cwd,
+    if (
+      current
+      && current.relativePath !== relativePath
+      && !current.binary
+      && current.content !== current.baseline
+      && !opts.discardDirty
+    ) {
+      return false;
+    }
+    this.patchOpen(key, {
+      cwd: scope.cwd,
       relativePath,
       content: '',
       baseline: '',
@@ -117,18 +155,18 @@ class FilesStore {
     });
     try {
       const value = await ipc.files.readFile({
-        cwd,
+        cwd: scope.cwd,
         relativePath,
-        runMode: context.runMode,
-        ...(context.wslDistro ? { wslDistro: context.wslDistro } : {})
+        runMode: scope.runMode,
+        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
       });
       // A second openFileAt could land before this one resolves; drop the stale
       // response so we don't overwrite the newer pending state.
-      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === relativePath;
-      if (!stillCurrent) return;
+      const stillCurrent = this.openFilesByCwd[key]?.relativePath === relativePath;
+      if (!stillCurrent) return false;
       const truncated = value.size > 0 && value.content.length === 0 && !value.binary;
-      this.patchOpen(cwd, {
-        cwd,
+      this.patchOpen(key, {
+        cwd: scope.cwd,
         relativePath: value.relativePath,
         content: value.content,
         baseline: value.content,
@@ -139,65 +177,72 @@ class FilesStore {
         saving: false,
         error: null
       });
+      return true;
     } catch (err) {
-      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === relativePath;
-      if (!stillCurrent) return;
-      const existing = this.openFilesByCwd[cwd];
-      if (!existing) return;
-      this.patchOpen(cwd, {
+      const stillCurrent = this.openFilesByCwd[key]?.relativePath === relativePath;
+      if (!stillCurrent) return false;
+      const existing = this.openFilesByCwd[key];
+      if (!existing) return false;
+      this.patchOpen(key, {
         ...existing,
         loading: false,
         error: err instanceof Error ? err.message : String(err)
       });
+      return true;
     }
   }
 
-  setContent(cwd: string, content: string): void {
-    const current = this.openFilesByCwd[cwd];
+  setContent(scope: FilesScope, content: string): void {
+    const key = worktreeScopeKey(scope);
+    const current = this.openFilesByCwd[key];
     if (!current) return;
     if (current.content === content) return;
-    this.patchOpen(cwd, { ...current, content });
+    this.patchOpen(key, { ...current, content });
   }
 
-  closeFile(cwd: string): void {
-    if (!(cwd in this.openFilesByCwd)) return;
+  closeFile(scope: FilesScope): void {
+    const key = worktreeScopeKey(scope);
+    if (!(key in this.openFilesByCwd)) return;
     const next = { ...this.openFilesByCwd };
-    delete next[cwd];
+    delete next[key];
     this.openFilesByCwd = next;
+    this.reconcileReleasedPayload(key);
   }
 
-  async save(cwd: string): Promise<void> {
-    const open = this.openFilesByCwd[cwd];
+  async save(scope: FilesScope): Promise<void> {
+    const key = worktreeScopeKey(scope);
+    const open = this.openFilesByCwd[key];
     if (!open || open.binary || open.saving) return;
     if (open.content === open.baseline) return;
-    const context = this.contextByCwd[cwd];
-    if (!context) throw new Error('No file context for cwd');
-    this.patchOpen(cwd, { ...open, saving: true, error: null });
+    this.patchOpen(key, { ...open, saving: true, error: null });
     try {
       await ipc.files.writeFile({
-        cwd,
+        cwd: scope.cwd,
         relativePath: open.relativePath,
         content: open.content,
-        runMode: context.runMode,
-        ...(context.wslDistro ? { wslDistro: context.wslDistro } : {})
+        runMode: scope.runMode,
+        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
       });
       // Same staleness guard as openFileAt — user may have switched files mid-save.
-      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === open.relativePath;
+      const stillCurrent = this.openFilesByCwd[key]?.relativePath === open.relativePath;
       if (!stillCurrent) return;
-      const current = this.openFilesByCwd[cwd];
+      const current = this.openFilesByCwd[key];
       if (!current) return;
-      this.patchOpen(cwd, {
+      this.patchOpen(key, {
         ...current,
         saving: false,
-        baseline: current.content,
+        // The disk now contains the exact snapshot sent above. If the user
+        // typed while the write was pending, preserve that newer content and
+        // keep the editor dirty against the saved snapshot.
+        baseline: open.content,
         error: null
       });
     } catch (err) {
-      const stillCurrent = this.openFilesByCwd[cwd]?.relativePath === open.relativePath;
+      const stillCurrent = this.openFilesByCwd[key]?.relativePath === open.relativePath;
       if (!stillCurrent) return;
-      const current = this.openFilesByCwd[cwd];
+      const current = this.openFilesByCwd[key];
       if (!current) return;
-      this.patchOpen(cwd, {
+      this.patchOpen(key, {
         ...current,
         saving: false,
         error: err instanceof Error ? err.message : String(err)
@@ -205,12 +250,52 @@ class FilesStore {
     }
   }
 
-  private patchTree(cwd: string, entry: TreeEntry): void {
-    this.treeByCwd = { ...this.treeByCwd, [cwd]: entry };
+  private patchTree(key: string, entry: TreeEntry): void {
+    this.treeByCwd = { ...this.treeByCwd, [key]: entry };
+    this.reconcileReleasedPayload(key);
   }
 
-  private patchOpen(cwd: string, entry: OpenFile): void {
-    this.openFilesByCwd = { ...this.openFilesByCwd, [cwd]: entry };
+  private patchOpen(key: string, entry: OpenFile): void {
+    this.openFilesByCwd = { ...this.openFilesByCwd, [key]: entry };
+    this.reconcileReleasedPayload(key);
+  }
+
+  private reconcileReleasedPayload(key: string): void {
+    if ((this.residencyByScope.get(key) ?? 0) > 0) {
+      this.recentReleasedScopes.delete(key);
+      return;
+    }
+    if (!this.treeByCwd[key] && !this.openFilesByCwd[key]) {
+      this.recentReleasedScopes.delete(key);
+      return;
+    }
+    this.recentReleasedScopes.delete(key);
+    this.recentReleasedScopes.set(key, true);
+    this.trimReleasedPayloads();
+  }
+
+  private trimReleasedPayloads(): void {
+    while (this.recentReleasedScopes.size > MAX_RECENT_CLEAN_SCOPES) {
+      const oldest = this.recentReleasedScopes.keys().next().value as string | undefined;
+      if (!oldest) return;
+      this.recentReleasedScopes.delete(oldest);
+      this.evictCleanPayload(oldest);
+    }
+  }
+
+  private evictCleanPayload(key: string): void {
+    if (key in this.treeByCwd) {
+      const nextTrees = { ...this.treeByCwd };
+      delete nextTrees[key];
+      this.treeByCwd = nextTrees;
+    }
+    const open = this.openFilesByCwd[key];
+    if (!open || open.loading || open.saving || (!open.binary && open.content !== open.baseline)) {
+      return;
+    }
+    const nextOpenFiles = { ...this.openFilesByCwd };
+    delete nextOpenFiles[key];
+    this.openFilesByCwd = nextOpenFiles;
   }
 }
 

@@ -14,15 +14,33 @@
   import type { GitStatusEntry } from '@pierre/trees';
   import type { WorkingChange } from '@shared/types/git.js';
   import { sessions } from '../../stores/sessions.svelte';
-  import { filesStore } from '../../stores/files.svelte';
-  import { workingDiff } from '../../stores/working-diff.svelte';
+  import {
+    createFilesScope,
+    filesStore,
+    type FilesScope
+  } from '../../stores/files.svelte';
+  import {
+    createReviewScope,
+    workingDiff,
+    type ReviewScope
+  } from '../../stores/working-diff.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { Button } from '$lib/components/ui/button';
   import FileTreeView from './FileTreeView.svelte';
-  import FileEditor from './FileEditor.svelte';
-  import EditorSelectionMenu from './EditorSelectionMenu.svelte';
-  import EditorContextMenu from './EditorContextMenu.svelte';
+
+  type FileEditorSurfaceComponent = typeof import('./FileEditorSurface.svelte').default;
+
+  // CodeMirror and its language registry are among the renderer's largest
+  // dependencies. The context/selection helpers also use EditorView at
+  // runtime, so the whole editor surface must share the lazy boundary. The
+  // promise is retained so later files reuse the module.
+  let fileEditorSurfacePromise: Promise<FileEditorSurfaceComponent> | null = null;
+
+  function loadFileEditorSurface(): Promise<FileEditorSurfaceComponent> {
+    fileEditorSurfacePromise ??= import('./FileEditorSurface.svelte').then((module) => module.default);
+    return fileEditorSurfacePromise;
+  }
 
   let rootEl: HTMLDivElement | null = $state(null);
   let treeWrapperEl: HTMLDivElement | null = $state(null);
@@ -58,18 +76,41 @@
     const cwd = selected?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
   });
+  let activeReviewScope = $derived.by<ReviewScope | null>(() => {
+    if (!activeCwd || !selected) return null;
+    return createReviewScope(activeCwd, {
+      runMode: selected.runMode,
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+    });
+  });
+  let activeFilesScope = $derived.by<FilesScope | null>(() => {
+    if (!activeCwd || !selected) return null;
+    return createFilesScope(activeCwd, {
+      runMode: selected.runMode,
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+    });
+  });
 
-  let tree = $derived(activeCwd ? filesStore.treeFor(activeCwd) : null);
-  let openFile = $derived(activeCwd ? filesStore.openFileFor(activeCwd) : null);
-  let dirty = $derived(activeCwd ? filesStore.dirtyFor(activeCwd) : false);
+  let tree = $derived(activeFilesScope ? filesStore.treeFor(activeFilesScope) : null);
+  let openFile = $derived(activeFilesScope ? filesStore.openFileFor(activeFilesScope) : null);
+  let dirty = $derived(activeFilesScope ? filesStore.dirtyFor(activeFilesScope) : false);
+
+  // Residency owns heavyweight tree/editor payload only while this surface is
+  // visible. The store keeps a tiny warm LRU after release and protects dirty
+  // buffers separately, so unmounting can reclaim clean memory safely.
+  $effect(() => {
+    const scope = activeFilesScope;
+    if (!scope) return;
+    return filesStore.acquirePayloadResidency(scope);
+  });
 
   // Map working-tree changes onto Pierre's status union. 'copied' isn't a
   // Pierre status — flag the destination as 'added' since that's the closest
   // semantically (a brand-new path appeared). Renames also surface fromPath so
   // the old name is painted as 'deleted' alongside the new name as 'renamed'.
   let gitStatus = $derived.by<GitStatusEntry[] | undefined>(() => {
-    if (!activeCwd) return undefined;
-    const result = workingDiff.changesFor(activeCwd).result;
+    if (!activeReviewScope) return undefined;
+    const result = workingDiff.changesFor(activeReviewScope).result;
     if (!result) return undefined;
     const entries: GitStatusEntry[] = [];
     for (const change of result.changes as WorkingChange[]) {
@@ -107,68 +148,59 @@
   // Re-register context whenever the active worktree (or its run mode) changes
   // so listTree/readFile dispatch through the right native vs WSL path.
   $effect(() => {
-    if (!activeCwd || !selected) return;
-    filesStore.setContext(activeCwd, {
-      runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
-    });
+    const scope = activeFilesScope;
+    if (!scope) return;
+    // Runtime is part of Worktree Identity. A distro switch with the same cwd
+    // must load its own tree instead of reusing the previous runtime's state.
+    void filesStore.loadTree(scope).catch(reportError);
   });
 
-  // Mirror the diff tab's context registration so the file tree's git-status
-  // overlay works even when the diff tab has never been opened. workingDiff
-  // coalesces concurrent loadChanges callers, so this doesn't double-fetch
-  // when both tabs are mounted.
+  // The file tree's Git overlay expresses the same Review Refresh Intent as
+  // the Diff surface. The store ref-counts both owners so two visible panes
+  // share one refresh and the final unmount stops tick-driven review work.
   $effect(() => {
-    if (!activeCwd || !selected) return;
-    workingDiff.setContext(activeCwd, {
-      runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
-    });
-  });
-
-  // Auto-load the tree on worktree change. Subsequent refreshes are user-driven.
-  $effect(() => {
-    const cwd = activeCwd;
-    if (!cwd) return;
-    void filesStore.loadTree(cwd).catch(reportError);
-  });
-
-  // Prime the working-tree changes so the status badges appear immediately on
-  // the first paint. The git change listener attached in RailDiffTab pushes
-  // subsequent refreshes app-wide.
-  $effect(() => {
-    const cwd = activeCwd;
-    if (!cwd) return;
-    void workingDiff.loadChanges(cwd).catch(reportError);
+    const scope = activeReviewScope;
+    if (!scope) return;
+    return workingDiff.acquireReviewDemand(scope);
   });
 
   function onSelectPath(path: string): void {
-    if (!activeCwd) return;
-    void filesStore.openFileAt(activeCwd, path).catch(reportError);
+    const scope = activeFilesScope;
+    if (!scope) return;
+    const current = filesStore.openFileFor(scope);
+    const discardingDirty = Boolean(
+      current
+      && current.relativePath !== path
+      && filesStore.dirtyFor(scope)
+    );
+    if (discardingDirty && !window.confirm('Discard unsaved changes and open another file?')) {
+      return;
+    }
+    void filesStore.openFileAt(scope, path, { discardDirty: discardingDirty }).catch(reportError);
   }
 
   function onBack(): void {
-    if (!activeCwd) return;
+    if (!activeFilesScope) return;
     if (dirty) {
       const ok = window.confirm('Discard unsaved changes?');
       if (!ok) return;
     }
-    filesStore.closeFile(activeCwd);
+    filesStore.closeFile(activeFilesScope);
   }
 
   function onSave(): void {
-    if (!activeCwd) return;
-    void filesStore.save(activeCwd).catch(reportError);
+    if (!activeFilesScope) return;
+    void filesStore.save(activeFilesScope).catch(reportError);
   }
 
   function onRefresh(): void {
-    if (!activeCwd) return;
-    void filesStore.loadTree(activeCwd, { force: true }).catch(reportError);
+    if (!activeFilesScope) return;
+    void filesStore.loadTree(activeFilesScope, { force: true }).catch(reportError);
   }
 
   function onChange(next: string): void {
-    if (!activeCwd) return;
-    filesStore.setContent(activeCwd, next);
+    if (!activeFilesScope) return;
+    filesStore.setContent(activeFilesScope, next);
   }
 
   // Per-cwd scroll persistence for both surfaces. Mirrors RailDiffTab's
@@ -448,23 +480,20 @@
               File too large to open in the in-rail editor.
             </div>
           {:else}
-            <EditorContextMenu
-              relativePath={openFile.relativePath}
-              rootEl={editorWrapperEl}
-            >
-              {#snippet children()}
-                <FileEditor
-                  value={openFile.content}
-                  relativePath={openFile.relativePath}
-                  onChange={onChange}
-                  onSave={onSave}
-                />
-              {/snippet}
-            </EditorContextMenu>
-            <EditorSelectionMenu
-              relativePath={openFile.relativePath}
-              rootEl={editorWrapperEl}
-            />
+            {#await loadFileEditorSurface()}
+              <div class="flex flex-1 items-center justify-center text-xs text-muted-foreground">
+                <Loader2 class="mr-2 size-3 animate-spin" />
+                Loading editor…
+              </div>
+            {:then FileEditorSurface}
+              <FileEditorSurface
+                value={openFile.content}
+                relativePath={openFile.relativePath}
+                rootEl={editorWrapperEl}
+                onChange={onChange}
+                onSave={onSave}
+              />
+            {/await}
           {/if}
         {:else if isSplit}
           <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">

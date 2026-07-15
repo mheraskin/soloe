@@ -17,12 +17,16 @@ import type {
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
-import type { RunMode, Session } from '@shared/types/sessions.js';
+import type { Session } from '@shared/types/sessions.js';
 import { effectiveAgentProvider } from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { FileSearchService } from '../files/FileSearchService.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { PtyManager } from '../terminal/PtyManager.js';
+import {
+  posixToWslUnc as wslUncPath,
+  worktreeHostPath as hostPathFor
+} from '../runtime/wsl-paths.js';
 import { ipcInvoke } from './result.js';
 
 export interface FilesIpcOptions {
@@ -181,11 +185,6 @@ function isAgentSession(session: Session): boolean {
   return effectiveAgentProvider(session) !== null;
 }
 
-function wslUncPath(distro: string, linuxPath: string): string {
-  const parts = linuxPath.split('/').filter(Boolean);
-  return ['\\\\wsl.localhost', distro, ...parts].join('\\');
-}
-
 function extensionForMime(mimeType: string): string {
   switch (mimeType.toLowerCase()) {
     case 'image/jpeg':
@@ -203,18 +202,6 @@ function extensionForMime(mimeType: string): string {
 
 function joinProviderPath(dir: string, filename: string, runMode: Session['runMode']): string {
   return runMode === 'wsl' ? `${dir.replace(/\/$/u, '')}/${filename}` : path.join(dir, filename);
-}
-
-// Resolve a worktree-relative cwd to a path that the host Node process can
-// actually open. When Soloe runs on the Windows host and the session is in WSL,
-// the session's cwd is a Linux path; the host reads it through the WSL UNC
-// share. Native runs (or Linux/macOS hosts) read the path as-is.
-function hostPathFor(cwd: string, runMode: RunMode, wslDistro?: string): string {
-  if (runMode === 'wsl' && process.platform === 'win32') {
-    if (!wslDistro) throw new Error('WSL distro required to access worktree from Windows host');
-    return wslUncPath(wslDistro, cwd);
-  }
-  return cwd;
 }
 
 // Ensures a user-supplied relative path stays inside cwd. Rejects '..' escapes,

@@ -35,9 +35,10 @@ export interface OpenDevToolsRequest {
   bounds: DevToolsBounds;
 }
 
-export interface SetDevToolsBoundsRequest {
+export interface SetDevToolsLayoutRequest {
   webContentsId: number;
-  bounds: DevToolsBounds;
+  bounds?: DevToolsBounds;
+  visible?: boolean;
 }
 
 export interface CloseDevToolsRequest {

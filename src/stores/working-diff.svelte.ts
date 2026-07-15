@@ -7,7 +7,30 @@ import type {
   WorkingChangesResult
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import {
+  worktreeIdentityKey,
+  worktreeScope,
+  type WorktreeScope
+} from '@shared/worktree-identity.js';
 import { ipc } from '../lib/ipc';
+import type { GitRefreshCause } from '../lib/git-refresh-coordinator';
+import {
+  estimateBlameBytes,
+  estimateFileDiffBytes,
+  ReviewPayloadCache,
+  type ReviewPayloadEviction,
+  type ReviewPayloadStats
+} from '../lib/review-payload-cache';
+import {
+  findReviewEntry,
+  isReviewEntryId,
+  reviewEntryId,
+  reviewEntryIdFrom,
+  reviewEntryPath,
+  reviewEntrySection,
+  type ReviewEntryId,
+  type ReviewEntrySection
+} from '../lib/review-entry';
 import { git } from './git.svelte';
 
 export type ReviewMode =
@@ -26,6 +49,15 @@ interface RepoContext {
   wslDistro?: string;
 }
 
+/** Immutable runtime-qualified scope for one review surface or action. */
+export type ReviewScope = WorktreeScope;
+
+export function createReviewScope(cwd: string, context: RepoContext = {}): ReviewScope {
+  return worktreeScope(cwd, context);
+}
+
+type ReviewTarget = string | ReviewScope;
+
 interface ChangesEntry {
   result: WorkingChangesResult | null;
   loading: boolean;
@@ -41,11 +73,6 @@ interface DiffEntry {
   generation: number;
 }
 
-interface ActiveSelection {
-  cwd: string;
-  filePath: string;
-}
-
 interface FileLinesEntry {
   lines: string[] | null;
   totalLines: number;
@@ -57,6 +84,7 @@ interface BlameEntry {
   // Sparse per-line attribution, indexed by new-side line number (1-based).
   // Slot 0 is unused so callers can read by lineNo directly without a -1.
   byLine: (BlameLine | undefined)[];
+  loaded: boolean;
   loading: boolean;
   error: string | null;
 }
@@ -65,7 +93,7 @@ const DEFAULT_CONTEXT_LINES = 3;
 
 const WT_MARKER = 'WT';
 
-class WorkingDiffStore {
+export class WorkingDiffStore {
   // Keyed by working-tree cwd (a session/worktree path), since selection
   // and diff caches are per-worktree, not per repoPath.
   changesByCwd = $state<Record<string, ChangesEntry>>({});
@@ -80,11 +108,7 @@ class WorkingDiffStore {
 
   // The path of the file currently being inspected, per-cwd. Persists across
   // refreshes so the user doesn't lose their place when files shuffle.
-  selectedByCwd = $state<Record<string, string>>({});
-
-  // The currently-mounted-in-the-UI selection. Drives auto-load of diffs
-  // and follows the active worktree.
-  active = $state<ActiveSelection | null>(null);
+  selectedByCwd = $state<Record<string, ReviewEntryId>>({});
 
   contextLines = $state<number>(DEFAULT_CONTEXT_LINES);
 
@@ -111,38 +135,47 @@ class WorkingDiffStore {
   // or the file's head moves.
   blamesByKey = $state<Record<string, BlameEntry>>({});
 
-  private contextByCwd = new Map<string, RepoContext>();
+  private currentIdentityByCwd = $state<Record<string, string>>({});
+  private contextByIdentity = new Map<string, RepoContext>();
+  // Keyed by immutable review identity, not cwd alone. A working-tree request
+  // already in flight must never satisfy a newly-selected commit range.
   private inflightChanges = new Map<string, Promise<WorkingChangesResult | null>>();
-  // Per-key in-flight diff fetches — selection clicks and the eager prefetch
+  private changesEpochByCwd = new Map<string, number>();
+  // Per-key in-flight diff fetches — selection clicks and viewport prefetch
   // share a single request when they hit the same file, so neither blocks
   // the other.
   private inflightDiffs = new Map<string, Promise<FileDiff | null>>();
   private inflightFileLines = new Map<string, Promise<FileLinesEntry>>();
   private inflightBlames = new Map<string, Promise<BlameEntry>>();
+  private reviewDemandByIdentity = new Map<string, number>();
   private detachers: Array<() => void> = [];
   private generationCounter = 0;
+  private contextEpoch = 0;
+  private prefetchEpochByCwd = new Map<string, number>();
+  private reviewPayloadCache = new ReviewPayloadCache();
   // `git diff HEAD` ignores the index, so stage/unstage events don't need a
   // diff-cache wipe — entries here mark the window during which we treat
   // change events as our own and skip the heavy refresh.
   private stageSuppressUntil = new Map<string, number>();
   private static readonly STAGE_SUPPRESS_MS = 1500;
-  // Cap eager prefetch on huge changesets. Beyond this we fall back to the
-  // lazy per-click load — the user is unlikely to click through 200+ files
-  // in a single review session anyway.
-  private static readonly PREFETCH_CAP = 200;
-  // How many diff fetches we allow in flight at the same time during prefetch.
-  // Higher numbers swamp WSL git startup; lower numbers leave the queue idle.
-  private static readonly PREFETCH_CONCURRENCY = 4;
+  // A review-wide Git patch is process-efficient, but materializing hundreds
+  // of FileDiff payloads still creates a large IPC and heap spike. The review
+  // viewport requests its resident window through this bounded batch.
+  private static readonly PREFETCH_CAP = 16;
 
   setContext(cwd: string, context: RepoContext): void {
     const trimmed = cwd.trim();
     if (!trimmed) return;
-    this.contextByCwd.set(trimmed, context);
+    const identity = worktreeIdentityKey(trimmed, context);
+    this.contextByIdentity.set(identity, { ...context });
+    if (this.currentIdentityByCwd[trimmed] === identity) return;
+    this.currentIdentityByCwd = { ...this.currentIdentityByCwd, [trimmed]: identity };
   }
 
-  changesFor(cwd: string): ChangesEntry {
+  changesFor(target: ReviewTarget): ChangesEntry {
+    const identity = this.identityFor(target);
     return (
-      this.changesByCwd[cwd] ?? {
+      this.changesByCwd[identity] ?? {
         result: null,
         loading: false,
         error: null
@@ -150,10 +183,11 @@ class WorkingDiffStore {
     );
   }
 
-  filteredChangesFor(cwd: string): WorkingChange[] {
-    const all = this.changesFor(cwd).result?.changes ?? [];
+  filteredChangesFor(target: ReviewTarget): WorkingChange[] {
+    const identity = this.identityFor(target);
+    const all = this.changesFor(target).result?.changes ?? [];
     const q = this.query.trim().toLowerCase();
-    const mode = this.reviewModeByCwd[cwd];
+    const mode = this.reviewModeByCwd[identity];
     const chipFilter = mode?.kind === 'range' ? mode.chipFilter : null;
     return all.filter((change) => {
       if (this.filter === 'staged' && !change.staged) return false;
@@ -172,96 +206,103 @@ class WorkingDiffStore {
     });
   }
 
-  selectedFilePath(cwd: string): string | null {
-    return this.selectedByCwd[cwd] ?? null;
+  selectedFilePath(target: ReviewTarget): string | null {
+    const selected = this.selectedByCwd[this.identityFor(target)];
+    return selected ? reviewEntryPath(selected) : null;
   }
 
-  reviewModeFor(cwd: string): ReviewMode {
-    return this.reviewModeByCwd[cwd] ?? { kind: 'working-tree' };
+  selectedReviewEntry(target: ReviewTarget): ReviewEntryId | null {
+    return this.selectedByCwd[this.identityFor(target)] ?? null;
   }
 
-  setReviewMode(cwd: string, mode: ReviewMode): void {
-    const trimmed = cwd.trim();
+  reviewModeFor(target: ReviewTarget): ReviewMode {
+    return this.reviewModeByCwd[this.identityFor(target)] ?? { kind: 'working-tree' };
+  }
+
+  setReviewMode(target: ReviewTarget, mode: ReviewMode): void {
+    const { cwd: trimmed, identity } = this.resolveTarget(target);
     if (!trimmed) return;
-    const prev = this.reviewModeByCwd[trimmed] ?? { kind: 'working-tree' };
+    const prev = this.reviewModeByCwd[identity] ?? { kind: 'working-tree' };
     // Identity-by-content guard: a no-op set (re-applying the same mode)
     // shouldn't blow caches or refresh.
     if (sameReviewMode(prev, mode)) return;
     if (mode.kind === 'working-tree') {
       const next = { ...this.reviewModeByCwd };
-      delete next[trimmed];
+      delete next[identity];
       this.reviewModeByCwd = next;
     } else {
-      this.reviewModeByCwd = { ...this.reviewModeByCwd, [trimmed]: mode };
+      this.reviewModeByCwd = { ...this.reviewModeByCwd, [identity]: mode };
     }
     // The set of files in view + the per-file diff payload both change when
     // mode flips. Drop both caches scoped to this cwd so the next read fetches
     // fresh content under the new mode's keys.
-    this.invalidate(trimmed);
+    this.invalidate(target);
     // Reset filter to 'all' on mode change — 'staged'/'unstaged' don't make
     // sense in range mode, and 'wt'/'committed' don't in working-tree mode.
     this.filter = 'all';
   }
 
-  clearReviewMode(cwd: string): void {
-    this.setReviewMode(cwd, { kind: 'working-tree' });
+  clearReviewMode(target: ReviewTarget): void {
+    this.setReviewMode(target, { kind: 'working-tree' });
   }
 
-  setChipFilter(cwd: string, sha: string | null): void {
-    const mode = this.reviewModeByCwd[cwd];
+  setChipFilter(target: ReviewTarget, sha: string | null): void {
+    const identity = this.identityFor(target);
+    const mode = this.reviewModeByCwd[identity];
     if (!mode || mode.kind !== 'range') return;
     if (mode.chipFilter === sha) return;
     this.reviewModeByCwd = {
       ...this.reviewModeByCwd,
-      [cwd]: { ...mode, chipFilter: sha }
+      [identity]: { ...mode, chipFilter: sha }
     };
   }
 
-  setIncludeWorkingTree(cwd: string, include: boolean): void {
-    const mode = this.reviewModeByCwd[cwd];
+  setIncludeWorkingTree(target: ReviewTarget, include: boolean): void {
+    const identity = this.identityFor(target);
+    const mode = this.reviewModeByCwd[identity];
     if (!mode || mode.kind !== 'range') return;
     if (mode.includeWorkingTree === include) return;
     this.reviewModeByCwd = {
       ...this.reviewModeByCwd,
-      [cwd]: { ...mode, includeWorkingTree: include }
+      [identity]: { ...mode, includeWorkingTree: include }
     };
   }
 
   // Compose the diffs cache key. Mode-aware so working-tree-vs-HEAD and a
   // base..head range diff for the same file can co-exist in the cache.
-  diffKey(cwd: string, filePath: string, base?: string | null, head?: string | null): string {
-    return `${cwd}::${filePath}::${base ?? WT_MARKER}::${head ?? WT_MARKER}`;
+  diffKey(target: ReviewTarget, filePath: string, base?: string | null, head?: string | null): string {
+    return this.diffKeyForIdentity(this.identityFor(target), filePath, base, head);
   }
 
   // Pick the appropriate base/head for the given file under the current mode.
   // WT-only mode and the WT section of a range mode both render the same
   // working-tree diff (and share the same cache key).
-  diffKeyForFile(cwd: string, change: WorkingChange): string {
+  diffKeyForFile(target: ReviewTarget, change: WorkingChange): string {
     if (change.section === 'committed') {
-      const mode = this.reviewModeByCwd[cwd];
+      const mode = this.reviewModeByCwd[this.identityFor(target)];
       if (mode && mode.kind === 'range') {
-        return this.diffKey(cwd, change.path, mode.base, mode.head);
+        return this.diffKey(target, change.path, mode.base, mode.head);
       }
     }
-    return this.diffKey(cwd, change.path);
+    return this.diffKey(target, change.path);
   }
 
-  diffEntryFor(cwd: string, filePath: string, base?: string | null, head?: string | null): DiffEntry {
+  diffEntryFor(target: ReviewTarget, filePath: string, base?: string | null, head?: string | null): DiffEntry {
     let resolvedBase = base ?? null;
     let resolvedHead = head ?? null;
     // When base/head aren't explicitly supplied, infer the right (base, head)
     // from the change's section so committed-section files in range mode hit
     // their range cache slot rather than the empty WT slot.
     if (resolvedBase === null && resolvedHead === null) {
-      const change = this.changesFor(cwd).result?.changes.find((c) => c.path === filePath);
-      const mode = this.reviewModeByCwd[cwd];
+      const change = this.changesFor(target).result?.changes.find((c) => c.path === filePath);
+      const mode = this.reviewModeByCwd[this.identityFor(target)];
       if (change?.section === 'committed' && mode?.kind === 'range') {
         resolvedBase = mode.base;
         resolvedHead = mode.head;
       }
     }
     return (
-      this.diffsByKey[this.diffKey(cwd, filePath, resolvedBase, resolvedHead)] ?? {
+      this.diffsByKey[this.diffKey(target, filePath, resolvedBase, resolvedHead)] ?? {
         diff: null,
         loading: false,
         error: null,
@@ -270,18 +311,84 @@ class WorkingDiffStore {
     );
   }
 
-  setActive(active: ActiveSelection | null): void {
-    this.active = active;
+  setReviewResidents(target: ReviewTarget | null, filePaths: Iterable<string>): void {
+    this.applyReviewPayloadEvictions(
+      this.reviewPayloadCache.setResidents(target ? this.identityFor(target) : null, filePaths)
+    );
   }
 
-  setSelected(cwd: string, filePath: string | null): void {
+  reviewPayloadStats(): ReviewPayloadStats {
+    return this.reviewPayloadCache.stats();
+  }
+
+  /**
+   * Acquires visible Review Surface demand for one Worktree Identity.
+   * The first owner refreshes once; the final release stops Git-tick refresh,
+   * rejects late materialization, and releases payload residency.
+   */
+  acquireReviewDemand(scope: ReviewScope): () => void {
+    const { identity } = this.resolveTarget(scope);
+    this.setContext(scope.cwd, scope);
+    const previous = this.reviewDemandByIdentity.get(identity) ?? 0;
+    this.reviewDemandByIdentity.set(identity, previous + 1);
+    if (previous === 0) void this.loadChanges(scope);
+
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const current = this.reviewDemandByIdentity.get(identity) ?? 0;
+      if (current > 1) {
+        this.reviewDemandByIdentity.set(identity, current - 1);
+        return;
+      }
+      this.reviewDemandByIdentity.delete(identity);
+      this.suspendReviewDemand(identity);
+      if (this.reviewDemandByIdentity.size === 0) this.setReviewResidents(null, []);
+    };
+  }
+
+  setSelected(
+    target: ReviewTarget,
+    filePath: string | null,
+    section?: ReviewEntrySection
+  ): void {
+    const identity = this.identityFor(target);
     if (filePath === null) {
       const next = { ...this.selectedByCwd };
-      delete next[cwd];
+      delete next[identity];
       this.selectedByCwd = next;
       return;
     }
-    this.selectedByCwd = { ...this.selectedByCwd, [cwd]: filePath };
+    const mode = this.reviewModeFor(target);
+    const current = this.selectedByCwd[identity];
+    if (
+      current &&
+      reviewEntryPath(current) === filePath &&
+      (!section || current === reviewEntryIdFrom(filePath, section, mode))
+    ) return;
+    const changes = this.changesFor(target).result?.changes ?? [];
+    const match = section
+      ? changes.find(
+          (change) => change.path === filePath && reviewEntrySection(change) === section
+        )
+      : changes.find((change) => change.path === filePath);
+    const entryId = match
+      ? reviewEntryId(match, mode)
+      : reviewEntryIdFrom(filePath, section ?? 'wt', mode);
+    this.selectedByCwd = { ...this.selectedByCwd, [identity]: entryId };
+  }
+
+  setSelectedEntry(target: ReviewTarget, change: WorkingChange | null): void {
+    if (!change) {
+      this.setSelected(target, null);
+      return;
+    }
+    const identity = this.identityFor(target);
+    this.selectedByCwd = {
+      ...this.selectedByCwd,
+      [identity]: reviewEntryId(change, this.reviewModeFor(target))
+    };
   }
 
   // Fetch the working-tree changes for a worktree. Coalesces concurrent
@@ -290,33 +397,39 @@ class WorkingDiffStore {
   // for the active base..head and merges both lists into a single result;
   // each entry carries `section` ('wt' | 'committed') so the UI can split
   // them under separate headers.
-  async loadChanges(cwd: string): Promise<WorkingChangesResult | null> {
-    const trimmed = cwd.trim();
+  async loadChanges(
+    target: ReviewTarget,
+    observedWorkingTree?: WorkingChangesResult
+  ): Promise<WorkingChangesResult | null> {
+    const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(target);
     if (!trimmed) return null;
-    const inflight = this.inflightChanges.get(trimmed);
+    const mode = this.reviewModeByCwd[identity];
+    const requestKey = changesRequestKey(identity, mode, ctx);
+    const inflight = this.inflightChanges.get(requestKey);
     if (inflight) return inflight;
 
-    const ctx = this.contextByCwd.get(trimmed) ?? {};
-    const previous = this.changesByCwd[trimmed];
+    const epoch = this.changesEpochByCwd.get(identity) ?? 0;
+    const previous = this.changesByCwd[identity];
     this.changesByCwd = {
       ...this.changesByCwd,
-      [trimmed]: {
+      [identity]: {
         result: previous?.result ?? null,
         loading: true,
         error: null
       }
     };
 
-    const mode = this.reviewModeByCwd[trimmed];
     const fetchWt = !mode || mode.kind !== 'range' || mode.includeWorkingTree;
     const fetchRange = mode?.kind === 'range';
 
     const wtPromise = fetchWt
-      ? ipc.git.workingChanges({
+      ? observedWorkingTree
+        ? Promise.resolve(observedWorkingTree)
+        : ipc.git.workingChanges({
           cwd: trimmed,
           ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
           ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
-        })
+          })
       : Promise.resolve<WorkingChangesResult>({
           repoPath: previous?.result?.repoPath ?? null,
           isRepo: previous?.result?.isRepo ?? true,
@@ -345,25 +458,29 @@ class WorkingDiffStore {
           isRepo: wt.isRepo || (previous?.result?.isRepo ?? false),
           changes: merged
         };
+        if ((this.changesEpochByCwd.get(identity) ?? 0) !== epoch) return result;
         this.changesByCwd = {
           ...this.changesByCwd,
-          [trimmed]: { result, loading: false, error: null }
+          [identity]: { result, loading: false, error: null }
         };
         // If the currently-selected file disappeared, clear it so the diff
         // pane doesn't show stale content. Pick the first available change
         // as a fallback so the user can keep reviewing.
-        const selected = this.selectedByCwd[trimmed];
-        if (selected && !merged.some((c) => c.path === selected)) {
-          const fallback = merged[0]?.path ?? null;
-          this.setSelected(trimmed, fallback);
+        const selected = this.selectedByCwd[identity];
+        if (selected && !findReviewEntry(merged, selected, mode)) {
+          const next = { ...this.selectedByCwd };
+          if (merged[0]) next[identity] = reviewEntryId(merged[0], mode ?? { kind: 'working-tree' });
+          else delete next[identity];
+          this.selectedByCwd = next;
         }
         return result;
       })
       .catch((err: unknown) => {
+        if ((this.changesEpochByCwd.get(identity) ?? 0) !== epoch) return null;
         const message = err instanceof Error ? err.message : String(err);
         this.changesByCwd = {
           ...this.changesByCwd,
-          [trimmed]: {
+          [identity]: {
             result: previous?.result ?? null,
             loading: false,
             error: message
@@ -372,29 +489,40 @@ class WorkingDiffStore {
         return null;
       })
       .finally(() => {
-        if (this.inflightChanges.get(trimmed) === request) {
-          this.inflightChanges.delete(trimmed);
+        if (this.inflightChanges.get(requestKey) === request) {
+          this.inflightChanges.delete(requestKey);
         }
       });
 
-    this.inflightChanges.set(trimmed, request);
+    this.inflightChanges.set(requestKey, request);
     return request;
   }
 
-  async loadDiff(cwd: string, filePath: string): Promise<FileDiff | null> {
-    const trimmedCwd = cwd.trim();
+  async loadDiff(
+    target: ReviewTarget,
+    filePath: string,
+    section?: ReviewEntrySection
+  ): Promise<FileDiff | null> {
+    const { cwd: trimmedCwd, identity } = this.resolveTarget(target);
     if (!trimmedCwd || !filePath) return null;
     // Selection lives at (cwd, path) granularity; the section discriminator
     // determines which base/head pair to fetch. Resolve the section from the
     // changes list, then key everything by the full quadruple.
-    const change = this.changesFor(trimmedCwd).result?.changes.find(
-      (c) => c.path === filePath
-    );
-    const mode = this.reviewModeByCwd[trimmedCwd];
+    const changes = this.changesFor(target).result?.changes ?? [];
+    const selected = this.selectedByCwd[identity];
+    const mode = this.reviewModeFor(target);
+    const change = section
+      ? changes.find(
+          (candidate) =>
+            candidate.path === filePath && reviewEntrySection(candidate) === section
+        )
+      : selected && reviewEntryPath(selected) === filePath
+        ? findReviewEntry(changes, selected, mode)
+        : changes.find((candidate) => candidate.path === filePath);
     const isCommitted = change?.section === 'committed';
-    const base = isCommitted && mode?.kind === 'range' ? mode.base : null;
-    const head = isCommitted && mode?.kind === 'range' ? mode.head : null;
-    const key = this.diffKey(trimmedCwd, filePath, base, head);
+    const base = isCommitted && mode.kind === 'range' ? mode.base : null;
+    const head = isCommitted && mode.kind === 'range' ? mode.head : null;
+    const key = this.diffKey(target, filePath, base, head);
 
     // If another caller is already fetching this exact file, ride along on
     // their promise. Selection clicks and the eager prefetch all funnel
@@ -406,9 +534,24 @@ class WorkingDiffStore {
     // or context-lines change). Return immediately so re-mounting the
     // component or re-entering the effect costs nothing.
     const cached = this.diffsByKey[key];
-    if (cached?.diff && !cached.error) return cached.diff;
+    if (cached?.diff && !cached.error) {
+      this.reviewPayloadCache.touch('diff', key);
+      return cached.diff;
+    }
 
-    const promise = this.fetchDiff(trimmedCwd, filePath, key, change, base, head);
+    const pinKey = change
+      ? reviewEntryId(change, mode)
+      : reviewEntryIdFrom(filePath, base && head ? 'committed' : 'wt', mode);
+    const promise = this.fetchDiff(
+      trimmedCwd,
+      identity,
+      filePath,
+      key,
+      change,
+      base,
+      head,
+      pinKey
+    );
     this.inflightDiffs.set(key, promise);
     void promise.finally(() => {
       if (this.inflightDiffs.get(key) === promise) {
@@ -420,13 +563,15 @@ class WorkingDiffStore {
 
   private async fetchDiff(
     trimmedCwd: string,
+    identity: string,
     filePath: string,
     key: string,
     change: WorkingChange | undefined,
     base: string | null,
-    head: string | null
+    head: string | null,
+    pinKey: ReviewEntryId
   ): Promise<FileDiff | null> {
-    const ctx = this.contextByCwd.get(trimmedCwd) ?? {};
+    const ctx = this.contextByIdentity.get(identity) ?? {};
     const generation = ++this.generationCounter;
     const previous = this.diffsByKey[key];
     this.diffsByKey = {
@@ -452,16 +597,25 @@ class WorkingDiffStore {
         ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
       });
       const current = this.diffsByKey[key];
-      if (current && current.generation !== generation) return diff;
+      if (current?.generation !== generation) return diff;
       this.diffsByKey = {
         ...this.diffsByKey,
         [key]: { diff, loading: false, error: null, generation }
       };
+      this.applyReviewPayloadEvictions(
+        this.reviewPayloadCache.remember({
+          kind: 'diff',
+          key,
+          cwd: identity,
+          pinKey,
+          bytes: estimateFileDiffBytes(diff)
+        })
+      );
       return diff;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const current = this.diffsByKey[key];
-      if (current && current.generation !== generation) return null;
+      if (current?.generation !== generation) return null;
       this.diffsByKey = {
         ...this.diffsByKey,
         [key]: {
@@ -475,59 +629,162 @@ class WorkingDiffStore {
     }
   }
 
-  // Eagerly fetch every file's diff so cross-file clicks are instant. Each
-  // worker pulls from a shared queue and calls `loadDiff`, which dedupes
-  // against the selection-driven fetch and any cache hits. Failures are
-  // swallowed at the per-file level so one bad file can't stall the rest.
-  async prefetchDiffs(cwd: string): Promise<void> {
-    const trimmed = cwd.trim();
+  // Materialize tracked diffs at review granularity. Working-tree and commit-
+  // range files need distinct Git ranges, but each group costs one Git process
+  // instead of one process (plus WSL repository discovery) per file.
+  // Untracked files stay lazy because Git cannot batch `--no-index` pairs.
+  async prefetchDiffs(target: ReviewTarget, entryIds?: Iterable<string>): Promise<void> {
+    const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(target);
     if (!trimmed) return;
-    const changes = this.changesFor(trimmed).result?.changes;
+    const changes = this.changesFor(target).result?.changes;
     if (!changes?.length) return;
+    const mode = this.reviewModeFor(target);
+    const contextLines = this.contextLines;
+    const contextEpoch = this.contextEpoch;
+    const epoch = this.prefetchEpochByCwd.get(identity) ?? 0;
+    const requested = entryIds ? Array.from(new Set(entryIds)) : null;
+    const selectedEntry = this.selectedByCwd[identity];
+    const orderedChanges = requested
+      ? requested
+          .map((identity) =>
+            isReviewEntryId(identity)
+              ? findReviewEntry(changes, identity, mode)
+              : changes.find((change) => change.path === identity)
+          )
+          .filter((change): change is WorkingChange => Boolean(change))
+      : [
+          ...(selectedEntry
+            ? changes.filter((change) => reviewEntryId(change, mode) === selectedEntry)
+            : []),
+          ...changes.filter((change) => reviewEntryId(change, mode) !== selectedEntry)
+        ];
+    const candidates = orderedChanges
+      .slice(0, WorkingDiffStore.PREFETCH_CAP)
+      .filter((change) => change.kind !== 'untracked');
 
-    const queue = changes.slice(0, WorkingDiffStore.PREFETCH_CAP).map((c) => c.path);
-    // The active file is the one the user is staring at — fetch it first so
-    // a re-prime triggered mid-review refreshes their view ahead of every-
-    // thing else.
-    const activePath = this.active?.cwd === trimmed ? this.active.filePath : null;
-    if (activePath) {
-      const idx = queue.indexOf(activePath);
-      if (idx > 0) {
-        queue.splice(idx, 1);
-        queue.unshift(activePath);
+    const loadGroup = async (
+      group: WorkingChange[],
+      base: string | null,
+      head: string | null
+    ): Promise<void> => {
+      const pending = group.filter((change) => {
+        const key = this.diffKeyForIdentity(identity, change.path, base, head);
+        return !this.diffsByKey[key]?.diff && !this.inflightDiffs.has(key);
+      });
+      if (pending.length === 0) return;
+      const batchRequest = ipc.git.reviewDiffs({
+        cwd: trimmed,
+        files: pending.map((change) => ({
+          path: change.path,
+          ...(change.fromPath ? { fromPath: change.fromPath } : {})
+        })),
+        contextLines,
+        ...(base ? { base } : {}),
+        ...(head ? { head } : {}),
+        ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+      });
+      // Register each batch member before yielding. Overlapping viewport
+      // effects now join these promises, and a direct selected-file request
+      // joins the same Git process instead of starting a duplicate command.
+      const memberRequests = new Map<string, Promise<FileDiff | null>>();
+      for (const change of pending) {
+        const key = this.diffKeyForIdentity(identity, change.path, base, head);
+        const member = batchRequest
+          .then((diffs) => diffs.find((diff) => diff.path === change.path) ?? null)
+          .catch(() => null);
+        memberRequests.set(key, member);
+        this.inflightDiffs.set(key, member);
       }
-    }
-    const concurrency = Math.min(WorkingDiffStore.PREFETCH_CONCURRENCY, queue.length);
-    const next = async (): Promise<void> => {
-      while (queue.length > 0) {
-        const filePath = queue.shift();
-        if (!filePath) return;
-        try {
-          await this.loadDiff(trimmed, filePath);
-        } catch {
-          // per-file failure is non-fatal; the entry stores the error
+
+      try {
+        const diffs = await batchRequest;
+        if (
+          contextEpoch !== this.contextEpoch ||
+          epoch !== (this.prefetchEpochByCwd.get(identity) ?? 0) ||
+          contextLines !== this.contextLines
+        ) return;
+
+        const next = { ...this.diffsByKey };
+        let changed = false;
+        const remembered: Array<{ key: string; pinKey: ReviewEntryId; diff: FileDiff }> = [];
+        for (const diff of diffs) {
+          const key = this.diffKeyForIdentity(identity, diff.path, base, head);
+          const owner = memberRequests.get(key);
+          if (!owner || this.inflightDiffs.get(key) !== owner || next[key]?.diff) continue;
+          next[key] = {
+            diff,
+            loading: false,
+            error: null,
+            generation: ++this.generationCounter
+          };
+          const source = group.find((change) => change.path === diff.path);
+          remembered.push({
+            key,
+            pinKey: source
+              ? reviewEntryId(source, mode)
+              : reviewEntryIdFrom(diff.path, base && head ? 'committed' : 'wt', mode),
+            diff
+          });
+          changed = true;
+        }
+        if (changed) {
+          this.diffsByKey = next;
+          const evictions: ReviewPayloadEviction[] = [];
+          for (const item of remembered) {
+            evictions.push(
+              ...this.reviewPayloadCache.remember({
+                kind: 'diff',
+                key: item.key,
+                cwd: identity,
+                pinKey: item.pinKey,
+                bytes: estimateFileDiffBytes(item.diff)
+              })
+            );
+          }
+          this.applyReviewPayloadEvictions(evictions);
+        }
+      } finally {
+        for (const [key, owner] of memberRequests) {
+          if (this.inflightDiffs.get(key) === owner) this.inflightDiffs.delete(key);
         }
       }
     };
-    await Promise.all(Array.from({ length: concurrency }, () => next()));
+
+    const workingTree = candidates.filter((change) => change.section !== 'committed');
+    const committed = candidates.filter((change) => change.section === 'committed');
+    await Promise.all([
+      loadGroup(workingTree, null, null),
+      mode?.kind === 'range'
+        ? loadGroup(committed, mode.base, mode.head)
+        : Promise.resolve()
+    ]);
   }
 
-  fileLinesKey(cwd: string, filePath: string, startLine: number, endLine: number): string {
-    // The trailing head-marker keeps WT-mode gaps and range-mode gaps in
-    // separate cache slots. Range mode reads the same on-disk content today
-    // but the key shape is forward-compatible with a `--at <head>` fetch.
-    const mode = this.reviewModeByCwd[cwd];
-    const headMarker = mode?.kind === 'range' ? mode.head : WT_MARKER;
-    return `${cwd}::${filePath}::${startLine}-${endLine}::${headMarker}`;
+  fileLinesKey(
+    target: ReviewTarget,
+    filePath: string,
+    startLine: number,
+    endLine: number,
+    revision = 'HEAD'
+  ): string {
+    return this.fileLinesKeyForIdentity(
+      this.identityFor(target),
+      filePath,
+      startLine,
+      endLine,
+      revision
+    );
   }
 
   fileLinesEntry(
-    cwd: string,
+    target: ReviewTarget,
     filePath: string,
     startLine: number,
-    endLine: number
+    endLine: number,
+    revision = 'HEAD'
   ): FileLinesEntry {
-    const key = this.fileLinesKey(cwd, filePath, startLine, endLine);
+    const key = this.fileLinesKey(target, filePath, startLine, endLine, revision);
     return (
       this.fileLinesByKey[key] ?? {
         lines: null,
@@ -539,30 +796,34 @@ class WorkingDiffStore {
   }
 
   async loadFileLines(
-    cwd: string,
+    target: ReviewTarget,
     filePath: string,
     startLine: number,
-    endLine: number
+    endLine: number,
+    revision = 'HEAD'
   ): Promise<FileLinesEntry> {
-    const trimmed = cwd.trim();
+    const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(target);
     const idle: FileLinesEntry = { lines: null, totalLines: 0, loading: false, error: null };
     if (!trimmed || !filePath || startLine > endLine) return idle;
-    const key = this.fileLinesKey(trimmed, filePath, startLine, endLine);
+    const key = this.fileLinesKeyForIdentity(identity, filePath, startLine, endLine, revision);
     const existing = this.fileLinesByKey[key];
     if (existing?.lines) return existing;
     const inflight = this.inflightFileLines.get(key);
     if (inflight) return inflight;
 
-    const ctx = this.contextByCwd.get(trimmed) ?? {};
     this.fileLinesByKey = {
       ...this.fileLinesByKey,
       [key]: { lines: null, totalLines: 0, loading: true, error: null }
     };
 
-    const request = ipc.git
+    let request!: Promise<FileLinesEntry>;
+    request = ipc.git
       .fileLines({
         cwd: trimmed,
         path: filePath,
+        revision: revision === 'HEAD'
+          ? { kind: 'head' }
+          : { kind: 'commit', sha: revision },
         startLine,
         endLine,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
@@ -575,7 +836,9 @@ class WorkingDiffStore {
           loading: false,
           error: null
         };
-        this.fileLinesByKey = { ...this.fileLinesByKey, [key]: entry };
+        if (this.inflightFileLines.get(key) === request) {
+          this.fileLinesByKey = { ...this.fileLinesByKey, [key]: entry };
+        }
         return entry;
       })
       .catch((err: unknown): FileLinesEntry => {
@@ -586,7 +849,9 @@ class WorkingDiffStore {
           loading: false,
           error: message
         };
-        this.fileLinesByKey = { ...this.fileLinesByKey, [key]: entry };
+        if (this.inflightFileLines.get(key) === request) {
+          this.fileLinesByKey = { ...this.fileLinesByKey, [key]: entry };
+        }
         return entry;
       })
       .finally(() => {
@@ -599,37 +864,49 @@ class WorkingDiffStore {
     return request;
   }
 
-  blameKey(cwd: string, filePath: string, head: string): string {
-    return `${cwd}::${filePath}::${head}`;
+  blameKey(target: ReviewTarget, filePath: string, head: string): string {
+    return this.blameKeyForIdentity(this.identityFor(target), filePath, head);
   }
 
-  blameEntry(cwd: string, filePath: string, head: string): BlameEntry {
+  blameEntry(target: ReviewTarget, filePath: string, head: string): BlameEntry {
+    const key = this.blameKey(target, filePath, head);
+    this.reviewPayloadCache.touch('blame', key);
     return (
-      this.blamesByKey[this.blameKey(cwd, filePath, head)] ?? {
+      this.blamesByKey[key] ?? {
         byLine: [],
+        loaded: false,
         loading: false,
         error: null
       }
     );
   }
 
-  async loadBlame(cwd: string, filePath: string, head: string): Promise<BlameEntry> {
-    const trimmed = cwd.trim();
-    const idle: BlameEntry = { byLine: [], loading: false, error: null };
+  async loadBlame(target: ReviewTarget, filePath: string, head: string): Promise<BlameEntry> {
+    const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(target);
+    const idle: BlameEntry = { byLine: [], loaded: false, loading: false, error: null };
     if (!trimmed || !filePath || !head) return idle;
-    const key = this.blameKey(trimmed, filePath, head);
+    const key = this.blameKeyForIdentity(identity, filePath, head);
+    const mode = this.reviewModeByCwd[identity] ?? { kind: 'working-tree' as const };
     const existing = this.blamesByKey[key];
-    if (existing && !existing.error && existing.byLine.length > 0) return existing;
+    if (existing?.loaded && !existing.error) {
+      this.reviewPayloadCache.touch('blame', key);
+      return existing;
+    }
     const inflight = this.inflightBlames.get(key);
     if (inflight) return inflight;
 
-    const ctx = this.contextByCwd.get(trimmed) ?? {};
     this.blamesByKey = {
       ...this.blamesByKey,
-      [key]: { byLine: existing?.byLine ?? [], loading: true, error: null }
+      [key]: {
+        byLine: existing?.byLine ?? [],
+        loaded: existing?.loaded ?? false,
+        loading: true,
+        error: null
+      }
     };
 
-    const request = ipc.git
+    let request!: Promise<BlameEntry>;
+    request = ipc.git
       .fileBlame({
         cwd: trimmed,
         path: filePath,
@@ -642,18 +919,32 @@ class WorkingDiffStore {
         for (const line of result.lines) {
           byLine[line.lineNo] = line;
         }
-        const entry: BlameEntry = { byLine, loading: false, error: null };
-        this.blamesByKey = { ...this.blamesByKey, [key]: entry };
+        const entry: BlameEntry = { byLine, loaded: true, loading: false, error: null };
+        if (this.inflightBlames.get(key) === request) {
+          this.blamesByKey = { ...this.blamesByKey, [key]: entry };
+          this.applyReviewPayloadEvictions(
+            this.reviewPayloadCache.remember({
+              kind: 'blame',
+              key,
+              cwd: identity,
+              pinKey: reviewEntryIdFrom(filePath, 'committed', mode),
+              bytes: estimateBlameBytes(byLine)
+            })
+          );
+        }
         return entry;
       })
       .catch((err: unknown): BlameEntry => {
         const message = err instanceof Error ? err.message : String(err);
         const entry: BlameEntry = {
           byLine: existing?.byLine ?? [],
+          loaded: existing?.loaded ?? false,
           loading: false,
           error: message
         };
-        this.blamesByKey = { ...this.blamesByKey, [key]: entry };
+        if (this.inflightBlames.get(key) === request) {
+          this.blamesByKey = { ...this.blamesByKey, [key]: entry };
+        }
         return entry;
       })
       .finally(() => {
@@ -673,17 +964,17 @@ class WorkingDiffStore {
   // intersected with the active reviewMode's selected commits so chips never
   // surface SHAs the user didn't pick.
   attributedCommitsFor(
-    cwd: string,
+    target: ReviewTarget,
     filePath: string,
     head: string,
     side: 'old' | 'new',
     startLine: number,
     endLine: number
   ): string[] {
-    const mode = this.reviewModeByCwd[cwd];
+    const mode = this.reviewModeByCwd[this.identityFor(target)];
     if (!mode || mode.kind !== 'range') return [];
     const selected = new Set(mode.commits.map((c) => c.hash));
-    const blame = this.blameEntry(cwd, filePath, head).byLine;
+    const blame = this.blameEntry(target, filePath, head).byLine;
     if (blame.length === 0) return [];
 
     const newLines: number[] = [];
@@ -693,7 +984,7 @@ class WorkingDiffStore {
       // Map old-side lines through the diff. Only context rows carry both
       // sides, so we mostly recover pairs there; remove-only lines have no
       // new-side counterpart and are intentionally dropped.
-      const diff = this.diffEntryFor(cwd, filePath, mode.base, mode.head).diff;
+      const diff = this.diffEntryFor(target, filePath, mode.base, mode.head).diff;
       if (!diff) return [];
       for (const hunk of diff.hunks) {
         for (const line of hunk.lines) {
@@ -717,16 +1008,15 @@ class WorkingDiffStore {
     return out;
   }
 
-  async stageFiles(cwd: string, paths: string[]): Promise<void> {
-    const trimmed = cwd.trim();
+  async stageFiles(scope: ReviewScope, paths: string[]): Promise<void> {
+    const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(scope);
     if (!trimmed || !paths.length) return;
-    const previous = this.applyStagedLocally(trimmed, paths, true);
-    this.markPending(trimmed, paths, true);
+    const previous = this.applyStagedLocally(identity, paths, true);
+    this.markPending(identity, paths, true);
     this.stageSuppressUntil.set(
-      trimmed,
+      identity,
       Date.now() + WorkingDiffStore.STAGE_SUPPRESS_MS
     );
-    const ctx = this.contextByCwd.get(trimmed) ?? {};
     try {
       await ipc.git.stageFiles({
         cwd: trimmed,
@@ -735,23 +1025,22 @@ class WorkingDiffStore {
         ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
       });
     } catch (err) {
-      if (previous) this.restoreStagedLocally(trimmed, previous);
+      if (previous) this.restoreStagedLocally(identity, previous);
       throw err;
     } finally {
-      this.markPending(trimmed, paths, false);
+      this.markPending(identity, paths, false);
     }
   }
 
-  async unstageFiles(cwd: string, paths: string[]): Promise<void> {
-    const trimmed = cwd.trim();
+  async unstageFiles(scope: ReviewScope, paths: string[]): Promise<void> {
+    const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(scope);
     if (!trimmed || !paths.length) return;
-    const previous = this.applyStagedLocally(trimmed, paths, false);
-    this.markPending(trimmed, paths, true);
+    const previous = this.applyStagedLocally(identity, paths, false);
+    this.markPending(identity, paths, true);
     this.stageSuppressUntil.set(
-      trimmed,
+      identity,
       Date.now() + WorkingDiffStore.STAGE_SUPPRESS_MS
     );
-    const ctx = this.contextByCwd.get(trimmed) ?? {};
     try {
       await ipc.git.unstageFiles({
         cwd: trimmed,
@@ -760,19 +1049,29 @@ class WorkingDiffStore {
         ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
       });
     } catch (err) {
-      if (previous) this.restoreStagedLocally(trimmed, previous);
+      if (previous) this.restoreStagedLocally(identity, previous);
       throw err;
     } finally {
-      this.markPending(trimmed, paths, false);
+      this.markPending(identity, paths, false);
     }
   }
 
-  async discardFiles(cwd: string, files: WorkingChange[]): Promise<void> {
-    const trimmed = cwd.trim();
-    if (!trimmed || !files.length) return;
+  async discardEntries(scope: ReviewScope, entryIds: Iterable<ReviewEntryId>): Promise<void> {
+    const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(scope);
+    if (!trimmed) return;
+    const ids = Array.from(new Set(entryIds));
+    if (!ids.length) return;
+    const mode = this.reviewModeByCwd[identity] ?? { kind: 'working-tree' as const };
+    const snapshot = this.changesByCwd[identity]?.result?.changes ?? [];
+    const files = ids.map((entryId) => {
+      const entry = findReviewEntry(snapshot, entryId, mode);
+      if (!entry || entry.section === 'committed') {
+        throw new Error(`Cannot discard stale or non-working-tree entry: ${entryId}`);
+      }
+      return entry;
+    });
     const paths = files.map((f) => f.path);
-    this.markPending(trimmed, paths, true);
-    const ctx = this.contextByCwd.get(trimmed) ?? {};
+    this.markPending(identity, paths, true);
     try {
       await ipc.git.discardFiles({
         cwd: trimmed,
@@ -785,20 +1084,20 @@ class WorkingDiffStore {
         ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
       });
     } finally {
-      this.markPending(trimmed, paths, false);
+      this.markPending(identity, paths, false);
     }
   }
 
-  isStagePending(cwd: string, path: string): boolean {
-    return this.pendingStage[`${cwd}::${path}`] === true;
+  isStagePending(target: ReviewTarget, path: string): boolean {
+    return this.pendingStage[`${this.identityFor(target)}::${path}`] === true;
   }
 
-  private markPending(cwd: string, paths: string[], pending: boolean): void {
+  private markPending(identity: string, paths: string[], pending: boolean): void {
     if (!paths.length) return;
     const next = { ...this.pendingStage };
     let touched = false;
     for (const p of paths) {
-      const key = `${cwd}::${p}`;
+      const key = `${identity}::${p}`;
       if (pending) {
         if (next[key] !== true) {
           next[key] = true;
@@ -813,11 +1112,11 @@ class WorkingDiffStore {
   }
 
   private applyStagedLocally(
-    cwd: string,
+    identity: string,
     paths: string[],
     staged: boolean
   ): Map<string, boolean> | null {
-    const entry = this.changesByCwd[cwd];
+    const entry = this.changesByCwd[identity];
     if (!entry?.result) return null;
     const pathSet = new Set(paths);
     const previous = new Map<string, boolean>();
@@ -832,7 +1131,7 @@ class WorkingDiffStore {
     if (!touched) return null;
     this.changesByCwd = {
       ...this.changesByCwd,
-      [cwd]: {
+      [identity]: {
         ...entry,
         result: { ...entry.result, changes: newChanges }
       }
@@ -840,15 +1139,15 @@ class WorkingDiffStore {
     return previous;
   }
 
-  private restoreStagedLocally(cwd: string, previous: Map<string, boolean>): void {
-    const entry = this.changesByCwd[cwd];
+  private restoreStagedLocally(identity: string, previous: Map<string, boolean>): void {
+    const entry = this.changesByCwd[identity];
     if (!entry?.result) return;
     const newChanges = entry.result.changes.map((c) =>
       previous.has(c.path) ? { ...c, staged: previous.get(c.path) ?? c.staged } : c
     );
     this.changesByCwd = {
       ...this.changesByCwd,
-      [cwd]: {
+      [identity]: {
         ...entry,
         result: { ...entry.result, changes: newChanges }
       }
@@ -859,6 +1158,7 @@ class WorkingDiffStore {
     const clamped = Math.max(0, Math.min(50, Math.trunc(value)));
     if (clamped === this.contextLines) return;
     this.contextLines = clamped;
+    this.contextEpoch += 1;
     // Bump every entry's generation alongside clearing it. Any in-flight
     // fetches issued under the previous context-lines value will see a
     // generation mismatch when they return and discard their result, so
@@ -870,6 +1170,7 @@ class WorkingDiffStore {
       if (entry) next[key] = { ...entry, diff: null, generation: newGen };
     }
     this.diffsByKey = next;
+    this.reviewPayloadCache.clear('diff');
     this.inflightDiffs.clear();
     // Hunk boundaries shift when ctx changes, so existing gap expansions
     // become meaningless. Drop them all and let users re-expand on demand.
@@ -877,23 +1178,30 @@ class WorkingDiffStore {
     this.inflightFileLines.clear();
   }
 
-  invalidate(cwd: string): void {
-    const trimmed = cwd.trim();
+  invalidate(target: ReviewTarget): void {
+    const { cwd: trimmed, identity } = this.resolveTarget(target);
     if (!trimmed) return;
+    this.bumpPrefetchEpoch(identity);
+    this.changesEpochByCwd.set(identity, (this.changesEpochByCwd.get(identity) ?? 0) + 1);
+    const changesPrefix = `${identity}\u001f`;
+    for (const key of Array.from(this.inflightChanges.keys())) {
+      if (key.startsWith(changesPrefix)) this.inflightChanges.delete(key);
+    }
     // Drop the cached changes entry; next read triggers a fresh fetch.
-    if (this.changesByCwd[trimmed]) {
+    if (this.changesByCwd[identity]) {
       const next = { ...this.changesByCwd };
-      delete next[trimmed];
+      delete next[identity];
       this.changesByCwd = next;
     }
     // Drop only this worktree's diff entries. Other worktrees of the same
     // repo (e.g., other branches) keep their cached state.
-    const prefix = `${trimmed}::`;
+    const prefix = `${identity}::`;
     const remaining: Record<string, DiffEntry> = {};
     for (const [key, entry] of Object.entries(this.diffsByKey)) {
       if (!key.startsWith(prefix)) remaining[key] = entry;
     }
     this.diffsByKey = remaining;
+    this.reviewPayloadCache.forgetCwd(identity);
     // Drop in-flight fetches for this worktree so the next loadDiff issues
     // a fresh request rather than reusing one that's about to land in a
     // cleared slot.
@@ -940,10 +1248,11 @@ class WorkingDiffStore {
   // entries existed. Use this when the underlying files may have changed —
   // e.g. a git change event — so the next click forces a fresh fetch and
   // we re-prime the cache with current content.
-  private clearDiffCache(cwd: string): void {
-    const trimmed = cwd.trim();
+  private clearDiffCache(target: ReviewTarget): void {
+    const { cwd: trimmed, identity } = this.resolveTarget(target);
     if (!trimmed) return;
-    const prefix = `${trimmed}::`;
+    this.bumpPrefetchEpoch(identity);
+    const prefix = `${identity}::`;
     const newGen = ++this.generationCounter;
     const next = { ...this.diffsByKey };
     let touched = false;
@@ -956,37 +1265,131 @@ class WorkingDiffStore {
       }
     }
     if (touched) this.diffsByKey = next;
+    this.reviewPayloadCache.forgetCwd(identity, 'diff');
     for (const key of Array.from(this.inflightDiffs.keys())) {
       if (key.startsWith(prefix)) this.inflightDiffs.delete(key);
     }
     this.dropFileLines(prefix);
   }
 
+  private applyReviewPayloadEvictions(evictions: ReviewPayloadEviction[]): void {
+    if (evictions.length === 0) return;
+    let nextDiffs: Record<string, DiffEntry> | null = null;
+    let nextBlames: Record<string, BlameEntry> | null = null;
+    for (const eviction of evictions) {
+      if (eviction.kind === 'diff' && this.diffsByKey[eviction.key]) {
+        nextDiffs ??= { ...this.diffsByKey };
+        delete nextDiffs[eviction.key];
+      } else if (eviction.kind === 'blame' && this.blamesByKey[eviction.key]) {
+        nextBlames ??= { ...this.blamesByKey };
+        delete nextBlames[eviction.key];
+      }
+    }
+    if (nextDiffs) this.diffsByKey = nextDiffs;
+    if (nextBlames) this.blamesByKey = nextBlames;
+  }
+
+  private identityFor(target: ReviewTarget): string {
+    return this.resolveTarget(target).identity;
+  }
+
+  private resolveTarget(target: ReviewTarget): {
+    cwd: string;
+    identity: string;
+    context: RepoContext;
+  } {
+    if (typeof target !== 'string') {
+      const cwd = target.cwd.trim();
+      const context: RepoContext = {
+        ...(target.runMode ? { runMode: target.runMode } : {}),
+        ...(target.wslDistro ? { wslDistro: target.wslDistro } : {})
+      };
+      return { cwd, identity: worktreeIdentityKey(cwd, context), context };
+    }
+    const cwd = target.trim();
+    const identity = this.currentIdentityByCwd[cwd] ?? worktreeIdentityKey(cwd);
+    return { cwd, identity, context: this.contextByIdentity.get(identity) ?? {} };
+  }
+
+  private diffKeyForIdentity(
+    identity: string,
+    filePath: string,
+    base?: string | null,
+    head?: string | null
+  ): string {
+    return `${identity}::${filePath}::${base ?? WT_MARKER}::${head ?? WT_MARKER}`;
+  }
+
+  private fileLinesKeyForIdentity(
+    identity: string,
+    filePath: string,
+    startLine: number,
+    endLine: number,
+    revision: string
+  ): string {
+    return `${identity}::${filePath}::${startLine}-${endLine}::${revision}`;
+  }
+
+  private blameKeyForIdentity(identity: string, filePath: string, head: string): string {
+    return `${identity}::${filePath}::${head}`;
+  }
+
+  private bumpPrefetchEpoch(identity: string): void {
+    this.prefetchEpochByCwd.set(identity, (this.prefetchEpochByCwd.get(identity) ?? 0) + 1);
+  }
+
+  private suspendReviewDemand(identity: string): void {
+    this.bumpPrefetchEpoch(identity);
+    this.changesEpochByCwd.set(identity, (this.changesEpochByCwd.get(identity) ?? 0) + 1);
+    const requestPrefix = `${identity}\u001f`;
+    for (const key of Array.from(this.inflightChanges.keys())) {
+      if (key.startsWith(requestPrefix)) this.inflightChanges.delete(key);
+    }
+    const entry = this.changesByCwd[identity];
+    if (entry?.loading) {
+      this.changesByCwd = {
+        ...this.changesByCwd,
+        [identity]: { ...entry, loading: false }
+      };
+    }
+    const payloadPrefix = `${identity}::`;
+    for (const key of Array.from(this.inflightDiffs.keys())) {
+      if (key.startsWith(payloadPrefix)) this.inflightDiffs.delete(key);
+    }
+    for (const key of Array.from(this.inflightFileLines.keys())) {
+      if (key.startsWith(payloadPrefix)) this.inflightFileLines.delete(key);
+    }
+    for (const key of Array.from(this.inflightBlames.keys())) {
+      if (key.startsWith(payloadPrefix)) this.inflightBlames.delete(key);
+    }
+  }
+
   attachListeners(): void {
     this.detach();
+    // Consume the Git store's completed observation instead of registering a
+    // second filesystem watcher. This keeps status, line counts, and review
+    // changes on one coherent generation and one process budget.
     this.detachers.push(
-      ipc.git.onChange((event) => {
-        // The git change event identifies the repo by repoPath, but our
-        // store is keyed by worktree cwd. Match by repoPath stored on the
-        // result so each affected worktree refreshes.
-        for (const [cwd, entry] of Object.entries(this.changesByCwd)) {
-          if (entry.result?.repoPath !== event.repoPath) continue;
-          if ((this.stageSuppressUntil.get(cwd) ?? 0) > Date.now()) continue;
-          this.refreshCwd(cwd, true);
-        }
+      git.onTick((cwd, observedWorkingTree, cause, context) => {
+        const scope = createReviewScope(cwd, context);
+        const identity = worktreeIdentityKey(cwd, context);
+        // Cache presence is history, not demand. Only a visible Diff or Files
+        // Rail Surface may turn a Git observation into review refresh work.
+        if ((this.reviewDemandByIdentity.get(identity) ?? 0) === 0) return;
+        if (this.isSuppressedStageObservation(identity, cause)) return;
+        this.refreshCwd(scope, cause.kind === 'filesystem', observedWorkingTree);
       })
     );
-    // Polling fallback: ride the git store's tick so the diff pane refreshes
-    // on the same 5s/30s cadence as tab line counts. Without this, the diff
-    // pane only updates on filesystem-driven onChange events and can lag
-    // behind the tab badges when changes originate outside the watcher.
-    this.detachers.push(
-      git.onTick((cwd) => {
-        if (!this.changesByCwd[cwd]) return;
-        if ((this.stageSuppressUntil.get(cwd) ?? 0) > Date.now()) return;
-        this.refreshCwd(cwd, false);
-      })
-    );
+  }
+
+  private isSuppressedStageObservation(identity: string, cause: GitRefreshCause): boolean {
+    const suppressUntil = this.stageSuppressUntil.get(identity) ?? 0;
+    if (cause.kind === 'filesystem') {
+      // Compare the event's causal timestamp, not observation completion. A
+      // slow queued refresh must not misclassify an old stage event as new.
+      return cause.occurredAt <= suppressUntil;
+    }
+    return Date.now() <= suppressUntil;
   }
 
   // `forceDiffRefresh` clears the per-file diff cache regardless of whether
@@ -994,14 +1397,18 @@ class WorkingDiffStore {
   // already indicate something changed. The polling-tick path passes false
   // and compares signatures so unchanged worktrees don't refetch all diffs
   // every 5s.
-  private refreshCwd(cwd: string, forceDiffRefresh: boolean): void {
-    const before = this.changesSignature(this.changesByCwd[cwd]?.result ?? null);
-    void this.loadChanges(cwd).then((result) => {
+  private refreshCwd(
+    target: ReviewTarget,
+    forceDiffRefresh: boolean,
+    observedWorkingTree?: WorkingChangesResult
+  ): void {
+    const identity = this.identityFor(target);
+    const before = this.changesSignature(this.changesByCwd[identity]?.result ?? null);
+    void this.loadChanges(target, observedWorkingTree).then((result) => {
       if (!result) return;
       const after = this.changesSignature(result);
       if (forceDiffRefresh || before !== after) {
-        this.clearDiffCache(cwd);
-        void this.prefetchDiffs(cwd);
+        this.clearDiffCache(target);
       }
     });
   }
@@ -1034,6 +1441,13 @@ function sameReviewMode(a: ReviewMode, b: ReviewMode): boolean {
     if (a.commits[i]?.hash !== b.commits[i]?.hash) return false;
   }
   return true;
+}
+
+function changesRequestKey(cwd: string, mode: ReviewMode | undefined, context: RepoContext): string {
+  const review = mode?.kind === 'range'
+    ? `range:${mode.base}:${mode.head}:${mode.includeWorkingTree ? 'with-wt' : 'commits-only'}`
+    : 'working-tree';
+  return [cwd, review, context.runMode ?? '', context.wslDistro ?? ''].join('\u001f');
 }
 
 function rangeChangeToWorking(r: RangeChange): WorkingChange {

@@ -4,7 +4,8 @@ import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   DiffRpcRequest,
   DiffRpcResponse,
-  DiffRpcResult
+  DiffRpcResult,
+  OpenForCommitsRequest
 } from '@shared/types/diff-rpc.js';
 
 export interface DiffBridgeOptions {
@@ -15,15 +16,6 @@ export interface DiffBridgeOptions {
 interface PendingCall {
   resolve: (result: DiffRpcResult) => void;
   timer: NodeJS.Timeout;
-}
-
-export interface OpenForCommitsRequest {
-  cwd: string;
-  base: string;
-  head: string;
-  commits: string[];
-  includeWorkingTree: boolean;
-  focusPath?: string;
 }
 
 export class DiffBridge {

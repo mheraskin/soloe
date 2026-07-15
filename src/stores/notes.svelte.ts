@@ -1,34 +1,35 @@
 import type { ProjectId } from '@shared/types/projects.js';
 import type { NoteImage, NoteImagePayload, NoteSummary } from '@shared/types/notes.js';
+import {
+  worktreeScope,
+  worktreeScopeKey,
+  type WorktreeScope
+} from '@shared/worktree-identity.js';
 import { ipc } from '../lib/ipc';
 import { sessions } from './sessions.svelte';
 import { settings } from './settings.svelte';
+import {
+  NotesDraftPersistence,
+  savedNoteRecoveryKey,
+  type NotesDraftAddress
+} from '../lib/notes-draft-persistence';
 
 export type NotesStatus = 'idle' | 'saving' | 'saved' | 'error';
 
-// Per-project draft persistence. Drafts are scratch space — they survive app
-// restarts in localStorage so a half-written note isn't lost just because the
-// user closed the window before saving to disk. The key prefix is namespaced
-// so projects can't collide. Removed on save/discard.
-const DRAFT_KEY_PROJECT_PREFIX = 'soloe.notes.draft.';
-
-// Per-worktree draft persistence. Used when `settings.notes.draftsPerWorktree`
-// is on. Key composes projectId and cwd; treated as opaque (never split back).
-// Project IDs are slugged at creation, so this stays unambiguous even when cwd
-// contains spaces.
-const DRAFT_KEY_WORKTREE_PREFIX = 'soloe.notes.draftByWorktree.';
-
-function worktreeDraftStorageKey(projectId: ProjectId, cwd: string): string {
-  return `${projectId}::${cwd}`;
+export function notesWorktreeStorageKey(
+  projectId: ProjectId,
+  scope: WorktreeScope
+): string {
+  return `${projectId}::${worktreeScopeKey(scope)}`;
 }
 
 // Per-worktree memory of which saved note was last open. Notes live at the
 // project level (shared across worktrees) but each worktree should restore the
-// selection it had before the user navigated away. Keyed by cwd so the memory
-// is independent of any session id; pairs the filename with the projectId so a
-// stale entry (cwd later opened under a different project) can't surface the
-// wrong note.
-const VIEW_KEY_PREFIX = 'soloe.notes.viewByWorktree.';
+// selection it had before the user navigated away. The key is an exact
+// Worktree Identity, not a path: equal Linux paths in different WSL distros
+// must never share editor state.
+const VIEW_KEY_PREFIX = 'soloe.notes.viewByWorktree.v2.';
+const LEGACY_VIEW_KEY_PREFIX = 'soloe.notes.viewByWorktree.';
 const SAVED_NOTE_DEBOUNCE_MS = 500;
 
 interface WorktreeViewEntry {
@@ -68,11 +69,11 @@ function loadViewsFromStorage(): Record<string, WorktreeViewEntry> {
 }
 
 function persistViewSelection(
-  cwd: string,
+  identityKey: string,
   entry: WorktreeViewEntry | null
 ): void {
   if (typeof localStorage === 'undefined') return;
-  const key = VIEW_KEY_PREFIX + cwd;
+  const key = VIEW_KEY_PREFIX + identityKey;
   try {
     if (entry) localStorage.setItem(key, JSON.stringify(entry));
     else localStorage.removeItem(key);
@@ -81,99 +82,43 @@ function persistViewSelection(
   }
 }
 
-function loadProjectDraftsFromStorage(): Record<ProjectId, string> {
-  if (typeof localStorage === 'undefined') return {};
-  const result: Record<ProjectId, string> = {};
+function loadLegacyView(scope: WorktreeScope): WorktreeViewEntry | null {
+  // A path-only WSL entry is ambiguous and must never be guessed into a
+  // distro. Native Windows entries can be migrated without changing identity.
+  if (scope.runMode !== 'windows' || typeof localStorage === 'undefined') return null;
   try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith(DRAFT_KEY_PROJECT_PREFIX)) continue;
-      // Skip the worktree prefix, which begins with the project prefix string.
-      if (key.startsWith(DRAFT_KEY_WORKTREE_PREFIX)) continue;
-      const value = localStorage.getItem(key);
-      if (value !== null && value.length > 0) {
-        const projectId = key.slice(DRAFT_KEY_PROJECT_PREFIX.length) as ProjectId;
-        result[projectId] = value;
-      }
-    }
+    const raw = localStorage.getItem(LEGACY_VIEW_KEY_PREFIX + scope.cwd);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !parsed
+      || typeof parsed !== 'object'
+      || typeof (parsed as { projectId?: unknown }).projectId !== 'string'
+      || typeof (parsed as { filename?: unknown }).filename !== 'string'
+    ) return null;
+    return parsed as WorktreeViewEntry;
   } catch {
-    // Storage disabled (private mode / quota). Drafts stay in-memory only.
-  }
-  return result;
-}
-
-function persistProjectDraft(projectId: ProjectId, content: string): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    if (content.length > 0) {
-      localStorage.setItem(DRAFT_KEY_PROJECT_PREFIX + projectId, content);
-    } else {
-      localStorage.removeItem(DRAFT_KEY_PROJECT_PREFIX + projectId);
-    }
-  } catch {
-    // Quota / private mode — silently fall back to in-memory only.
+    return null;
   }
 }
 
-function clearStoredProjectDraft(projectId: ProjectId): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.removeItem(DRAFT_KEY_PROJECT_PREFIX + projectId);
-  } catch {
-    // No-op.
-  }
-}
+type DraftLocation =
+  | { kind: 'project'; projectId: ProjectId }
+  | { kind: 'worktree'; projectId: ProjectId; storageKey: string };
 
-function loadWorktreeDraftsFromStorage(): Record<string, string> {
-  if (typeof localStorage === 'undefined') return {};
-  const result: Record<string, string> = {};
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith(DRAFT_KEY_WORKTREE_PREFIX)) continue;
-      const value = localStorage.getItem(key);
-      if (value !== null && value.length > 0) {
-        const storageKey = key.slice(DRAFT_KEY_WORKTREE_PREFIX.length);
-        if (storageKey.includes('::')) result[storageKey] = value;
-      }
-    }
-  } catch {
-    // Storage disabled. In-memory only.
-  }
-  return result;
-}
-
-function persistWorktreeDraft(storageKey: string, content: string): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    if (content.length > 0) {
-      localStorage.setItem(DRAFT_KEY_WORKTREE_PREFIX + storageKey, content);
-    } else {
-      localStorage.removeItem(DRAFT_KEY_WORKTREE_PREFIX + storageKey);
-    }
-  } catch {
-    // No-op.
-  }
-}
-
-function clearStoredWorktreeDraft(storageKey: string): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.removeItem(DRAFT_KEY_WORKTREE_PREFIX + storageKey);
-  } catch {
-    // No-op.
-  }
-}
-
-class NotesStoreClass {
+export class NotesStore {
   listsByProject = $state<Record<ProjectId, NoteSummary[]>>({});
   loadedProjects = $state<Record<ProjectId, boolean>>({});
 
-  draftsByProject = $state<Record<ProjectId, string>>(loadProjectDraftsFromStorage());
+  draftsByProject = $state<Record<ProjectId, string>>({});
 
-  // Drafts persisted per (project, worktree-cwd) when settings.notes
-  // .draftsPerWorktree is on. Key = worktreeDraftStorageKey(projectId, cwd).
-  draftsByWorktree = $state<Record<string, string>>(loadWorktreeDraftsFromStorage());
+  // Drafts persisted per exact (Project, Worktree Identity) when settings.notes
+  // .draftsPerWorktree is on.
+  draftsByWorktree = $state<Record<string, string>>({});
+
+  // Restart-safe recovery for saved-note editor buffers that are newer than
+  // the authoritative file. Key = savedNoteRecoveryKey(projectId, filename).
+  savedRecoveryByNote = $state<Record<string, string>>({});
 
   // null view = draft is showing, string = saved-note filename
   viewByProject = $state<Record<ProjectId, string | null>>({});
@@ -191,6 +136,17 @@ class NotesStoreClass {
 
   activeProjectId = $derived<ProjectId | null>(sessions.selected?.projectId ?? null);
   activeWorktreeCwd = $derived<string | null>(sessions.selected?.cwd ?? null);
+  activeWorktreeScope = $derived.by<WorktreeScope | null>(() => {
+    const selected = sessions.selected;
+    if (!selected) return null;
+    return worktreeScope(selected.cwd, {
+      runMode: selected.runMode,
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+    });
+  });
+  activeWorktreeKey = $derived<string | null>(
+    this.activeWorktreeScope ? worktreeScopeKey(this.activeWorktreeScope) : null
+  );
 
   notes = $derived<NoteSummary[]>(
     this.activeProjectId ? this.listsByProject[this.activeProjectId] ?? [] : []
@@ -231,8 +187,17 @@ class NotesStoreClass {
 
   private detachers: Array<() => void> = [];
   private savedFlushTimers = new Map<ProjectId, ReturnType<typeof setTimeout>>();
-  private savedFlushInFlight = new Set<ProjectId>();
-  private savedFlushQueued = new Set<ProjectId>();
+  private savedFlushRequests = new Map<ProjectId, Promise<void>>();
+  private selectionGeneration = new Map<ProjectId, number>();
+
+  constructor(
+    private readonly draftPersistence: NotesDraftPersistence = new NotesDraftPersistence()
+  ) {
+    const loaded = draftPersistence.load();
+    this.draftsByProject = loaded.byProject;
+    this.draftsByWorktree = loaded.byWorktree;
+    this.savedRecoveryByNote = loaded.bySaved;
+  }
 
   attachListeners(): void {
     this.detach();
@@ -244,6 +209,7 @@ class NotesStoreClass {
         const activeFilename = this.viewByProject[event.projectId];
         if (activeFilename && !known.has(activeFilename)) {
           // selected note was deleted/renamed externally; revert to draft
+          this.invalidateSelection(event.projectId);
           this.viewByProject = { ...this.viewByProject, [event.projectId]: null };
           this.savedContentByProject = { ...this.savedContentByProject, [event.projectId]: '' };
           this.savedDiskByProject = { ...this.savedDiskByProject, [event.projectId]: '' };
@@ -261,6 +227,11 @@ class NotesStoreClass {
     this.detachers = [];
     for (const timer of this.savedFlushTimers.values()) clearTimeout(timer);
     this.savedFlushTimers.clear();
+    this.draftPersistence.flushAll();
+  }
+
+  flushDraftPersistence(): void {
+    this.draftPersistence.flushAll();
   }
 
   async ensureLoaded(projectId: ProjectId): Promise<void> {
@@ -274,10 +245,12 @@ class NotesStoreClass {
     this.loadedProjects = { ...this.loadedProjects, [projectId]: true };
   }
 
-  newDraft(): void {
+  async newDraft(): Promise<void> {
     const id = this.activeProjectId;
     if (!id) return;
-    if (this.viewByProject[id]) void this.flushSaved(id).catch(() => {});
+    const generation = this.nextSelectionGeneration(id);
+    if (this.viewByProject[id]) await this.flushSaved(id);
+    if (this.selectionGeneration.get(id) !== generation) return;
     this.viewByProject = { ...this.viewByProject, [id]: null };
     this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
     this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
@@ -308,20 +281,18 @@ class NotesStoreClass {
       this.writeActiveDraft('');
       void this.cleanupImages(id);
     } else {
-      this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
-      const status = this.statusByProject[id];
-      if (status === 'saved' || status === 'error') {
-        this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
-        this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
-      }
-      this.scheduleSavedFlush(id);
+      this.updateSavedContent('');
     }
   }
 
   updateSavedContent(content: string): void {
     const id = this.activeProjectId;
-    if (!id) return;
+    const filename = id ? this.viewByProject[id] : null;
+    if (!id || !filename) return;
     this.savedContentByProject = { ...this.savedContentByProject, [id]: content };
+    const recoveryKey = savedNoteRecoveryKey(id, filename);
+    this.savedRecoveryByNote = { ...this.savedRecoveryByNote, [recoveryKey]: content };
+    this.draftPersistence.schedule({ kind: 'saved', projectId: id, filename }, content);
     const status = this.statusByProject[id];
     if (status === 'saved' || status === 'error') {
       this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
@@ -333,19 +304,28 @@ class NotesStoreClass {
   async selectNote(filename: string): Promise<void> {
     const id = this.activeProjectId;
     if (!id) return;
+    const generation = this.nextSelectionGeneration(id);
     const currentFilename = this.viewByProject[id];
     if (currentFilename && currentFilename !== filename) {
-      await this.flushSaved(id).catch(() => {});
+      // Navigation is destructive to the sole saved-note editor buffer. Wait
+      // for the actual write and leave the old note visible if it fails.
+      await this.flushSaved(id);
     }
+    if (this.selectionGeneration.get(id) !== generation) return;
     this.viewByProject = { ...this.viewByProject, [id]: filename };
     this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
     this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
     this.rememberSelection(filename);
     try {
       const note = await ipc.notes.read(id, filename);
-      this.savedContentByProject = { ...this.savedContentByProject, [id]: note.content };
+      if (!this.isCurrentSelection(id, filename, generation)) return;
+      const recovery = this.savedRecoveryByNote[savedNoteRecoveryKey(id, filename)];
+      const content = recovery ?? note.content;
+      this.savedContentByProject = { ...this.savedContentByProject, [id]: content };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
+      if (recovery !== undefined && recovery !== note.content) this.scheduleSavedFlush(id);
     } catch (err) {
+      if (!this.isCurrentSelection(id, filename, generation)) return;
       this.statusByProject = { ...this.statusByProject, [id]: 'error' };
       this.errorMessageByProject = {
         ...this.errorMessageByProject,
@@ -356,19 +336,34 @@ class NotesStoreClass {
 
   async saveDraft(filename: string): Promise<void> {
     const id = this.activeProjectId;
-    if (!id) return;
-    const content = this.readActiveDraft();
+    const draftLocation = this.activeDraftLocation();
+    const identityKey = this.activeWorktreeKey;
+    if (!id || !draftLocation) return;
+    const generation = this.nextSelectionGeneration(id);
+    const content = this.readDraftAt(draftLocation);
     this.statusByProject = { ...this.statusByProject, [id]: 'saving' };
     try {
       const note = await ipc.notes.write(id, filename, content);
-      this.clearActiveDraft();
+      const draftUnchanged = this.readDraftAt(draftLocation) === content;
+      if (draftUnchanged) this.clearDraftAt(draftLocation);
+      await this.refresh(id);
+      if (draftUnchanged && identityKey) {
+        this.rememberSelectionFor(identityKey, id, note.filename);
+      }
+      if (
+        !draftUnchanged
+        || this.selectionGeneration.get(id) !== generation
+        || !identityKey
+        || !this.isActiveWorktree(id, identityKey)
+      ) {
+        this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
+        return;
+      }
       this.viewByProject = { ...this.viewByProject, [id]: note.filename };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: note.content };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
       this.statusByProject = { ...this.statusByProject, [id]: 'saved' };
       this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
-      this.rememberSelection(note.filename);
-      await this.refresh(id);
     } catch (err) {
       this.statusByProject = { ...this.statusByProject, [id]: 'error' };
       this.errorMessageByProject = {
@@ -383,33 +378,29 @@ class NotesStoreClass {
     const id = projectId ?? this.activeProjectId;
     if (!id) return;
     this.clearSavedFlushTimer(id);
-    if (this.savedFlushInFlight.has(id)) {
-      this.savedFlushQueued.add(id);
-      return;
-    }
-    this.savedFlushInFlight.add(id);
-    try {
-      let canContinue = true;
+    const existing = this.savedFlushRequests.get(id);
+    if (existing) return existing;
+
+    let request!: Promise<void>;
+    request = (async () => {
       do {
-        this.savedFlushQueued.delete(id);
-        canContinue = await this.flushSavedOnce(id);
+        await this.flushSavedOnce(id);
       } while (
-        canContinue
-        && (
-          this.savedFlushQueued.has(id)
-          || (this.savedContentByProject[id] ?? '') !== (this.savedDiskByProject[id] ?? '')
-        )
+        this.viewByProject[id]
+          && (this.savedContentByProject[id] ?? '') !== (this.savedDiskByProject[id] ?? '')
       );
-    } finally {
-      this.savedFlushInFlight.delete(id);
-    }
+    })().finally(() => {
+      if (this.savedFlushRequests.get(id) === request) this.savedFlushRequests.delete(id);
+    });
+    this.savedFlushRequests.set(id, request);
+    return request;
   }
 
   private scheduleSavedFlush(projectId: ProjectId): void {
     this.clearSavedFlushTimer(projectId);
     const timer = setTimeout(() => {
       this.savedFlushTimers.delete(projectId);
-      void this.flushSaved(projectId);
+      void this.flushSaved(projectId).catch(() => {});
     }, SAVED_NOTE_DEBOUNCE_MS);
     this.savedFlushTimers.set(projectId, timer);
   }
@@ -421,39 +412,44 @@ class NotesStoreClass {
     this.savedFlushTimers.delete(projectId);
   }
 
-  private async flushSavedOnce(projectId: ProjectId): Promise<boolean> {
+  private async flushSavedOnce(projectId: ProjectId): Promise<void> {
     const filename = this.viewByProject[projectId];
-    if (!filename) return true;
+    if (!filename) return;
     const content = this.savedContentByProject[projectId] ?? '';
-    if (content === (this.savedDiskByProject[projectId] ?? '')) return true;
+    if (content === (this.savedDiskByProject[projectId] ?? '')) return;
     this.statusByProject = { ...this.statusByProject, [projectId]: 'saving' };
     try {
       const note = await ipc.notes.write(projectId, filename, content);
       this.savedDiskByProject = { ...this.savedDiskByProject, [projectId]: note.content };
       // Only mark saved if the current buffer matches what we wrote; otherwise
       // the outer flush loop will immediately write the newer text.
-      if ((this.savedContentByProject[projectId] ?? '') === note.content) {
+      if (
+        this.viewByProject[projectId] === filename
+        && (this.savedContentByProject[projectId] ?? '') === note.content
+      ) {
         this.statusByProject = { ...this.statusByProject, [projectId]: 'saved' };
+        this.removeSavedRecovery(projectId, filename);
       } else {
         this.statusByProject = { ...this.statusByProject, [projectId]: 'idle' };
       }
       this.errorMessageByProject = { ...this.errorMessageByProject, [projectId]: null };
-      return true;
     } catch (err) {
       this.statusByProject = { ...this.statusByProject, [projectId]: 'error' };
       this.errorMessageByProject = {
         ...this.errorMessageByProject,
         [projectId]: err instanceof Error ? err.message : String(err)
       };
-      return false;
+      throw err;
     }
   }
 
   async rename(oldName: string, newName: string): Promise<void> {
     const id = this.activeProjectId;
     if (!id) return;
+    if (this.viewByProject[id] === oldName) await this.flushSaved(id);
     const summary = await ipc.notes.rename(id, oldName, newName);
     if (this.viewByProject[id] === oldName) {
+      this.invalidateSelection(id);
       this.viewByProject = { ...this.viewByProject, [id]: summary.filename };
     }
     this.renameWorktreeMemoryFor(id, oldName, summary.filename);
@@ -462,8 +458,11 @@ class NotesStoreClass {
   async remove(filename: string): Promise<void> {
     const id = this.activeProjectId;
     if (!id) return;
+    if (this.viewByProject[id] === filename) await this.flushSaved(id);
     await ipc.notes.delete(id, filename);
+    this.removeSavedRecovery(id, filename);
     if (this.viewByProject[id] === filename) {
+      this.invalidateSelection(id);
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
@@ -478,16 +477,30 @@ class NotesStoreClass {
   // worktree just stays in draft mode.
   async restoreForActiveWorktree(): Promise<void> {
     const id = this.activeProjectId;
-    const cwd = this.activeWorktreeCwd;
-    if (!id || !cwd) return;
-    const entry = this.viewByWorktree[cwd];
+    const scope = this.activeWorktreeScope;
+    if (!id || !scope) return;
+    const identityKey = worktreeScopeKey(scope);
+    this.migrateLegacyDraft(id, scope);
+    let entry = this.viewByWorktree[identityKey];
+    if (!entry) {
+      const legacy = loadLegacyView(scope);
+      if (legacy?.projectId === id) {
+        entry = legacy;
+        this.rememberSelectionFor(identityKey, id, legacy.filename);
+      }
+    }
     const desired: string | null =
       entry && entry.projectId === id ? entry.filename : null;
     const currentView = this.viewByProject[id] ?? null;
     if (currentView === desired) return;
+    const generation = this.nextSelectionGeneration(id);
     // Flush any pending edits on the previous selection so its dirty buffer
     // doesn't vanish when we swap to the new note.
-    await this.flushSaved(id).catch(() => {});
+    await this.flushSaved(id);
+    if (
+      !this.isActiveWorktree(id, identityKey)
+      || this.selectionGeneration.get(id) !== generation
+    ) return;
     if (desired === null) {
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
@@ -496,10 +509,15 @@ class NotesStoreClass {
       this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
       return;
     }
-    await this.ensureLoaded(id).catch(() => {});
+    await this.ensureLoaded(id);
+    if (
+      !this.isActiveWorktree(id, identityKey)
+      || this.selectionGeneration.get(id) !== generation
+    ) return;
     const list = this.listsByProject[id] ?? [];
     if (!list.some((n) => n.filename === desired)) {
       this.dropWorktreeMemoryFor(id, (name) => name === desired);
+      this.invalidateSelection(id);
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
@@ -509,16 +527,24 @@ class NotesStoreClass {
   }
 
   private rememberSelection(filename: string | null): void {
-    const cwd = this.activeWorktreeCwd;
+    const identityKey = this.activeWorktreeKey;
     const id = this.activeProjectId;
-    if (!cwd || !id) return;
+    if (!identityKey || !id) return;
+    this.rememberSelectionFor(identityKey, id, filename);
+  }
+
+  private rememberSelectionFor(
+    identityKey: string,
+    projectId: ProjectId,
+    filename: string | null
+  ): void {
     const next = { ...this.viewByWorktree };
     if (filename) {
-      next[cwd] = { projectId: id, filename };
-      persistViewSelection(cwd, next[cwd]);
+      next[identityKey] = { projectId, filename };
+      persistViewSelection(identityKey, next[identityKey]);
     } else {
-      delete next[cwd];
-      persistViewSelection(cwd, null);
+      delete next[identityKey];
+      persistViewSelection(identityKey, null);
     }
     this.viewByWorktree = next;
   }
@@ -529,11 +555,11 @@ class NotesStoreClass {
   ): void {
     let changed = false;
     const next = { ...this.viewByWorktree };
-    for (const [cwd, entry] of Object.entries(next)) {
+    for (const [identityKey, entry] of Object.entries(next)) {
       if (entry.projectId !== projectId) continue;
       if (!matches(entry.filename)) continue;
-      delete next[cwd];
-      persistViewSelection(cwd, null);
+      delete next[identityKey];
+      persistViewSelection(identityKey, null);
       changed = true;
     }
     if (changed) this.viewByWorktree = next;
@@ -546,11 +572,11 @@ class NotesStoreClass {
   ): void {
     let changed = false;
     const next = { ...this.viewByWorktree };
-    for (const [cwd, entry] of Object.entries(next)) {
+    for (const [identityKey, entry] of Object.entries(next)) {
       if (entry.projectId !== projectId) continue;
       if (entry.filename !== oldName) continue;
-      next[cwd] = { projectId, filename: newName };
-      persistViewSelection(cwd, next[cwd]);
+      next[identityKey] = { projectId, filename: newName };
+      persistViewSelection(identityKey, next[identityKey]);
       changed = true;
     }
     if (changed) this.viewByWorktree = next;
@@ -593,15 +619,18 @@ class NotesStoreClass {
     return settings.current.notes?.draftsPerWorktree === true;
   }
 
-  private activeDraftLocation():
-    | { kind: 'project'; projectId: ProjectId }
-    | { kind: 'worktree'; projectId: ProjectId; storageKey: string }
-    | null {
+  private activeDraftLocation(): DraftLocation | null {
     const id = this.activeProjectId;
     if (!id) return null;
     if (this.draftsPerWorktreeEnabled) {
-      const cwd = this.activeWorktreeCwd;
-      if (cwd) return { kind: 'worktree', projectId: id, storageKey: worktreeDraftStorageKey(id, cwd) };
+      const scope = this.activeWorktreeScope;
+      if (scope) {
+        return {
+          kind: 'worktree',
+          projectId: id,
+          storageKey: notesWorktreeStorageKey(id, scope)
+        };
+      }
     }
     return { kind: 'project', projectId: id };
   }
@@ -609,6 +638,10 @@ class NotesStoreClass {
   private readActiveDraft(): string {
     const loc = this.activeDraftLocation();
     if (!loc) return '';
+    return this.readDraftAt(loc);
+  }
+
+  private readDraftAt(loc: DraftLocation): string {
     if (loc.kind === 'worktree') return this.draftsByWorktree[loc.storageKey] ?? '';
     return this.draftsByProject[loc.projectId] ?? '';
   }
@@ -625,28 +658,92 @@ class NotesStoreClass {
     if (!loc) return;
     if (loc.kind === 'worktree') {
       this.draftsByWorktree = { ...this.draftsByWorktree, [loc.storageKey]: content };
-      persistWorktreeDraft(loc.storageKey, content);
+      const address: NotesDraftAddress = {
+        kind: 'worktree',
+        projectId: loc.projectId,
+        storageKey: loc.storageKey
+      };
+      this.draftPersistence.schedule(address, content);
     } else {
       this.draftsByProject = { ...this.draftsByProject, [loc.projectId]: content };
-      persistProjectDraft(loc.projectId, content);
+      this.draftPersistence.schedule({ kind: 'project', projectId: loc.projectId }, content);
     }
   }
 
   private clearActiveDraft(): void {
     const loc = this.activeDraftLocation();
     if (!loc) return;
+    this.clearDraftAt(loc);
+  }
+
+  private clearDraftAt(loc: DraftLocation): void {
     if (loc.kind === 'worktree') {
       const next = { ...this.draftsByWorktree };
       delete next[loc.storageKey];
       this.draftsByWorktree = next;
-      clearStoredWorktreeDraft(loc.storageKey);
+      this.draftPersistence.remove({
+        kind: 'worktree',
+        projectId: loc.projectId,
+        storageKey: loc.storageKey
+      });
     } else {
       const next = { ...this.draftsByProject };
       delete next[loc.projectId];
       this.draftsByProject = next;
-      clearStoredProjectDraft(loc.projectId);
+      this.draftPersistence.remove({ kind: 'project', projectId: loc.projectId });
     }
+  }
+
+  private removeSavedRecovery(projectId: ProjectId, filename: string): void {
+    const key = savedNoteRecoveryKey(projectId, filename);
+    if (Object.prototype.hasOwnProperty.call(this.savedRecoveryByNote, key)) {
+      const next = { ...this.savedRecoveryByNote };
+      delete next[key];
+      this.savedRecoveryByNote = next;
+    }
+    this.draftPersistence.remove({ kind: 'saved', projectId, filename });
+  }
+
+  private migrateLegacyDraft(projectId: ProjectId, scope: WorktreeScope): void {
+    if (scope.runMode !== 'windows') return;
+    const storageKey = notesWorktreeStorageKey(projectId, scope);
+    if (this.draftsByWorktree[storageKey] !== undefined) return;
+    const legacyStorageKey = `${projectId}::${scope.cwd}`;
+    const content = this.draftsByWorktree[legacyStorageKey];
+    if (content === undefined) return;
+    const next = { ...this.draftsByWorktree, [storageKey]: content };
+    delete next[legacyStorageKey];
+    this.draftsByWorktree = next;
+    this.draftPersistence.remove({
+      kind: 'worktree',
+      projectId,
+      storageKey: legacyStorageKey
+    });
+    this.draftPersistence.schedule({ kind: 'worktree', projectId, storageKey }, content);
+  }
+
+  private nextSelectionGeneration(projectId: ProjectId): number {
+    const generation = (this.selectionGeneration.get(projectId) ?? 0) + 1;
+    this.selectionGeneration.set(projectId, generation);
+    return generation;
+  }
+
+  private invalidateSelection(projectId: ProjectId): void {
+    this.nextSelectionGeneration(projectId);
+  }
+
+  private isCurrentSelection(
+    projectId: ProjectId,
+    filename: string,
+    generation: number
+  ): boolean {
+    return this.viewByProject[projectId] === filename
+      && this.selectionGeneration.get(projectId) === generation;
+  }
+
+  private isActiveWorktree(projectId: ProjectId, identityKey: string): boolean {
+    return this.activeProjectId === projectId && this.activeWorktreeKey === identityKey;
   }
 }
 
-export const notes = new NotesStoreClass();
+export const notes = new NotesStore();

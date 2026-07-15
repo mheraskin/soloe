@@ -1,7 +1,8 @@
-import { ipcMain, type BrowserWindow } from 'electron';
+import { ipcMain, type BrowserWindow, type WebContents } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   TerminalInputPayload,
+  TerminalOutputDemandPayload,
   TerminalResizePayload
 } from '@shared/types/ipc.js';
 import type { SessionId } from '@shared/types/sessions.js';
@@ -24,6 +25,8 @@ export interface TerminalIpcOptions {
 export class TerminalIpc {
   private registered = false;
   private listeners: Array<() => void> = [];
+  private outputDemandByWebContents = new Map<number, Set<TerminalId>>();
+  private observedDemandOwners = new WeakSet<WebContents>();
 
   constructor(private readonly opts: TerminalIpcOptions) {}
 
@@ -66,8 +69,24 @@ export class TerminalIpc {
       ipcInvoke(() => this.opts.pty.listRunning())
     );
 
-    const onOutput = (event: TerminalOutputEvent) => this.broadcast(IpcChannels.terminal.output, event);
-    const onExit = (event: TerminalExitEvent) => this.broadcast(IpcChannels.terminal.exit, event);
+    ipcMain.handle(IpcChannels.terminal.replay, (_e, terminalId: TerminalId, afterSeq?: number) =>
+      ipcInvoke(() => this.opts.pty.replay(terminalId, afterSeq))
+    );
+
+    ipcMain.handle(
+      IpcChannels.terminal.outputDemand,
+      (event, payload: TerminalOutputDemandPayload) =>
+        ipcInvoke(() => {
+          this.setOutputDemand(event.sender, payload);
+          return true as const;
+        })
+    );
+
+    const onOutput = (event: TerminalOutputEvent) => this.publishOutput(event);
+    const onExit = (event: TerminalExitEvent) => {
+      this.broadcast(IpcChannels.terminal.exit, event);
+      this.releaseTerminalDemand(event.terminalId);
+    };
     const onLocation = (event: TerminalLocationEvent) =>
       this.broadcast(IpcChannels.terminal.location, event);
     const onStatus = (event: TerminalStatusEvent) =>
@@ -96,12 +115,53 @@ export class TerminalIpc {
     ipcMain.removeHandler(IpcChannels.terminal.input);
     ipcMain.removeHandler(IpcChannels.terminal.resize);
     ipcMain.removeHandler(IpcChannels.terminal.listRunning);
+    ipcMain.removeHandler(IpcChannels.terminal.replay);
+    ipcMain.removeHandler(IpcChannels.terminal.outputDemand);
+    this.outputDemandByWebContents.clear();
     this.registered = false;
+  }
+
+  private setOutputDemand(sender: WebContents, payload: TerminalOutputDemandPayload): void {
+    const terminalId = payload?.terminalId?.trim();
+    if (!terminalId || typeof payload.active !== 'boolean') {
+      throw new Error('Invalid terminal output demand');
+    }
+    const ownerId = sender.id;
+    if (!this.observedDemandOwners.has(sender)) {
+      this.observedDemandOwners.add(sender);
+      sender.once('destroyed', () => {
+        this.outputDemandByWebContents.delete(ownerId);
+      });
+    }
+
+    const current = this.outputDemandByWebContents.get(ownerId) ?? new Set<TerminalId>();
+    if (payload.active) current.add(terminalId);
+    else current.delete(terminalId);
+    if (current.size > 0) this.outputDemandByWebContents.set(ownerId, current);
+    else this.outputDemandByWebContents.delete(ownerId);
+  }
+
+  private publishOutput(event: TerminalOutputEvent): void {
+    for (const win of this.opts.getWindows()) {
+      if (win.isDestroyed()) continue;
+      const webContents = win.webContents;
+      if (webContents.isDestroyed()) continue;
+      if (!this.outputDemandByWebContents.get(webContents.id)?.has(event.terminalId)) continue;
+      webContents.send(IpcChannels.terminal.output, event);
+    }
+  }
+
+  private releaseTerminalDemand(terminalId: TerminalId): void {
+    for (const [ownerId, terminals] of this.outputDemandByWebContents) {
+      terminals.delete(terminalId);
+      if (terminals.size === 0) this.outputDemandByWebContents.delete(ownerId);
+    }
   }
 
   private broadcast(channel: string, payload: unknown): void {
     for (const win of this.opts.getWindows()) {
       if (win.isDestroyed()) continue;
+      if (win.webContents.isDestroyed()) continue;
       win.webContents.send(channel, payload);
     }
   }

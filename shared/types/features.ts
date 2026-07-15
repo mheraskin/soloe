@@ -106,6 +106,8 @@ export interface FeatureSnapshot {
   issues: FeatureIssueEntry[];
   tracker: IssueTrackerConfig;
   setup: FeatureSetupStatus;
+  // Exact Feature Artifact Index revision used to materialize this snapshot.
+  artifactRevision: string;
   // The wall-clock time the main process completed the scan. Renderer uses
   // this for "last refreshed N seconds ago" UI affordances.
   scannedAt: number;
@@ -118,6 +120,9 @@ export interface FeatureScanRequest {
   // Limits scanning to a specific feature slug. When omitted, the snapshot
   // includes the slug list but `coverage`, `plans`, and `issues` are empty.
   slug?: string;
+  // A watcher-triggered refresh can reuse this exact main-owned Index instead
+  // of repeating the metadata traversal that detected the change.
+  observedRevision?: string;
 }
 
 export interface FeatureSetBranchStatusRequest {
@@ -140,8 +145,12 @@ export interface FeatureSetIssueStatusRequest {
 
 export interface FeatureChangeEvent {
   cwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
   // Coarse change category so the renderer can decide whether to refetch
   // everything or just the affected slice. The current implementation always
   // emits a full scan, so the renderer treats every event as a snapshot refresh.
   kind: 'features' | 'coverage' | 'plans' | 'issues' | 'setup' | 'tracker';
+  // Exact Feature Artifact Index revision already resident in the main process.
+  revision: string;
 }

@@ -91,6 +91,14 @@ describe('ProjectStore — validation', () => {
       store.create(draft({ defaultRunMode: 'mac' as unknown as 'wsl' }))
     ).rejects.toThrow(/Invalid defaultRunMode/);
   });
+
+  it('rejects a selected favicon path outside Project scope', async () => {
+    const store = new ProjectStore(storePath);
+    const created = await store.create(draft());
+    await expect(
+      store.update(created.id, { selectedFaviconPath: '../secret.png' })
+    ).rejects.toThrow(/safe relative path/);
+  });
 });
 
 describe('ProjectStore — update/delete/touch', () => {
@@ -132,7 +140,7 @@ describe('ProjectStore — update/delete/touch', () => {
 });
 
 describe('ProjectStore — favicons', () => {
-  it('discovers favicon files and picks a default', async () => {
+  it('discovers favicon assets without mutating or persisting Project metadata', async () => {
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-favicons-'));
     try {
       await fs.mkdir(path.join(projectDir, 'public'), { recursive: true });
@@ -146,6 +154,9 @@ describe('ProjectStore — favicons', () => {
 
       const store = new ProjectStore(storePath);
       const created = await store.create(draft({ path: projectDir }));
+      const metadataBefore = await fs.readFile(storePath, 'utf8');
+      const changes: unknown[] = [];
+      store.onChange((projects) => changes.push(projects));
       const favicons = await store.refreshFavicons(created.id);
       const updated = await store.get(created.id);
 
@@ -153,14 +164,16 @@ describe('ProjectStore — favicons', () => {
         'public/favicon.ico',
         'src/assets/apple-touch-icon.png'
       ]);
-      expect(updated?.selectedFaviconPath).toBe('public/favicon.ico');
-      expect(updated?.favicons?.[0]?.dataUrl).toMatch(/^data:image\/x-icon;base64,/);
+      expect(favicons[0]?.dataUrl).toMatch(/^data:image\/x-icon;base64,/);
+      expect(updated?.selectedFaviconPath).toBeUndefined();
+      expect(await fs.readFile(storePath, 'utf8')).toBe(metadataBefore);
+      expect(changes).toEqual([]);
     } finally {
       await fs.rm(projectDir, { recursive: true, force: true });
     }
   });
 
-  it('keeps the selected favicon when rescanning', async () => {
+  it('reads a selected favicon on demand and preserves only its relative path', async () => {
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-favicons-'));
     try {
       await fs.mkdir(path.join(projectDir, 'public'), { recursive: true });
@@ -169,12 +182,13 @@ describe('ProjectStore — favicons', () => {
 
       const store = new ProjectStore(storePath);
       const created = await store.create(draft({ path: projectDir }));
-      await store.refreshFavicons(created.id);
       await store.update(created.id, { selectedFaviconPath: 'public/favicon.svg' });
-      await store.refreshFavicons(created.id);
+      const selected = await store.readFavicon(created.id, 'public/favicon.svg');
 
       const updated = await store.get(created.id);
       expect(updated?.selectedFaviconPath).toBe('public/favicon.svg');
+      expect(selected?.dataUrl).toMatch(/^data:image\/svg\+xml;base64,/);
+      expect(JSON.stringify(updated)).not.toContain('data:image');
     } finally {
       await fs.rm(projectDir, { recursive: true, force: true });
     }
@@ -202,6 +216,37 @@ describe('ProjectStore — disk round-trip', () => {
     expect(await store.list()).toEqual([]);
     const entries = await fs.readdir(tmpDir);
     expect(entries.some((f) => f.startsWith('projects.json.corrupt-'))).toBe(true);
+  });
+
+  it('migrates legacy embedded favicon payloads to metadata-only storage', async () => {
+    const now = new Date().toISOString();
+    await fs.writeFile(storePath, JSON.stringify({
+      version: 1,
+      projects: [{
+        id: 'legacy',
+        name: 'Legacy',
+        path: tmpDir,
+        createdAt: now,
+        lastOpenedAt: now,
+        sortIndex: 0,
+        selectedFaviconPath: 'public/favicon.ico',
+        favicons: [{
+          path: 'public/favicon.ico',
+          label: 'favicon.ico',
+          mediaType: 'image/x-icon',
+          dataUrl: `data:image/x-icon;base64,${'A'.repeat(10_000)}`
+        }]
+      }]
+    }), 'utf8');
+
+    const store = new ProjectStore(storePath);
+    await store.init();
+
+    const project = await store.get('legacy');
+    const migrated = await fs.readFile(storePath, 'utf8');
+    expect(project?.selectedFaviconPath).toBe('public/favicon.ico');
+    expect(migrated).not.toContain('data:image');
+    expect(JSON.parse(migrated).version).toBe(2);
   });
 });
 

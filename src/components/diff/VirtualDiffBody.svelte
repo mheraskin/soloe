@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { BlameLine, DiffHunk, DiffLine, FileDiff } from '@shared/types/git.js';
+  import { worktreeScopeKey } from '@shared/worktree-identity.js';
   import type { DiffComment, DiffSide } from '../../stores/diff-comments.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
   import {
@@ -8,9 +9,10 @@
     parseMentions,
     type CommentAgent
   } from '../../stores/comment-agents.svelte';
-  import { workingDiff } from '../../stores/working-diff.svelte';
+  import { workingDiff, type ReviewScope } from '../../stores/working-diff.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { highlightLine, languageForPath } from '$lib/highlight';
+  import type { ReviewEntrySection } from '$lib/review-entry';
   import CommentMarker from './CommentMarker.svelte';
   import AgentBadge from './AgentBadge.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -24,15 +26,20 @@
   } from '@lucide/svelte';
 
   interface Props {
-    cwd: string;
+    scope: ReviewScope;
     filePath: string;
     gapPath: string;
+    gapRevision: string;
+    reviewSection: ReviewEntrySection;
     diff: FileDiff;
     mode: 'unified' | 'split';
     gutterWidth: number;
     canExpand: boolean;
     wrap?: boolean;
     viewport: HTMLElement | null;
+    viewportScrollTop: number;
+    viewportHeight: number;
+    viewportVersion: number;
     // y-offset of this file's section within the scroll content. Default 0
     // (single-file mode); in the concatenated viewer each section reports its
     // own offset so virtualization and the sticky hunk header stay correct
@@ -41,17 +48,23 @@
   }
 
   let {
-    cwd,
+    scope,
     filePath,
     gapPath,
+    gapRevision,
+    reviewSection,
     diff,
     mode,
     gutterWidth,
     canExpand,
     wrap = true,
     viewport,
+    viewportScrollTop,
+    viewportHeight,
+    viewportVersion,
     sectionTop = 0
   }: Props = $props();
+  let cwd = $derived(scope.cwd);
 
   let language = $derived(languageForPath(filePath));
   let fontSize = $derived(settings.current.diff.fontSize);
@@ -60,11 +73,11 @@
   // Range-mode blame state. When the active review is a base..head range,
   // surface a leftmost gutter column with a colored dot per new-side line
   // whose originating commit is in the picker selection.
-  let reviewMode = $derived(workingDiff.reviewModeFor(cwd));
+  let reviewMode = $derived(workingDiff.reviewModeFor(scope));
   let isRangeMode = $derived(reviewMode.kind === 'range');
   let blameHead = $derived(reviewMode.kind === 'range' ? reviewMode.head : null);
   let blameByLine = $derived<(BlameLine | undefined)[]>(
-    isRangeMode && blameHead ? workingDiff.blameEntry(cwd, filePath, blameHead).byLine : []
+    isRangeMode && blameHead ? workingDiff.blameEntry(scope, filePath, blameHead).byLine : []
   );
   let activeChipFilter = $derived(
     reviewMode.kind === 'range' ? reviewMode.chipFilter : null
@@ -76,7 +89,7 @@
   $effect(() => {
     const head = blameHead;
     if (!head) return;
-    void workingDiff.loadBlame(cwd, filePath, head);
+    void workingDiff.loadBlame(scope, filePath, head);
   });
 
   function blameFor(
@@ -113,7 +126,7 @@
     e.stopPropagation();
     e.preventDefault();
     if (!isRangeMode) return;
-    workingDiff.setChipFilter(cwd, activeChipFilter === sha ? null : sha);
+    workingDiff.setChipFilter(scope, activeChipFilter === sha ? null : sha);
   }
 
   function blameTitle(short: string, subject: string): string {
@@ -229,7 +242,7 @@
     if (canExpand && hunks[0] && hunks[0].oldStart > 1) {
       const oldStart = 1;
       const oldEnd = hunks[0].oldStart - 1;
-      const entry = workingDiff.fileLinesEntry(cwd, gapPath, oldStart, oldEnd);
+      const entry = workingDiff.fileLinesEntry(scope, gapPath, oldStart, oldEnd, gapRevision);
       if (entry.lines && entry.lines.length > 0) {
         for (let i = 0; i < entry.lines.length; i++) {
           out.push({
@@ -279,7 +292,13 @@
         const gapNewStart = hunk.newStart + hunk.newCount;
         const gapOldEnd = next.oldStart - 1;
         if (gapOldEnd >= gapOldStart) {
-          const entry = workingDiff.fileLinesEntry(cwd, gapPath, gapOldStart, gapOldEnd);
+          const entry = workingDiff.fileLinesEntry(
+            scope,
+            gapPath,
+            gapOldStart,
+            gapOldEnd,
+            gapRevision
+          );
           if (entry.lines && entry.lines.length > 0) {
             for (let i = 0; i < entry.lines.length; i++) {
               out.push({
@@ -383,30 +402,14 @@
 
   let totalHeight = $derived(offsets[rows.length] ?? 0);
 
-  let scrollTop = $state(0);
-  let viewportHeight = $state(800);
-
+  // ReviewViewport owns native observation. Resident file renderers consume
+  // its coalesced snapshot, so a 200-file review still has one listener and
+  // one viewport observer rather than 200 of each.
   $effect(() => {
-    const v = viewport;
-    if (!v) return;
-    const onScroll = () => {
-      scrollTop = v.scrollTop;
-      // Hover preview anchors to a captured rect; once the gutter scrolls
-      // away the tooltip would float in the wrong place. Cheaper to drop it.
-      cancelHover();
-    };
-    const onResize = () => {
-      viewportHeight = v.clientHeight;
-    };
-    onResize();
-    onScroll();
-    v.addEventListener('scroll', onScroll, { passive: true });
-    const ro = new ResizeObserver(onResize);
-    ro.observe(v);
-    return () => {
-      v.removeEventListener('scroll', onScroll);
-      ro.disconnect();
-    };
+    void viewportVersion;
+    // Hover preview anchors to a captured rect; once the gutter scrolls away
+    // the tooltip would float in the wrong place. Drop it on the shared tick.
+    cancelHover();
   });
 
   // Flash-on-jump support: when the comments rail surfaces a highlight hint
@@ -415,7 +418,12 @@
   // the hint after ~1.6s so the class falls off automatically.
   let highlightHint = $derived.by(() => {
     const h = diffComments.highlight;
-    if (!h || h.cwd !== cwd || h.filePath !== filePath) return null;
+    if (
+      !h ||
+      worktreeScopeKey(h.scope) !== worktreeScopeKey(scope) ||
+      h.filePath !== filePath ||
+      h.section !== reviewSection
+    ) return null;
     return h;
   });
 
@@ -531,8 +539,8 @@
   // Position within this section. In single-file mode sectionTop=0 so
   // localScrollTop matches the viewport scroll directly; in multi-file the
   // viewport scrolls past earlier sections first.
-  let localScrollTop = $derived(Math.max(0, scrollTop - sectionTop));
-  let localBottom = $derived(scrollTop + viewportHeight - sectionTop);
+  let localScrollTop = $derived(Math.max(0, viewportScrollTop - sectionTop));
+  let localBottom = $derived(viewportScrollTop + viewportHeight - sectionTop);
   let sectionActive = $derived(localBottom > 0 && localScrollTop < totalHeight);
 
   // Sticky hunk header — find the latest hunk-header at or above localScrollTop,
@@ -655,21 +663,27 @@
   function isSelected(side: DiffSide, line: number | null): boolean {
     if (line === null) return false;
     const sel = diffComments.selection;
-    if (!sel || sel.cwd !== cwd || sel.filePath !== filePath || sel.side !== side) return false;
+    if (
+      !sel ||
+      worktreeScopeKey(sel.scope) !== worktreeScopeKey(scope) ||
+      sel.filePath !== filePath ||
+      sel.section !== reviewSection ||
+      sel.side !== side
+    ) return false;
     return line >= sel.startLine && line <= sel.endLine;
   }
 
   function commentsStartingAt(side: DiffSide, line: number | null) {
     if (line === null) return [];
     return diffComments
-      .activeForFile(cwd, filePath)
+      .activeForFile(scope, filePath, reviewSection)
       .filter((c) => c.side === side && c.startLine === line);
   }
 
   function commentsContinuingAt(side: DiffSide, line: number | null) {
     if (line === null) return [];
     return diffComments
-      .activeForFile(cwd, filePath)
+      .activeForFile(scope, filePath, reviewSection)
       .filter((c) => c.side === side && c.startLine < line && line <= c.endLine);
   }
 
@@ -722,7 +736,7 @@
     if (!target) return;
     e.preventDefault();
     cancelHover();
-    diffComments.startSelection(cwd, filePath, target.side, target.line);
+    diffComments.startSelection(scope, filePath, target.side, target.line, reviewSection);
   }
 
   function onGutterEnter(
@@ -735,7 +749,7 @@
       // Cross-file drag: extendSelection only knows side+line, so applying
       // another file's coordinates would corrupt this drag's range. Wait
       // until the cursor returns to the originating file.
-      if (sel.cwd !== cwd || sel.filePath !== filePath) return;
+      if (worktreeScopeKey(sel.scope) !== worktreeScopeKey(scope) || sel.filePath !== filePath) return;
       const sideLine = sel.side === 'old' ? oldLine : newLine;
       if (sideLine !== null) {
         diffComments.extendSelection(sel.side, sideLine);
@@ -751,13 +765,13 @@
     if (e.button !== 0) return;
     e.preventDefault();
     cancelHover();
-    diffComments.startSelection(cwd, filePath, 'new', newLine);
+    diffComments.startSelection(scope, filePath, 'new', newLine, reviewSection);
   }
 
   function onGapGutterEnter(oldLine: number, newLine: number): void {
     const sel = diffComments.selection;
     if (sel?.dragging) {
-      if (sel.cwd !== cwd || sel.filePath !== filePath) return;
+      if (worktreeScopeKey(sel.scope) !== worktreeScopeKey(scope) || sel.filePath !== filePath) return;
       diffComments.extendSelection(sel.side, sel.side === 'old' ? oldLine : newLine);
       return;
     }
@@ -826,7 +840,13 @@
     diffComments.setResolved(c.id, !c.resolvedAt);
     // Refresh the preview so the badge updates without waiting for a reopen.
     if (hoverPreview) {
-      const updated = diffComments.forLine(cwd, filePath, hoverPreview.side, hoverPreview.line);
+      const updated = diffComments.forLine(
+        scope,
+        filePath,
+        hoverPreview.side,
+        hoverPreview.line,
+        reviewSection
+      );
       if (updated.length === 0) {
         cancelHover();
       } else {
@@ -848,7 +868,7 @@
       cancelHover();
       return;
     }
-    const comments = diffComments.forLine(cwd, filePath, t.side, t.line);
+    const comments = diffComments.forLine(scope, filePath, t.side, t.line, reviewSection);
     if (comments.length === 0) {
       cancelHover();
       return;
@@ -866,7 +886,7 @@
   function hoverAgentsFor(comment: DiffComment): CommentAgent[] {
     const out: CommentAgent[] = [];
     for (const name of parseMentions(comment.text)) {
-      const agent = commentAgents.byName(comment.cwd, name);
+      const agent = commentAgents.byName(comment.scope, name);
       if (agent) out.push(agent);
     }
     return out;
@@ -879,11 +899,11 @@
   }
 
   async function expandGap(oldStart: number, oldEnd: number): Promise<void> {
-    await workingDiff.loadFileLines(cwd, gapPath, oldStart, oldEnd);
+    await workingDiff.loadFileLines(scope, gapPath, oldStart, oldEnd, gapRevision);
   }
 
   function gapButtonEntry(oldStart: number, oldEnd: number) {
-    return workingDiff.fileLinesEntry(cwd, gapPath, oldStart, oldEnd);
+    return workingDiff.fileLinesEntry(scope, gapPath, oldStart, oldEnd, gapRevision);
   }
 </script>
 

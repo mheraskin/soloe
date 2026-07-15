@@ -97,18 +97,11 @@ class ProjectsStore {
   }
 
   async refreshFavicons(id: ProjectId): Promise<ProjectFavicon[]> {
-    const favicons = await ipc.projects.refreshFavicons(id);
-    this.projects = this.projects.map((p) => {
-      if (p.id !== id) return p;
-      const selectedFaviconPath = favicons.some((f) => f.path === p.selectedFaviconPath)
-        ? p.selectedFaviconPath
-        : favicons[0]?.path;
-      const next: Project = { ...p, favicons };
-      if (selectedFaviconPath) next.selectedFaviconPath = selectedFaviconPath;
-      else delete next.selectedFaviconPath;
-      return next;
-    });
-    return favicons;
+    return ipc.projects.refreshFavicons(id);
+  }
+
+  async readFavicon(id: ProjectId, relativePath: string): Promise<ProjectFavicon | null> {
+    return ipc.projects.readFavicon(id, relativePath);
   }
 
   consumeNewlyAdded(id: ProjectId): void {

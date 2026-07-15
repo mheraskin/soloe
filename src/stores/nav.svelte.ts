@@ -6,25 +6,7 @@ import { git } from './git.svelte';
 import { sidebarExpansion } from './sidebar-expansion.svelte';
 import { reportError } from './toast.svelte';
 import { confirmDeleteSession } from '../lib/session-delete-confirmation';
-
-function normPath(p: string): string {
-  return p.replace(/[/\\]+$/, '');
-}
-
-function basename(p: string): string {
-  const parts = normPath(p).split(/[/\\]/);
-  return parts[parts.length - 1] || p;
-}
-
-function worktreeLabel(projectPath: string, cwd: string): string {
-  const projectRoot = normPath(projectPath);
-  const worktreePath = normPath(cwd);
-  if (worktreePath === projectRoot) return 'main';
-  if (worktreePath.startsWith(projectRoot + '/') || worktreePath.startsWith(projectRoot + '\\')) {
-    return worktreePath.slice(projectRoot.length + 1);
-  }
-  return basename(worktreePath);
-}
+import { buildWorktreeGroups } from '../lib/worktree-groups';
 
 const STANDALONE_KEY = '__standalone__';
 const HINT_LIMIT = 9;
@@ -58,41 +40,19 @@ class NavStore {
       // first (so empty worktrees still seed the order), then any session cwds
       // that aren't git worktrees. Without the git-worktrees seed, the Ctrl+N
       // numbering doesn't match what the user sees in the sidebar.
-      const naturalOrder: string[] = [];
-      const buckets: Record<string, Session[]> = {};
-      const gitWorktrees = project ? git.worktreesFor(project.path) ?? [] : [];
-      for (const wt of gitWorktrees) {
-        const k = normPath(wt.path);
-        if (!buckets[k]) {
-          buckets[k] = [];
-          naturalOrder.push(k);
-        }
-      }
-      for (const s of list) {
-        const k = normPath(s.cwd);
-        if (!buckets[k]) {
-          buckets[k] = [];
-          naturalOrder.push(k);
-        }
-        buckets[k].push(s);
-      }
-      const userOrder = (project?.worktreeOrder ?? []).map(normPath);
-      const seen = new Set<string>();
-      const finalOrder: string[] = [];
-      for (const key of userOrder) {
-        if (buckets[key] && !seen.has(key)) {
-          seen.add(key);
-          finalOrder.push(key);
-        }
-      }
-      for (const key of naturalOrder) {
-        if (!seen.has(key)) {
-          seen.add(key);
-          finalOrder.push(key);
-        }
-      }
-      for (const k of finalOrder) {
-        for (const s of buckets[k]!) out.push(s);
+      const gitWorktrees = project ? git.worktreesFor(project.path, {
+        ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+        ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+      }) ?? [] : [];
+      const worktreeGroups = buildWorktreeGroups({
+        projectPath: project?.path ?? '',
+        ...(project?.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+        worktrees: gitWorktrees,
+        items: list,
+        orderedPaths: project?.worktreeOrder ?? []
+      });
+      for (const group of worktreeGroups) {
+        for (const session of group.items) out.push(session);
       }
     }
     return out;
@@ -135,56 +95,27 @@ class NavStore {
     const project = projects.get(projectId);
     if (!project) return [];
 
-    const buckets = new Map<string, { firstSessionId: SessionId | null }>();
-    const naturalOrder: string[] = [];
-    function ensureBucket(path: string): { firstSessionId: SessionId | null } {
-      const key = normPath(path);
-      let bucket = buckets.get(key);
-      if (!bucket) {
-        bucket = { firstSessionId: null };
-        buckets.set(key, bucket);
-        naturalOrder.push(key);
-      }
-      return bucket;
-    }
-
-    const gitWorktrees = git.worktreesFor(project.path) ?? [];
-    for (const wt of gitWorktrees) {
-      ensureBucket(wt.path);
-    }
-    for (const s of sessions.byProject[project.id] ?? []) {
-      const bucket = ensureBucket(s.cwd);
-      bucket.firstSessionId ??= s.id;
-    }
-
-    const userOrder = (project.worktreeOrder ?? []).map(normPath);
-    const seen = new Set<string>();
-    const finalOrder: string[] = [];
-    for (const key of userOrder) {
-      if (buckets.has(key) && !seen.has(key)) {
-        seen.add(key);
-        finalOrder.push(key);
-      }
-    }
-    for (const key of naturalOrder) {
-      if (!seen.has(key)) {
-        seen.add(key);
-        finalOrder.push(key);
-      }
-    }
-
-    return finalOrder.map((cwd) => {
-      const gitWorktree = gitWorktrees.find((wt) => normPath(wt.path) === cwd);
+    const gitWorktrees = git.worktreesFor(project.path, {
+      ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+      ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+    }) ?? [];
+    const groups = buildWorktreeGroups({
+      projectPath: project.path,
+      ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+      worktrees: gitWorktrees,
+      items: sessions.byProject[project.id] ?? [],
+      orderedPaths: project.worktreeOrder ?? []
+    });
+    return groups.map((group) => {
+      const firstSessionId = group.items[0]?.id ?? null;
       return {
         projectId,
-        cwd,
-        label: gitWorktree?.branch
-          ?? (gitWorktree?.detached ? 'detached' : worktreeLabel(project.path, cwd)),
-        ...(gitWorktree?.branch ? { branch: gitWorktree.branch } : {}),
-        selectedSessionId: sessions.lastSelectedIdForWorktree({ projectId, cwd })
-          ?? buckets.get(cwd)?.firstSessionId
-          ?? null,
-        firstSessionId: buckets.get(cwd)?.firstSessionId ?? null
+        cwd: group.cwd,
+        label: group.label,
+        ...(group.worktree?.branch ? { branch: group.worktree.branch } : {}),
+        selectedSessionId: sessions.lastSelectedIdForWorktree({ projectId, cwd: group.cwd })
+          ?? firstSessionId,
+        firstSessionId
       };
     });
   });

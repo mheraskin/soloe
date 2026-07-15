@@ -3,18 +3,31 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type { SessionId } from '@shared/types/sessions.js';
-import type { SystemUsageSnapshot } from '@shared/types/system.js';
+import type { SystemUsageRequest, SystemUsageSnapshot } from '@shared/types/system.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
+import { ResourceUsageObservation } from '../diagnostics/ResourceUsageObservation.js';
+import { WslUsageSampler } from '../diagnostics/WslUsageSampler.js';
 import { ipcInvoke } from './result.js';
 
 export interface SystemIpcOptions {
   store: SessionStore;
+  getRunningWslDistros?: () => Promise<string[]>;
 }
 
 export class SystemIpc {
   private registered = false;
+  private readonly wslUsage: WslUsageSampler;
+  private readonly usage: ResourceUsageObservation;
 
-  constructor(private readonly opts: SystemIpcOptions) {}
+  constructor(private readonly opts: SystemIpcOptions) {
+    this.wslUsage = new WslUsageSampler();
+    this.usage = new ResourceUsageObservation({
+      collectAppUsage,
+      getRunningWslDistros: () => this.getRunningWslDistros(),
+      sampleWsl: (distroCount) => this.wslUsage.sample(distroCount),
+      resetWsl: () => this.wslUsage.reset()
+    });
+  }
 
   register(): void {
     if (this.registered) return;
@@ -60,8 +73,8 @@ export class SystemIpc {
       ipcInvoke(() => listWslDistros())
     );
 
-    ipcMain.handle(IpcChannels.system.usage, () =>
-      ipcInvoke(() => collectUsage())
+    ipcMain.handle(IpcChannels.system.usage, (_event, request?: SystemUsageRequest) =>
+      ipcInvoke(() => this.usage.observe(request))
     );
   }
 
@@ -72,7 +85,16 @@ export class SystemIpc {
     ipcMain.removeHandler(IpcChannels.system.openExternal);
     ipcMain.removeHandler(IpcChannels.system.listWslDistros);
     ipcMain.removeHandler(IpcChannels.system.usage);
+    this.usage.reset();
     this.registered = false;
+  }
+
+  private async getRunningWslDistros(): Promise<string[]> {
+    try {
+      return await (this.opts.getRunningWslDistros?.() ?? Promise.resolve([]));
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -83,7 +105,7 @@ interface ProcessRow {
   cpuPercent: number;
 }
 
-async function collectUsage(): Promise<SystemUsageSnapshot> {
+async function collectAppUsage(): Promise<Omit<SystemUsageSnapshot, 'wslActive' | 'wsl'>> {
   const electronMetrics = app.getAppMetrics();
   const electronByPid = new Map(electronMetrics.map((metric) => [metric.pid, metric]));
   const rows = await listProcessRows();

@@ -16,22 +16,18 @@ import type {
 import { launchProvider } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
 import { projects } from './projects.svelte';
-import { git } from './git.svelte';
+import { git, type WorktreeInventory } from './git.svelte';
 import { settings } from './settings.svelte';
 import { randomName } from '../lib/random-name';
 import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelte';
 import { rightRail } from './right-rail.svelte';
 import { sendBracketedPaste } from '../lib/terminal-paste';
+import { sameWorktreePath, worktreePathKey } from '../lib/worktree-path';
 
 const LAST_SELECTED_BY_PROJECT_KEY = 'soloe.lastSelectedByProject.v1';
 const LAST_SELECTED_BY_WORKTREE_KEY = 'soloe.lastSelectedByWorktree.v1';
 const LAST_SELECTED_SESSION_KEY = 'soloe.lastSelectedSession.v1';
 const STANDALONE_KEY = '__standalone__';
-
-// Cadence for re-checking whether project-bound sessions still belong to a
-// listed git worktree; sessions whose worktree was removed are archived (data
-// kept, hidden from UI).
-const WORKTREE_SWEEP_INTERVAL_MS = 20000;
 
 const SPLIT_RATIO_KEY = 'soloe.terminalSplitRatio.v1';
 const SPLIT_RATIO_MIN = 0.2;
@@ -57,10 +53,6 @@ function writeSplitRatio(value: number): void {
   } catch {
     // ignore
   }
-}
-
-function normPath(p: string): string {
-  return p.replace(/[/\\]+$/, '');
 }
 
 function readLastSelectedMap(storageKey: string): Record<string, SessionId> {
@@ -114,7 +106,7 @@ function worktreeSelectionKey(args: {
 }): string {
   return [
     args.projectId ?? STANDALONE_KEY,
-    normPath(args.cwd),
+    worktreePathKey(args.cwd, args.runMode),
     args.runMode,
     args.wslDistro ?? ''
   ].join('\u001f');
@@ -139,7 +131,7 @@ interface RuntimeEntry extends SessionRuntimeState {
   // last known status events keep around for "exited" badge until re-start
 }
 
-class SessionsStore {
+export class SessionsStore {
   sessions = $state<Session[]>([]);
   archived = $state<Session[]>([]);
   runtime = $state<Record<SessionId, RuntimeEntry>>({});
@@ -248,9 +240,11 @@ class SessionsStore {
   // app reopens on the exact tab that was active when it closed — not just the
   // first project's last-selected tab.
   private lastSelectedSessionId: SessionId | null = readLastSelectedSession();
-  // Periodic sweep that archives sessions whose git worktree was removed.
-  private worktreeSweepHandle: ReturnType<typeof setInterval> | null = null;
-  private sweepingWorktrees = false;
+  // Successful Worktree inventories are serialized through one reconciliation
+  // queue. This prevents duplicate archive attempts without maintaining an
+  // independent renderer polling cadence.
+  private inventoryReconcileQueue: Promise<void> = Promise.resolve();
+  private inventoryScan: Promise<void> | null = null;
 
   statusFor(id: SessionId): SessionStatus {
     return this.runtime[id]?.status ?? 'stopped';
@@ -316,74 +310,91 @@ class SessionsStore {
           : null;
         agentNotifications.primeSnapshot(snapshot, session, this.selectedId);
       }
-      // Catch sessions whose worktree was removed while the app was closed,
-      // then keep watching for live removals.
-      void this.pruneRemovedWorktreeSessions();
-      this.startWorktreeSweep();
+      // Catch removals that occurred while Soloe was closed. Subsequent
+      // reconciliation is driven by successful Worktree inventories.
+      if (document.visibilityState !== 'hidden') {
+        void this.reconcileKnownWorktreeInventories();
+      }
     } finally {
       this.loading = false;
     }
   }
 
-  // Archive sessions whose git worktree has been removed. The source of truth
-  // is `git worktree list` (mirrored by git.worktreesFor) — NOT raw folder
-  // existence — so `git worktree remove` drops a worktree's sessions out of the
-  // sidebar, while a session whose folder merely became briefly unreachable is
-  // left alone. Archive (not delete) keeps the data; matching mirrors how the
-  // sidebar groups sessions, so what gets archived is exactly what would
-  // otherwise show as an orphaned phantom group.
-  //
-  // Guards against false archives, in increasing caution:
-  //  - a project is only swept once its worktree list was fetched and is
-  //    non-empty (a healthy repo always lists its main worktree, so an empty
-  //    list means "couldn't enumerate" — treated as inconclusive);
-  //  - if NOT ONE of a project's sessions matches a listed worktree, that points
-  //    to a path-format mismatch rather than every worktree vanishing at once,
-  //    so the whole project is skipped.
-  private async pruneRemovedWorktreeSessions(): Promise<void> {
-    if (this.sweepingWorktrees) return;
-    this.sweepingWorktrees = true;
-    try {
-      const byProject = new Map<string, Session[]>();
-      for (const s of this.sessions) {
-        if (!s.projectId || !s.cwd || s.cwd.trim().length === 0) continue;
-        const group = byProject.get(s.projectId) ?? [];
-        group.push(s);
-        byProject.set(s.projectId, group);
-      }
-      for (const [projectId, group] of byProject) {
-        const project = projects.get(projectId);
-        if (!project?.path) continue;
-        const sample = group[0]!;
-        const ctx = {
-          ...(sample.runMode ? { runMode: sample.runMode } : {}),
-          ...(sample.wslDistro ? { wslDistro: sample.wslDistro } : {})
-        };
-        const worktrees = await git
-          .loadWorktrees(project.path, false, ctx)
-          .catch(() => null);
-        if (!worktrees || worktrees.length === 0) continue;
-        const listed = new Set(worktrees.map((w) => normPath(w.path)));
-        const orphaned = group.filter((s) => !listed.has(normPath(s.cwd)));
-        if (orphaned.length === 0 || orphaned.length === group.length) continue;
-        for (const s of orphaned) {
-          try {
-            await this.archive(s.id);
-          } catch {
-            // best effort — retry on the next sweep
-          }
-        }
-      }
-    } finally {
-      this.sweepingWorktrees = false;
+  // Archive sessions whose Worktree disappeared from a successful Git
+  // inventory. Empty inventories remain inconclusive because a healthy repo
+  // always lists its main Worktree; IPC failures also resolve to empty.
+  private queueWorktreeInventory(inventory: WorktreeInventory): void {
+    const projectIds = new Set(
+      this.sessions.flatMap((session) => session.projectId ? [session.projectId] : [])
+    );
+    for (const projectId of projectIds) {
+      const project = projects.get(projectId);
+      if (!project?.path) continue;
+      const runMode = inventory.context.runMode ?? project.defaultRunMode;
+      if (!sameWorktreePath(project.path, inventory.repoPath, runMode)) continue;
+      if (
+        runMode === 'wsl'
+        && inventory.context.wslDistro
+        && project.defaultWslDistro
+        && inventory.context.wslDistro !== project.defaultWslDistro
+      ) continue;
+      this.queueProjectInventory(projectId, inventory.worktrees);
     }
   }
 
-  private startWorktreeSweep(): void {
-    if (this.worktreeSweepHandle) return;
-    this.worktreeSweepHandle = setInterval(() => {
-      void this.pruneRemovedWorktreeSessions();
-    }, WORKTREE_SWEEP_INTERVAL_MS);
+  private queueProjectInventory(
+    projectId: string,
+    worktrees: WorktreeInventory['worktrees']
+  ): Promise<void> {
+    this.inventoryReconcileQueue = this.inventoryReconcileQueue
+      .then(() => this.reconcileProjectInventory(projectId, worktrees))
+      .catch(() => {
+        // One failed archive must not poison future inventory reconciliation.
+      });
+    return this.inventoryReconcileQueue;
+  }
+
+  private async reconcileProjectInventory(
+    projectId: string,
+    worktrees: WorktreeInventory['worktrees']
+  ): Promise<void> {
+    if (worktrees.length === 0) return;
+    const group = this.sessions.filter(
+      (session) => session.projectId === projectId && session.cwd.trim().length > 0
+    );
+    const orphaned = group.filter((session) =>
+      !worktrees.some((worktree) => sameWorktreePath(worktree.path, session.cwd, session.runMode))
+    );
+    for (const session of orphaned) {
+      try {
+        await this.archive(session.id);
+      } catch {
+        // Best effort; a later successful inventory retries surviving sessions.
+      }
+    }
+  }
+
+  private reconcileKnownWorktreeInventories(): Promise<void> {
+    if (this.inventoryScan) return this.inventoryScan;
+    const projectIds = new Set(
+      this.sessions.flatMap((session) => session.projectId ? [session.projectId] : [])
+    );
+    const request = Promise.all(Array.from(projectIds, async (projectId) => {
+      const project = projects.get(projectId);
+      if (!project?.path) return;
+      const sample = this.sessions.find((session) => session.projectId === projectId);
+      if (!sample) return;
+      const context = {
+        runMode: sample.runMode,
+        ...(sample.wslDistro ? { wslDistro: sample.wslDistro } : {})
+      };
+      const worktrees = await git.loadWorktrees(project.path, false, context).catch(() => []);
+      await this.queueProjectInventory(projectId, worktrees);
+    })).then(() => undefined).finally(() => {
+      if (this.inventoryScan === request) this.inventoryScan = null;
+    });
+    this.inventoryScan = request;
+    return request;
   }
 
   toggleArchivedFor(projectId: string): void {
@@ -439,9 +450,10 @@ class SessionsStore {
 
   lastSelectedIdForWorktree(args: { projectId?: string | null; cwd: string }): SessionId | null {
     const projectId = args.projectId ?? null;
-    const cwd = normPath(args.cwd);
     const candidates = this.sessions.filter(
-      (s) => (s.projectId ?? null) === projectId && normPath(s.cwd) === cwd
+      (session) =>
+        (session.projectId ?? null) === projectId
+        && sameWorktreePath(session.cwd, args.cwd, session.runMode)
     );
     if (candidates.length === 0) return null;
     const candidateIds = new Set(candidates.map((s) => s.id));
@@ -536,6 +548,18 @@ class SessionsStore {
         }
       })
     );
+    this.detachers.push(
+      git.onWorktrees((inventory) => this.queueWorktreeInventory(inventory))
+    );
+
+    const onVisibility = () => {
+      if (document.visibilityState !== 'hidden') {
+        void this.reconcileKnownWorktreeInventories();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    this.detachers.push(() => document.removeEventListener('visibilitychange', onVisibility));
+    onVisibility();
   }
 
   private rowSessionIdForEvent(event: ObserverEvent): SessionId | null {
@@ -551,7 +575,7 @@ class SessionsStore {
 
   private async applyTerminalLocation(id: SessionId, cwd: string): Promise<void> {
     const current = this.sessions.find((s) => s.id === id);
-    if (!current || current.cwd === cwd) return;
+    if (!current || sameWorktreePath(current.cwd, cwd, current.runMode)) return;
     const version = (this.locationVersions.get(id) ?? 0) + 1;
     this.locationVersions.set(id, version);
     this.sessions = this.sessions.map((s) =>
@@ -602,6 +626,8 @@ class SessionsStore {
       branch?: string;
       model?: string;
       extraArgs?: string[];
+      runMode?: RunMode;
+      wslDistro?: string;
     } = {}
   ): Promise<Session> {
     return this.createTypedWithDefaults(kind, opts);
@@ -616,7 +642,9 @@ class SessionsStore {
     const created = await this.createAgentWithDefaults(provider, {
       ...(origin.projectId ? { projectId: origin.projectId } : {}),
       cwd: origin.cwd,
-      ...(origin.lastBranch ? { branch: origin.lastBranch } : {})
+      ...(origin.lastBranch ? { branch: origin.lastBranch } : {}),
+      runMode: origin.runMode,
+      ...(origin.wslDistro ? { wslDistro: origin.wslDistro } : {})
     });
     const terminalId = await this.waitForTerminalId(created.id, 5000);
     if (!terminalId) throw new Error(`Terminal did not start for ${created.name}`);
@@ -924,7 +952,7 @@ class SessionsStore {
   }
 
   private isSameWorktree(a: Session, b: Session): boolean {
-    return a.cwd === b.cwd
+    return sameWorktreePath(a.cwd, b.cwd, a.runMode)
       && a.runMode === b.runMode
       && (a.wslDistro ?? null) === (b.wslDistro ?? null);
   }

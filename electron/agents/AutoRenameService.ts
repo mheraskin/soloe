@@ -1,17 +1,13 @@
 import { spawn } from 'node:child_process';
-import * as os from 'node:os';
 import type {
-  ModelProvider,
   ModelSelection,
-  Settings,
-  SettingsBinaries
+  Settings
 } from '@shared/types/settings.js';
 import type { Session, SessionId } from '@shared/types/sessions.js';
-import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
-import { buildWslAgentLine } from '../sessions/SessionCommandBuilder.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { SettingsStore } from '../settings/SettingsStore.js';
 import type { Notifier } from '../notify/Notifier.js';
+import { BackgroundAgentExecution } from './BackgroundAgentExecution.js';
 
 export interface AutoRenameServiceOptions {
   sessionStore: SessionStore;
@@ -21,6 +17,7 @@ export interface AutoRenameServiceOptions {
   log?: (message: string, detail?: unknown) => void;
   // Override binary spawn in tests; production calls runProcess.
   spawnImpl?: typeof spawn;
+  execution?: BackgroundAgentExecution;
 }
 
 interface RenameInputs {
@@ -42,7 +39,18 @@ export class AutoRenameService {
   private readonly notifiedNoProvider = new Set<string>();
   private readonly runningRenames = new Set<SessionId>();
 
-  constructor(private readonly opts: AutoRenameServiceOptions) {}
+  private readonly execution: BackgroundAgentExecution;
+
+  constructor(private readonly opts: AutoRenameServiceOptions) {
+    this.execution = opts.execution ?? new BackgroundAgentExecution({
+      ...(opts.spawnImpl ? {
+        spawnImpl: opts.spawnImpl,
+        // A supplied spawn Adapter is a deterministic test seam; availability
+        // is controlled by candidate ordering rather than host PATH.
+        isExecutableAvailable: async () => true
+      } : {})
+    });
+  }
 
   async maybeRename(input: RenameInputs): Promise<void> {
     console.log(`[soloe-rename] service: maybeRename entered for ${input.sessionId}`);
@@ -85,31 +93,35 @@ export class AutoRenameService {
     }
 
     const settings = await this.opts.settings.get();
-    const target = await this.pickProvider(settings);
-    if (!target) {
-      console.log(
-        `[soloe-rename] service: skip — no provider available for ${input.sessionId}`
-      );
-      this.notifyMissingProvider();
+    const candidates = providerCandidates(settings);
+    const truncated = trimmed.length > PROMPT_MAX_LENGTH ? trimmed.slice(0, PROMPT_MAX_LENGTH) : trimmed;
+    const result = await this.execution.execute({
+      candidates,
+      binaries: settings.binaries,
+      scope: {
+        cwd: session.cwd,
+        runMode: session.runMode,
+        ...(session.wslDistro ? { wslDistro: session.wslDistro } : {})
+      },
+      prompt: `${NAMING_INSTRUCTION}\n${truncated}`,
+      timeoutMs: RENAME_TIMEOUT_MS,
+      priority: 'background',
+      maxOutputBytes: 64 * 1024,
+      validate: async () => {
+        const latest = await this.opts.sessionStore.get(session.id);
+        return Boolean(latest && latest.autoNamed !== false);
+      }
+    });
+    if (!result.ok) {
+      if (result.reason === 'unavailable') this.notifyMissingProvider();
+      if (result.reason !== 'cancelled') {
+        this.opts.log?.('auto-rename background agent failed', result.error);
+      }
       return;
     }
-
+    const raw = result.text;
     console.log(
-      `[soloe-rename] service: spawning ${target.provider}/${target.id} for ${input.sessionId} (runMode=${session.runMode}, distro=${session.wslDistro ?? '-'})`
-    );
-    let raw: string;
-    try {
-      raw = await this.runOneShot(session, settings.binaries, target, trimmed);
-    } catch (err) {
-      console.log(
-        `[soloe-rename] service: spawn FAILED for ${target.provider} on ${input.sessionId}:`,
-        err instanceof Error ? err.message : err
-      );
-      this.opts.log?.(`auto-rename ${target.provider} failed`, err);
-      return;
-    }
-    console.log(
-      `[soloe-rename] service: spawn returned ${raw.length}b for ${input.sessionId}: ${JSON.stringify(raw.slice(0, 200))}`
+      `[soloe-rename] service: ${result.provider.provider}/${result.provider.id} returned ${raw.length}b for ${input.sessionId}: ${JSON.stringify(raw.slice(0, 200))}`
     );
     const name = sanitizeName(raw);
     if (!name) {
@@ -156,18 +168,6 @@ export class AutoRenameService {
     }
   }
 
-  private async pickProvider(settings: Settings): Promise<ModelSelection | null> {
-    const configured = settings.models.textGeneration ?? null;
-    const codexAvailable = isBinaryAvailable(settings.binaries, 'codex');
-    const claudeAvailable = isBinaryAvailable(settings.binaries, 'claude');
-    if (configured && isProviderAvailable(configured.provider, settings.binaries)) {
-      return configured;
-    }
-    if (codexAvailable) return settings.models.textGeneration ?? { provider: 'codex', id: 'gpt-5.4-mini' };
-    if (claudeAvailable) return { provider: 'claude', id: 'haiku' };
-    return null;
-  }
-
   private notifyMissingProvider(): void {
     const key = 'no-provider';
     if (this.notifiedNoProvider.has(key)) return;
@@ -180,129 +180,30 @@ export class AutoRenameService {
     });
   }
 
-  private async runOneShot(
-    session: Session,
-    binaries: SettingsBinaries,
-    target: ModelSelection,
-    prompt: string
-  ): Promise<string> {
-    const truncated = prompt.length > PROMPT_MAX_LENGTH ? prompt.slice(0, PROMPT_MAX_LENGTH) : prompt;
-    const fullPrompt = `${NAMING_INSTRUCTION}\n${truncated}`;
-    const argv = buildAgentArgv(target, binaries, fullPrompt);
-    if (session.runMode === 'wsl') {
-      return runWslArgv(session.wslDistro ?? 'Ubuntu', session.cwd, argv, this.opts.spawnImpl);
+}
+
+function providerCandidates(settings: Settings): ModelSelection[] {
+  const configured = settings.models.textGeneration ?? null;
+  const claudeAllowed = settings.integrations.allowClaudeHeadless === true;
+  if (configured) {
+    const candidates = configured.provider === 'claude' && !claudeAllowed ? [] : [configured];
+    if (configured.provider !== 'codex') {
+      candidates.push({ provider: 'codex', id: 'gpt-5.4-mini' });
+    } else if (claudeAllowed) {
+      candidates.push({ provider: 'claude', id: 'haiku' });
     }
-    return runDirect(argv, this.opts.spawnImpl);
+    return candidates;
   }
-}
-
-function buildAgentArgv(
-  target: ModelSelection,
-  binaries: SettingsBinaries,
-  prompt: string
-): { executable: string; args: string[] } {
-  if (target.provider === 'codex') {
-    const exe = binaries.codex || 'codex';
-    // Pin model from settings (cheap default = gpt-5.4-mini) instead of
-    // letting codex pick its own — codex's own default may be a frontier
-    // model, which is wasteful for naming a session.
-    return {
-      executable: exe,
-      args: ['exec', '--skip-git-repo-check', '--color', 'never', '-m', target.id, prompt]
-    };
+  const candidates: ModelSelection[] = [];
+  if (settings.binaries.codex) candidates.push({ provider: 'codex', id: 'gpt-5.4-mini' });
+  if (settings.binaries.claude && claudeAllowed) {
+    candidates.push({ provider: 'claude', id: 'haiku' });
   }
-  const exe = binaries.claude || 'claude';
-  return {
-    executable: exe,
-    args: ['-p', '--model', target.id, '--output-format', 'text', prompt]
-  };
-}
-
-function isProviderAvailable(provider: ModelProvider, binaries: SettingsBinaries): boolean {
-  return isBinaryAvailable(binaries, provider === 'codex' ? 'codex' : 'claude');
-}
-
-// We treat a binary as "potentially available" if either the user has set an
-// override in Settings, or we have no signal to say otherwise — the actual
-// spawn surfaces the truth and is logged on failure. This keeps the picker
-// permissive so legitimate setups aren't blocked by a strict pre-check.
-function isBinaryAvailable(binaries: SettingsBinaries, key: 'claude' | 'codex'): boolean {
-  return Boolean(binaries[key]) || true;
-}
-
-async function runDirect(
-  argv: { executable: string; args: string[] },
-  spawnImpl: typeof spawn = spawn
-): Promise<string> {
-  return runProcess(argv.executable, argv.args, undefined, spawnImpl);
-}
-
-async function runWslArgv(
-  distro: string,
-  cwd: string,
-  argv: { executable: string; args: string[] },
-  spawnImpl: typeof spawn = spawn
-): Promise<string> {
-  const inner = buildWslAgentLine({}, argv.executable, argv.args);
-  return runProcess(
-    WslCommandBuilder.WSL_EXE,
-    ['-d', distro, '--cd', cwd, 'bash', '-lc', inner],
-    process.env['USERPROFILE'] ?? process.env['HOME'] ?? os.homedir(),
-    spawnImpl
-  );
-}
-
-function runProcess(
-  command: string,
-  args: string[],
-  cwd: string | undefined,
-  spawnImpl: typeof spawn
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawnImpl(command, args, {
-      cwd,
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
-    });
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
-      reject(new Error(`auto-rename timed out after ${RENAME_TIMEOUT_MS}ms`));
-    }, RENAME_TIMEOUT_MS);
-
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => {
-      stdout += chunk;
-      if (stdout.length > 64 * 1024) stdout = stdout.slice(0, 64 * 1024);
-    });
-    child.stderr?.on('data', (chunk: string) => {
-      stderr += chunk;
-      if (stderr.length > 64 * 1024) stderr = stderr.slice(0, 64 * 1024);
-    });
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(err);
-    });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (code !== 0) {
-        const message = stderr.trim() || `process exited with code ${code}`;
-        reject(new Error(message));
-        return;
-      }
-      resolve(stdout);
-    });
-  });
+  if (candidates.length === 0) {
+    candidates.push({ provider: 'codex', id: 'gpt-5.4-mini' });
+    if (claudeAllowed) candidates.push({ provider: 'claude', id: 'haiku' });
+  }
+  return candidates;
 }
 
 export function sanitizeName(raw: string): string {

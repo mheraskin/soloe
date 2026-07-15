@@ -55,6 +55,18 @@ describe('SettingsStore — update', () => {
     expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
   });
 
+  it('merges and validates browser residency updates', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({ browser: { maxResidentTabs: 2 } });
+    expect(updated.browser.maxResidentTabs).toBe(2);
+    expect(updated.browser.pauseAutoResumeMinutes).toBe(
+      DEFAULT_SETTINGS.browser.pauseAutoResumeMinutes
+    );
+    await expect(
+      store.update({ browser: { maxResidentTabs: 0 } })
+    ).rejects.toThrow(/Invalid browser\.maxResidentTabs/);
+  });
+
   it('merges default new session kind updates', async () => {
     const store = new SettingsStore(storePath);
     const updated = await store.update({ defaults: { newSessionKind: 'claude_code' } });
@@ -115,6 +127,7 @@ describe('SettingsStore — migration', () => {
     expect(s.terminal.fontSize).toBe(13);
     expect(s.terminal.confirmDeleteTabs).toBe(true);
     expect(s.defaults.newSessionKind).toBe('terminal');
+    expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

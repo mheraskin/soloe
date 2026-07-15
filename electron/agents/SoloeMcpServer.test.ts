@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { GitService } from '../git/GitService.js';
 import { AgentObserverManager } from './AgentObserverManager.js';
 import { AgentRuntimeManager, type WorkerSdkAdapter } from './AgentRuntimeManager.js';
 import {
@@ -43,6 +44,63 @@ describe('SoloeMcpServer', () => {
       arguments: { workerId: created.workerId }
     });
     expect(JSON.stringify(status)).toContain('sdk_worker');
+  });
+
+  it('keeps the exact Worktree Scope through Git resolution and diff transport', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const commit = {
+      hash: 'a'.repeat(40),
+      shortHash: 'aaaaaaa',
+      author: 'A',
+      authoredAt: '2026-01-01T00:00:00.000Z',
+      subject: 'Scoped range'
+    };
+    const resolveCommitRefs = vi.fn()
+      .mockResolvedValueOnce(['h'.repeat(40), 'a'.repeat(40)])
+      .mockResolvedValueOnce(['b'.repeat(40)]);
+    const getCommitsBetween = vi.fn().mockResolvedValue({ commits: [commit], truncated: false });
+    const openForCommits = vi.fn().mockResolvedValue({
+      ok: true,
+      sessionId: 'ubuntu',
+      cwd: '/repo',
+      base: 'b'.repeat(40),
+      head: 'h'.repeat(40),
+      commitCount: 1
+    });
+    const target = {
+      sessionId: 'ubuntu',
+      scope: { cwd: '/repo', runMode: 'wsl' as const, wslDistro: 'Ubuntu' }
+    };
+    const server = new SoloeMcpServer({
+      observer,
+      runtime,
+      git: { resolveCommitRefs, getCommitsBetween } as unknown as GitService,
+      diffBridge: { openForCommits },
+      resolveDiffTarget: vi.fn().mockResolvedValue(target)
+    });
+
+    await server.handlePayload({
+      tool: 'open_diff_for_commits',
+      arguments: { sessionId: 'ubuntu', commits: ['HEAD~1'] }
+    });
+
+    expect(resolveCommitRefs).toHaveBeenCalledWith(
+      '/repo',
+      ['HEAD', 'HEAD~1'],
+      { runMode: 'wsl', wslDistro: 'Ubuntu' }
+    );
+    expect(getCommitsBetween).toHaveBeenCalledWith(
+      '/repo',
+      'b'.repeat(40),
+      'h'.repeat(40),
+      { runMode: 'wsl', wslDistro: 'Ubuntu' }
+    );
+    expect(openForCommits).toHaveBeenCalledWith(expect.objectContaining({
+      target,
+      commits: [commit]
+    }));
+    await runtime.dispose();
   });
 });
 

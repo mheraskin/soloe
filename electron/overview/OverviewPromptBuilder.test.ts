@@ -10,6 +10,7 @@ const emptyFacts: WorktreeFacts = {
   branch: 'main',
   head: 'abc1234',
   baseBranch: 'main',
+  baseOid: 'abc1234',
   commitsAhead: 0,
   commitsBehind: 0,
   commitsAheadShas: [],
@@ -17,6 +18,9 @@ const emptyFacts: WorktreeFacts = {
   mergedIntoBase: false,
   dirtyFiles: [],
   dirtyHash: '',
+  evidenceFingerprint: 'evidence',
+  completeness: 'complete',
+  diagnostics: [],
   workingDiff: '',
   recentCommits: []
 };

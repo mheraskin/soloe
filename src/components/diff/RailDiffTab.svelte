@@ -28,11 +28,17 @@
   } from '@lucide/svelte';
   import { onMount, untrack } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
+  import { worktreeScopeKey } from '@shared/worktree-identity.js';
   import { sessions } from '../../stores/sessions.svelte';
-  import { workingDiff } from '../../stores/working-diff.svelte';
+  import {
+    createReviewScope,
+    workingDiff,
+    type ReviewScope
+  } from '../../stores/working-diff.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
+  import { settings } from '../../stores/settings.svelte';
   import { confirmStore } from '../../stores/confirm.svelte';
   import type { WorkingChange } from '@shared/types/git.js';
   import { Button } from '$lib/components/ui/button';
@@ -46,9 +52,24 @@
   import DiffSelectionMenu from './DiffSelectionMenu.svelte';
   import CommitPicker from './CommitPicker.svelte';
   import CommitComposer from './CommitComposer.svelte';
+  import { estimateReviewBodyHeight, ReviewViewport } from '$lib/review-viewport.svelte';
+  import {
+    resolveReviewSelectionTarget,
+    type ReviewSelectionTarget
+  } from '$lib/diff-selection';
+  import {
+    findReviewEntry,
+    reviewEntryId,
+    reviewEntryPath,
+    reviewEntrySection,
+    type ReviewEntryId
+  } from '$lib/review-entry';
 
   let diffRootEl: HTMLDivElement | null = $state(null);
   let diffViewportEl: HTMLElement | null = $state(null);
+  const reviewViewport = new ReviewViewport();
+
+  $effect(() => reviewViewport.attach(diffViewportEl));
 
   // Auto-fit by default: 4 full rows + half of the 5th when there are more,
   // otherwise just enough for whatever's there. The user can still drag to
@@ -90,49 +111,43 @@
     return cwd && cwd.length > 0 ? cwd : null;
   });
 
-  $effect(() => {
-    if (!activeCwd || !selected) return;
-    workingDiff.setContext(activeCwd, {
+  let activeReviewScope = $derived.by<ReviewScope | null>(() => {
+    if (!activeCwd || !selected) return null;
+    return createReviewScope(activeCwd, {
       runMode: selected.runMode,
       ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
     });
   });
 
-  // Auto-load changes whenever the active worktree changes. Subsequent refreshes
-  // are pushed by the git change listener attached on mount.
   $effect(() => {
-    const cwd = activeCwd;
-    if (!cwd) return;
-    void workingDiff
-      .loadChanges(cwd)
-      .then((result) => {
-        // Kick off the eager prefetch as soon as the file list lands. Each
-        // diff request is deduped against the in-flight selection click so
-        // there's no race penalty for the file the user picks first.
-        if (result) void workingDiff.prefetchDiffs(cwd);
-      })
-      .catch(reportError);
+    const scope = activeReviewScope;
+    if (!scope) return;
+    return workingDiff.acquireReviewDemand(scope);
   });
 
-  // Whenever the user changes the context-lines slider, every diff entry is
-  // wiped. Re-prime the cache so subsequent clicks stay instant — the active
-  // file is already being refetched by the selection effect below.
-  $effect(() => {
-    const cwd = activeCwd;
-    workingDiff.contextLines;
-    if (!cwd) return;
-    if (!workingDiff.changesFor(cwd).result) return;
-    void workingDiff.prefetchDiffs(cwd);
-  });
-
-  let changesEntry = $derived(activeCwd ? workingDiff.changesFor(activeCwd) : null);
-  let filteredChanges = $derived(activeCwd ? workingDiff.filteredChangesFor(activeCwd) : []);
+  let changesEntry = $derived(activeReviewScope ? workingDiff.changesFor(activeReviewScope) : null);
+  let filteredChanges = $derived(activeReviewScope ? workingDiff.filteredChangesFor(activeReviewScope) : []);
   let totalChangeCount = $derived(changesEntry?.result?.changes.length ?? 0);
   let stagedChanges = $derived(filteredChanges.filter((c) => c.staged && c.section !== 'committed'));
   let unstagedChanges = $derived(filteredChanges.filter((c) => !c.staged && c.section !== 'committed'));
 
   let reviewMode = $derived(
-    activeCwd ? workingDiff.reviewModeFor(activeCwd) : ({ kind: 'working-tree' } as const)
+    activeReviewScope ? workingDiff.reviewModeFor(activeReviewScope) : ({ kind: 'working-tree' } as const)
+  );
+  let selectionContextKey = $derived.by(() => {
+    const scope = activeReviewScope;
+    if (!scope) return 'no-review';
+    const modeKey = reviewMode.kind === 'range'
+      ? `range\0${reviewMode.base}\0${reviewMode.head}`
+      : 'working-tree';
+    return `${worktreeScopeKey(scope)}\0${modeKey}`;
+  });
+  let selectionMenuActive = $derived(
+    rightRail.openTabs.includes('diff') &&
+      (!rightRail.fullscreen || rightRail.fullscreenTab === 'diff')
+  );
+  let selectionGeometryVersion = $derived(
+    `${reviewViewport.scrollVersion}:${reviewViewport.layoutVersion}`
   );
   let isRangeMode = $derived(reviewMode.kind === 'range');
   let filterOptions = $derived(isRangeMode ? RANGE_FILTER_OPTIONS : WT_FILTER_OPTIONS);
@@ -178,45 +193,46 @@
   let pickerOpen = $state(false);
 
   function clearChipFilter(): void {
-    if (!activeCwd) return;
-    workingDiff.setChipFilter(activeCwd, null);
+    if (!activeReviewScope) return;
+    workingDiff.setChipFilter(activeReviewScope, null);
   }
 
   function pickCommitChip(sha: string): void {
-    if (!activeCwd) return;
-    workingDiff.setChipFilter(activeCwd, reviewMode.kind === 'range' && reviewMode.chipFilter === sha ? null : sha);
+    if (!activeReviewScope) return;
+    workingDiff.setChipFilter(activeReviewScope, reviewMode.kind === 'range' && reviewMode.chipFilter === sha ? null : sha);
   }
 
-  let storedSelected = $derived(activeCwd ? workingDiff.selectedFilePath(activeCwd) : null);
+  let storedSelected = $derived(activeReviewScope ? workingDiff.selectedReviewEntry(activeReviewScope) : null);
   // Multi-file viewer renders the filtered set as a scroll stack; the
   // "selected" file is the one currently in view (highlight + active for
   // outside integrations). Anything outside the filter can't be the active
   // one because it isn't rendered.
-  let effectiveSelected = $derived.by<string | null>(() => {
-    if (storedSelected && filteredChanges.some((c) => c.path === storedSelected)) {
+  let effectiveSelected = $derived.by<ReviewEntryId | null>(() => {
+    if (
+      storedSelected &&
+      filteredChanges.some((change) => reviewEntryId(change, reviewMode) === storedSelected)
+    ) {
       return storedSelected;
     }
     if (!filteredChanges.length) return null;
-    return filteredChanges[0]?.path ?? null;
+    return reviewEntryId(filteredChanges[0]!, reviewMode);
   });
+  let effectiveSelectedChange = $derived(
+    effectiveSelected
+      ? findReviewEntry(filteredChanges, effectiveSelected, reviewMode) ?? null
+      : null
+  );
+  let effectiveSelectedPath = $derived(
+    effectiveSelected ? reviewEntryPath(effectiveSelected) : null
+  );
 
   $effect(() => {
     if (!activeCwd) return;
     const next = effectiveSelected;
     if (next && next !== storedSelected) {
-      workingDiff.setSelected(activeCwd, next);
+      const change = findReviewEntry(filteredChanges, next, reviewMode);
+      if (change && activeReviewScope) workingDiff.setSelectedEntry(activeReviewScope, change);
     }
-  });
-
-  $effect(() => {
-    const cwd = activeCwd;
-    const path = effectiveSelected;
-    if (!cwd || !path) {
-      if (cwd) workingDiff.setActive({ cwd, filePath: '' });
-      return;
-    }
-    workingDiff.setActive({ cwd, filePath: path });
-    void workingDiff.loadDiff(cwd, path).catch(reportError);
   });
 
   // Per-file refs power the scroll-stacked viewer: each file section reports
@@ -228,6 +244,7 @@
   let layoutTick = $state(0);
 
   function bindSection(node: HTMLDivElement, path: string) {
+    const viewportRegistration = reviewViewport.registerSection(node, path);
     sectionEls[path] = node;
     layoutTick++;
     let current = path;
@@ -237,9 +254,11 @@
         sectionEls[current] = null;
         current = newPath;
         sectionEls[current] = node;
+        viewportRegistration.update(current);
         layoutTick++;
       },
       destroy() {
+        viewportRegistration.destroy();
         sectionEls[current] = null;
         layoutTick++;
       }
@@ -247,6 +266,7 @@
   }
 
   function bindBodyWrapper(node: HTMLDivElement, path: string) {
+    const viewportRegistration = reviewViewport.registerBody(node, path);
     bodyWrapperEls[path] = node;
     layoutTick++;
     let current = path;
@@ -256,9 +276,11 @@
         bodyWrapperEls[current] = null;
         current = newPath;
         bodyWrapperEls[current] = node;
+        viewportRegistration.update(current);
         layoutTick++;
       },
       destroy() {
+        viewportRegistration.destroy();
         bodyWrapperEls[current] = null;
         layoutTick++;
       }
@@ -280,34 +302,8 @@
     });
   });
 
-  $effect(() => {
-    const root = diffRootEl;
-    if (!root) return;
-    const ro = new ResizeObserver(() => {
-      layoutTick++;
-    });
-    ro.observe(root);
-    return () => ro.disconnect();
-  });
-
-  // Body offsets within diffRootEl. VirtualDiffBody virtualizes against the
-  // shared viewport scrollTop; without these offsets every body would think
-  // its content starts at scroll 0 and stickies/visible-rows would misalign.
-  let sectionTops = $derived.by<Record<string, number>>(() => {
-    void layoutTick;
-    const out: Record<string, number> = {};
-    const root = diffRootEl;
-    if (!root) return out;
-    const rootRect = root.getBoundingClientRect();
-    for (const change of stackChanges) {
-      const wrapper = bodyWrapperEls[change.path];
-      if (!wrapper) continue;
-      out[change.path] = wrapper.getBoundingClientRect().top - rootRect.top;
-    }
-    return out;
-  });
-
-  // Per-file collapse state. Keyed by `${cwd}::${path}` so it stays stable
+  // Per-entry collapse state. Keyed by cwd + immutable ReviewEntryId so WT
+  // and committed rows for the same path remain independently controllable.
   // across worktree switches without spilling between them. Staged files are
   // auto-seeded collapsed (see effect below) so a big mechanical staged diff
   // doesn't drown out the unstaged review; once the user toggles, their
@@ -318,16 +314,16 @@
   // graph so the seeding effect below doesn't read what it writes.
   const collapseSeedSeen = new Set<string>();
 
-  function collapseKey(path: string): string {
-    return `${activeCwd ?? '__none__'}::${path}`;
+  function collapseKey(entryId: ReviewEntryId): string {
+    return `${activeCwd ?? '__none__'}::${entryId}`;
   }
 
   function isCollapsed(change: WorkingChange): boolean {
-    return collapsedByPath[collapseKey(change.path)] === true;
+    return collapsedByPath[collapseKey(reviewEntryId(change, reviewMode))] === true;
   }
 
   function toggleCollapsed(change: WorkingChange): void {
-    const key = collapseKey(change.path);
+    const key = collapseKey(reviewEntryId(change, reviewMode));
     const next = { ...collapsedByPath };
     if (next[key]) delete next[key];
     else next[key] = true;
@@ -336,19 +332,126 @@
 
   let allCollapsed = $derived.by<boolean>(() => {
     if (stackChanges.length === 0) return false;
-    return stackChanges.every((c) => collapsedByPath[collapseKey(c.path)] === true);
+    return stackChanges.every(
+      (change) => collapsedByPath[collapseKey(reviewEntryId(change, reviewMode))] === true
+    );
   });
 
   function toggleAllCollapsed(): void {
     const target = !allCollapsed;
     const next = { ...collapsedByPath };
     for (const c of stackChanges) {
-      const key = collapseKey(c.path);
+      const key = collapseKey(reviewEntryId(c, reviewMode));
       if (target) next[key] = true;
       else delete next[key];
     }
     collapsedByPath = next;
   }
+
+  // The shared ReviewViewport keeps only a pixel-local window resident. The
+  // selected file and a pending comment reveal are pins so navigation never
+  // waits for IntersectionObserver to catch up after a far jump.
+  let residentEntries = $derived.by<ReadonlySet<ReviewEntryId>>(() => {
+    const near = reviewViewport.nearPaths;
+    const highlighted = diffComments.highlight;
+    const out = new Set<ReviewEntryId>();
+    for (const change of stackChanges) {
+      if (isCollapsed(change)) continue;
+      const entryId = reviewEntryId(change, reviewMode);
+      if (
+        near.has(entryId) ||
+        entryId === effectiveSelected ||
+        (highlighted && activeReviewScope &&
+          worktreeScopeKey(highlighted.scope) === worktreeScopeKey(activeReviewScope) &&
+          highlighted.filePath === change.path &&
+          highlighted.section === reviewEntrySection(change))
+      ) {
+        out.add(entryId);
+      }
+    }
+    return out;
+  });
+
+  // Residency is also the pin set for the bounded payload cache. Updating it
+  // atomically lets the cache evict the previous review's cold LRU entries
+  // without dropping the file currently being rendered or revealed.
+  $effect(() => {
+    const scope = activeReviewScope;
+    const entries = Array.from(residentEntries);
+    untrack(() => workingDiff.setReviewResidents(scope, entries));
+  });
+
+  // Selection describes navigation intent; residency determines allocation.
+  // In particular, a staged file can be selected yet auto-collapsed, and
+  // fetching its body would consume Git/IPC/heap resources for invisible UI.
+  $effect(() => {
+    const scope = activeReviewScope;
+    const selected = effectiveSelectedChange;
+    if (!scope || !selected || !residentEntries.has(reviewEntryId(selected, reviewMode))) return;
+    void workingDiff
+      .loadDiff(scope, selected.path, reviewEntrySection(selected))
+      .catch(reportError);
+  });
+
+  // A comment reveal is a semantic navigation request, not just a flash.
+  // Ensure a previously collapsed target can mount before VirtualDiffBody
+  // resolves and scrolls to the exact line range.
+  $effect(() => {
+    const highlighted = diffComments.highlight;
+    const scope = activeReviewScope;
+    if (
+      !highlighted ||
+      !scope ||
+      worktreeScopeKey(highlighted.scope) !== worktreeScopeKey(scope)
+    ) return;
+    const target = effectiveSelectedChange?.path === highlighted.filePath &&
+      reviewEntrySection(effectiveSelectedChange) === highlighted.section
+      ? effectiveSelectedChange
+      : stackChanges.find(
+          (change) =>
+            change.path === highlighted.filePath &&
+            reviewEntrySection(change) === highlighted.section
+        );
+    if (!target) return;
+    const key = collapseKey(reviewEntryId(target, reviewMode));
+    if (!collapsedByPath[key]) return;
+    untrack(() => {
+      const next = { ...collapsedByPath };
+      delete next[key];
+      collapsedByPath = next;
+    });
+  });
+
+  // Materialize only the resident review window. The main-side Adapter still
+  // batches these into one patch per Git range, retaining process efficiency
+  // without shipping up to 200 off-screen diffs through IPC.
+  $effect(() => {
+    const scope = activeReviewScope;
+    const selectedEntry = effectiveSelected;
+    const entries = Array.from(residentEntries).filter((entryId) => entryId !== selectedEntry);
+    void changesEntry?.result;
+    void workingDiff.contextLines;
+    if (!scope || entries.length === 0) return;
+    void workingDiff.prefetchDiffs(scope, entries).catch(reportError);
+  });
+
+  // Only resident bodies need geometry reads. The previous implementation
+  // synchronously measured every file after any root resize, making layout
+  // work linear in review size even though row rendering was virtualized.
+  let sectionTops = $derived.by<Record<string, number>>(() => {
+    void layoutTick;
+    void reviewViewport.layoutVersion;
+    const out: Record<string, number> = {};
+    const root = diffRootEl;
+    if (!root) return out;
+    const rootRect = root.getBoundingClientRect();
+    for (const entryId of residentEntries) {
+      const wrapper = bodyWrapperEls[entryId];
+      if (!wrapper) continue;
+      out[entryId] = wrapper.getBoundingClientRect().top - rootRect.top;
+    }
+    return out;
+  });
 
   // Staged-file auto-collapse seed. The `untrack` here keeps us from
   // subscribing to our own write of `collapsedByPath` — `{...collapsedByPath}`
@@ -359,7 +462,7 @@
     let pending: string[] | null = null;
     for (const change of stackChanges) {
       if (!change.staged) continue;
-      const key = collapseKey(change.path);
+      const key = collapseKey(reviewEntryId(change, reviewMode));
       if (collapseSeedSeen.has(key)) continue;
       collapseSeedSeen.add(key);
       if (!pending) pending = [];
@@ -380,12 +483,23 @@
   // rendering markers; running this for every loaded diff keeps outdated
   // detection in sync even when the user hasn't scrolled to that file yet.
   $effect(() => {
-    const cwd = activeCwd;
-    if (!cwd) return;
+    const scope = activeReviewScope;
+    if (!scope) return;
     for (const change of filteredChanges) {
-      const entry = workingDiff.diffEntryFor(cwd, change.path);
+      const committed = change.section === 'committed' && reviewMode.kind === 'range';
+      const entry = workingDiff.diffEntryFor(
+        scope,
+        change.path,
+        committed ? reviewMode.base : null,
+        committed ? reviewMode.head : null
+      );
       if (entry?.diff) {
-        diffComments.recomputeOutdated(cwd, change.path, entry.diff);
+        diffComments.recomputeOutdated(
+          scope,
+          change.path,
+          entry.diff,
+          reviewEntrySection(change)
+        );
       }
     }
   });
@@ -402,6 +516,20 @@
     return Math.max(2, String(max).length);
   }
 
+  function selectionTargetForEntry(entryId: string): ReviewSelectionTarget | null {
+    const scope = activeReviewScope;
+    if (!scope) return null;
+    return resolveReviewSelectionTarget(scope, stackChanges, entryId, reviewMode, (change) => {
+      const committed = change.section === 'committed' && reviewMode.kind === 'range';
+      return workingDiff.diffEntryFor(
+        scope,
+        change.path,
+        committed ? reviewMode.base : null,
+        committed ? reviewMode.head : null
+      ).diff;
+    });
+  }
+
   let queryDraft = $state(workingDiff.query);
 
   function commitQuery(): void {
@@ -413,8 +541,8 @@
   // The toggle's count reflects unresolved threads only — resolved ones are
   // still reachable inside the panel but stay out of the headline number.
   let totalCommentCount = $derived(
-    activeCwd
-      ? diffComments.forWorktree(activeCwd).filter((c) => !c.resolvedAt).length
+    activeReviewScope
+      ? diffComments.forWorktree(activeReviewScope).filter((c) => !c.resolvedAt).length
       : 0
   );
   let showComments = $state(false);
@@ -443,18 +571,19 @@
     userListHeightOverride !== null ? userListHeightOverride : naturalListHeight
   );
 
-  function pickChange(path: string): void {
+  function pickChange(change: WorkingChange): void {
     if (!activeCwd) return;
-    workingDiff.setSelected(activeCwd, path);
+    const entryId = reviewEntryId(change, reviewMode);
+    workingDiff.setSelectedEntry(activeReviewScope ?? activeCwd, change);
     // Expand the picked file so the click actually reveals content rather
     // than scrolling to a still-collapsed header.
-    const key = collapseKey(path);
+    const key = collapseKey(entryId);
     if (collapsedByPath[key]) {
       const next = { ...collapsedByPath };
       delete next[key];
       collapsedByPath = next;
     }
-    const section = sectionEls[path];
+    const section = sectionEls[entryId];
     const viewport = diffViewportEl;
     if (!section || !viewport) return;
     const sectionRect = section.getBoundingClientRect();
@@ -464,32 +593,38 @@
   }
 
   async function stageFile(path: string): Promise<void> {
-    if (!activeCwd) return;
-    await workingDiff.stageFiles(activeCwd, [path]);
+    const scope = activeReviewScope;
+    if (!scope) return;
+    await workingDiff.stageFiles(scope, [path]);
   }
 
   async function unstageFile(path: string): Promise<void> {
-    if (!activeCwd) return;
-    await workingDiff.unstageFiles(activeCwd, [path]);
+    const scope = activeReviewScope;
+    if (!scope) return;
+    await workingDiff.unstageFiles(scope, [path]);
   }
 
   async function stageAll(): Promise<void> {
-    if (!activeCwd) return;
+    const scope = activeReviewScope;
+    if (!scope) return;
     const paths = unstagedChanges.map((c) => c.path);
-    if (paths.length) await workingDiff.stageFiles(activeCwd, paths);
+    if (paths.length) await workingDiff.stageFiles(scope, paths);
   }
 
   async function unstageAll(): Promise<void> {
-    if (!activeCwd) return;
+    const scope = activeReviewScope;
+    if (!scope) return;
     const paths = stagedChanges.map((c) => c.path);
-    if (paths.length) await workingDiff.unstageFiles(activeCwd, paths);
+    if (paths.length) await workingDiff.unstageFiles(scope, paths);
   }
 
   // Destructive: discarding rewrites the working tree from HEAD (or removes
   // untracked/added files outright). Always gate on a danger confirm — this
   // is the same pattern other delete-style flows use.
   async function discardChange(change: WorkingChange): Promise<void> {
-    if (!activeCwd) return;
+    const scope = activeReviewScope;
+    if (!scope) return;
+    const entryId = reviewEntryId(change, reviewMode);
     const verb = change.kind === 'untracked' || change.kind === 'added' ? 'delete' : 'discard changes to';
     const ok = await confirmStore.ask({
       title: 'Discard changes',
@@ -500,7 +635,7 @@
     });
     if (!ok) return;
     try {
-      await workingDiff.discardFiles(activeCwd, [change]);
+      await workingDiff.discardEntries(scope, [entryId]);
     } catch (err) {
       reportError(err);
     }
@@ -514,8 +649,10 @@
   );
 
   async function discardAll(): Promise<void> {
-    if (!activeCwd) return;
+    const scope = activeReviewScope;
+    if (!scope) return;
     const targets = allWtChanges;
+    const entryIds = targets.map((change) => reviewEntryId(change, reviewMode));
     if (targets.length === 0) return;
     const ok = await confirmStore.ask({
       title: 'Discard all changes',
@@ -526,18 +663,18 @@
     });
     if (!ok) return;
     try {
-      await workingDiff.discardFiles(activeCwd, targets);
+      await workingDiff.discardEntries(scope, entryIds);
     } catch (err) {
       reportError(err);
     }
   }
 
   async function refresh(): Promise<void> {
-    if (!activeCwd) return;
-    workingDiff.invalidate(activeCwd);
+    const scope = activeReviewScope;
+    if (!scope) return;
+    workingDiff.invalidate(scope);
     try {
-      const result = await workingDiff.loadChanges(activeCwd);
-      if (result) void workingDiff.prefetchDiffs(activeCwd);
+      await workingDiff.loadChanges(scope);
     } catch (err) {
       reportError(err);
     }
@@ -633,20 +770,20 @@
 
   $effect(() => {
     const cwd = activeCwd;
-    const v = diffViewportEl;
-    if (!cwd || !v) return;
-    const onScroll = () => {
+    if (!cwd) return;
+    return reviewViewport.subscribeScroll((scrollTop) => {
       // User input wins — abort any pending restore so we don't clobber it.
       if (restoreTimer !== null) cancelRestore();
       if (scrollSaveTimer !== null) clearTimeout(scrollSaveTimer);
       scrollSaveTimer = setTimeout(() => {
         scrollSaveTimer = null;
-        rightRail.setDiffScrollTop(cwd, v.scrollTop);
+        rightRail.setDiffScrollTop(cwd, scrollTop);
       }, SCROLL_SAVE_DEBOUNCE_MS);
-    };
-    v.addEventListener('scroll', onScroll, { passive: true });
+    });
+  });
+
+  $effect(() => {
     return () => {
-      v.removeEventListener('scroll', onScroll);
       if (scrollSaveTimer !== null) {
         clearTimeout(scrollSaveTimer);
         scrollSaveTimer = null;
@@ -662,7 +799,6 @@
         userListHeightOverride = clampListHeight(stored);
       }
     }
-    workingDiff.attachListeners();
     const focusSearch = () => {
       searchInputEl?.focus();
       searchInputEl?.select();
@@ -679,16 +815,22 @@
     window.addEventListener('soloe:refocus-rail', onRefocus);
     window.addEventListener('soloe:focus-pane', onFocusPane);
     // Single document-level mouseup finalizes any in-progress gutter drag
-    // started inside a HunkBlock. Without this, releasing the cursor outside
+    // started inside a virtual diff body. Without this, releasing the cursor outside
     // a gutter cell would leave the selection stuck in dragging state.
     // Use the selection's own file rather than the active one — drag may
     // have started in a file that isn't the topmost in the viewport.
     const onDocMouseup = () => {
       const sel = diffComments.selection;
       if (!sel?.dragging) return;
-      const cwd = activeCwd;
-      if (!cwd) return;
-      const entry = workingDiff.diffEntryFor(cwd, sel.filePath);
+      const scope = sel.scope;
+      const selectionMode = workingDiff.reviewModeFor(scope);
+      const committed = sel.section === 'committed' && selectionMode.kind === 'range';
+      const entry = workingDiff.diffEntryFor(
+        scope,
+        sel.filePath,
+        committed ? selectionMode.base : null,
+        committed ? selectionMode.head : null
+      );
       diffComments.endSelectionAndCreate(entry?.diff ?? null);
     };
     window.addEventListener('mouseup', onDocMouseup);
@@ -696,7 +838,7 @@
       window.removeEventListener('soloe:refocus-rail', onRefocus);
       window.removeEventListener('soloe:focus-pane', onFocusPane);
       window.removeEventListener('mouseup', onDocMouseup);
-      workingDiff.detach();
+      workingDiff.setReviewResidents(null, []);
     };
   });
 </script>
@@ -735,7 +877,9 @@
         </Popover.Trigger>
         <Popover.Content align="start" class="w-auto p-0">
           {#if activeCwd}
-            <CommitPicker cwd={activeCwd} onClose={() => (pickerOpen = false)} />
+            {#key worktreeScopeKey(activeReviewScope!)}
+              <CommitPicker scope={activeReviewScope!} onClose={() => (pickerOpen = false)} />
+            {/key}
           {/if}
         </Popover.Content>
       </Popover.Root>
@@ -883,7 +1027,7 @@
       Pick a session to inspect its working tree.
     </div>
   {:else if showComments}
-    <RailCommentsPanel cwd={activeCwd} onClose={() => (showComments = false)} />
+    <RailCommentsPanel scope={activeReviewScope!} onClose={() => (showComments = false)} />
   {:else if changesEntry?.result && !changesEntry.result.isRepo}
     <div class="flex flex-1 items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
       <GitCompare class="size-4 shrink-0" />
@@ -941,8 +1085,8 @@
                 {/snippet}
               </Popover.Trigger>
               <Popover.Content align="end" class="w-80 p-0">
-                {#key activeCwd}
-                  <CommitComposer cwd={activeCwd} />
+                {#key activeReviewScope ? worktreeScopeKey(activeReviewScope) : activeCwd}
+                  <CommitComposer scope={activeReviewScope!} />
                 {/key}
               </Popover.Content>
             </Popover.Root>
@@ -970,9 +1114,9 @@
     {#snippet wtChangeRow(change: WorkingChange)}
       <ChangeRow
         {change}
-        selected={change.path === effectiveSelected}
-        pending={activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
-        onpick={() => pickChange(change.path)}
+        selected={reviewEntryId(change, reviewMode) === effectiveSelected}
+        pending={activeReviewScope ? workingDiff.isStagePending(activeReviewScope, change.path) : false}
+        onpick={() => pickChange(change)}
         onstage={!change.staged ? () => void stageFile(change.path).catch(reportError) : undefined}
         onunstage={change.staged ? () => void unstageFile(change.path).catch(reportError) : undefined}
         ondiscard={() => void discardChange(change)}
@@ -982,8 +1126,8 @@
       <div class="flex flex-col">
         <ChangeRow
           {change}
-          selected={change.path === effectiveSelected}
-          onpick={() => pickChange(change.path)}
+          selected={reviewEntryId(change, reviewMode) === effectiveSelected}
+          onpick={() => pickChange(change)}
         />
         {#if change.commitsTouching && change.commitsTouching.length > 0}
           <div class="flex flex-wrap gap-1 px-2 pb-1 pl-8">
@@ -1134,21 +1278,38 @@
             class="flex flex-col"
             style:overflow-anchor="none"
           >
-            {#each stackChanges as change (change.path + '::' + (change.section ?? 'wt'))}
+            {#each stackChanges as change (reviewEntryId(change, reviewMode))}
+              {@const entryId = reviewEntryId(change, reviewMode)}
               {@const isCommitted = change.section === 'committed'}
               {@const rangeBase = isCommitted && reviewMode.kind === 'range' ? reviewMode.base : null}
               {@const rangeHead = isCommitted && reviewMode.kind === 'range' ? reviewMode.head : null}
-              {@const entry = workingDiff.diffEntryFor(activeCwd!, change.path, rangeBase, rangeHead)}
+              {@const entry = workingDiff.diffEntryFor(activeReviewScope!, change.path, rangeBase, rangeHead)}
               {@const fileDiff = entry?.diff ?? null}
               {@const gapPath = fileDiff?.fromPath ?? change.path}
-              {@const canExpand = fileDiff ? fileDiff.kind !== 'added' && fileDiff.kind !== 'untracked' : false}
+              {@const gapRevision = isCommitted && reviewMode.kind === 'range'
+                ? reviewMode.base
+                : 'HEAD'}
+              {@const canExpand = fileDiff
+                ? fileDiff.kind !== 'added' && fileDiff.kind !== 'untracked'
+                : false}
               {@const gutter = gutterWidthFor(fileDiff?.hunks)}
-              {@const isActive = change.path === effectiveSelected}
+              {@const isActive = entryId === effectiveSelected}
               {@const collapsed = isCollapsed(change)}
-              {@const stagePending = activeCwd ? workingDiff.isStagePending(activeCwd, change.path) : false}
+              {@const resident = residentEntries.has(entryId)}
+              {@const retainedBodyHeight = reviewViewport.retainedBodyHeight(
+                entryId,
+                estimateReviewBodyHeight(
+                  fileDiff,
+                  settings.current.diff.fontSize,
+                  workingDiff.wordWrap
+                )
+              )}
+              {@const stagePending = activeReviewScope ? workingDiff.isStagePending(activeReviewScope, change.path) : false}
               <div
-                use:bindSection={change.path}
+                use:bindSection={entryId}
                 data-file-path={change.path}
+                data-diff-file-path={fileDiff?.path ?? change.path}
+                data-review-entry={entryId}
                 class="relative flex flex-col"
               >
                 <header
@@ -1246,8 +1407,12 @@
                     {/if}
                   </div>
                 </header>
-                <div use:bindBodyWrapper={change.path}>
-                  {#if !collapsed}
+                <div
+                  use:bindBodyWrapper={entryId}
+                  style:height={!collapsed && !resident ? `${retainedBodyHeight}px` : null}
+                  aria-hidden={!collapsed && !resident ? 'true' : null}
+                >
+                  {#if !collapsed && resident}
                     {#if entry?.loading && !fileDiff}
                       <div class="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
                         <Loader2 class="size-3 animate-spin" />
@@ -1267,23 +1432,22 @@
                         No textual changes.
                       </div>
                     {:else if fileDiff}
-                      <DiffSelectionMenu
-                        cwd={activeCwd!}
-                        filePath={fileDiff.path}
-                        rootEl={sectionEls[change.path] ?? null}
-                        diff={fileDiff}
-                      />
                       <VirtualDiffBody
-                        cwd={activeCwd!}
+                        scope={activeReviewScope!}
                         filePath={fileDiff.path}
                         {gapPath}
+                        {gapRevision}
+                        reviewSection={reviewEntrySection(change)}
                         diff={fileDiff}
                         mode={workingDiff.viewMode}
                         gutterWidth={gutter}
                         {canExpand}
                         wrap={workingDiff.wordWrap}
                         viewport={diffViewportEl}
-                        sectionTop={sectionTops[change.path] ?? 0}
+                        viewportScrollTop={reviewViewport.scrollTop}
+                        viewportHeight={reviewViewport.height}
+                        viewportVersion={reviewViewport.scrollVersion}
+                        sectionTop={sectionTops[entryId] ?? 0}
                       />
                     {:else}
                       <div class="px-3 py-6 text-center text-xs text-muted-foreground">
@@ -1294,6 +1458,13 @@
                 </div>
               </div>
             {/each}
+            <DiffSelectionMenu
+              rootEl={diffRootEl}
+              active={selectionMenuActive}
+              contextKey={selectionContextKey}
+              geometryVersion={selectionGeometryVersion}
+              resolveTarget={selectionTargetForEntry}
+            />
           </div>
         </ScrollArea>
       {/if}

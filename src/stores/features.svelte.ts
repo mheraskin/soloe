@@ -1,9 +1,15 @@
 import type {
   BranchStatus,
+  FeatureChangeEvent,
   FeatureIssueEntry,
   FeatureSnapshot
 } from '@shared/types/features.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import {
+  worktreeScope,
+  worktreeScopeKey,
+  type WorktreeScope
+} from '@shared/worktree-identity.js';
 import { untrack } from 'svelte';
 import { ipc } from '../lib/ipc';
 
@@ -12,8 +18,14 @@ export interface FeatureContext {
   wslDistro?: string;
 }
 
+export type FeatureScope = WorktreeScope & { runMode: RunMode };
+
+export function createFeatureScope(cwd: string, context: FeatureContext): FeatureScope {
+  return worktreeScope(cwd, context) as FeatureScope;
+}
+
 interface CwdState {
-  context: FeatureContext;
+  scope: FeatureScope;
   snapshot: FeatureSnapshot | null;
   loading: boolean;
   error: string | null;
@@ -26,17 +38,17 @@ interface CwdState {
   generation: number;
 }
 
-const SELECTED_SLUG_KEY = 'soloe.featureSelectedSlug.v1';
-const FEATURE_UI_KEY = 'soloe.featureUi.v1';
+const SELECTED_SLUG_KEY = 'soloe.featureSelectedSlug.v2';
+const FEATURE_UI_KEY = 'soloe.featureUi.v2';
 
 interface FeatureUiState {
   hideSolvedIssues?: boolean;
   collapsed?: Record<string, boolean>;
 }
 
-function emptyState(context: FeatureContext): CwdState {
+function emptyState(scope: FeatureScope): CwdState {
   return {
-    context,
+    scope,
     snapshot: null,
     loading: false,
     error: null,
@@ -47,16 +59,19 @@ function emptyState(context: FeatureContext): CwdState {
 }
 
 class FeaturesStore {
-  // Per-worktree state. Renderer code reads via the helper getters keyed by
-  // cwd so multiple worktrees can keep their selection + snapshot warm.
-  private stateByCwd = $state<Record<string, CwdState>>({});
-  // Selected slug per-cwd, persisted to localStorage so re-opening the rail
+  // Runtime-qualified state. Equal Linux paths in separate WSL distributions
+  // are distinct Worktrees and must never share snapshots or mutations.
+  private stateByIdentity = $state<Record<string, CwdState>>({});
+  // Selected slug per Worktree Identity, persisted to localStorage so re-opening the rail
   // restores the same feature. Plain (non-$state) backing map plus a $state
   // mirror so subscribers re-derive after writes.
-  private selectedSlugByCwdRaw: Record<string, string | null> = {};
-  private selectedSlugByCwd = $state<Record<string, string | null>>({});
-  private uiByCwdRaw: Record<string, FeatureUiState> = {};
-  private uiByCwd = $state<Record<string, FeatureUiState>>({});
+  private selectedSlugByIdentityRaw: Record<string, string | null> = {};
+  private selectedSlugByIdentity = $state<Record<string, string | null>>({});
+  private uiByIdentityRaw: Record<string, FeatureUiState> = {};
+  private uiByIdentity = $state<Record<string, FeatureUiState>>({});
+  private subscriptionRefs = new Map<string, number>();
+  private subscriptionQueues = new Map<string, Promise<void>>();
+  private subscribedScopes = new Map<string, FeatureScope>();
 
   constructor() {
     if (typeof localStorage === 'undefined') return;
@@ -68,8 +83,8 @@ class FeaturesStore {
         for (const [key, value] of Object.entries(parsed)) {
           if (typeof value === 'string' && value.length > 0) next[key] = value;
         }
-        this.selectedSlugByCwdRaw = next;
-        this.selectedSlugByCwd = { ...next };
+        this.selectedSlugByIdentityRaw = next;
+        this.selectedSlugByIdentity = { ...next };
       }
     } catch {
       // ignore corrupt persisted state — restart with empty selection.
@@ -78,113 +93,113 @@ class FeaturesStore {
       const raw = localStorage.getItem(FEATURE_UI_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Record<string, FeatureUiState>;
-        this.uiByCwdRaw = parsed && typeof parsed === 'object' ? parsed : {};
-        this.uiByCwd = { ...this.uiByCwdRaw };
+        this.uiByIdentityRaw = parsed && typeof parsed === 'object' ? parsed : {};
+        this.uiByIdentity = { ...this.uiByIdentityRaw };
       }
     } catch {
       // ignore corrupt persisted UI state.
     }
   }
 
-  setContext(cwd: string, context: FeatureContext): void {
-    if (!cwd) return;
+  register(scope: FeatureScope): void {
+    const key = worktreeScopeKey(scope);
+    if (!scope.cwd) return;
     untrack(() => {
-      const prev = this.stateByCwd[cwd];
-      if (
-        prev &&
-        prev.context.runMode === context.runMode &&
-        prev.context.wslDistro === context.wslDistro
-      ) {
-        return;
-      }
-      const next = prev ? { ...prev, context } : emptyState(context);
-      this.stateByCwd = { ...this.stateByCwd, [cwd]: next };
+      if (this.stateByIdentity[key]) return;
+      this.stateByIdentity = { ...this.stateByIdentity, [key]: emptyState(scope) };
     });
   }
 
-  stateFor(cwd: string | null | undefined): CwdState | null {
-    if (!cwd) return null;
-    return this.stateByCwd[cwd] ?? null;
+  stateFor(scope: FeatureScope | null | undefined): CwdState | null {
+    if (!scope?.cwd) return null;
+    return this.stateByIdentity[worktreeScopeKey(scope)] ?? null;
   }
 
-  selectedSlugFor(cwd: string | null | undefined): string | null {
-    if (!cwd) return null;
-    return this.selectedSlugByCwd[cwd] ?? null;
+  selectedSlugFor(scope: FeatureScope | null | undefined): string | null {
+    if (!scope?.cwd) return null;
+    return this.selectedSlugByIdentity[worktreeScopeKey(scope)] ?? null;
   }
 
-  hideSolvedIssuesFor(cwd: string | null | undefined): boolean {
-    if (!cwd) return false;
-    return this.uiByCwd[cwd]?.hideSolvedIssues ?? false;
+  hideSolvedIssuesFor(scope: FeatureScope | null | undefined): boolean {
+    if (!scope?.cwd) return false;
+    return this.uiByIdentity[worktreeScopeKey(scope)]?.hideSolvedIssues ?? false;
   }
 
-  setHideSolvedIssues(cwd: string, value: boolean): void {
-    if (!cwd) return;
+  setHideSolvedIssues(scope: FeatureScope, value: boolean): void {
+    const key = worktreeScopeKey(scope);
+    if (!scope.cwd) return;
     untrack(() => {
-      const prev = this.uiByCwdRaw[cwd] ?? {};
+      const prev = this.uiByIdentityRaw[key] ?? {};
       if ((prev.hideSolvedIssues ?? false) === value) return;
-      this.uiByCwdRaw[cwd] = { ...prev, hideSolvedIssues: value };
-      this.uiByCwd = { ...this.uiByCwd, [cwd]: this.uiByCwdRaw[cwd] };
+      this.uiByIdentityRaw[key] = { ...prev, hideSolvedIssues: value };
+      this.uiByIdentity = { ...this.uiByIdentity, [key]: this.uiByIdentityRaw[key] };
       this.persistUi();
     });
   }
 
-  sectionOpenFor(cwd: string | null | undefined, section: string, fallback = true): boolean {
-    if (!cwd) return fallback;
-    const collapsed = this.uiByCwd[cwd]?.collapsed?.[section];
+  sectionOpenFor(scope: FeatureScope | null | undefined, section: string, fallback = true): boolean {
+    if (!scope?.cwd) return fallback;
+    const collapsed = this.uiByIdentity[worktreeScopeKey(scope)]?.collapsed?.[section];
     return collapsed === undefined ? fallback : !collapsed;
   }
 
-  setSectionOpen(cwd: string, section: string, open: boolean, fallback = true): void {
-    if (!cwd || !section) return;
+  setSectionOpen(scope: FeatureScope, section: string, open: boolean, fallback = true): void {
+    const key = worktreeScopeKey(scope);
+    if (!scope.cwd || !section) return;
     untrack(() => {
-      const prev = this.uiByCwdRaw[cwd] ?? {};
+      const prev = this.uiByIdentityRaw[key] ?? {};
       const collapsed = { ...(prev.collapsed ?? {}) };
       const wasOpen = collapsed[section] === undefined ? fallback : !collapsed[section];
       if (wasOpen === open) return;
       if (open === fallback) delete collapsed[section];
       else collapsed[section] = !open;
-      this.uiByCwdRaw[cwd] = { ...prev, collapsed };
-      this.uiByCwd = { ...this.uiByCwd, [cwd]: this.uiByCwdRaw[cwd] };
+      this.uiByIdentityRaw[key] = { ...prev, collapsed };
+      this.uiByIdentity = { ...this.uiByIdentity, [key]: this.uiByIdentityRaw[key] };
       this.persistUi();
     });
   }
 
-  setSelectedSlug(cwd: string, slug: string | null): void {
-    if (!cwd) return;
+  setSelectedSlug(scope: FeatureScope, slug: string | null): void {
+    const key = worktreeScopeKey(scope);
+    if (!scope.cwd) return;
+    this.register(scope);
     const trimmed = slug?.trim() || null;
     const changed = untrack(() => {
-      if (this.selectedSlugByCwd[cwd] === trimmed) return false;
-      this.selectedSlugByCwdRaw[cwd] = trimmed;
-      this.selectedSlugByCwd = { ...this.selectedSlugByCwd, [cwd]: trimmed };
+      if (this.selectedSlugByIdentity[key] === trimmed) return false;
+      this.selectedSlugByIdentityRaw[key] = trimmed;
+      this.selectedSlugByIdentity = { ...this.selectedSlugByIdentity, [key]: trimmed };
       this.persistSelected();
       return true;
     });
     if (!changed) return;
-    void this.refresh(cwd).catch(() => undefined);
+    void this.refresh(scope).catch(() => undefined);
   }
 
-  async refresh(cwd: string): Promise<void> {
+  async refresh(scope: FeatureScope, observedRevision?: string): Promise<void> {
+    this.register(scope);
+    const key = worktreeScopeKey(scope);
     const request = untrack(() => {
-      const state = this.stateByCwd[cwd];
+      const state = this.stateByIdentity[key];
       if (!state) return null;
-      const slug = this.selectedSlugByCwd[cwd] ?? null;
+      const slug = this.selectedSlugByIdentity[key] ?? null;
       const gen = state.generation + 1;
-      this.patch(cwd, { loading: true, error: null, generation: gen });
+      this.patch(key, { loading: true, error: null, generation: gen });
       return {
         gen,
         slug,
-        context: { ...state.context }
+        scope: { ...state.scope }
       };
     });
     if (!request) return;
     try {
       const snapshot = await ipc.features.scan({
-        cwd,
-        runMode: request.context.runMode,
-        ...(request.context.wslDistro ? { wslDistro: request.context.wslDistro } : {}),
-        ...(request.slug ? { slug: request.slug } : {})
+        cwd: request.scope.cwd,
+        runMode: request.scope.runMode,
+        ...(request.scope.wslDistro ? { wslDistro: request.scope.wslDistro } : {}),
+        ...(request.slug ? { slug: request.slug } : {}),
+        ...(observedRevision ? { observedRevision } : {})
       });
-      const current = this.stateByCwd[cwd];
+      const current = this.stateByIdentity[key];
       if (!current || current.generation !== request.gen) return;
       // Auto-pick a slug if none chosen yet and the worktree has features —
       // bias toward a feature with both coverage and issues, then any with
@@ -196,45 +211,50 @@ class FeaturesStore {
           snapshot.features.find((f) => f.hasCoverage) ??
           snapshot.features[0];
         if (best) {
-          this.selectedSlugByCwdRaw[cwd] = best.slug;
-          this.selectedSlugByCwd = { ...this.selectedSlugByCwd, [cwd]: best.slug };
+          this.selectedSlugByIdentityRaw[key] = best.slug;
+          this.selectedSlugByIdentity = { ...this.selectedSlugByIdentity, [key]: best.slug };
           this.persistSelected();
-          this.patch(cwd, {
+          this.patch(key, {
             snapshot,
             loading: false,
             loadedSlug: snapshot.selectedSlug,
             error: null
           });
           // Re-scan with the picked slug so the coverage/plans/issues hydrate.
-          void this.refresh(cwd).catch(() => undefined);
+          void this.refresh(scope).catch(() => undefined);
           return;
         }
       }
-      this.patch(cwd, {
+      this.patch(key, {
         snapshot,
         loading: false,
         loadedSlug: snapshot.selectedSlug,
         error: null
       });
     } catch (err) {
-      const current = this.stateByCwd[cwd];
+      const current = this.stateByIdentity[key];
       if (!current || current.generation !== request.gen) return;
-      this.patch(cwd, {
+      this.patch(key, {
         loading: false,
         error: err instanceof Error ? err.message : String(err)
       });
     }
   }
 
-  async setBranchStatus(cwd: string, branchId: string, status: BranchStatus): Promise<void> {
-    const state = this.stateByCwd[cwd];
-    const slug = this.selectedSlugByCwd[cwd];
+  async setBranchStatus(scope: FeatureScope, branchId: string, status: BranchStatus): Promise<void> {
+    const key = worktreeScopeKey(scope);
+    const state = this.stateByIdentity[key];
+    const slug = this.selectedSlugByIdentity[key];
     if (!state || !slug) return;
+    this.patch(key, {
+      generation: state.generation + 1,
+      loading: false
+    });
     try {
       const coverage = await ipc.features.setBranchStatus({
-        cwd,
-        runMode: state.context.runMode,
-        ...(state.context.wslDistro ? { wslDistro: state.context.wslDistro } : {}),
+        cwd: state.scope.cwd,
+        runMode: state.scope.runMode,
+        ...(state.scope.wslDistro ? { wslDistro: state.scope.wslDistro } : {}),
         slug,
         branchId,
         status
@@ -242,36 +262,41 @@ class FeaturesStore {
       // Patch only the coverage slice locally — avoids a full re-scan round
       // trip after a click. The watcher will still send a `features` change
       // event that triggers a refresh and reconciles anything we missed.
-      const current = this.stateByCwd[cwd];
+      const current = this.stateByIdentity[key];
       if (!current?.snapshot) return;
-      this.patch(cwd, {
+      this.patch(key, {
         snapshot: { ...current.snapshot, coverage }
       });
     } catch (err) {
-      this.patch(cwd, {
+      this.patch(key, {
         error: err instanceof Error ? err.message : String(err)
       });
     }
   }
 
   async setIssueStatus(
-    cwd: string,
+    scope: FeatureScope,
     relativePath: string,
     status: string
   ): Promise<FeatureIssueEntry | null> {
-    const state = this.stateByCwd[cwd];
+    const key = worktreeScopeKey(scope);
+    const state = this.stateByIdentity[key];
     if (!state) return null;
+    this.patch(key, {
+      generation: state.generation + 1,
+      loading: false
+    });
     try {
       const issue = await ipc.features.setIssueStatus({
-        cwd,
-        runMode: state.context.runMode,
-        ...(state.context.wslDistro ? { wslDistro: state.context.wslDistro } : {}),
+        cwd: state.scope.cwd,
+        runMode: state.scope.runMode,
+        ...(state.scope.wslDistro ? { wslDistro: state.scope.wslDistro } : {}),
         relativePath,
         status
       });
-      const current = this.stateByCwd[cwd];
+      const current = this.stateByIdentity[key];
       if (current?.snapshot) {
-        this.patch(cwd, {
+        this.patch(key, {
           snapshot: {
             ...current.snapshot,
             issues: current.snapshot.issues.map((item) =>
@@ -280,73 +305,97 @@ class FeaturesStore {
           }
         });
       }
-      void this.refresh(cwd).catch(() => undefined);
       return issue;
     } catch (err) {
-      this.patch(cwd, {
+      this.patch(key, {
         error: err instanceof Error ? err.message : String(err)
       });
       return null;
     }
   }
 
-  async subscribe(cwd: string): Promise<void> {
-    const request = untrack(() => {
-      const state = this.stateByCwd[cwd];
-      if (!state || state.subscribed) return null;
-      return { ...state.context };
-    });
-    if (!request) return;
-    try {
-      await ipc.features.subscribe({
-        cwd,
-        runMode: request.runMode,
-        ...(request.wslDistro ? { wslDistro: request.wslDistro } : {})
-      });
-      untrack(() => this.patch(cwd, { subscribed: true }));
-    } catch {
-      // Subscribe failures are non-fatal — refresh button still works without it.
-    }
+  async subscribe(scope: FeatureScope): Promise<void> {
+    this.register(scope);
+    const key = worktreeScopeKey(scope);
+    this.subscriptionRefs.set(key, (this.subscriptionRefs.get(key) ?? 0) + 1);
+    await this.queueSubscriptionReconcile(key);
   }
 
-  async unsubscribe(cwd: string): Promise<void> {
-    const request = untrack(() => {
-      const state = this.stateByCwd[cwd];
-      if (!state || !state.subscribed) return null;
-      return { ...state.context };
-    });
-    if (!request) return;
+  async unsubscribe(scope: FeatureScope): Promise<void> {
+    const key = worktreeScopeKey(scope);
+    const refs = this.subscriptionRefs.get(key) ?? 0;
+    if (refs <= 1) this.subscriptionRefs.delete(key);
+    else this.subscriptionRefs.set(key, refs - 1);
+    await this.queueSubscriptionReconcile(key);
+  }
+
+  private queueSubscriptionReconcile(key: string): Promise<void> {
+    const previous = this.subscriptionQueues.get(key) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.reconcileSubscription(key));
+    this.subscriptionQueues.set(key, next);
+    void next.finally(() => {
+      if (this.subscriptionQueues.get(key) === next) {
+        this.subscriptionQueues.delete(key);
+      }
+    }).catch(() => undefined);
+    return next;
+  }
+
+  private async reconcileSubscription(key: string): Promise<void> {
+    let desired = (this.subscriptionRefs.get(key) ?? 0) > 0
+      ? untrack(() => this.stateByIdentity[key]?.scope ?? null)
+      : null;
+    const active = this.subscribedScopes.get(key) ?? null;
+
+    if (active && !desired) {
+      try {
+        await ipc.features.unsubscribe(toSubscriptionRequest(active));
+        this.subscribedScopes.delete(key);
+        untrack(() => this.patch(key, { subscribed: false }));
+      } catch {
+        // A local IPC failure is transient. Keep the active record so a later
+        // reconciliation retries instead of incrementing the main ref-count.
+        return;
+      }
+    }
+
+    desired = (this.subscriptionRefs.get(key) ?? 0) > 0
+      ? untrack(() => this.stateByIdentity[key]?.scope ?? null)
+      : null;
+    if (!desired || this.subscribedScopes.has(key)) return;
     try {
-      await ipc.features.unsubscribe({
-        cwd,
-        runMode: request.runMode,
-        ...(request.wslDistro ? { wslDistro: request.wslDistro } : {})
-      });
-      untrack(() => this.patch(cwd, { subscribed: false }));
+      await ipc.features.subscribe(toSubscriptionRequest(desired));
+      this.subscribedScopes.set(key, { ...desired });
+      untrack(() => this.patch(key, { subscribed: true }));
     } catch {
-      // ignore — main-process unsubscribe is best-effort.
+      // Subscribe failures are non-fatal — refresh remains available.
+      untrack(() => this.patch(key, { subscribed: false }));
     }
   }
 
   // Bound at module load to the global `features:change` channel. The rail tab
   // also subscribes per-cwd before mount so the change event maps back to a
   // scan refresh while it's visible.
-  applyChangeEvent(event: { cwd: string }): void {
-    const state = this.stateByCwd[event.cwd];
+  applyChangeEvent(event: FeatureChangeEvent): void {
+    const scope = createFeatureScope(event.cwd, event);
+    const state = this.stateByIdentity[worktreeScopeKey(scope)];
     if (!state) return;
-    void this.refresh(event.cwd).catch(() => undefined);
+    if (state.snapshot?.artifactRevision === event.revision) return;
+    void this.refresh(scope, event.revision).catch(() => undefined);
   }
 
-  private patch(cwd: string, partial: Partial<CwdState>): void {
-    const prev = this.stateByCwd[cwd];
+  private patch(key: string, partial: Partial<CwdState>): void {
+    const prev = this.stateByIdentity[key];
     if (!prev) return;
-    this.stateByCwd = { ...this.stateByCwd, [cwd]: { ...prev, ...partial } };
+    this.stateByIdentity = { ...this.stateByIdentity, [key]: { ...prev, ...partial } };
   }
 
   private persistSelected(): void {
     if (typeof localStorage === 'undefined') return;
     try {
-      localStorage.setItem(SELECTED_SLUG_KEY, JSON.stringify(this.selectedSlugByCwdRaw));
+      localStorage.setItem(SELECTED_SLUG_KEY, JSON.stringify(this.selectedSlugByIdentityRaw));
     } catch {
       // Quota — ignore.
     }
@@ -355,11 +404,23 @@ class FeaturesStore {
   private persistUi(): void {
     if (typeof localStorage === 'undefined') return;
     try {
-      localStorage.setItem(FEATURE_UI_KEY, JSON.stringify(this.uiByCwdRaw));
+      localStorage.setItem(FEATURE_UI_KEY, JSON.stringify(this.uiByIdentityRaw));
     } catch {
       // Quota — ignore.
     }
   }
+}
+
+function toSubscriptionRequest(scope: FeatureScope): {
+  cwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
+} {
+  return {
+    cwd: scope.cwd,
+    runMode: scope.runMode,
+    ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+  };
 }
 
 export const featuresStore = new FeaturesStore();

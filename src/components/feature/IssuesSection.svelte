@@ -1,29 +1,29 @@
 <script lang="ts">
   import { ChevronRight, CircleAlert, CircleCheck, ExternalLink, FileText } from '@lucide/svelte';
   import type { FeatureIssueEntry, IssueTrackerConfig } from '@shared/types/features.js';
-  import { featuresStore } from '../../stores/features.svelte';
+  import { featuresStore, type FeatureScope } from '../../stores/features.svelte';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
 
   interface Props {
-    cwd: string;
+    scope: FeatureScope;
     issues: FeatureIssueEntry[];
     tracker: IssueTrackerConfig;
     onOpenFile: (relativePath: string) => void;
     onSetStatus: (relativePath: string, status: string) => Promise<void>;
   }
 
-  let { cwd, issues, tracker, onOpenFile, onSetStatus }: Props = $props();
+  let { scope, issues, tracker, onOpenFile, onSetStatus }: Props = $props();
 
-  let open = $derived(featuresStore.sectionOpenFor(cwd, 'issues', true));
+  let open = $derived(featuresStore.sectionOpenFor(scope, 'issues', true));
   let updatingByPath = $state<Record<string, boolean>>({});
 
   function onOpenChange(nextOpen: boolean): void {
-    featuresStore.setSectionOpen(cwd, 'issues', nextOpen);
+    featuresStore.setSectionOpen(scope, 'issues', nextOpen);
   }
 
-  let hideSolved = $derived(featuresStore.hideSolvedIssuesFor(cwd));
+  let hideSolved = $derived(featuresStore.hideSolvedIssuesFor(scope));
   let issueRows = $derived(issues.filter((issue) => issue.kind === 'issue'));
   let artifactRows = $derived(issues.filter((issue) => issue.kind !== 'issue'));
   let solvedCount = $derived(issueRows.filter((issue) => isSolved(issue.status)).length);
@@ -106,7 +106,7 @@
       <label class="flex shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground">
         <Checkbox
           checked={hideSolved}
-          onCheckedChange={(v) => featuresStore.setHideSolvedIssues(cwd, v === true)}
+          onCheckedChange={(v) => featuresStore.setHideSolvedIssues(scope, v === true)}
         />
         Hide done
       </label>

@@ -27,6 +27,8 @@
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
+  import { buildWorktreeGroups } from '../lib/worktree-groups';
+  import { sameWorktreePath, worktreeBasename, worktreeLabel } from '../lib/worktree-path';
   import SessionItem from './SessionItem.svelte';
   import WorktreeGroup from './WorktreeGroup.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
@@ -48,113 +50,65 @@
   let expanded = $state(true);
   let faviconsLoading = $state(false);
   let faviconsRequested = $state(false);
-  let gitWorktrees = $derived(git.worktreesFor(project.path) ?? []);
-  let loadingWorktrees = $derived(git.worktreesLoadingFor(project.path));
-  let worktreeLoadFailed = $derived(git.worktreesErrorFor(project.path) !== null);
-
-  function normPath(p: string): string {
-    return p.replace(/[/\\]+$/, '');
-  }
-
-  function worktreeLabel(cwd: string): string {
-    const projectPath = normPath(project.path);
-    const sessionCwd = normPath(cwd);
-    if (sessionCwd === projectPath) return 'main';
-    if (sessionCwd.startsWith(projectPath + '/') || sessionCwd.startsWith(projectPath + '\\')) {
-      return sessionCwd.slice(projectPath.length + 1);
-    }
-    const parts = sessionCwd.split(/[/\\]/);
-    return parts[parts.length - 1] || sessionCwd;
-  }
-
-  function basename(p: string): string {
-    const parts = normPath(p).split(/[/\\]/);
-    return parts[parts.length - 1] || p;
-  }
+  let favicons = $state<ProjectFavicon[] | null>(null);
+  let selectedFavicon = $state<ProjectFavicon | null>(null);
+  let gitContext = $derived({
+    ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+    ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+  });
+  let gitWorktrees = $derived(git.worktreesFor(project.path, gitContext) ?? []);
+  let loadingWorktrees = $derived(git.worktreesLoadingFor(project.path, gitContext));
+  let worktreeLoadFailed = $derived(git.worktreesErrorFor(project.path, gitContext) !== null);
 
   function gitWorktreeLabel(worktree: GitWorktree): string {
-    return worktree.branch ?? (worktree.detached ? 'detached' : worktreeLabel(worktree.path));
+    return worktree.branch
+      ?? (worktree.detached
+        ? 'detached'
+        : worktreeLabel(project.path, worktree.path, project.defaultRunMode));
   }
 
   $effect(() => {
-    void git.loadWorktrees(project.path, false, {
-      ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
-      ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+    const projectId = project.id;
+    const selectedPath = project.selectedFaviconPath;
+    if (!selectedPath) {
+      selectedFavicon = null;
+      return;
+    }
+    let cancelled = false;
+    void projects.readFavicon(projectId, selectedPath).then((favicon) => {
+      if (!cancelled) selectedFavicon = favicon;
+    }).catch(() => {
+      if (!cancelled) selectedFavicon = null;
     });
+    return () => {
+      cancelled = true;
+    };
   });
 
-  $effect(() => {
-    if (faviconsRequested || project.favicons !== undefined) return;
-    faviconsRequested = true;
-    void refreshFavicons();
-  });
-
-  let worktrees = $derived.by<{ cwd: string; label: string; isMain: boolean; items: Session[] }[]>(() => {
-    const naturalOrder: string[] = [];
-    const buckets: Record<string, Session[]> = {};
-    for (const worktree of gitWorktrees) {
-      const key = normPath(worktree.path);
-      if (!buckets[key]) {
-        buckets[key] = [];
-        naturalOrder.push(key);
-      }
-    }
-    for (const s of items) {
-      const key = normPath(s.cwd);
-      if (!buckets[key]) {
-        buckets[key] = [];
-        naturalOrder.push(key);
-      }
-      buckets[key].push(s);
-    }
-    // Apply user-defined worktree order. Entries the user hasn't placed yet
-    // (newly-discovered git worktrees, sessions in unfamiliar cwds) keep their
-    // natural position relative to each other and slot in at the end.
-    const userOrder = (project.worktreeOrder ?? []).map(normPath);
-    const seen = new Set<string>();
-    const finalOrder: string[] = [];
-    for (const key of userOrder) {
-      if (buckets[key] && !seen.has(key)) {
-        seen.add(key);
-        finalOrder.push(key);
-      }
-    }
-    for (const key of naturalOrder) {
-      if (!seen.has(key)) {
-        seen.add(key);
-        finalOrder.push(key);
-      }
-    }
-    return finalOrder.map((key) => {
-      const gitWorktree = gitWorktrees.find((wt) => normPath(wt.path) === key);
-      return {
-        cwd: key,
-        label: gitWorktree ? gitWorktreeLabel(gitWorktree) : worktreeLabel(key),
-        isMain: gitWorktree?.isMain ?? false,
-        items: buckets[key]!
-      };
-    });
-  });
+  let worktrees = $derived.by(() => buildWorktreeGroups({
+    projectPath: project.path,
+    ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+    worktrees: gitWorktrees,
+    items,
+    orderedPaths: project.worktreeOrder ?? []
+  }));
 
   let accent = $derived(project.accentColor ?? null);
-  let selectedFaviconPath = $derived(project.selectedFaviconPath ?? project.favicons?.[0]?.path ?? null);
-  let selectedFavicon = $derived(
-    project.favicons?.find((f) => f.path === selectedFaviconPath) ?? project.favicons?.[0] ?? null
-  );
+  let selectedFaviconPath = $derived(project.selectedFaviconPath ?? null);
   let mainWorktree = $derived(gitWorktrees.find((wt) => wt.isMain) ?? null);
   let hasWorktrees = $derived(gitWorktrees.some((wt) => !wt.isMain));
   let isStandaloneWorktreeProject = $derived(
     hasWorktrees
       && mainWorktree !== null
-      && normPath(mainWorktree.path) !== normPath(project.path)
+      && !sameWorktreePath(mainWorktree.path, project.path, project.defaultRunMode)
   );
   let showWorktreeGroups = $derived(
     (hasWorktrees || worktrees.length > 1) && !isStandaloneWorktreeProject
   );
-  let repoName = $derived(mainWorktree ? basename(mainWorktree.path) : project.name);
+  let repoName = $derived(mainWorktree ? worktreeBasename(mainWorktree.path) : project.name);
   let otherWorktreeLabels = $derived.by(() =>
     gitWorktrees
-      .filter((wt) => normPath(wt.path) !== normPath(project.path))
+      .filter((wt) => !sameWorktreePath(wt.path, project.path, project.defaultRunMode))
       .map(gitWorktreeLabel)
   );
   let containsSelectedSession = $derived.by(() => {
@@ -211,9 +165,12 @@
 
   async function refreshFavicons() {
     if (faviconsLoading) return;
+    faviconsRequested = true;
     faviconsLoading = true;
     try {
-      await projects.refreshFavicons(project.id);
+      favicons = await projects.refreshFavicons(project.id);
+      selectedFavicon = favicons.find((favicon) => favicon.path === selectedFaviconPath)
+        ?? selectedFavicon;
     } catch (err) {
       reportError(err);
     } finally {
@@ -222,12 +179,13 @@
   }
 
   function onFaviconMenuOpenChange(open: boolean) {
-    if (open && (project.favicons === undefined || project.favicons.length === 0)) {
+    if (open && !faviconsRequested) {
       void refreshFavicons();
     }
   }
 
   function selectFavicon(favicon: ProjectFavicon) {
+    selectedFavicon = favicon;
     void projects.update(project.id, { selectedFaviconPath: favicon.path }).catch(reportError);
   }
 
@@ -432,8 +390,8 @@
                     <RefreshCcw class="animate-spin" />
                     <span>Scanning...</span>
                   </DropdownMenu.Item>
-                {:else if project.favicons && project.favicons.length > 0}
-                  {#each project.favicons as favicon (favicon.path)}
+                {:else if favicons && favicons.length > 0}
+                  {#each favicons as favicon (favicon.path)}
                     <DropdownMenu.Item onSelect={() => selectFavicon(favicon)}>
                       <img
                         src={favicon.dataUrl}
@@ -513,6 +471,8 @@
           cwd={wt.cwd}
           projectId={project.id}
           items={wt.items}
+          runMode={project.defaultRunMode}
+          wslDistro={project.defaultWslDistro}
           isMain={wt.isMain}
           {filter}
           forceShow={projectNameMatches}

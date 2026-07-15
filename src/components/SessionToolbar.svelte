@@ -69,7 +69,11 @@
           {selected.cwd}
         </span>
       </div>
-      <GitBranchWidget cwd={selected.cwd} />
+      <GitBranchWidget
+        cwd={selected.cwd}
+        runMode={selected.runMode}
+        wslDistro={selected.wslDistro}
+      />
     </div>
 
     <Tooltip.Provider delayDuration={250}>

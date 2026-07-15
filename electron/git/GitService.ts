@@ -1,16 +1,13 @@
-import { spawn } from 'node:child_process';
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import * as path from 'node:path';
 import type {
   BlameLine,
-  DiffHunk,
-  DiffLine,
-  DiffLineKind,
   DiscardFileEntry,
   FileBlameResult,
   FileDiff,
   GitAheadBehind,
   GitBranch,
+  GitChangeEvent,
   GitCommit,
   GitCommitResult,
   GitDirty,
@@ -19,17 +16,28 @@ import type {
   GitStatus,
   GitWorktree,
   RangeChange,
+  ReviewDiffTarget,
   WorkingChange,
   WorkingChangeKind,
-  WorkingChangesResult
+  WorkingChangesResult,
+  WorkingTreeSnapshot
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import { materializeReviewDiffs, parseUnifiedDiff } from './ReviewDiffMaterializer.js';
+import { UntrackedFileCounter } from './UntrackedFileCounter.js';
+import { worktreeHostPath } from '../runtime/wsl-paths.js';
+import { runGitCommand } from './GitCommandRunner.js';
+import { worktreeIdentityKey } from '@shared/worktree-identity.js';
 
 export interface GitServiceOptions {
   gitBinary?: string;
   getGitBinary?: () => Promise<string | undefined> | string | undefined;
   wslBinary?: string;
+  runGit?: (cwd: string, args: string[]) => Promise<GitResult>;
   runWslGit?: (distro: string, cwd: string, args: string[]) => Promise<GitResult>;
+  watchImpl?: typeof watch;
+  maxRepoCaches?: number;
+  maxRepoResolutions?: number;
 }
 
 interface RepoInfo {
@@ -46,19 +54,25 @@ interface GitRepoContext {
 
 interface RepoCache {
   info: RepoInfo;
-  status: GitStatus | null;
-  shortstat: GitShortstat | null;
   worktrees: GitWorktree[] | null;
   branches: GitBranch[] | null;
   commitsByLimit: Map<number, GitCommit[]>;
+  workingTreeSnapshot: WorkingTreeSnapshot | null;
+  epoch: number;
   watchers: FSWatcher[];
   debounce: NodeJS.Timeout | null;
+  observationLeaseCount: number;
 }
 
 interface GitResult {
   code: number | null;
   stdout: string;
   stderr: string;
+}
+
+interface RepoResolutionEntry {
+  info: RepoInfo | null;
+  expiresAt: number;
 }
 
 const EMPTY_COUNTS = {
@@ -72,24 +86,190 @@ const EMPTY_COUNTS = {
 // Soft ceiling on `git log <base>..<head>` to protect the renderer from a
 // 10k-commit accidental range. The picker warns when truncation hits.
 const COMMITS_BETWEEN_CAP = 500;
+// Repository identity is stable across ordinary edits, staging, commits, and
+// branch changes. Re-discovering it on every 5-second WSL poll costs two
+// `wsl.exe` launches before useful work begins, so retain it for one coarse
+// inventory window. A known identity is stable enough to span several
+// observations; negative results use a short TTL to notice newly-created
+// repositories quickly.
+const REPO_RESOLUTION_TTL_MS = 10 * 60_000;
+const MISSING_REPO_RESOLUTION_TTL_MS = 5_000;
+const DEFAULT_MAX_REPO_CACHES = 64;
+const DEFAULT_MAX_REPO_RESOLUTIONS = 256;
 
 export class GitService {
   private readonly caches = new Map<string, RepoCache>();
-  private readonly listeners = new Set<(repoPath: string) => void>();
+  private readonly listeners = new Set<(event: GitChangeEvent) => void>();
+  private readonly repoResolutions = new Map<string, RepoResolutionEntry>();
+  private readonly repoResolutionRequests = new Map<string, Promise<RepoInfo | null>>();
+  private readonly workingTreeSnapshotRequests = new Map<string, Promise<WorkingTreeSnapshot>>();
+  private readonly untrackedFileCounter = new UntrackedFileCounter();
+  private workingTreeGeneration = 0;
 
   constructor(private readonly options: GitServiceOptions = {}) {}
 
-  async getStatus(cwd: string, force = false, context: GitRepoContext = {}): Promise<GitStatus> {
-    const empty = emptyStatus(cwd);
+  /**
+   * Acquire native filesystem observation for one Session-owned Worktree.
+   * Passive reads intentionally do not watch repositories; the returned
+   * idempotent release function owns the observation lifetime.
+   */
+  async acquireObservation(
+    cwd: string,
+    context: GitRepoContext = {}
+  ): Promise<() => void> {
     const info = await this.resolveRepo(cwd, context);
-    if (!info) return empty;
+    if (!info || info.runMode === 'wsl') return () => {};
     const cache = this.ensureCache(info);
-    if (!force && cache.status) return clone(cache.status);
+    cache.observationLeaseCount += 1;
+    if (cache.observationLeaseCount === 1) this.attachWatchers(cache);
 
-    const output = await this.runInRepo(info, ['status', '--porcelain=v2', '--branch']);
-    if (output.code !== 0) return empty;
-    cache.status = parsePorcelainV2(cwd, info.repoPath, output.stdout);
-    return clone(cache.status);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      cache.observationLeaseCount = Math.max(0, cache.observationLeaseCount - 1);
+      if (cache.observationLeaseCount > 0) return;
+      this.closeWatchers(cache);
+      cache.workingTreeSnapshot = null;
+      this.clearUntrackedMeasurements(cache.info);
+      this.trimRepoCaches();
+    };
+  }
+
+  async getWorkingTreeSnapshot(
+    cwd: string,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<WorkingTreeSnapshot> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) {
+      return {
+        generation: ++this.workingTreeGeneration,
+        status: emptyStatus(cwd),
+        shortstat: emptyShortstat(cwd, false),
+        workingChanges: { repoPath: null, isRepo: false, changes: [] }
+      };
+    }
+    const cache = this.ensureCache(info);
+    if (!force && cache.workingTreeSnapshot) return clone(cache.workingTreeSnapshot);
+    const requestKey = repoInfoKey(info);
+    const inflight = this.workingTreeSnapshotRequests.get(requestKey);
+    if (inflight) return clone(await inflight);
+    const epoch = cache.epoch;
+    const request = this.materializeWorkingTreeSnapshot(cwd, info)
+      .then((snapshot) => {
+        if (cache.epoch === epoch) {
+          cache.workingTreeSnapshot = snapshot;
+        }
+        return snapshot;
+      })
+      .finally(() => {
+        if (this.workingTreeSnapshotRequests.get(requestKey) === request) {
+          this.workingTreeSnapshotRequests.delete(requestKey);
+        }
+      });
+    this.workingTreeSnapshotRequests.set(requestKey, request);
+    return clone(await request);
+  }
+
+  private async materializeWorkingTreeSnapshot(
+    cwd: string,
+    info: RepoInfo
+  ): Promise<WorkingTreeSnapshot> {
+    let [statusOutput, trackedOutput] = await Promise.all([
+      this.runInRepo(info, [
+        'status',
+        '--porcelain=v2',
+        '--branch',
+        '--untracked-files=all',
+        '-z'
+      ]),
+      this.runInRepo(info, [
+        'diff',
+        '--no-color',
+        '--numstat',
+        '-z',
+        '--diff-filter=AMDRCT',
+        'HEAD'
+      ])
+    ]);
+    let trackedEntries = trackedOutput.code === 0 ? parseNumstatZ(trackedOutput.stdout) : [];
+    if (trackedOutput.code !== 0) {
+      const fallback = await this.runInRepo(info, [
+        'diff',
+        '--no-color',
+        '--numstat',
+        '-z',
+        '--cached',
+        '--diff-filter=AMDRCT'
+      ]);
+      if (fallback.code === 0) trackedEntries = parseNumstatZ(fallback.stdout);
+    }
+
+    const parsedStatus = statusOutput.code === 0
+      ? parsePorcelainV2Z(cwd, info.repoPath, statusOutput.stdout)
+      : {
+          status: emptyStatus(cwd),
+          flagsByPath: new Map<string, WorkingPathFlags>(),
+          untrackedPaths: []
+        };
+    const renameSources = new Set(
+      trackedEntries.map((entry) => entry.fromPath).filter((value): value is string => !!value)
+    );
+    const untrackedFiles = parsedStatus.untrackedPaths.filter((file) => !renameSources.has(file));
+    const measured = await this.measureUntrackedFiles(info, untrackedFiles);
+
+    const changes: WorkingChange[] = trackedEntries.map((entry) => {
+      const flags = parsedStatus.flagsByPath.get(entry.path);
+      return {
+        path: entry.path,
+        fromPath: entry.fromPath,
+        kind: flags?.kind ?? entry.kind,
+        staged: flags?.staged ?? false,
+        insertions: entry.insertions,
+        deletions: entry.deletions,
+        binary: entry.binary
+      };
+    });
+    let untrackedInsertions = 0;
+    for (const file of untrackedFiles) {
+      const measurement = measured.get(file) ?? await this.untrackedInsertions(info, file);
+      untrackedInsertions += measurement.lines;
+      changes.push({
+        path: file,
+        fromPath: null,
+        kind: 'untracked',
+        staged: false,
+        insertions: measurement.lines,
+        deletions: 0,
+        binary: measurement.binary
+      });
+    }
+    changes.sort((a, b) => a.path.localeCompare(b.path));
+
+    const status = parsedStatus.status;
+    if (statusOutput.code === 0) {
+      status.untracked = untrackedFiles.length;
+      status.dirty = status.staged > 0 || status.unstaged > 0 || status.untracked > 0;
+    }
+    const shortstat: GitShortstat = {
+      repoPath: info.repoPath,
+      isRepo: true,
+      filesChanged: trackedEntries.length + untrackedFiles.length,
+      insertions:
+        trackedEntries.reduce((sum, entry) => sum + entry.insertions, 0) + untrackedInsertions,
+      deletions: trackedEntries.reduce((sum, entry) => sum + entry.deletions, 0)
+    };
+    return {
+      generation: ++this.workingTreeGeneration,
+      status,
+      shortstat,
+      workingChanges: { repoPath: info.repoPath, isRepo: true, changes }
+    };
+  }
+
+  async getStatus(cwd: string, force = false, context: GitRepoContext = {}): Promise<GitStatus> {
+    return (await this.getWorkingTreeSnapshot(cwd, force, context)).status;
   }
 
   async getBranch(repoPath: string): Promise<string | null> {
@@ -102,57 +282,7 @@ export class GitService {
     force = false,
     context: GitRepoContext = {}
   ): Promise<GitShortstat> {
-    const info = await this.resolveRepo(repoPath, context);
-    if (!info) return emptyShortstat(repoPath, false);
-    const cache = this.ensureCache(info);
-    if (!force && cache.shortstat) return clone(cache.shortstat);
-
-    let output = await this.runInRepo(info, ['diff', '--shortstat', 'HEAD', '--']);
-    if (output.code !== 0) {
-      output = await this.runInRepo(info, ['diff', '--shortstat', '--']);
-    }
-    const tracked = parseShortstat(output.code === 0 ? output.stdout : '');
-    const untracked = await this.countUntracked(info);
-    cache.shortstat = {
-      repoPath: info.repoPath,
-      isRepo: true,
-      filesChanged: tracked.filesChanged + untracked.filesChanged,
-      insertions: tracked.insertions + untracked.insertions,
-      deletions: tracked.deletions
-    };
-    return clone(cache.shortstat);
-  }
-
-  private async countUntracked(
-    info: RepoInfo
-  ): Promise<{ filesChanged: number; insertions: number }> {
-    // git diff --shortstat HEAD only counts tracked files; new files would
-    // never show up in the +N -N counter. Run ls-files to enumerate them
-    // and treat each one as additions, so the user sees their new code.
-    const list = await this.runInRepo(info, [
-      'ls-files',
-      '--others',
-      '--exclude-standard',
-      '-z'
-    ]);
-    if (list.code !== 0 || !list.stdout) return { filesChanged: 0, insertions: 0 };
-    const files = list.stdout.split('\0').filter(Boolean);
-    if (files.length === 0) return { filesChanged: 0, insertions: 0 };
-    let insertions = 0;
-    for (const file of files) {
-      // git diff --no-index returns code 1 when files differ (always here),
-      // so we read stdout regardless of exit status.
-      const result = await this.runInRepo(info, [
-        'diff',
-        '--no-index',
-        '--shortstat',
-        '--',
-        '/dev/null',
-        file
-      ]);
-      insertions += parseShortstat(result.stdout).insertions;
-    }
-    return { filesChanged: files.length, insertions };
+    return (await this.getWorkingTreeSnapshot(repoPath, force, context)).shortstat;
   }
 
   async getAheadBehind(
@@ -259,7 +389,7 @@ export class GitService {
     if (output.code !== 0) {
       throw new Error(output.stderr.trim() || `Failed to check out ${target}`);
     }
-    this.invalidate(info.repoPath);
+    this.invalidate(info);
     return this.getStatus(info.repoPath, true, context);
   }
 
@@ -270,85 +400,7 @@ export class GitService {
     cwd: string,
     context: GitRepoContext = {}
   ): Promise<WorkingChangesResult> {
-    const info = await this.resolveRepo(cwd, context);
-    if (!info) return { repoPath: null, isRepo: false, changes: [] };
-
-    const tracked = await this.runInRepo(info, [
-      'diff',
-      '--no-color',
-      '--numstat',
-      '-z',
-      '--diff-filter=AMDRCT',
-      'HEAD'
-    ]);
-    let trackedEntries: TrackedNumstat[] = [];
-    if (tracked.code === 0) {
-      trackedEntries = parseNumstatZ(tracked.stdout);
-    } else {
-      // Repos with no commits yet: HEAD is unresolvable. Fall back to the
-      // staged-vs-empty-tree numstat so initial-commit files still show up.
-      const fallback = await this.runInRepo(info, [
-        'diff',
-        '--no-color',
-        '--numstat',
-        '-z',
-        '--cached',
-        '--diff-filter=AMDRCT'
-      ]);
-      if (fallback.code === 0) trackedEntries = parseNumstatZ(fallback.stdout);
-    }
-
-    const renameSources = new Set<string>();
-    for (const entry of trackedEntries) {
-      if (entry.fromPath) renameSources.add(entry.fromPath);
-    }
-
-    // Status flags tell us whether each tracked entry is staged, unstaged, or
-    // both. We prefer porcelain v1 -z because it gives us the X/Y bytes per
-    // path in a parseable way.
-    const status = await this.runInRepo(info, ['status', '--porcelain=v1', '-z']);
-    const flagByPath = new Map<string, { staged: boolean; unstaged: boolean }>();
-    if (status.code === 0) parsePorcelainV1Flags(status.stdout, flagByPath);
-
-    const changes: WorkingChange[] = [];
-    for (const entry of trackedEntries) {
-      const flags = flagByPath.get(entry.path) ?? { staged: false, unstaged: true };
-      changes.push({
-        path: entry.path,
-        fromPath: entry.fromPath,
-        kind: entry.kind,
-        staged: flags.staged,
-        insertions: entry.insertions,
-        deletions: entry.deletions,
-        binary: entry.binary
-      });
-    }
-
-    const untrackedList = await this.runInRepo(info, [
-      'ls-files',
-      '--others',
-      '--exclude-standard',
-      '-z'
-    ]);
-    if (untrackedList.code === 0 && untrackedList.stdout) {
-      const files = untrackedList.stdout.split('\0').filter(Boolean);
-      for (const file of files) {
-        if (renameSources.has(file)) continue;
-        const insertions = await this.untrackedInsertions(info, file);
-        changes.push({
-          path: file,
-          fromPath: null,
-          kind: 'untracked',
-          staged: false,
-          insertions: insertions.lines,
-          deletions: 0,
-          binary: insertions.binary
-        });
-      }
-    }
-
-    changes.sort((a, b) => a.path.localeCompare(b.path));
-    return { repoPath: info.repoPath, isRepo: true, changes };
+    return (await this.getWorkingTreeSnapshot(cwd, true, context)).workingChanges;
   }
 
   async stageFiles(
@@ -359,7 +411,7 @@ export class GitService {
     const info = await this.resolveRepo(cwd, context);
     if (!info || paths.length === 0) return;
     await this.runInRepo(info, ['add', '--', ...paths]);
-    this.invalidate(info.repoPath);
+    this.invalidate(info);
   }
 
   async unstageFiles(
@@ -374,7 +426,7 @@ export class GitService {
       // Fresh repo with no HEAD — unstage via rm --cached instead.
       await this.runInRepo(info, ['rm', '--cached', '--', ...paths]);
     }
-    this.invalidate(info.repoPath);
+    this.invalidate(info);
   }
 
   // Mirror VSCode's "Discard Changes": for each file, choose the right
@@ -418,7 +470,7 @@ export class GitService {
       await this.runInRepo(info, ['clean', '-f', '--', ...cleanUntracked]);
     }
 
-    this.invalidate(info.repoPath);
+    this.invalidate(info);
   }
 
   async commit(
@@ -439,7 +491,7 @@ export class GitService {
     }
     const head = await this.runInRepo(info, ['rev-parse', 'HEAD']);
     const hash = head.stdout.trim();
-    this.invalidate(info.repoPath);
+    this.invalidate(info);
     return { hash, shortHash: hash.slice(0, 7) };
   }
 
@@ -486,27 +538,33 @@ export class GitService {
     if (result.code !== 0) {
       throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${baseArgs[0]} failed`);
     }
-    this.invalidate(info.repoPath);
+    this.invalidate(info);
     return { stdout: result.stdout, stderr: result.stderr };
   }
 
-  // Fetch a 1-based line range from HEAD's version of the file. Used by
-  // the diff viewer to lazily expand collapsed unchanged regions between
-  // hunks — the renderer only sends context-around-changes by default to
-  // keep payloads small, then fetches more on demand here.
+  // Fetch a 1-based line range from the diff's old-side tree. Working-tree
+  // reviews read HEAD; committed reviews read their canonical base SHA.
   async getFileLines(
     cwd: string,
     filePath: string,
     startLine: number,
     endLine: number,
-    context: GitRepoContext = {}
+    options: {
+      revision?: { kind: 'head' } | { kind: 'commit'; sha: string };
+      context?: GitRepoContext;
+    } = {}
   ): Promise<{ lines: string[]; totalLines: number }> {
-    const info = await this.resolveRepo(cwd, context);
+    const info = await this.resolveRepo(cwd, options.context ?? {});
     if (!info) return { lines: [], totalLines: 0 };
     if (!filePath || endLine < 1 || startLine > endLine) {
       return { lines: [], totalLines: 0 };
     }
-    const output = await this.runInRepo(info, ['show', `HEAD:${filePath}`]);
+    const revision = options.revision ?? { kind: 'head' as const };
+    const ref = revision.kind === 'head' ? 'HEAD' : revision.sha;
+    if (revision.kind === 'commit' && !/^[0-9a-f]{40}$/i.test(revision.sha)) {
+      throw new Error('Historical file-line revision must be a canonical commit SHA');
+    }
+    const output = await this.runInRepo(info, ['show', `${ref}:${filePath}`]);
     if (output.code !== 0) return { lines: [], totalLines: 0 };
     const all = output.stdout.split('\n');
     // git emits a trailing newline for normal files, which split turns into
@@ -598,6 +656,48 @@ export class GitService {
       hunks: parsed?.hunks ?? [],
       empty: !parsed || parsed.hunks.length === 0
     };
+  }
+
+  /**
+   * Materialize the tracked portion of a review with one repository-level
+   * Git command. Files Git omits (normally untracked files) are absent so the
+   * renderer can fetch only the file the user actually opens via getFileDiff.
+   */
+  async getReviewDiffs(
+    cwd: string,
+    files: readonly ReviewDiffTarget[],
+    options: {
+      contextLines?: number;
+      base?: string;
+      head?: string;
+      context?: GitRepoContext;
+    } = {}
+  ): Promise<FileDiff[]> {
+    if (files.length === 0) return [];
+    const info = await this.resolveRepo(cwd, options.context ?? {});
+    if (!info) return [];
+
+    const contextLines = Math.max(0, Math.trunc(options.contextLines ?? 3));
+    const rangeMode = !!(options.base && options.head);
+    const rangeArg = rangeMode ? `${options.base}..${options.head}` : 'HEAD';
+    const paths = Array.from(
+      new Set(files.flatMap((file) => [file.fromPath, file.path]).filter((p): p is string => !!p))
+    );
+    const output = await this.runInRepo(info, [
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--no-color',
+      '--no-ext-diff',
+      '-M',
+      '-C',
+      `--unified=${contextLines}`,
+      rangeArg,
+      '--',
+      ...paths
+    ]);
+    if (output.code !== 0 || !output.stdout.trim()) return [];
+    return materializeReviewDiffs(output.stdout, files);
   }
 
   private async untrackedInsertions(
@@ -780,7 +880,7 @@ export class GitService {
     return out;
   }
 
-  onChange(listener: (repoPath: string) => void): () => void {
+  onChange(listener: (event: GitChangeEvent) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -792,15 +892,67 @@ export class GitService {
       this.closeWatchers(cache);
     }
     this.caches.clear();
+    this.repoResolutions.clear();
+    this.repoResolutionRequests.clear();
+    this.workingTreeSnapshotRequests.clear();
+    this.untrackedFileCounter.clear();
     this.listeners.clear();
+  }
+
+  private async measureUntrackedFiles(
+    info: RepoInfo,
+    files: readonly string[]
+  ): Promise<Map<string, { lines: number; binary: boolean }>> {
+    try {
+      const runMode: RunMode = info.runMode === 'wsl' ? 'wsl' : 'windows';
+      const hostRoot = worktreeHostPath(info.repoPath, runMode, info.wslDistro);
+      return await this.untrackedFileCounter.measure(hostRoot, files);
+    } catch {
+      // If host-path translation or filesystem access is unavailable, callers
+      // retain the authoritative per-file Git fallback.
+      return new Map();
+    }
   }
 
   private async resolveRepo(cwd: string, context: GitRepoContext = {}): Promise<RepoInfo | null> {
     const trimmed = cwd.trim();
     if (!trimmed) return null;
-    const nativeInfo = await this.resolveNativeRepo(trimmed);
+    const key = repoResolutionKey(trimmed, context);
+    this.pruneExpiredRepoResolutions();
+    const cached = this.repoResolutions.get(key);
+    if (cached) {
+      this.repoResolutions.delete(key);
+      this.repoResolutions.set(key, cached);
+      return cached.info;
+    }
+    const inflight = this.repoResolutionRequests.get(key);
+    if (inflight) return inflight;
+
+    const request = this.resolveRepoUncached(trimmed, context)
+      .then((info) => {
+        this.repoResolutions.set(key, {
+          info,
+          expiresAt: Date.now() + (info ? REPO_RESOLUTION_TTL_MS : MISSING_REPO_RESOLUTION_TTL_MS)
+        });
+        this.trimRepoResolutions();
+        return info;
+      })
+      .finally(() => {
+        if (this.repoResolutionRequests.get(key) === request) {
+          this.repoResolutionRequests.delete(key);
+        }
+      });
+    this.repoResolutionRequests.set(key, request);
+    return request;
+  }
+
+  private async resolveRepoUncached(
+    cwd: string,
+    context: GitRepoContext
+  ): Promise<RepoInfo | null> {
+    const nativeInfo = await this.resolveNativeRepo(cwd);
     if (nativeInfo) return nativeInfo;
-    return this.resolveWslRepo(trimmed, context);
+    return this.resolveWslRepo(cwd, context);
   }
 
   private async resolveNativeRepo(cwd: string): Promise<RepoInfo | null> {
@@ -842,20 +994,26 @@ export class GitService {
   }
 
   private ensureCache(info: RepoInfo): RepoCache {
-    const existing = this.caches.get(info.repoPath);
-    if (existing) return existing;
+    const key = repoInfoKey(info);
+    const existing = this.caches.get(key);
+    if (existing) {
+      this.caches.delete(key);
+      this.caches.set(key, existing);
+      return existing;
+    }
     const cache: RepoCache = {
       info,
-      status: null,
-      shortstat: null,
       worktrees: null,
       branches: null,
       commitsByLimit: new Map(),
+      workingTreeSnapshot: null,
+      epoch: 0,
       watchers: [],
-      debounce: null
+      debounce: null,
+      observationLeaseCount: 0
     };
-    this.caches.set(info.repoPath, cache);
-    this.attachWatchers(cache);
+    this.caches.set(key, cache);
+    this.trimRepoCaches(cache);
     return cache;
   }
 
@@ -867,7 +1025,10 @@ export class GitService {
       cache.info.repoPath
     ]) {
       try {
-        cache.watchers.push(watch(target, { persistent: false }, () => this.invalidate(cache.info.repoPath)));
+        const watchImpl = this.options.watchImpl ?? watch;
+        cache.watchers.push(
+          watchImpl(target, { persistent: false }, () => this.invalidate(cache.info))
+        );
       } catch {
         // Some repos have no index yet; the next status call will still work.
       }
@@ -887,25 +1048,72 @@ export class GitService {
     cache.watchers = [];
   }
 
-  private invalidate(repoPath: string): void {
-    const cache = this.caches.get(repoPath);
+  private invalidate(info: RepoInfo): void {
+    const cache = this.caches.get(repoInfoKey(info));
     if (!cache) return;
-    cache.status = null;
-    cache.shortstat = null;
     cache.worktrees = null;
     cache.branches = null;
     cache.commitsByLimit.clear();
+    cache.workingTreeSnapshot = null;
+    cache.epoch += 1;
     if (cache.debounce) clearTimeout(cache.debounce);
     cache.debounce = setTimeout(() => {
       cache.debounce = null;
       for (const listener of this.listeners) {
         try {
-          listener(repoPath);
+          listener({
+            repoPath: info.repoPath,
+            runMode: info.runMode === 'wsl' ? 'wsl' : 'windows',
+            ...(info.wslDistro ? { wslDistro: info.wslDistro } : {})
+          });
         } catch {
           // listener errors are isolated
         }
       }
     }, 150);
+  }
+
+  private trimRepoCaches(protectedCache?: RepoCache): void {
+    const limit = positiveLimit(this.options.maxRepoCaches, DEFAULT_MAX_REPO_CACHES);
+    if (this.caches.size <= limit) return;
+    for (const [key, cache] of this.caches) {
+      if (this.caches.size <= limit) break;
+      if (cache === protectedCache) continue;
+      if (cache.observationLeaseCount > 0) continue;
+      this.closeWatchers(cache);
+      this.clearUntrackedMeasurements(cache.info);
+      this.caches.delete(key);
+    }
+  }
+
+  private pruneExpiredRepoResolutions(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.repoResolutions) {
+      if (entry.expiresAt <= now) this.repoResolutions.delete(key);
+    }
+  }
+
+  private trimRepoResolutions(): void {
+    const limit = positiveLimit(
+      this.options.maxRepoResolutions,
+      DEFAULT_MAX_REPO_RESOLUTIONS
+    );
+    while (this.repoResolutions.size > limit) {
+      const oldest = this.repoResolutions.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.repoResolutions.delete(oldest);
+    }
+  }
+
+  private clearUntrackedMeasurements(info: RepoInfo): void {
+    try {
+      const runMode: RunMode = info.runMode === 'wsl' ? 'wsl' : 'windows';
+      this.untrackedFileCounter.clearRoot(
+        worktreeHostPath(info.repoPath, runMode, info.wslDistro)
+      );
+    } catch {
+      // Host path translation is best-effort, just like measurement itself.
+    }
   }
 
   private async gitBinary(): Promise<string> {
@@ -917,7 +1125,12 @@ export class GitService {
   }
 
   private async run(cwd: string, args: string[]): Promise<GitResult> {
-    return runGit(await this.gitBinary(), cwd, args);
+    const binary = await this.gitBinary();
+    return retryTransientGitFailure(() =>
+      this.options.runGit
+        ? this.options.runGit(cwd, args)
+        : runGit(binary, cwd, args)
+    );
   }
 
   private async runInRepo(info: RepoInfo, args: string[]): Promise<GitResult> {
@@ -926,9 +1139,28 @@ export class GitService {
   }
 
   private async runWsl(distro: string, cwd: string, args: string[]): Promise<GitResult> {
-    if (this.options.runWslGit) return this.options.runWslGit(distro, cwd, args);
-    return runWslGit(this.options.wslBinary ?? 'wsl.exe', distro, cwd, args);
+    return retryTransientGitFailure(() =>
+      this.options.runWslGit
+        ? this.options.runWslGit(distro, cwd, args)
+        : runWslGit(this.options.wslBinary ?? 'wsl.exe', distro, cwd, args)
+    );
   }
+}
+
+function repoResolutionKey(cwd: string, context: GitRepoContext): string {
+  return worktreeIdentityKey(cwd, context);
+}
+
+function repoInfoKey(info: RepoInfo): string {
+  return worktreeIdentityKey(info.repoPath, {
+    runMode: info.runMode === 'wsl' ? 'wsl' : 'windows',
+    ...(info.wslDistro ? { wslDistro: info.wslDistro } : {})
+  });
+}
+
+function positiveLimit(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.trunc(value));
 }
 
 function emptyStatus(cwd: string): GitStatus {
@@ -948,7 +1180,21 @@ function emptyShortstat(repoPath: string, isRepo: boolean): GitShortstat {
   return { repoPath, isRepo, filesChanged: 0, insertions: 0, deletions: 0 };
 }
 
-function parsePorcelainV2(cwd: string, repoPath: string, output: string): GitStatus {
+interface WorkingPathFlags {
+  staged: boolean;
+  unstaged: boolean;
+  kind: WorkingChangeKind;
+}
+
+function parsePorcelainV2Z(
+  cwd: string,
+  repoPath: string,
+  output: string
+): {
+  status: GitStatus;
+  flagsByPath: Map<string, WorkingPathFlags>;
+  untrackedPaths: string[];
+} {
   const status: GitStatus = {
     cwd,
     repoPath,
@@ -959,56 +1205,77 @@ function parsePorcelainV2(cwd: string, repoPath: string, output: string): GitSta
     dirty: false,
     ...EMPTY_COUNTS
   };
-  for (const line of output.split('\n')) {
-    if (!line) continue;
-    if (line.startsWith('# branch.oid ')) {
-      const oid = line.slice('# branch.oid '.length).trim();
+  const flagsByPath = new Map<string, WorkingPathFlags>();
+  const untrackedPaths: string[] = [];
+  const records = output.split('\0');
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index] ?? '';
+    if (!record) continue;
+    if (record.startsWith('# branch.oid ')) {
+      const oid = record.slice('# branch.oid '.length).trim();
       if (oid && oid !== '(initial)') status.head = oid;
       continue;
     }
-    if (line.startsWith('# branch.head ')) {
-      const head = line.slice('# branch.head '.length).trim();
-      if (head === '(detached)') {
-        status.detached = true;
-      } else {
-        status.branch = head;
-      }
+    if (record.startsWith('# branch.head ')) {
+      const head = record.slice('# branch.head '.length).trim();
+      if (head === '(detached)') status.detached = true;
+      else status.branch = head;
       continue;
     }
-    if (line.startsWith('# branch.ab ')) {
-      const rest = line.slice('# branch.ab '.length).trim();
-      const match = rest.match(/\+(-?\d+)\s+-(-?\d+)/);
+    if (record.startsWith('# branch.ab ')) {
+      const match = record.slice('# branch.ab '.length).match(/\+(-?\d+)\s+-(-?\d+)/);
       if (match) {
         status.ahead = Number(match[1] ?? 0);
         status.behind = Number(match[2] ?? 0);
       }
       continue;
     }
-    if (line.startsWith('?')) {
+    if (record.startsWith('? ')) {
       status.untracked += 1;
+      untrackedPaths.push(record.slice(2));
       continue;
     }
-    if (line.startsWith('1 ') || line.startsWith('2 ')) {
-      const xy = line.slice(2, 4);
-      const x = xy[0];
-      const y = xy[1];
-      if (x && x !== '.') status.staged += 1;
-      if (y && y !== '.') status.unstaged += 1;
+    const recordKind = record[0];
+    if (recordKind !== '1' && recordKind !== '2' && recordKind !== 'u') continue;
+    const xy = record.slice(2, 4);
+    const x = xy[0] ?? '.';
+    const y = xy[1] ?? '.';
+    const staged = x !== '.';
+    const unstaged = y !== '.';
+    if (staged) status.staged += 1;
+    if (unstaged) status.unstaged += 1;
+    const spacesBeforePath = recordKind === '1' ? 8 : recordKind === '2' ? 9 : 10;
+    const filePath = fieldAfterSpaces(record, spacesBeforePath);
+    if (filePath) {
+      flagsByPath.set(filePath, {
+        staged,
+        unstaged,
+        kind: changeKindFromStatus(x !== '.' ? x : y)
+      });
     }
+    // Rename/copy records carry the source path in the next NUL field.
+    if (recordKind === '2') index += 1;
   }
   status.dirty = status.staged > 0 || status.unstaged > 0 || status.untracked > 0;
-  return status;
+  return { status, flagsByPath, untrackedPaths };
 }
 
-function parseShortstat(output: string): Omit<GitShortstat, 'repoPath' | 'isRepo'> {
-  const files = output.match(/(\d+)\s+files?\s+changed/);
-  const insertions = output.match(/(\d+)\s+insertions?\(\+\)/);
-  const deletions = output.match(/(\d+)\s+deletions?\(-\)/);
-  return {
-    filesChanged: files ? Number(files[1]) : 0,
-    insertions: insertions ? Number(insertions[1]) : 0,
-    deletions: deletions ? Number(deletions[1]) : 0
-  };
+function fieldAfterSpaces(record: string, count: number): string {
+  let from = 0;
+  for (let seen = 0; seen < count; seen++) {
+    const space = record.indexOf(' ', from);
+    if (space < 0) return '';
+    from = space + 1;
+  }
+  return record.slice(from);
+}
+
+function changeKindFromStatus(code: string): WorkingChangeKind {
+  if (code === 'A') return 'added';
+  if (code === 'D') return 'deleted';
+  if (code === 'R') return 'renamed';
+  if (code === 'C') return 'copied';
+  return 'modified';
 }
 
 function parseWorktrees(output: string): GitWorktree[] {
@@ -1106,26 +1373,16 @@ function parseLinePorcelain(output: string): BlameLine[] {
   return out;
 }
 
+const TRANSIENT_GIT_FAILURE = /\b(?:EAGAIN|ENOMEM|EMFILE|ENFILE)\b|resource temporarily unavailable/i;
+
+async function retryTransientGitFailure(run: () => Promise<GitResult>): Promise<GitResult> {
+  const first = await run();
+  if (first.code !== null || !TRANSIENT_GIT_FAILURE.test(first.stderr)) return first;
+  return run();
+}
+
 function runGit(bin: string, cwd: string, args: string[]): Promise<GitResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let stdout = '';
-    let stderr = '';
-    const child = spawn(bin, args, { cwd });
-    const finish = (result: GitResult) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-    child.stdout.on('data', (b: Buffer) => {
-      stdout += b.toString('utf8');
-    });
-    child.stderr.on('data', (b: Buffer) => {
-      stderr += b.toString('utf8');
-    });
-    child.on('error', (err) => finish({ code: null, stdout, stderr: String(err) }));
-    child.on('exit', (code) => finish({ code, stdout, stderr }));
-  });
+  return runGitCommand(bin, args, { cwd });
 }
 
 function runWslGit(
@@ -1134,29 +1391,10 @@ function runWslGit(
   cwd: string,
   args: string[]
 ): Promise<GitResult> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let stdout = '';
-    let stderr = '';
-    const child = spawn(
-      wslBinary,
-      ['-d', distro, '--cd', cwd, '--', 'git', ...args],
-      { stdio: ['ignore', 'pipe', 'pipe'] }
-    );
-    const finish = (result: GitResult) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-    child.stdout.on('data', (b: Buffer) => {
-      stdout += b.toString('utf8');
-    });
-    child.stderr.on('data', (b: Buffer) => {
-      stderr += b.toString('utf8');
-    });
-    child.on('error', (err) => finish({ code: null, stdout, stderr: String(err) }));
-    child.on('exit', (code) => finish({ code, stdout, stderr }));
-  });
+  return runGitCommand(
+    wslBinary,
+    ['-d', distro, '--cd', cwd, '--', 'git', ...args]
+  );
 }
 
 function clone<T>(value: T): T {
@@ -1319,128 +1557,4 @@ function parseLogNameOnlyZ(output: string): Map<string, string[]> {
     }
   }
   return out;
-}
-
-function parsePorcelainV1Flags(
-  output: string,
-  out: Map<string, { staged: boolean; unstaged: boolean }>
-): void {
-  // Format: XY<space><path>NUL, with rename entries spelled
-  // XY<space><to>NUL<from>NUL.
-  const tokens = output.split('\0');
-  let i = 0;
-  while (i < tokens.length) {
-    const record = tokens[i];
-    if (!record) {
-      i += 1;
-      continue;
-    }
-    if (record.length < 4) {
-      i += 1;
-      continue;
-    }
-    const x = record[0]!;
-    const y = record[1]!;
-    const filePath = record.slice(3);
-    const isRename = x === 'R' || y === 'R' || x === 'C' || y === 'C';
-    const stageStaged = x !== ' ' && x !== '?' && x !== '!';
-    const stageUnstaged = y !== ' ' && y !== '?' && y !== '!';
-    out.set(filePath, { staged: stageStaged, unstaged: stageUnstaged });
-    i += 1;
-    if (isRename) {
-      // Drop the from-path token; the renamed entry is keyed by destination.
-      i += 1;
-    }
-  }
-}
-
-interface ParsedDiff {
-  fromPath: string | null;
-  kind: WorkingChangeKind;
-  binary: boolean;
-  hunks: DiffHunk[];
-}
-
-function parseUnifiedDiff(text: string): ParsedDiff | null {
-  if (!text) return null;
-  const lines = text.split('\n');
-  let fromPath: string | null = null;
-  let kind: WorkingChangeKind = 'modified';
-  let binary = false;
-  const hunks: DiffHunk[] = [];
-  let current: DiffHunk | null = null;
-  let oldCursor = 0;
-  let newCursor = 0;
-  let sawHeader = false;
-
-  for (const raw of lines) {
-    if (raw.startsWith('diff --git ')) {
-      sawHeader = true;
-      continue;
-    }
-    if (!sawHeader && raw.startsWith('--- ')) sawHeader = true;
-    if (raw.startsWith('new file mode')) kind = 'added';
-    else if (raw.startsWith('deleted file mode')) kind = 'deleted';
-    else if (raw.startsWith('rename from ')) {
-      fromPath = raw.slice('rename from '.length);
-      kind = 'renamed';
-    } else if (raw.startsWith('copy from ')) {
-      fromPath = raw.slice('copy from '.length);
-      kind = 'copied';
-    } else if (raw.startsWith('Binary files') || raw.includes('GIT binary patch')) {
-      binary = true;
-    }
-
-    if (raw.startsWith('@@')) {
-      const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(raw);
-      if (!match) continue;
-      const oldStart = Number(match[1] ?? 0);
-      const oldCount = match[2] === undefined ? 1 : Number(match[2]);
-      const newStart = Number(match[3] ?? 0);
-      const newCount = match[4] === undefined ? 1 : Number(match[4]);
-      current = {
-        header: (match[5] ?? '').trim(),
-        oldStart,
-        oldCount,
-        newStart,
-        newCount,
-        lines: []
-      };
-      hunks.push(current);
-      oldCursor = oldStart;
-      newCursor = newStart;
-      continue;
-    }
-
-    if (!current) continue;
-
-    const head = raw[0];
-    if (head === '+' && !raw.startsWith('+++')) {
-      current.lines.push(makeLine('add', null, newCursor, raw.slice(1)));
-      newCursor += 1;
-    } else if (head === '-' && !raw.startsWith('---')) {
-      current.lines.push(makeLine('remove', oldCursor, null, raw.slice(1)));
-      oldCursor += 1;
-    } else if (head === '\\') {
-      // "\ No newline at end of file" — annotate as meta on current pair.
-      current.lines.push(makeLine('meta', null, null, raw));
-    } else if (head === ' ' || raw === '') {
-      const ctx = head === ' ' ? raw.slice(1) : '';
-      current.lines.push(makeLine('context', oldCursor, newCursor, ctx));
-      oldCursor += 1;
-      newCursor += 1;
-    }
-  }
-
-  if (!sawHeader && hunks.length === 0 && !binary) return null;
-  return { fromPath, kind, binary, hunks };
-}
-
-function makeLine(
-  kind: DiffLineKind,
-  oldLine: number | null,
-  newLine: number | null,
-  text: string
-): DiffLine {
-  return { kind, oldLine, newLine, text };
 }

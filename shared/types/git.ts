@@ -22,6 +22,14 @@ export interface GitStatusRequest {
   wslDistro?: string;
 }
 
+/** Session-owned demand for native repository filesystem observation. */
+export interface GitObservationDemandRequest {
+  cwd: string;
+  active: boolean;
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
 export interface GitRepoRequest {
   repoPath: string;
   force?: boolean;
@@ -89,6 +97,8 @@ export interface GitCommit {
 
 export interface GitChangeEvent {
   repoPath: string;
+  runMode: RunMode;
+  wslDistro?: string;
 }
 
 export type WorkingChangeKind =
@@ -129,6 +139,16 @@ export interface WorkingChangesResult {
   repoPath: string | null;
   isRepo: boolean;
   changes: WorkingChange[];
+}
+
+export interface WorkingTreeSnapshotRequest extends GitStatusRequest {}
+
+/** One coherent working-tree observation shared by badges and review surfaces. */
+export interface WorkingTreeSnapshot {
+  generation: number;
+  status: GitStatus;
+  shortstat: GitShortstat;
+  workingChanges: WorkingChangesResult;
 }
 
 export type DiffLineKind = 'context' | 'add' | 'remove' | 'meta';
@@ -179,6 +199,21 @@ export interface FileDiffRequest {
   // When both are set, the diff is computed against `git diff <base>..<head>`
   // instead of the default working-tree-vs-HEAD diff. The untracked-file
   // fallback (--no-index) is suppressed in this mode.
+  base?: string;
+  head?: string;
+  runMode?: RunMode;
+  wslDistro?: string;
+}
+
+export interface ReviewDiffTarget {
+  path: string;
+  fromPath?: string | null;
+}
+
+export interface ReviewDiffsRequest {
+  cwd: string;
+  files: ReviewDiffTarget[];
+  contextLines?: number;
   base?: string;
   head?: string;
   runMode?: RunMode;
@@ -270,6 +305,7 @@ export interface RangeChangesResult {
 export interface FileLinesRequest {
   cwd: string;
   path: string;
+  revision: { kind: 'head' } | { kind: 'commit'; sha: string };
   startLine: number;
   endLine: number;
   runMode?: RunMode;

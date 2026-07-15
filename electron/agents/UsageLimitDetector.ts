@@ -56,7 +56,17 @@ const HARD_LIMIT_PREFIXES = [
 ];
 
 export function detectUsageLimit(input: unknown): UsageLimitInfo | null {
-  const text = normalizeText(collectText(input).join('\n'));
+  return detectNormalizedUsageLimit(normalizeText(collectText(input).join('\n')));
+}
+
+// Pty output has already had terminal escape sequences removed. Keeping this
+// entry point explicit avoids running the relatively expensive ANSI regexes a
+// second time for every agent output chunk.
+export function detectUsageLimitPlainText(input: string): UsageLimitInfo | null {
+  return detectNormalizedUsageLimit(normalizePlainText(input));
+}
+
+function detectNormalizedUsageLimit(text: string): UsageLimitInfo | null {
   if (!text) return null;
 
   const lower = text.toLowerCase();
@@ -101,7 +111,11 @@ function collectText(input: unknown, depth = 0): string[] {
 }
 
 function normalizeText(input: string): string {
-  return stripAnsi(input)
+  return normalizePlainText(stripAnsi(input));
+}
+
+function normalizePlainText(input: string): string {
+  return input
     .replace(/[•·]/g, ' ')
     .replace(/\r\n?/g, '\n')
     .split('\n')

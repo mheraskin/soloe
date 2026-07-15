@@ -8,6 +8,7 @@ import type {
 } from '@shared/types/agents.js';
 import type { Session, SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
 import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
+import type { SystemUsageRequest } from '@shared/types/system.js';
 import type {
   Project,
   ProjectDraft,
@@ -33,13 +34,16 @@ import type {
   GitChangeEvent,
   GitCommitRequest,
   GitRecentCommitsRequest,
+  GitObservationDemandRequest,
   GitRemoteOpRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
+  ReviewDiffsRequest,
   ResolveRefsRequest,
   StageFilesRequest,
-  WorkingChangesRequest
+  WorkingChangesRequest,
+  WorkingTreeSnapshotRequest
 } from '@shared/types/git.js';
 import type {
   FileOpenRequest,
@@ -72,6 +76,12 @@ import type {
   GetOverviewRequest,
   RegenerateOverviewRequest
 } from '@shared/types/overview.js';
+import type {
+  CloseDevToolsRequest,
+  OpenDevToolsRequest,
+  SetDevToolsLayoutRequest
+} from '@shared/types/browser.js';
+import { TerminalOutputRouter } from './terminal-output-router';
 
 function unwrap<T>(r: IpcResult<T>): T {
   if (!r.ok) throw new Error(r.error);
@@ -90,6 +100,13 @@ export function toIpcPayload<T>(value: T): T {
 }
 
 const c = globalThis.window?.soloe as Window['soloe'];
+const terminalOutputRouter = new TerminalOutputRouter(
+  (listener) => c.terminal.onOutput(listener),
+  async (terminalId, afterSeq) => unwrap(await c.terminal.replay(terminalId, afterSeq)),
+  async (terminalId, active) => {
+    unwrap(await c.terminal.setOutputDemand({ terminalId, active }));
+  }
+);
 
 export const ipc = {
   sessions: {
@@ -115,7 +132,14 @@ export const ipc = {
     resize: async (terminalId: TerminalId, cols: number, rows: number) =>
       unwrap(await c.terminal.resize(toIpcPayload({ terminalId, dimensions: { cols, rows } }))),
     listRunning: async () => unwrap(await c.terminal.listRunning()),
-    onOutput: (cb: (event: TerminalOutputEvent) => void) => c.terminal.onOutput(cb),
+    replay: async (terminalId: TerminalId, afterSeq = 0) =>
+      unwrap(await c.terminal.replay(terminalId, afterSeq)),
+    attachPresentation: (
+      terminalId: TerminalId,
+      sessionId: SessionId,
+      sink: Parameters<TerminalOutputRouter['attach']>[2],
+      initiallyVisible: boolean
+    ) => terminalOutputRouter.attach(terminalId, sessionId, sink, initiallyVisible),
     onExit: (cb: (event: TerminalExitEvent) => void) => c.terminal.onExit(cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) => c.terminal.onStatus(cb),
     onLocation: (cb: (event: TerminalLocationEvent) => void) => c.terminal.onLocation(cb)
@@ -134,13 +158,22 @@ export const ipc = {
     onSnapshot: (cb: (snapshot: ObservedAgentSnapshot) => void) => c.observer.onSnapshot(cb),
     onEvent: (cb: (event: ObserverEvent) => void) => c.observer.onEvent(cb)
   },
+  browser: {
+    openDevTools: async (request: OpenDevToolsRequest) =>
+      unwrap(await c.browser.openDevTools(toIpcPayload(request))),
+    setDevToolsLayout: async (request: SetDevToolsLayoutRequest) =>
+      unwrap(await c.browser.setDevToolsLayout(toIpcPayload(request))),
+    closeDevTools: async (request: CloseDevToolsRequest) =>
+      unwrap(await c.browser.closeDevTools(toIpcPayload(request)))
+  },
   system: {
     openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId)),
     saveText: async (request: { defaultPath?: string; content: string }) =>
       unwrap(await c.system.saveText(toIpcPayload(request))),
     openExternal: async (url: string) => unwrap(await c.system.openExternal(url)),
     listWslDistros: async () => unwrap(await c.system.listWslDistros()),
-    usage: async () => unwrap(await c.system.usage())
+    usage: async (request?: SystemUsageRequest) =>
+      unwrap(await c.system.usage(request ? toIpcPayload(request) : undefined))
   },
   settings: {
     get: async () => unwrap(await c.settings.get()),
@@ -159,6 +192,8 @@ export const ipc = {
     reorder: async (orderedIds: ProjectId[]) =>
       unwrap(await c.projects.reorder([...orderedIds])),
     refreshFavicons: async (id: ProjectId) => unwrap(await c.projects.refreshFavicons(id)),
+    readFavicon: async (id: ProjectId, relativePath: string) =>
+      unwrap(await c.projects.readFavicon(id, relativePath)),
     detectFromPath: async (p: string) => unwrap(await c.projects.detectFromPath(p)),
     suggestPaths: async (query: string, options?: ProjectSuggestOptions) =>
       unwrap(await c.projects.suggestPaths(query, options ? toIpcPayload(options) : undefined)),
@@ -198,6 +233,10 @@ export const ipc = {
       unwrap(await c.git.checkout(toIpcPayload(request))),
     workingChanges: async (request: WorkingChangesRequest) =>
       unwrap(await c.git.workingChanges(toIpcPayload(request))),
+    workingTreeSnapshot: async (request: WorkingTreeSnapshotRequest) =>
+      unwrap(await c.git.workingTreeSnapshot(toIpcPayload(request))),
+    setObservationDemand: async (request: GitObservationDemandRequest) =>
+      unwrap(await c.git.setObservationDemand(toIpcPayload(request))),
     rangeChanges: async (request: RangeChangesRequest) =>
       unwrap(await c.git.rangeChanges(toIpcPayload(request))),
     commitsBetween: async (request: CommitsBetweenRequest) =>
@@ -208,6 +247,8 @@ export const ipc = {
       unwrap(await c.git.fileBlame(toIpcPayload(request))),
     fileDiff: async (request: FileDiffRequest) =>
       unwrap(await c.git.fileDiff(toIpcPayload(request))),
+    reviewDiffs: async (request: ReviewDiffsRequest) =>
+      unwrap(await c.git.reviewDiffs(toIpcPayload(request))),
     fileLines: async (request: FileLinesRequest) =>
       unwrap(await c.git.fileLines(toIpcPayload(request))),
     stageFiles: async (request: StageFilesRequest) =>

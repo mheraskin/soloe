@@ -1,12 +1,20 @@
 import type { DiffRpcRequest, DiffRpcResult } from '@shared/types/diff-rpc.js';
-import type { GitCommit } from '@shared/types/git.js';
-import { ipc } from './ipc';
-import { git } from '../stores/git.svelte';
+import {
+  sameWorktreeIdentity
+} from '@shared/worktree-identity.js';
 import { rightRail } from '../stores/right-rail.svelte';
 import { sessions } from '../stores/sessions.svelte';
 import { workingDiff } from '../stores/working-diff.svelte';
 
 let initialized = false;
+
+export interface DiffRequestDeps {
+  sessions: Pick<typeof sessions, 'sessions' | 'select'>;
+  workingDiff: Pick<typeof workingDiff, 'setReviewMode' | 'setSelected'>;
+  rightRail: Pick<typeof rightRail, 'setActiveCwd' | 'openTab'>;
+}
+
+const defaultDeps: DiffRequestDeps = { sessions, workingDiff, rightRail };
 
 export function initDiffBridge(): void {
   if (initialized) return;
@@ -19,56 +27,55 @@ export function initDiffBridge(): void {
 async function handleRequest(req: DiffRpcRequest): Promise<void> {
   let result: DiffRpcResult;
   try {
-    result = await dispatch(req);
+    result = await dispatchDiffRequest(req);
   } catch (err) {
     result = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
   window.soloe.diff.sendRpcResponse({ requestId: req.requestId, result });
 }
 
-async function dispatch(req: DiffRpcRequest): Promise<DiffRpcResult> {
+export async function dispatchDiffRequest(
+  req: DiffRpcRequest,
+  deps: DiffRequestDeps = defaultDeps
+): Promise<DiffRpcResult> {
   switch (req.op) {
     case 'open_for_commits': {
-      const { cwd, base, head, commits, includeWorkingTree, focusPath } = req.args;
+      const { target, base, head, commits, includeWorkingTree, focusPath } = req.args;
+      const { scope, sessionId } = target;
+      const { cwd } = scope;
       // The worktree-scope-open-sessions rule: refuse to operate on a cwd that
       // isn't already an open session/worktree. Prevents the bridge from
       // synthesizing UI state for a directory the user hasn't surfaced.
-      const known = sessions.sessions.some((s) => s.cwd === cwd);
-      if (!known) return { ok: false, error: `cwd is not an open session: ${cwd}` };
+      const session = deps.sessions.sessions.find((candidate) => candidate.id === sessionId);
+      if (!session) return { ok: false, error: `session is not open: ${sessionId}` };
+      if (!sameWorktreeIdentity(session.cwd, session, scope.cwd, scope)) {
+        return { ok: false, error: `session Worktree Scope mismatch: ${sessionId}` };
+      }
       if (commits.length === 0) return { ok: false, error: 'no commits provided' };
 
-      // Re-fetch the topo-ordered range so the chip rendering and file list
-      // use git's ordering (matches what the picker does on Apply).
-      const ctx = git.contextFor(cwd);
-      let ordered: GitCommit[] = [];
-      try {
-        const between = await ipc.git.commitsBetween({ cwd, base, head, ...ctx });
-        ordered = between.commits;
-      } catch (err) {
-        return { ok: false, error: `commitsBetween failed: ${err instanceof Error ? err.message : String(err)}` };
-      }
-      if (ordered.length === 0) {
-        return { ok: false, error: 'range resolved to zero commits' };
-      }
-
-      workingDiff.setReviewMode(cwd, {
+      deps.workingDiff.setReviewMode(scope, {
         kind: 'range',
         base,
         head,
-        commits: ordered,
+        commits,
         includeWorkingTree,
         chipFilter: null
       });
-      rightRail.setActiveCwd(cwd);
-      rightRail.openTab('diff');
-      if (focusPath) workingDiff.setSelected(cwd, focusPath);
+      deps.sessions.select(sessionId);
+      deps.rightRail.setActiveCwd(cwd);
+      deps.rightRail.openTab('diff');
+      // The bridge opens a commit review, so a duplicated WT/range path must
+      // focus the committed row rather than whichever path happens to appear
+      // first in the merged list.
+      if (focusPath) deps.workingDiff.setSelected(scope, focusPath, 'committed');
 
       return {
         ok: true,
+        sessionId,
         cwd,
         base,
         head,
-        commitCount: ordered.length
+        commitCount: commits.length
       };
     }
     default: {

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { posixToWslUnc } from '../runtime/wsl-paths.js';
 
 export interface WslDistroInfo {
   distro: string;
@@ -39,8 +40,7 @@ export class WslHostDetector {
 }
 
 export function linuxPathToUnc(distro: string, linuxPath: string): string {
-  const segments = linuxPath.split('/').filter((s) => s.length > 0);
-  return ['\\\\wsl.localhost', distro, ...segments].join('\\');
+  return posixToWslUnc(distro, linuxPath);
 }
 
 function listWslDistros(): Promise<string[]> {

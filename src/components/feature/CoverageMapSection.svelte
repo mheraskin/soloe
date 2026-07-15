@@ -1,22 +1,22 @@
 <script lang="ts">
   import { ChevronRight, ExternalLink, Map } from '@lucide/svelte';
   import type { BranchStatus, CoverageMapSnapshot } from '@shared/types/features.js';
-  import { featuresStore } from '../../stores/features.svelte';
+  import { featuresStore, type FeatureScope } from '../../stores/features.svelte';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import { Button } from '$lib/components/ui/button';
 
   interface Props {
-    cwd: string;
+    scope: FeatureScope;
     coverage: CoverageMapSnapshot;
     onToggleBranch: (branchId: string, next: BranchStatus) => void;
     onOpenFile: (relativePath: string) => void;
   }
 
-  let { cwd, coverage, onToggleBranch, onOpenFile }: Props = $props();
-  let open = $derived(featuresStore.sectionOpenFor(cwd, 'coverage', true));
+  let { scope, coverage, onToggleBranch, onOpenFile }: Props = $props();
+  let open = $derived(featuresStore.sectionOpenFor(scope, 'coverage', true));
 
   function onOpenChange(nextOpen: boolean): void {
-    featuresStore.setSectionOpen(cwd, 'coverage', nextOpen);
+    featuresStore.setSectionOpen(scope, 'coverage', nextOpen);
   }
 
   let total = $derived(
@@ -69,14 +69,14 @@
   }
 
   function sectionOpen(section: CoverageMapSnapshot['sections'][number]): boolean {
-    return featuresStore.sectionOpenFor(cwd, sectionUiKey(section.id), !sectionComplete(section));
+    return featuresStore.sectionOpenFor(scope, sectionUiKey(section.id), !sectionComplete(section));
   }
 
   function onSectionOpenChange(
     section: CoverageMapSnapshot['sections'][number],
     nextOpen: boolean
   ): void {
-    featuresStore.setSectionOpen(cwd, sectionUiKey(section.id), nextOpen, !sectionComplete(section));
+    featuresStore.setSectionOpen(scope, sectionUiKey(section.id), nextOpen, !sectionComplete(section));
   }
 </script>
 

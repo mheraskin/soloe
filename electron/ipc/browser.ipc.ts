@@ -12,7 +12,7 @@ import type {
   DisableDeviceEmulationRequest,
   EnableDeviceEmulationRequest,
   OpenDevToolsRequest,
-  SetDevToolsBoundsRequest,
+  SetDevToolsLayoutRequest,
   SetUserAgentRequest
 } from '@shared/types/browser.js';
 import { ipcInvoke } from './result.js';
@@ -22,6 +22,7 @@ interface DevToolsHost {
   window: BrowserWindow;
   target: WebContents;
   onTargetDestroyed: () => void;
+  onWindowClosed: () => void;
 }
 
 export class BrowserIpc {
@@ -103,7 +104,15 @@ export class BrowserIpc {
           const existing = this.hosts.get(request.webContentsId);
           if (existing) {
             existing.view.setBounds(roundBounds(request.bounds));
+            existing.view.setVisible(true);
             return true as const;
+          }
+
+          // A BrowserWindow owns at most one DevTools renderer. Rapid tab
+          // switches or overlapping open requests must retire the old native
+          // view before admitting a new target.
+          for (const [targetId, host] of this.hosts) {
+            if (host.window === win) this.teardownHost(targetId);
           }
 
           // The DevTools host MUST be a never-navigated WebContents — Chromium
@@ -123,13 +132,16 @@ export class BrowserIpc {
           view.setBounds(roundBounds(request.bounds));
 
           const onTargetDestroyed = () => this.teardownHost(request.webContentsId);
+          const onWindowClosed = () => this.teardownHost(request.webContentsId);
           target.once('destroyed', onTargetDestroyed);
+          win.once('closed', onWindowClosed);
 
           this.hosts.set(request.webContentsId, {
             view,
             window: win,
             target,
-            onTargetDestroyed
+            onTargetDestroyed,
+            onWindowClosed
           });
 
           target.setDevToolsWebContents(view.webContents);
@@ -141,12 +153,13 @@ export class BrowserIpc {
     );
 
     ipcMain.handle(
-      IpcChannels.browser.setDevToolsBounds,
-      (_event, request: SetDevToolsBoundsRequest) =>
+      IpcChannels.browser.setDevToolsLayout,
+      (_event, request: SetDevToolsLayoutRequest) =>
         ipcInvoke(() => {
           const host = this.hosts.get(request.webContentsId);
           if (!host) return true as const;
-          host.view.setBounds(roundBounds(request.bounds));
+          if (request.bounds) host.view.setBounds(roundBounds(request.bounds));
+          if (request.visible !== undefined) host.view.setVisible(request.visible);
           return true as const;
         })
     );
@@ -181,7 +194,7 @@ export class BrowserIpc {
     ipcMain.removeHandler(IpcChannels.browser.disableDeviceEmulation);
     ipcMain.removeHandler(IpcChannels.browser.setUserAgent);
     ipcMain.removeHandler(IpcChannels.browser.openDevTools);
-    ipcMain.removeHandler(IpcChannels.browser.setDevToolsBounds);
+    ipcMain.removeHandler(IpcChannels.browser.setDevToolsLayout);
     ipcMain.removeHandler(IpcChannels.browser.closeDevTools);
     this.registered = false;
   }
@@ -194,6 +207,18 @@ export class BrowserIpc {
       host.target.removeListener('destroyed', host.onTargetDestroyed);
     } catch {
       // listener may already be gone
+    }
+    try {
+      host.window.removeListener('closed', host.onWindowClosed);
+    } catch {
+      // window may already be disposing its listeners
+    }
+    try {
+      if (!host.target.isDestroyed() && host.target.isDevToolsOpened()) {
+        host.target.closeDevTools();
+      }
+    } catch {
+      // target may be midway through destruction
     }
     if (!host.window.isDestroyed()) {
       try {

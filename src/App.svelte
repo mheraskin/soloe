@@ -14,7 +14,6 @@
     X
   } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
-  import type { GitWorktree } from '@shared/types/git.js';
   import type {
     AgentObservedState,
     Session,
@@ -26,6 +25,7 @@
   import { projects } from './stores/projects.svelte';
   import { notes } from './stores/notes.svelte';
   import { git } from './stores/git.svelte';
+  import { workingDiff } from './stores/working-diff.svelte';
   import { nav, type WorktreeIndexTarget } from './stores/nav.svelte';
   import { commandPalette } from './stores/command-palette.svelte';
   import { filePalette } from './stores/file-palette.svelte';
@@ -40,6 +40,10 @@
   import { ipc } from './lib/ipc';
   import { confirmDeleteSession } from './lib/session-delete-confirmation';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
+  import { modal } from './stores/modal.svelte';
+  import { projectModal } from './stores/project-modal.svelte';
+  import { sessionHandoff } from './stores/session-handoff.svelte';
+  import { confirmStore } from './stores/confirm.svelte';
   import {
     Keymap,
     shouldIgnoreInTextInput,
@@ -47,6 +51,10 @@
     worktreeIndexFromEvent
   } from './lib/keymap';
   import { toggleRailTabAndFocus } from './lib/rail-focus';
+  import { buildWorktreeGroups } from './lib/worktree-groups';
+  import { sameWorktreePath, worktreeBasename, worktreeLabel } from './lib/worktree-path';
+  import { worktreeScope } from '@shared/worktree-identity.js';
+  import { sessionRefreshIntents } from './lib/worktree-polling-policy';
   import { displaySessionKind } from './lib/session-agent';
   import {
     displayedAgentState as resolveDisplayedAgentState,
@@ -61,20 +69,22 @@
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
   import RightRail from './components/RightRail.svelte';
-  import NewSessionModal from './components/NewSessionModal.svelte';
-  import ConfirmDialog from './components/ConfirmDialog.svelte';
-  import SettingsDialog from './components/SettingsDialog.svelte';
-  import ProjectModal from './components/ProjectModal.svelte';
-  import CommandPalette from './components/CommandPalette.svelte';
-  import FilePalette from './components/FilePalette.svelte';
-  import NewSessionPickerDialog from './components/NewSessionPickerDialog.svelte';
-  import SessionHandoffDialog from './components/SessionHandoffDialog.svelte';
-  import AgentIntegrationSetupDialog from './components/AgentIntegrationSetupDialog.svelte';
-  import AgentNotificationToasts from './components/AgentNotificationToasts.svelte';
+  import LazyOverlay from './components/LazyOverlay.svelte';
   import AgentLaunchPopover from './components/AgentLaunchPopover.svelte';
   import SessionContextMenu from './components/SessionContextMenu.svelte';
   import KindIcon from './components/KindIcon.svelte';
   import appIconUrl from '../build/favicon.svg';
+
+  const loadNewSessionModal = () => import('./components/NewSessionModal.svelte');
+  const loadConfirmDialog = () => import('./components/ConfirmDialog.svelte');
+  const loadSettingsDialog = () => import('./components/SettingsDialog.svelte');
+  const loadProjectModal = () => import('./components/ProjectModal.svelte');
+  const loadCommandPalette = () => import('./components/CommandPalette.svelte');
+  const loadFilePalette = () => import('./components/FilePalette.svelte');
+  const loadNewSessionPicker = () => import('./components/NewSessionPickerDialog.svelte');
+  const loadSessionHandoff = () => import('./components/SessionHandoffDialog.svelte');
+  const loadAgentIntegrationSetup = () => import('./components/AgentIntegrationSetupDialog.svelte');
+  const loadAgentNotificationToasts = () => import('./components/AgentNotificationToasts.svelte');
 
   let appliedTheme: string | null = null;
   let suppressCollapsedDropdownSelect = false;
@@ -85,6 +95,7 @@
     projects.attachListeners();
     notes.attachListeners();
     git.attachListeners();
+    workingDiff.attachListeners();
     const detachToast = ipc.notify.onToast((t) => {
       const opts = t.description ? { description: t.description } : undefined;
       if (t.severity === 'error') toast.error(t.message, opts);
@@ -96,18 +107,27 @@
     const detachKbdHints = kbdHints.attach();
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keydown', onClearPaneRing, true);
+    window.addEventListener('beforeunload', flushRendererPersistence);
     return () => {
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('keydown', onClearPaneRing, true);
+      window.removeEventListener('beforeunload', flushRendererPersistence);
+      flushRendererPersistence();
       detachKbdHints();
       detachToast();
       sessions.detach();
       settings.detach();
       projects.detach();
       notes.detach();
+      workingDiff.detach();
       git.detach();
     };
   });
+
+  function flushRendererPersistence(): void {
+    browserStore.flushPersistence();
+    notes.flushDraftPersistence();
+  }
 
   // Clears the pane focus ring on the next real keystroke after a Ctrl+;
   // cycle. Ignores pure modifier presses and the cycle key itself so the
@@ -195,29 +215,6 @@
     }>;
   };
 
-  function normPath(p: string): string {
-    return p.replace(/[/\\]+$/, '');
-  }
-
-  function basename(p: string): string {
-    const parts = normPath(p).split(/[/\\]/);
-    return parts[parts.length - 1] || p;
-  }
-
-  function worktreeLabel(projectPath: string, cwd: string): string {
-    const projectRoot = normPath(projectPath);
-    const worktreePath = normPath(cwd);
-    if (worktreePath === projectRoot) return 'main';
-    if (worktreePath.startsWith(projectRoot + '/') || worktreePath.startsWith(projectRoot + '\\')) {
-      return worktreePath.slice(projectRoot.length + 1);
-    }
-    return basename(worktreePath);
-  }
-
-  function gitWorktreeLabel(projectPath: string, worktree: GitWorktree): string {
-    return worktree.branch ?? (worktree.detached ? 'detached' : worktreeLabel(projectPath, worktree.path));
-  }
-
   function collapsedStatusDotClass(tone: CollapsedStatusTone): string {
     const classes = {
       active: 'bg-warning',
@@ -297,22 +294,24 @@
     const project = sel.projectId ? projects.get(sel.projectId) : null;
     const projectName = project?.name ?? null;
     const cwd = sel.cwd?.trim() ?? '';
-    const branch = git.statusFor(cwd)?.branch ?? sel.lastBranch ?? null;
+    const branch = git.statusFor(cwd, {
+      runMode: sel.runMode,
+      ...(sel.wslDistro ? { wslDistro: sel.wslDistro } : {})
+    })?.branch ?? sel.lastBranch ?? null;
     let worktree = branch;
     if (!worktree && project) {
-      worktree = worktreeLabel(project.path, cwd);
+      worktree = worktreeLabel(project.path, cwd, sel.runMode);
     }
     if (!worktree && cwd) {
-      worktree = basename(cwd);
+      worktree = worktreeBasename(cwd);
     }
-    const normSelCwd = normPath(cwd);
     // Order siblings the same way the sidebar does, but do not inherit the
     // sidebar's collapsed-worktree filtering. The top bar has its own visibility
     // contract when the sidebar is hidden.
     const ordered = nav.flat.filter(
       (s) =>
         (s.projectId ?? null) === (sel.projectId ?? null)
-        && normPath(s.cwd?.trim() ?? '') === normSelCwd
+        && sameWorktreePath(s.cwd?.trim() ?? '', cwd, s.runMode)
     );
     const sessionList = ordered.map((s, i) => ({
       id: s.id,
@@ -332,56 +331,30 @@
     }));
     const worktreeOptions: CollapsedWorktreeOption[] = [];
     if (project) {
-      const buckets = new Map<string, { count: number; firstId: string | null }>();
-      const naturalOrder: string[] = [];
-      function ensureBucket(path: string): { count: number; firstId: string | null } {
-        const key = normPath(path);
-        let bucket = buckets.get(key);
-        if (!bucket) {
-          bucket = { count: 0, firstId: null };
-          buckets.set(key, bucket);
-          naturalOrder.push(key);
-        }
-        return bucket;
-      }
-      const gitWorktrees = git.worktreesFor(project.path) ?? [];
-      for (const wt of gitWorktrees) {
-        ensureBucket(wt.path);
-      }
-      for (const s of sessions.byProject[project.id] ?? []) {
-        const bucket = ensureBucket(s.cwd);
-        bucket.count += 1;
-        bucket.firstId ??= s.id;
-      }
-      const userOrder = (project.worktreeOrder ?? []).map(normPath);
-      const seen = new Set<string>();
-      const finalOrder: string[] = [];
-      for (const key of userOrder) {
-        if (buckets.has(key) && !seen.has(key)) {
-          seen.add(key);
-          finalOrder.push(key);
-        }
-      }
-      for (const key of naturalOrder) {
-        if (!seen.has(key)) {
-          seen.add(key);
-          finalOrder.push(key);
-        }
-      }
-      for (const key of finalOrder) {
-        const gitWorktree = gitWorktrees.find((wt) => normPath(wt.path) === key);
-        const bucket = buckets.get(key)!;
+      const gitWorktrees = git.worktreesFor(project.path, {
+        ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+        ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+      }) ?? [];
+      const groups = buildWorktreeGroups({
+        projectPath: project.path,
+        ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
+        worktrees: gitWorktrees,
+        items: sessions.byProject[project.id] ?? [],
+        orderedPaths: project.worktreeOrder ?? []
+      });
+      for (const group of groups) {
+        const firstId = group.items[0]?.id ?? null;
         worktreeOptions.push({
-          cwd: key,
-          label: gitWorktree ? gitWorktreeLabel(project.path, gitWorktree) : worktreeLabel(project.path, key),
-          ...(gitWorktree?.branch ? { branch: gitWorktree.branch } : {}),
-          isMain: gitWorktree?.isMain ?? normPath(project.path) === key,
-          active: key === normSelCwd,
-          sessionCount: bucket.count,
+          cwd: group.cwd,
+          label: group.label,
+          ...(group.worktree?.branch ? { branch: group.worktree.branch } : {}),
+          isMain: group.isMain,
+          active: sameWorktreePath(group.cwd, cwd, sel.runMode),
+          sessionCount: group.items.length,
           selectedSessionId:
-            sessions.lastSelectedIdForWorktree({ projectId: project.id, cwd: key })
-            ?? bucket.firstId,
-          firstSessionId: bucket.firstId,
+            sessions.lastSelectedIdForWorktree({ projectId: project.id, cwd: group.cwd })
+            ?? firstId,
+          firstSessionId: firstId,
           shortcutIndex: worktreeOptions.length < 9 ? worktreeOptions.length + 1 : null
         });
       }
@@ -403,54 +376,35 @@
   // selected session, so its per-worktree open/fullscreen/tab state can be
   // recalled when bouncing between worktrees.
   $effect(() => {
-    const cwd = sessions.selected?.cwd ?? null;
+    const selected = sessions.selected;
+    const cwd = selected?.cwd ?? null;
     rightRail.setActiveCwd(cwd);
-    browserStore.setActiveCwd(cwd);
+    browserStore.setActiveScope(selected ? worktreeScope(selected.cwd, selected) : null);
     vaultStore.setActiveCwd(cwd);
   });
 
-  // Poll git status/diff for every worktree of every known project at the
-  // slow tier so sessionless worktrees still get a +N −N indicator. Sessions
-  // bump matching worktrees to the fast tier via the next effect.
+  // Reconcile Worktree Inventory for every known Project. Inventory does not
+  // create recurring Working Tree Snapshots; Session demand owns those via
+  // the next effect.
   $effect(() => {
     const list = projects.projects;
+    const selectedProjectId = sessions.selected?.projectId ?? null;
     const intents = list.map((p) => ({
       repoPath: p.path,
+      cadence: p.id === selectedProjectId ? 'foreground' as const : 'background' as const,
       ...(p.defaultRunMode ? { runMode: p.defaultRunMode } : {}),
       ...(p.defaultWslDistro ? { wslDistro: p.defaultWslDistro } : {})
     }));
     void git.refreshProjectWorktrees(intents);
   });
 
-  // Drive git status/diff polling for every worktree that has a session.
-  // Worktrees with at least one running/starting session (or holding the
-  // selected session) tick every 1.5s; idle ones fall back to 15s so we
-  // don't burn `git diff` on dozens of dormant projects.
+  // Session presence registers a Worktree for observation, but only the
+  // selected Worktree expresses foreground observation demand. A normal shell
+  // is "running" for its whole lifetime and must not cause permanent 5s WSL
+  // Git process churn merely because its terminal remains open in the
+  // background.
   $effect(() => {
-    const list = sessions.sessions;
-    const selectedId = sessions.selectedId;
-    type Intent = { fast: boolean; runMode?: 'windows' | 'wsl'; wslDistro?: string };
-    const intentByCwd = new Map<string, Intent>();
-    for (const s of list) {
-      const cwd = s.cwd?.trim();
-      if (!cwd) continue;
-      const status = sessions.statusFor(s.id);
-      const active = status === 'running' || status === 'starting' || s.id === selectedId;
-      const prev = intentByCwd.get(cwd);
-      const next: Intent = {
-        fast: (prev?.fast ?? false) || active,
-        runMode: prev?.runMode ?? s.runMode,
-        wslDistro: prev?.wslDistro ?? s.wslDistro
-      };
-      intentByCwd.set(cwd, next);
-    }
-    const intents = Array.from(intentByCwd, ([cwd, info]) => ({
-      cwd,
-      fast: info.fast,
-      ...(info.runMode ? { runMode: info.runMode } : {}),
-      ...(info.wslDistro ? { wslDistro: info.wslDistro } : {})
-    }));
-    git.setWorktreePolling(intents);
+    git.setWorktreePolling(sessionRefreshIntents(sessions.sessions, sessions.selectedId));
   });
 
   function consume(e: KeyboardEvent): void {
@@ -860,8 +814,8 @@
     if (!current) return;
     if (dnd.drag.id === session.id) return;
     if ((dnd.drag.projectId ?? null) !== (session.projectId ?? null)) return;
-    if (normPath(dnd.drag.worktreeCwd ?? '') !== normPath(session.cwd)) return;
-    if (normPath(session.cwd) !== normPath(current.cwd)) return;
+    if (!sameWorktreePath(dnd.drag.worktreeCwd ?? '', session.cwd, session.runMode)) return;
+    if (!sameWorktreePath(session.cwd, current.cwd, session.runMode)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     const position = horizontalDropPositionFromEvent(e, el);
@@ -1164,7 +1118,7 @@
                   disabled={collapsedNav.worktrees.length === 0}
                 >
                   <FolderGit2 class="size-3" />
-                  <span class="min-w-0 truncate">{collapsedNav.worktree || basename(collapsedNav.cwd)}</span>
+                  <span class="min-w-0 truncate">{collapsedNav.worktree || worktreeBasename(collapsedNav.cwd)}</span>
                   <ChevronDown class="size-3 opacity-60" />
                 </Button>
               {/snippet}
@@ -1359,16 +1313,36 @@
     </div>
     <RightRail fullscreen={railFullscreen} />
   </div>
-  <NewSessionModal />
-  <ProjectModal />
-  <CommandPalette />
-  <FilePalette />
-  <NewSessionPickerDialog />
-  <SessionHandoffDialog />
-  <ConfirmDialog />
-  <AgentIntegrationSetupDialog />
-  <SettingsDialog />
-  <AgentNotificationToasts />
+  {#if modal.open}
+    <LazyOverlay label="session editor" load={loadNewSessionModal} />
+  {/if}
+  {#if projectModal.open}
+    <LazyOverlay label="project editor" load={loadProjectModal} />
+  {/if}
+  {#if commandPalette.isOpen}
+    <LazyOverlay label="command palette" load={loadCommandPalette} />
+  {/if}
+  {#if filePalette.open}
+    <LazyOverlay label="file palette" load={loadFilePalette} />
+  {/if}
+  {#if newSessionPicker.isOpen}
+    <LazyOverlay label="new session picker" load={loadNewSessionPicker} />
+  {/if}
+  {#if sessionHandoff.isOpen}
+    <LazyOverlay label="session handoff" load={loadSessionHandoff} />
+  {/if}
+  {#if confirmStore.open}
+    <LazyOverlay label="confirmation dialog" load={loadConfirmDialog} />
+  {/if}
+  {#if agentIntegrationSetup.open}
+    <LazyOverlay label="agent integration setup" load={loadAgentIntegrationSetup} />
+  {/if}
+  {#if settings.dialogOpen}
+    <LazyOverlay label="settings" load={loadSettingsDialog} />
+  {/if}
+  {#if agentNotifications.toasts.length > 0}
+    <LazyOverlay label="agent notifications" load={loadAgentNotificationToasts} />
+  {/if}
   <Toaster richColors closeButton />
 </div>
 

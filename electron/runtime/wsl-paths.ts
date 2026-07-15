@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import * as path from 'node:path';
+import type { RunMode } from '@shared/types/sessions.js';
 
 const HOME_CACHE = new Map<string, string>();
 
@@ -24,6 +26,35 @@ export function mntPosixToWindows(posixPath: string): string | null {
   const drive = match[1]!.toUpperCase();
   const rest = match[2] ? match[2].replace(/\//g, '\\') : '';
   return rest ? `${drive}:\\${rest}` : `${drive}:\\`;
+}
+
+// Resolve a session worktree path into something the Electron host can access.
+// WSL DrvFs mounts are deliberately routed through the native drive because
+// the WSL UNC provider cannot enumerate those paths reliably.
+export function worktreeHostPath(
+  cwd: string,
+  runMode: RunMode,
+  wslDistro?: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  if (runMode !== 'wsl' || platform !== 'win32') return cwd;
+  // A project selected from the Windows filesystem can still launch its shell
+  // in WSL. The Electron host already has the correct path in that case.
+  if (isWindowsHostPath(cwd)) return cwd;
+  const distro = wslDistro?.trim();
+  if (!distro) throw new Error('WSL distro required to access worktree from Windows host');
+  return mntPosixToWindows(cwd) ?? posixToWslUnc(distro, cwd);
+}
+
+// `node:path` follows the host running the tests/build, which is not always the
+// filesystem represented by `host`. Select win32 semantics from the path shape
+// so UNC and drive paths remain valid even when inspected from WSL or Linux.
+export function joinHostPath(host: string, ...segments: string[]): string {
+  return (isWindowsHostPath(host) ? path.win32 : path).join(host, ...segments);
+}
+
+function isWindowsHostPath(value: string): boolean {
+  return value.startsWith('\\\\') || /^[a-zA-Z]:[\\/]/u.test(value);
 }
 
 export function runWslCommand(distro: string, bashLine: string): Promise<string> {

@@ -22,6 +22,16 @@ export interface TerminalOutputEvent {
   seq: number;
 }
 
+export interface TerminalReplaySnapshot {
+  terminalId: TerminalId;
+  sessionId: SessionId;
+  data: string;
+  fromSeq: number;
+  toSeq: number;
+  truncated: boolean;
+  byteLength: number;
+}
+
 export interface TerminalExitEvent {
   terminalId: TerminalId;
   sessionId: SessionId;

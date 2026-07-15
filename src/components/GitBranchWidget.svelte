@@ -2,6 +2,7 @@
   import { AlertCircle, Check, GitBranch, GitCommitHorizontal, Loader2 } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import type { GitBranch as GitBranchInfo, GitCommit } from '@shared/types/git.js';
+  import type { RunMode } from '@shared/types/sessions.js';
   import { ipc } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
   import { git } from '../stores/git.svelte';
@@ -10,7 +11,16 @@
   import * as Popover from '$lib/components/ui/popover';
   import * as Command from '$lib/components/ui/command';
 
-  let { cwd }: { cwd: string } = $props();
+  let { cwd, runMode, wslDistro }: {
+    cwd: string;
+    runMode?: RunMode;
+    wslDistro?: string;
+  } = $props();
+
+  let context = $derived({
+    ...(runMode ? { runMode } : {}),
+    ...(wslDistro ? { wslDistro } : {})
+  });
 
   const INITIAL_COMMIT_LIMIT = 10;
 
@@ -23,8 +33,8 @@
   let loadError = $state<string | null>(null);
 
   async function refresh(force = false): Promise<void> {
-    const status = await git.loadStatus(cwd, force);
-    if (status?.repoPath) void git.loadShortstat(status.repoPath, force);
+    const status = await git.loadStatus(cwd, force, context);
+    if (status?.repoPath) void git.loadShortstat(status.repoPath, force, context);
   }
 
   $effect(() => {
@@ -34,8 +44,8 @@
     });
   });
 
-  let status = $derived(git.statusFor(cwd));
-  let shortstat = $derived(git.shortstatFor(cwd));
+  let status = $derived(git.statusFor(cwd, context));
+  let shortstat = $derived(git.shortstatFor(cwd, context));
 
   let shortHead = $derived(status?.head ? status.head.slice(0, 7) : null);
 
@@ -82,7 +92,7 @@
     }
     if (!status?.repoPath) return;
     const repoPath = status.repoPath;
-    const ctx = git.contextFor(cwd);
+    const ctx = git.contextFor(cwd, context);
     const limit = commitLimit;
     untrack(() => {
       loading = true;
@@ -120,9 +130,9 @@
       const next = await ipc.git.checkout({
         repoPath: status.repoPath,
         ref,
-        ...git.contextFor(cwd)
+        ...git.contextFor(cwd, context)
       });
-      git.setStatus(status.cwd, next);
+      git.setStatus(status.cwd, next, context);
       switcherOpen = false;
     } catch (err) {
       reportError(err);

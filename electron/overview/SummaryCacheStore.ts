@@ -1,6 +1,8 @@
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
+import type { RunMode } from '@shared/types/sessions.js';
+import { worktreeIdentityKey } from '@shared/worktree-identity.js';
 import type {
   OverviewProvider,
   OverviewSourcesSummary,
@@ -14,6 +16,8 @@ interface StorageShape {
 
 export interface CachedOverviewEntry {
   worktreeCwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
   text: string;
   generatedAt: string;
   generatedBy: { provider: OverviewProvider; model: string };
@@ -21,7 +25,7 @@ export interface CachedOverviewEntry {
   sources: OverviewSourcesSummary;
 }
 
-const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 2;
 
 export class SummaryCacheStore {
   private cache: Map<string, CachedOverviewEntry> | null = null;
@@ -35,20 +39,26 @@ export class SummaryCacheStore {
     this.cache = await this.loadFromDisk();
   }
 
-  async get(worktreeCwd: string): Promise<CachedOverviewEntry | null> {
+  async get(
+    worktreeCwd: string,
+    context: { runMode?: RunMode; wslDistro?: string } = {}
+  ): Promise<CachedOverviewEntry | null> {
     await this.init();
-    return this.cache!.get(keyFor(worktreeCwd)) ?? null;
+    return this.cache!.get(keyFor(worktreeCwd, context)) ?? null;
   }
 
   async set(entry: CachedOverviewEntry): Promise<void> {
     await this.init();
-    this.cache!.set(keyFor(entry.worktreeCwd), entry);
+    this.cache!.set(keyFor(entry.worktreeCwd, entry), entry);
     await this.persist();
   }
 
-  async clear(worktreeCwd: string): Promise<void> {
+  async clear(
+    worktreeCwd: string,
+    context: { runMode?: RunMode; wslDistro?: string } = {}
+  ): Promise<void> {
     await this.init();
-    this.cache!.delete(keyFor(worktreeCwd));
+    this.cache!.delete(keyFor(worktreeCwd, context));
     await this.persist();
   }
 
@@ -72,7 +82,14 @@ export class SummaryCacheStore {
     } catch {
       return new Map();
     }
-    if (!parsed || typeof parsed !== 'object' || !parsed.entries) return new Map();
+    // Version 1 used path-only keys. A legacy WSL entry cannot be assigned to
+    // a distro safely, so invalidate it instead of guessing and leaking text.
+    if (
+      !parsed
+      || typeof parsed !== 'object'
+      || parsed.version !== STORAGE_VERSION
+      || !parsed.entries
+    ) return new Map();
     const map = new Map<string, CachedOverviewEntry>();
     for (const [key, entry] of Object.entries(parsed.entries)) {
       if (entry && typeof entry === 'object' && typeof entry.text === 'string') {
@@ -100,29 +117,38 @@ export class SummaryCacheStore {
   }
 }
 
-export function keyFor(worktreeCwd: string): string {
-  return path.resolve(worktreeCwd);
+export function keyFor(
+  worktreeCwd: string,
+  context: { runMode?: RunMode; wslDistro?: string } = {}
+): string {
+  return worktreeIdentityKey(worktreeCwd, context);
 }
 
 export function watermarksMatch(a: OverviewWatermark, b: OverviewWatermark): boolean {
+  if (!a.scopeKey || a.scopeKey !== b.scopeKey) return false;
+  if (!a.evidenceFingerprint || a.evidenceFingerprint !== b.evidenceFingerprint) return false;
   if (a.headSha !== b.headSha) return false;
   if (a.dirtyHash !== b.dirtyHash) return false;
   if (a.perSession.length !== b.perSession.length) return false;
-  const sortedA = [...a.perSession].sort((x, y) => x.sessionFile.localeCompare(y.sessionFile));
-  const sortedB = [...b.perSession].sort((x, y) => x.sessionFile.localeCompare(y.sessionFile));
-  for (let i = 0; i < sortedA.length; i++) {
-    if (sortedA[i]!.sessionFile !== sortedB[i]!.sessionFile) return false;
-    if (sortedA[i]!.lastRecordKey !== sortedB[i]!.lastRecordKey) return false;
+  for (let i = 0; i < a.perSession.length; i++) {
+    const x = a.perSession[i]!;
+    const y = b.perSession[i]!;
+    if (x.sessionFile !== y.sessionFile) return false;
+    if (x.displayName !== y.displayName) return false;
+    if (x.mtimeMs !== y.mtimeMs) return false;
+    if (x.size !== y.size) return false;
+    if (x.lastRecordKey !== y.lastRecordKey) return false;
   }
   return true;
 }
 
 export function fingerprintWatermark(w: OverviewWatermark): string {
-  const sorted = [...w.perSession].sort((x, y) => x.sessionFile.localeCompare(y.sessionFile));
   const fingerprint = JSON.stringify({
+    scope: w.scopeKey,
+    evidence: w.evidenceFingerprint,
     head: w.headSha,
     dirty: w.dirtyHash,
-    sessions: sorted
+    sessions: w.perSession
   });
   return createHash('sha1').update(fingerprint).digest('hex');
 }

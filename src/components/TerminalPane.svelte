@@ -2,14 +2,15 @@
   import { untrack } from 'svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
-  import { SearchAddon } from '@xterm/addon-search';
+  import type { SearchAddon } from '@xterm/addon-search';
   import { WebLinksAddon } from '@xterm/addon-web-links';
-  import { WebglAddon } from '@xterm/addon-webgl';
-  import { CanvasAddon } from '@xterm/addon-canvas';
+  import type { WebglAddon } from '@xterm/addon-webgl';
+  import type { CanvasAddon } from '@xterm/addon-canvas';
   import { Unicode11Addon } from '@xterm/addon-unicode11';
   import { ClipboardAddon } from '@xterm/addon-clipboard';
   import '@xterm/xterm/css/xterm.css';
   import { ipc } from '../lib/ipc';
+  import type { TerminalPresentation } from '../lib/terminal-output-router';
   import type { TerminalId } from '@shared/types/terminal.js';
   import type { SessionId } from '@shared/types/sessions.js';
   import { effectiveAgentProvider, launchKind } from '@shared/types/sessions.js';
@@ -75,7 +76,10 @@
   let term: Terminal | null = null;
   let fit: FitAddon | null = null;
   let search: SearchAddon | null = null;
+  let searchLoading: Promise<SearchAddon | null> | null = null;
   let renderer: WebglAddon | CanvasAddon | null = null;
+  let outputPresentation: TerminalPresentation | null = null;
+  let rendererLoadToken = 0;
   // Hide the loading overlay only once output has actually settled — the first
   // byte alone is too early (shells stream a banner before the prompt; agents
   // paint a TUI in stages). We wait for a quiet window after first output, with
@@ -120,10 +124,32 @@
     return lines.join('\n').replace(/\s+$/u, '') + '\n';
   }
 
-  function openFind(): void {
+  async function openFind(): Promise<void> {
+    if (!focused) return;
+    await ensureSearchAddon();
     if (!focused) return;
     findOpen = true;
     requestAnimationFrame(() => findInput?.focus());
+  }
+
+  async function ensureSearchAddon(): Promise<SearchAddon | null> {
+    if (search) return search;
+    if (searchLoading) return searchLoading;
+    const current = term;
+    if (!current) return null;
+    searchLoading = import('@xterm/addon-search')
+      .then(({ SearchAddon }) => {
+        if (term !== current) return null;
+        const addon = new SearchAddon();
+        current.loadAddon(addon);
+        search = addon;
+        return addon;
+      })
+      .catch(() => null)
+      .finally(() => {
+        searchLoading = null;
+      });
+    return searchLoading;
   }
 
   async function saveBuffer(): Promise<void> {
@@ -275,45 +301,44 @@
   // output ourselves used to create a stale-frame class of bugs when the
   // host was hidden via display:none (rail fullscreen) without `active`
   // flipping, because nothing flushed the backlog on un-hide.
-  function writeOutput(data: string): void {
-    if (!term) return;
-    try {
-      term.write(data);
-      noteOutput(data.length);
-    } catch (err) {
-      console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
-    }
+  function writeOutput(data: string): Promise<void> {
+    const current = term;
+    if (!current) return Promise.resolve();
+    return new Promise((resolve) => {
+      try {
+        current.write(data, resolve);
+        noteOutput(data.length);
+      } catch (err) {
+        console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
+        resolve();
+      }
+    });
+  }
+
+  function replaceOutput(data: string): Promise<void> {
+    const current = term;
+    if (!current) return Promise.resolve();
+    current.reset();
+    return writeOutput(data);
   }
 
   // A WebGL context is scarce — Chromium force-loses the oldest once a page
   // holds roughly 16 — and losing one silently drops that terminal to xterm's
-  // DOM renderer, which cannot keep up with an agent TUI. Sessions stay mounted
-  // once started, so binding a context to every pane eventually starves the
-  // visible one. Only panes the user can see hold a renderer; hidden panes are
-  // paused by xterm's IntersectionObserver and have nothing to draw.
-  function attachRenderer(t: Terminal): void {
-    if (renderer) return;
+  // DOM renderer, which cannot keep up with an agent TUI. Presentations may
+  // remain resident briefly after a Session is hidden, so binding a context to
+  // every pane would eventually starve the visible one. Only panes the user can
+  // see hold a renderer; hidden panes have nothing to draw.
+  async function attachCanvasRenderer(t: Terminal, token: number): Promise<void> {
+    let canvas: CanvasAddon | null = null;
     try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        webgl.dispose();
-        if (renderer === webgl) renderer = null;
-      });
-      t.loadAddon(webgl);
-      renderer = webgl;
-      return;
-    } catch (err) {
-      console.warn('[DEBUG-xterm] WebGL renderer unavailable, falling back to canvas', {
-        terminalId,
-        sessionId,
-        err
-      });
-    }
-    try {
-      const canvas = new CanvasAddon();
+      const { CanvasAddon } = await import('@xterm/addon-canvas');
+      if (token !== rendererLoadToken || term !== t || !visible) return;
+      canvas = new CanvasAddon();
       t.loadAddon(canvas);
       renderer = canvas;
+      t.refresh(0, t.rows - 1);
     } catch (err) {
+      canvas?.dispose();
       console.warn('[DEBUG-xterm] Canvas renderer unavailable, using DOM', {
         terminalId,
         sessionId,
@@ -322,9 +347,58 @@
     }
   }
 
+  async function attachRenderer(t: Terminal): Promise<void> {
+    if (renderer) return;
+    const token = ++rendererLoadToken;
+    let webgl: WebglAddon | null = null;
+    try {
+      const { WebglAddon } = await import('@xterm/addon-webgl');
+      if (token !== rendererLoadToken || term !== t || !visible) return;
+      webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        if (renderer !== webgl) return;
+        renderer = null;
+        webgl?.dispose();
+        const fallbackToken = ++rendererLoadToken;
+        if (term === t && visible) void attachCanvasRenderer(t, fallbackToken);
+      });
+      t.loadAddon(webgl);
+      renderer = webgl;
+      t.refresh(0, t.rows - 1);
+      return;
+    } catch (err) {
+      webgl?.dispose();
+      console.warn('[DEBUG-xterm] WebGL renderer unavailable, falling back to canvas', {
+        terminalId,
+        sessionId,
+        err
+      });
+    }
+    if (token === rendererLoadToken && term === t && visible) {
+      await attachCanvasRenderer(t, token);
+    }
+  }
+
   function detachRenderer(): void {
-    renderer?.dispose();
+    rendererLoadToken += 1;
+    const current = renderer;
     renderer = null;
+    current?.dispose();
+  }
+
+  function repaintFontAtlas(): void {
+    const current = term;
+    if (!visible || !current) return;
+    if (renderer && 'clearTextureAtlas' in renderer) {
+      renderer.clearTextureAtlas();
+    }
+    requestAnimationFrame(() => {
+      if (!visible || term !== current) return;
+      if (renderer && 'clearTextureAtlas' in renderer) {
+        renderer.clearTextureAtlas();
+      }
+      current.refresh(0, current.rows - 1);
+    });
   }
 
   $effect(() => {
@@ -349,7 +423,9 @@
       cursorStyle: 'bar',
       cursorWidth: 2,
       cursorInactiveStyle: 'outline',
-      cursorBlink: true,
+      // Activated only while visible; hidden panes otherwise retain one cursor
+      // timer each even though they have no renderer.
+      cursorBlink: false,
       // Tokyo Night palette tuned to the #0f0f10 app shell.
       theme: {
         background: '#0f0f10',
@@ -380,14 +456,12 @@
       convertEol: false
     });
     const f = new FitAddon();
-    const s = new SearchAddon();
     const links = new WebLinksAddon((_event, uri) => {
       void ipc.system.openExternal(uri).catch(reportError);
     });
     const unicode11 = new Unicode11Addon();
     const clipboard = new ClipboardAddon();
     t.loadAddon(f);
-    t.loadAddon(s);
     t.loadAddon(links);
     t.loadAddon(unicode11);
     t.loadAddon(clipboard);
@@ -474,42 +548,6 @@
       return true;
     });
 
-    // fontsource splits each weight into unicode-range subsets the browser
-    // fetches lazily when a glyph in that range first renders. xterm-addon-webgl
-    // caches measured glyphs in a texture atlas, so cells that fell back to the
-    // system font stay cached after the matching subset finishes loading — the
-    // TUI looks garbled until a scroll or refresh evicts those entries. Repaint
-    // on every batch of font loads (initial preload plus lazy subsets fetched
-    // on demand) so no stale fallback glyphs survive.
-    const fontPx = initFontSize;
-    let fontsDisposed = false;
-    const dropAtlasAndRepaint = () => {
-      if (fontsDisposed) return;
-      // Every mounted pane hears this global event. Hidden ones hold no
-      // renderer and re-rasterise on reveal anyway, so skipping them keeps a
-      // single font subset from costing one atlas rebuild per open session.
-      if (!visible) return;
-      if (renderer && 'clearTextureAtlas' in renderer) {
-        renderer.clearTextureAtlas();
-      }
-      // Wait a frame so the browser commits the newly-loaded font to the
-      // render tree before xterm re-rasterises the atlas.
-      requestAnimationFrame(() => {
-        if (fontsDisposed) return;
-        if (renderer && 'clearTextureAtlas' in renderer) {
-          renderer.clearTextureAtlas();
-        }
-        t.refresh(0, t.rows - 1);
-      });
-    };
-    void Promise.all([
-      document.fonts.load(`400 ${fontPx}px "JetBrains Mono"`),
-      document.fonts.load(`700 ${fontPx}px "JetBrains Mono"`),
-      document.fonts.load(`400 ${fontPx}px "Cascadia Code"`, '─'),
-      document.fonts.load(`700 ${fontPx}px "Cascadia Code"`, '─')
-    ]).then(dropAtlasAndRepaint).catch(() => {});
-    document.fonts.addEventListener('loadingdone', dropAtlasAndRepaint);
-
     requestAnimationFrame(() => {
       if (!visible) return;
       try {
@@ -525,17 +563,14 @@
     });
     term = t;
     fit = f;
-    search = s;
 
-    let nextSeq = 1;
-    const offOutput = ipc.terminal.onOutput((e) => {
-      if (e.terminalId !== terminalId) return;
-      if (e.seq !== nextSeq) {
-        console.warn('output seq gap', { terminalId, expected: nextSeq, got: e.seq });
-      }
-      nextSeq = e.seq + 1;
-      writeOutput(e.data);
-    });
+    const presentation = ipc.terminal.attachPresentation(
+      terminalId,
+      sessionId,
+      { write: writeOutput, replace: replaceOutput },
+      untrack(() => visible)
+    );
+    outputPresentation = presentation;
 
     const onInput = t.onData((data) => {
       void ipc.terminal.input(terminalId, data).catch(() => {
@@ -570,68 +605,12 @@
     host?.addEventListener('mouseup', onHostMouseUp);
     host?.addEventListener('mousedown', onHostMouseDown);
 
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (askOpen) return;
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (host && host.contains(target)) return;
-      if (chipEl && chipEl.contains(target)) return;
-      clearChip();
-      // Also drop xterm's highlight so the "selection" visually goes with
-      // the chip — matches "click in another place clears the selection".
-      term?.clearSelection();
-    };
-    const onDocKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (askOpen) return;
-      if (!chipText) return;
-      clearChip();
-      term?.clearSelection();
-    };
-    window.addEventListener('mousedown', onDocMouseDown, true);
-    window.addEventListener('keydown', onDocKeyDown);
-
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      if (!visible) return;
-      const { width, height } = entry.contentRect;
-      if (width < 4 || height < 4) return; // hidden / collapsed
-      try {
-        f.fit();
-        void ipc.terminal.resize(terminalId, t.cols, t.rows).catch(() => {});
-      } catch (err) {
-        console.warn('[DEBUG-xterm] resize observer fit failed', { terminalId, sessionId, err });
-      }
-    });
-    ro.observe(host);
-
-    const onFind = () => openFind();
-    const onSave = () => { void saveBuffer().catch(reportError); };
-    const onCopy = () => { void copyBuffer().catch(reportError); };
-    const onCopyMarkdown = () => { void copyMarkdown().catch(reportError); };
-    const onRefocus = () => { if (focused) term?.focus(); };
-    window.addEventListener('soloe:terminal-find', onFind);
-    window.addEventListener('soloe:terminal-save-buffer', onSave);
-    window.addEventListener('soloe:terminal-copy-buffer', onCopy);
-    window.addEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
-    window.addEventListener('soloe:refocus-terminal', onRefocus);
-
     return () => {
-      fontsDisposed = true;
-      document.fonts.removeEventListener('loadingdone', dropAtlasAndRepaint);
-      window.removeEventListener('soloe:terminal-find', onFind);
-      window.removeEventListener('soloe:terminal-save-buffer', onSave);
-      window.removeEventListener('soloe:terminal-copy-buffer', onCopy);
-      window.removeEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
-      window.removeEventListener('soloe:refocus-terminal', onRefocus);
       host?.removeEventListener('mouseup', onHostMouseUp);
       host?.removeEventListener('mousedown', onHostMouseDown);
-      window.removeEventListener('mousedown', onDocMouseDown, true);
-      window.removeEventListener('keydown', onDocKeyDown);
-      ro.disconnect();
       onInput.dispose();
-      offOutput();
+      presentation.dispose();
+      if (outputPresentation === presentation) outputPresentation = null;
       detachRenderer();
       clipboard.dispose();
       unicode11.dispose();
@@ -639,14 +618,75 @@
       term = null;
       fit = null;
       search = null;
+      searchLoading = null;
       renderer = null;
       clearReadyTimers();
     };
   });
 
+  // Terminal construction is intentionally independent of visibility. Hidden
+  // resident presentations stop parsing output; reveal catches up from the
+  // last sequence xterm applied through the bounded Terminal Replay Tail.
   $effect(() => {
-    if (!term || !fit || !host) return;
+    const nextVisible = visible;
+    untrack(() => outputPresentation?.setVisible(nextVisible));
+  });
+
+  // Only the focused pane owns app-wide terminal commands and document input
+  // listeners. Previously every running pane handled every click and keydown,
+  // even when translated offscreen.
+  $effect(() => {
+    if (!focused || !term) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (askOpen) return;
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (host && host.contains(target)) return;
+      if (chipEl && chipEl.contains(target)) return;
+      clearChip();
+      term?.clearSelection();
+    };
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || askOpen || !chipText) return;
+      clearChip();
+      term?.clearSelection();
+    };
+    const onFind = () => { void openFind(); };
+    const onSave = () => { void saveBuffer().catch(reportError); };
+    const onCopy = () => { void copyBuffer().catch(reportError); };
+    const onCopyMarkdown = () => { void copyMarkdown().catch(reportError); };
+    const onRefocus = () => term?.focus();
+
+    window.addEventListener('mousedown', onDocMouseDown, true);
+    window.addEventListener('keydown', onDocKeyDown);
+    window.addEventListener('soloe:terminal-find', onFind);
+    window.addEventListener('soloe:terminal-save-buffer', onSave);
+    window.addEventListener('soloe:terminal-copy-buffer', onCopy);
+    window.addEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
+    window.addEventListener('soloe:refocus-terminal', onRefocus);
+    return () => {
+      window.removeEventListener('mousedown', onDocMouseDown, true);
+      window.removeEventListener('keydown', onDocKeyDown);
+      window.removeEventListener('soloe:terminal-find', onFind);
+      window.removeEventListener('soloe:terminal-save-buffer', onSave);
+      window.removeEventListener('soloe:terminal-copy-buffer', onCopy);
+      window.removeEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
+      window.removeEventListener('soloe:refocus-terminal', onRefocus);
+    };
+  });
+
+  $effect(() => {
+    if (!visible || !term || !fit || !host) return;
     term.options.fontSize = fontSize;
+    // Font subsets and atlas repair are needed only for panes that can draw.
+    // Browser font loads are cached, but avoiding four requests per hidden
+    // terminal also avoids a Promise/listener fan-out during session restore.
+    void Promise.all([
+      document.fonts.load(`400 ${fontSize}px "JetBrains Mono"`),
+      document.fonts.load(`700 ${fontSize}px "JetBrains Mono"`),
+      document.fonts.load(`400 ${fontSize}px "Cascadia Code"`, '─'),
+      document.fonts.load(`700 ${fontSize}px "Cascadia Code"`, '─')
+    ]).then(repaintFontAtlas).catch(() => {});
     requestAnimationFrame(() => {
       if (!host) return;
       const rect = host.getBoundingClientRect();
@@ -670,25 +710,51 @@
   // effect's job.
   $effect(() => {
     if (!visible || !term || !fit || !host) return;
-    attachRenderer(term);
+    const currentTerm = term;
+    const currentFit = fit;
+    const currentHost = host;
+    currentTerm.options.cursorBlink = true;
+    void attachRenderer(currentTerm);
+    document.fonts.addEventListener('loadingdone', repaintFontAtlas);
+    repaintFontAtlas();
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || !visible || term !== currentTerm) return;
+      const { width, height } = entry.contentRect;
+      if (width < 4 || height < 4) return;
+      try {
+        currentFit.fit();
+        void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
+      } catch (err) {
+        console.warn('[DEBUG-xterm] resize observer fit failed', { terminalId, sessionId, err });
+      }
+    });
+    ro.observe(currentHost);
     if (renderer && 'clearTextureAtlas' in renderer) {
       renderer.clearTextureAtlas();
     }
-    term.refresh(0, term.rows - 1);
+    currentTerm.refresh(0, currentTerm.rows - 1);
     requestAnimationFrame(() => {
-      if (!host) return;
-      const rect = host.getBoundingClientRect();
+      if (!visible || term !== currentTerm) return;
+      const rect = currentHost.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) return;
       try {
-        fit?.fit();
-        if (term) {
-          void ipc.terminal.resize(terminalId, term.cols, term.rows).catch(() => {});
-        }
+        currentFit.fit();
+        void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
       } catch (err) {
         console.warn('[DEBUG-xterm] visible fit failed', { terminalId, sessionId, err });
       }
     });
-    return () => detachRenderer();
+    return () => {
+      ro.disconnect();
+      document.fonts.removeEventListener('loadingdone', repaintFontAtlas);
+      try {
+        currentTerm.options.cursorBlink = false;
+      } catch {
+        // Terminal may already be disposed during component teardown.
+      }
+      detachRenderer();
+    };
   });
 
   // Only the focused pane takes keyboard focus. Deferring a frame lets the
