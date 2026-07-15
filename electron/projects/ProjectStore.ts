@@ -2,7 +2,6 @@ import { promises as fs } from 'node:fs';
 import type { Dirent } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { resolveWslHome, worktreeHostPath } from '../runtime/wsl-paths.js';
 import type {
@@ -22,6 +21,7 @@ import {
   ProjectFaviconCatalog,
   type ProjectFaviconCatalogOptions
 } from './ProjectFaviconCatalog.js';
+import { runGitCommand } from '../git/GitCommandRunner.js';
 
 interface StorageShape {
   version: number;
@@ -465,23 +465,18 @@ async function runGitToplevel(gitBinary: string, cwd: string): Promise<string | 
   return runGitRevParse(gitBinary, cwd, '--show-toplevel');
 }
 
-function runGitRevParse(gitBinary: string, cwd: string, flag: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const child = spawn(gitBinary, ['rev-parse', flag], { cwd });
-    let stdout = '';
-    child.stdout.on('data', (b: Buffer) => {
-      stdout += b.toString('utf8');
-    });
-    child.on('error', () => resolve(null));
-    child.on('exit', (code) => {
-      if (code === 0) {
-        const out = stdout.trim();
-        resolve(out.length > 0 ? out : null);
-      } else {
-        resolve(null);
-      }
-    });
+async function runGitRevParse(
+  gitBinary: string,
+  cwd: string,
+  flag: string
+): Promise<string | null> {
+  const result = await runGitCommand(gitBinary, ['rev-parse', flag], {
+    cwd,
+    stdoutLimitBytes: 1024 * 1024
   });
+  if (result.code !== 0) return null;
+  const out = result.stdout.trim();
+  return out.length > 0 ? out : null;
 }
 
 async function atomicWrite(filePath: string, content: string): Promise<void> {

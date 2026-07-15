@@ -120,6 +120,10 @@ _Avoid_: Per-keystroke draft save, editor cache
 A local recovery record for one saved note whose editor buffer is newer than its authoritative file.
 _Avoid_: Saved draft, autosave cache
 
+**Worktree File Index**:
+One bounded, freshness-qualified catalog of Worktree-relative files shared by the Files tree and file palette for one Worktree Identity.
+_Avoid_: File-search cache, repeated repository listing
+
 ## Relationships
 
 - A **Worktree** has at most one in-flight **Worktree Observation**
@@ -134,6 +138,7 @@ _Avoid_: Saved draft, autosave cache
 - A **Worktree Observation** produces one **Working Tree Snapshot**
 - A **Worktree Inventory** reconciles which project-bound Sessions still belong to a Worktree
 - A **Background Agent Request** acquires shared process capacity before resolving and launching a provider
+- Cancelling a **Background Agent Request** immediately leaves admission, kills its active native or WSL child, and renderer destruction or application shutdown aborts every request it owns
 - One semantic observer mutation creates at most one **Durable Agent Observation** commit, regardless of how many presentation notifications it publishes
 - A **Durable Agent Observation** excludes ordinary TUI lifecycle noise and permits only one atomic replacement at a time
 - **Worktree Evidence** is acquired once and may be handed from overview validation to one immediate regeneration
@@ -141,6 +146,9 @@ _Avoid_: Saved draft, autosave cache
 - One WSL **Worktree Evidence** generation crosses the host boundary through one bounded process; its working patch carries a bounded preview plus a full-content digest
 - Native **Worktree Evidence** streams the same bounded patch preview and full-content digest
 - Every ordinary Git command and native or WSL evidence generation acquires the shared two-child **Git Process Budget**
+- After termination is requested, every Git Adapter releases its **Git Process Budget** admission within one bounded close grace even when the child never publishes close
+- One **Worktree File Index** materialization is shared by concurrent tree and palette demand, capped per inventory and across a small exact-identity LRU
+- Invalidating a **Worktree File Index** during materialization queues one fresh generation and never publishes the stale catalog
 - The first Session-owned **Refresh Intent** acquires a **Git Observation Lease**; the final release closes native watchers and retires heavyweight snapshot payload, while passive repository caches remain bounded
 - Shared Project metadata persists only a selected relative icon path; **Project Icon Demand** owns bounded traversal and asset payloads without Project-list persistence or broadcast
 - **Notes Draft Durability** keys Worktree-owned state by **Worktree Identity**, keeps the latest in-memory text immediate, coalesces durable writes by immutable note address, flushes on shutdown, and cancels pending writes before discard

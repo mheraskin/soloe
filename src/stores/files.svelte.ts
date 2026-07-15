@@ -100,7 +100,8 @@ export class FilesStore {
       const result = await ipc.files.listTree({
         cwd: scope.cwd,
         runMode: scope.runMode,
-        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+        ...(opts.force ? { force: true } : {})
       });
       this.patchTree(key, {
         paths: result.paths,

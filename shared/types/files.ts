@@ -2,7 +2,9 @@ import type { RunMode } from './sessions.js';
 import type { TerminalId } from './terminal.js';
 
 export interface FileSearchRequest {
-  rootPath: string;
+  cwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
   query: string;
   limit?: number;
 }
@@ -43,6 +45,7 @@ export interface FileTreeRequest {
   cwd: string;
   runMode: RunMode;
   wslDistro?: string;
+  force?: boolean;
 }
 
 export interface FileTreeResult {

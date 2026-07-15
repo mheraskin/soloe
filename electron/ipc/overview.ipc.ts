@@ -17,6 +17,7 @@ export interface OverviewIpcOptions {
 
 interface ActiveStream {
   cancel: () => void;
+  detach: () => void;
 }
 
 export class OverviewIpc {
@@ -52,12 +53,23 @@ export class OverviewIpc {
       });
     });
 
-    ipcMain.handle(IpcChannels.overview.askStart, (_e, request: AskFollowUpRequest) =>
+    ipcMain.handle(IpcChannels.overview.askStart, (event, request: AskFollowUpRequest) =>
       ipcInvoke(async () => {
         const requestId = randomBytes(8).toString('hex');
-        let cancelled = false;
-        this.streams.set(requestId, { cancel: () => { cancelled = true; } });
-        void this.runStream(requestId, request, () => cancelled);
+        const controller = new AbortController();
+        const detach = () => event.sender.removeListener('destroyed', onDestroyed);
+        const cancel = (reason: string) => {
+          controller.abort(reason);
+          detach();
+          this.streams.delete(requestId);
+        };
+        const onDestroyed = () => cancel('renderer destroyed');
+        event.sender.once('destroyed', onDestroyed);
+        this.streams.set(requestId, {
+          cancel: () => cancel('request cancelled'),
+          detach
+        });
+        void this.runStream(requestId, request, controller);
         return { requestId };
       })
     );
@@ -66,7 +78,6 @@ export class OverviewIpc {
       ipcInvoke(async () => {
         const stream = this.streams.get(requestId);
         if (stream) stream.cancel();
-        this.streams.delete(requestId);
         return true as const;
       })
     );
@@ -78,7 +89,10 @@ export class OverviewIpc {
     ipcMain.removeHandler(IpcChannels.overview.regenerate);
     ipcMain.removeHandler(IpcChannels.overview.askStart);
     ipcMain.removeHandler(IpcChannels.overview.askCancel);
-    for (const stream of this.streams.values()) stream.cancel();
+    for (const stream of this.streams.values()) {
+      stream.cancel();
+      stream.detach();
+    }
     this.streams.clear();
     this.registered = false;
   }
@@ -86,14 +100,11 @@ export class OverviewIpc {
   private async runStream(
     requestId: string,
     request: AskFollowUpRequest,
-    isCancelled: () => boolean
+    controller: AbortController
   ): Promise<void> {
     try {
-      for await (const chunk of this.opts.service.streamFollowUp(request)) {
-        if (isCancelled()) {
-          this.broadcast({ requestId, type: 'done' });
-          return;
-        }
+      for await (const chunk of this.opts.service.streamFollowUp(request, controller.signal)) {
+        if (controller.signal.aborted) return;
         const out: AskFollowUpChunk = {
           requestId,
           type: chunk.type,
@@ -104,12 +115,14 @@ export class OverviewIpc {
         if (chunk.type === 'done' || chunk.type === 'error') break;
       }
     } catch (err: unknown) {
+      if (controller.signal.aborted) return;
       this.broadcast({
         requestId,
         type: 'error',
         error: err instanceof Error ? err.message : String(err)
       });
     } finally {
+      this.streams.get(requestId)?.detach();
       this.streams.delete(requestId);
     }
   }

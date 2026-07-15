@@ -22,6 +22,7 @@ export interface GitCommandOptions {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_STDERR_LIMIT_BYTES = 64 * 1024;
+const PROCESS_KILL_GRACE_MS = 50;
 const OUTPUT_TRUNCATED = '\n…[output truncated]';
 
 /**
@@ -64,9 +65,12 @@ function runAdmittedGitCommand(
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let stdoutSeen = 0;
+    let stdoutRetained = 0;
     let stderrSeen = 0;
     let stderrRetained = 0;
     let terminationMessage = '';
+    let timer: NodeJS.Timeout | null = null;
+    let killGrace: NodeJS.Timeout | null = null;
     const spawnOptions: SpawnOptions = {
       ...(options.cwd ? { cwd: options.cwd } : {}),
       env: process.env,
@@ -74,50 +78,79 @@ function runAdmittedGitCommand(
       windowsHide: true
     };
     const child = (options.spawnImpl ?? spawn)(binary, args, spawnOptions);
-    const finish = (result: GitCommandResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const terminate = (message: string) => {
-      if (settled || terminationMessage) return;
-      terminationMessage = message;
-      try { child.kill(); } catch { /* best effort */ }
-    };
-    child.stdout?.on('data', (chunk: Buffer) => {
+    const onStdout = (chunk: Buffer) => {
       stdoutSeen += chunk.length;
       if (stdoutSeen > stdoutLimit) {
         terminate(`Git command output exceeded ${stdoutLimit} bytes`);
         return;
       }
       stdout.push(chunk);
-    });
-    child.stderr?.on('data', (chunk: Buffer) => {
+      stdoutRetained += chunk.length;
+    };
+    const onStderr = (chunk: Buffer) => {
       stderrSeen += chunk.length;
       if (stderrRetained >= stderrLimit) return;
       const retained = chunk.subarray(0, stderrLimit - stderrRetained);
       stderr.push(retained);
       stderrRetained += retained.length;
-    });
-    child.on('error', (error) => {
+    };
+    const decodeStdout = () => Buffer.concat(stdout, stdoutRetained).toString('utf8');
+    const decodeStderr = () => Buffer.concat(stderr, stderrRetained).toString('utf8') +
+      (stderrSeen > stderrRetained ? OUTPUT_TRUNCATED : '');
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (killGrace) clearTimeout(killGrace);
+      child.stdout?.removeListener('data', onStdout);
+      child.stderr?.removeListener('data', onStderr);
+      child.removeListener('error', onError);
+      child.removeListener('close', onClose);
+      if (terminationMessage) child.once('error', () => { /* ignore late child failure */ });
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    };
+    const finish = (result: GitCommandResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const terminate = (message: string) => {
+      if (settled || terminationMessage) return;
+      terminationMessage = message;
+      if (timer) clearTimeout(timer);
+      child.stdout?.removeListener('data', onStdout);
+      child.stderr?.removeListener('data', onStderr);
+      try { child.kill(); } catch { /* best effort */ }
+      if (settled) return;
+      killGrace = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* best effort */ }
+        (child as typeof child & { unref?: () => void }).unref?.();
+        finish({ code: null, stdout: decodeStdout(), stderr: message });
+      }, PROCESS_KILL_GRACE_MS);
+    };
+    const onError = (error: Error) => {
+      if (terminationMessage) {
+        finish({ code: null, stdout: decodeStdout(), stderr: terminationMessage });
+        return;
+      }
       const code = (error as NodeJS.ErrnoException).code;
       const prefix = code ? `${code}: ` : '';
       finish({
         code: null,
-        stdout: Buffer.concat(stdout, stdoutSeen).toString('utf8'),
+        stdout: decodeStdout(),
         stderr: `${prefix}${error.message}`
       });
-    });
-    child.on('close', (code) => {
-      const stdoutText = Buffer.concat(stdout, stdoutSeen).toString('utf8');
-      const stderrText = Buffer.concat(stderr, stderrRetained).toString('utf8') +
-        (stderrSeen > stderrRetained ? OUTPUT_TRUNCATED : '');
+    };
+    const onClose = (code: number | null) => {
       finish(terminationMessage
-        ? { code: null, stdout: stdoutText, stderr: terminationMessage }
-        : { code, stdout: stdoutText, stderr: stderrText });
-    });
-    const timer = setTimeout(() => {
+        ? { code: null, stdout: decodeStdout(), stderr: terminationMessage }
+        : { code, stdout: decodeStdout(), stderr: decodeStderr() });
+    };
+    child.stdout?.on('data', onStdout);
+    child.stderr?.on('data', onStderr);
+    child.on('error', onError);
+    child.on('close', onClose);
+    timer = setTimeout(() => {
       terminate(`Git command timed out after ${timeoutMs}ms`);
     }, timeoutMs);
   });

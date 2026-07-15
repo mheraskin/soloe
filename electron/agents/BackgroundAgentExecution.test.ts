@@ -133,6 +133,128 @@ describe('BackgroundAgentExecution', () => {
     children[1]!.succeed('next');
     await expect(next).resolves.toMatchObject({ ok: true, text: 'next' });
   });
+
+  it('aborts an active one-shot child without waiting for close and releases admission', async () => {
+    const children: FakeChild[] = [];
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => {
+      const child = new FakeChild();
+      children.push(child);
+      return child;
+    });
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      isExecutableAvailable: async () => true,
+      maxConcurrency: 1
+    });
+    const controller = new AbortController();
+    const aborted = execution.execute(request({
+      priority: 'interactive',
+      signal: controller.signal
+    }));
+    await waitFor(() => children.length === 1);
+
+    controller.abort();
+
+    await expect(aborted).resolves.toMatchObject({ ok: false, reason: 'cancelled' });
+    expect(children[0]!.killed).toBe(true);
+
+    const next = execution.execute(request({ priority: 'interactive' }));
+    await waitFor(() => children.length === 2);
+    children[1]!.succeed('next');
+    await expect(next).resolves.toMatchObject({ ok: true, text: 'next' });
+  });
+
+  it('removes an aborted queued request without consuming a later permit', async () => {
+    const children: FakeChild[] = [];
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => {
+      const child = new FakeChild();
+      children.push(child);
+      return child;
+    });
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      isExecutableAvailable: async () => true,
+      maxConcurrency: 1
+    });
+    const first = execution.execute(request({ priority: 'interactive' }));
+    await waitFor(() => children.length === 1);
+    const controller = new AbortController();
+    const queued = execution.execute(request({
+      priority: 'interactive',
+      signal: controller.signal
+    }));
+
+    controller.abort();
+
+    await expect(queued).resolves.toMatchObject({ ok: false, reason: 'cancelled' });
+    expect(children).toHaveLength(1);
+    children[0]!.succeed('first');
+    await first;
+
+    const next = execution.execute(request({ priority: 'interactive' }));
+    await waitFor(() => children.length === 2);
+    children[1]!.succeed('next');
+    await expect(next).resolves.toMatchObject({ ok: true, text: 'next' });
+  });
+
+  it('aborts an active stream through its signal and releases admission', async () => {
+    const children: FakeChild[] = [];
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => {
+      const child = new FakeChild();
+      children.push(child);
+      return child;
+    });
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      isExecutableAvailable: async () => true,
+      maxConcurrency: 1
+    });
+    const controller = new AbortController();
+    const stream = execution.stream(request({
+      priority: 'interactive',
+      signal: controller.signal
+    }))[Symbol.asyncIterator]();
+    const pending = stream.next();
+    await waitFor(() => children.length === 1);
+
+    controller.abort();
+
+    await expect(pending).resolves.toEqual({
+      done: false,
+      value: { type: 'error', error: 'Background agent request was cancelled.' }
+    });
+    expect(children[0]!.killed).toBe(true);
+    await stream.return?.();
+
+    const next = execution.execute(request({ priority: 'interactive' }));
+    await waitFor(() => children.length === 2);
+    children[1]!.succeed('next');
+    await expect(next).resolves.toMatchObject({ ok: true, text: 'next' });
+  });
+
+  it('disposes active and queued requests without waiting for child close', async () => {
+    const child = new FakeChild();
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      isExecutableAvailable: async () => true,
+      maxConcurrency: 1
+    });
+    const active = execution.execute(request({ priority: 'interactive' }));
+    await waitFor(() => spawnMock.mock.calls.length === 1);
+    const queued = execution.execute(request({ priority: 'interactive' }));
+
+    await execution.dispose();
+
+    await expect(active).resolves.toMatchObject({ ok: false, reason: 'cancelled' });
+    await expect(queued).resolves.toMatchObject({ ok: false, reason: 'cancelled' });
+    expect(child.killed).toBe(true);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    await expect(execution.execute(request())).resolves.toMatchObject({
+      ok: false,
+      reason: 'cancelled'
+    });
+  });
 });
 
 class FakeChild extends EventEmitter {

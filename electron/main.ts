@@ -28,7 +28,7 @@ import { Notifier } from './notify/Notifier.js';
 import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
 import { GitService } from './git/GitService.js';
-import { FileSearchService } from './files/FileSearchService.js';
+import { WorktreeFileIndex } from './files/WorktreeFileIndex.js';
 import { DiagnosticsService } from './diagnostics/DiagnosticsService.js';
 import { SessionsIpc } from './ipc/sessions.ipc.js';
 import { TerminalIpc } from './ipc/terminal.ipc.js';
@@ -65,11 +65,13 @@ interface AppServices {
   observer: AgentObserverManager;
   observerStore: AgentObserverStore;
   runtime: AgentRuntimeManager;
+  backgroundAgentExecution: BackgroundAgentExecution;
   mcp: SoloeMcpServer;
   commentsBridge: CommentsBridge;
   diffBridge: DiffBridge;
   git: GitService;
-  files: FileSearchService;
+  files: WorktreeFileIndex;
+  releaseFileIndexGitChanges: () => void;
   diagnostics: DiagnosticsService;
   sessionsIpc: SessionsIpc;
   terminalIpc: TerminalIpc;
@@ -341,9 +343,16 @@ async function setupServices(): Promise<AppServices> {
     service: git,
     getWindows: () => BrowserWindow.getAllWindows()
   });
-  const files = new FileSearchService({ getBinaries });
+  const files = new WorktreeFileIndex({ getBinaries });
+  const releaseFileIndexGitChanges = git.onChange((event) => {
+    files.invalidate({
+      cwd: event.repoPath,
+      runMode: event.runMode,
+      ...(event.wslDistro ? { wslDistro: event.wslDistro } : {})
+    });
+  });
   const filesIpc = new FilesIpc({
-    service: files,
+    fileIndex: files,
     store,
     pty: manager,
     getBinaries
@@ -440,11 +449,13 @@ async function setupServices(): Promise<AppServices> {
     observer,
     observerStore,
     runtime,
+    backgroundAgentExecution,
     mcp,
     commentsBridge,
     diffBridge,
     git,
     files,
+    releaseFileIndexGitChanges,
     diagnostics,
     sessionsIpc,
     terminalIpc,
@@ -634,9 +645,11 @@ async function cleanup(): Promise<void> {
     services.featureArtifacts.dispose();
     services.vaultIpc.dispose();
     services.browserIpc.dispose();
+    services.releaseFileIndexGitChanges();
     services.git.dispose();
     await services.pty.dispose();
     await services.runtime.dispose();
+    await services.backgroundAgentExecution.dispose();
     // Terminal and worker shutdown can produce the final semantic observer
     // commit. Keep durability attached until those producers have settled,
     // then flush exactly the latest projection before releasing the Module.

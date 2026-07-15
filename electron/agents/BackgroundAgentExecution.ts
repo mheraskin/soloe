@@ -23,6 +23,7 @@ export interface BackgroundAgentRequest {
   priority: BackgroundAgentPriority;
   maxOutputBytes?: number;
   validate?: () => Promise<boolean> | boolean;
+  signal?: AbortSignal;
 }
 
 export type BackgroundAgentResult =
@@ -48,7 +49,9 @@ export interface BackgroundAgentExecutionOptions {
 interface Admission {
   priority: BackgroundAgentPriority;
   sequence: number;
-  resolve: (release: () => void) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+  resolve: (release: (() => void) | null) => void;
 }
 
 const DEFAULT_MAX_CONCURRENCY = 2;
@@ -75,6 +78,8 @@ export class BackgroundAgentExecution {
   private active = 0;
   private activeBackground = 0;
   private sequence = 0;
+  private disposed = false;
+  private readonly activeCancellations = new Set<() => void>();
 
   constructor(options: BackgroundAgentExecutionOptions = {}) {
     this.spawnImpl = options.spawnImpl ?? spawn;
@@ -93,12 +98,13 @@ export class BackgroundAgentExecution {
   }
 
   async execute(request: BackgroundAgentRequest): Promise<BackgroundAgentResult> {
-    const release = await this.acquire(request.priority);
+    const release = await this.acquire(request.priority, request.signal);
+    if (!release) return cancelledResult();
     try {
-      if (!(await isStillValid(request.validate))) return cancelledResult();
+      if (!(await this.isStillValid(request))) return cancelledResult();
       const resolved = await this.resolveProvider(request);
       if (!resolved) return unavailableResult();
-      if (!(await isStillValid(request.validate))) return cancelledResult();
+      if (!(await this.isStillValid(request))) return cancelledResult();
       return await this.runOneShot(request, resolved);
     } finally {
       release();
@@ -106,11 +112,16 @@ export class BackgroundAgentExecution {
   }
 
   async *stream(request: BackgroundAgentRequest): AsyncIterable<BackgroundAgentChunk> {
-    const release = await this.acquire(request.priority);
+    const release = await this.acquire(request.priority, request.signal);
+    if (!release) {
+      yield { type: 'error', error: cancelledResult().error };
+      return;
+    }
     let child: ChildProcess | null = null;
     let completed = false;
+    let cancelActive: (() => void) | null = null;
     try {
-      if (!(await isStillValid(request.validate))) {
+      if (!(await this.isStillValid(request))) {
         yield { type: 'error', error: cancelledResult().error };
         return;
       }
@@ -119,7 +130,7 @@ export class BackgroundAgentExecution {
         yield { type: 'error', error: unavailableResult().error };
         return;
       }
-      if (!(await isStillValid(request.validate))) {
+      if (!(await this.isStillValid(request))) {
         yield { type: 'error', error: cancelledResult().error };
         return;
       }
@@ -136,12 +147,24 @@ export class BackgroundAgentExecution {
         wake = null;
         notify?.();
       };
-      const timeout = setTimeout(() => {
+      let timeout: NodeJS.Timeout | null = null;
+      const cancel = () => {
+        if (settled) return;
+        settled = true;
+        kill(child!);
+        if (timeout) clearTimeout(timeout);
+        push({ type: 'error', error: cancelledResult().error });
+      };
+      cancelActive = cancel;
+      this.activeCancellations.add(cancel);
+      request.signal?.addEventListener('abort', cancel, { once: true });
+      timeout = setTimeout(() => {
         if (settled) return;
         settled = true;
         kill(child!);
         push({ type: 'error', error: `background agent timed out after ${request.timeoutMs}ms` });
       }, request.timeoutMs);
+      if (request.signal?.aborted) cancel();
       child.stdout?.setEncoding('utf8');
       child.stderr?.setEncoding('utf8');
       child.stdout?.on('data', (chunk: string) => push({ type: 'delta', text: chunk }));
@@ -151,13 +174,13 @@ export class BackgroundAgentExecution {
       child.on('error', (error) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         push({ type: 'error', error: error.message });
       });
       child.on('close', (code) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         if (code !== 0) {
           push({ type: 'error', error: stderr.trim() || `exit ${code}` });
           return;
@@ -178,7 +201,14 @@ export class BackgroundAgentExecution {
     } catch (error) {
       yield { type: 'error', error: errorMessage(error) };
     } finally {
-      if (child && !completed) kill(child);
+      if (child && !completed) {
+        if (cancelActive) cancelActive();
+        else kill(child);
+      }
+      if (cancelActive) {
+        request.signal?.removeEventListener('abort', cancelActive);
+        this.activeCancellations.delete(cancelActive);
+      }
       release();
     }
   }
@@ -200,10 +230,30 @@ export class BackgroundAgentExecution {
       let stderr = '';
       let settled = false;
       const limit = request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-      const timeout = setTimeout(() => {
+      let timeout: NodeJS.Timeout | null = null;
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout);
+        request.signal?.removeEventListener('abort', cancel);
+        this.activeCancellations.delete(cancel);
+      };
+      const cancel = () => {
         if (settled) return;
         settled = true;
         kill(child);
+        cleanup();
+        resolve(cancelledResult());
+      };
+      this.activeCancellations.add(cancel);
+      request.signal?.addEventListener('abort', cancel, { once: true });
+      if (request.signal?.aborted) {
+        cancel();
+        return;
+      }
+      timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        kill(child);
+        cleanup();
         resolve({
           ok: false,
           reason: 'failed',
@@ -221,13 +271,13 @@ export class BackgroundAgentExecution {
       child.on('error', (error) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
+        cleanup();
         resolve({ ok: false, reason: 'failed', error: error.message });
       });
       child.on('close', (code) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
+        cleanup();
         if (code !== 0) {
           const detail = (stderr.trim() || stdout.trim()).slice(-limit);
           resolve({
@@ -320,9 +370,35 @@ export class BackgroundAgentExecution {
     });
   }
 
-  private acquire(priority: BackgroundAgentPriority): Promise<() => void> {
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const admission of this.admissions.splice(0)) {
+      admission.signal?.removeEventListener('abort', admission.onAbort!);
+      admission.resolve(null);
+    }
+    for (const cancel of [...this.activeCancellations]) cancel();
+    this.activeCancellations.clear();
+    this.availability.clear();
+    await Promise.resolve();
+  }
+
+  private acquire(
+    priority: BackgroundAgentPriority,
+    signal?: AbortSignal
+  ): Promise<(() => void) | null> {
+    if (this.disposed || signal?.aborted) return Promise.resolve(null);
     return new Promise((resolve) => {
-      this.admissions.push({ priority, sequence: this.sequence++, resolve });
+      const admission: Admission = { priority, sequence: this.sequence++, resolve, signal };
+      if (signal) {
+        admission.onAbort = () => {
+          const index = this.admissions.indexOf(admission);
+          if (index >= 0) this.admissions.splice(index, 1);
+          resolve(null);
+        };
+        signal.addEventListener('abort', admission.onAbort, { once: true });
+      }
+      this.admissions.push(admission);
       this.drainAdmissions();
     });
   }
@@ -333,6 +409,11 @@ export class BackgroundAgentExecution {
       if (index < 0) return;
       const [entry] = this.admissions.splice(index, 1);
       if (!entry) return;
+      if (entry.onAbort) entry.signal?.removeEventListener('abort', entry.onAbort);
+      if (entry.signal?.aborted || this.disposed) {
+        entry.resolve(null);
+        continue;
+      }
       this.active += 1;
       if (entry.priority === 'background') this.activeBackground += 1;
       let released = false;
@@ -358,6 +439,11 @@ export class BackgroundAgentExecution {
       if (fallback < 0 || entry.sequence < this.admissions[fallback]!.sequence) fallback = index;
     }
     return fallback;
+  }
+
+  private async isStillValid(request: BackgroundAgentRequest): Promise<boolean> {
+    if (this.disposed || request.signal?.aborted) return false;
+    return isStillValid(request.validate);
   }
 }
 

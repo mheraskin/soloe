@@ -234,7 +234,10 @@ export class WorktreeOverviewService {
     };
   }
 
-  async *streamFollowUp(args: StreamFollowUpArgs): AsyncIterable<FollowUpChunk> {
+  async *streamFollowUp(
+    args: StreamFollowUpArgs,
+    signal?: AbortSignal
+  ): AsyncIterable<FollowUpChunk> {
     const cwd = args.worktreeCwd;
     const { refs, facts } = await this.evidence.materialize(args);
     if (facts.completeness === 'degraded') {
@@ -277,7 +280,8 @@ export class WorktreeOverviewService {
       },
       prompt: fullPrompt,
       timeoutMs: FOLLOWUP_TIMEOUT_MS,
-      priority: 'interactive'
+      priority: 'interactive',
+      ...(signal ? { signal } : {})
     });
   }
 

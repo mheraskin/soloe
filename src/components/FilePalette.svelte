@@ -4,6 +4,7 @@
   import { filePalette } from '../stores/file-palette.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
+  import { settings } from '../stores/settings.svelte';
   import { ipc } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
   import * as Command from '$lib/components/ui/command';
@@ -13,12 +14,26 @@
   let loading = $state(false);
   let searchSeq = 0;
 
-  let rootPath = $derived.by(() => {
+  let fileScope = $derived.by(() => {
     const selected = sessions.selected;
-    if (selected?.cwd) return selected.cwd;
+    if (selected?.cwd) {
+      return {
+        cwd: selected.cwd,
+        runMode: selected.runMode,
+        ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      };
+    }
     const selectedProject = selected?.projectId ? projects.get(selected.projectId) : null;
-    return selectedProject?.path ?? '';
+    if (!selectedProject?.path) return null;
+    const runMode = selectedProject.defaultRunMode ?? settings.current.defaults.runMode;
+    const wslDistro = selectedProject.defaultWslDistro ?? settings.current.defaults.wslDistro;
+    return {
+      cwd: selectedProject.path,
+      runMode,
+      ...(runMode === 'wsl' && wslDistro ? { wslDistro } : {})
+    };
   });
+  let rootPath = $derived(fileScope?.cwd ?? '');
 
   $effect(() => {
     if (!filePalette.open) return;
@@ -27,11 +42,12 @@
   });
 
   $effect(() => {
-    if (!filePalette.open || !rootPath) return;
+    const scope = fileScope;
+    if (!filePalette.open || !scope) return;
     const seq = ++searchSeq;
     loading = true;
     const timer = window.setTimeout(() => {
-      ipc.files.search({ rootPath, query, limit: 80 })
+      ipc.files.search({ ...scope, query, limit: 80 })
         .then((next) => {
           if (seq === searchSeq) {
             results = next;
