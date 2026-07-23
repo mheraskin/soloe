@@ -208,11 +208,13 @@
         <Loader2 class="size-4 animate-spin" />
         <span>Starting session…</span>
       </div>
-    {:else if status === 'exited' || status === 'error'}
+    {:else if status === 'stopped' || status === 'exited' || status === 'error'}
       <div class="mt-3 flex items-center gap-2 text-xs {status === 'error' ? 'text-destructive' : ''}">
         {#if status === 'error'}
           <AlertTriangle class="size-3.5" />
           <span>Session failed to start.</span>
+        {:else if status === 'stopped'}
+          <span>Session is stopped.</span>
         {:else}
           <span>Session exited.</span>
         {/if}

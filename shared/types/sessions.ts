@@ -110,8 +110,8 @@ export interface Session {
   // legacy sessions is treated as false to avoid surprise renames.
   autoNamed?: boolean;
   // True once the provider reports a submitted user prompt. New Claude
-  // launches use false until that hook arrives so empty provider ids
-  // are not restored after restart.
+  // launches use false until that hook arrives so their preassigned id is
+  // launched with --session-id rather than treated as a resumable thread.
   hasUserInput?: boolean;
 }
 

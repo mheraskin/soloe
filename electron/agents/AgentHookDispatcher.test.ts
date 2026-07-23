@@ -399,7 +399,7 @@ describe('AgentHookDispatcher', () => {
       });
     });
 
-    it('skips capture when payload has no session_id', async () => {
+    it('keeps the preassigned Claude id when a hook has no session_id', async () => {
       const created = await sessionStore.create({
         name: 'work',
         cwd: '/tmp',
@@ -407,13 +407,18 @@ describe('AgentHookDispatcher', () => {
         wslDistro: 'Ubuntu',
         launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
       });
+      const assignedSessionId =
+        created.launch.type === 'agent' ? created.launch.claudeSessionId : undefined;
+      expect(assignedSessionId).toBeDefined();
       await dispatcher.dispatch({
         provider: 'claude_code',
         soloeSessionId: created.id,
         payload: { hook_event_name: 'SessionStart' }
       });
       const updated = await sessionStore.get(created.id);
-      expect(updated?.launch.type === 'agent' ? updated.launch.claudeSessionId : undefined).toBeUndefined();
+      expect(updated?.launch.type === 'agent' ? updated.launch.claudeSessionId : undefined).toBe(
+        assignedSessionId
+      );
     });
 
     it('switches the stored agent launch when the hook provider does not match the stored kind', async () => {

@@ -328,6 +328,48 @@ describe('PtyManager', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('marks a Claude session resumable when submitted input reaches the PTY', async () => {
+    const claudeSession: Session = {
+      ...session,
+      id: 'claude-input',
+      name: 'Claude',
+      launch: {
+        type: 'agent',
+        provider: 'claude_code',
+        resumeMode: 'new',
+        claudeSessionId: '123e4567-e89b-42d3-a456-426614174000'
+      },
+      hasUserInput: false
+    };
+    const update = vi.fn(async () => ({ ...claudeSession, hasUserInput: true }));
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => claudeSession),
+        touch: vi.fn(async () => {}),
+        update
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: claudeSession.id });
+    manager.write(started.terminalId, 'hello');
+    expect(update).not.toHaveBeenCalled();
+
+    manager.write(started.terminalId, '\r');
+    await vi.waitFor(() => {
+      expect(update).toHaveBeenCalledWith(claudeSession.id, { hasUserInput: true });
+    });
+  });
+
   it('marks an agent as waiting for approval from terminal output', async () => {
     const codexSession: Session = {
       ...session,

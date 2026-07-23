@@ -84,6 +84,7 @@ export class PtyManager extends EventEmitter {
   private readonly sessionToTerminal = new Map<SessionId, TerminalId>();
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly agentSpawnQueues = new Map<string, Promise<void>>();
+  private readonly pendingClaudeInputPersistence = new Set<SessionId>();
   private readonly replayBuffer: TerminalReplayBuffer;
   private disposed = false;
 
@@ -217,10 +218,31 @@ export class PtyManager extends EventEmitter {
   }
 
   private handleAgentInputState(instance: TerminalInstance, data: string): void {
-    if (!instance.agentProvider || !data.includes('\x03')) return;
+    if (!instance.agentProvider) return;
+    if (instance.agentProvider === 'claude_code' && /[\r\n]/.test(data)) {
+      this.markClaudeSessionResumable(instance.sessionId);
+    }
+    if (!data.includes('\x03')) return;
     const snapshot = this.opts.observer?.getSnapshot(instance.sessionId);
     if (!snapshot || snapshot.state === 'idle' || snapshot.state === 'exited') return;
     this.opts.observer?.setTuiObservedState(instance.sessionId, 'idle', 'idle');
+  }
+
+  private markClaudeSessionResumable(sessionId: SessionId): void {
+    if (this.pendingClaudeInputPersistence.has(sessionId)) return;
+    this.pendingClaudeInputPersistence.add(sessionId);
+    void this.opts.store
+      .get(sessionId)
+      .then(async (session) => {
+        if (session?.hasUserInput !== false) return;
+        await this.opts.store.update(sessionId, { hasUserInput: true });
+      })
+      .catch((err) => {
+        console.warn(`[terminal] failed to persist Claude input for ${sessionId}`, err);
+      })
+      .finally(() => {
+        this.pendingClaudeInputPersistence.delete(sessionId);
+      });
   }
 
   private clearApprovalStateOnInput(sessionId: SessionId, data: string): void {

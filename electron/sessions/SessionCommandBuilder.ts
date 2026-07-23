@@ -134,11 +134,13 @@ export class SessionCommandBuilder {
   private buildClaude(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
     const args: string[] = [];
     switch (launch.resumeMode) {
-      case 'new':
-        if (!isKnownEmptyClaudeSession(s) && (launch.claudeSessionId ?? s.providerThreadId)) {
-          args.push('--resume', launch.claudeSessionId ?? s.providerThreadId!);
+      case 'new': {
+        const sessionId = launch.claudeSessionId ?? s.providerThreadId;
+        if (sessionId) {
+          args.push(isKnownEmptyClaudeSession(s) ? '--session-id' : '--resume', sessionId);
         }
         break;
+      }
       case 'resume_last':
         args.push('--continue');
         break;

@@ -147,26 +147,35 @@ describe('SessionStore — disk round-trip', () => {
     expect(entries.some((f) => f.startsWith('sessions.json.corrupt-'))).toBe(true);
   });
 
-  it('does not persist brand-new Claude sessions until user input is seen', async () => {
+  it('persists dangerous Claude sessions before user-input hooks arrive', async () => {
     const store = new SessionStore(storePath);
     const created = await store.create({
       name: 'Claude',
       cwd: '/x',
       runMode: 'windows',
-      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
+      launch: {
+        type: 'agent',
+        provider: 'claude_code',
+        resumeMode: 'new',
+        extraArgs: ['--dangerously-skip-permissions']
+      }
     });
     expect(created.hasUserInput).toBe(false);
+    expect(created.launch).toMatchObject({
+      type: 'agent',
+      provider: 'claude_code',
+      claudeSessionId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      )
+    });
     expect(await store.list()).toHaveLength(1);
 
-    const reloadedEmpty = new SessionStore(storePath);
-    expect(await reloadedEmpty.list()).toEqual([]);
-
-    await store.update(created.id, { hasUserInput: true });
-    const reloadedWithInput = new SessionStore(storePath);
-    expect((await reloadedWithInput.list()).map((s) => s.id)).toEqual([created.id]);
+    const reloaded = new SessionStore(storePath);
+    expect((await reloaded.list()).map((s) => s.id)).toEqual([created.id]);
+    expect((await reloaded.get(created.id))?.launch).toEqual(created.launch);
   });
 
-  it('prunes known-empty Claude sessions from older persisted storage', async () => {
+  it('preserves known-empty Claude sessions from older persisted storage', async () => {
     await fs.writeFile(
       storePath,
       JSON.stringify({
@@ -188,6 +197,6 @@ describe('SessionStore — disk round-trip', () => {
       'utf8'
     );
     const store = new SessionStore(storePath);
-    expect(await store.list()).toEqual([]);
+    expect((await store.list()).map((s) => s.id)).toEqual(['empty-claude']);
   });
 });

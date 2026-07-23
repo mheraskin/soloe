@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { X } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
-  import { reportError } from '../stores/toast.svelte';
   import EmptyState from './EmptyState.svelte';
   import SessionToolbar from './SessionToolbar.svelte';
   import UsageLimitOverlay from './UsageLimitOverlay.svelte';
@@ -12,8 +12,8 @@
   type TerminalPaneComponent = typeof import('./TerminalPane.svelte').default;
 
   // Parsing xterm and its renderer stack used to block the shell even when
-  // there was no live terminal. Preload the module before starting a PTY so
-  // the output listener is ready before the first shell bytes can arrive.
+  // there was no live terminal. Keep it lazy until a PTY is actually running;
+  // the main-process replay tail retains output produced while it loads.
   const terminalPaneModule = new LazyModule<TerminalPaneComponent>(() =>
     import('./TerminalPane.svelte').then((module) => module.default)
   );
@@ -79,38 +79,13 @@
     }
   });
 
-  const autoStarted = new Set<string>();
-
-  async function startAfterTerminalPaneLoads(id: string): Promise<void> {
-    const TerminalPane = await terminalPaneModule.load();
-    if (!TerminalPane || autoStarted.has(id)) return;
-    const currentStatus = sessions.statusFor(id);
-    const currentTerminal = sessions.terminalIdFor(id);
-    if (currentTerminal || currentStatus === 'starting' || currentStatus === 'running') return;
-    autoStarted.add(id);
-    try {
-      await sessions.start(id);
-    } catch (err) {
-      autoStarted.delete(id);
-      reportError(err);
-    }
-  }
-
   $effect(() => {
     if (!selected) return;
-    const id = selected.id;
-    const status = sessions.statusFor(id);
-    const hasTerminal = !!sessions.terminalIdFor(id);
-    if (hasTerminal) {
-      // A restored PTY already has a terminal id, but its renderer module is
-      // still fresh after an application reload. Load the presentation
-      // without attempting to start a second process.
-      void terminalPaneModule.load();
-      return;
-    }
-    if (status === 'starting' || status === 'running') return;
-    if (autoStarted.has(id)) return;
-    void startAfterTerminalPaneLoads(id);
+    if (!sessions.terminalIdFor(selected.id)) return;
+    // A restored or newly started PTY has a terminal id, but its renderer
+    // module may still be fresh. Loading the presentation must never start a
+    // process: Stop is an explicit terminal lifecycle boundary.
+    untrack(() => void terminalPaneModule.load());
   });
 
   function dismissHandoffOverlay(): void {
@@ -234,7 +209,7 @@
         <button
           type="button"
           class="rounded-md border border-border px-2 py-1 text-foreground hover:bg-muted"
-          onclick={() => void startAfterTerminalPaneLoads(selected.id)}
+          onclick={() => void terminalPaneModule.load()}
         >Retry</button>
       </div>
     {:else if showEmpty}

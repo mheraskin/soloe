@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type {
   AgentLaunch,
   AgentRuntimeInfo,
@@ -11,7 +11,7 @@ import type {
   ShellKind,
   TerminalLaunch
 } from '@shared/types/sessions.js';
-import { isSessionColor, launchProvider } from '@shared/types/sessions.js';
+import { isSessionColor } from '@shared/types/sessions.js';
 
 interface StorageShape {
   version: number;
@@ -46,10 +46,8 @@ export class SessionStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     if (this.cache) return;
     this.cache = await this.loadFromDisk();
-    const pruned = this.pruneKnownEmptyClaudeSessions();
     const assignedSortIndices = this.assignMissingSortIndices();
-    const changed = pruned || assignedSortIndices;
-    if (changed) {
+    if (assignedSortIndices) {
       await this.persist();
     }
   }
@@ -78,10 +76,13 @@ export class SessionStore {
   async create(draft: SessionDraft | LegacySessionDraft): Promise<Session> {
     await this.ensureLoaded();
     const normalizedDraft = normalizeSessionDraft(draft);
+    const hasUserInput =
+      normalizedDraft.hasUserInput ?? initialHasUserInput(normalizedDraft);
+    const durableDraft = assignNewClaudeSessionId(normalizedDraft);
     const now = new Date().toISOString();
-    const id = this.generateId(normalizedDraft.name);
+    const id = this.generateId(durableDraft.name);
     const session = {
-      ...normalizedDraft,
+      ...durableDraft,
       id,
       createdAt: now,
       lastUsedAt: now,
@@ -89,8 +90,8 @@ export class SessionStore {
       // New sessions are eligible for auto-rename until the user manually
       // edits the name (which sets autoNamed=false). Drafts may pre-set this
       // explicitly for tests or imports.
-      autoNamed: normalizedDraft.autoNamed ?? true,
-      hasUserInput: normalizedDraft.hasUserInput ?? initialHasUserInput(normalizedDraft)
+      autoNamed: durableDraft.autoNamed ?? true,
+      hasUserInput
     } as Session;
     validateSession(session);
     this.cache!.set(id, session);
@@ -193,17 +194,6 @@ export class SessionStore {
     return true;
   }
 
-  private pruneKnownEmptyClaudeSessions(): boolean {
-    if (!this.cache) return false;
-    let changed = false;
-    for (const session of this.cache.values()) {
-      if (launchProvider(session) !== 'claude_code' || session.hasUserInput !== false) continue;
-      this.cache.delete(session.id);
-      changed = true;
-    }
-    return changed;
-  }
-
   private async loadFromDisk(): Promise<Map<SessionId, Session>> {
     let raw: string;
     try {
@@ -237,7 +227,7 @@ export class SessionStore {
   private async persist(): Promise<void> {
     const snapshot: StorageShape = {
       version: STORAGE_VERSION,
-      sessions: [...this.cache!.values()].filter((session) => !isKnownEmptyClaudeSession(session))
+      sessions: [...this.cache!.values()]
     };
     const payload = JSON.stringify(snapshot, null, 2);
     this.writeQueue = this.writeQueue.then(() => atomicWrite(this.filePath, payload));
@@ -403,8 +393,17 @@ function initialHasUserInput(draft: SessionDraft): boolean | undefined {
   return false;
 }
 
-function isKnownEmptyClaudeSession(session: Session): boolean {
-  return launchProvider(session) === 'claude_code' && session.hasUserInput === false;
+function assignNewClaudeSessionId(draft: SessionDraft): SessionDraft {
+  if (draft.launch.type !== 'agent' || draft.launch.provider !== 'claude_code') return draft;
+  if (draft.launch.resumeMode !== 'new') return draft;
+  if (draft.launch.claudeSessionId || draft.providerThreadId) return draft;
+  return {
+    ...draft,
+    launch: {
+      ...draft.launch,
+      claudeSessionId: randomUUID()
+    }
+  };
 }
 
 function normalizeSessionDraft(draft: SessionDraft | LegacySessionDraft): SessionDraft {

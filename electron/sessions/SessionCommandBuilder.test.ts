@@ -289,15 +289,21 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     expect(script).toContain('--resume claude-123');
   });
 
-  it('does not resume a captured Claude id for a known-empty Claude launch', () => {
+  it('starts a known-empty Claude launch with its assigned session id', () => {
+    const assignedSessionId = '123e4567-e89b-42d3-a456-426614174000';
     const s = {
       ...claudeBase('new'),
-      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new', claudeSessionId: 'claude-empty' },
+      launch: {
+        type: 'agent',
+        provider: 'claude_code',
+        resumeMode: 'new',
+        claudeSessionId: assignedSessionId
+      },
       hasUserInput: false
     } as Session;
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).not.toContain('--resume');
-    expect(script).not.toContain('claude-empty');
+    expect(script).toContain(`--session-id ${assignedSessionId}`);
   });
 
   it('does not resume the provider global last session for previously used Claude launches without an id', () => {
