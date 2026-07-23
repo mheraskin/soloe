@@ -7,6 +7,7 @@ import type {
   WorkingChangesResult
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import { untrack } from 'svelte';
 import {
   worktreeIdentityKey,
   worktreeScope,
@@ -327,25 +328,34 @@ export class WorkingDiffStore {
    * rejects late materialization, and releases payload residency.
    */
   acquireReviewDemand(scope: ReviewScope): () => void {
-    const { identity } = this.resolveTarget(scope);
-    this.setContext(scope.cwd, scope);
-    const previous = this.reviewDemandByIdentity.get(identity) ?? 0;
-    this.reviewDemandByIdentity.set(identity, previous + 1);
-    if (previous === 0) void this.loadChanges(scope);
+    // Review Surfaces acquire this resource from Svelte effects. Context
+    // registration and the first load synchronously read and update reactive
+    // cache state, but those internals are not dependencies of the Surface's
+    // lifetime. Tracking them creates an acquire → load → teardown → release
+    // cycle whenever the loading entry changes.
+    return untrack(() => {
+      const { identity } = this.resolveTarget(scope);
+      this.setContext(scope.cwd, scope);
+      const previous = this.reviewDemandByIdentity.get(identity) ?? 0;
+      this.reviewDemandByIdentity.set(identity, previous + 1);
+      if (previous === 0) void this.loadChanges(scope);
 
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const current = this.reviewDemandByIdentity.get(identity) ?? 0;
-      if (current > 1) {
-        this.reviewDemandByIdentity.set(identity, current - 1);
-        return;
-      }
-      this.reviewDemandByIdentity.delete(identity);
-      this.suspendReviewDemand(identity);
-      if (this.reviewDemandByIdentity.size === 0) this.setReviewResidents(null, []);
-    };
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        untrack(() => {
+          const current = this.reviewDemandByIdentity.get(identity) ?? 0;
+          if (current > 1) {
+            this.reviewDemandByIdentity.set(identity, current - 1);
+            return;
+          }
+          this.reviewDemandByIdentity.delete(identity);
+          this.suspendReviewDemand(identity);
+          if (this.reviewDemandByIdentity.size === 0) this.setReviewResidents(null, []);
+        });
+      };
+    });
   }
 
   setSelected(

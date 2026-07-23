@@ -101,7 +101,13 @@
     const id = selected.id;
     const status = sessions.statusFor(id);
     const hasTerminal = !!sessions.terminalIdFor(id);
-    if (hasTerminal) return;
+    if (hasTerminal) {
+      // A restored PTY already has a terminal id, but its renderer module is
+      // still fresh after an application reload. Load the presentation
+      // without attempting to start a second process.
+      void terminalPaneModule.load();
+      return;
+    }
     if (status === 'starting' || status === 'running') return;
     if (autoStarted.has(id)) return;
     void startAfterTerminalPaneLoads(id);
