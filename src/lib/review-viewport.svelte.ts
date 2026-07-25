@@ -109,6 +109,20 @@ export class ReviewViewport {
     return measured && measured > 0 ? measured : estimate;
   }
 
+  scrollSectionToTop(path: string, behavior: ScrollBehavior = 'auto'): boolean {
+    const viewport = this.viewport;
+    const section = this.sections.get(path);
+    if (!viewport || !section) return false;
+
+    const top =
+      viewport.scrollTop +
+      section.getBoundingClientRect().top -
+      viewport.getBoundingClientRect().top;
+    viewport.scrollTo({ top: Math.max(0, top), behavior });
+    this.syncViewport();
+    return true;
+  }
+
   private readonly onScroll = (): void => {
     const top = this.viewport?.scrollTop ?? 0;
     for (const subscriber of this.scrollSubscribers) subscriber(top);

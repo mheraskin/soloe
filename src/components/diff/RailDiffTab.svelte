@@ -47,6 +47,7 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Popover from '$lib/components/ui/popover';
   import ChangeRow from './ChangeRow.svelte';
+  import DiffLoadPlaceholder from './DiffLoadPlaceholder.svelte';
   import VirtualDiffBody from './VirtualDiffBody.svelte';
   import RailCommentsPanel from './RailCommentsPanel.svelte';
   import DiffSelectionMenu from './DiffSelectionMenu.svelte';
@@ -323,11 +324,24 @@
   }
 
   function toggleCollapsed(change: WorkingChange): void {
-    const key = collapseKey(reviewEntryId(change, reviewMode));
+    const entryId = reviewEntryId(change, reviewMode);
+    const key = collapseKey(entryId);
     const next = { ...collapsedByPath };
-    if (next[key]) delete next[key];
-    else next[key] = true;
+    if (next[key]) {
+      delete next[key];
+    } else {
+      reviewViewport.scrollSectionToTop(entryId);
+      next[key] = true;
+    }
     collapsedByPath = next;
+  }
+
+  function loadReviewDiff(change: WorkingChange): void {
+    const scope = activeReviewScope;
+    if (!scope) return;
+    void workingDiff
+      .loadDiff(scope, change.path, reviewEntrySection(change))
+      .catch(reportError);
   }
 
   let allCollapsed = $derived.by<boolean>(() => {
@@ -1414,15 +1428,9 @@
                 >
                   {#if !collapsed && resident}
                     {#if entry?.loading && !fileDiff}
-                      <div class="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
-                        <Loader2 class="size-3 animate-spin" />
-                        Loading diff…
-                      </div>
+                      <DiffLoadPlaceholder loading={true} error={null} onLoad={() => loadReviewDiff(change)} />
                     {:else if entry?.error}
-                      <div class="flex items-start justify-center gap-2 px-3 py-4 text-xs text-destructive">
-                        <AlertCircle class="size-3 shrink-0" />
-                        <span class="break-words">{entry.error}</span>
-                      </div>
+                      <DiffLoadPlaceholder loading={false} error={entry.error} onLoad={() => loadReviewDiff(change)} />
                     {:else if fileDiff?.binary}
                       <div class="px-3 py-4 text-center text-xs text-muted-foreground">
                         Binary file — diff not shown.
@@ -1450,9 +1458,7 @@
                         sectionTop={sectionTops[entryId] ?? 0}
                       />
                     {:else}
-                      <div class="px-3 py-6 text-center text-xs text-muted-foreground">
-                        Diff not loaded.
-                      </div>
+                      <DiffLoadPlaceholder loading={false} error={null} onLoad={() => loadReviewDiff(change)} />
                     {/if}
                   {/if}
                 </div>

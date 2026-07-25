@@ -34,6 +34,7 @@
     shouldPasteImageViaSavedPath,
     shouldSendShiftEnterSequence
   } from '../lib/terminal-input';
+  import { deferTerminalDispose, TerminalFitController } from '../lib/terminal-fit';
   import type { ClipboardImagePayload } from '@shared/types/files.js';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
@@ -80,6 +81,7 @@
   let renderer: WebglAddon | CanvasAddon | null = null;
   let outputPresentation: TerminalPresentation | null = null;
   let rendererLoadToken = 0;
+  const terminalFit = new TerminalFitController();
   // Hide the loading overlay only once output has actually settled — the first
   // byte alone is too early (shells stream a banner before the prompt; agents
   // paint a TUI in stages). We wait for a quiet window after first output, with
@@ -551,7 +553,7 @@
     requestAnimationFrame(() => {
       if (!visible) return;
       try {
-        f.fit();
+        terminalFit.fit(t, f, () => visible && term === t && fit === f);
         // Sync PTY immediately so the first output isn't wrapped at the
         // default 80x24 and replayed at the actual geometry.
         if (Number.isFinite(t.cols) && Number.isFinite(t.rows)) {
@@ -611,16 +613,20 @@
       onInput.dispose();
       presentation.dispose();
       if (outputPresentation === presentation) outputPresentation = null;
+      terminalFit.cancel();
       detachRenderer();
       clipboard.dispose();
       unicode11.dispose();
-      t.dispose();
       term = null;
       fit = null;
       search = null;
       searchLoading = null;
       renderer = null;
       clearReadyTimers();
+      // xterm 5.5 queues Viewport.syncScrollArea during open without clearing
+      // that timer on dispose. Let the queued initialization finish before
+      // releasing the renderer (fixed upstream in xtermjs/xterm.js#4984).
+      deferTerminalDispose(t);
     };
   });
 
@@ -677,6 +683,9 @@
 
   $effect(() => {
     if (!visible || !term || !fit || !host) return;
+    const currentTerm = term;
+    const currentFit = fit;
+    const currentHost = host;
     term.options.fontSize = fontSize;
     // Font subsets and atlas repair are needed only for panes that can draw.
     // Browser font loads are cached, but avoiding four requests per hidden
@@ -688,14 +697,21 @@
       document.fonts.load(`700 ${fontSize}px "Cascadia Code"`, '─')
     ]).then(repaintFontAtlas).catch(() => {});
     requestAnimationFrame(() => {
-      if (!host) return;
-      const rect = host.getBoundingClientRect();
+      if (!visible || term !== currentTerm || fit !== currentFit || host !== currentHost) return;
+      const rect = currentHost.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) return;
       try {
-        fit?.fit();
-        if (term) {
-          void ipc.terminal.resize(terminalId, term.cols, term.rows).catch(() => {});
-        }
+        terminalFit.fit(
+          currentTerm,
+          currentFit,
+          () =>
+            visible &&
+            term === currentTerm &&
+            fit === currentFit &&
+            host === currentHost &&
+            currentHost.isConnected
+        );
+        void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
       } catch (err) {
         console.warn('[DEBUG-xterm] font-size fit failed', { terminalId, sessionId, err });
       }
@@ -723,7 +739,16 @@
       const { width, height } = entry.contentRect;
       if (width < 4 || height < 4) return;
       try {
-        currentFit.fit();
+        terminalFit.fit(
+          currentTerm,
+          currentFit,
+          () =>
+            visible &&
+            term === currentTerm &&
+            fit === currentFit &&
+            host === currentHost &&
+            currentHost.isConnected
+        );
         void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
       } catch (err) {
         console.warn('[DEBUG-xterm] resize observer fit failed', { terminalId, sessionId, err });
@@ -739,7 +764,16 @@
       const rect = currentHost.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) return;
       try {
-        currentFit.fit();
+        terminalFit.fit(
+          currentTerm,
+          currentFit,
+          () =>
+            visible &&
+            term === currentTerm &&
+            fit === currentFit &&
+            host === currentHost &&
+            currentHost.isConnected
+        );
         void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
       } catch (err) {
         console.warn('[DEBUG-xterm] visible fit failed', { terminalId, sessionId, err });
@@ -747,6 +781,7 @@
     });
     return () => {
       ro.disconnect();
+      terminalFit.cancel();
       document.fonts.removeEventListener('loadingdone', repaintFontAtlas);
       try {
         currentTerm.options.cursorBlink = false;

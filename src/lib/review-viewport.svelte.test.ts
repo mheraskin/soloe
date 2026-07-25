@@ -121,6 +121,29 @@ describe('ReviewViewport', () => {
     expect(module.retainedBodyHeight('above.ts', 48)).toBe(140);
     expect(viewport.scrollTop).toBe(540);
   });
+
+  it('scrolls a registered file section back to its header', () => {
+    const viewport = document.createElement('div');
+    viewport.scrollTop = 900;
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 300 });
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect);
+    const scrollTo = vi.fn((options: ScrollToOptions) => {
+      viewport.scrollTop = (options as ScrollToOptions).top ?? viewport.scrollTop;
+    });
+    Object.defineProperty(viewport, 'scrollTo', {
+      configurable: true,
+      value: scrollTo
+    });
+    const section = document.createElement('section');
+    vi.spyOn(section, 'getBoundingClientRect').mockReturnValue({ top: -250 } as DOMRect);
+    const module = new ReviewViewport();
+    module.attach(viewport);
+    module.registerSection(section, 'deep-file.ts');
+
+    expect(module.scrollSectionToTop('deep-file.ts')).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 550, behavior: 'auto' });
+    expect(module.scrollTop).toBe(550);
+  });
 });
 
 describe('estimateReviewBodyHeight', () => {
