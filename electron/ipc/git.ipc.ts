@@ -181,6 +181,7 @@ export class GitIpc {
         this.opts.service.getFileDiff(request.cwd, request.path, {
           fromPath: request.fromPath ?? null,
           contextLines: request.contextLines,
+          untracked: request.untracked,
           base: request.base,
           head: request.head,
           context: {

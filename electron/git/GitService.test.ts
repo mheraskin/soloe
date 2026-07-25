@@ -793,10 +793,12 @@ describe.skipIf(!hasGit)('GitService', () => {
     }
   });
 
-  it('getFileDiff: routes through WSL git including the untracked fallback', async () => {
+  it('getFileDiff: routes known untracked files directly through WSL no-index diff', async () => {
+    const calls: string[] = [];
     const wslSvc = new GitService({
       runWslGit: async (_distro, _cwd, args) => {
         const command = args.join(' ');
+        calls.push(command);
         if (command === 'rev-parse --show-toplevel') {
           return { code: 0, stdout: '/home/me/repo\n', stderr: '' };
         }
@@ -820,7 +822,6 @@ describe.skipIf(!hasGit)('GitService', () => {
             stderr: ''
           };
         }
-        // The tracked attempt returns an empty diff so the fallback kicks in.
         if (command.startsWith('diff --no-color --no-ext-diff')) {
           return { code: 0, stdout: '', stderr: '' };
         }
@@ -830,12 +831,15 @@ describe.skipIf(!hasGit)('GitService', () => {
 
     try {
       const diff = await wslSvc.getFileDiff('/home/me/repo', 'fresh.txt', {
+        untracked: true,
         context: { runMode: 'wsl', wslDistro: 'Ubuntu' }
       });
       expect(diff.kind).toBe('untracked');
       expect(diff.hunks).toHaveLength(1);
       const adds = diff.hunks[0]!.lines.filter((l) => l.kind === 'add');
       expect(adds.map((l) => l.text)).toEqual(['one', 'two']);
+      expect(calls).toHaveLength(3);
+      expect(calls.filter((command) => command.includes('--no-index'))).toHaveLength(1);
     } finally {
       wslSvc.dispose();
     }

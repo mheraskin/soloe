@@ -32,6 +32,10 @@ import {
   type ReviewEntryId,
   type ReviewEntrySection
 } from '../lib/review-entry';
+import {
+  shouldAutoLoadUntrackedDiff,
+  UNTRACKED_DIFF_AUTOLOAD_CONCURRENCY
+} from '../lib/untracked-diff-autoload';
 import { git } from './git.svelte';
 
 export type ReviewMode =
@@ -154,6 +158,9 @@ export class WorkingDiffStore {
   private contextEpoch = 0;
   private prefetchEpochByCwd = new Map<string, number>();
   private reviewPayloadCache = new ReviewPayloadCache();
+  private untrackedDiffAutoloadPool = new AsyncTaskPool(
+    UNTRACKED_DIFF_AUTOLOAD_CONCURRENCY
+  );
   // `git diff HEAD` ignores the index, so stage/unstage events don't need a
   // diff-cache wipe — entries here mark the window during which we treat
   // change events as our own and skip the heavy refresh.
@@ -601,6 +608,7 @@ export class WorkingDiffStore {
         path: filePath,
         fromPath,
         contextLines: this.contextLines,
+        ...(change?.kind === 'untracked' ? { untracked: true } : {}),
         ...(base ? { base } : {}),
         ...(head ? { head } : {}),
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
@@ -641,8 +649,9 @@ export class WorkingDiffStore {
 
   // Materialize tracked diffs at review granularity. Working-tree and commit-
   // range files need distinct Git ranges, but each group costs one Git process
-  // instead of one process (plus WSL repository discovery) per file.
-  // Untracked files stay lazy because Git cannot batch `--no-index` pairs.
+  // instead of one process (plus WSL repository discovery) per file. Safe
+  // untracked files use the individual `--no-index` path through a shared
+  // concurrency pool; generated, binary, and oversized entries stay lazy.
   async prefetchDiffs(target: ReviewTarget, entryIds?: Iterable<string>): Promise<void> {
     const { cwd: trimmed, identity, context: ctx } = this.resolveTarget(target);
     if (!trimmed) return;
@@ -669,8 +678,11 @@ export class WorkingDiffStore {
           ...changes.filter((change) => reviewEntryId(change, mode) !== selectedEntry)
         ];
     const candidates = orderedChanges
-      .slice(0, WorkingDiffStore.PREFETCH_CAP)
-      .filter((change) => change.kind !== 'untracked');
+      .filter(
+        (change) =>
+          change.kind !== 'untracked' || shouldAutoLoadUntrackedDiff(change)
+      )
+      .slice(0, WorkingDiffStore.PREFETCH_CAP);
 
     const loadGroup = async (
       group: WorkingChange[],
@@ -763,11 +775,20 @@ export class WorkingDiffStore {
 
     const workingTree = candidates.filter((change) => change.section !== 'committed');
     const committed = candidates.filter((change) => change.section === 'committed');
+    const untracked = workingTree.filter((change) => change.kind === 'untracked');
+    const trackedWorkingTree = workingTree.filter((change) => change.kind !== 'untracked');
     await Promise.all([
-      loadGroup(workingTree, null, null),
+      loadGroup(trackedWorkingTree, null, null),
       mode?.kind === 'range'
         ? loadGroup(committed, mode.base, mode.head)
-        : Promise.resolve()
+        : Promise.resolve(),
+      Promise.all(
+        untracked.map((change) =>
+          this.untrackedDiffAutoloadPool.run(async () => {
+            await this.loadDiff(target, change.path, reviewEntrySection(change));
+          })
+        )
+      )
     ]);
   }
 
@@ -1472,6 +1493,39 @@ function rangeChangeToWorking(r: RangeChange): WorkingChange {
     section: 'committed',
     commitsTouching: r.commitsTouching
   };
+}
+
+class AsyncTaskPool {
+  private active = 0;
+  private readonly queue: Array<() => void> = [];
+
+  constructor(private readonly limit: number) {}
+
+  run<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push(() => {
+        this.active += 1;
+        void (async () => {
+          try {
+            resolve(await task());
+          } catch (error) {
+            reject(error);
+          } finally {
+            this.active -= 1;
+            this.drain();
+          }
+        })();
+      });
+      this.drain();
+    });
+  }
+
+  private drain(): void {
+    const limit = Math.max(1, Math.trunc(this.limit));
+    while (this.active < limit && this.queue.length > 0) {
+      this.queue.shift()!();
+    }
+  }
 }
 
 export const workingDiff = new WorkingDiffStore();

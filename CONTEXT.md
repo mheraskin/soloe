@@ -167,6 +167,7 @@ _Avoid_: Renderer backend, IPC implementation
 - The first visible **Terminal Presentation** acquires **Terminal Output Demand** for its PTY; the final hidden owner releases cross-process publication without stopping replay retention or agent observation
 - Each output batch receives one **Terminal Semantic Observation** before replay publication; usage-limit state outranks approval redraws and hidden presentations remain observable
 - One **Review Surface** owns one text-selection action; resident file bodies contribute exact review-entry identity without adding global listeners
+- A **Review Surface** auto-loads ordinary resident untracked text through two shared admissions; dependency, cache, generated-output, binary, and oversized paths remain explicit-load only
 - A cached review does not imply **Review Demand**; the final visible owner releases tick-driven range refresh and resident payload pins
 - Only visible rail tabs own **Rail Surface Residency**; Worktree layout, review state, scroll positions, and unsaved file content survive outside renderer allocation
 - A visible Files **Rail Surface Residency** acquires **Files Payload Residency**; final release retains at most two clean recent scopes while unsaved or saving buffers remain protected independently of evictable trees

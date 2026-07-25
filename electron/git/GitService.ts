@@ -584,6 +584,9 @@ export class GitService {
     options: {
       fromPath?: string | null;
       contextLines?: number;
+      // The caller already has a status snapshot identifying this path as
+      // untracked, so avoid a guaranteed-empty tracked diff process.
+      untracked?: boolean;
       // When both `base` and `head` are set, diff against `<base>..<head>`
       // instead of the default working-tree-vs-HEAD diff. The untracked
       // fallback is suppressed since the path must exist in the range.
@@ -619,21 +622,23 @@ export class GitService {
       targetPath
     ];
 
-    let output = await this.runInRepo(info, args);
-    let mode: 'tracked' | 'untracked-fallback' = 'tracked';
+    const untrackedArgs = [
+      'diff',
+      '--no-color',
+      '--no-ext-diff',
+      `--unified=${contextLines}`,
+      '--no-index',
+      '--',
+      '/dev/null',
+      targetPath
+    ];
+    const knownUntracked = !rangeMode && options.untracked === true;
+    let output = await this.runInRepo(info, knownUntracked ? untrackedArgs : args);
+    let mode: 'tracked' | 'untracked-fallback' =
+      knownUntracked ? 'untracked-fallback' : 'tracked';
 
-    if (!rangeMode && (output.code !== 0 || !output.stdout.trim())) {
+    if (!rangeMode && !knownUntracked && (output.code !== 0 || !output.stdout.trim())) {
       // No commit yet, or path is untracked: try the new-file fallback.
-      const untrackedArgs = [
-        'diff',
-        '--no-color',
-        '--no-ext-diff',
-        `--unified=${contextLines}`,
-        '--no-index',
-        '--',
-        '/dev/null',
-        targetPath
-      ];
       const untracked = await this.runInRepo(info, untrackedArgs);
       // `--no-index` returns code 1 when the files differ — which is the
       // normal case here. Treat any stdout as success.

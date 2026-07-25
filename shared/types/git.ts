@@ -196,6 +196,9 @@ export interface FileDiffRequest {
   path: string;
   fromPath?: string | null;
   contextLines?: number;
+  // Skip the tracked probe and use `git diff --no-index` directly when the
+  // caller already knows this working-tree path is untracked.
+  untracked?: boolean;
   // When both are set, the diff is computed against `git diff <base>..<head>`
   // instead of the default working-tree-vs-HEAD diff. The untracked-file
   // fallback (--no-index) is suppressed in this mode.

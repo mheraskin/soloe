@@ -378,6 +378,122 @@ describe('WorkingDiffStore review freshness', () => {
     expect(mocks.reviewDiffs.mock.calls[0]?.[0].files[15]?.path).toBe('file-20.ts');
   });
 
+  it('automatically loads ordinary untracked files but leaves generated and oversized files lazy', async () => {
+    const changes = [
+      {
+        path: 'frontend/order-ahead/src/app.ts',
+        fromPath: null,
+        kind: 'untracked' as const,
+        staged: false,
+        insertions: 24,
+        deletions: 0,
+        binary: false
+      },
+      {
+        path: 'frontend/order-ahead/node_modules/pkg/index.js',
+        fromPath: null,
+        kind: 'untracked' as const,
+        staged: false,
+        insertions: 12,
+        deletions: 0,
+        binary: false
+      },
+      {
+        path: 'frontend/order-ahead/dist/bundle.js',
+        fromPath: null,
+        kind: 'untracked' as const,
+        staged: false,
+        insertions: 300,
+        deletions: 0,
+        binary: false
+      },
+      {
+        path: 'fixtures/huge-generated.txt',
+        fromPath: null,
+        kind: 'untracked' as const,
+        staged: false,
+        insertions: 5_001,
+        deletions: 0,
+        binary: false
+      },
+      {
+        path: 'assets/new-image.png',
+        fromPath: null,
+        kind: 'untracked' as const,
+        staged: false,
+        insertions: 0,
+        deletions: 0,
+        binary: true
+      }
+    ];
+    mocks.workingChanges.mockResolvedValueOnce({ repoPath: '/repo', isRepo: true, changes });
+    mocks.fileDiff.mockImplementation(async (request: { path: string }) =>
+      fileDiff(request.path)
+    );
+    const store = new WorkingDiffStore();
+    await store.loadChanges('/repo');
+
+    await store.prefetchDiffs('/repo', changes.map((change) => change.path));
+
+    expect(mocks.fileDiff).toHaveBeenCalledTimes(1);
+    expect(mocks.fileDiff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'frontend/order-ahead/src/app.ts',
+        untracked: true
+      })
+    );
+    expect(store.diffEntryFor('/repo', 'frontend/order-ahead/src/app.ts').diff).not.toBeNull();
+    expect(store.diffEntryFor('/repo', 'frontend/order-ahead/node_modules/pkg/index.js').diff)
+      .toBeNull();
+    expect(store.diffEntryFor('/repo', 'frontend/order-ahead/dist/bundle.js').diff).toBeNull();
+    expect(store.diffEntryFor('/repo', 'fixtures/huge-generated.txt').diff).toBeNull();
+    expect(store.diffEntryFor('/repo', 'assets/new-image.png').diff).toBeNull();
+  });
+
+  it('limits concurrent automatic loads for resident untracked files', async () => {
+    const changes = Array.from({ length: 5 }, (_, index) => ({
+      path: `src/new-${index}.ts`,
+      fromPath: null,
+      kind: 'untracked' as const,
+      staged: false,
+      insertions: 10,
+      deletions: 0,
+      binary: false
+    }));
+    mocks.workingChanges.mockResolvedValueOnce({ repoPath: '/repo', isRepo: true, changes });
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    mocks.fileDiff.mockImplementation((request: { path: string }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise<FileDiff>((resolve) => {
+        releases.push(() => {
+          active -= 1;
+          resolve(fileDiff(request.path));
+        });
+      });
+    });
+    const store = new WorkingDiffStore();
+    await store.loadChanges('/repo');
+
+    const loading = Promise.all([
+      store.prefetchDiffs('/repo', changes.slice(0, 3).map((change) => change.path)),
+      store.prefetchDiffs('/repo', changes.slice(3).map((change) => change.path))
+    ]);
+    await vi.waitFor(() => expect(mocks.fileDiff).toHaveBeenCalledTimes(2));
+    expect(maxActive).toBe(2);
+
+    releases.splice(0, 2).forEach((release) => release());
+    await vi.waitFor(() => expect(mocks.fileDiff).toHaveBeenCalledTimes(4));
+    releases.splice(0, 2).forEach((release) => release());
+    await vi.waitFor(() => expect(mocks.fileDiff).toHaveBeenCalledTimes(5));
+    releases.splice(0).forEach((release) => release());
+    await loading;
+
+    expect(maxActive).toBe(2);
+  });
+
   it('bounds accumulated diff payloads while scrolling through a long review', async () => {
     const changes = Array.from({ length: 80 }, (_, index) => ({
       path: `file-${index}.ts`,
