@@ -3,13 +3,14 @@ import type {
   CommentsRpcResult
 } from '@shared/types/comments-rpc.js';
 import { diffComments } from '../stores/diff-comments.svelte';
+import { backend } from './ipc';
 
 let initialized = false;
 
 export function initCommentsBridge(): void {
   if (initialized) return;
   initialized = true;
-  window.soloe.comments.onRpcRequest((req) => {
+  backend.comments.onRpcRequest((req) => {
     void handleRequest(req);
   });
 }
@@ -21,7 +22,7 @@ async function handleRequest(req: CommentsRpcRequest): Promise<void> {
   } catch (err) {
     result = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  window.soloe.comments.sendRpcResponse({ requestId: req.requestId, result });
+  backend.comments.sendRpcResponse({ requestId: req.requestId, result });
 }
 
 async function dispatch(req: CommentsRpcRequest): Promise<CommentsRpcResult> {

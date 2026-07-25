@@ -5,8 +5,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type { AgentIntegrationTargetStatus } from '@shared/types/ipc.js';
 import { WslHostDetector, type WslDistroInfo } from './WslHostDetector.js';
+import { hostPlatform } from '@shared/platform.js';
 
-export type HookHostKind = 'windows' | 'wsl';
+export type HookHostKind = 'windows' | 'linux' | 'wsl';
 
 export interface HookHost {
   kind: HookHostKind;
@@ -24,6 +25,7 @@ export interface HookHost {
 
 export type HookHostKey =
   | { kind: 'windows' }
+  | { kind: 'linux' }
   | { kind: 'wsl'; distro: string };
 
 export interface HostInstallStatus {
@@ -132,9 +134,10 @@ function buildHookCommand(provider: 'claude' | 'codex'): string {
 }
 
 export function defaultLocalHost(): HookHost {
+  const kind = hostPlatform();
   return {
-    kind: 'windows',
-    label: process.platform === 'win32' ? 'Windows' : 'Local',
+    kind,
+    label: kind === 'windows' ? 'Windows' : 'Linux',
     homeDir: os.homedir(),
     available: true
   };
@@ -295,7 +298,7 @@ export class HookInstaller {
       if (!host.available) continue;
       const key: HookHostKey = host.kind === 'wsl'
         ? { kind: 'wsl', distro: host.distro ?? '' }
-        : { kind: 'windows' };
+        : { kind: host.kind };
       try {
         const url = await this.resolveMcpUrlForHost(host);
         const claudeChanged = await this.refreshClaudeHost(host, key, url);
@@ -381,7 +384,7 @@ export class HookInstaller {
 
   private requireHost(key: HookHostKey): HookHost {
     const host = this.hostsList.find((h) =>
-      h.kind === key.kind && (key.kind === 'windows' || h.distro === key.distro)
+      h.kind === key.kind && (key.kind !== 'wsl' || h.distro === key.distro)
     );
     if (!host) throw new Error(`Unknown host: ${describeHostKey(key)}`);
     if (!host.available) {
@@ -441,7 +444,7 @@ export class HookInstaller {
 }
 
 function describeHostKey(key: HookHostKey): string {
-  return key.kind === 'wsl' ? `wsl:${key.distro}` : 'windows';
+  return key.kind === 'wsl' ? `wsl:${key.distro}` : key.kind;
 }
 
 // Path codex itself reads when loading user-level config. For local hosts this

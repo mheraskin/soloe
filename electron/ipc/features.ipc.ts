@@ -61,7 +61,7 @@ export class FeaturesIpc {
 
     ipcMain.handle(
       IpcChannels.features.subscribe,
-      (event, request: { cwd: string; runMode: 'windows' | 'wsl'; wslDistro?: string }) =>
+      (event, request: { cwd: string; runMode: 'windows' | 'linux' | 'wsl'; wslDistro?: string }) =>
         ipcInvoke(async () => {
           const owner = this.ownerFor(event);
           const id = this.subscriptionId(request);
@@ -74,7 +74,7 @@ export class FeaturesIpc {
 
     ipcMain.handle(
       IpcChannels.features.unsubscribe,
-      (event, request: { cwd: string; runMode: 'windows' | 'wsl'; wslDistro?: string }) =>
+      (event, request: { cwd: string; runMode: 'windows' | 'linux' | 'wsl'; wslDistro?: string }) =>
         ipcInvoke(async () => {
           const id = this.subscriptionId(request);
           const owner = this.owners.get(event.sender.id);

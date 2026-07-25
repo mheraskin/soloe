@@ -32,9 +32,9 @@ export class ShellDetector {
       case 'zsh':
         return { executable: 'zsh', args: ['-l'] };
       case 'pwsh':
-        return runMode === 'wsl'
-          ? { executable: 'pwsh', args: ['-NoLogo'] }
-          : { executable: 'pwsh.exe', args: ['-NoLogo'] };
+        return runMode === 'windows'
+          ? { executable: 'pwsh.exe', args: ['-NoLogo'] }
+          : { executable: 'pwsh', args: ['-NoLogo'] };
       case 'cmd':
         return { executable: 'cmd.exe', args: ['/Q'] };
     }

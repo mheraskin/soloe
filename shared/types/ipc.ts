@@ -107,7 +107,7 @@ import type {
   TerminalStartResult,
   TerminalStatusEvent
 } from './terminal.js';
-import type { SystemUsageRequest, SystemUsageSnapshot } from './system.js';
+import type { HostPlatformInfo, SystemUsageRequest, SystemUsageSnapshot } from './system.js';
 import type {
   VaultDeleteRequest,
   VaultEntry,
@@ -163,6 +163,7 @@ export const IpcChannels = {
     event: 'observer:event'
   },
   system: {
+    platform: 'system:platform',
     openPath: 'system:open-path',
     saveText: 'system:save-text',
     openExternal: 'system:open-external',
@@ -380,6 +381,7 @@ export interface ObserverApi {
 }
 
 export interface SystemApi {
+  platform(): Promise<IpcResult<HostPlatformInfo>>;
   openPath(sessionId: SessionId): Promise<IpcResult<true>>;
   saveText(request: { defaultPath?: string; content: string }): Promise<IpcResult<true>>;
   openExternal(url: string): Promise<IpcResult<true>>;
@@ -493,10 +495,11 @@ export interface WindowApi {
   close(): Promise<IpcResult<true>>;
 }
 
-export type AgentIntegrationHostKind = 'windows' | 'wsl';
+export type AgentIntegrationHostKind = 'windows' | 'linux' | 'wsl';
 
 export type AgentIntegrationHostKey =
   | { kind: 'windows' }
+  | { kind: 'linux' }
   | { kind: 'wsl'; distro: string };
 
 export interface AgentIntegrationHost {
@@ -586,12 +589,12 @@ export interface FeaturesApi {
   setIssueStatus(request: FeatureSetIssueStatusRequest): Promise<IpcResult<FeatureIssueEntry>>;
   subscribe(request: {
     cwd: string;
-    runMode: 'windows' | 'wsl';
+    runMode: import('./sessions.js').RunMode;
     wslDistro?: string;
   }): Promise<IpcResult<true>>;
   unsubscribe(request: {
     cwd: string;
-    runMode: 'windows' | 'wsl';
+    runMode: import('./sessions.js').RunMode;
     wslDistro?: string;
   }): Promise<IpcResult<true>>;
   onChange(listener: (event: FeatureChangeEvent) => void): () => void;

@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { RunMode } from '@shared/types/sessions.js';
+  import { runModeLabel as labelForRunMode } from '@shared/platform.js';
   import { projectModal } from '../../stores/project-modal.svelte';
   import { settings } from '../../stores/settings.svelte';
+  import { platform } from '../../stores/platform.svelte';
   import { ipc } from '../../lib/ipc';
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
@@ -22,7 +24,7 @@
 
   $effect(() => {
     if (!projectModal.open) return;
-    void loadWslDistros();
+    if (platform.current.supportsWsl) void loadWslDistros();
   });
 
   $effect(() => {
@@ -70,7 +72,7 @@
 
   let runModeLabel = $derived.by(() => {
     if (!projectModal.draft.defaultRunMode) return 'Inherit from settings';
-    return projectModal.draft.defaultRunMode === 'wsl' ? 'WSL' : 'Windows / native';
+    return labelForRunMode(projectModal.draft.defaultRunMode);
   });
 </script>
 
@@ -107,8 +109,12 @@
       <Select.Trigger class="w-full">{runModeLabel}</Select.Trigger>
       <Select.Content>
         <Select.Item value="__inherit__" label="Inherit from settings">Inherit from settings</Select.Item>
-        <Select.Item value="windows" label="Windows / native">Windows / native</Select.Item>
-        <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+        {#if platform.current.platform === 'linux'}
+          <Select.Item value="linux" label="Linux">Linux</Select.Item>
+        {:else}
+          <Select.Item value="windows" label="Windows">Windows</Select.Item>
+          <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+        {/if}
       </Select.Content>
     </Select.Root>
   </div>

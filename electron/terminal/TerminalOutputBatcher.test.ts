@@ -42,4 +42,18 @@ describe('TerminalOutputBatcher', () => {
       { terminalId: 't-1', sessionId: 's-1', data: 'final', seq: 2 }
     ]);
   });
+
+  it('publishes a Rust-side batch immediately without adding another timer boundary', () => {
+    vi.useFakeTimers();
+    const flush = vi.fn<(events: TerminalOutputEvent[]) => void>();
+    const batcher = new TerminalOutputBatcher(16, flush);
+
+    batcher.pushPrebatched('t-1', 's-1', 'already batched');
+
+    expect(flush).toHaveBeenCalledWith([
+      { terminalId: 't-1', sessionId: 's-1', data: 'already batched', seq: 1 }
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+    batcher.destroy();
+  });
 });

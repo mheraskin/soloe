@@ -22,6 +22,7 @@ import {
   type ProjectFaviconCatalogOptions
 } from './ProjectFaviconCatalog.js';
 import { runGitCommand } from '../git/GitCommandRunner.js';
+import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.js';
 
 interface StorageShape {
   version: number;
@@ -29,10 +30,11 @@ interface StorageShape {
 }
 
 const STORAGE_VERSION = 2;
-const VALID_RUN_MODES = new Set(['windows', 'wsl']);
+const VALID_RUN_MODES = new Set(['windows', 'linux', 'wsl']);
 
 export interface ProjectStoreOptions {
   gitBinary?: string;
+  platform?: SupportedHostPlatform;
   faviconCatalog?: ProjectFaviconCatalog;
   faviconCatalogOptions?: ProjectFaviconCatalogOptions;
 }
@@ -87,7 +89,7 @@ export class ProjectStore {
       lastOpenedAt: now,
       sortIndex: this.nextSortIndex()
     };
-    validateProject(project);
+    validateProject(project, this.options.platform);
     this.cache!.set(id, project);
     await this.persist();
     this.broadcast();
@@ -120,7 +122,7 @@ export class ProjectStore {
       id: existing.id,
       createdAt: existing.createdAt
     };
-    validateProject(merged);
+    validateProject(merged, this.options.platform);
     this.cache!.set(id, merged);
     await this.persist();
     this.broadcast();
@@ -204,14 +206,16 @@ export class ProjectStore {
     limit = 10
   ): Promise<ProjectSuggestResult> {
     await this.ensureLoaded();
-    const requested: ProjectSuggestOptions = options ?? { scope: 'windows' };
+    const requested: ProjectSuggestOptions = options ?? {
+      scope: this.options.platform === 'linux' ? 'linux' : 'windows'
+    };
     const parsed = parseProjectQuery(query, requested);
     const scope = parsed.scope;
     const wslDistro = scope === 'wsl' ? parsed.wslDistro ?? 'Ubuntu' : undefined;
     const byPath = new Map<string, ProjectPathSuggestion>();
 
     const known = [...this.cache!.values()]
-      .filter((project) => projectMatchesScope(project, scope, wslDistro))
+      .filter((project) => projectMatchesScope(project, scope, wslDistro, this.options.platform))
       .map((project) => {
         const score = Math.max(
           fuzzyScore(parsed.queryForKnown, project.name) ?? -1,
@@ -224,11 +228,11 @@ export class ProjectStore {
       .slice(0, limit);
 
     for (const { project } of known) {
-      byPath.set(normalizePath(project.path), {
+      byPath.set(normalizePath(project.path, scope === 'windows'), {
         path: project.path,
         name: project.name,
         source: 'known',
-        scope: pathScope(project),
+        scope: pathScope(project, this.options.platform),
         ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {}),
         projectId: project.id
       });
@@ -237,10 +241,10 @@ export class ProjectStore {
     const dirResults =
       scope === 'wsl'
         ? await this.suggestWslDirectories(wslDistro!, parsed, limit)
-        : await suggestWindowsDirectories(parsed, limit);
+        : await suggestNativeDirectories(parsed, limit);
 
     for (const suggestion of dirResults) {
-      const key = normalizePath(suggestion.path);
+      const key = normalizePath(suggestion.path, scope === 'windows');
       if (!byPath.has(key)) byPath.set(key, suggestion);
     }
 
@@ -257,7 +261,7 @@ export class ProjectStore {
               queryForKnown: ''
             }
           : {
-              scope: 'windows',
+              scope,
               baseDir: single.path,
               fragment: '',
               original: '',
@@ -266,9 +270,9 @@ export class ProjectStore {
       const childResults =
         scope === 'wsl'
           ? await this.suggestWslDirectories(wslDistro!, childParsed, limit)
-          : await suggestWindowsDirectories(childParsed, limit);
+          : await suggestNativeDirectories(childParsed, limit);
       for (const suggestion of childResults) {
-        const key = normalizePath(suggestion.path);
+        const key = normalizePath(suggestion.path, scope === 'windows');
         if (!byPath.has(key)) byPath.set(key, suggestion);
       }
     }
@@ -341,9 +345,10 @@ export class ProjectStore {
 
   private findByPath(repoPath: string): ProjectId | null {
     if (!this.cache) return null;
-    const norm = normalizePath(repoPath);
+    const windowsHost = this.options.platform !== 'linux';
+    const norm = normalizePath(repoPath, windowsHost);
     for (const project of this.cache.values()) {
-      if (normalizePath(project.path) === norm) return project.id;
+      if (normalizePath(project.path, windowsHost) === norm) return project.id;
     }
     return null;
   }
@@ -493,8 +498,9 @@ function slugify(input: string): string {
     .slice(0, 48);
 }
 
-function normalizePath(p: string): string {
-  return p.replace(/[/\\]+$/, '').replace(/\\/g, '/').toLowerCase();
+function normalizePath(p: string, windows = true): string {
+  const normalized = p.replace(/[/\\]+$/, '').replace(/\\/g, '/');
+  return windows ? normalized.toLowerCase() : normalized;
 }
 
 function inferNameFromPath(projectPath: string): string {
@@ -524,7 +530,11 @@ function parseProjectQuery(
   }
   if (trimmed.toLowerCase().startsWith('win:')) {
     const remainder = trimmed.slice(4).replace(/^[\s]+/, '');
-    return buildWindowsParsed(remainder, remainder);
+    return buildNativeParsed(remainder, remainder, 'windows');
+  }
+  if (trimmed.toLowerCase().startsWith('linux:')) {
+    const remainder = trimmed.slice(6).replace(/^[\s]+/, '');
+    return buildNativeParsed(remainder, remainder, 'linux');
   }
   const uncMatch = trimmed.match(WSL_UNC_RE);
   if (uncMatch) {
@@ -536,25 +546,29 @@ function parseProjectQuery(
   if (options.scope === 'wsl') {
     return buildWslParsed(trimmed, options.wslDistro ?? 'Ubuntu', trimmed);
   }
-  return buildWindowsParsed(trimmed, trimmed);
+  return buildNativeParsed(trimmed, trimmed, options.scope === 'linux' ? 'linux' : 'windows');
 }
 
-function buildWindowsParsed(query: string, original: string): ParsedProjectQuery {
+function buildNativeParsed(
+  query: string,
+  original: string,
+  scope: Exclude<ProjectSearchScope, 'wsl'>
+): ParsedProjectQuery {
   if (!query) {
     return {
-      scope: 'windows',
+      scope,
       baseDir: os.homedir(),
       fragment: '',
       original,
       queryForKnown: original
     };
   }
-  const resolved = isWindowsAbsolute(query) ? query : joinWindowsHome(query);
-  const expanded = expandWindowsHome(resolved);
+  const resolved = isNativeAbsolute(query, scope) ? query : joinNativeHome(query);
+  const expanded = expandNativeHome(resolved);
   const endsWithSep = resolved.endsWith('/') || resolved.endsWith('\\');
   if (endsWithSep) {
     return {
-      scope: 'windows',
+      scope,
       baseDir: expanded,
       fragment: '',
       original,
@@ -564,7 +578,7 @@ function buildWindowsParsed(query: string, original: string): ParsedProjectQuery
   const lastSeparator = Math.max(expanded.lastIndexOf('/'), expanded.lastIndexOf('\\'));
   if (lastSeparator >= 0) {
     return {
-      scope: 'windows',
+      scope,
       baseDir: expanded.slice(0, lastSeparator + 1),
       fragment: expanded.slice(lastSeparator + 1),
       original,
@@ -572,7 +586,7 @@ function buildWindowsParsed(query: string, original: string): ParsedProjectQuery
     };
   }
   return {
-    scope: 'windows',
+    scope,
     baseDir: os.homedir(),
     fragment: expanded,
     original,
@@ -623,9 +637,9 @@ function buildWslParsed(query: string, distro: string, original: string): Parsed
   };
 }
 
-function isWindowsAbsolute(query: string): boolean {
+function isNativeAbsolute(query: string, scope: Exclude<ProjectSearchScope, 'wsl'>): boolean {
   if (query.startsWith('/') || query.startsWith('\\')) return true;
-  if (/^[a-zA-Z]:[\\/]/.test(query)) return true;
+  if (scope === 'windows' && /^[a-zA-Z]:[\\/]/.test(query)) return true;
   if (query === '~' || query.startsWith('~/') || query.startsWith('~\\')) return true;
   return false;
 }
@@ -636,11 +650,11 @@ function isWslAbsolute(query: string): boolean {
   return false;
 }
 
-function joinWindowsHome(query: string): string {
+function joinNativeHome(query: string): string {
   return `${os.homedir()}${path.sep}${query}`;
 }
 
-function expandWindowsHome(input: string): string {
+function expandNativeHome(input: string): string {
   if (input === '~') return os.homedir();
   if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
     return path.join(os.homedir(), input.slice(2));
@@ -668,8 +682,12 @@ function toDisplayPath(p: string, home: string, scope: ProjectSearchScope): stri
   return p;
 }
 
-function pathScope(project: Project): ProjectSearchScope {
-  if (project.defaultRunMode) return project.defaultRunMode === 'wsl' ? 'wsl' : 'windows';
+function pathScope(
+  project: Project,
+  platform: SupportedHostPlatform = 'windows'
+): ProjectSearchScope {
+  if (project.defaultRunMode) return project.defaultRunMode;
+  if (platform === 'linux') return 'linux';
   if (project.path.startsWith('/')) return 'wsl';
   return 'windows';
 }
@@ -677,9 +695,10 @@ function pathScope(project: Project): ProjectSearchScope {
 function projectMatchesScope(
   project: Project,
   scope: ProjectSearchScope,
-  wslDistro: string | undefined
+  wslDistro: string | undefined,
+  platform: SupportedHostPlatform = 'windows'
 ): boolean {
-  const projectScope = pathScope(project);
+  const projectScope = pathScope(project, platform);
   if (projectScope !== scope) return false;
   if (scope !== 'wsl') return true;
   if (!wslDistro) return true;
@@ -687,7 +706,7 @@ function projectMatchesScope(
   return project.defaultWslDistro === wslDistro;
 }
 
-async function suggestWindowsDirectories(
+async function suggestNativeDirectories(
   parsed: ParsedProjectQuery,
   limit: number
 ): Promise<ProjectPathSuggestion[]> {
@@ -711,7 +730,7 @@ async function suggestWindowsDirectories(
           path: fullPath,
           name: entry.name,
           source: 'directory' as const,
-          scope: 'windows' as const
+          scope: parsed.scope as Exclude<ProjectSearchScope, 'wsl'>
         },
         score
       };
@@ -799,12 +818,19 @@ function parseProject(raw: unknown): Project | null {
   }
 }
 
-function validateProject(p: Project): void {
+function validateProject(p: Project, platform?: SupportedHostPlatform): void {
   if (!p.id.trim()) throw new Error('Project id is required');
   if (!p.name.trim()) throw new Error('Project name is required');
   if (!p.path.trim()) throw new Error('Project path is required');
   if (p.defaultRunMode !== undefined && !VALID_RUN_MODES.has(p.defaultRunMode)) {
     throw new Error(`Invalid defaultRunMode: ${p.defaultRunMode}`);
+  }
+  if (
+    platform
+    && p.defaultRunMode !== undefined
+    && !supportedRunModes(platform).includes(p.defaultRunMode)
+  ) {
+    throw new Error(`Run mode ${p.defaultRunMode} is not available on ${platform}`);
   }
   if (p.defaultWslDistro !== undefined && !p.defaultWslDistro.trim()) {
     throw new Error('defaultWslDistro must be non-empty when set');

@@ -6,10 +6,26 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    permissions:
-      contents: write
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            command: npm run package:windows
+            files: |
+              release/*.exe
+              release/*.yml
+              release/*.blockmap
+          - os: ubuntu-latest
+            platform: linux
+            command: npm run package:linux
+            files: |
+              release/*.AppImage
+              release/*.deb
+              release/*.yml
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
@@ -21,26 +37,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Package Windows installer
-        run: npm run package
+      - name: Package ${{ matrix.platform }} build
+        run: ${{ matrix.command }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: soloe-windows-${{ github.sha }}
-          path: |
-            release/*.exe
-            release/*.yml
-            release/*.blockmap
+          name: soloe-${{ matrix.platform }}-${{ github.sha }}
+          path: ${{ matrix.files }}
           if-no-files-found: error
 
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: soloe-*-${{ github.sha }}
+          path: release
+          merge-multiple: true
+
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release/*.exe
-            release/*.yml
-            release/*.blockmap
+          files: release/*
           prerelease: true
           generate_release_notes: true

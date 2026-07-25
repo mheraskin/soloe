@@ -30,6 +30,23 @@ describe('SettingsStore — defaults', () => {
     const exists = await fs.access(path.join(tmpDir, 'no-such.json')).then(() => true).catch(() => false);
     expect(exists).toBe(false);
   });
+
+  it('selects native Linux defaults for the Linux build', async () => {
+    const store = new SettingsStore(path.join(tmpDir, 'linux.json'), 'linux');
+    const s = await store.get();
+    expect(s.defaults.runMode).toBe('linux');
+    expect(s.defaults.wslDistro).toBeUndefined();
+    await expect(store.update({ defaults: { runMode: 'wsl' } })).rejects.toThrow(
+      /not available on linux/
+    );
+  });
+
+  it('migrates a copied Windows default to native Linux', async () => {
+    await fs.writeFile(storePath, JSON.stringify(DEFAULT_SETTINGS), 'utf8');
+    const store = new SettingsStore(storePath, 'linux');
+    expect((await store.get()).defaults.runMode).toBe('linux');
+  });
+
 });
 
 describe('SettingsStore — update', () => {

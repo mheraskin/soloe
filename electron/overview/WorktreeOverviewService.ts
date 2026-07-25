@@ -7,6 +7,7 @@ import type {
 } from '@shared/types/overview.js';
 import type { ModelProvider, ModelSelection, Settings } from '@shared/types/settings.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import { nativeRunMode } from '@shared/platform.js';
 import { BackgroundAgentExecution } from '../agents/BackgroundAgentExecution.js';
 import { SessionTranscriptReader } from './SessionTranscriptReader.js';
 import { WorktreeFactsCollector } from './WorktreeFactsCollector.js';
@@ -183,7 +184,7 @@ export class WorktreeOverviewService {
       binaries: settings.binaries,
       scope: {
         cwd,
-        runMode: args.runMode ?? 'windows',
+        runMode: args.runMode ?? nativeRunMode(),
         ...(args.wslDistro ? { wslDistro: args.wslDistro } : {})
       },
       prompt: fullPrompt,
@@ -209,7 +210,7 @@ export class WorktreeOverviewService {
 
     const entry: CachedOverviewEntry = {
       worktreeCwd: cwd,
-      runMode: args.runMode ?? 'windows',
+      runMode: args.runMode ?? nativeRunMode(),
       ...(args.wslDistro ? { wslDistro: args.wslDistro } : {}),
       text: result.text,
       generatedAt: new Date().toISOString(),
@@ -275,7 +276,7 @@ export class WorktreeOverviewService {
       binaries: settings.binaries,
       scope: {
         cwd,
-        runMode: args.runMode ?? 'windows',
+        runMode: args.runMode ?? nativeRunMode(),
         ...(args.wslDistro ? { wslDistro: args.wslDistro } : {})
       },
       prompt: fullPrompt,

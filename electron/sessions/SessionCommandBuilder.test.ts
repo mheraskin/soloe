@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  buildWslAgentPathPrelude,
   SessionCommandBuilder,
   type SessionBuildContext,
   wslReachableBridgeUrl
@@ -510,6 +515,38 @@ describe('SessionCommandBuilder — windows runMode', () => {
   });
 });
 
+describe('SessionCommandBuilder — native Linux runMode', () => {
+  it('starts a native Linux login shell without wsl.exe', () => {
+    const spec = builder.build({
+      ...baseFields(),
+      runMode: 'linux',
+      launch: { type: 'terminal', shell: 'bash' }
+    }, ctx);
+    expect(spec.file).toBe('bash');
+    expect(spec.args).toEqual(['-l']);
+    expect(spec.cwd).toBe('/home/me/proj');
+    expect(spec.env['PROMPT_COMMAND']).toContain('633;P;Cwd=%s');
+  });
+
+  it('resolves and execs native Linux agents through the local login shell', () => {
+    const spec = builder.build({
+      ...baseFields(),
+      runMode: 'linux',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    }, {
+      baseEnv: { HOME: '/home/me' },
+      bridge: { url: 'http://127.0.0.1:3210', token: 'native-token' }
+    });
+    expect(spec.file).toBe('bash');
+    expect(spec.args[0]).toBe('-lc');
+    expect(spec.args.join(' ')).not.toContain('wsl.exe');
+    const script = decodeAgentScript(spec.args[1]!);
+    expect(script).toContain('command -v codex');
+    expect(script).toContain('SOLOE_BRIDGE_URL=http://127.0.0.1:3210');
+    expect(script).not.toContain('host.wsl.internal');
+  });
+});
+
 describe('wslReachableBridgeUrl', () => {
   it('rewrites 127.0.0.1 to host.wsl.internal', () => {
     expect(wslReachableBridgeUrl('http://127.0.0.1:9000')).toBe('http://host.wsl.internal:9000');
@@ -529,5 +566,38 @@ describe('wslReachableBridgeUrl', () => {
 
   it('returns the original string when not a valid URL', () => {
     expect(wslReachableBridgeUrl('not-a-url')).toBe('not-a-url');
+  });
+});
+
+describe('buildWslAgentPathPrelude', () => {
+  it('rejects Windows-mounted npm shims before probing Linux NVM installs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'soloe-agent-path-'));
+    const linuxBin = join(root, 'versions', 'node', 'v99.0.0', 'bin');
+    const linuxCodex = join(linuxBin, 'codex');
+    mkdirSync(linuxBin, { recursive: true });
+    writeFileSync(linuxCodex, '#!/bin/sh\nexit 0\n');
+    chmodSync(linuxCodex, 0o755);
+
+    try {
+      const script = [
+        'command() {',
+        '  if [ "$1" = "-v" ]; then',
+        "    printf '%s\\n' /mnt/c/Users/test/AppData/Roaming/npm/codex",
+        '  else',
+        '    builtin command "$@"',
+        '  fi',
+        '}',
+        buildWslAgentPathPrelude('codex'),
+        "printf '%s' \"$__soloe_agent_bin\""
+      ].join('\n');
+      const resolved = execFileSync('bash', ['--noprofile', '--norc', '-c', script], {
+        encoding: 'utf8',
+        env: { ...process.env, NVM_DIR: root }
+      });
+
+      expect(resolved).toBe(linuxCodex);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

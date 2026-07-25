@@ -11,7 +11,7 @@ import {
   type WorktreeScope
 } from '@shared/worktree-identity.js';
 import { untrack } from 'svelte';
-import { ipc } from '../lib/ipc';
+import { hasBackendTransport, ipc } from '../lib/ipc';
 
 export interface FeatureContext {
   runMode: RunMode;
@@ -425,7 +425,7 @@ function toSubscriptionRequest(scope: FeatureScope): {
 
 export const featuresStore = new FeaturesStore();
 
-if (typeof window !== 'undefined' && window.soloe) {
+if (hasBackendTransport()) {
   // Single, app-wide listener that routes change events to the matching cwd.
   ipc.features.onChange((event) => {
     featuresStore.applyChangeEvent(event);

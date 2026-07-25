@@ -15,6 +15,22 @@ const request = (overrides: Partial<BackgroundAgentRequest> = {}): BackgroundAge
 });
 
 describe('BackgroundAgentExecution', () => {
+  it('launches Linux work natively through bash without a WSL process', async () => {
+    const child = new FakeChild();
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      isExecutableAvailable: async () => true
+    });
+    const pending = execution.execute(request({ scope: { cwd: '/repo', runMode: 'linux' } }));
+    await waitFor(() => spawnMock.mock.calls.length === 1);
+    expect(spawnMock.mock.calls[0]?.[0]).toBe('bash');
+    expect(spawnMock.mock.calls[0]?.[1]?.[0]).toBe('-lc');
+    expect(spawnMock.mock.calls[0]?.[1]).not.toContain('wsl.exe');
+    child.succeed('native');
+    await expect(pending).resolves.toMatchObject({ ok: true, text: 'native' });
+  });
+
   it('falls back to the first executable that is actually available', async () => {
     const child = new FakeChild();
     const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);

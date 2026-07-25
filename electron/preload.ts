@@ -171,6 +171,7 @@ const soloe: SoloeApi = {
       subscribe<ObserverEvent>(IpcChannels.observer.event, cb)
   },
   system: {
+    platform: () => ipcRenderer.invoke(IpcChannels.system.platform),
     openPath: (sessionId: SessionId) => ipcRenderer.invoke(IpcChannels.system.openPath, sessionId),
     saveText: (request: { defaultPath?: string; content: string }) =>
       ipcRenderer.invoke(IpcChannels.system.saveText, request),

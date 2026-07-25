@@ -1,4 +1,4 @@
-import type { Session, SessionDraft, SessionLaunchKind } from '@shared/types/sessions.js';
+import type { RunMode, Session, SessionDraft, SessionLaunchKind } from '@shared/types/sessions.js';
 import { launchKind } from '@shared/types/sessions.js';
 import type { SettingsDefaults } from '@shared/types/settings.js';
 
@@ -32,7 +32,7 @@ export function defaultDraft(kind: SessionLaunchKind, defaults?: SettingsDefault
     cwd: '',
     runMode,
     ...(runMode === 'wsl' ? { wslDistro: defaults?.wslDistro ?? 'Ubuntu' } : {})
-  } as { name: string; cwd: string; runMode: 'windows' | 'wsl'; wslDistro?: string };
+  } as { name: string; cwd: string; runMode: RunMode; wslDistro?: string };
   const standardShell = defaults?.shell ?? 'auto';
   switch (kind) {
     case 'terminal':

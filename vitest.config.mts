@@ -26,7 +26,8 @@ export default defineConfig({
     include: [
       'electron/**/*.test.ts',
       'shared/**/*.test.ts',
-      'src/**/*.test.ts'
+      'src/**/*.test.ts',
+      'tests/**/*.test.ts'
     ],
     environmentMatchGlobs: [
       ['src/**', 'jsdom']

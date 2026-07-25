@@ -327,11 +327,18 @@ export class BackgroundAgentExecution {
         processOptions(hostHome())
       );
     }
+    if (request.scope.runMode === 'linux') {
+      // Use the native login shell only to resolve user-managed binaries
+      // (nvm, bun, ~/.local/bin), then exec the agent in the native Linux process
+      // and filesystem. No WSL or host bridge is involved.
+      const inner = buildWslAgentLine({}, argv.executable, argv.args);
+      return this.spawnImpl('bash', ['-lc', inner], processOptions(request.scope.cwd));
+    }
     return this.spawnImpl(argv.executable, argv.args, processOptions(request.scope.cwd));
   }
 
   private async probeExecutable(executable: string, scope: BackgroundAgentScope): Promise<boolean> {
-    if (scope.runMode === 'windows' && hasPathSeparator(executable)) {
+    if (scope.runMode !== 'wsl' && hasPathSeparator(executable)) {
       return fs.access(executable, fsConstants.F_OK).then(() => true, () => false);
     }
     const command = scope.runMode === 'wsl' ? WslCommandBuilder.WSL_EXE : nativeProbeCommand();

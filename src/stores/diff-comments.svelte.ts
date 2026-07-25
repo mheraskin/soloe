@@ -217,7 +217,7 @@ function isPersistedComment(value: unknown): value is DiffComment {
       typeof scope === 'object' &&
       typeof scope.cwd === 'string' &&
       scope.cwd.trim() &&
-      (scope.runMode === 'windows' ||
+      (scope.runMode === 'windows' || scope.runMode === 'linux' ||
         (scope.runMode === 'wsl' &&
           typeof scope.wslDistro === 'string' &&
           scope.wslDistro.trim()))

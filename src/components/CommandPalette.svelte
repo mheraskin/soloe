@@ -18,6 +18,7 @@
   import { projects } from '../stores/projects.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { settings } from '../stores/settings.svelte';
+  import { platform } from '../stores/platform.svelte';
   import { nav } from '../stores/nav.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
@@ -44,7 +45,7 @@
 
   function resetScopeFromSettings() {
     const defaults = settings.current.defaults;
-    scope = defaults.runMode === 'wsl' ? 'wsl' : 'windows';
+    scope = defaults.runMode;
     wslDistro = defaults.wslDistro?.trim() || 'Ubuntu';
   }
 
@@ -201,7 +202,7 @@
               defaultRunMode: 'wsl' as const,
               ...(suggestion.wslDistro ? { defaultWslDistro: suggestion.wslDistro } : {})
             }
-          : { defaultRunMode: 'windows' as const })
+          : { defaultRunMode: suggestion.scope })
       });
       try {
         await ipc.git.worktrees({
@@ -226,14 +227,14 @@
   function drillIntoHighlighted() {
     const target = pathSuggestions.find((s) => s.path === highlight) ?? pathSuggestions[0];
     if (!target) return;
-    const sep = target.scope === 'wsl' ? '/' : '\\';
+    const sep = target.scope === 'windows' ? '\\' : '/';
     const next = target.path.endsWith(sep) ? target.path : `${target.path}${sep}`;
     query = next;
     if (target.scope === 'wsl') {
       scope = 'wsl';
       if (target.wslDistro) wslDistro = target.wslDistro;
     } else {
-      scope = 'windows';
+      scope = target.scope;
     }
   }
 
@@ -281,14 +282,15 @@
           type="button"
           class={cn(
             'rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
-            scope === 'windows'
+            scope === platform.current.defaultRunMode
               ? 'bg-background text-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground'
           )}
-          onclick={() => (scope = 'windows')}
+          onclick={() => (scope = platform.current.defaultRunMode)}
         >
-          Windows
+          {platform.current.platform === 'linux' ? 'Linux' : 'Windows'}
         </button>
+        {#if platform.current.supportsWsl}
         <button
           type="button"
           class={cn(
@@ -301,6 +303,7 @@
         >
           WSL: {wslDistro}
         </button>
+        {/if}
       </div>
       <span class="ml-auto text-[10px] text-muted-foreground">
         <kbd class="rounded border border-border bg-muted px-1 font-mono">Tab</kbd>

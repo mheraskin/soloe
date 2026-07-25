@@ -19,3 +19,4 @@ if (!target) throw new Error('Missing #app root element');
 initCommentsBridge();
 initDiffBridge();
 mount(App, { target });
+performance.mark('soloe:renderer-mounted');

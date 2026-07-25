@@ -733,10 +733,10 @@
       if ((lastAppliedDeviceKeyById[tabId] ?? null) === null) return;
       lastAppliedDeviceKeyById = { ...lastAppliedDeviceKeyById, [tabId]: null };
       try {
-        await window.soloe.browser.disableDeviceEmulation({ webContentsId });
+        await ipc.browser.disableDeviceEmulation({ webContentsId });
         if (!isCurrentAttachment()) return;
         if ((lastAppliedUaById[tabId] ?? null) !== null) {
-          await window.soloe.browser.setUserAgent({ webContentsId, userAgent: null });
+          await ipc.browser.setUserAgent({ webContentsId, userAgent: null });
           if (!isCurrentAttachment()) return;
           const previousUa = lastAppliedUaById[tabId] ?? null;
           lastAppliedUaById = { ...lastAppliedUaById, [tabId]: null };
@@ -753,7 +753,7 @@
     const w = tabDevice.rotated ? tabDevice.height : tabDevice.width;
     const h = tabDevice.rotated ? tabDevice.width : tabDevice.height;
     try {
-      await window.soloe.browser.enableDeviceEmulation({
+      await ipc.browser.enableDeviceEmulation({
         webContentsId,
         emulation: {
           width: w,

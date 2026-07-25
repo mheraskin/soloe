@@ -5,6 +5,7 @@ import { flushSync } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/ipc', () => ({
+  hasBackendTransport: () => true,
   ipc: {
     features: {
       scan: vi.fn(async (request: { cwd: string; slug?: string }) => ({

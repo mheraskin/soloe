@@ -137,7 +137,7 @@
 <button
   type="button"
   class="mb-2 flex w-full flex-col items-center gap-1 rounded-sm border-0 bg-transparent px-1 outline-none focus-visible:ring-1 focus-visible:ring-ring"
-  aria-label="Inspect Soloe and WSL resource usage"
+  aria-label={usage?.wslActive ? 'Inspect Soloe and WSL resource usage' : 'Inspect Soloe resource usage'}
   {title}
   onpointerenter={() => setWslHovered(true)}
   onpointerleave={() => setWslHovered(false)}

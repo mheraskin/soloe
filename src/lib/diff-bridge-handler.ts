@@ -5,6 +5,7 @@ import {
 import { rightRail } from '../stores/right-rail.svelte';
 import { sessions } from '../stores/sessions.svelte';
 import { workingDiff } from '../stores/working-diff.svelte';
+import { backend } from './ipc';
 
 let initialized = false;
 
@@ -19,7 +20,7 @@ const defaultDeps: DiffRequestDeps = { sessions, workingDiff, rightRail };
 export function initDiffBridge(): void {
   if (initialized) return;
   initialized = true;
-  window.soloe.diff.onRpcRequest((req) => {
+  backend.diff.onRpcRequest((req) => {
     void handleRequest(req);
   });
 }
@@ -31,7 +32,7 @@ async function handleRequest(req: DiffRpcRequest): Promise<void> {
   } catch (err) {
     result = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  window.soloe.diff.sendRpcResponse({ requestId: req.requestId, result });
+  backend.diff.sendRpcResponse({ requestId: req.requestId, result });
 }
 
 export async function dispatchDiffRequest(

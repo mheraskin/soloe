@@ -46,6 +46,16 @@ describe('SessionStore — create/list', () => {
 });
 
 describe('SessionStore — validation', () => {
+  it('allows only native Linux sessions in the Linux build', async () => {
+    const store = new SessionStore(storePath, 'linux');
+    await expect(store.create(standardDraft({ runMode: 'windows' }))).rejects.toThrow(
+      /not available on linux/
+    );
+    await expect(store.create(standardDraft({ runMode: 'linux' }))).resolves.toMatchObject({
+      runMode: 'linux'
+    });
+  });
+
   it('rejects an empty/whitespace name', async () => {
     const store = new SessionStore(storePath);
     await expect(store.create(standardDraft({ name: '   ' }))).rejects.toThrow(

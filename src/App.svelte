@@ -22,6 +22,7 @@
   } from '@shared/types/sessions.js';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
+  import { platform } from './stores/platform.svelte';
   import { projects } from './stores/projects.svelte';
   import { notes } from './stores/notes.svelte';
   import { git } from './stores/git.svelte';
@@ -141,7 +142,7 @@
 
   async function loadInitialState(): Promise<void> {
     try {
-      await Promise.all([settings.load(), projects.load(), sessions.load()]);
+      await Promise.all([platform.load(), settings.load(), projects.load(), sessions.load()]);
       await promptForAgentIntegrationSetup();
     } catch (err) {
       reportError(err);

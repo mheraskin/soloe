@@ -8,7 +8,7 @@ import type {
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { InnerCommand } from '../runtime/InnerCommand.js';
-import { WindowsCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
+import { NativeCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
 import { buildPosixCommandLine, posixSingleQuote } from '../runtime/posix-quote.js';
 import { ShellDetector } from '../terminal/ShellDetector.js';
@@ -25,7 +25,7 @@ export interface SessionBuildContext {
 export class SessionCommandBuilder {
   constructor(
     private readonly shellDetector: ShellDetector = new ShellDetector(),
-    private readonly windowsBuilder: WindowsCommandBuilder = new WindowsCommandBuilder(),
+    private readonly nativeBuilder: NativeCommandBuilder = new NativeCommandBuilder(),
     private readonly wslBuilder: WslCommandBuilder = new WslCommandBuilder()
   ) {}
 
@@ -40,7 +40,7 @@ export class SessionCommandBuilder {
         cwd: session.cwd
       });
     }
-    return this.windowsBuilder.build(inner, {
+    return this.nativeBuilder.build(inner, {
       cwd: session.cwd,
       baseEnv: ctx.baseEnv
     });
@@ -225,13 +225,17 @@ function buildAgentCommand(
   executable: string,
   args: string[],
   env: Record<string, string>,
-  runMode: 'windows' | 'wsl'
+  runMode: Session['runMode']
 ): InnerCommand {
   const inner: InnerCommand = { executable, args, env };
-  if (runMode !== 'wsl') return inner;
+  if (runMode === 'windows') return inner;
+  const rawLine = buildWslAgentLine(env, executable, args);
+  if (runMode === 'linux') {
+    return { executable: 'bash', args: ['-lc', rawLine], env: {} };
+  }
   return {
     ...inner,
-    rawLine: buildWslAgentLine(env, executable, args)
+    rawLine
   };
 }
 
@@ -254,6 +258,9 @@ export function buildWslAgentPathPrelude(executable: string): string {
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
     'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"',
     `__soloe_agent_bin="$(command -v ${exe} 2>/dev/null)"`,
+    'case "$__soloe_agent_bin" in',
+    '  /mnt/[a-zA-Z]/*) __soloe_agent_bin="" ;;',
+    'esac',
     `if [ -z "$__soloe_agent_bin" ] && [ -d "$NVM_DIR/versions/node" ]; then`,
     `  for __soloe_dir in $(ls -1 "$NVM_DIR/versions/node" 2>/dev/null | sort -rV); do`,
     `    if [ -x "$NVM_DIR/versions/node/$__soloe_dir/bin/${executable}" ]; then`,
@@ -267,6 +274,9 @@ export function buildWslAgentPathPrelude(executable: string): string {
     `if [ -z "$__soloe_agent_bin" ] && [ -s "$NVM_DIR/nvm.sh" ]; then`,
     `  . "$NVM_DIR/nvm.sh" >/dev/null 2>&1`,
     `  __soloe_agent_bin="$(command -v ${exe} 2>/dev/null)"`,
+    `  case "$__soloe_agent_bin" in`,
+    `    /mnt/[a-zA-Z]/*) __soloe_agent_bin="" ;;`,
+    `  esac`,
     `fi`,
     `if [ -z "$__soloe_agent_bin" ]; then`,
     `  printf '%s\\n' ${notFoundMsg} >&2`,
@@ -290,7 +300,7 @@ function buildWslAgentExecLine(
 
 function buildSoloeEnv(
   sessionId: SessionId,
-  runMode: 'windows' | 'wsl',
+  runMode: Session['runMode'],
   provider: 'claude_code' | 'codex' | undefined,
   ctx: SessionBuildContext
 ): Record<string, string> {

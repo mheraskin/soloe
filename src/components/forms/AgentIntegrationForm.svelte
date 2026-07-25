@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { ipc } from '../../lib/ipc';
   import { settings } from '../../stores/settings.svelte';
+  import { platform } from '../../stores/platform.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import type { AgentIntegrationStatus } from '@shared/types/ipc.js';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -66,6 +67,7 @@
     <AgentIntegrationGrid {status} onChange={(next) => (status = next)} />
   {/if}
 
+  {#if platform.current.supportsWsl}
   <div class="flex flex-col gap-1.5 rounded-md border border-border p-2.5">
     <div class="flex items-center gap-2">
       <Checkbox
@@ -84,6 +86,7 @@
       bridge URL changes.
     </p>
   </div>
+  {/if}
 
   <div class="flex flex-col gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5">
     <div class="flex items-center gap-2">

@@ -78,9 +78,21 @@ import type {
 } from '@shared/types/overview.js';
 import type {
   CloseDevToolsRequest,
+  DisableDeviceEmulationRequest,
+  EnableDeviceEmulationRequest,
   OpenDevToolsRequest,
-  SetDevToolsLayoutRequest
+  SetDevToolsLayoutRequest,
+  SetUserAgentRequest
 } from '@shared/types/browser.js';
+import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
+import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
+import type {
+  VaultDeleteRequest,
+  VaultGetSecretRequest,
+  VaultListRequest,
+  VaultSaveRequest,
+  VaultUpdateRequest
+} from '@shared/types/vault.js';
 import { TerminalOutputRouter } from './terminal-output-router';
 
 function unwrap<T>(r: IpcResult<T>): T {
@@ -108,7 +120,7 @@ const terminalOutputRouter = new TerminalOutputRouter(
   }
 );
 
-export const ipc = {
+export const backend = {
   sessions: {
     list: async () => unwrap(await c.sessions.list()),
     listArchived: async () => unwrap(await c.sessions.listArchived()),
@@ -159,6 +171,12 @@ export const ipc = {
     onEvent: (cb: (event: ObserverEvent) => void) => c.observer.onEvent(cb)
   },
   browser: {
+    enableDeviceEmulation: async (request: EnableDeviceEmulationRequest) =>
+      unwrap(await c.browser.enableDeviceEmulation(toIpcPayload(request))),
+    disableDeviceEmulation: async (request: DisableDeviceEmulationRequest) =>
+      unwrap(await c.browser.disableDeviceEmulation(toIpcPayload(request))),
+    setUserAgent: async (request: SetUserAgentRequest) =>
+      unwrap(await c.browser.setUserAgent(toIpcPayload(request))),
     openDevTools: async (request: OpenDevToolsRequest) =>
       unwrap(await c.browser.openDevTools(toIpcPayload(request))),
     setDevToolsLayout: async (request: SetDevToolsLayoutRequest) =>
@@ -167,6 +185,7 @@ export const ipc = {
       unwrap(await c.browser.closeDevTools(toIpcPayload(request)))
   },
   system: {
+    platform: async () => unwrap(await c.system.platform()),
     openPath: async (sessionId: SessionId) => unwrap(await c.system.openPath(sessionId)),
     saveText: async (request: { defaultPath?: string; content: string }) =>
       unwrap(await c.system.saveText(toIpcPayload(request))),
@@ -321,6 +340,17 @@ export const ipc = {
     askCancel: async (requestId: string) => unwrap(await c.overview.askCancel(requestId)),
     onChunk: (cb: (chunk: AskFollowUpChunk) => void) => c.overview.onChunk(cb)
   },
+  comments: {
+    onRpcRequest: (cb: (request: CommentsRpcRequest) => void) =>
+      c.comments.onRpcRequest(cb),
+    sendRpcResponse: (response: CommentsRpcResponse) =>
+      c.comments.sendRpcResponse(toIpcPayload(response))
+  },
+  diff: {
+    onRpcRequest: (cb: (request: DiffRpcRequest) => void) => c.diff.onRpcRequest(cb),
+    sendRpcResponse: (response: DiffRpcResponse) =>
+      c.diff.sendRpcResponse(toIpcPayload(response))
+  },
   features: {
     scan: async (request: FeatureScanRequest) =>
       unwrap(await c.features.scan(toIpcPayload(request))),
@@ -330,14 +360,40 @@ export const ipc = {
       unwrap(await c.features.setIssueStatus(toIpcPayload(request))),
     subscribe: async (request: {
       cwd: string;
-      runMode: 'windows' | 'wsl';
+      runMode: 'windows' | 'linux' | 'wsl';
       wslDistro?: string;
     }) => unwrap(await c.features.subscribe(toIpcPayload(request))),
     unsubscribe: async (request: {
       cwd: string;
-      runMode: 'windows' | 'wsl';
+      runMode: 'windows' | 'linux' | 'wsl';
       wslDistro?: string;
     }) => unwrap(await c.features.unsubscribe(toIpcPayload(request))),
     onChange: (cb: (event: FeatureChangeEvent) => void) => c.features.onChange(cb)
+  },
+  vault: {
+    list: async (request: VaultListRequest) =>
+      unwrap(await c.vault.list(toIpcPayload(request))),
+    save: async (request: VaultSaveRequest) =>
+      unwrap(await c.vault.save(toIpcPayload(request))),
+    update: async (request: VaultUpdateRequest) =>
+      unwrap(await c.vault.update(toIpcPayload(request))),
+    delete: async (request: VaultDeleteRequest) =>
+      unwrap(await c.vault.delete(toIpcPayload(request))),
+    getSecret: async (request: VaultGetSecretRequest) =>
+      unwrap(await c.vault.getSecret(toIpcPayload(request)))
   }
 };
+
+/**
+ * The renderer-facing backend Interface. Electron's preload bridge is the
+ * current Adapter; a Tauri Adapter can replace it without changing Svelte
+ * Modules or stores.
+ */
+export type RendererBackend = typeof backend;
+
+/** @deprecated Use `backend`; retained while existing callers migrate. */
+export const ipc = backend;
+
+export function hasBackendTransport(): boolean {
+  return typeof window !== 'undefined' && Boolean(window.soloe);
+}

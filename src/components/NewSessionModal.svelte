@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { RunMode, SessionDraft } from '@shared/types/sessions.js';
+  import { runModeLabel as labelForRunMode } from '@shared/platform.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import { modal } from '../stores/modal.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { platform } from '../stores/platform.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { validateDraft } from '../lib/sessions-helpers';
   import { Button } from '$lib/components/ui/button';
@@ -59,7 +61,7 @@
     if (!next) modal.close();
   }
 
-  let runModeLabel = $derived(modal.draft.runMode === 'wsl' ? 'WSL' : 'Windows / native');
+  let runModeLabel = $derived(labelForRunMode(modal.draft.runMode));
 </script>
 
 <Dialog.Root open={modal.open} {onOpenChange}>
@@ -92,7 +94,7 @@
           id="ses-cwd"
           type="text"
           required
-          placeholder={modal.draft.runMode === 'wsl' ? '/home/you/project' : 'C:\\Users\\you\\project'}
+          placeholder={modal.draft.runMode === 'windows' ? 'C:\\Users\\you\\project' : '/home/you/project'}
           value={modal.draft.cwd}
           oninput={(e) => setBase('cwd', (e.currentTarget as HTMLInputElement).value)}
         />
@@ -108,8 +110,12 @@
           >
             <Select.Trigger class="w-full">{runModeLabel}</Select.Trigger>
             <Select.Content>
-              <Select.Item value="windows" label="Windows / native">Windows / native</Select.Item>
-              <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+              {#if platform.current.platform === 'linux'}
+                <Select.Item value="linux" label="Linux">Linux</Select.Item>
+              {:else}
+                <Select.Item value="windows" label="Windows">Windows</Select.Item>
+                <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+              {/if}
             </Select.Content>
           </Select.Root>
         </div>

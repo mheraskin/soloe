@@ -21,13 +21,23 @@ export class TerminalOutputBatcher {
 
   push(terminalId: TerminalId, sessionId: SessionId, data: string): void {
     if (this.destroyed) return;
+    this.append(terminalId, sessionId, data);
+    this.scheduleFlush();
+  }
+
+  pushPrebatched(terminalId: TerminalId, sessionId: SessionId, data: string): void {
+    if (this.destroyed) return;
+    this.append(terminalId, sessionId, data);
+    this.flushTerminal(terminalId);
+  }
+
+  private append(terminalId: TerminalId, sessionId: SessionId, data: string): void {
     let buffer = this.buffers.get(terminalId);
     if (!buffer) {
       buffer = { sessionId, chunks: [] };
       this.buffers.set(terminalId, buffer);
     }
     buffer.chunks.push(data);
-    this.scheduleFlush();
   }
 
   flushTerminal(terminalId: TerminalId): void {

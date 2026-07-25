@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
-import * as pty from 'node-pty';
 import type {
   RunMode,
   Session,
@@ -31,11 +30,13 @@ import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
 import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
 import { detectUsageLimitPlainText, stripAnsi } from '../agents/UsageLimitDetector.js';
 import type { UsageLimitInfo } from '../agents/UsageLimitDetector.js';
+import { NodePtyProcessFactory } from './NodePtyProcessFactory.js';
+import type { PtyProcess, PtyProcessFactory } from './PtyProcess.js';
 
 interface TerminalInstance {
   terminalId: TerminalId;
   sessionId: SessionId;
-  pty: pty.IPty;
+  pty: PtyProcess;
   spec: SpawnSpec;
   runMode: RunMode;
   cols: number;
@@ -69,6 +70,7 @@ export interface PtyManagerOptions {
   bridgeInfo?: () => { url: string; token: string } | null;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
   replayBuffer?: TerminalReplayBuffer;
+  processFactory?: PtyProcessFactory;
 }
 
 export declare interface PtyManager {
@@ -86,12 +88,14 @@ export class PtyManager extends EventEmitter {
   private readonly agentSpawnQueues = new Map<string, Promise<void>>();
   private readonly pendingClaudeInputPersistence = new Set<SessionId>();
   private readonly replayBuffer: TerminalReplayBuffer;
+  private readonly processFactory: PtyProcessFactory;
   private disposed = false;
 
   constructor(private readonly opts: PtyManagerOptions) {
     super();
     this.baseEnv = opts.baseEnv ?? process.env;
     this.replayBuffer = opts.replayBuffer ?? new TerminalReplayBuffer();
+    this.processFactory = opts.processFactory ?? new NodePtyProcessFactory();
   }
 
   forwardBatchedOutput(events: TerminalOutputEvent[]): void {
@@ -140,16 +144,16 @@ export class PtyManager extends EventEmitter {
 
     const agentProvider = effectiveAgentProvider(session) ?? legacyAgentProvider(session);
     const release = agentProvider ? await this.acquireAgentSpawnSlot(agentProvider) : noop;
-    let proc: pty.IPty;
+    let proc: PtyProcess;
     try {
-      proc = pty.spawn(spec.file, spec.args, {
-        name: 'xterm-256color',
+      proc = await this.processFactory.spawn({
+        terminalId,
+        sessionId,
+        spec,
         cols,
         rows,
-        cwd: spec.cwd,
-        env: mergeEnv(this.baseEnv, spec.env),
-        useConpty: process.platform === 'win32'
-      } as pty.IPtyForkOptions);
+        env: mergeEnv(this.baseEnv, spec.env)
+      });
     } catch (err) {
       release();
       const message = errorMessage(err);
@@ -183,7 +187,11 @@ export class PtyManager extends EventEmitter {
     this.terminals.set(terminalId, instance);
 
     proc.onData((data) => {
-      this.opts.batcher.push(terminalId, sessionId, data);
+      if (this.processFactory.outputIsPrebatched) {
+        this.opts.batcher.pushPrebatched(terminalId, sessionId, data);
+      } else {
+        this.opts.batcher.push(terminalId, sessionId, data);
+      }
     });
 
     proc.onExit(({ exitCode, signal }) => {
@@ -290,6 +298,7 @@ export class PtyManager extends EventEmitter {
     this.opts.batcher.destroy();
     this.replayBuffer.clear();
     this.removeAllListeners();
+    await this.processFactory.dispose?.();
   }
 
   private async acquireAgentSpawnSlot(kind: AgentRuntimeProvider): Promise<() => void> {

@@ -15,6 +15,7 @@
     NotebookPen
   } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
+  import { platform } from '../../stores/platform.svelte';
   import type {
     DiffFontSizePref,
     ModelProvider,
@@ -27,6 +28,7 @@
   } from '@shared/types/settings.js';
   import { MODEL_CATALOG, modelCatalogFor } from '@shared/types/settings.js';
   import type { AgentRuntimeProvider, RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
+  import { runModeLabel } from '@shared/platform.js';
   import { reportError } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -42,8 +44,12 @@
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
   const diffFontSizes: DiffFontSizePref[] = [11, 12, 13, 14, 15, 16];
-  const runModes: RunMode[] = ['windows', 'wsl'];
-  const shells: ShellKind[] = ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom'];
+  let runModes = $derived<RunMode[]>(platform.current.availableRunModes);
+  let shells = $derived<ShellKind[]>(
+    platform.current.platform === 'linux'
+      ? ['auto', 'bash', 'zsh', 'pwsh', 'custom']
+      : ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']
+  );
   const newSessionKinds: { value: SessionLaunchKind; label: string }[] = [
     { value: 'terminal', label: 'Terminal' },
     { value: 'claude_code', label: 'Claude' },
@@ -666,14 +672,15 @@
           value={settings.current.defaults.runMode}
           onValueChange={(v) => setDefault('runMode', v)}
         >
-          <Select.Trigger class="w-full">{settings.current.defaults.runMode}</Select.Trigger>
+          <Select.Trigger class="w-full">{runModeLabel(settings.current.defaults.runMode)}</Select.Trigger>
           <Select.Content>
             {#each runModes as r (r)}
-              <Select.Item value={r} label={r}>{r}</Select.Item>
+              <Select.Item value={r} label={runModeLabel(r)}>{runModeLabel(r)}</Select.Item>
             {/each}
           </Select.Content>
         </Select.Root>
       </div>
+      {#if settings.current.defaults.runMode === 'wsl'}
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground" for="pref-wsl-distro">WSL distro</Label>
         <Input
@@ -684,6 +691,7 @@
           onchange={(e) => setDefault('wslDistro', (e.currentTarget as HTMLInputElement).value)}
         />
       </div>
+      {/if}
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground">Shell</Label>
         <Select.Root

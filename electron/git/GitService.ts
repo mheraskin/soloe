@@ -26,6 +26,7 @@ import type { RunMode } from '@shared/types/sessions.js';
 import { materializeReviewDiffs, parseUnifiedDiff } from './ReviewDiffMaterializer.js';
 import { UntrackedFileCounter } from './UntrackedFileCounter.js';
 import { worktreeHostPath } from '../runtime/wsl-paths.js';
+import { nativeRunMode } from '@shared/platform.js';
 import { runGitCommand } from './GitCommandRunner.js';
 import { worktreeIdentityKey } from '@shared/worktree-identity.js';
 
@@ -904,7 +905,7 @@ export class GitService {
     files: readonly string[]
   ): Promise<Map<string, { lines: number; binary: boolean }>> {
     try {
-      const runMode: RunMode = info.runMode === 'wsl' ? 'wsl' : 'windows';
+      const runMode: RunMode = info.runMode === 'wsl' ? 'wsl' : nativeRunMode();
       const hostRoot = worktreeHostPath(info.repoPath, runMode, info.wslDistro);
       return await this.untrackedFileCounter.measure(hostRoot, files);
     } catch {
@@ -1063,7 +1064,7 @@ export class GitService {
         try {
           listener({
             repoPath: info.repoPath,
-            runMode: info.runMode === 'wsl' ? 'wsl' : 'windows',
+            runMode: info.runMode === 'wsl' ? 'wsl' : nativeRunMode(),
             ...(info.wslDistro ? { wslDistro: info.wslDistro } : {})
           });
         } catch {
@@ -1107,7 +1108,7 @@ export class GitService {
 
   private clearUntrackedMeasurements(info: RepoInfo): void {
     try {
-      const runMode: RunMode = info.runMode === 'wsl' ? 'wsl' : 'windows';
+      const runMode: RunMode = info.runMode === 'wsl' ? 'wsl' : nativeRunMode();
       this.untrackedFileCounter.clearRoot(
         worktreeHostPath(info.repoPath, runMode, info.wslDistro)
       );
@@ -1153,7 +1154,7 @@ function repoResolutionKey(cwd: string, context: GitRepoContext): string {
 
 function repoInfoKey(info: RepoInfo): string {
   return worktreeIdentityKey(info.repoPath, {
-    runMode: info.runMode === 'wsl' ? 'wsl' : 'windows',
+    runMode: info.runMode === 'wsl' ? 'wsl' : nativeRunMode(),
     ...(info.wslDistro ? { wslDistro: info.wslDistro } : {})
   });
 }

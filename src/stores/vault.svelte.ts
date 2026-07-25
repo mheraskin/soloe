@@ -4,6 +4,7 @@ import type {
   VaultEntryUpdate,
   VaultSecret
 } from '../../shared/types/vault';
+import { backend } from '../lib/ipc';
 
 type CwdKey = string;
 
@@ -87,40 +88,41 @@ class VaultStore {
     const cwd = this.activeCwd;
     if (!cwd) return;
     this.byCwd = { ...this.byCwd, [cwd]: { ...this.cache(cwd), loading: true, error: null } };
-    const res = await window.soloe.vault.list({ cwd });
-    if (!res.ok) {
+    try {
+      const entries = await backend.vault.list({ cwd });
       this.byCwd = {
         ...this.byCwd,
-        [cwd]: { ...this.cache(cwd), loading: false, error: res.error }
+        [cwd]: { entries, loaded: true, loading: false, error: null }
       };
-      return;
+    } catch (err) {
+      this.byCwd = {
+        ...this.byCwd,
+        [cwd]: {
+          ...this.cache(cwd),
+          loading: false,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      };
     }
-    this.byCwd = {
-      ...this.byCwd,
-      [cwd]: { entries: res.value, loaded: true, loading: false, error: null }
-    };
   }
 
   async save(draft: VaultEntryDraft): Promise<VaultEntry> {
     const cwd = this.requireCwd();
-    const res = await window.soloe.vault.save({ cwd, draft });
-    if (!res.ok) throw new Error(res.error);
-    this.upsert(cwd, res.value);
-    return res.value;
+    const entry = await backend.vault.save({ cwd, draft });
+    this.upsert(cwd, entry);
+    return entry;
   }
 
   async update(id: string, patch: VaultEntryUpdate): Promise<VaultEntry> {
     const cwd = this.requireCwd();
-    const res = await window.soloe.vault.update({ cwd, id, patch });
-    if (!res.ok) throw new Error(res.error);
-    this.upsert(cwd, res.value);
-    return res.value;
+    const entry = await backend.vault.update({ cwd, id, patch });
+    this.upsert(cwd, entry);
+    return entry;
   }
 
   async delete(id: string): Promise<void> {
     const cwd = this.requireCwd();
-    const res = await window.soloe.vault.delete({ cwd, id });
-    if (!res.ok) throw new Error(res.error);
+    await backend.vault.delete({ cwd, id });
     const cur = this.cache(cwd);
     this.byCwd = {
       ...this.byCwd,
@@ -130,9 +132,7 @@ class VaultStore {
 
   async getSecret(id: string): Promise<VaultSecret> {
     const cwd = this.requireCwd();
-    const res = await window.soloe.vault.getSecret({ cwd, id });
-    if (!res.ok) throw new Error(res.error);
-    return res.value;
+    return backend.vault.getSecret({ cwd, id });
   }
 
   private upsert(cwd: string, entry: VaultEntry): void {

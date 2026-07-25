@@ -4,6 +4,7 @@ icon: build/icon.png
 directories:
   output: release
   buildResources: build
+beforeBuild: scripts/electron-builder-before-build.cjs
 files:
   - out/**/*
   - build/favicon.svg
@@ -16,8 +17,13 @@ extraResources:
     to: build/icon.ico
   - from: build/icon.png
     to: build/icon.png
-asarUnpack:
-  - node_modules/node-pty/**/*
+  # electron-vite bundles everything except these two runtime dependencies.
+  # Placing them beside app.asar makes them available through Node's normal
+  # parent node_modules lookup and keeps node-pty's native binary unpacked.
+  - from: node_modules/node-pty
+    to: node_modules/node-pty
+  - from: node_modules/smol-toml
+    to: node_modules/smol-toml
 win:
   icon: build/icon.ico
   target:
@@ -28,8 +34,17 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 linux:
+  icon: build/icon.png
+  category: Development
+  executableName: soloe
   target:
-    - AppImage
-mac:
-  target:
-    - dmg
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}
+deb:
+  maintainer: Mykhail Heraskin
+  packageCategory: devel

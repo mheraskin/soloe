@@ -46,6 +46,33 @@ describe('ProjectStore — create/list', () => {
 });
 
 describe('ProjectStore — open', () => {
+  it('uses native Linux project scope and case-sensitive paths', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-linux-open-'));
+    const upper = path.join(root, 'Project');
+    const lower = path.join(root, 'project');
+    try {
+      await fs.mkdir(upper);
+      await fs.mkdir(lower);
+      const store = new ProjectStore(storePath, { platform: 'linux' });
+      const a = await store.create(draft({ name: 'Upper', path: upper, defaultRunMode: 'linux' }));
+      const b = await store.open({ path: lower, defaultRunMode: 'linux' });
+      expect(b.id).not.toBe(a.id);
+      const suggestions = await store.suggestPaths('', undefined, 20);
+      expect(suggestions.scope).toBe('linux');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects Windows and WSL project runtimes in the Linux build', async () => {
+    const store = new ProjectStore(storePath, { platform: 'linux' });
+    await expect(store.create(draft({ defaultRunMode: 'windows' }))).rejects.toThrow(
+      /not available on linux/
+    );
+    await expect(store.create(draft({ defaultRunMode: 'wsl', defaultWslDistro: 'Ubuntu' })))
+      .rejects.toThrow(/not available on linux/);
+  });
+
   it('infers the project name from the opened path', async () => {
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-open-'));
     try {
@@ -364,6 +391,26 @@ describe.runIf(hasGit)('ProjectStore — detectFromPath', () => {
 });
 
 describe('ProjectStore — suggestPaths', () => {
+  it('discovers native Linux directories with case-sensitive identities', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-linux-suggest-'));
+    try {
+      const upper = path.join(root, 'Project');
+      const lower = path.join(root, 'project');
+      await fs.mkdir(upper);
+      await fs.mkdir(lower);
+      const store = new ProjectStore(storePath, { platform: 'linux' });
+      await store.create(draft({ name: 'Upper', path: upper, defaultRunMode: 'linux' }));
+      await store.create(draft({ name: 'Lower', path: lower, defaultRunMode: 'linux' }));
+      const result = await store.suggestPaths(`${root}/`, { scope: 'linux' });
+      expect(result.scope).toBe('linux');
+      expect(result.suggestions.some((item) => item.path === upper)).toBe(true);
+      expect(result.suggestions.some((item) => item.path === lower)).toBe(true);
+      expect(result.suggestions.every((item) => item.scope === 'linux')).toBe(true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('returns fuzzy known project matches and directory matches in windows scope', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-suggest-'));
     try {

@@ -1,3 +1,14 @@
+import type { RunMode } from './sessions.js';
+
+export type HostPlatform = 'windows' | 'linux';
+
+export interface HostPlatformInfo {
+  platform: HostPlatform;
+  defaultRunMode: Exclude<RunMode, 'wsl'>;
+  availableRunModes: RunMode[];
+  supportsWsl: boolean;
+}
+
 export type SystemUsageDetail = 'summary' | 'wsl';
 
 export interface SystemUsageRequest {

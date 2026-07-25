@@ -2,6 +2,7 @@
   import { PlugZap } from '@lucide/svelte';
   import { agentIntegrationSetup } from '../stores/agent-integration-setup.svelte';
   import { confirmStore } from '../stores/confirm.svelte';
+  import { platform } from '../stores/platform.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import AgentIntegrationGrid from './AgentIntegrationGrid.svelte';
@@ -50,9 +51,9 @@
       </Dialog.Title>
       <Dialog.Description class="text-sm text-foreground">
         Connect Claude and Codex on each environment Soloe should observe. Hooks live in each
-        environment's home directory and are not shared between Windows and WSL. Soloe will
-        re-probe the WSL bridge URL on every launch and rewrite agent configs if it drifted (you
-        can opt out in Settings → Integration).
+        environment's home directory. {platform.current.supportsWsl
+          ? 'Windows and WSL environments are configured separately. Soloe re-probes the WSL bridge URL on every launch.'
+          : 'On Linux, Soloe configures the agents in your native home directory.'}
       </Dialog.Description>
     </Dialog.Header>
 

@@ -12,6 +12,7 @@ import type {
   TerminalLaunch
 } from '@shared/types/sessions.js';
 import { isSessionColor } from '@shared/types/sessions.js';
+import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.js';
 
 interface StorageShape {
   version: number;
@@ -40,7 +41,10 @@ export class SessionStore {
   private cache: Map<SessionId, Session> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly platform?: SupportedHostPlatform
+  ) {}
 
   async init(): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
@@ -93,7 +97,7 @@ export class SessionStore {
       autoNamed: durableDraft.autoNamed ?? true,
       hasUserInput
     } as Session;
-    validateSession(session);
+    validateSession(session, this.platform);
     this.cache!.set(id, session);
     await this.persist();
     return session;
@@ -109,7 +113,7 @@ export class SessionStore {
       id: existing.id,
       createdAt: existing.createdAt
     } as Session;
-    validateSession(merged);
+    validateSession(merged, this.platform);
     this.cache!.set(id, merged);
     await this.persist();
     return merged;
@@ -211,7 +215,7 @@ export class SessionStore {
       await this.backupCorruptFile(raw);
       return new Map();
     }
-    const sessions = parseStorage(parsed);
+    const sessions = parseStorage(parsed, this.platform);
     return new Map(sessions.map((s) => [s.id, s]));
   }
 
@@ -264,42 +268,45 @@ function slugify(input: string): string {
     .slice(0, 48);
 }
 
-function parseStorage(raw: unknown): Session[] {
+function parseStorage(raw: unknown, platform?: SupportedHostPlatform): Session[] {
   if (!isObject(raw)) return [];
   const sessionsRaw = raw['sessions'];
   if (!Array.isArray(sessionsRaw)) return [];
   const valid: Session[] = [];
   for (const candidate of sessionsRaw) {
-    const session = parseSession(candidate);
+    const session = parseSession(candidate, platform);
     if (session) valid.push(session);
   }
   return valid;
 }
 
-function parseSession(raw: unknown): Session | null {
+function parseSession(raw: unknown, platform?: SupportedHostPlatform): Session | null {
   if (!isObject(raw)) return null;
   if (typeof raw['id'] !== 'string') return null;
   if (typeof raw['name'] !== 'string') return null;
   if (typeof raw['cwd'] !== 'string') return null;
   const runMode = raw['runMode'];
-  if (runMode !== 'windows' && runMode !== 'wsl') return null;
+  if (runMode !== 'windows' && runMode !== 'linux' && runMode !== 'wsl') return null;
   if (typeof raw['createdAt'] !== 'string') return null;
   if (typeof raw['lastUsedAt'] !== 'string') return null;
   const session = migrateRawSession(raw);
   if (!session) return null;
   try {
-    validateSession(session);
+    validateSession(session, platform);
     return session;
   } catch {
     return null;
   }
 }
 
-function validateSession(s: Session): void {
+function validateSession(s: Session, platform?: SupportedHostPlatform): void {
   if (!s.name.trim()) throw new Error('Session name is required');
   if (!s.cwd.trim()) throw new Error('Session cwd is required');
   if (s.runMode === 'wsl' && !s.wslDistro) {
     throw new Error('wslDistro is required when runMode is wsl');
+  }
+  if (platform && !supportedRunModes(platform).includes(s.runMode)) {
+    throw new Error(`Run mode ${s.runMode} is not available on ${platform}`);
   }
   if (s.projectId !== undefined && (typeof s.projectId !== 'string' || !s.projectId.trim())) {
     throw new Error('projectId must be a non-empty string when set');

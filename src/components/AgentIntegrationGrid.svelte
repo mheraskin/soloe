@@ -48,7 +48,7 @@
   const bulkLabel = $derived(allInstalled ? 'Update everywhere' : 'Set up everywhere');
 
   function sameHost(a: AgentIntegrationHost, b: AgentIntegrationHost): boolean {
-    return a.kind === b.kind && (a.kind === 'windows' || a.distro === b.distro);
+    return a.kind === b.kind && (a.kind !== 'wsl' || a.distro === b.distro);
   }
 
   function busyKey(host: AgentIntegrationHost, provider: Provider): string {
@@ -61,7 +61,7 @@
 
   function hostKey(host: AgentIntegrationHost): AgentIntegrationHostKey {
     if (host.kind === 'wsl' && host.distro) return { kind: 'wsl', distro: host.distro };
-    return { kind: 'windows' };
+    return host.kind === 'linux' ? { kind: 'linux' } : { kind: 'windows' };
   }
 
   function providerLabel(provider: Provider): string {

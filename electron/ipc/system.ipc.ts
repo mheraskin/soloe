@@ -7,6 +7,7 @@ import type { SystemUsageRequest, SystemUsageSnapshot } from '@shared/types/syst
 import type { SessionStore } from '../sessions/SessionStore.js';
 import { ResourceUsageObservation } from '../diagnostics/ResourceUsageObservation.js';
 import { WslUsageSampler } from '../diagnostics/WslUsageSampler.js';
+import { platformInfo } from '@shared/platform.js';
 import { ipcInvoke } from './result.js';
 
 export interface SystemIpcOptions {
@@ -32,6 +33,10 @@ export class SystemIpc {
   register(): void {
     if (this.registered) return;
     this.registered = true;
+
+    ipcMain.handle(IpcChannels.system.platform, () =>
+      ipcInvoke(async () => platformInfo())
+    );
 
     ipcMain.handle(IpcChannels.system.openPath, (_e, sessionId: SessionId) =>
       ipcInvoke(async () => {
@@ -80,6 +85,7 @@ export class SystemIpc {
 
   dispose(): void {
     if (!this.registered) return;
+    ipcMain.removeHandler(IpcChannels.system.platform);
     ipcMain.removeHandler(IpcChannels.system.openPath);
     ipcMain.removeHandler(IpcChannels.system.saveText);
     ipcMain.removeHandler(IpcChannels.system.openExternal);
@@ -214,6 +220,7 @@ function round(value: number, digits: number): number {
 }
 
 function listWslDistros(): Promise<string[]> {
+  if (process.platform !== 'win32') return Promise.resolve([]);
   return new Promise((resolve) => {
     const child = spawn('wsl.exe', ['-l', '-q'], { stdio: ['ignore', 'pipe', 'ignore'] });
     let stdout = '';

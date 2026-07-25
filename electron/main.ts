@@ -10,6 +10,7 @@ import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
 import { ShellDetector } from './terminal/ShellDetector.js';
 import { TerminalOutputBatcher } from './terminal/TerminalOutputBatcher.js';
 import { PtyManager } from './terminal/PtyManager.js';
+import { selectTerminalBackend } from './terminal/TerminalBackend.js';
 import { SettingsStore } from './settings/SettingsStore.js';
 import { ProjectStore } from './projects/ProjectStore.js';
 import { NotesStore } from './notes/NotesStore.js';
@@ -25,7 +26,8 @@ import { DiffBridge } from './agents/DiffBridge.js';
 import { resolveDiffTarget } from './agents/DiffTargetResolver.js';
 import { BridgePersistence, type BridgeConfig } from './integrations/BridgePersistence.js';
 import { Notifier } from './notify/Notifier.js';
-import { WindowsCommandBuilder } from './runtime/WindowsCommandBuilder.js';
+import { NativeCommandBuilder } from './runtime/WindowsCommandBuilder.js';
+import { hostPlatform } from '@shared/platform.js';
 import { WslCommandBuilder } from './runtime/WslCommandBuilder.js';
 import { GitService } from './git/GitService.js';
 import { WorktreeFileIndex } from './files/WorktreeFileIndex.js';
@@ -199,13 +201,14 @@ async function setupServices(): Promise<AppServices> {
   const vaultDir = path.join(userDataPath, 'vault');
   const bridgePersistence = new BridgePersistence(bridgeFile);
 
-  const store = new SessionStore(sessionsFile);
+  const store = new SessionStore(sessionsFile, hostPlatform());
   await store.init();
-  const settings = new SettingsStore(settingsFile);
+  const settings = new SettingsStore(settingsFile, hostPlatform());
   await settings.init();
   const getBinaries = async () => (await settings.get()).binaries;
   const projects = new ProjectStore(projectsFile, {
-    gitBinary: (await settings.get()).binaries.git ?? 'git'
+    gitBinary: (await settings.get()).binaries.git ?? 'git',
+    platform: hostPlatform()
   });
   await projects.init();
   const notes = new NotesStore(notesDir);
@@ -231,7 +234,7 @@ async function setupServices(): Promise<AppServices> {
 
   const commandBuilder = new SessionCommandBuilder(
     new ShellDetector(),
-    new WindowsCommandBuilder(),
+    new NativeCommandBuilder(),
     new WslCommandBuilder()
   );
 
@@ -296,6 +299,15 @@ async function setupServices(): Promise<AppServices> {
   mcpInfo = startedInfo;
 
   let manager: PtyManager;
+  const terminalBackend = selectTerminalBackend({
+    appPath: app.getAppPath(),
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    log: (message, detail) => console.warn(message, detail)
+  });
+  console.info(
+    `[terminal] using ${terminalBackend.name} backend${terminalBackend.sidecarPath ? ` (${terminalBackend.sidecarPath})` : ''}`
+  );
   const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
     manager.forwardBatchedOutput(events);
   });
@@ -305,7 +317,8 @@ async function setupServices(): Promise<AppServices> {
     batcher,
     observer,
     bridgeInfo: getBridgeInfo,
-    getBinaries
+    getBinaries,
+    processFactory: terminalBackend.processFactory
   });
   const terminalIpc = new TerminalIpc({
     pty: manager,
@@ -381,7 +394,7 @@ async function setupServices(): Promise<AppServices> {
       if (res.rewritten.length > 0) {
         console.log(
           '[hooks] refreshed MCP URL for hosts:',
-          res.rewritten.map((h) => (h.kind === 'wsl' ? `wsl:${h.distro}` : 'windows')).join(', ')
+          res.rewritten.map((h) => (h.kind === 'wsl' ? `wsl:${h.distro}` : h.kind)).join(', ')
         );
       }
       for (const e of res.errors) {

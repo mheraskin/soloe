@@ -3,13 +3,13 @@ import * as path from 'node:path';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { InnerCommand } from './InnerCommand.js';
 
-export interface WindowsRunOptions {
+export interface NativeRunOptions {
   cwd: string;
   baseEnv: Record<string, string | undefined>;
 }
 
-export class WindowsCommandBuilder {
-  build(inner: InnerCommand, opts: WindowsRunOptions): SpawnSpec {
+export class NativeCommandBuilder {
+  build(inner: InnerCommand, opts: NativeRunOptions): SpawnSpec {
     const env = mergeEnv(opts.baseEnv, inner.env);
     const cwd = expandHome(opts.cwd);
     return {
@@ -21,6 +21,10 @@ export class WindowsCommandBuilder {
     };
   }
 }
+
+// Kept as a source-compatible alias for extensions and older tests. The
+// implementation is host-native and is used by both Windows and Linux.
+export class WindowsCommandBuilder extends NativeCommandBuilder {}
 
 function expandHome(cwd: string): string {
   if (cwd === '~') return os.homedir();

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
   DEFAULT_SETTINGS,
+  defaultSettingsForRunMode,
   MODEL_CATALOG,
   type ModelSelection,
   type QuickLaunchPreset,
@@ -11,11 +12,12 @@ import {
   type SettingsUpdate
 } from '@shared/types/settings.js';
 import { isAgentProvider } from '@shared/types/sessions.js';
+import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.js';
 
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
 const VALID_DIFF_FONT_SIZES = new Set([11, 12, 13, 14, 15, 16]);
-const VALID_RUN_MODES = new Set(['windows', 'wsl']);
+const VALID_RUN_MODES = new Set(['windows', 'linux', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
 const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
@@ -26,7 +28,14 @@ export class SettingsStore {
   private writeQueue: Promise<void> = Promise.resolve();
   private listeners = new Set<(s: Settings) => void>();
 
-  constructor(private readonly filePath: string) {}
+  private readonly defaults: Settings;
+
+  constructor(
+    private readonly filePath: string,
+    private readonly platform: SupportedHostPlatform = 'windows'
+  ) {
+    this.defaults = defaultSettingsForRunMode(platform === 'linux' ? 'linux' : 'wsl');
+  }
 
   async init(): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
@@ -57,7 +66,7 @@ export class SettingsStore {
       integrations: { ...this.cache!.integrations, ...(patch.integrations ?? {}) },
       notes: { ...this.cache!.notes, ...(patch.notes ?? {}) }
     };
-    validateSettings(next);
+    validateSettings(next, this.platform);
     this.cache = next;
     await this.persist();
     for (const l of this.listeners) {
@@ -81,7 +90,7 @@ export class SettingsStore {
       raw = await fs.readFile(this.filePath, 'utf8');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return clone(DEFAULT_SETTINGS);
+        return clone(this.defaults);
       }
       throw err;
     }
@@ -90,9 +99,9 @@ export class SettingsStore {
       parsed = JSON.parse(raw);
     } catch {
       await this.backupCorruptFile(raw);
-      return clone(DEFAULT_SETTINGS);
+      return clone(this.defaults);
     }
-    return parseSettings(parsed);
+    return parseSettings(parsed, this.defaults, this.platform);
   }
 
   private async backupCorruptFile(content: string): Promise<void> {
@@ -182,8 +191,12 @@ function cloneDefaultModels(): SettingsModels {
   return clone(DEFAULT_SETTINGS.models);
 }
 
-function parseSettings(raw: unknown): Settings {
-  if (!isObject(raw)) return clone(DEFAULT_SETTINGS);
+function parseSettings(
+  raw: unknown,
+  defaultsForHost: Settings = DEFAULT_SETTINGS,
+  platform: SupportedHostPlatform = 'windows'
+): Settings {
+  if (!isObject(raw)) return clone(defaultsForHost);
   const appearance = isObject(raw['appearance']) ? raw['appearance'] : {};
   const terminal = isObject(raw['terminal']) ? raw['terminal'] : {};
   const diff = isObject(raw['diff']) ? raw['diff'] : {};
@@ -216,7 +229,11 @@ function parseSettings(raw: unknown): Settings {
       pauseAutoResumeMinutes: pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes'])
     },
     defaults: {
-      runMode: pickEnum(defaults['runMode'], VALID_RUN_MODES, DEFAULT_SETTINGS.defaults.runMode) as Settings['defaults']['runMode'],
+      runMode: pickEnum(
+        defaults['runMode'],
+        new Set(supportedRunModes(platform)),
+        defaultsForHost.defaults.runMode
+      ) as Settings['defaults']['runMode'],
       shell: pickEnum(defaults['shell'], VALID_SHELLS, DEFAULT_SETTINGS.defaults.shell) as Settings['defaults']['shell'],
       cwd: typeof defaults['cwd'] === 'string' && defaults['cwd'] ? defaults['cwd'] : DEFAULT_SETTINGS.defaults.cwd,
       newSessionKind: pickSessionLaunchKind(defaults['newSessionKind']),
@@ -229,7 +246,8 @@ function parseSettings(raw: unknown): Settings {
     integrations: parseIntegrations(raw['integrations']),
     notes: parseNotes(raw['notes'])
   };
-  validateSettings(out);
+  if (out.defaults.runMode !== 'wsl') delete out.defaults.wslDistro;
+  validateSettings(out, platform);
   return out;
 }
 
@@ -332,7 +350,7 @@ function parseQuickLaunch(raw: unknown, defaultsSeeded: boolean): QuickLaunchPre
   return out;
 }
 
-function validateSettings(s: Settings): void {
+function validateSettings(s: Settings, platform: SupportedHostPlatform = 'windows'): void {
   if (s.version !== 1) throw new Error(`Unsupported settings version: ${s.version}`);
   if (!VALID_THEMES.has(s.appearance.theme)) throw new Error(`Invalid theme: ${s.appearance.theme}`);
   if (!VALID_TERMINAL_FONT_SIZES.has(s.terminal.fontSize)) {
@@ -355,6 +373,9 @@ function validateSettings(s: Settings): void {
     throw new Error('Invalid browser.pauseAutoResumeMinutes');
   }
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
+  if (!supportedRunModes(platform).includes(s.defaults.runMode)) {
+    throw new Error(`Run mode ${s.defaults.runMode} is not available on ${platform}`);
+  }
   if (!VALID_SHELLS.has(s.defaults.shell)) throw new Error(`Invalid shell: ${s.defaults.shell}`);
   if (!VALID_SESSION_LAUNCH_KINDS.has(s.defaults.newSessionKind)) {
     throw new Error(`Invalid newSessionKind: ${s.defaults.newSessionKind}`);

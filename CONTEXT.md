@@ -124,6 +124,14 @@ _Avoid_: Saved draft, autosave cache
 One bounded, freshness-qualified catalog of Worktree-relative files shared by the Files tree and file palette for one Worktree Identity.
 _Avoid_: File-search cache, repeated repository listing
 
+**Renderer Backend Interface**:
+The transport-neutral renderer seam through which Svelte Modules invoke backend behavior and subscribe to backend events.
+_Avoid_: Electron IPC wrapper, preload global
+
+**Renderer Backend Adapter**:
+One shell-specific implementation of the Renderer Backend Interface, such as the current Electron preload transport or a future Tauri transport.
+_Avoid_: Renderer backend, IPC implementation
+
 ## Relationships
 
 - A **Worktree** has at most one in-flight **Worktree Observation**
@@ -169,6 +177,7 @@ _Avoid_: File-search cache, repeated repository listing
 - A Feature Snapshot is materialized from exactly one **Feature Artifact Index** revision
 - One active **Feature Artifact Observation** exists per subscribed **Worktree Identity**, regardless of renderer count
 - A **Feature Artifact Observation** traverses only the fixed-depth semantic artifact grammar and publishes only to exact subscribed owners
+- Every Svelte Module crosses the **Renderer Backend Interface**; only a **Renderer Backend Adapter** may access shell-specific globals or transport primitives
 
 ## Example dialogue
 

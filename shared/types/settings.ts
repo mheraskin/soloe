@@ -201,3 +201,10 @@ export const DEFAULT_SETTINGS: Settings = {
   integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false },
   notes: { draftsPerWorktree: false }
 };
+
+export function defaultSettingsForRunMode(runMode: Exclude<RunMode, 'wsl'> | 'wsl'): Settings {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.defaults.runMode = runMode;
+  if (runMode !== 'wsl') delete settings.defaults.wslDistro;
+  return settings;
+}
