@@ -59,6 +59,9 @@
   let findOpen = $state(false);
   let findQuery = $state('');
   let ready = $state(false);
+  let loadingLabel = $derived(
+    sessions.runtime[sessionId]?.status === 'starting' ? 'Starting' : 'Restoring terminal'
+  );
   // Floating "Ask Agent" chip state. We snapshot the selected text into
   // `chipText` at mouseup time and keep the chip visible from that snapshot
   // — not from `term.hasSelection()`. Claude's TUI mode redraws the screen
@@ -814,7 +817,7 @@
           </span>
         </span>
         <span class="text-[10px] font-medium tracking-[0.18em] text-muted-foreground/80 uppercase">
-          Starting
+          {loadingLabel}
         </span>
       </div>
     </div>
