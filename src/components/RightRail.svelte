@@ -210,6 +210,7 @@
     const targetContent = window.innerWidth - event.clientX - ICON_COL_WIDTH;
     const paneCount = openTabs.length >= 2 ? 2 : 1;
     size = { ...size, railWidth: clampTotal(targetContent, paneCount) };
+    publishRailLayout();
   }
 
   function startSplitterResize(event: PointerEvent) {
@@ -229,6 +230,11 @@
     const usable = contentRight - contentLeft - SPLITTER;
     if (usable <= 0) return;
     size = { ...size, splitRatio: clampSplitRatio((event.clientX - contentLeft) / usable) };
+    publishRailLayout();
+  }
+
+  function publishRailLayout(): void {
+    window.dispatchEvent(new CustomEvent('soloe:rail-layout'));
   }
 
   function beginRailResize(
@@ -258,6 +264,7 @@
       }
       if (finishRailResize === finish) finishRailResize = null;
       window.dispatchEvent(new CustomEvent('soloe:rail-resize-end'));
+      publishRailLayout();
       persistSize();
     };
     finishRailResize = finish;

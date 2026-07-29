@@ -53,6 +53,41 @@ describe('TerminalFitController', () => {
     expect(cancelFrame).toHaveBeenCalledWith(7);
     expect(terminal.refresh).not.toHaveBeenCalled();
   });
+
+  it('coalesces layout fits into the next frame and reports the final size', () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const terminal = { cols: 80, rows: 24, refresh: vi.fn() };
+    const fit = {
+      fit: vi.fn(() => {
+        terminal.cols = 132;
+        terminal.rows = 46;
+      })
+    };
+    const onFit = vi.fn();
+    const controller = new TerminalFitController(
+      (callback) => {
+        const handle = nextFrame++;
+        frames.set(handle, callback);
+        return handle;
+      },
+      (handle) => {
+        frames.delete(handle);
+      }
+    );
+
+    controller.scheduleFit(terminal, fit, () => true, onFit);
+    controller.scheduleFit(terminal, fit, () => true, onFit);
+
+    expect(frames.size).toBe(1);
+    expect(fit.fit).not.toHaveBeenCalled();
+    const scheduled = frames.entries().next().value as [number, FrameRequestCallback];
+    frames.delete(scheduled[0]);
+    scheduled[1](0);
+
+    expect(fit.fit).toHaveBeenCalledOnce();
+    expect(onFit).toHaveBeenCalledWith({ cols: 132, rows: 46 });
+  });
 });
 
 describe('deferTerminalDispose', () => {

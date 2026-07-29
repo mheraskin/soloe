@@ -101,9 +101,10 @@ export class BrowserIpc {
             throw new Error('owning BrowserWindow not found');
           }
 
+          const bounds = nativeViewBounds(request.bounds, event.sender.getZoomFactor());
           const existing = this.hosts.get(request.webContentsId);
           if (existing) {
-            existing.view.setBounds(roundBounds(request.bounds));
+            existing.view.setBounds(bounds);
             existing.view.setVisible(true);
             return true as const;
           }
@@ -129,7 +130,7 @@ export class BrowserIpc {
           });
           view.setBackgroundColor('#1e1e1e');
           win.contentView.addChildView(view);
-          view.setBounds(roundBounds(request.bounds));
+          view.setBounds(bounds);
 
           const onTargetDestroyed = () => this.teardownHost(request.webContentsId);
           const onWindowClosed = () => this.teardownHost(request.webContentsId);
@@ -154,11 +155,15 @@ export class BrowserIpc {
 
     ipcMain.handle(
       IpcChannels.browser.setDevToolsLayout,
-      (_event, request: SetDevToolsLayoutRequest) =>
+      (event, request: SetDevToolsLayoutRequest) =>
         ipcInvoke(() => {
           const host = this.hosts.get(request.webContentsId);
           if (!host) return true as const;
-          if (request.bounds) host.view.setBounds(roundBounds(request.bounds));
+          if (request.bounds) {
+            host.view.setBounds(
+              nativeViewBounds(request.bounds, event.sender.getZoomFactor())
+            );
+          }
           if (request.visible !== undefined) host.view.setVisible(request.visible);
           return true as const;
         })
@@ -239,11 +244,18 @@ export class BrowserIpc {
   }
 }
 
-function roundBounds(bounds: DevToolsBounds): DevToolsBounds {
+function nativeViewBounds(
+  bounds: DevToolsBounds,
+  rendererZoomFactor: number
+): DevToolsBounds {
+  const scale =
+    Number.isFinite(rendererZoomFactor) && rendererZoomFactor > 0
+      ? rendererZoomFactor
+      : 1;
   return {
-    x: Math.round(bounds.x),
-    y: Math.round(bounds.y),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height))
+    x: Math.round(bounds.x * scale),
+    y: Math.round(bounds.y * scale),
+    width: Math.max(0, Math.round(bounds.width * scale)),
+    height: Math.max(0, Math.round(bounds.height * scale))
   };
 }

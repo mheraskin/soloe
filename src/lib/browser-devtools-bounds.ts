@@ -281,9 +281,13 @@ const browserDevToolsEnvironment: BrowserDevToolsEnvironment = {
       : new ResizeObserver(invalidate);
     observer?.observe(host);
     window.addEventListener('resize', invalidate);
+    window.addEventListener('scroll', invalidate, true);
+    window.addEventListener('soloe:rail-layout', invalidate);
     return () => {
       observer?.disconnect();
       window.removeEventListener('resize', invalidate);
+      window.removeEventListener('scroll', invalidate, true);
+      window.removeEventListener('soloe:rail-layout', invalidate);
     };
   },
   afterLayout: () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))

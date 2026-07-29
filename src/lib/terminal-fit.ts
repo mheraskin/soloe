@@ -12,7 +12,8 @@ type RequestFrame = (callback: FrameRequestCallback) => number;
 type CancelFrame = (handle: number) => void;
 
 export class TerminalFitController {
-  private frame: number | null = null;
+  private redrawFrame: number | null = null;
+  private scheduledFitFrame: number | null = null;
   private generation = 0;
 
   constructor(
@@ -28,21 +29,54 @@ export class TerminalFitController {
     canRedraw: () => boolean = () => true
   ): { cols: number; rows: number } {
     fitAddon.fit();
-    this.cancel();
+    this.cancelRedraw();
     const generation = this.generation;
-    this.frame = this.requestFrame(() => {
-      this.frame = null;
+    this.redrawFrame = this.requestFrame(() => {
+      this.redrawFrame = null;
       if (generation !== this.generation || !canRedraw() || terminal.rows <= 0) return;
       terminal.refresh(0, terminal.rows - 1);
     });
     return { cols: terminal.cols, rows: terminal.rows };
   }
 
+  scheduleFit(
+    terminal: TerminalFitTarget,
+    fitAddon: FitAddonTarget,
+    canFit: () => boolean = () => true,
+    onFit: (size: { cols: number; rows: number }) => void = () => {},
+    onError: (error: unknown) => void = () => {}
+  ): void {
+    if (this.scheduledFitFrame !== null) return;
+    this.cancelRedraw();
+    const generation = this.generation;
+    this.scheduledFitFrame = this.requestFrame(() => {
+      this.scheduledFitFrame = null;
+      if (generation !== this.generation || !canFit()) return;
+      try {
+        onFit(this.fit(terminal, fitAddon, canFit));
+      } catch (error) {
+        onError(error);
+      }
+    });
+  }
+
   cancel(): void {
     this.generation += 1;
-    if (this.frame === null) return;
-    this.cancelFrame(this.frame);
-    this.frame = null;
+    if (this.scheduledFitFrame !== null) {
+      this.cancelFrame(this.scheduledFitFrame);
+      this.scheduledFitFrame = null;
+    }
+    if (this.redrawFrame !== null) {
+      this.cancelFrame(this.redrawFrame);
+      this.redrawFrame = null;
+    }
+  }
+
+  private cancelRedraw(): void {
+    this.generation += 1;
+    if (this.redrawFrame === null) return;
+    this.cancelFrame(this.redrawFrame);
+    this.redrawFrame = null;
   }
 }
 

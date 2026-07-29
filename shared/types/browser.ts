@@ -20,9 +20,9 @@ export interface SetUserAgentRequest {
   userAgent: string | null;
 }
 
-// Bounds for the embedded DevTools host, in DIP coordinates relative to the
-// owning BrowserWindow's content area — same coordinate system the renderer
-// gets back from getBoundingClientRect().
+// Bounds for the embedded DevTools host in renderer CSS pixels, relative to
+// the owning BrowserWindow's content area. Main converts these to native view
+// coordinates using the renderer WebContents zoom factor.
 export interface DevToolsBounds {
   x: number;
   y: number;

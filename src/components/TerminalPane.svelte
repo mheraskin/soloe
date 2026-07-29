@@ -736,54 +736,46 @@
     void attachRenderer(currentTerm);
     document.fonts.addEventListener('loadingdone', repaintFontAtlas);
     repaintFontAtlas();
+    const canFit = () =>
+      visible &&
+      term === currentTerm &&
+      fit === currentFit &&
+      host === currentHost &&
+      currentHost.isConnected;
+    const scheduleFit = () => {
+      terminalFit.scheduleFit(
+        currentTerm,
+        currentFit,
+        canFit,
+        ({ cols, rows }) => {
+          void ipc.terminal.resize(terminalId, cols, rows).catch(() => {});
+        },
+        (err) => {
+          console.warn('[DEBUG-xterm] scheduled layout fit failed', {
+            terminalId,
+            sessionId,
+            err
+          });
+        }
+      );
+    };
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry || !visible || term !== currentTerm) return;
       const { width, height } = entry.contentRect;
       if (width < 4 || height < 4) return;
-      try {
-        terminalFit.fit(
-          currentTerm,
-          currentFit,
-          () =>
-            visible &&
-            term === currentTerm &&
-            fit === currentFit &&
-            host === currentHost &&
-            currentHost.isConnected
-        );
-        void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
-      } catch (err) {
-        console.warn('[DEBUG-xterm] resize observer fit failed', { terminalId, sessionId, err });
-      }
+      scheduleFit();
     });
     ro.observe(currentHost);
+    window.addEventListener('soloe:rail-layout', scheduleFit);
     if (renderer && 'clearTextureAtlas' in renderer) {
       renderer.clearTextureAtlas();
     }
     currentTerm.refresh(0, currentTerm.rows - 1);
-    requestAnimationFrame(() => {
-      if (!visible || term !== currentTerm) return;
-      const rect = currentHost.getBoundingClientRect();
-      if (rect.width < 4 || rect.height < 4) return;
-      try {
-        terminalFit.fit(
-          currentTerm,
-          currentFit,
-          () =>
-            visible &&
-            term === currentTerm &&
-            fit === currentFit &&
-            host === currentHost &&
-            currentHost.isConnected
-        );
-        void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
-      } catch (err) {
-        console.warn('[DEBUG-xterm] visible fit failed', { terminalId, sessionId, err });
-      }
-    });
+    scheduleFit();
     return () => {
       ro.disconnect();
+      window.removeEventListener('soloe:rail-layout', scheduleFit);
       terminalFit.cancel();
       document.fonts.removeEventListener('loadingdone', repaintFontAtlas);
       try {

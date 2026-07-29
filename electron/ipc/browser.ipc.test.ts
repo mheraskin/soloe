@@ -27,6 +27,7 @@ const electronMocks = vi.hoisted(() => {
   const targets = new Map<number, any>();
   const views: any[] = [];
   let currentWindow: any = null;
+  let rendererZoomFactor = 1;
 
   class FakeView {
     setBackgroundColor = vi.fn();
@@ -77,6 +78,8 @@ const electronMocks = vi.hoisted(() => {
     createWindow,
     setCurrentWindow: (window: any) => { currentWindow = window; },
     getCurrentWindow: () => currentWindow,
+    setRendererZoomFactor: (factor: number) => { rendererZoomFactor = factor; },
+    rendererSender: () => ({ getZoomFactor: () => rendererZoomFactor }),
     removeHandler: vi.fn()
   };
 });
@@ -104,6 +107,7 @@ beforeEach(() => {
   electronMocks.handlers.clear();
   electronMocks.targets.clear();
   electronMocks.views.length = 0;
+  electronMocks.setRendererZoomFactor(1);
   electronMocks.removeHandler.mockClear();
 });
 
@@ -156,14 +160,47 @@ describe('BrowserIpc DevTools ownership', () => {
     );
     ipc.dispose();
   });
+
+  it('converts zoomed renderer CSS bounds to native view bounds', async () => {
+    const window = electronMocks.createWindow();
+    electronMocks.setCurrentWindow(window);
+    electronMocks.setRendererZoomFactor(1.5);
+    electronMocks.createTarget(1);
+    const ipc = new BrowserIpc();
+    ipc.register();
+
+    await invokeOpen(1, { x: 10, y: 20, width: 800, height: 300 });
+    const view = electronMocks.views[0];
+    expect(view.setBounds).toHaveBeenLastCalledWith({
+      x: 15,
+      y: 30,
+      width: 1200,
+      height: 450
+    });
+
+    await invokeLayout({
+      webContentsId: 1,
+      bounds: { x: 12, y: 18, width: 720, height: 260 }
+    });
+    expect(view.setBounds).toHaveBeenLastCalledWith({
+      x: 18,
+      y: 27,
+      width: 1080,
+      height: 390
+    });
+    ipc.dispose();
+  });
 });
 
-async function invokeOpen(webContentsId: number): Promise<void> {
+async function invokeOpen(
+  webContentsId: number,
+  bounds = { x: 0, y: 0, width: 800, height: 300 }
+): Promise<void> {
   const handler = electronMocks.handlers.get(IpcChannels.browser.openDevTools);
   if (!handler) throw new Error('openDevTools handler not registered');
   const result = await handler(
-    { sender: {} },
-    { webContentsId, bounds: { x: 0, y: 0, width: 800, height: 300 } }
+    { sender: electronMocks.rendererSender() },
+    { webContentsId, bounds }
   );
   expect(result).toEqual({ ok: true, value: true });
 }
@@ -175,6 +212,6 @@ async function invokeLayout(request: {
 }): Promise<void> {
   const handler = electronMocks.handlers.get(IpcChannels.browser.setDevToolsLayout);
   if (!handler) throw new Error('setDevToolsLayout handler not registered');
-  const result = await handler({ sender: {} }, request);
+  const result = await handler({ sender: electronMocks.rendererSender() }, request);
   expect(result).toEqual({ ok: true, value: true });
 }

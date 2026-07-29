@@ -143,6 +143,40 @@ describe('BrowserDevToolsBoundsSync', () => {
     expect(publish).toHaveBeenCalledTimes(2);
     expect(publish).toHaveBeenLastCalledWith(7, { bounds: rect });
   });
+
+  it('tracks position-only changes announced by rail layout events', () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    class TestResizeObserver {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const handle = nextFrame++;
+      frames.set(handle, callback);
+      return handle;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      frames.delete(handle);
+    });
+    vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    const sync = new BrowserDevToolsBoundsSync({ publish });
+
+    try {
+      sync.activate(7, host, rect);
+      flushNextFrame(frames);
+      expect(publish).not.toHaveBeenCalled();
+
+      rect = { ...rect, x: 45 };
+      window.dispatchEvent(new CustomEvent('soloe:rail-layout'));
+      expect(frames.size).toBe(1);
+      flushNextFrame(frames);
+      expect(publish).toHaveBeenCalledWith(7, { bounds: rect });
+    } finally {
+      sync.deactivate();
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('BrowserDevToolsViewController', () => {
@@ -223,6 +257,13 @@ async function settle(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function flushNextFrame(frames: Map<number, FrameRequestCallback>): void {
+  const entry = frames.entries().next().value as [number, FrameRequestCallback] | undefined;
+  if (!entry) return;
+  frames.delete(entry[0]);
+  entry[1](0);
 }
 
 function createPublisher() {
