@@ -16,7 +16,6 @@ const { listTree, readFile, writeFile } = vi.hoisted(() => ({
     relativePath,
     content: `${wslDistro ?? 'native'} content`,
     binary: false,
-    truncated: false,
     size: 16
   })),
   writeFile: vi.fn(async () => true)
@@ -103,27 +102,6 @@ describe('FilesStore Worktree Identity', () => {
     expect(await store.openFileAt(scope, 'second.ts', { discardDirty: true })).toBe(true);
     expect(store.openFileFor(scope)?.relativePath).toBe('second.ts');
     expect(readFile).toHaveBeenCalledTimes(2);
-  });
-
-  it('preserves an explicit bounded-preview marker from the file service', async () => {
-    readFile.mockResolvedValueOnce({
-      relativePath: 'large.log',
-      content: 'preview content',
-      binary: false,
-      truncated: true,
-      size: 1_000_000
-    });
-    const scope = createFilesScope(cwd, { runMode: 'windows' });
-
-    await store.openFileAt(scope, 'large.log');
-
-    expect(store.openFileFor(scope)).toEqual(expect.objectContaining({
-      relativePath: 'large.log',
-      content: 'preview content',
-      truncated: true,
-      size: 1_000_000
-    }));
-    expect(store.dirtyFor(scope)).toBe(false);
   });
 
   it('reuses tree and unsaved file state when the Files Rail Surface remounts', async () => {

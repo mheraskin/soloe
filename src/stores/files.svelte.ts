@@ -87,10 +87,7 @@ export class FilesStore {
 
   dirtyFor(scope: FilesScope): boolean {
     const open = this.openFilesByCwd[worktreeScopeKey(scope)];
-    return open !== undefined
-      && !open.binary
-      && !open.truncated
-      && open.content !== open.baseline;
+    return open !== undefined && !open.binary && open.content !== open.baseline;
   }
 
   async loadTree(scope: FilesScope, opts: { force?: boolean } = {}): Promise<void> {
@@ -168,8 +165,7 @@ export class FilesStore {
       // response so we don't overwrite the newer pending state.
       const stillCurrent = this.openFilesByCwd[key]?.relativePath === relativePath;
       if (!stillCurrent) return false;
-      const truncated =
-        value.truncated ?? (value.size > 0 && value.content.length === 0 && !value.binary);
+      const truncated = value.size > 0 && value.content.length === 0 && !value.binary;
       this.patchOpen(key, {
         cwd: scope.cwd,
         relativePath: value.relativePath,
@@ -200,7 +196,7 @@ export class FilesStore {
   setContent(scope: FilesScope, content: string): void {
     const key = worktreeScopeKey(scope);
     const current = this.openFilesByCwd[key];
-    if (!current || current.truncated) return;
+    if (!current) return;
     if (current.content === content) return;
     this.patchOpen(key, { ...current, content });
   }
@@ -217,7 +213,7 @@ export class FilesStore {
   async save(scope: FilesScope): Promise<void> {
     const key = worktreeScopeKey(scope);
     const open = this.openFilesByCwd[key];
-    if (!open || open.binary || open.truncated || open.saving) return;
+    if (!open || open.binary || open.saving) return;
     if (open.content === open.baseline) return;
     this.patchOpen(key, { ...open, saving: true, error: null });
     try {
