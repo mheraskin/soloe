@@ -660,6 +660,14 @@ class GitStore {
         }
       })
     );
+    this.detachers.push(
+      ipc.connection.onReconnect(() => {
+        for (const [key, intent] of this.sessionIntents) {
+          this.publishObservationDemand(intent, true);
+          this.refreshCoordinator.request(key, { kind: 'manual' });
+        }
+      })
+    );
 
     // Pause polling when the Electron window is hidden/minimized; resume
     // on visibility restore. applyPolling() ticks each worktree once on

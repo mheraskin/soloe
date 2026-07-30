@@ -13,6 +13,7 @@ describe("browser API", () => {
         }),
     );
     const api = createBrowserApi({
+      clientId: "browser-test",
       fetchImpl: fetchImpl as typeof fetch,
       socketFactory: () => new FakeSocket(),
     });
@@ -25,6 +26,7 @@ describe("browser API", () => {
       namespace: "sessions",
       method: "list",
       args: [],
+      clientId: "browser-test",
     });
 
     await api.terminal.input({ terminalId: "terminal-1", data: "hello" });
@@ -32,6 +34,7 @@ describe("browser API", () => {
       namespace: "terminal",
       method: "input",
       args: ["terminal-1", "hello"],
+      clientId: "browser-test",
     });
   });
 
@@ -43,6 +46,7 @@ describe("browser API", () => {
         }),
     );
     const api = createBrowserApi({
+      clientId: "browser-test",
       fetchImpl: fetchImpl as typeof fetch,
       socketFactory: () => new FakeSocket(),
     });
@@ -53,7 +57,46 @@ describe("browser API", () => {
       namespace: "files",
       method: "listTree",
       args: [{ cwd: "/repo", runMode: "linux" }],
+      clientId: "browser-test",
     });
+  });
+
+  it("sends Git reads and observation demand with a stable client identity", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "git-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    await api.git.status({ cwd: "/repo", runMode: "linux" });
+    await api.git.setObservationDemand({
+      cwd: "/repo",
+      runMode: "linux",
+      active: true,
+    });
+
+    expect(
+      fetchImpl.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      {
+        namespace: "git",
+        method: "status",
+        args: [{ cwd: "/repo", runMode: "linux" }],
+        clientId: "git-browser",
+      },
+      {
+        namespace: "git",
+        method: "setObservationDemand",
+        args: [{ cwd: "/repo", runMode: "linux", active: true }],
+        clientId: "git-browser",
+      },
+    ]);
   });
 
   it("supports an absolute server URL and bearer token for the Electron shell", async () => {
@@ -64,6 +107,7 @@ describe("browser API", () => {
     let socketUrl = "";
     const api = createBrowserApi({
       baseUrl: "http://127.0.0.1:4317/?token=bootstrap",
+      clientId: "browser-test",
       token: "secret",
       fetchImpl: fetchImpl as typeof fetch,
       socketFactory: (url) => {
@@ -80,7 +124,7 @@ describe("browser API", () => {
       authorization: "Bearer secret",
     });
     expect(socketUrl).toBe(
-      "ws://127.0.0.1:4317/api/runtime/events?token=secret",
+      "ws://127.0.0.1:4317/api/runtime/events?token=secret&clientId=browser-test",
     );
   });
 
@@ -163,12 +207,7 @@ describe("browser API", () => {
     expect(api.transport?.supports("files", "readFile")).toBe(true);
     expect(api.transport?.supports("files", "writeFile")).toBe(true);
     expect(api.transport?.supports("files", "openInEditor")).toBe(false);
-    expect(api.transport?.supports("git", "status")).toBe(false);
-    await expect(api.git.status({ cwd: "/repo" } as never)).resolves.toEqual({
-      ok: false,
-      error: "RPC git.status is unavailable over browser",
-      code: "rpc_not_supported",
-    });
+    expect(api.transport?.supports("git", "status")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

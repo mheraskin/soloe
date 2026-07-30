@@ -16,12 +16,15 @@ export interface SoloeServerOptions {
   token: string;
   webRoot?: string;
   rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
+  clientDisconnected?: (clientId: string) => void;
+  clientDisconnectGraceMs?: number;
 }
 
 export interface BrowserRpcCall {
   namespace: string;
   method: string;
   args: unknown[];
+  clientId?: string;
 }
 
 export class SoloeServer {
@@ -32,6 +35,8 @@ export class SoloeServer {
     token: string;
     webRoot: string;
     rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
+    clientDisconnected?: (clientId: string) => void;
+    clientDisconnectGraceMs: number;
   };
   private runtimeClient: RuntimeClient | undefined;
   private server: Server | undefined;
@@ -40,6 +45,9 @@ export class SoloeServer {
     event: string;
     listener: (payload: unknown) => void;
   }> = [];
+  private readonly clientSocketCounts = new Map<string, number>();
+  private readonly clientDisconnectTimers = new Map<string, NodeJS.Timeout>();
+  private closing = false;
 
   constructor(options: SoloeServerOptions) {
     this.options = {
@@ -49,6 +57,10 @@ export class SoloeServer {
       token: options.token,
       webRoot: options.webRoot ?? "",
       ...(options.rpcHandler ? { rpcHandler: options.rpcHandler } : {}),
+      ...(options.clientDisconnected
+        ? { clientDisconnected: options.clientDisconnected }
+        : {}),
+      clientDisconnectGraceMs: options.clientDisconnectGraceMs ?? 5_000,
     };
   }
 
@@ -56,6 +68,7 @@ export class SoloeServer {
     if (this.server) {
       throw new Error("Soloe server is already listening");
     }
+    this.closing = false;
 
     const runtimeClient = await RuntimeClient.connect(this.options.runtimeEndpoint);
     const webSocketServer = new WebSocketServer({ noServer: true });
@@ -111,6 +124,26 @@ export class SoloeServer {
         webSocketServer.emit("connection", webSocket, request);
       });
     });
+    webSocketServer.on("connection", (webSocket, request) => {
+      const url = new URL(request.url ?? "/", "http://localhost");
+      const rawClientId = url.searchParams.get("clientId");
+      const clientId = validClientId(rawClientId);
+      if (rawClientId !== null && !clientId) {
+        webSocket.close(1008, "invalid client identity");
+        return;
+      }
+      if (!clientId) return;
+      const timer = this.clientDisconnectTimers.get(clientId);
+      if (timer) {
+        clearTimeout(timer);
+        this.clientDisconnectTimers.delete(clientId);
+      }
+      this.clientSocketCounts.set(
+        clientId,
+        (this.clientSocketCounts.get(clientId) ?? 0) + 1,
+      );
+      webSocket.once("close", () => this.releaseClientSocket(clientId));
+    });
     const runtimeListeners = ["output", "exit"].map((event) => {
       const listener = (payload: unknown) => this.publish(event, payload);
       runtimeClient.on(event, listener);
@@ -154,6 +187,10 @@ export class SoloeServer {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    for (const timer of this.clientDisconnectTimers.values()) clearTimeout(timer);
+    this.clientDisconnectTimers.clear();
+    this.clientSocketCounts.clear();
     const server = this.server;
     this.server = undefined;
     const webSocketServer = this.webSocketServer;
@@ -401,6 +438,24 @@ export class SoloeServer {
     );
   }
 
+  private releaseClientSocket(clientId: string): void {
+    const remaining = (this.clientSocketCounts.get(clientId) ?? 1) - 1;
+    if (remaining > 0) {
+      this.clientSocketCounts.set(clientId, remaining);
+      return;
+    }
+    this.clientSocketCounts.delete(clientId);
+    if (this.closing || !this.options.clientDisconnected) return;
+    const timer = setTimeout(() => {
+      this.clientDisconnectTimers.delete(clientId);
+      if (!this.clientSocketCounts.has(clientId)) {
+        this.options.clientDisconnected?.(clientId);
+      }
+    }, this.options.clientDisconnectGraceMs);
+    timer.unref();
+    this.clientDisconnectTimers.set(clientId, timer);
+  }
+
   private async serveWebClient(url: URL, response: ServerResponse): Promise<void> {
     const root = path.resolve(this.options.webRoot);
     const requestedPath = decodeURIComponent(url.pathname);
@@ -482,11 +537,21 @@ function validateRpcCall(value: unknown): BrowserRpcCall {
   ) {
     throw malformedRpc();
   }
+  if (call.clientId !== undefined && !validClientId(call.clientId)) {
+    throw malformedRpc();
+  }
   return {
     namespace: call.namespace,
     method: call.method,
     args: call.args,
+    ...(typeof call.clientId === "string" ? { clientId: call.clientId } : {}),
   };
+}
+
+function validClientId(value: unknown): string | null {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/u.test(value)
+    ? value
+    : null;
 }
 
 function malformedRpc(): RpcTransportError {
@@ -559,6 +624,6 @@ function contentType(file: string): string {
     case ".woff2":
       return "font/woff2";
     default:
-      return "application/octet-stream";
+  return "application/octet-stream";
   }
 }

@@ -236,6 +236,59 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
+  it('keeps client-owned observation leases through brief WebSocket reconnects', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-clients-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const clientDisconnected = vi.fn();
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      clientDisconnected,
+      clientDisconnectGraceMs: 75
+    });
+    let first: WebSocket | undefined;
+    let replacement: WebSocket | undefined;
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const eventUrl = new URL(
+        '/api/runtime/events?token=test-token&clientId=reconnecting-client',
+        baseUrl
+      ).toString();
+      first = new WebSocket(eventUrl);
+      await opened(first);
+      const firstClosed = closed(first);
+      first.close();
+      await firstClosed;
+
+      replacement = new WebSocket(eventUrl);
+      await opened(replacement);
+      await delay(100);
+      expect(clientDisconnected).not.toHaveBeenCalled();
+
+      const replacementClosed = closed(replacement);
+      replacement.close();
+      await replacementClosed;
+      await vi.waitFor(() => {
+        expect(clientDisconnected).toHaveBeenCalledOnce();
+        expect(clientDisconnected).toHaveBeenCalledWith('reconnecting-client');
+      });
+    } finally {
+      first?.close();
+      replacement?.close();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects browser control without the local service token', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-auth-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
@@ -416,6 +469,23 @@ describe('Soloe Server lifecycle', () => {
         }
       });
 
+      const malformedClient = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: {
+          namespace: 'files',
+          method: 'readFile',
+          args: [],
+          clientId: '../other-client'
+        }
+      });
+      expect(malformedClient.status).toBe(400);
+      expect(await malformedClient.json()).toEqual({
+        error: {
+          code: 'malformed_rpc_body',
+          message: 'RPC body must contain a valid namespace, method, and args array'
+        }
+      });
+
       const oversized = await fetch(new URL('/api/rpc', baseUrl), {
         method: 'POST',
         headers: {
@@ -545,11 +615,11 @@ describe('Soloe Server lifecycle', () => {
 
       const unsupported = await request(baseUrl, '/api/rpc', {
         method: 'POST',
-        body: { namespace: 'git', method: 'status', args: [] }
+        body: { namespace: 'browser', method: 'openDevTools', args: [] }
       });
       expect(await unsupported.json()).toEqual({
         ok: false,
-        error: 'RPC git.status is not supported by the application server',
+        error: 'RPC browser.openDevTools is not supported by the application server',
         code: 'rpc_not_supported'
       });
     } finally {
@@ -630,6 +700,16 @@ async function opened(socket: WebSocket): Promise<void> {
       reject(new Error('WebSocket failed to open'));
     });
   });
+}
+
+async function closed(socket: WebSocket): Promise<void> {
+  await new Promise<void>((resolve) => {
+    socket.addEventListener('close', () => resolve(), { once: true });
+  });
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function nextMessage(socket: WebSocket): Promise<unknown> {

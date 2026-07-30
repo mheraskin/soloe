@@ -134,6 +134,10 @@ const terminalOutputRouter = new TerminalOutputRouter(
 );
 
 export const backend = {
+  connection: {
+    onReconnect: (listener: () => void) =>
+      terminalReconnect ? terminalReconnect(listener) : () => {}
+  },
   sessions: {
     list: async () => unwrap(await c.sessions.list()),
     listArchived: async () => unwrap(await c.sessions.listArchived()),

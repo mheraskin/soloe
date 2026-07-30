@@ -25,6 +25,7 @@ const server = new SoloeServer({
   token,
   webRoot: process.env.SOLOE_WEB_ROOT ?? "",
   rpcHandler: (call) => domain.invoke(call),
+  clientDisconnected: (clientId) => domain.releaseClient(clientId),
 });
 domain.on("event", (event, payload) => server.publish(event, payload));
 const address = await server.listen();

@@ -21,6 +21,7 @@ export interface BrowserApiOptions {
   reconnectDelayMs?: number;
   baseUrl?: string;
   token?: string;
+  clientId?: string;
   transport?: Extract<SoloeTransportKind, "browser" | "remote-electron">;
 }
 
@@ -96,6 +97,7 @@ const NAMESPACE_METHODS = {
     "rangeChanges",
     "resolveRefs",
     "checkout",
+    "createWorktree",
     "workingChanges",
     "workingTreeSnapshot",
     "setObservationDemand",
@@ -159,6 +161,10 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
   const baseUrl = options.baseUrl ?? window.location.href;
   const listeners = new Map<string, Set<Listener>>();
   const transport = options.transport ?? "browser";
+  const clientId =
+    options.clientId ??
+    globalThis.crypto?.randomUUID?.() ??
+    `client-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const rpc = async <T>(
     namespace: string,
     method: string,
@@ -171,7 +177,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
         method: "POST",
         credentials: "same-origin",
         headers,
-        body: JSON.stringify({ namespace, method, args }),
+        body: JSON.stringify({ namespace, method, args, clientId }),
       });
       if (!response.ok) {
         return { ok: false, error: `Soloe server returned HTTP ${response.status}` };
@@ -200,6 +206,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
   const url = new URL("/api/runtime/events", baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   if (options.token) url.searchParams.set("token", options.token);
+  url.searchParams.set("clientId", clientId);
   let openedConnections = 0;
   const connectEvents = () => {
     const socket = socketFactory(url.toString());
