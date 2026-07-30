@@ -9,6 +9,38 @@ use tauri::Manager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 
+#[derive(Debug, PartialEq, Eq)]
+enum QuitIntent {
+    Confirm,
+    Begin,
+    Ignore,
+}
+
+#[derive(Default)]
+struct QuitState {
+    confirmation_deadline: Option<Instant>,
+    quitting: bool,
+}
+
+impl QuitState {
+    fn request(&mut self, requires_confirmation: bool, now: Instant) -> QuitIntent {
+        if self.quitting {
+            return QuitIntent::Ignore;
+        }
+        if requires_confirmation
+            && !self
+                .confirmation_deadline
+                .is_some_and(|deadline| deadline > now)
+        {
+            self.confirmation_deadline = Some(now + Duration::from_secs(10));
+            return QuitIntent::Confirm;
+        }
+        self.quitting = true;
+        self.confirmation_deadline = None;
+        QuitIntent::Begin
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -50,8 +82,8 @@ pub fn run() {
             let menu_supervisor = Arc::clone(&supervisor);
             let menu_backend_action = backend_action.clone();
             let menu_quit = quit.clone();
-            let quit_confirmation = Arc::new(Mutex::new(None::<Instant>));
-            let menu_quit_confirmation = Arc::clone(&quit_confirmation);
+            let quit_state = Arc::new(Mutex::new(QuitState::default()));
+            let menu_quit_state = Arc::clone(&quit_state);
             let mut tray = TrayIconBuilder::new()
                 .tooltip("Soloe service")
                 .menu(&menu)
@@ -61,7 +93,7 @@ pub fn run() {
                     let supervisor = Arc::clone(&menu_supervisor);
                     let backend_action = menu_backend_action.clone();
                     let quit = menu_quit.clone();
-                    let quit_confirmation = Arc::clone(&menu_quit_confirmation);
+                    let quit_state = Arc::clone(&menu_quit_state);
                     let app = app.clone();
                     thread::spawn(move || {
                         if id == "toggle_backend" {
@@ -94,30 +126,45 @@ pub fn run() {
                                     .lock()
                                     .map_err(|_| "backend supervisor lock poisoned".to_string())
                                     .map(|service| service.requires_quit_confirmation());
-                                let confirmed = quit_confirmation
-                                    .lock()
-                                    .map_err(|_| "quit confirmation lock poisoned".to_string())
-                                    .map(|mut deadline| {
-                                        if deadline.is_some_and(|until| until > Instant::now()) {
-                                            true
-                                        } else {
-                                            *deadline =
-                                                Some(Instant::now() + Duration::from_secs(10));
-                                            false
-                                        }
-                                    });
-                                if requires_confirmation == Ok(true) && confirmed == Ok(false) {
+                                let intent = requires_confirmation.and_then(|required| {
+                                    quit_state
+                                        .lock()
+                                        .map_err(|_| "quit state lock poisoned".to_string())
+                                        .map(|mut state| state.request(required, Instant::now()))
+                                });
+                                let intent = match intent {
+                                    Ok(intent) => intent,
+                                    Err(error) => {
+                                        eprintln!("[tray] {error}");
+                                        return;
+                                    }
+                                };
+                                if intent == QuitIntent::Confirm {
                                     let _ = quit.set_text(
                                         "Confirm quit — stop active agents and all services",
                                     );
                                     return;
                                 }
+                                if intent == QuitIntent::Ignore {
+                                    return;
+                                }
+                                let _ = quit.set_text("Quitting…");
+                                let _ = quit.set_enabled(false);
+                                let transition = supervisor
+                                    .lock()
+                                    .map(|service| service.backend_transition_label())
+                                    .unwrap_or_else(|_| "Stopping…".to_string());
+                                let _ = backend_action.set_text(transition);
+                                let _ = backend_action.set_enabled(false);
                                 let result = supervisor
                                     .lock()
                                     .map_err(|_| "backend supervisor lock poisoned".to_string())
                                     .and_then(|service| service.shutdown_all());
+                                if let Err(error) = &result {
+                                    eprintln!("[tray] {error}");
+                                }
                                 app.exit(if result.is_ok() { 0 } else { 1 });
-                                result
+                                return;
                             }
                             _ => Ok(()),
                         };
@@ -168,4 +215,45 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Soloe tray service");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QuitIntent, QuitState};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn quit_requires_confirmation_then_enters_quitting_once() {
+        let now = Instant::now();
+        let mut state = QuitState::default();
+
+        assert_eq!(state.request(true, now), QuitIntent::Confirm);
+        assert_eq!(
+            state.request(true, now + Duration::from_secs(1)),
+            QuitIntent::Begin
+        );
+        assert_eq!(
+            state.request(true, now + Duration::from_secs(2)),
+            QuitIntent::Ignore
+        );
+    }
+
+    #[test]
+    fn expired_quit_confirmation_must_be_requested_again() {
+        let now = Instant::now();
+        let mut state = QuitState::default();
+
+        assert_eq!(state.request(true, now), QuitIntent::Confirm);
+        assert_eq!(
+            state.request(true, now + Duration::from_secs(11)),
+            QuitIntent::Confirm
+        );
+    }
+
+    #[test]
+    fn quit_without_active_agents_begins_immediately() {
+        let mut state = QuitState::default();
+
+        assert_eq!(state.request(false, Instant::now()), QuitIntent::Begin);
+    }
 }

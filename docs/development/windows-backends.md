@@ -165,7 +165,8 @@ disabled and displays **Starting (WSL/Windows)…** or
 **Quit Soloe** is a complete shutdown. It stops tray-launched Electron
 processes, the Web Host, the Application Server, and the Environment Runtime
 before exiting. When the runtime may own active agents, the tray asks for a
-second confirmation.
+second confirmation. As soon as shutdown begins, the confirmation action
+changes to the disabled **Quitting…** state.
 
 The tray is the definitive owner. A killed/crashed Windows tray closes its Job
 Object, terminating native process trees. For WSL, a heartbeat lease expires
