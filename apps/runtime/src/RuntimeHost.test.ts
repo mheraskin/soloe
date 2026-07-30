@@ -247,10 +247,12 @@ describe('Environment Runtime lifecycle', () => {
       await host.listen();
       const client = await RuntimeClient.connect(endpoint);
       const output = new Promise<string>((resolve) => {
+        let received = '';
         const onOutput = (event: { data: string }) => {
-          if (!event.data.includes('echo:ready')) return;
+          received += event.data;
+          if (!received.includes('echo:ready')) return;
           client.off('output', onOutput);
-          resolve(event.data);
+          resolve(received);
         };
         client.on('output', onOutput);
       });
@@ -269,7 +271,7 @@ describe('Environment Runtime lifecycle', () => {
         rows: 30
       });
 
-      await client.write(started.terminalId, 'ready\n');
+      await client.write(started.terminalId, process.platform === 'win32' ? 'ready\r' : 'ready\n');
 
       await expect(output).resolves.toContain('echo:ready');
       client.disconnect();

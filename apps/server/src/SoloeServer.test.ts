@@ -419,7 +419,7 @@ describe('Soloe Server lifecycle', () => {
           name: 'Browser session',
           projectId: project.id,
           cwd: directory,
-          runMode: 'linux',
+          runMode: process.platform === 'win32' ? 'windows' : 'linux',
           launch: { type: 'terminal', shell: 'auto' }
         }
       ]);
