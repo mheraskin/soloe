@@ -40,7 +40,7 @@
   import { browserStore } from './stores/browser.svelte';
   import { vaultStore } from './stores/vault.svelte';
   import { reportError } from './stores/toast.svelte';
-  import { ipc } from './lib/ipc';
+  import { ipc, supportsBackendOperation } from './lib/ipc';
   import { confirmDeleteSession } from './lib/session-delete-confirmation';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import { modal } from './stores/modal.svelte';
@@ -1005,7 +1005,9 @@
     }
     if (Keymap.toggleBrowserRail.match(e)) {
       consume(e);
-      void toggleRailTabAndFocus('browser');
+      if (supportsBackendOperation('browser', 'openDevTools')) {
+        void toggleRailTabAndFocus('browser');
+      }
       return;
     }
     if (Keymap.toggleSidebar.match(e)) {

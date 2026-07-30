@@ -5,7 +5,9 @@
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { settings } from '../stores/settings.svelte';
-  import { ipc } from '../lib/ipc';
+  import { filesStore } from '../stores/files.svelte';
+  import { rightRail } from '../stores/right-rail.svelte';
+  import { ipc, supportsBackendOperation } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
   import * as Command from '$lib/components/ui/command';
 
@@ -63,7 +65,15 @@
 
   async function openResult(result: FileSearchResult): Promise<void> {
     filePalette.close();
-    await ipc.files.openInEditor({ absolutePath: result.absolutePath });
+    if (supportsBackendOperation('files', 'openInEditor')) {
+      await ipc.files.openInEditor({ absolutePath: result.absolutePath });
+      return;
+    }
+    const scope = fileScope;
+    if (!scope) return;
+    rightRail.openTab('files');
+    await filesStore.openFileAt(scope, result.path);
+    window.dispatchEvent(new CustomEvent('soloe:focus-pane', { detail: { tabId: 'files' } }));
   }
 
   async function pasteResult(result: FileSearchResult): Promise<void> {

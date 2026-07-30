@@ -15,6 +15,7 @@
   import { sidebar } from '../stores/sidebar.svelte';
   import { createFeatureScope, featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
+  import { supportsBackendOperation } from '../lib/ipc';
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import { clampSplitRatio, splitPaneWidths, type RailSize } from '../lib/rail-widths';
   import { kbdHints } from '../stores/kbd-hints.svelte';
@@ -38,12 +39,15 @@
     shortcut?: readonly string[];
   }
 
+  const browserPaneAvailable = supportsBackendOperation('browser', 'openDevTools');
   const tabs: Tab[] = [
     { id: 'inspector', label: 'Inspector', icon: Activity },
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
     { id: 'files', label: 'Files', icon: FolderTree, shortcut: Keymap.toggleFilesRail.keys },
     { id: 'feature', label: 'Feature Lab', icon: Microscope, shortcut: Keymap.toggleFeatureRail.keys },
-    { id: 'browser', label: 'Browser', icon: Globe, shortcut: Keymap.toggleBrowserRail.keys },
+    ...(browserPaneAvailable
+      ? [{ id: 'browser' as const, label: 'Browser', icon: Globe, shortcut: Keymap.toggleBrowserRail.keys }]
+      : []),
     { id: 'notes', label: 'Notes', icon: NotebookPen, shortcut: Keymap.toggleNotesRail.keys }
   ];
 
@@ -133,7 +137,7 @@
   let diffMountedHere = $derived(tabVisible('diff'));
   let filesMountedHere = $derived(tabVisible('files'));
   let featureMountedHere = $derived(tabVisible('feature'));
-  let browserMountedHere = $derived(tabVisible('browser'));
+  let browserMountedHere = $derived(browserPaneAvailable && tabVisible('browser'));
   let inspectorMountedHere = $derived(tabVisible('inspector'));
   let notesMountedHere = $derived(tabVisible('notes'));
 
@@ -169,6 +173,9 @@
 
   onMount(() => {
     size = loadSize();
+    if (!browserPaneAvailable && rightRail.openTabs.includes('browser')) {
+      rightRail.toggleTab('browser');
+    }
     return () => finishRailResize?.();
   });
 

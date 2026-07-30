@@ -442,7 +442,7 @@
                 <span class="text-destructive">Error</span>
               {:else if dirty}
                 <span class="text-muted-foreground">Unsaved</span>
-              {:else if !openFile.loading && !openFile.binary}
+              {:else if !openFile.loading && !openFile.binary && !openFile.truncated && !openFile.unavailable}
                 <Check class="size-3 text-emerald-500" />
                 <span class="text-emerald-500">Saved</span>
               {/if}
@@ -452,7 +452,7 @@
               size="xs"
               class="gap-1.5 px-2"
               onclick={onSave}
-              disabled={!dirty || openFile.saving || openFile.binary}
+              disabled={!dirty || openFile.saving || openFile.binary || openFile.truncated || openFile.unavailable}
               aria-label="Save file"
               title="Save (Ctrl/Cmd+S)"
             >
@@ -471,6 +471,11 @@
             <div class="flex flex-1 items-center justify-center text-xs text-muted-foreground">
               <Loader2 class="mr-2 size-3 animate-spin" />
               Loading…
+            </div>
+          {:else if openFile.unavailable}
+            <div class="flex flex-1 flex-col items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
+              <AlertCircle class="size-4" />
+              <span>File unavailable — {openFile.unavailableReason ?? 'the backend could not read it'}.</span>
             </div>
           {:else if openFile.binary}
             <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">

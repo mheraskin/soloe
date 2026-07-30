@@ -414,3 +414,8 @@ export const ipc = backend;
 export function hasBackendTransport(): boolean {
   return typeof window !== 'undefined' && Boolean(window.soloe);
 }
+
+export function supportsBackendOperation(namespace: string, method: string): boolean {
+  const transport = c?.transport;
+  return transport ? transport.supports(namespace, method) : true;
+}

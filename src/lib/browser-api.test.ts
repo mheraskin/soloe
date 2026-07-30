@@ -35,6 +35,27 @@ describe("browser API", () => {
     });
   });
 
+  it("sends supported Files operations to the application server", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: { paths: [] } }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    await api.files.listTree({ cwd: "/repo", runMode: "linux" });
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "files",
+      method: "listTree",
+      args: [{ cwd: "/repo", runMode: "linux" }],
+    });
+  });
+
   it("supports an absolute server URL and bearer token for the Electron shell", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -138,6 +159,10 @@ describe("browser API", () => {
       const [namespace, method] = rpc.split(".");
       expect(api.transport?.supports(namespace!, method!)).toBe(true);
     }
+    expect(api.transport?.supports("files", "listTree")).toBe(true);
+    expect(api.transport?.supports("files", "readFile")).toBe(true);
+    expect(api.transport?.supports("files", "writeFile")).toBe(true);
+    expect(api.transport?.supports("files", "openInEditor")).toBe(false);
     expect(api.transport?.supports("git", "status")).toBe(false);
     await expect(api.git.status({ cwd: "/repo" } as never)).resolves.toEqual({
       ok: false,
