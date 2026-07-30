@@ -336,59 +336,62 @@ describe('WslGitEvidenceAdapter', () => {
     expect(child.listenerCount('close')).toBe(0);
   });
 
-  it('runs the stdin plan against a real repository with native-equivalent facts', async () => {
-    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-wsl-evidence-'));
-    try {
-      await git(repo, ['init', '-b', 'main']);
-      await git(repo, ['config', 'user.email', 'test@soloe.local']);
-      await git(repo, ['config', 'user.name', 'Soloe Test']);
-      await fs.writeFile(path.join(repo, 'tracked.txt'), 'base\n', 'utf8');
-      await git(repo, ['add', 'tracked.txt']);
-      await git(repo, ['commit', '-m', 'base']);
-      await git(repo, ['switch', '-c', 'feature']);
-      await fs.writeFile(path.join(repo, 'tracked.txt'), 'x'.repeat(250_001), 'utf8');
-      await fs.writeFile(path.join(repo, 'new file.txt'), 'untracked\n', 'utf8');
+  it.skipIf(process.platform === 'win32')(
+    'runs the stdin plan against a real repository with native-equivalent facts',
+    async () => {
+      const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-wsl-evidence-'));
+      try {
+        await git(repo, ['init', '-b', 'main']);
+        await git(repo, ['config', 'user.email', 'test@soloe.local']);
+        await git(repo, ['config', 'user.name', 'Soloe Test']);
+        await fs.writeFile(path.join(repo, 'tracked.txt'), 'base\n', 'utf8');
+        await git(repo, ['add', 'tracked.txt']);
+        await git(repo, ['commit', '-m', 'base']);
+        await git(repo, ['switch', '-c', 'feature']);
+        await fs.writeFile(path.join(repo, 'tracked.txt'), 'x'.repeat(250_001), 'utf8');
+        await fs.writeFile(path.join(repo, 'new file.txt'), 'untracked\n', 'utf8');
 
-      const spawnMock = vi.fn((
-        _file: string,
-        args: readonly string[]
-      ) => spawnProcess(
-        'bash',
-        [
-          '-s', '--',
-          String(args.at(-2) ?? ''),
-          String(args.at(-1) ?? '')
-        ],
-        { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] }
-      ));
-      const wslCollector = new WorktreeFactsCollector({
-        spawnImpl: spawnMock as unknown as typeof spawnProcess
-      });
-      const nativeCollector = new WorktreeFactsCollector();
+        const spawnMock = vi.fn((
+          _file: string,
+          args: readonly string[]
+        ) => spawnProcess(
+          'bash',
+          [
+            '-s', '--',
+            String(args.at(-2) ?? ''),
+            String(args.at(-1) ?? '')
+          ],
+          { cwd: repo, stdio: ['pipe', 'pipe', 'pipe'] }
+        ));
+        const wslCollector = new WorktreeFactsCollector({
+          spawnImpl: spawnMock as unknown as typeof spawnProcess
+        });
+        const nativeCollector = new WorktreeFactsCollector();
 
-      const [wslFacts, nativeFacts] = await Promise.all([
-        wslCollector.collect(repo, 'main', { runMode: 'wsl', wslDistro: 'Test' }),
-        nativeCollector.collect(repo, 'main', { runMode: 'windows' })
-      ]);
+        const [wslFacts, nativeFacts] = await Promise.all([
+          wslCollector.collect(repo, 'main', { runMode: 'wsl', wslDistro: 'Test' }),
+          nativeCollector.collect(repo, 'main', { runMode: 'windows' })
+        ]);
 
-      expect(spawnMock).toHaveBeenCalledTimes(1);
-      expect(wslFacts.completeness).toBe('complete');
-      expect(wslFacts).toMatchObject({
-        head: nativeFacts.head,
-        baseOid: nativeFacts.baseOid,
-        commitsAhead: nativeFacts.commitsAhead,
-        commitsBehind: nativeFacts.commitsBehind,
-        dirtyFiles: nativeFacts.dirtyFiles,
-        dirtyHash: nativeFacts.dirtyHash,
-        workingDiff: nativeFacts.workingDiff,
-        recentCommits: nativeFacts.recentCommits
-      });
-      expect(wslFacts.workingDiff).toContain('[truncated, full diff was');
-      expect(Buffer.byteLength(wslFacts.workingDiff)).toBeLessThan(201_000);
-    } finally {
-      await fs.rm(repo, { recursive: true, force: true });
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        expect(wslFacts.completeness).toBe('complete');
+        expect(wslFacts).toMatchObject({
+          head: nativeFacts.head,
+          baseOid: nativeFacts.baseOid,
+          commitsAhead: nativeFacts.commitsAhead,
+          commitsBehind: nativeFacts.commitsBehind,
+          dirtyFiles: nativeFacts.dirtyFiles,
+          dirtyHash: nativeFacts.dirtyHash,
+          workingDiff: nativeFacts.workingDiff,
+          recentCommits: nativeFacts.recentCommits
+        });
+        expect(wslFacts.workingDiff).toContain('[truncated, full diff was');
+        expect(Buffer.byteLength(wslFacts.workingDiff)).toBeLessThan(201_000);
+      } finally {
+        await fs.rm(repo, { recursive: true, force: true });
+      }
     }
-  });
+  );
 });
 
 type FrameKey =

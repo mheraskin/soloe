@@ -570,34 +570,37 @@ describe('wslReachableBridgeUrl', () => {
 });
 
 describe('buildWslAgentPathPrelude', () => {
-  it('rejects Windows-mounted npm shims before probing Linux NVM installs', () => {
-    const root = mkdtempSync(join(tmpdir(), 'soloe-agent-path-'));
-    const linuxBin = join(root, 'versions', 'node', 'v99.0.0', 'bin');
-    const linuxCodex = join(linuxBin, 'codex');
-    mkdirSync(linuxBin, { recursive: true });
-    writeFileSync(linuxCodex, '#!/bin/sh\nexit 0\n');
-    chmodSync(linuxCodex, 0o755);
+  it.skipIf(process.platform === 'win32')(
+    'rejects Windows-mounted npm shims before probing Linux NVM installs',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'soloe-agent-path-'));
+      const linuxBin = join(root, 'versions', 'node', 'v99.0.0', 'bin');
+      const linuxCodex = join(linuxBin, 'codex');
+      mkdirSync(linuxBin, { recursive: true });
+      writeFileSync(linuxCodex, '#!/bin/sh\nexit 0\n');
+      chmodSync(linuxCodex, 0o755);
 
-    try {
-      const script = [
-        'command() {',
-        '  if [ "$1" = "-v" ]; then',
-        "    printf '%s\\n' /mnt/c/Users/test/AppData/Roaming/npm/codex",
-        '  else',
-        '    builtin command "$@"',
-        '  fi',
-        '}',
-        buildWslAgentPathPrelude('codex'),
-        "printf '%s' \"$__soloe_agent_bin\""
-      ].join('\n');
-      const resolved = execFileSync('bash', ['--noprofile', '--norc', '-c', script], {
-        encoding: 'utf8',
-        env: { ...process.env, NVM_DIR: root }
-      });
+      try {
+        const script = [
+          'command() {',
+          '  if [ "$1" = "-v" ]; then',
+          "    printf '%s\\n' /mnt/c/Users/test/AppData/Roaming/npm/codex",
+          '  else',
+          '    builtin command "$@"',
+          '  fi',
+          '}',
+          buildWslAgentPathPrelude('codex'),
+          "printf '%s' \"$__soloe_agent_bin\""
+        ].join('\n');
+        const resolved = execFileSync('bash', ['--noprofile', '--norc', '-c', script], {
+          encoding: 'utf8',
+          env: { ...process.env, NVM_DIR: root }
+        });
 
-      expect(resolved).toBe(linuxCodex);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
+        expect(resolved).toBe(linuxCodex);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
-  });
+  );
 });

@@ -277,7 +277,7 @@ describe('Environment Runtime lifecycle', () => {
       client.disconnect();
     } finally {
       await host.shutdown();
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 });
