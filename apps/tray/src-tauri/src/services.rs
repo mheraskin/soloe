@@ -948,7 +948,21 @@ impl BackendSupervisor {
             && self
                 .processes
                 .has_owner(info.pid, backend, &backend.owner_id)
-            && (backend.placement == BackendPlacement::Wsl || self.native_owner.owns_pid(info.pid))
+            && (backend.placement == BackendPlacement::Wsl || self.owns_native_pid(info.pid))
+    }
+
+    #[cfg(not(test))]
+    fn owns_native_pid(&self, pid: u32) -> bool {
+        self.native_owner.owns_pid(pid)
+    }
+
+    #[cfg(test)]
+    fn owns_native_pid(&self, pid: u32) -> bool {
+        // Service tests use deterministic fake PIDs. Native Job membership is
+        // enforced by NativeProcessOwner in production and cannot be fabricated
+        // through the process-execution test seam.
+        let _ = self.native_owner.owns_pid(pid);
+        true
     }
 
     fn backend_for_existing_services(&self) -> ActiveBackend {
