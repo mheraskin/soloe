@@ -35,6 +35,12 @@ importers:
       '@pierre/trees':
         specifier: ^1.0.0-beta.3
         version: 1.0.0-beta.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@soloe/protocol':
+        specifier: workspace:*
+        version: link:packages/protocol
+      '@soloe/runtime':
+        specifier: workspace:*
+        version: link:apps/runtime
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1

@@ -75,10 +75,13 @@ describe("monorepo boundaries", () => {
   });
 
   it("links internal packages only through the workspace protocol", async () => {
+    const rootManifest = await manifest("package.json");
     const runtimeManifest = await manifest("apps/runtime/package.json");
     const serverManifest = await manifest("apps/server/package.json");
     const desktopManifest = await manifest("apps/desktop-electron/package.json");
 
+    expect(rootManifest.dependencies?.["@soloe/runtime"]).toBe("workspace:*");
+    expect(rootManifest.dependencies?.["@soloe/protocol"]).toBe("workspace:*");
     expect(runtimeManifest.dependencies?.["@soloe/protocol"]).toBe("workspace:*");
     expect(serverManifest.dependencies?.["@soloe/runtime"]).toBe("workspace:*");
     expect(serverManifest.dependencies?.["@soloe/protocol"]).toBe("workspace:*");
