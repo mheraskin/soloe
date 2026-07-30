@@ -83,6 +83,7 @@ describe("monorepo boundaries", () => {
     expect(rootManifest.dependencies?.["@soloe/runtime"]).toBe("workspace:*");
     expect(rootManifest.dependencies?.["@soloe/protocol"]).toBe("workspace:*");
     expect(rootManifest.dependencies?.["@lezer/highlight"]).toBe("^1.2.3");
+    expect(rootManifest.dependencies?.["@codemirror/lang-html"]).toBe("^6.4.11");
     expect(runtimeManifest.dependencies?.["@soloe/protocol"]).toBe("workspace:*");
     expect(serverManifest.dependencies?.["@soloe/runtime"]).toBe("workspace:*");
     expect(serverManifest.dependencies?.["@soloe/protocol"]).toBe("workspace:*");

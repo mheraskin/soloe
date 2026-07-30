@@ -59,6 +59,7 @@
     "@soloe/protocol": "workspace:*",
     "@soloe/runtime": "workspace:*",
     "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-html": "^6.4.11",
     "@codemirror/language": "^6.12.3",
     "@codemirror/language-data": "^6.5.2",
     "@codemirror/search": "^6.7.0",
