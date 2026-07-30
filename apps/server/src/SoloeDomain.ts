@@ -32,10 +32,36 @@ import type {
   FileWriteRequest,
   ImagePasteRequest,
 } from "../../../shared/types/files.js";
-import type { WorktreeScope } from "../../../shared/worktree-identity.js";
+import type {
+  CommitsBetweenRequest,
+  DiscardFilesRequest,
+  FileBlameRequest,
+  FileDiffRequest,
+  FileLinesRequest,
+  GitCheckoutRequest,
+  GitCommitRequest,
+  GitCreateWorktreeRequest,
+  GitObservationDemandRequest,
+  GitRecentCommitsRequest,
+  GitRefHistoryRequest,
+  GitRemoteOpRequest,
+  GitRepoRequest,
+  GitStatusRequest,
+  RangeChangesRequest,
+  ReviewDiffsRequest,
+  ResolveRefsRequest,
+  StageFilesRequest,
+  WorkingChangesRequest,
+  WorkingTreeSnapshotRequest,
+} from "../../../shared/types/git.js";
+import {
+  worktreeIdentityKey,
+  type WorktreeScope,
+} from "../../../shared/worktree-identity.js";
 import { hostPlatform, platformInfo } from "../../../shared/platform.js";
 import {
   FileService,
+  GitService,
   WorktreeFileIndex,
   type FileIndexScope,
 } from "@soloe/domain";
@@ -63,6 +89,7 @@ export interface DomainCall {
   namespace: string;
   method: string;
   args: unknown[];
+  clientId?: string;
 }
 
 export interface SoloeDomainOptions {
@@ -82,6 +109,11 @@ export class SoloeDomain extends EventEmitter {
   private readonly settings: SettingsStore;
   private readonly projects: ProjectStore;
   private readonly files: FileService;
+  private readonly git: GitService;
+  private readonly gitObservationReleases = new Map<
+    string,
+    Map<string, () => void>
+  >();
   private readonly observerStore: AgentObserverStore;
   private observer!: AgentObserverManager;
   private workerRuntime!: AgentRuntimeManager;
@@ -112,6 +144,12 @@ export class SoloeDomain extends EventEmitter {
       runtime: options.runtime,
       getSession: (sessionId) => this.sessions.get(sessionId),
       authorizeScope: (scope) => this.isAuthorizedWorktree(scope),
+    });
+    this.git = new GitService({
+      getGitBinary: async () => (await this.settings.get()).binaries.git,
+    });
+    this.git.onChange((event) => {
+      this.emit("event", "git.change", event);
     });
     this.observerStore = new AgentObserverStore(
       path.join(options.dataDirectory, "observer.json"),
@@ -149,6 +187,10 @@ export class SoloeDomain extends EventEmitter {
   }
 
   async dispose(): Promise<void> {
+    for (const clientId of this.gitObservationReleases.keys()) {
+      this.releaseClient(clientId);
+    }
+    this.git.dispose();
     this.files.dispose();
     await this.workerRuntime.dispose();
     await this.observerStore.dispose();
@@ -166,6 +208,14 @@ export class SoloeDomain extends EventEmitter {
     }
     if (call.namespace === "files") {
       return this.filesCall(call.method, call.args);
+    }
+    if (call.namespace === "git") {
+      try {
+        return await this.gitCall(call.method, call.args, call.clientId);
+      } catch (error) {
+        if (error instanceof RpcError) throw error;
+        throw structuredGitError(error);
+      }
     }
     if (call.namespace === "observer") {
       return this.observerCall(call.method, call.args);
@@ -189,6 +239,365 @@ export class SoloeDomain extends EventEmitter {
       "rpc_not_supported",
       `RPC ${call.namespace}.${call.method} is not supported by the application server`,
     );
+  }
+
+  releaseClient(clientId: string): void {
+    const releases = this.gitObservationReleases.get(clientId);
+    if (!releases) return;
+    this.gitObservationReleases.delete(clientId);
+    for (const release of releases.values()) release();
+  }
+
+  private async gitCall(
+    method: string,
+    args: unknown[],
+    clientId?: string,
+  ): Promise<unknown> {
+    try {
+      validateGitRpcRequest(method, args[0]);
+      switch (method) {
+        case "status": {
+          const request = args[0] as GitStatusRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          return this.git.getStatus(request.cwd, request.force, request);
+        }
+        case "aheadBehind": {
+          const request = args[0] as GitRepoRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.getAheadBehind(request.repoPath, request.force, request);
+        }
+        case "shortstat": {
+          const request = args[0] as GitRepoRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.getShortstat(request.repoPath, request.force, request);
+        }
+        case "dirty": {
+          const request = args[0] as GitRepoRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.getDirty(request.repoPath, request.force, request);
+        }
+        case "worktrees": {
+          const request = args[0] as GitRepoRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.listWorktrees(request.repoPath, request.force, request);
+        }
+        case "branches": {
+          const request = args[0] as GitRepoRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.listLocalBranches(request.repoPath, request.force, request);
+        }
+        case "recentCommits": {
+          const request = args[0] as GitRecentCommitsRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.listRecentCommits(
+            request.repoPath,
+            request.limit,
+            request.force,
+            request,
+          );
+        }
+        case "refHistory": {
+          const request = args[0] as GitRefHistoryRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.listRefHistory(
+            request.repoPath,
+            request.limit,
+            request.force,
+            request,
+          );
+        }
+        case "commitsBetween": {
+          const request = args[0] as CommitsBetweenRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          await this.requireGitRefs(request.cwd, [request.base, request.head], request);
+          const { commits, truncated } = await this.git.getCommitsBetween(
+            request.cwd,
+            request.base,
+            request.head,
+            request,
+          );
+          return {
+            base: request.base,
+            head: request.head,
+            commits,
+            truncated,
+          };
+        }
+        case "rangeChanges": {
+          const request = args[0] as RangeChangesRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          await this.requireGitRefs(request.cwd, [request.base, request.head], request);
+          return {
+            base: request.base,
+            head: request.head,
+            changes: await this.git.getRangeChanges(
+              request.cwd,
+              request.base,
+              request.head,
+              request,
+            ),
+          };
+        }
+        case "resolveRefs": {
+          const request = args[0] as ResolveRefsRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          return {
+            resolved: await this.git.resolveCommitRefs(
+              request.cwd,
+              request.refs,
+              request,
+            ),
+          };
+        }
+        case "checkout": {
+          const request = args[0] as GitCheckoutRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          await this.requireGitRefs(request.repoPath, [request.ref], request);
+          return this.git.checkout(
+            request.repoPath,
+            request.ref,
+            request.force,
+            request,
+          );
+        }
+        case "createWorktree": {
+          const request = args[0] as GitCreateWorktreeRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          validateWorktreeTarget(request.repoPath, request.path);
+          await this.requireGitRefs(request.repoPath, [request.baseRef], request);
+          return this.git.createWorktree(
+            request.repoPath,
+            request.path,
+            request.branch,
+            request.baseRef,
+            request,
+          );
+        }
+        case "workingChanges": {
+          const request = args[0] as WorkingChangesRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          return this.git.listWorkingChanges(request.cwd, request);
+        }
+        case "workingTreeSnapshot": {
+          const request = args[0] as WorkingTreeSnapshotRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          return this.git.getWorkingTreeSnapshot(
+            request.cwd,
+            request.force,
+            request,
+          );
+        }
+        case "setObservationDemand":
+          return this.setGitObservationDemand(
+            clientId,
+            args[0] as GitObservationDemandRequest,
+          );
+        case "fileDiff": {
+          const request = args[0] as FileDiffRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          validateGitRelativePaths([request.path, request.fromPath]);
+          if (request.base && request.head) {
+            await this.requireGitRefs(
+              request.cwd,
+              [request.base, request.head],
+              request,
+            );
+          }
+          return this.git.getFileDiff(request.cwd, request.path, {
+            fromPath: request.fromPath ?? null,
+            contextLines: request.contextLines,
+            untracked: request.untracked,
+            base: request.base,
+            head: request.head,
+            context: request,
+          });
+        }
+        case "reviewDiffs": {
+          const request = args[0] as ReviewDiffsRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          validateGitRelativePaths(
+            request.files.flatMap((file) => [file.path, file.fromPath]),
+          );
+          if (request.base && request.head) {
+            await this.requireGitRefs(
+              request.cwd,
+              [request.base, request.head],
+              request,
+            );
+          }
+          return this.git.getReviewDiffs(request.cwd, request.files, {
+            contextLines: request.contextLines,
+            base: request.base,
+            head: request.head,
+            context: request,
+          });
+        }
+        case "fileBlame": {
+          const request = args[0] as FileBlameRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          validateGitRelativePaths([request.path]);
+          await this.requireGitRefs(
+            request.cwd,
+            [request.head ?? "HEAD"],
+            request,
+          );
+          return this.git.getFileBlame(
+            request.cwd,
+            request.path,
+            request.head ?? "HEAD",
+            request,
+          );
+        }
+        case "fileLines": {
+          const request = args[0] as FileLinesRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          validateGitRelativePaths([request.path]);
+          if (request.revision.kind === "commit") {
+            await this.requireGitRefs(
+              request.cwd,
+              [request.revision.sha],
+              request,
+            );
+          }
+          return this.git.getFileLines(
+            request.cwd,
+            request.path,
+            request.startLine,
+            request.endLine,
+            { revision: request.revision, context: request },
+          );
+        }
+        case "stageFiles":
+        case "unstageFiles": {
+          const request = args[0] as StageFilesRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          validateGitRelativePaths(request.paths);
+          if (method === "stageFiles") {
+            await this.git.stageFiles(request.cwd, request.paths, request);
+          } else {
+            await this.git.unstageFiles(request.cwd, request.paths, request);
+          }
+          return true;
+        }
+        case "discardFiles": {
+          const request = args[0] as DiscardFilesRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          validateGitRelativePaths(
+            request.files.flatMap((file) => [file.path, file.fromPath]),
+          );
+          await this.git.discardFiles(request.cwd, request.files, request);
+          return true;
+        }
+        case "commit": {
+          const request = args[0] as GitCommitRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          return this.git.commit(
+            request.cwd,
+            request.message,
+            request.stageAll ?? false,
+            request,
+          );
+        }
+        case "push":
+        case "pull":
+        case "fetch": {
+          const request = args[0] as GitRemoteOpRequest;
+          await this.authorizeGitPath(request.cwd, request);
+          if (method === "push") {
+            return this.git.push(
+              request.cwd,
+              request.remote,
+              request.branch,
+              request.setUpstream ?? false,
+              request,
+            );
+          }
+          if (method === "pull") {
+            return this.git.pull(
+              request.cwd,
+              request.remote,
+              request.branch,
+              request,
+            );
+          }
+          return this.git.fetch(request.cwd, request.remote, request);
+        }
+        default:
+          throw unsupportedRpc("git", method);
+      }
+    } catch (error) {
+      if (error instanceof RpcError) throw error;
+      throw structuredGitError(error);
+    }
+  }
+
+  private async authorizeGitPath(
+    cwd: string,
+    context: Pick<WorktreeScope, "runMode" | "wslDistro">,
+  ): Promise<void> {
+    const runMode = context.runMode ?? hostPlatform();
+    const authorized = await this.isAuthorizedWorktree({
+      cwd,
+      runMode,
+      ...(context.wslDistro ? { wslDistro: context.wslDistro } : {}),
+    });
+    if (!authorized) {
+      throw new RpcError(
+        "worktree_not_authorized",
+        "The requested Git Worktree is not registered with this Soloe backend",
+      );
+    }
+  }
+
+  private async requireGitRefs(
+    cwd: string,
+    refs: string[],
+    context: Pick<WorktreeScope, "runMode" | "wslDistro">,
+  ): Promise<void> {
+    const resolved = await this.git.resolveCommitRefs(cwd, refs, context);
+    const missing = refs.find((_ref, index) => resolved[index] === null);
+    if (missing) {
+      throw new RpcError(
+        "invalid_revision",
+        `Git revision could not be resolved: ${missing}`,
+      );
+    }
+  }
+
+  private async setGitObservationDemand(
+    clientId: string | undefined,
+    request: GitObservationDemandRequest,
+  ): Promise<true> {
+    if (!clientId) {
+      throw new RpcError(
+        "client_identity_required",
+        "Git observation demand requires a client identity",
+      );
+    }
+    await this.authorizeGitPath(request.cwd, request);
+    const key = worktreeIdentityKey(request.cwd, request);
+    let releases = this.gitObservationReleases.get(clientId);
+    if (!releases) {
+      if (!request.active) return true;
+      releases = new Map();
+      this.gitObservationReleases.set(clientId, releases);
+    }
+    const existing = releases.get(key);
+    if (request.active) {
+      if (!existing) {
+        releases.set(
+          key,
+          await this.git.acquireObservation(request.cwd, request),
+        );
+      }
+    } else if (existing) {
+      existing();
+      releases.delete(key);
+      if (releases.size === 0) {
+        this.gitObservationReleases.delete(clientId);
+      }
+    }
+    return true;
   }
 
   private async filesCall(method: string, args: unknown[]): Promise<unknown> {
@@ -497,6 +906,395 @@ function sameWorktreePlacement(
   if (session.runMode !== scope.runMode) return false;
   if (session.runMode !== "wsl") return true;
   return session.wslDistro?.trim() === scope.wslDistro?.trim();
+}
+
+function validateGitRelativePaths(
+  values: Array<string | null | undefined>,
+): void {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    if (
+      !value.trim() ||
+      value.includes("\0") ||
+      path.posix.isAbsolute(value) ||
+      path.win32.isAbsolute(value) ||
+      value.split(/[\\/]/u).includes("..")
+    ) {
+      throw new RpcError(
+        "invalid_git_path",
+        "Git file paths must be non-empty Worktree-relative paths",
+      );
+    }
+  }
+}
+
+const GIT_REPO_PATH_METHODS = new Set([
+  "aheadBehind",
+  "shortstat",
+  "dirty",
+  "worktrees",
+  "branches",
+  "recentCommits",
+  "refHistory",
+  "checkout",
+  "createWorktree",
+]);
+const GIT_CWD_METHODS = new Set([
+  "status",
+  "commitsBetween",
+  "rangeChanges",
+  "resolveRefs",
+  "workingChanges",
+  "workingTreeSnapshot",
+  "setObservationDemand",
+  "fileDiff",
+  "reviewDiffs",
+  "fileBlame",
+  "fileLines",
+  "stageFiles",
+  "unstageFiles",
+  "discardFiles",
+  "commit",
+  "push",
+  "pull",
+  "fetch",
+]);
+
+function validateGitRpcRequest(method: string, value: unknown): void {
+  if (!GIT_REPO_PATH_METHODS.has(method) && !GIT_CWD_METHODS.has(method)) {
+    return;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidGitRequest("Git RPC calls require a request object");
+  }
+  const request = value as Record<string, unknown>;
+  const rootKey = GIT_REPO_PATH_METHODS.has(method) ? "repoPath" : "cwd";
+  requireBoundedString(request[rootKey], rootKey, 16_384);
+  validateGitContext(request);
+
+  switch (method) {
+    case "recentCommits":
+    case "refHistory":
+      optionalBoundedInteger(request.limit, "limit", 1, 1_000);
+      break;
+    case "checkout":
+      validateGitOperand(request.ref, "ref");
+      optionalBoolean(request.force, "force");
+      break;
+    case "createWorktree":
+      requireBoundedString(request.path, "path", 16_384);
+      validateGitOperand(request.branch, "branch");
+      validateGitOperand(request.baseRef, "baseRef");
+      break;
+    case "commitsBetween":
+    case "rangeChanges":
+      validateGitOperand(request.base, "base");
+      validateGitOperand(request.head, "head");
+      break;
+    case "resolveRefs":
+      validateGitOperands(request.refs, "refs", 500);
+      break;
+    case "setObservationDemand":
+      if (typeof request.active !== "boolean") {
+        throw invalidGitRequest("active must be a boolean");
+      }
+      break;
+    case "fileDiff":
+      validateGitRelativePaths([
+        requireBoundedString(request.path, "path", 16_384),
+        optionalBoundedString(request.fromPath, "fromPath", 16_384),
+      ]);
+      validateOptionalRange(request);
+      optionalBoundedInteger(request.contextLines, "contextLines", 0, 10_000);
+      break;
+    case "reviewDiffs": {
+      const files = requireBoundedArray(request.files, "files", 500);
+      for (const file of files) {
+        if (!file || typeof file !== "object" || Array.isArray(file)) {
+          throw invalidGitRequest("files entries must be objects");
+        }
+        const target = file as Record<string, unknown>;
+        validateGitRelativePaths([
+          requireBoundedString(target.path, "files.path", 16_384),
+          optionalBoundedString(target.fromPath, "files.fromPath", 16_384),
+        ]);
+      }
+      validateOptionalRange(request);
+      optionalBoundedInteger(request.contextLines, "contextLines", 0, 10_000);
+      break;
+    }
+    case "fileBlame":
+      validateGitRelativePaths([
+        requireBoundedString(request.path, "path", 16_384),
+      ]);
+      if (request.head !== undefined) validateGitOperand(request.head, "head");
+      break;
+    case "fileLines": {
+      validateGitRelativePaths([
+        requireBoundedString(request.path, "path", 16_384),
+      ]);
+      const start = requireBoundedInteger(request.startLine, "startLine", 1, 10_000_000);
+      const end = requireBoundedInteger(request.endLine, "endLine", start, 10_000_000);
+      if (end - start > 10_000) {
+        throw invalidGitRequest("fileLines ranges may contain at most 10001 lines");
+      }
+      const revision = request.revision;
+      if (!revision || typeof revision !== "object" || Array.isArray(revision)) {
+        throw invalidGitRequest("revision must identify head or a canonical commit");
+      }
+      const revisionValue = revision as Record<string, unknown>;
+      if (revisionValue.kind === "head") break;
+      if (
+        revisionValue.kind !== "commit" ||
+        typeof revisionValue.sha !== "string" ||
+        !/^[0-9a-f]{40}$/iu.test(revisionValue.sha)
+      ) {
+        throw invalidGitRequest("commit revisions must use a canonical 40-character SHA");
+      }
+      break;
+    }
+    case "stageFiles":
+    case "unstageFiles":
+      validateGitRelativePaths(
+        validateStringArray(request.paths, "paths", 1_000),
+      );
+      break;
+    case "discardFiles": {
+      const files = requireBoundedArray(request.files, "files", 1_000);
+      for (const file of files) {
+        if (!file || typeof file !== "object" || Array.isArray(file)) {
+          throw invalidGitRequest("files entries must be objects");
+        }
+        const target = file as Record<string, unknown>;
+        validateGitRelativePaths([
+          requireBoundedString(target.path, "files.path", 16_384),
+          optionalBoundedString(target.fromPath, "files.fromPath", 16_384),
+        ]);
+        if (
+          !["added", "modified", "deleted", "renamed", "copied", "untracked"].includes(
+            String(target.kind),
+          )
+        ) {
+          throw invalidGitRequest("files.kind is invalid");
+        }
+      }
+      break;
+    }
+    case "commit":
+      requireBoundedString(request.message, "message", 100_000);
+      optionalBoolean(request.stageAll, "stageAll");
+      break;
+    case "push":
+    case "pull":
+    case "fetch":
+      if (request.remote !== undefined) validateGitOperand(request.remote, "remote");
+      if (request.branch !== undefined) validateGitOperand(request.branch, "branch");
+      optionalBoolean(request.setUpstream, "setUpstream");
+      break;
+  }
+}
+
+function validateGitContext(request: Record<string, unknown>): void {
+  if (
+    request.runMode !== undefined &&
+    request.runMode !== "windows" &&
+    request.runMode !== "linux" &&
+    request.runMode !== "wsl"
+  ) {
+    throw invalidGitRequest("runMode is invalid");
+  }
+  if (request.wslDistro !== undefined) {
+    requireBoundedString(request.wslDistro, "wslDistro", 128);
+  }
+  if (request.runMode === "wsl" && request.wslDistro === undefined) {
+    throw invalidGitRequest("wslDistro is required for WSL Git requests");
+  }
+}
+
+function validateOptionalRange(request: Record<string, unknown>): void {
+  const hasBase = request.base !== undefined;
+  const hasHead = request.head !== undefined;
+  if (hasBase !== hasHead) {
+    throw invalidGitRequest("base and head must be provided together");
+  }
+  if (hasBase) {
+    validateGitOperand(request.base, "base");
+    validateGitOperand(request.head, "head");
+  }
+}
+
+function validateGitOperand(value: unknown, name: string): string {
+  const operand = requireBoundedString(value, name, 4_096);
+  if (operand.startsWith("-") || /[\0\r\n]/u.test(operand)) {
+    throw invalidGitRequest(`${name} is not a safe Git argument`);
+  }
+  return operand;
+}
+
+function validateGitOperands(
+  value: unknown,
+  name: string,
+  maximum: number,
+): string[] {
+  const operands = validateStringArray(value, name, maximum);
+  for (const operand of operands) validateGitOperand(operand, name);
+  return operands;
+}
+
+function validateStringArray(
+  value: unknown,
+  name: string,
+  maximum: number,
+): string[] {
+  const values = requireBoundedArray(value, name, maximum);
+  return values.map((entry) => requireBoundedString(entry, name, 16_384));
+}
+
+function requireBoundedArray(
+  value: unknown,
+  name: string,
+  maximum: number,
+): unknown[] {
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw invalidGitRequest(`${name} must be an array with at most ${maximum} entries`);
+  }
+  return value;
+}
+
+function optionalBoundedString(
+  value: unknown,
+  name: string,
+  maximum: number,
+): string | undefined {
+  return value === undefined || value === null
+    ? undefined
+    : requireBoundedString(value, name, maximum);
+}
+
+function requireBoundedString(
+  value: unknown,
+  name: string,
+  maximum: number,
+): string {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > maximum ||
+    value.includes("\0")
+  ) {
+    throw invalidGitRequest(`${name} must be a non-empty bounded string`);
+  }
+  return value;
+}
+
+function optionalBoundedInteger(
+  value: unknown,
+  name: string,
+  minimum: number,
+  maximum: number,
+): void {
+  if (value !== undefined) {
+    requireBoundedInteger(value, name, minimum, maximum);
+  }
+}
+
+function requireBoundedInteger(
+  value: unknown,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
+    throw invalidGitRequest(`${name} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return value;
+}
+
+function optionalBoolean(value: unknown, name: string): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw invalidGitRequest(`${name} must be a boolean`);
+  }
+}
+
+function invalidGitRequest(message: string): RpcError {
+  return new RpcError("invalid_git_request", message);
+}
+
+function validateWorktreeTarget(repoPath: string, targetPath: string): void {
+  const windowsPath =
+    /^[a-zA-Z]:[\\/]/u.test(repoPath) || repoPath.startsWith("\\\\");
+  const pathApi = windowsPath ? path.win32 : path.posix;
+  if (!pathApi.isAbsolute(targetPath)) {
+    throw new RpcError(
+      "invalid_worktree_path",
+      "A new Worktree path must be absolute",
+    );
+  }
+  const repoParent = pathApi.dirname(pathApi.resolve(repoPath));
+  const targetParent = pathApi.dirname(pathApi.resolve(targetPath));
+  if (
+    (windowsPath
+      ? repoParent.toLowerCase() !== targetParent.toLowerCase()
+      : repoParent !== targetParent) ||
+    pathApi.basename(targetPath) === ""
+  ) {
+    throw new RpcError(
+      "worktree_path_not_authorized",
+      "A new Worktree must be created as a sibling of the authorized repository",
+    );
+  }
+}
+
+function structuredGitError(error: unknown): RpcError {
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+  if (lower.includes("not a git repository")) {
+    return new RpcError("repository_not_found", message);
+  }
+  if (
+    lower.includes("unknown revision") ||
+    lower.includes("bad revision") ||
+    lower.includes("invalid object") ||
+    lower.includes("not a valid object") ||
+    lower.includes("ambiguous argument")
+  ) {
+    return new RpcError("invalid_revision", message);
+  }
+  if (
+    lower.includes("would be overwritten") ||
+    lower.includes("uncommitted changes")
+  ) {
+    return new RpcError("dirty_checkout", message);
+  }
+  if (
+    lower.includes("conflict") ||
+    lower.includes("automatic merge failed") ||
+    lower.includes("not possible to fast-forward")
+  ) {
+    return new RpcError("git_conflict", message);
+  }
+  if (
+    lower.includes("authentication failed") ||
+    lower.includes("permission denied (publickey)") ||
+    lower.includes("could not read username")
+  ) {
+    return new RpcError("authentication_failed", message);
+  }
+  if (
+    lower.includes("could not resolve host") ||
+    lower.includes("failed to connect") ||
+    lower.includes("does not appear to be a git repository") ||
+    lower.includes("could not read from remote repository") ||
+    lower.includes("remote:")
+  ) {
+    return new RpcError("remote_failure", message);
+  }
+  return new RpcError("git_failed", message);
 }
 
 function mergeEnvironment(
