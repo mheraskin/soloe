@@ -1435,20 +1435,11 @@
                       <div class="px-3 py-4 text-center text-xs text-muted-foreground">
                         Binary file — diff not shown.
                       </div>
-                    {:else if fileDiff?.truncated && fileDiff.hunks.length === 0}
-                      <div class="px-3 py-4 text-center text-xs text-muted-foreground">
-                        Diff is too large for the in-app preview.
-                      </div>
                     {:else if fileDiff && (fileDiff.empty || fileDiff.hunks.length === 0)}
                       <div class="px-3 py-4 text-center text-xs text-muted-foreground">
                         No textual changes.
                       </div>
                     {:else if fileDiff}
-                      {#if fileDiff.truncated}
-                        <div class="border-b border-border bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground">
-                          Large diff preview limited to keep Soloe responsive.
-                        </div>
-                      {/if}
                       <VirtualDiffBody
                         scope={activeReviewScope!}
                         filePath={fileDiff.path}

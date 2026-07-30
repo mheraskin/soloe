@@ -12,11 +12,7 @@ interface ParsedDiff {
   kind: WorkingChangeKind;
   binary: boolean;
   hunks: DiffHunk[];
-  truncated: boolean;
 }
-
-const MAX_MATERIALIZED_LINES_PER_FILE = 2_000;
-const MAX_MATERIALIZED_TEXT_CHARS_PER_FILE = 256 * 1024;
 
 /**
  * Splits one repository-level patch into the per-file shape consumed by the
@@ -45,8 +41,7 @@ export function materializeReviewDiffs(
       kind: parsed.kind,
       binary: parsed.binary,
       hunks: parsed.hunks,
-      empty: parsed.hunks.length === 0,
-      truncated: parsed.truncated
+      empty: parsed.hunks.length === 0
     });
   }
   return out;
@@ -84,9 +79,6 @@ export function parseUnifiedDiff(text: string): ParsedDiff | null {
   let oldCursor = 0;
   let newCursor = 0;
   let sawHeader = false;
-  let materializedLines = 0;
-  let materializedTextChars = 0;
-  let truncated = false;
 
   for (const raw of lines) {
     if (raw.startsWith('diff --git ')) {
@@ -129,13 +121,6 @@ export function parseUnifiedDiff(text: string): ParsedDiff | null {
 
     if (!current) continue;
     const head = raw[0];
-    if (
-      materializedLines >= MAX_MATERIALIZED_LINES_PER_FILE ||
-      materializedTextChars + raw.length > MAX_MATERIALIZED_TEXT_CHARS_PER_FILE
-    ) {
-      truncated = true;
-      break;
-    }
     if (head === '+' && !raw.startsWith('+++')) {
       current.lines.push(makeLine('add', null, newCursor, raw.slice(1)));
       newCursor += 1;
@@ -150,12 +135,10 @@ export function parseUnifiedDiff(text: string): ParsedDiff | null {
       oldCursor += 1;
       newCursor += 1;
     }
-    materializedLines += 1;
-    materializedTextChars += raw.length;
   }
 
   if (!sawHeader && hunks.length === 0 && !binary) return null;
-  return { fromPath, kind, binary, hunks, truncated };
+  return { fromPath, kind, binary, hunks };
 }
 
 function makeLine(
