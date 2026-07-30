@@ -6,8 +6,8 @@ import { WebSocket, WebSocketServer } from "ws";
 
 import { RuntimeClient } from "@soloe/runtime";
 
-const MAX_JSON_REQUEST_BYTES = 1024 * 1024;
-const MAX_RPC_RESPONSE_BYTES = 16 * 1024 * 1024;
+const MAX_JSON_REQUEST_BYTES = 32 * 1024 * 1024;
+const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 export interface SoloeServerOptions {
   runtimeEndpoint: string;

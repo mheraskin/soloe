@@ -62,6 +62,7 @@ import { hostPlatform, platformInfo } from "../../../shared/platform.js";
 import {
   FileService,
   GitService,
+  NotesStore,
   WorktreeFileIndex,
   type FileIndexScope,
 } from "@soloe/domain";
@@ -110,6 +111,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly projects: ProjectStore;
   private readonly files: FileService;
   private readonly git: GitService;
+  private readonly notes: NotesStore;
   private readonly gitObservationReleases = new Map<
     string,
     Map<string, () => void>
@@ -148,8 +150,12 @@ export class SoloeDomain extends EventEmitter {
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
+    this.notes = new NotesStore(path.join(options.dataDirectory, "notes"));
     this.git.onChange((event) => {
       this.emit("event", "git.change", event);
+    });
+    this.notes.onChange((event) => {
+      this.emit("event", "notes.change", event);
     });
     this.observerStore = new AgentObserverStore(
       path.join(options.dataDirectory, "observer.json"),
@@ -216,6 +222,9 @@ export class SoloeDomain extends EventEmitter {
         if (error instanceof RpcError) throw error;
         throw structuredGitError(error);
       }
+    }
+    if (call.namespace === "notes") {
+      return this.notesCall(call.method, call.args);
     }
     if (call.namespace === "observer") {
       return this.observerCall(call.method, call.args);
@@ -619,6 +628,72 @@ export class SoloeDomain extends EventEmitter {
     }
   }
 
+  private async notesCall(method: string, args: unknown[]): Promise<unknown> {
+    if (!NOTES_RPC_METHODS.has(method)) {
+      throw unsupportedRpc("notes", method);
+    }
+    if (method === "readImage") {
+      return this.notes.readImage(
+        requireNotesString(args[0], "absolutePath", 16_384),
+      );
+    }
+    const projectId = requireNotesString(args[0], "projectId", 256) as ProjectId;
+    if (!(await this.projects.get(projectId))) {
+      throw new RpcError(
+        "project_not_found",
+        "The requested Notes project is not registered with this Soloe backend",
+      );
+    }
+    switch (method) {
+      case "list":
+        return this.notes.list(projectId);
+      case "read":
+        return this.notes.read(
+          projectId,
+          requireNotesString(args[1], "filename", 256),
+        );
+      case "write":
+        return this.notes.write(
+          projectId,
+          requireNotesString(args[1], "filename", 256),
+          requireNotesString(args[2], "content", 1024 * 1024, true),
+          args[3] as string | null | undefined,
+        );
+      case "rename":
+        return this.notes.rename(
+          projectId,
+          requireNotesString(args[1], "oldName", 256),
+          requireNotesString(args[2], "newName", 256),
+        );
+      case "delete":
+        await this.notes.delete(
+          projectId,
+          requireNotesString(args[1], "filename", 256),
+        );
+        return true;
+      case "saveImage":
+        return this.notes.saveImage(
+          projectId,
+          requireNotesString(args[1], "mimeType", 128),
+          requireNotesString(args[2], "dataBase64", 30 * 1024 * 1024),
+        );
+      case "cleanupImages": {
+        if (!Array.isArray(args[1]) || args[1].length > 1_000) {
+          throw new RpcError(
+            "invalid_notes_request",
+            "extraReferences must be a bounded string array",
+          );
+        }
+        return this.notes.cleanupImages(
+          projectId,
+          args[1].map((value) =>
+            requireNotesString(value, "extraReferences", 1024 * 1024, true),
+          ),
+        );
+      }
+    }
+  }
+
   private async isAuthorizedWorktree(scope: FileIndexScope): Promise<boolean> {
     const [projects, sessions] = await Promise.all([
       this.projects.list(),
@@ -906,6 +981,37 @@ function sameWorktreePlacement(
   if (session.runMode !== scope.runMode) return false;
   if (session.runMode !== "wsl") return true;
   return session.wslDistro?.trim() === scope.wslDistro?.trim();
+}
+
+const NOTES_RPC_METHODS = new Set([
+  "list",
+  "read",
+  "write",
+  "rename",
+  "delete",
+  "saveImage",
+  "readImage",
+  "cleanupImages",
+]);
+
+function requireNotesString(
+  value: unknown,
+  name: string,
+  maximum: number,
+  allowEmpty = false,
+): string {
+  if (
+    typeof value !== "string" ||
+    (!allowEmpty && !value.trim()) ||
+    value.length > maximum ||
+    value.includes("\0")
+  ) {
+    throw new RpcError(
+      "invalid_notes_request",
+      `${name} must be a bounded string`,
+    );
+  }
+  return value;
 }
 
 function validateGitRelativePaths(

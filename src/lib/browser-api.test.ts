@@ -99,6 +99,29 @@ describe("browser API", () => {
     ]);
   });
 
+  it("sends revision-aware Notes writes to the application server", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "notes-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    await api.notes.write("project-1", "shared.md", "updated", "a".repeat(64));
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "notes",
+      method: "write",
+      args: ["project-1", "shared.md", "updated", "a".repeat(64)],
+      clientId: "notes-browser",
+    });
+  });
+
   it("supports an absolute server URL and bearer token for the Electron shell", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -208,6 +231,8 @@ describe("browser API", () => {
     expect(api.transport?.supports("files", "writeFile")).toBe(true);
     expect(api.transport?.supports("files", "openInEditor")).toBe(false);
     expect(api.transport?.supports("git", "status")).toBe(true);
+    expect(api.transport?.supports("notes", "list")).toBe(true);
+    expect(api.transport?.supports("notes", "saveImage")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

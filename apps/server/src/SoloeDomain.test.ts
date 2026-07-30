@@ -736,7 +736,182 @@ describe("SoloeDomain", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("owns Notes CRUD, images, conflicts, authorization, and shared events", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-notes-"));
+    const outside = path.join(directory, "outside.png");
+    await writeFile(outside, Buffer.from(NOTE_PNG_BASE64, "base64"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+    const changes: unknown[] = [];
+    domain.on("event", (event, payload) => {
+      if (event === "notes.change") changes.push(payload);
+    });
+
+    try {
+      await domain.init();
+      const project = (await domain.invoke({
+        namespace: "projects",
+        method: "create",
+        args: [{ name: "Notes project", path: directory }],
+      })) as { id: string };
+
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "list",
+          args: [project.id],
+        }),
+      ).resolves.toEqual([]);
+      const created = (await domain.invoke({
+        namespace: "notes",
+        method: "write",
+        args: [project.id, "shared.md", "first", null],
+      })) as { revision: string };
+      expect(created.revision).toMatch(/^[0-9a-f]{64}$/u);
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "read",
+          args: [project.id, "shared.md"],
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          filename: "shared.md",
+          content: "first",
+          revision: created.revision,
+        }),
+      );
+
+      const updated = (await domain.invoke({
+        namespace: "notes",
+        method: "write",
+        args: [project.id, "shared.md", "second", created.revision],
+      })) as { revision: string };
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "write",
+          args: [project.id, "shared.md", "stale", created.revision],
+        }),
+      ).rejects.toMatchObject({ code: "notes_conflict" });
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "read",
+          args: [project.id, "shared.md"],
+        }),
+      ).resolves.toEqual(expect.objectContaining({ content: "second" }));
+
+      const referenced = (await domain.invoke({
+        namespace: "notes",
+        method: "saveImage",
+        args: [project.id, "image/png", NOTE_PNG_BASE64],
+      })) as { filename: string; absolutePath: string };
+      const unused = (await domain.invoke({
+        namespace: "notes",
+        method: "saveImage",
+        args: [project.id, "image/png", NOTE_PNG_BASE64],
+      })) as { absolutePath: string };
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "readImage",
+          args: [referenced.absolutePath],
+        }),
+      ).resolves.toEqual({
+        mimeType: "image/png",
+        dataBase64: NOTE_PNG_BASE64,
+      });
+      await domain.invoke({
+        namespace: "notes",
+        method: "write",
+        args: [
+          project.id,
+          "shared.md",
+          `![image](${referenced.absolutePath})`,
+          updated.revision,
+        ],
+      });
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "cleanupImages",
+          args: [project.id, []],
+        }),
+      ).resolves.toEqual({ deleted: 1 });
+      await expect(readFile(unused.absolutePath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+
+      const imageLink = path.join(
+        directory,
+        "notes",
+        project.id,
+        "images",
+        "soloe-img-link.png",
+      );
+      await symlink(outside, imageLink);
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "readImage",
+          args: [imageLink],
+        }),
+      ).rejects.toThrow(/escapes notes directory/iu);
+
+      const renamed = (await domain.invoke({
+        namespace: "notes",
+        method: "rename",
+        args: [project.id, "shared.md", "renamed.md"],
+      })) as { filename: string };
+      expect(renamed.filename).toBe("renamed.md");
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "delete",
+          args: [project.id, "renamed.md"],
+        }),
+      ).resolves.toBe(true);
+
+      expect(changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            projectId: project.id,
+            notes: expect.any(Array),
+          }),
+        ]),
+      );
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "write",
+          args: [project.id, "../outside.md", "blocked"],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_note_filename" });
+      await expect(
+        domain.invoke({
+          namespace: "notes",
+          method: "list",
+          args: ["unregistered-project"],
+        }),
+      ).rejects.toMatchObject({ code: "project_not_found" });
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
+
+const NOTE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });

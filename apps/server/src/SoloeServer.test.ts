@@ -451,7 +451,10 @@ describe('Soloe Server lifecycle', () => {
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
-      rpcHandler: async () => true
+      rpcHandler: async (call) =>
+        call.method === 'oversizedResponse'
+          ? 'x'.repeat(32 * 1024 * 1024)
+          : true
     });
 
     try {
@@ -495,16 +498,32 @@ describe('Soloe Server lifecycle', () => {
         body: JSON.stringify({
           namespace: 'files',
           method: 'writeFile',
-          args: ['x'.repeat(1024 * 1024)]
+          args: ['x'.repeat(32 * 1024 * 1024)]
         })
       });
       expect(oversized.status).toBe(413);
       expect(await oversized.json()).toEqual({
         error: {
           code: 'request_too_large',
-          message: 'JSON request exceeds the 1048576-byte limit',
+          message: 'JSON request exceeds the 33554432-byte limit',
           remediation: 'Send a smaller request'
         }
+      });
+
+      const oversizedResponse = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: {
+          namespace: 'system',
+          method: 'oversizedResponse',
+          args: []
+        }
+      });
+      expect(oversizedResponse.status).toBe(200);
+      expect(await oversizedResponse.json()).toEqual({
+        ok: false,
+        error: 'RPC response exceeds the 33554432-byte limit',
+        code: 'response_too_large',
+        remediation: 'Narrow the request or use a bounded result'
       });
     } finally {
       await server.close();
