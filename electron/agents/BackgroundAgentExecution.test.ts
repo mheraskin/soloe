@@ -15,6 +15,37 @@ const request = (overrides: Partial<BackgroundAgentRequest> = {}): BackgroundAge
 });
 
 describe('BackgroundAgentExecution', () => {
+  it('finds bare WSL executables through the same NVM-aware resolver used for launch', async () => {
+    const spawnMock = vi.fn((...args: Parameters<typeof spawn>) => {
+      const child = new FakeChild();
+      const commandArgs = args[1] ?? [];
+      const isProbe = args[0] === 'wsl.exe' && !commandArgs.includes('--cd');
+      queueMicrotask(() => {
+        if (isProbe) {
+          const script = decodeWslScript(commandArgs[4] ?? '');
+          child.close(script.includes('NVM_DIR') ? 0 : 1);
+          return;
+        }
+        child.succeed('nvm-resolved');
+      });
+      return child;
+    });
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn
+    });
+
+    await expect(execution.execute(request({
+      scope: { cwd: '/repo', runMode: 'wsl', wslDistro: 'Ubuntu' }
+    }))).resolves.toMatchObject({ ok: true, text: 'nvm-resolved' });
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    const probeArgs = spawnMock.mock.calls[0]?.[1] ?? [];
+    expect(probeArgs.slice(0, 4)).toEqual(['-d', 'Ubuntu', 'bash', '-lc']);
+    expect(decodeWslScript(probeArgs[4] ?? '')).toContain(
+      '__soloe_agent_bin="$(command -v codex 2>/dev/null)"'
+    );
+  });
+
   it('launches Linux work natively through bash without a WSL process', async () => {
     const child = new FakeChild();
     const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
@@ -289,6 +320,17 @@ class FakeChild extends EventEmitter {
     this.stderr.end();
     this.emit('close', 0);
   }
+
+  close(code: number): void {
+    this.stdout.end();
+    this.stderr.end();
+    this.emit('close', code);
+  }
+}
+
+function decodeWslScript(line: string): string {
+  const match = /^\. <\(printf %s ([A-Za-z0-9+/=]+) \| base64 -d\)$/u.exec(line);
+  return match?.[1] ? Buffer.from(match[1], 'base64').toString('utf8') : line;
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

@@ -247,6 +247,17 @@ export function buildWslAgentLine(env: Record<string, string>, executable: strin
     buildWslAgentPathPrelude(executable),
     buildWslAgentExecLine(env, '"$__soloe_agent_bin"', args)
   ].join('\n');
+  return encodeWslAgentScript(script);
+}
+
+export function buildWslAgentProbeLine(executable: string): string {
+  const script = executable.includes('/') || executable.includes('\\')
+    ? buildPosixCommandLine({}, 'test', ['-x', executable])
+    : buildWslAgentPathPrelude(executable);
+  return encodeWslAgentScript(script);
+}
+
+function encodeWslAgentScript(script: string): string {
   const b64 = Buffer.from(script, 'utf8').toString('base64');
   return `. <(printf %s ${b64} | base64 -d)`;
 }

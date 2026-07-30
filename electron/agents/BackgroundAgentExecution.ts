@@ -4,7 +4,10 @@ import * as os from 'node:os';
 import type { ModelSelection, SettingsBinaries } from '@shared/types/settings.js';
 import type { RunMode } from '@shared/types/sessions.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
-import { buildWslAgentLine } from '../sessions/SessionCommandBuilder.js';
+import {
+  buildWslAgentLine,
+  buildWslAgentProbeLine
+} from '../sessions/SessionCommandBuilder.js';
 
 export type BackgroundAgentPriority = 'interactive' | 'background';
 
@@ -345,7 +348,7 @@ export class BackgroundAgentExecution {
     const args = scope.runMode === 'wsl'
       ? [
           '-d', scope.wslDistro ?? 'Ubuntu',
-          'bash', '-lc', 'command -v -- "$1" >/dev/null 2>&1', 'soloe-probe', executable
+          'bash', '-lc', buildWslAgentProbeLine(executable)
         ]
       : nativeProbeArgs(executable);
     return new Promise<boolean>((resolve) => {
