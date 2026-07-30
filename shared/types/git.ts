@@ -378,6 +378,4 @@ export interface FileDiff {
   hunks: DiffHunk[];
   // True when the file is empty after the change (e.g. deletion or empty add).
   empty: boolean;
-  /** True when only a bounded prefix was materialized for the review UI. */
-  truncated?: boolean;
 }

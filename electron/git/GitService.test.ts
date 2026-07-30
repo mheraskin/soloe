@@ -704,33 +704,6 @@ describe.skipIf(!hasGit)('GitService', () => {
     expect(adds[0]?.text).toBe('one');
   });
 
-  it('getFileDiff: returns a bounded placeholder when Git output exceeds the review cap', async () => {
-    const runGit = vi.fn(async (_cwd: string, args: string[]) => {
-      if (args.join(' ') === 'rev-parse --show-toplevel') {
-        return { code: 0, stdout: `${tmpRoot}\n`, stderr: '' };
-      }
-      if (args.join(' ') === 'rev-parse --git-dir') {
-        return { code: 0, stdout: '.git\n', stderr: '' };
-      }
-      return {
-        code: null,
-        stdout: 'partial patch',
-        stderr: 'Git command output exceeded 2097152 bytes'
-      };
-    });
-    const bounded = new GitService({ runGit });
-
-    const diff = await bounded.getFileDiff(tmpRoot, 'large.txt');
-
-    expect(diff).toMatchObject({
-      path: 'large.txt',
-      hunks: [],
-      empty: false,
-      truncated: true
-    });
-    expect(runGit).toHaveBeenCalledTimes(3);
-  });
-
   it('getReviewDiffs: materializes multiple tracked files with one repository patch', async () => {
     await initRepo(tmpRoot);
     await fs.writeFile(path.join(tmpRoot, 'b.txt'), 'before\n', 'utf8');

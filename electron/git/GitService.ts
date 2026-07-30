@@ -29,27 +29,15 @@ import { materializeReviewDiffs, parseUnifiedDiff } from './ReviewDiffMaterializ
 import { UntrackedFileCounter } from './UntrackedFileCounter.js';
 import { worktreeHostPath } from '../runtime/wsl-paths.js';
 import { nativeRunMode } from '@shared/platform.js';
-import {
-  runGitCommand,
-  type GitCommandOptions
-} from './GitCommandRunner.js';
+import { runGitCommand } from './GitCommandRunner.js';
 import { worktreeIdentityKey } from '@shared/worktree-identity.js';
 
 export interface GitServiceOptions {
   gitBinary?: string;
   getGitBinary?: () => Promise<string | undefined> | string | undefined;
   wslBinary?: string;
-  runGit?: (
-    cwd: string,
-    args: string[],
-    options?: GitExecutionOptions
-  ) => Promise<GitResult>;
-  runWslGit?: (
-    distro: string,
-    cwd: string,
-    args: string[],
-    options?: GitExecutionOptions
-  ) => Promise<GitResult>;
+  runGit?: (cwd: string, args: string[]) => Promise<GitResult>;
+  runWslGit?: (distro: string, cwd: string, args: string[]) => Promise<GitResult>;
   watchImpl?: typeof watch;
   maxRepoCaches?: number;
   maxRepoResolutions?: number;
@@ -86,8 +74,6 @@ interface GitResult {
   stderr: string;
 }
 
-type GitExecutionOptions = Pick<GitCommandOptions, 'stdoutLimitBytes'>;
-
 interface RepoResolutionEntry {
   info: RepoInfo | null;
   expiresAt: number;
@@ -114,7 +100,6 @@ const REPO_RESOLUTION_TTL_MS = 10 * 60_000;
 const MISSING_REPO_RESOLUTION_TTL_MS = 5_000;
 const DEFAULT_MAX_REPO_CACHES = 64;
 const DEFAULT_MAX_REPO_RESOLUTIONS = 256;
-const REVIEW_DIFF_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024;
 
 export class GitService {
   private readonly caches = new Map<string, RepoCache>();
@@ -705,8 +690,7 @@ export class GitService {
         kind: 'modified',
         binary: false,
         hunks: [],
-        empty: true,
-        truncated: false
+        empty: true
       };
     }
 
@@ -735,26 +719,13 @@ export class GitService {
       targetPath
     ];
     const knownUntracked = !rangeMode && options.untracked === true;
-    let output = await this.runInRepo(
-      info,
-      knownUntracked ? untrackedArgs : args,
-      { stdoutLimitBytes: REVIEW_DIFF_OUTPUT_LIMIT_BYTES }
-    );
+    let output = await this.runInRepo(info, knownUntracked ? untrackedArgs : args);
     let mode: 'tracked' | 'untracked-fallback' =
       knownUntracked ? 'untracked-fallback' : 'tracked';
 
-    if (reviewOutputExceeded(output)) {
-      return truncatedFileDiff(targetPath, options.fromPath ?? null);
-    }
-
     if (!rangeMode && !knownUntracked && (output.code !== 0 || !output.stdout.trim())) {
       // No commit yet, or path is untracked: try the new-file fallback.
-      const untracked = await this.runInRepo(info, untrackedArgs, {
-        stdoutLimitBytes: REVIEW_DIFF_OUTPUT_LIMIT_BYTES
-      });
-      if (reviewOutputExceeded(untracked)) {
-        return truncatedFileDiff(targetPath, options.fromPath ?? null, 'untracked');
-      }
+      const untracked = await this.runInRepo(info, untrackedArgs);
       // `--no-index` returns code 1 when the files differ — which is the
       // normal case here. Treat any stdout as success.
       if (untracked.stdout.trim().length > 0) {
@@ -775,8 +746,7 @@ export class GitService {
       kind,
       binary: parsed?.binary ?? false,
       hunks: parsed?.hunks ?? [],
-      empty: !parsed || parsed.hunks.length === 0,
-      truncated: parsed?.truncated ?? false
+      empty: !parsed || parsed.hunks.length === 0
     };
   }
 
@@ -805,26 +775,19 @@ export class GitService {
     const paths = Array.from(
       new Set(files.flatMap((file) => [file.fromPath, file.path]).filter((p): p is string => !!p))
     );
-    const output = await this.runInRepo(
-      info,
-      [
-        '-c',
-        'core.quotePath=false',
-        'diff',
-        '--no-color',
-        '--no-ext-diff',
-        '-M',
-        '-C',
-        `--unified=${contextLines}`,
-        rangeArg,
-        '--',
-        ...paths
-      ],
-      { stdoutLimitBytes: REVIEW_DIFF_OUTPUT_LIMIT_BYTES }
-    );
-    if (reviewOutputExceeded(output)) {
-      return files.map((file) => truncatedFileDiff(file.path, file.fromPath ?? null));
-    }
+    const output = await this.runInRepo(info, [
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--no-color',
+      '--no-ext-diff',
+      '-M',
+      '-C',
+      `--unified=${contextLines}`,
+      rangeArg,
+      '--',
+      ...paths
+    ]);
     if (output.code !== 0 || !output.stdout.trim()) return [];
     return materializeReviewDiffs(output.stdout, files);
   }
@@ -1255,40 +1218,25 @@ export class GitService {
     return this.options.gitBinary ?? 'git';
   }
 
-  private async run(
-    cwd: string,
-    args: string[],
-    options: GitExecutionOptions = {}
-  ): Promise<GitResult> {
+  private async run(cwd: string, args: string[]): Promise<GitResult> {
     const binary = await this.gitBinary();
     return retryTransientGitFailure(() =>
       this.options.runGit
-        ? this.options.runGit(cwd, args, options)
-        : runGit(binary, cwd, args, options)
+        ? this.options.runGit(cwd, args)
+        : runGit(binary, cwd, args)
     );
   }
 
-  private async runInRepo(
-    info: RepoInfo,
-    args: string[],
-    options: GitExecutionOptions = {}
-  ): Promise<GitResult> {
-    if (info.runMode === 'wsl') {
-      return this.runWsl(info.wslDistro!, info.repoPath, args, options);
-    }
-    return this.run(info.repoPath, args, options);
+  private async runInRepo(info: RepoInfo, args: string[]): Promise<GitResult> {
+    if (info.runMode === 'wsl') return this.runWsl(info.wslDistro!, info.repoPath, args);
+    return this.run(info.repoPath, args);
   }
 
-  private async runWsl(
-    distro: string,
-    cwd: string,
-    args: string[],
-    options: GitExecutionOptions = {}
-  ): Promise<GitResult> {
+  private async runWsl(distro: string, cwd: string, args: string[]): Promise<GitResult> {
     return retryTransientGitFailure(() =>
       this.options.runWslGit
-        ? this.options.runWslGit(distro, cwd, args, options)
-        : runWslGit(this.options.wslBinary ?? 'wsl.exe', distro, cwd, args, options)
+        ? this.options.runWslGit(distro, cwd, args)
+        : runWslGit(this.options.wslBinary ?? 'wsl.exe', distro, cwd, args)
     );
   }
 }
@@ -1597,46 +1545,19 @@ async function retryTransientGitFailure(run: () => Promise<GitResult>): Promise<
   return run();
 }
 
-function reviewOutputExceeded(result: GitResult): boolean {
-  return result.code === null && /output exceeded \d+ bytes/i.test(result.stderr);
-}
-
-function truncatedFileDiff(
-  path: string,
-  fromPath: string | null,
-  kind: WorkingChangeKind = 'modified'
-): FileDiff {
-  return {
-    path,
-    fromPath,
-    kind,
-    binary: false,
-    hunks: [],
-    empty: false,
-    truncated: true
-  };
-}
-
-function runGit(
-  bin: string,
-  cwd: string,
-  args: string[],
-  options: GitExecutionOptions = {}
-): Promise<GitResult> {
-  return runGitCommand(bin, args, { cwd, ...options });
+function runGit(bin: string, cwd: string, args: string[]): Promise<GitResult> {
+  return runGitCommand(bin, args, { cwd });
 }
 
 function runWslGit(
   wslBinary: string,
   distro: string,
   cwd: string,
-  args: string[],
-  options: GitExecutionOptions = {}
+  args: string[]
 ): Promise<GitResult> {
   return runGitCommand(
     wslBinary,
-    ['-d', distro, '--cd', cwd, '--', 'git', ...args],
-    options
+    ['-d', distro, '--cd', cwd, '--', 'git', ...args]
   );
 }
 
