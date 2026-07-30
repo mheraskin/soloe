@@ -409,7 +409,10 @@ impl BackendSupervisor {
         let settings_path = self.data_directory.join("settings.json");
         let mut backend = match fs::read(&settings_path) {
             Ok(data) => {
-                serde_json::from_slice::<StoredSettings>(&data)
+                let json = data
+                    .strip_prefix(&[0xEF, 0xBB, 0xBF])
+                    .unwrap_or(data.as_slice());
+                serde_json::from_slice::<StoredSettings>(json)
                     .map_err(|error| {
                         format!("failed to read {}: {error}", settings_path.display())
                     })?
@@ -1351,6 +1354,30 @@ mod tests {
                 wsl_distro: "Debian".to_string(),
                 wsl_repository_root: "/home/me/soloe".to_string(),
             }
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn reads_windows_powershell_utf8_settings_with_a_bom() {
+        let directory = env::temp_dir().join(format!(
+            "soloe-tray-settings-bom-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&directory);
+        let mut settings = vec![0xEF, 0xBB, 0xBF];
+        settings.extend_from_slice(
+            br#"{"backend":{"placement":"wsl","wslDistro":"Ubuntu","wslRepositoryRoot":"/home/me/soloe"}}"#,
+        );
+        fs::write(directory.join("settings.json"), settings).unwrap();
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
+
+        assert_eq!(
+            supervisor.configured_backend().unwrap().placement,
+            BackendPlacement::Wsl
         );
         let _ = fs::remove_dir_all(directory);
     }
