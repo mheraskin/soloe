@@ -379,9 +379,20 @@
   $effect(() => {
     const selected = sessions.selected;
     const cwd = selected?.cwd ?? null;
+    const project = selected?.projectId ? projects.get(selected.projectId) : null;
+    const projectSessions = selected?.projectId
+      ? sessions.byProject[selected.projectId] ?? []
+      : [];
     rightRail.setActiveCwd(cwd);
     browserStore.setActiveScope(selected ? worktreeScope(selected.cwd, selected) : null);
-    vaultStore.setActiveCwd(cwd);
+    vaultStore.setActiveContext({
+      cwd,
+      projectCwd: project?.path ?? cwd,
+      projectScopeCwds: projectSessions.flatMap((session) => {
+        const repoPath = git.statusFor(session.cwd, session)?.repoPath;
+        return repoPath ? [session.cwd, repoPath] : [session.cwd];
+      })
+    });
   });
 
   // Reconcile Worktree Inventory for every known Project. Inventory does not

@@ -196,6 +196,29 @@ describe('BrowserStore residency', () => {
     });
   });
 
+  it('keeps page and responsive canvas zoom independent for every tab', () => {
+    const store = new BrowserStore();
+    const first = add(store, 'https://same-origin.test/first');
+    const second = add(store, 'https://same-origin.test/second');
+
+    store.setPageZoom(first.id, 1.25);
+    store.setCanvasZoom(first.id, 0.67);
+    store.setPageZoom(second.id, 0.9);
+    store.setCanvasZoom(second.id, 1.5);
+
+    store.selectTab(first.id);
+    expect(store.activeTab).toMatchObject({ pageZoom: 1.25, canvasZoom: 0.67 });
+    store.selectTab(second.id);
+    expect(store.activeTab).toMatchObject({ pageZoom: 0.9, canvasZoom: 1.5 });
+
+    vi.advanceTimersByTime(100);
+    const restored = new BrowserStore();
+    restored.selectTab(first.id);
+    expect(restored.activeTab).toMatchObject({ pageZoom: 1.25, canvasZoom: 0.67 });
+    restored.selectTab(second.id);
+    expect(restored.activeTab).toMatchObject({ pageZoom: 0.9, canvasZoom: 1.5 });
+  });
+
   it('rewrites only the changed scope instead of serializing all browser state', () => {
     const store = new BrowserStore();
     const first = worktreeScope('/repo-a', { runMode: 'wsl', wslDistro: 'Ubuntu' });

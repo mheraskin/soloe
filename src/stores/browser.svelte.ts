@@ -28,6 +28,11 @@ export interface BrowserTab {
   historyIndex: number;
   // Per-tab device emulation. Undefined = native (no emulation).
   device?: BrowserTabDevice;
+  // Chromium shares native zoom between same-origin webContents. Persisting
+  // the intended factors on the logical tab lets the renderer re-apply the
+  // selected tab's value whenever focus changes.
+  pageZoom?: number;
+  canvasZoom?: number;
   // When set, the tab's <webview> is unmounted to release memory. Wallclock
   // ms of when the user paused it; an auto-resume timer reads this against
   // the configured threshold to decide when to remount.
@@ -70,6 +75,10 @@ function isDevice(value: unknown): value is BrowserTabDevice {
   );
 }
 
+function isZoomFactor(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0.25 && value <= 5;
+}
+
 function isTab(value: unknown): value is BrowserTab {
   if (!value || typeof value !== 'object') return false;
   const t = value as Record<string, unknown>;
@@ -78,6 +87,8 @@ function isTab(value: unknown): value is BrowserTab {
   if (typeof t.historyIndex !== 'number') return false;
   if (t.historyIndex < 0 || t.historyIndex >= t.history.length) return false;
   if (t.device !== undefined && !isDevice(t.device)) return false;
+  if (t.pageZoom !== undefined && !isZoomFactor(t.pageZoom)) return false;
+  if (t.canvasZoom !== undefined && !isZoomFactor(t.canvasZoom)) return false;
   if (t.pausedAt !== undefined && (typeof t.pausedAt !== 'number' || !Number.isFinite(t.pausedAt))) {
     return false;
   }
@@ -99,6 +110,8 @@ function sanitize(value: unknown): BrowserCwdState {
         history,
         historyIndex: Math.max(0, Math.min(history.length - 1, tab.historyIndex - historyStart)),
         ...(tab.device ? { device: { ...tab.device } } : {}),
+        ...(tab.pageZoom !== undefined ? { pageZoom: tab.pageZoom } : {}),
+        ...(tab.canvasZoom !== undefined ? { canvasZoom: tab.canvasZoom } : {}),
         ...(tab.pausedAt !== undefined ? { pausedAt: tab.pausedAt } : {})
       };
       })
@@ -470,6 +483,36 @@ export class BrowserStore {
       tabs[idx] = rest;
     } else {
       tabs[idx] = { ...prev, device };
+    }
+    this.write({ ...state, tabs });
+  }
+
+  setPageZoom(id: string, factor: number): void {
+    this.setTabZoom(id, 'pageZoom', factor);
+  }
+
+  setCanvasZoom(id: string, factor: number): void {
+    this.setTabZoom(id, 'canvasZoom', factor);
+  }
+
+  private setTabZoom(
+    id: string,
+    field: 'pageZoom' | 'canvasZoom',
+    factor: number
+  ): void {
+    if (!isZoomFactor(factor)) return;
+    const state = this.current();
+    const idx = state.tabs.findIndex((tab) => tab.id === id);
+    if (idx < 0) return;
+    const prev = state.tabs[idx]!;
+    const normalized = Math.round(factor * 1_000) / 1_000;
+    if ((prev[field] ?? 1) === normalized) return;
+    const tabs = state.tabs.slice();
+    if (normalized === 1) {
+      const { [field]: _omitted, ...rest } = prev;
+      tabs[idx] = rest;
+    } else {
+      tabs[idx] = { ...prev, [field]: normalized };
     }
     this.write({ ...state, tabs });
   }

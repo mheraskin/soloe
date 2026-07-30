@@ -24,7 +24,7 @@
   import { reportError } from '../../stores/toast.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { vaultStore } from '../../stores/vault.svelte';
-  import type { VaultEntry } from '../../../shared/types/vault';
+  import type { ScopedVaultEntry } from '../../lib/vault-groups';
   import type { ElectronWebview } from '../../types/webview';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -68,20 +68,12 @@
   let failureById = $state<Record<string, FailureSuggestion | null>>({});
   let lastAppliedDeviceKeyById = $state<Record<string, string | null>>({});
   let lastAppliedUaById = $state<Record<string, string | null>>({});
-  // Per-tab page zoom factor (1.0 = 100%). Driven by Ctrl+/-/0 outside
-  // responsive mode; seeded from the webview's own zoom level on dom-ready.
-  let pageZoomFactorById = $state<Record<string, number>>({});
-  // Per-tab canvas zoom factor (1.0 = 100%). Applied as a CSS scale to the
-  // device frame in responsive mode so the user can zoom out and see the
-  // whole emulated viewport without changing the page's own zoom.
-  let canvasZoomById = $state<Record<string, number>>({});
-
   let activeWebview = $derived(activeId ? webviewsById[activeId] ?? null : null);
   let activeDomReady = $derived(activeId ? !!domReadyById[activeId] : false);
   let isLoading = $derived(activeId ? !!isLoadingById[activeId] : false);
   let failureSuggestion = $derived(activeId ? failureById[activeId] ?? null : null);
-  let activePageZoom = $derived(activeId ? pageZoomFactorById[activeId] ?? 1 : 1);
-  let activeCanvasZoom = $derived(activeId ? canvasZoomById[activeId] ?? 1 : 1);
+  let activePageZoom = $derived(activeTab?.pageZoom ?? 1);
+  let activeCanvasZoom = $derived(activeTab?.canvasZoom ?? 1);
   // While a device is active Ctrl+/-/0 drives the canvas; otherwise the
   // webview's page zoom. The indicator and reset button follow the same rule.
   let activeZoomFactor = $derived(device ? activeCanvasZoom : activePageZoom);
@@ -137,7 +129,7 @@
   }
 
   function applyPageZoom(tabId: string, factor: number): void {
-    pageZoomFactorById = { ...pageZoomFactorById, [tabId]: factor };
+    browserStore.setPageZoom(tabId, factor);
     const el = webviewsById[tabId];
     if (!el || !domReadyById[tabId]) return;
     try {
@@ -149,7 +141,7 @@
   }
 
   function applyCanvasZoom(tabId: string, factor: number): void {
-    canvasZoomById = { ...canvasZoomById, [tabId]: factor };
+    browserStore.setCanvasZoom(tabId, factor);
   }
 
   function resetActiveZoom(): void {
@@ -301,14 +293,13 @@
         // Re-apply any previously-set page zoom: a resumed tab has a fresh
         // webContents whose zoom level resets to 0 (= 100%), so without this
         // the indicator and the actual page would silently disagree.
-        const factor = pageZoomFactorById[tabId];
-        if (factor !== undefined && factor !== 1) {
-          try {
-            wv.setZoomLevel(factorToLevel(factor));
-          } catch {
-            // Webview destroyed between dom-ready firing and us applying —
-            // the next attach will re-try on the new webContents.
-          }
+        const factor =
+          browserStore.tabs.find((tab) => tab.id === tabId)?.pageZoom ?? 1;
+        try {
+          wv.setZoomLevel(factorToLevel(factor));
+        } catch {
+          // Webview destroyed between dom-ready firing and us applying —
+          // the next attach will re-try on the new webContents.
         }
         void applyEmulationFor(tabId);
       };
@@ -787,6 +778,22 @@
     void applyEmulationFor(tab.id);
   });
 
+  // Native Chromium zoom is shared by same-origin webContents in one
+  // partition. Restore the selected logical tab's intended factor on every
+  // switch, including 100%, so a sibling tab cannot leak its zoom into it.
+  $effect(() => {
+    const tab = activeTab;
+    if (!tab || !activeDomReady) return;
+    const el = webviewsById[tab.id];
+    if (!el) return;
+    const factor = tab.pageZoom ?? 1;
+    try {
+      el.setZoomLevel(factorToLevel(factor));
+    } catch {
+      // A concurrent pause or scope switch can destroy the guest.
+    }
+  });
+
   // Canvas zoom is a CSS transform, which doesn't fire ResizeObserver — but
   // it does change the webview's visual rect, so an open autofill popover
   // has to follow.
@@ -868,13 +875,13 @@
       // In responsive mode the keystrokes drive the canvas scale (so the
       // user can see the whole emulated device), not the page's own zoom.
       if (tab.device) {
-        const current = canvasZoomById[tabId] ?? 1;
+        const current = tab.canvasZoom ?? 1;
         const next = nextZoomFactor(current, direction);
         if (next === current) return;
         applyCanvasZoom(tabId, next);
         return;
       }
-      const current = pageZoomFactorById[tabId] ?? 1;
+      const current = tab.pageZoom ?? 1;
       const next = nextZoomFactor(current, direction);
       if (next === current) return;
       applyPageZoom(tabId, next);
@@ -1013,7 +1020,7 @@
   }
   interface FillPrompt {
     origin: string;
-    matches: VaultEntry[];
+    matches: ScopedVaultEntry[];
     // Last rect reported by the preload (in page CSS pixels). Kept so we
     // can re-derive the host-side anchor when the layout shifts without
     // having to round-trip through the webview again.
@@ -1092,12 +1099,12 @@
       return;
     }
     try {
-      await vaultStore.ensureLoaded();
+      await vaultStore.ensureProjectLoaded();
     } catch {
       // Vault load failure is non-fatal — just skip the prompt.
       return;
     }
-    const matches = vaultStore.matchesForOrigin(origin);
+    const matches = vaultStore.projectMatchesForOrigin(origin);
     if (matches.length === 0) {
       fillPrompt = null;
       return;
@@ -1105,7 +1112,7 @@
     fillPrompt = { origin, matches, rect, anchor: computeFillAnchor(rect) };
   }
 
-  async function fillFromPrompt(entry: VaultEntry): Promise<void> {
+  async function fillFromPrompt(item: ScopedVaultEntry): Promise<void> {
     const promptOrigin = fillPrompt?.origin ?? '';
     const suppressPrompt = () => {
       if (!promptOrigin) return;
@@ -1115,7 +1122,7 @@
     suppressPrompt();
     fillPrompt = null;
     try {
-      const secret = await vaultStore.getSecret(entry.id);
+      const secret = await vaultStore.getSecret(item.entry.id, item.vaultCwd);
       suppressPrompt();
       const result = await runAutofill(secret.username, secret.password);
       if (!result.filledUser) {
@@ -1137,17 +1144,17 @@
   ): Promise<void> {
     fillPrompt = null;
     try {
-      await vaultStore.ensureLoaded();
+      await vaultStore.ensureProjectLoaded();
     } catch {
       return;
     }
-    const matches = vaultStore.matchesForOrigin(origin);
+    const matches = vaultStore.projectMatchesForOrigin(origin);
     // Already saved for this exact (origin, username) — don't nag the user
     // again. We don't compare passwords here because matchesForOrigin
     // returns metadata, not secrets; a stale password is the user's
     // problem to update manually for now.
     const alreadyKnown = matches.some(
-      (m) => m.username.toLowerCase() === username.toLowerCase()
+      ({ entry }) => entry.username.toLowerCase() === username.toLowerCase()
     );
     if (alreadyKnown) {
       savePrompt = null;
@@ -1160,11 +1167,14 @@
     if (!savePrompt || savePromptBusy) return;
     savePromptBusy = true;
     try {
-      await vaultStore.save({
-        origin: savePrompt.origin,
-        username: savePrompt.username,
-        password: savePrompt.password
-      });
+      await vaultStore.save(
+        {
+          origin: savePrompt.origin,
+          username: savePrompt.username,
+          password: savePrompt.password
+        },
+        vaultStore.saveTarget('project')
+      );
       toast.success('Password saved');
       savePrompt = null;
     } catch (err) {
@@ -1696,7 +1706,7 @@
         {@const tabW = tabDevice ? (tabDevice.rotated ? tabDevice.height : tabDevice.width) : 0}
         {@const tabH = tabDevice ? (tabDevice.rotated ? tabDevice.width : tabDevice.height) : 0}
         {@const initialUrl = getOrCaptureInitialUrl(tab.id, tabInitialUrl(tab))}
-        {@const tabCanvasZoom = canvasZoomById[tab.id] ?? 1}
+        {@const tabCanvasZoom = tab.canvasZoom ?? 1}
         {#if tabDevice}
           <!--
             Responsive mode: an overflow-auto wrapper hosts a scaler whose
@@ -1771,16 +1781,16 @@
               <X class="size-3" />
             </button>
           </div>
-          {#each fillPrompt.matches as entry (entry.id)}
+          {#each fillPrompt.matches as item (`${item.vaultCwd}:${item.entry.id}`)}
             <button
               type="button"
               class="flex w-full items-center gap-2 rounded border border-border/60 bg-muted/30 px-2 py-1.5 text-left hover:border-border hover:bg-muted/60"
-              onclick={() => fillFromPrompt(entry)}
+              onclick={() => fillFromPrompt(item)}
             >
               <div class="min-w-0 flex-1">
-                <div class="truncate text-xs">{entry.username}</div>
-                {#if entry.label}
-                  <div class="truncate text-[10px] text-muted-foreground">{entry.label}</div>
+                <div class="truncate text-xs">{item.entry.username}</div>
+                {#if item.entry.label}
+                  <div class="truncate text-[10px] text-muted-foreground">{item.entry.label}</div>
                 {/if}
               </div>
               <span class="text-[10px] text-muted-foreground">Fill</span>
