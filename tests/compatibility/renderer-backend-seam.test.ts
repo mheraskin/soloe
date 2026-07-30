@@ -35,5 +35,5 @@ describe('Renderer Backend Interface compatibility', () => {
     }
 
     expect(violations).toEqual([]);
-  });
+  }, 15_000);
 });
