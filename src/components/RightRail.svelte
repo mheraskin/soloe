@@ -382,6 +382,12 @@
 
   {#if inspectorMountedHere}
     <div class={paneClasses('inspector')} style={paneStyle('inspector')} data-pane-slot={slotOf('inspector')}>
+      <header class="soloe-pane-header">
+        <Activity class="size-3.5 text-muted-foreground" />
+        <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+          Inspector
+        </span>
+      </header>
       <ScrollArea class="min-h-0 flex-1">
         <RailInspectorTab />
       </ScrollArea>

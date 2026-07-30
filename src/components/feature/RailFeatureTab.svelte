@@ -139,7 +139,7 @@
 </script>
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-  <header class="flex min-w-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+  <header class="soloe-pane-header min-w-0 justify-between">
     <div class="flex min-w-0 items-center gap-1.5">
       <Microscope class="size-3.5 text-muted-foreground" />
       <span class="text-[10px] font-medium tracking-wider uppercase text-muted-foreground">Feature Lab</span>

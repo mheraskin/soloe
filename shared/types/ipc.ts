@@ -19,6 +19,7 @@ import type {
   GitAheadBehind,
   GitBranch,
   GitCheckoutRequest,
+  GitCreateWorktreeRequest,
   GitChangeEvent,
   GitCommit,
   GitDirty,
@@ -216,6 +217,7 @@ export const IpcChannels = {
     rangeChanges: 'git:range-changes',
     resolveRefs: 'git:resolve-refs',
     checkout: 'git:checkout',
+    createWorktree: 'git:create-worktree',
     workingChanges: 'git:working-changes',
     workingTreeSnapshot: 'git:working-tree-snapshot',
     observationDemand: 'git:observation-demand',
@@ -457,6 +459,7 @@ export interface GitApi {
   rangeChanges(request: RangeChangesRequest): Promise<IpcResult<RangeChangesResult>>;
   resolveRefs(request: ResolveRefsRequest): Promise<IpcResult<ResolveRefsResult>>;
   checkout(request: GitCheckoutRequest): Promise<IpcResult<GitStatus>>;
+  createWorktree(request: GitCreateWorktreeRequest): Promise<IpcResult<GitWorktree>>;
   workingChanges(request: WorkingChangesRequest): Promise<IpcResult<WorkingChangesResult>>;
   workingTreeSnapshot(
     request: WorkingTreeSnapshotRequest

@@ -858,7 +858,7 @@
 </script>
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col" class:select-none={resizingList}>
-  <header class="flex min-w-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+  <header class="soloe-pane-header min-w-0 justify-between">
     <div class="flex min-w-0 flex-1 items-center">
       <Popover.Root bind:open={pickerOpen}>
         <Popover.Trigger>

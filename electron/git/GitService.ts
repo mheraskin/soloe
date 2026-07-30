@@ -422,6 +422,62 @@ export class GitService {
     return this.getStatus(info.repoPath, true, context);
   }
 
+  async createWorktree(
+    repoPath: string,
+    worktreePath: string,
+    branch: string,
+    baseRef: string,
+    context: GitRepoContext = {}
+  ): Promise<GitWorktree> {
+    const targetPath = worktreePath.trim();
+    const targetBranch = branch.trim();
+    const targetBase = baseRef.trim();
+    if (!targetPath) throw new Error('Worktree folder is required');
+    if (!targetBranch) throw new Error('New branch name is required');
+    if (!targetBase) throw new Error('Base branch is required');
+
+    const info = await this.resolveRepo(repoPath, context);
+    if (!info) throw new Error(`Not a git repository: ${repoPath}`);
+
+    const branchCheck = await this.runInRepo(info, [
+      'check-ref-format',
+      '--branch',
+      targetBranch
+    ]);
+    if (branchCheck.code !== 0) {
+      throw new Error(branchCheck.stderr.trim() || `Invalid branch name: ${targetBranch}`);
+    }
+
+    const baseCheck = await this.runInRepo(info, [
+      'rev-parse',
+      '--verify',
+      `${targetBase}^{commit}`
+    ]);
+    if (baseCheck.code !== 0) {
+      throw new Error(baseCheck.stderr.trim() || `Base branch not found: ${targetBase}`);
+    }
+
+    const added = await this.runInRepo(info, [
+      'worktree',
+      'add',
+      '-b',
+      targetBranch,
+      targetPath,
+      targetBase
+    ]);
+    if (added.code !== 0) {
+      throw new Error(added.stderr.trim() || added.stdout.trim() || 'Failed to create worktree');
+    }
+
+    this.invalidate(info);
+    const worktrees = await this.listWorktrees(info.repoPath, true, context);
+    const created = worktrees.find((worktree) =>
+      normalizeComparablePath(worktree.path) === normalizeComparablePath(targetPath)
+    );
+    if (!created) throw new Error('Worktree was created but could not be rediscovered');
+    return created;
+  }
+
   // List every file with pending working-tree changes (staged + unstaged +
   // untracked), with per-file +/- counts. Untracked files run through
   // `diff --no-index` so a brand-new file shows real insertion totals.
@@ -1304,6 +1360,10 @@ function fieldAfterSpaces(record: string, count: number): string {
     from = space + 1;
   }
   return record.slice(from);
+}
+
+function normalizeComparablePath(value: string): string {
+  return value.replaceAll('\\', '/').replace(/\/+$/u, '').toLocaleLowerCase('en-US');
 }
 
 function changeKindFromStatus(code: string): WorkingChangeKind {

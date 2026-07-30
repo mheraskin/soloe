@@ -2,9 +2,9 @@
   import { onMount, tick, untrack } from 'svelte';
   import { ModeWatcher, setMode } from 'mode-watcher';
   import {
-    Check,
     ChevronDown,
     FolderGit2,
+    FolderPlus,
     FolderOpen,
     Maximize2,
     Minus,
@@ -43,6 +43,7 @@
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import { modal } from './stores/modal.svelte';
   import { projectModal } from './stores/project-modal.svelte';
+  import { worktreeCreateModal } from './stores/worktree-create-modal.svelte';
   import { sessionHandoff } from './stores/session-handoff.svelte';
   import { confirmStore } from './stores/confirm.svelte';
   import {
@@ -61,6 +62,7 @@
     displayedAgentState as resolveDisplayedAgentState,
     displayedAgentSummary
   } from './lib/session-display-state';
+  import { isCollapsedSessionWorking } from './lib/collapsed-session-activity';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
   import { toast } from 'svelte-sonner';
@@ -86,6 +88,7 @@
   const loadSessionHandoff = () => import('./components/SessionHandoffDialog.svelte');
   const loadAgentIntegrationSetup = () => import('./components/AgentIntegrationSetupDialog.svelte');
   const loadAgentNotificationToasts = () => import('./components/AgentNotificationToasts.svelte');
+  const loadCreateWorktreeDialog = () => import('./components/CreateWorktreeDialog.svelte');
 
   let appliedTheme: string | null = null;
   let suppressCollapsedDropdownSelect = false;
@@ -211,6 +214,7 @@
       index: number | null;
       kind: SessionLaunchKind;
       statusDot: CollapsedStatusDot | null;
+      working: boolean;
       active: boolean;
       session: Session;
     }>;
@@ -246,7 +250,10 @@
     return state.replaceAll('_', ' ');
   }
 
-  function buildCollapsedStatusDot(session: Session): CollapsedStatusDot | null {
+  function buildCollapsedSessionStatus(session: Session): {
+    statusDot: CollapsedStatusDot | null;
+    working: boolean;
+  } {
     const status = sessions.statusFor(session.id);
     const observed = sessions.observationFor(session.id);
     const latestEvent = sessions.eventsFor(session.id)[0] ?? null;
@@ -255,14 +262,20 @@
       : observed?.resultSummary ?? observed?.promptSummary ?? null;
     if (observed?.state === 'completed' || observed?.state === 'exited') {
       return {
-        tone: 'done',
-        title: statusTitle(stateLabel(observed.state), observedSummary)
+        statusDot: {
+          tone: 'done',
+          title: statusTitle(stateLabel(observed.state), observedSummary)
+        },
+        working: false
       };
     }
     if (observed?.state === 'failed' || observed?.state === 'waiting_for_approval') {
       return {
-        tone: 'issue',
-        title: statusTitle(stateLabel(observed.state), observedSummary)
+        statusDot: {
+          tone: 'issue',
+          title: statusTitle(stateLabel(observed.state), observedSummary)
+        },
+        working: false
       };
     }
     const displayedState = resolveDisplayedAgentState({
@@ -274,17 +287,36 @@
 
     if (displayedState) {
       const summary = displayedAgentSummary(observed, displayedState, observedSummary);
+      if (isCollapsedSessionWorking(displayedState)) {
+        return { statusDot: null, working: true };
+      }
       return {
-        tone: agentStateStatusTone(displayedState),
-        title: statusTitle(stateLabel(displayedState), summary)
+        statusDot: {
+          tone: agentStateStatusTone(displayedState),
+          title: statusTitle(stateLabel(displayedState), summary)
+        },
+        working: false
       };
     }
 
     const runtimeTone = runtimeStatusTone(status);
-    if (!runtimeTone) return null;
+    if (
+      status === 'starting'
+      && (
+        session.launch.type === 'agent'
+        || observed?.provider === 'claude_code'
+        || observed?.provider === 'codex'
+      )
+    ) {
+      return { statusDot: null, working: true };
+    }
+    if (!runtimeTone) return { statusDot: null, working: false };
     return {
-      tone: runtimeTone,
-      title: stateLabel(status)
+      statusDot: {
+        tone: runtimeTone,
+        title: stateLabel(status)
+      },
+      working: false
     };
   }
 
@@ -314,15 +346,19 @@
         (s.projectId ?? null) === (sel.projectId ?? null)
         && sameWorktreePath(s.cwd?.trim() ?? '', cwd, s.runMode)
     );
-    const sessionList = ordered.map((s, i) => ({
-      id: s.id,
-      name: s.name,
-      index: i < 9 ? i + 1 : null,
-      kind: displaySessionKind(s, sessions.observationFor(s.id)),
-      statusDot: buildCollapsedStatusDot(s),
-      active: s.id === sel.id,
-      session: s
-    }));
+    const sessionList = ordered.map((s, i) => {
+      const presentation = buildCollapsedSessionStatus(s);
+      return {
+        id: s.id,
+        name: s.name,
+        index: i < 9 ? i + 1 : null,
+        kind: displaySessionKind(s, sessions.observationFor(s.id)),
+        statusDot: presentation.statusDot,
+        working: presentation.working,
+        active: s.id === sel.id,
+        session: s
+      };
+    });
     const projectOptions = projects.recents.map((p) => ({
       id: p.id,
       name: p.name,
@@ -1072,7 +1108,9 @@
               <DropdownMenu.Label>Project</DropdownMenu.Label>
               {#each collapsedNav.projects as project (project.id)}
                 <DropdownMenu.Item
-                  class={`relative ${isDraggingCollapsedProject(project.id) ? 'opacity-40' : ''}`}
+                  class={`relative ${project.active ? 'bg-accent text-accent-foreground' : ''} ${
+                    isDraggingCollapsedProject(project.id) ? 'opacity-40' : ''
+                  }`}
                   draggable="true"
                   onSelect={(e) => onCollapsedProjectSelect(e, project.id)}
                   ondragstart={(e) => onCollapsedProjectDragStart(e, project)}
@@ -1102,9 +1140,6 @@
                   </span>
                   {#if project.sessionCount > 0}
                     <span class="ml-auto text-[11px] text-muted-foreground">{project.sessionCount}</span>
-                  {/if}
-                  {#if project.active}
-                    <Check class="ml-1 size-3" />
                   {/if}
                 </DropdownMenu.Item>
               {/each}
@@ -1137,9 +1172,22 @@
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="start" class="w-72">
               <DropdownMenu.Label>Worktree</DropdownMenu.Label>
+              <DropdownMenu.Item
+                disabled={!collapsedNav.projectId}
+                onSelect={() => {
+                  const project = projects.get(collapsedNav.projectId);
+                  if (project) worktreeCreateModal.openFor(project, collapsedNav.branch);
+                }}
+              >
+                <FolderPlus />
+                <span>Add worktree…</span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator />
               {#each collapsedNav.worktrees as worktree (worktree.cwd)}
                 <DropdownMenu.Item
-                  class={`relative ${isDraggingCollapsedWorktree(worktree.cwd) ? 'opacity-40' : ''}`}
+                  class={`relative ${worktree.active ? 'bg-accent text-accent-foreground' : ''} ${
+                    isDraggingCollapsedWorktree(worktree.cwd) ? 'opacity-40' : ''
+                  }`}
                   draggable="true"
                   onSelect={(e) => onCollapsedWorktreeSelect(e, worktree)}
                   ondragstart={(e) => onCollapsedWorktreeDragStart(e, worktree)}
@@ -1180,9 +1228,6 @@
                   </span>
                   {#if worktree.sessionCount > 0}
                     <span class="ml-auto text-[11px] text-muted-foreground">{worktree.sessionCount}</span>
-                  {/if}
-                  {#if worktree.active}
-                    <Check class="ml-1 size-3" />
                   {/if}
                 </DropdownMenu.Item>
               {/each}
@@ -1258,15 +1303,23 @@
                         {s.index}
                       </span>
                     {/if}
-                    <KindIcon kind={s.kind} size={12} />
-                    {#if s.statusDot}
+                    <span class="relative inline-flex size-3 shrink-0 items-center justify-center">
+                      <KindIcon kind={s.kind} size={12} />
+                      {#if s.statusDot}
+                        <span
+                          class={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ring-1 ring-background ${collapsedStatusDotClass(s.statusDot.tone)}`}
+                          title={s.statusDot.title}
+                          aria-label={s.statusDot.title}
+                        ></span>
+                      {/if}
+                    </span>
+                    <span class="min-w-0 truncate">{s.name}</span>
+                    {#if s.working}
                       <span
-                        class={`size-1.5 shrink-0 rounded-full ${collapsedStatusDotClass(s.statusDot.tone)}`}
-                        title={s.statusDot.title}
-                        aria-label={s.statusDot.title}
+                        class="collapsed-session-runner pointer-events-none absolute right-1.5 -bottom-px left-1.5 h-px"
+                        aria-hidden="true"
                       ></span>
                     {/if}
-                    <span class="min-w-0 truncate">{s.name}</span>
                   </button>
                 {/snippet}
               </SessionContextMenu>
@@ -1355,6 +1408,9 @@
   {#if agentNotifications.toasts.length > 0}
     <LazyOverlay label="agent notifications" load={loadAgentNotificationToasts} />
   {/if}
+  {#if worktreeCreateModal.open}
+    <LazyOverlay label="create worktree" load={loadCreateWorktreeDialog} />
+  {/if}
   <Toaster richColors closeButton />
 </div>
 
@@ -1368,5 +1424,24 @@
   }
   .collapsed-session-chip[data-chip-color][data-chip-active='true'] {
     background-color: color-mix(in oklab, var(--chip-color) 24%, transparent);
+  }
+  .collapsed-session-runner {
+    background-image: repeating-linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--primary) 82%, transparent) 0 3px,
+      transparent 3px 6px
+    );
+    background-size: 12px 1px;
+    animation: collapsed-session-runner 650ms linear infinite;
+  }
+  @keyframes collapsed-session-runner {
+    to {
+      background-position-x: 12px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .collapsed-session-runner {
+      animation: none;
+    }
   }
 </style>

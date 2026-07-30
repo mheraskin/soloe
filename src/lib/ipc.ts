@@ -31,6 +31,7 @@ import type {
   FileDiffRequest,
   FileLinesRequest,
   GitCheckoutRequest,
+  GitCreateWorktreeRequest,
   GitChangeEvent,
   GitCommitRequest,
   GitRecentCommitsRequest,
@@ -253,6 +254,8 @@ export const backend = {
       unwrap(await c.git.refHistory(toIpcPayload(request))),
     checkout: async (request: GitCheckoutRequest) =>
       unwrap(await c.git.checkout(toIpcPayload(request))),
+    createWorktree: async (request: GitCreateWorktreeRequest) =>
+      unwrap(await c.git.createWorktree(toIpcPayload(request))),
     workingChanges: async (request: WorkingChangesRequest) =>
       unwrap(await c.git.workingChanges(toIpcPayload(request))),
     workingTreeSnapshot: async (request: WorkingTreeSnapshotRequest) =>

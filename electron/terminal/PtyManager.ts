@@ -9,6 +9,7 @@ import type {
   SessionStatus
 } from '@shared/types/sessions.js';
 import { effectiveAgentProvider } from '@shared/types/sessions.js';
+import { sessionAutoApprovesPermissions } from '@shared/agent-permissions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
@@ -49,6 +50,7 @@ interface TerminalInstance {
   usageLimitBuffer: string;
   usageLimitDetected: boolean;
   agentProvider: AgentRuntimeProvider | null;
+  autoApprovesPermissions: boolean;
   exitedAt?: string;
   exitCode?: number | null;
   signal?: number | null;
@@ -182,7 +184,8 @@ export class PtyManager extends EventEmitter {
       agentSignalTail: '',
       usageLimitBuffer: '',
       usageLimitDetected: false,
-      agentProvider
+      agentProvider,
+      autoApprovesPermissions: sessionAutoApprovesPermissions(session)
     };
     this.terminals.set(terminalId, instance);
 
@@ -426,6 +429,7 @@ export class PtyManager extends EventEmitter {
     const observedState = this.opts.observer?.getSnapshot(instance.sessionId)?.state;
     if (
       isApprovalPromptOutput(signalText)
+      && !instance.autoApprovesPermissions
       && observedState !== 'waiting_for_approval'
       && observedState !== 'usage_limited'
     ) {

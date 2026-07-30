@@ -5,6 +5,7 @@
     Check,
     Folder,
     FolderTree,
+    FolderPlus,
     Pencil,
     RefreshCcw,
     Trash2
@@ -19,6 +20,7 @@
   import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { confirmStore } from '../stores/confirm.svelte';
+  import { worktreeCreateModal } from '../stores/worktree-create-modal.svelte';
   import { ipc } from '../lib/ipc';
   import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
@@ -321,19 +323,19 @@
   ondrop={onProjectDropEvent}
 >
   {#if dropPosition === 'before'}
-    <div class="pointer-events-none absolute -top-1.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+    <div class="pointer-events-none absolute -top-0.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
   {/if}
   {#if dropPosition === 'after'}
-    <div class="pointer-events-none absolute -bottom-1.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
+    <div class="pointer-events-none absolute -bottom-0.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
   {/if}
-<Collapsible.Root open={effectiveExpanded} onOpenChange={onProjectOpenChange} class="flex flex-col gap-1.5">
+<Collapsible.Root open={effectiveExpanded} onOpenChange={onProjectOpenChange} class="flex flex-col gap-1">
   <ContextMenu.Root>
     <ContextMenu.Trigger>
       {#snippet child({ props })}
         <div
           {...props}
           data-project-id={project.id}
-          class={cn('flex items-center gap-1 px-1 pt-1.5 pb-1', isDraggingSelf && 'opacity-40')}
+          class={cn('flex items-center gap-1', isDraggingSelf && 'opacity-40')}
           draggable={onProjectDrop ? 'true' : undefined}
           ondragstart={onProjectDragStart}
           ondragend={onProjectDragEnd}
@@ -341,7 +343,7 @@
           <span class="relative flex min-w-0 flex-1">
             <Collapsible.Trigger
               class={cn(
-                'group flex min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1.5 text-left text-foreground transition-colors',
+                'group flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground transition-colors',
                 isActiveProject ? 'bg-accent/60 border-border' : 'hover:bg-muted'
               )}
               aria-label={`Toggle ${project.name} project`}
@@ -441,6 +443,18 @@
   </ContextMenu.Root>
 
   <Collapsible.Content class="ml-3 flex flex-col gap-1.5 border-l border-border pl-2">
+    <button
+      type="button"
+      class="flex h-6 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      onclick={() =>
+        worktreeCreateModal.openFor(
+          project,
+          git.statusFor(project.path, gitContext)?.branch
+        )}
+    >
+      <FolderPlus class="size-3" />
+      <span>Add worktree…</span>
+    </button>
     {#if isStandaloneWorktreeProject && mainWorktree}
       <div class="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
         <FolderTree class="size-3 shrink-0" />
