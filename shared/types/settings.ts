@@ -26,6 +26,19 @@ export interface SettingsBrowser {
   pauseAutoResumeMinutes: number;
 }
 
+export type BackendPlacement = 'windows' | 'wsl';
+
+export interface SettingsBackend {
+  // The Application Server and Environment Runtime always move together.
+  placement: BackendPlacement;
+  // Used only when placement is "wsl".
+  wslDistro: string;
+  // Absolute Linux path to this repository in the selected distribution.
+  // Keeping a separate WSL checkout avoids sharing platform-specific
+  // node_modules with the Windows checkout.
+  wslRepositoryRoot: string;
+}
+
 export interface SettingsDefaults {
   runMode: RunMode;
   wslDistro?: string;
@@ -150,6 +163,7 @@ export const DEFAULT_MODEL_CLAUDE: ModelSelection = { provider: 'claude', id: 'h
 
 export interface Settings {
   version: 1;
+  backend: SettingsBackend;
   appearance: SettingsAppearance;
   terminal: SettingsTerminal;
   diff: SettingsDiff;
@@ -164,6 +178,7 @@ export interface Settings {
 }
 
 export type SettingsUpdate = {
+  backend?: Partial<SettingsBackend>;
   appearance?: Partial<SettingsAppearance>;
   terminal?: Partial<SettingsTerminal>;
   diff?: Partial<SettingsDiff>;
@@ -179,6 +194,11 @@ export type SettingsUpdate = {
 
 export const DEFAULT_SETTINGS: Settings = {
   version: 1,
+  backend: {
+    placement: 'windows',
+    wslDistro: 'Ubuntu',
+    wslRepositoryRoot: ''
+  },
   appearance: { theme: 'dark' },
   terminal: { fontSize: 13, confirmDeleteTabs: true },
   diff: { fontSize: 13 },

@@ -2833,18 +2833,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "soloe-tauri-spike"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "serde",
- "serde_json",
- "soloe-terminal",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "soloe-terminal"
 version = "0.1.0"
 dependencies = [
@@ -2852,6 +2840,16 @@ dependencies = [
  "portable-pty",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "soloe-tray"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
 ]
 
 [[package]]

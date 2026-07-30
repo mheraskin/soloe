@@ -21,6 +21,7 @@ const VALID_RUN_MODES = new Set(['windows', 'linux', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
 const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
+const VALID_BACKEND_PLACEMENTS = new Set(['windows', 'wsl']);
 const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration', 'worktreeOverview'];
 
 export class SettingsStore {
@@ -52,6 +53,7 @@ export class SettingsStore {
     await this.ensureLoaded();
     const next: Settings = {
       version: 1,
+      backend: { ...this.cache!.backend, ...(patch.backend ?? {}) },
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
       terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
       diff: { ...this.cache!.diff, ...(patch.diff ?? {}) },
@@ -198,6 +200,7 @@ function parseSettings(
 ): Settings {
   if (!isObject(raw)) return clone(defaultsForHost);
   const appearance = isObject(raw['appearance']) ? raw['appearance'] : {};
+  const backend = isObject(raw['backend']) ? raw['backend'] : {};
   const terminal = isObject(raw['terminal']) ? raw['terminal'] : {};
   const diff = isObject(raw['diff']) ? raw['diff'] : {};
   const browser = isObject(raw['browser']) ? raw['browser'] : {};
@@ -211,6 +214,21 @@ function parseSettings(
   );
   const out: Settings = {
     version: 1,
+    backend: {
+      placement: pickEnum(
+        backend['placement'],
+        VALID_BACKEND_PLACEMENTS,
+        DEFAULT_SETTINGS.backend.placement
+      ) as Settings['backend']['placement'],
+      wslDistro: pickNonEmptyString(
+        backend['wslDistro'],
+        DEFAULT_SETTINGS.backend.wslDistro
+      ),
+      wslRepositoryRoot: pickString(
+        backend['wslRepositoryRoot'],
+        DEFAULT_SETTINGS.backend.wslRepositoryRoot
+      )
+    },
     appearance: {
       theme: pickEnum(appearance['theme'], VALID_THEMES, DEFAULT_SETTINGS.appearance.theme) as Settings['appearance']['theme']
     },
@@ -310,6 +328,15 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function pickString(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value.trim() : fallback;
+}
+
+function pickNonEmptyString(value: unknown, fallback: string): string {
+  const parsed = pickString(value, fallback);
+  return parsed || fallback;
+}
+
 function pickSessionLaunchKind(value: unknown): Settings['defaults']['newSessionKind'] {
   if (value === 'standard_terminal') return 'terminal';
   return pickEnum(
@@ -352,6 +379,22 @@ function parseQuickLaunch(raw: unknown, defaultsSeeded: boolean): QuickLaunchPre
 
 function validateSettings(s: Settings, platform: SupportedHostPlatform = 'windows'): void {
   if (s.version !== 1) throw new Error(`Unsupported settings version: ${s.version}`);
+  if (!VALID_BACKEND_PLACEMENTS.has(s.backend.placement)) {
+    throw new Error(`Invalid backend.placement: ${s.backend.placement}`);
+  }
+  if (typeof s.backend.wslDistro !== 'string' || !s.backend.wslDistro.trim()) {
+    throw new Error('backend.wslDistro must be a non-empty string');
+  }
+  if (typeof s.backend.wslRepositoryRoot !== 'string') {
+    throw new Error('backend.wslRepositoryRoot must be a string');
+  }
+  if (
+    s.backend.placement === 'wsl'
+    && s.backend.wslRepositoryRoot
+    && !s.backend.wslRepositoryRoot.startsWith('/')
+  ) {
+    throw new Error('backend.wslRepositoryRoot must be an absolute Linux path');
+  }
   if (!VALID_THEMES.has(s.appearance.theme)) throw new Error(`Invalid theme: ${s.appearance.theme}`);
   if (!VALID_TERMINAL_FONT_SIZES.has(s.terminal.fontSize)) {
     throw new Error(`Invalid terminal.fontSize: ${s.terminal.fontSize}`);

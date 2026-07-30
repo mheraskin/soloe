@@ -50,6 +50,35 @@ describe('SettingsStore — defaults', () => {
 });
 
 describe('SettingsStore — update', () => {
+  it('persists the backend placement independently from session run mode', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({
+      backend: {
+        placement: 'wsl',
+        wslDistro: 'Debian',
+        wslRepositoryRoot: '/home/me/src/soloe'
+      }
+    });
+    expect(updated.backend).toEqual({
+      placement: 'wsl',
+      wslDistro: 'Debian',
+      wslRepositoryRoot: '/home/me/src/soloe'
+    });
+    expect(updated.defaults.runMode).toBe(DEFAULT_SETTINGS.defaults.runMode);
+  });
+
+  it('rejects an invalid WSL repository path', async () => {
+    const store = new SettingsStore(storePath);
+    await expect(
+      store.update({
+        backend: {
+          placement: 'wsl',
+          wslRepositoryRoot: 'C:\\src\\soloe'
+        }
+      })
+    ).rejects.toThrow(/absolute Linux path/);
+  });
+
   it('merges appearance updates', async () => {
     const store = new SettingsStore(storePath);
     const updated = await store.update({ appearance: { theme: 'light' } });
@@ -145,6 +174,7 @@ describe('SettingsStore — migration', () => {
     expect(s.terminal.confirmDeleteTabs).toBe(true);
     expect(s.defaults.newSessionKind).toBe('terminal');
     expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
+    expect(s.backend).toEqual(DEFAULT_SETTINGS.backend);
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

@@ -12,7 +12,8 @@
     FolderTree,
     Microscope,
     Globe,
-    NotebookPen
+    NotebookPen,
+    ServerCog
   } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import { platform } from '../../stores/platform.svelte';
@@ -23,6 +24,7 @@
     ModelTask,
     QuickLaunchPreset,
     SettingsBinaries,
+    BackendPlacement,
     TerminalFontSizePref,
     ThemePref
   } from '@shared/types/settings.js';
@@ -88,6 +90,7 @@
     | { kind: 'divider'; label: string };
 
   const tabs: TabEntry[] = [
+    { kind: 'tab', value: 'backend', label: 'Backend', icon: ServerCog },
     { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
     { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
     { kind: 'tab', value: 'models', label: 'Models', icon: Cpu },
@@ -102,7 +105,7 @@
     { kind: 'tab', value: 'notes', label: 'Notes', icon: NotebookPen }
   ];
 
-  let activeTab = $state<string>('integration');
+  let activeTab = $state<string>('backend');
   let lastAppliedTabNonce = -1;
   let draftPreset: QuickLaunchPreset | null = $state(null);
 
@@ -162,6 +165,28 @@
     if (!parsed) return;
     try {
       await settings.update({ models: { [task]: parsed } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBackendPlacement(value: BackendPlacement) {
+    try {
+      await settings.update({ backend: { placement: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBackendWslDistro(value: string) {
+    try {
+      await settings.update({
+        backend: { wslDistro: value.trim() || 'Ubuntu' }
+      });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBackendWslRepositoryRoot(value: string) {
+    try {
+      await settings.update({
+        backend: { wslRepositoryRoot: value.trim() }
+      });
     } catch (e) { reportError(e); }
   }
 
@@ -327,6 +352,64 @@
   </Tabs.List>
 
   <ScrollArea class="min-h-0 flex-1">
+    <Tabs.Content value="backend" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Backend placement</Label>
+        <Select.Root
+          type="single"
+          value={settings.current.backend.placement}
+          onValueChange={(v) => setBackendPlacement(v as BackendPlacement)}
+        >
+          <Select.Trigger class="w-full">
+            {settings.current.backend.placement === 'wsl' ? 'WSL' : 'Windows'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="windows" label="Windows">Windows</Select.Item>
+            <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+          </Select.Content>
+        </Select.Root>
+        <span class="text-[11px] text-muted-foreground">
+          The Application Server, Environment Runtime, terminal PTYs, and agents move together.
+          The tray and Electron client always remain on Windows.
+        </span>
+      </div>
+      {#if settings.current.backend.placement === 'wsl'}
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-xs text-muted-foreground" for="pref-backend-wsl-distro">
+            WSL distribution
+          </Label>
+          <Input
+            id="pref-backend-wsl-distro"
+            type="text"
+            placeholder="Ubuntu"
+            value={settings.current.backend.wslDistro}
+            onchange={(e) =>
+              setBackendWslDistro((e.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-xs text-muted-foreground" for="pref-backend-wsl-root">
+            Repository path inside WSL
+          </Label>
+          <Input
+            id="pref-backend-wsl-root"
+            type="text"
+            placeholder="/home/you/projects/soloe-2"
+            value={settings.current.backend.wslRepositoryRoot}
+            onchange={(e) =>
+              setBackendWslRepositoryRoot((e.currentTarget as HTMLInputElement).value)}
+          />
+          <span class="text-[11px] text-muted-foreground">
+            Use a WSL-native checkout with its own PNPM install. Do not reuse Windows node_modules.
+          </span>
+        </div>
+      {/if}
+      <div class="rounded-md border border-border bg-muted/30 p-3 text-[11px] text-muted-foreground">
+        Placement changes apply the next time you stop and start the backend from the tray.
+        Restarting a client does not stop running agents.
+      </div>
+    </Tabs.Content>
+
     <Tabs.Content value="integration" class={contentClass}>
       <AgentIntegrationForm />
     </Tabs.Content>
