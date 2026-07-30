@@ -130,6 +130,7 @@ export class NotesStore {
 
   savedContentByProject = $state<Record<ProjectId, string>>({});
   savedDiskByProject = $state<Record<ProjectId, string>>({});
+  savedRevisionByProject = $state<Record<ProjectId, string>>({});
 
   statusByProject = $state<Record<ProjectId, NotesStatus>>({});
   errorMessageByProject = $state<Record<ProjectId, string | null>>({});
@@ -213,6 +214,10 @@ export class NotesStore {
           this.viewByProject = { ...this.viewByProject, [event.projectId]: null };
           this.savedContentByProject = { ...this.savedContentByProject, [event.projectId]: '' };
           this.savedDiskByProject = { ...this.savedDiskByProject, [event.projectId]: '' };
+          this.savedRevisionByProject = {
+            ...this.savedRevisionByProject,
+            [event.projectId]: ''
+          };
         }
         // Drop any worktree memory pointing at notes that no longer exist for
         // this project, so a future worktree switch doesn't try to reload a
@@ -323,6 +328,10 @@ export class NotesStore {
       const content = recovery ?? note.content;
       this.savedContentByProject = { ...this.savedContentByProject, [id]: content };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
+      this.savedRevisionByProject = {
+        ...this.savedRevisionByProject,
+        [id]: note.revision
+      };
       if (recovery !== undefined && recovery !== note.content) this.scheduleSavedFlush(id);
     } catch (err) {
       if (!this.isCurrentSelection(id, filename, generation)) return;
@@ -343,7 +352,7 @@ export class NotesStore {
     const content = this.readDraftAt(draftLocation);
     this.statusByProject = { ...this.statusByProject, [id]: 'saving' };
     try {
-      const note = await ipc.notes.write(id, filename, content);
+      const note = await ipc.notes.write(id, filename, content, null);
       const draftUnchanged = this.readDraftAt(draftLocation) === content;
       if (draftUnchanged) this.clearDraftAt(draftLocation);
       await this.refresh(id);
@@ -362,6 +371,10 @@ export class NotesStore {
       this.viewByProject = { ...this.viewByProject, [id]: note.filename };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: note.content };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: note.content };
+      this.savedRevisionByProject = {
+        ...this.savedRevisionByProject,
+        [id]: note.revision
+      };
       this.statusByProject = { ...this.statusByProject, [id]: 'saved' };
       this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
     } catch (err) {
@@ -419,8 +432,17 @@ export class NotesStore {
     if (content === (this.savedDiskByProject[projectId] ?? '')) return;
     this.statusByProject = { ...this.statusByProject, [projectId]: 'saving' };
     try {
-      const note = await ipc.notes.write(projectId, filename, content);
+      const note = await ipc.notes.write(
+        projectId,
+        filename,
+        content,
+        this.savedRevisionByProject[projectId]
+      );
       this.savedDiskByProject = { ...this.savedDiskByProject, [projectId]: note.content };
+      this.savedRevisionByProject = {
+        ...this.savedRevisionByProject,
+        [projectId]: note.revision
+      };
       // Only mark saved if the current buffer matches what we wrote; otherwise
       // the outer flush loop will immediately write the newer text.
       if (
@@ -466,6 +488,7 @@ export class NotesStore {
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
+      this.savedRevisionByProject = { ...this.savedRevisionByProject, [id]: '' };
     }
     this.dropWorktreeMemoryFor(id, (name) => name === filename);
     await this.cleanupImages(id);
@@ -505,6 +528,7 @@ export class NotesStore {
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
+      this.savedRevisionByProject = { ...this.savedRevisionByProject, [id]: '' };
       this.statusByProject = { ...this.statusByProject, [id]: 'idle' };
       this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
       return;
@@ -521,6 +545,7 @@ export class NotesStore {
       this.viewByProject = { ...this.viewByProject, [id]: null };
       this.savedContentByProject = { ...this.savedContentByProject, [id]: '' };
       this.savedDiskByProject = { ...this.savedDiskByProject, [id]: '' };
+      this.savedRevisionByProject = { ...this.savedRevisionByProject, [id]: '' };
       return;
     }
     await this.selectNote(desired);

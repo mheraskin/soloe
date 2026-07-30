@@ -48,3 +48,36 @@ describe('NotesStore.readImage', () => {
     await expect(store.readImage(evil)).rejects.toThrow(/Unsupported/i);
   });
 });
+
+describe('NotesStore concurrent writes', () => {
+  it('rejects stale revisions without overwriting the newer content', async () => {
+    const created = await store.write('proj', 'shared.md', 'first', null);
+    const updated = await store.write(
+      'proj',
+      'shared.md',
+      'second',
+      created.revision
+    );
+
+    await expect(
+      store.write('proj', 'shared.md', 'stale', created.revision)
+    ).rejects.toMatchObject({ code: 'notes_conflict' });
+    await expect(store.read('proj', 'shared.md')).resolves.toMatchObject({
+      content: 'second',
+      revision: updated.revision
+    });
+  });
+
+  it('rejects create-only writes when another client already created the note', async () => {
+    await store.write('proj', 'shared.md', 'first', null);
+    await expect(
+      store.write('proj', 'shared.md', 'second', null)
+    ).rejects.toMatchObject({ code: 'notes_conflict' });
+  });
+
+  it('rejects filenames that contain path components', async () => {
+    await expect(
+      store.write('proj', '../outside.md', 'secret')
+    ).rejects.toMatchObject({ code: 'invalid_note_filename' });
+  });
+});

@@ -30,8 +30,16 @@ export class NotesIpc {
 
     ipcMain.handle(
       IpcChannels.notes.write,
-      (_e, projectId: ProjectId, filename: string, content: string) =>
-        ipcInvoke(() => this.opts.store.write(projectId, filename, content))
+      (
+        _e,
+        projectId: ProjectId,
+        filename: string,
+        content: string,
+        expectedRevision?: string | null
+      ) =>
+        ipcInvoke(() =>
+          this.opts.store.write(projectId, filename, content, expectedRevision)
+        )
     );
 
     ipcMain.handle(

@@ -427,7 +427,8 @@ export interface NotesApi {
   write(
     projectId: ProjectId,
     filename: string,
-    content: string
+    content: string,
+    expectedRevision?: string | null
   ): Promise<IpcResult<NoteContent>>;
   rename(
     projectId: ProjectId,

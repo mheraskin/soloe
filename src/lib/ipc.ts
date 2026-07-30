@@ -239,8 +239,13 @@ export const backend = {
     list: async (projectId: ProjectId) => unwrap(await c.notes.list(projectId)),
     read: async (projectId: ProjectId, filename: string) =>
       unwrap(await c.notes.read(projectId, filename)),
-    write: async (projectId: ProjectId, filename: string, content: string) =>
-      unwrap(await c.notes.write(projectId, filename, content)),
+    write: async (
+      projectId: ProjectId,
+      filename: string,
+      content: string,
+      expectedRevision?: string | null
+    ) =>
+      unwrap(await c.notes.write(projectId, filename, content, expectedRevision)),
     rename: async (projectId: ProjectId, oldName: string, newName: string) =>
       unwrap(await c.notes.rename(projectId, oldName, newName)),
     delete: async (projectId: ProjectId, filename: string) =>

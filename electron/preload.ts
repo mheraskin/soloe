@@ -212,8 +212,19 @@ const soloe: SoloeApi = {
     list: (projectId: ProjectId) => ipcRenderer.invoke(IpcChannels.notes.list, projectId),
     read: (projectId: ProjectId, filename: string) =>
       ipcRenderer.invoke(IpcChannels.notes.read, projectId, filename),
-    write: (projectId: ProjectId, filename: string, content: string) =>
-      ipcRenderer.invoke(IpcChannels.notes.write, projectId, filename, content),
+    write: (
+      projectId: ProjectId,
+      filename: string,
+      content: string,
+      expectedRevision?: string | null
+    ) =>
+      ipcRenderer.invoke(
+        IpcChannels.notes.write,
+        projectId,
+        filename,
+        content,
+        expectedRevision
+      ),
     rename: (projectId: ProjectId, oldName: string, newName: string) =>
       ipcRenderer.invoke(IpcChannels.notes.rename, projectId, oldName, newName),
     delete: (projectId: ProjectId, filename: string) =>
