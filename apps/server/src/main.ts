@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 const dataDirectory = resolveSoloeDataDirectory();
+const ownerId = process.env.SOLOE_OWNER_ID;
 const token =
   process.env.SOLOE_SERVER_TOKEN ?? (await loadOrCreateServerToken(dataDirectory));
 const runtimeEndpoint =
@@ -34,6 +35,7 @@ await writeServiceInfo(dataDirectory, {
   service: "server",
   pid: process.pid,
   startedAt: new Date().toISOString(),
+  ...(ownerId ? { ownerId } : {}),
   address,
   token,
 });
@@ -45,7 +47,7 @@ async function shutdown(): Promise<void> {
   shuttingDown = true;
   await server.close();
   domainRuntime.disconnect();
-  await removeServiceInfo(dataDirectory, "server", process.pid);
+  await removeServiceInfo(dataDirectory, "server", process.pid, ownerId);
   process.exitCode = 0;
 }
 

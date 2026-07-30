@@ -19,21 +19,28 @@ describe("service rendezvous", () => {
         service: "runtime",
         pid: 123,
         startedAt: "2026-07-30T10:00:00.000Z",
+        ownerId: "tray-owner",
         endpoint: "/tmp/runtime.sock",
       });
       expect(JSON.parse(await readFile(file, "utf8"))).toEqual({
         service: "runtime",
         pid: 123,
         startedAt: "2026-07-30T10:00:00.000Z",
+        ownerId: "tray-owner",
         endpoint: "/tmp/runtime.sock",
       });
 
-      await removeServiceInfo(directory, "runtime", 456);
+      await removeServiceInfo(directory, "runtime", 456, "tray-owner");
       expect(JSON.parse(await readFile(file, "utf8"))).toEqual(
         expect.objectContaining({ pid: 123 }),
       );
 
-      await removeServiceInfo(directory, "runtime", 123);
+      await removeServiceInfo(directory, "runtime", 123, "wrong-owner");
+      expect(JSON.parse(await readFile(file, "utf8"))).toEqual(
+        expect.objectContaining({ ownerId: "tray-owner" }),
+      );
+
+      await removeServiceInfo(directory, "runtime", 123, "tray-owner");
       await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(directory, { recursive: true, force: true });

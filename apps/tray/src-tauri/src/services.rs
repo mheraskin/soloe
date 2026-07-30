@@ -1,19 +1,38 @@
+use crate::ownership::{NativeProcessOwner, OwnershipLease, TrayInstanceGuard};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+const WSL_STOP_TIMEOUT: Duration = Duration::from_secs(12);
+
+#[derive(Clone, Debug)]
+enum LifecycleState {
+    Starting,
+    Running,
+    Stopping,
+    Stopped,
+    Degraded(String),
+    Failed(String),
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceInfo {
     pub service: String,
     pub pid: u32,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
     #[serde(default)]
     pub endpoint: Option<String>,
     #[serde(default)]
@@ -60,20 +79,33 @@ struct ActiveBackend {
     wsl_distro: String,
     #[serde(default)]
     wsl_repository_root: String,
+    #[serde(default)]
+    owner_id: String,
+    #[serde(default)]
+    tray_pid: u32,
 }
 
-impl From<BackendSettings> for ActiveBackend {
-    fn from(settings: BackendSettings) -> Self {
+impl ActiveBackend {
+    fn from_settings(settings: BackendSettings, owner_id: &str) -> Self {
         Self {
             placement: settings.placement,
             wsl_distro: settings.wsl_distro,
             wsl_repository_root: settings.wsl_repository_root,
+            owner_id: owner_id.to_string(),
+            tray_pid: std::process::id(),
         }
+    }
+
+    fn same_location(&self, other: &Self) -> bool {
+        self.placement == other.placement
+            && self.wsl_distro == other.wsl_distro
+            && self.wsl_repository_root == other.wsl_repository_root
     }
 }
 
 trait ProcessOperations: Send + Sync {
     fn is_running(&self, pid: u32, backend: &ActiveBackend) -> bool;
+    fn has_owner(&self, pid: u32, backend: &ActiveBackend, owner_id: &str) -> bool;
     fn terminate(&self, pid: u32, force: bool, backend: &ActiveBackend) -> Result<(), String>;
 }
 
@@ -84,25 +116,46 @@ impl ProcessOperations for SystemProcessOperations {
         is_pid_running(pid, backend)
     }
 
+    fn has_owner(&self, pid: u32, backend: &ActiveBackend, owner_id: &str) -> bool {
+        process_has_owner(pid, backend, owner_id)
+    }
+
     fn terminate(&self, pid: u32, force: bool, backend: &ActiveBackend) -> Result<(), String> {
         terminate_pid(pid, force, backend)
     }
 }
 
-#[derive(Clone)]
 pub struct BackendSupervisor {
     repository_root: PathBuf,
     data_directory: PathBuf,
     processes: Arc<dyn ProcessOperations>,
+    owner_id: String,
+    native_owner: NativeProcessOwner,
+    lease: Mutex<Option<OwnershipLease>>,
+    backend_children: Mutex<Vec<Child>>,
+    client_children: Mutex<Vec<Child>>,
+    lifecycle: Mutex<LifecycleState>,
 }
 
 impl BackendSupervisor {
-    pub fn discover() -> Self {
-        Self {
-            repository_root: repository_root(),
-            data_directory: data_directory(),
-            processes: Arc::new(SystemProcessOperations),
-        }
+    pub fn discover() -> Result<(Self, TrayInstanceGuard), String> {
+        let data_directory = data_directory();
+        let instance = TrayInstanceGuard::acquire(&data_directory)?;
+        let owner_id = new_owner_id();
+        Ok((
+            Self {
+                repository_root: repository_root(),
+                data_directory,
+                processes: Arc::new(SystemProcessOperations),
+                owner_id,
+                native_owner: NativeProcessOwner::new()?,
+                lease: Mutex::new(None),
+                backend_children: Mutex::new(Vec::new()),
+                client_children: Mutex::new(Vec::new()),
+                lifecycle: Mutex::new(LifecycleState::Stopped),
+            },
+            instance,
+        ))
     }
 
     #[cfg(test)]
@@ -115,6 +168,12 @@ impl BackendSupervisor {
             repository_root,
             data_directory,
             processes,
+            owner_id: "test-owner".to_string(),
+            native_owner: NativeProcessOwner::new().unwrap(),
+            lease: Mutex::new(None),
+            backend_children: Mutex::new(Vec::new()),
+            client_children: Mutex::new(Vec::new()),
+            lifecycle: Mutex::new(LifecycleState::Stopped),
         }
     }
 
@@ -124,23 +183,43 @@ impl BackendSupervisor {
             BackendPlacement::Windows => "Windows",
             BackendPlacement::Wsl => "WSL",
         };
-        if self.is_running_on("runtime", &backend) && self.is_running_on("server", &backend) {
-            format!("Backend: running on {host}")
-        } else if self.is_running_on("runtime", &backend) {
-            format!("Backend: runtime only on {host}")
-        } else {
-            format!("Backend: stopped ({host} selected)")
+        let state = self.reconciled_lifecycle(&backend);
+        match state {
+            LifecycleState::Starting => format!("Backend: starting on {host}"),
+            LifecycleState::Running => format!("Backend: running on {host}"),
+            LifecycleState::Stopping => format!("Backend: stopping on {host}"),
+            LifecycleState::Stopped => format!("Backend: stopped ({host} selected)"),
+            LifecycleState::Degraded(detail) => {
+                format!("Backend: degraded on {host} — {detail}")
+            }
+            LifecycleState::Failed(detail) => format!("Backend: failed on {host} — {detail}"),
         }
     }
 
     pub fn start(&self) -> Result<(), String> {
+        self.set_lifecycle(LifecycleState::Starting);
+        let result = self.start_inner();
+        match &result {
+            Ok(()) => self.set_lifecycle(LifecycleState::Running),
+            Err(error) => self.set_lifecycle(LifecycleState::Failed(error.clone())),
+        }
+        result
+    }
+
+    fn start_inner(&self) -> Result<(), String> {
         fs::create_dir_all(&self.data_directory)
             .map_err(|error| format!("failed to create Soloe data directory: {error}"))?;
-        let configured: ActiveBackend = self.configured_backend()?.into();
+        let configured = ActiveBackend::from_settings(self.configured_backend()?, &self.owner_id);
         if let Some(active) = self.read_active_backend() {
             let has_running_service =
                 self.is_running_on("runtime", &active) || self.is_running_on("server", &active);
-            if has_running_service && active != configured {
+            if has_running_service && active.owner_id != self.owner_id {
+                return Err(
+                    "an existing backend belongs to another tray owner; wait for its ownership cleanup or inspect the Soloe logs"
+                        .to_string(),
+                );
+            }
+            if has_running_service && !active.same_location(&configured) {
                 return Err(
                     "backend placement changed while services are running; stop the backend first"
                         .to_string(),
@@ -149,7 +228,18 @@ impl BackendSupervisor {
         }
         let backend = configured;
         self.validate_backend(&backend)?;
+        self.preflight(&backend)?;
         self.write_active_backend(&backend)?;
+
+        if backend.placement == BackendPlacement::Wsl {
+            self.start_lease()?;
+            if !self.is_running_on("runtime", &backend) || !self.is_running_on("server", &backend) {
+                self.spawn_wsl_supervisor(&backend)?;
+            }
+            self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
+            self.wait_until("server", true, START_TIMEOUT, &backend)?;
+            return Ok(());
+        }
 
         if !self.is_running_on("runtime", &backend) {
             self.spawn_workspace("@soloe/runtime", "runtime", &backend)?;
@@ -163,7 +253,20 @@ impl BackendSupervisor {
     }
 
     pub fn stop(&self) -> Result<(), String> {
+        self.set_lifecycle(LifecycleState::Stopping);
+        let result = self.stop_inner();
+        match &result {
+            Ok(()) => self.set_lifecycle(LifecycleState::Stopped),
+            Err(error) => self.set_lifecycle(LifecycleState::Degraded(error.clone())),
+        }
+        result
+    }
+
+    fn stop_inner(&self) -> Result<(), String> {
         let backend = self.backend_for_existing_services();
+        if backend.placement == BackendPlacement::Wsl {
+            return self.stop_wsl_backend(&backend);
+        }
         let mut failures = Vec::new();
         for service in ["server", "runtime"] {
             if let Err(error) = self.stop_service(service, &backend) {
@@ -172,6 +275,7 @@ impl BackendSupervisor {
         }
         if !self.is_running_on("server", &backend) && !self.is_running_on("runtime", &backend) {
             self.remove_active_backend();
+            self.stop_lease();
         }
         if failures.is_empty() {
             Ok(())
@@ -181,6 +285,56 @@ impl BackendSupervisor {
                 failures.join("; ")
             ))
         }
+    }
+
+    pub fn shutdown_all(&self) -> Result<(), String> {
+        let client_result = self.stop_clients();
+        let backend_result = self.stop();
+        match (client_result, backend_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(client), Ok(())) => Err(format!("client cleanup incomplete: {client}")),
+            (Ok(()), Err(backend)) => Err(backend),
+            (Err(client), Err(backend)) => {
+                Err(format!("client cleanup incomplete: {client}; {backend}"))
+            }
+        }
+    }
+
+    pub fn requires_quit_confirmation(&self) -> bool {
+        let backend = self.backend_for_existing_services();
+        if !self.is_running_on("runtime", &backend) {
+            return false;
+        }
+        self.running_terminal_count()
+            .map_or(true, |count| count > 0)
+    }
+
+    pub fn open_logs(&self) -> Result<(), String> {
+        open_target(&self.data_directory.to_string_lossy())
+    }
+
+    fn running_terminal_count(&self) -> Option<usize> {
+        let info = self.read_info("server")?;
+        let address = info.address?;
+        let token = info.token?;
+        let authority = address.strip_prefix("http://")?.trim_end_matches('/');
+        let mut stream = TcpStream::connect(authority).ok()?;
+        stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .ok()?;
+        write!(
+            stream,
+            "GET /api/runtime/sessions HTTP/1.0\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        )
+        .ok()?;
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).ok()?;
+        let separator = response.windows(4).position(|part| part == b"\r\n\r\n")?;
+        let body = &response[separator + 4..];
+        serde_json::from_slice::<Vec<serde_json::Value>>(body)
+            .ok()
+            .map(|sessions| sessions.len())
     }
 
     pub fn browser_address(&self) -> Option<String> {
@@ -222,9 +376,7 @@ impl BackendSupervisor {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        command
-            .spawn()
-            .map(|_| ())
+        self.spawn_owned(command, true)
             .map_err(|error| format!("failed to open Electron client: {error}"))
     }
 
@@ -280,6 +432,63 @@ impl BackendSupervisor {
         Ok(())
     }
 
+    fn preflight(&self, backend: &ActiveBackend) -> Result<(), String> {
+        if !self.repository_root.join("package.json").is_file() {
+            return Err(format!(
+                "Windows Soloe source is incomplete at {}; expected package.json",
+                self.repository_root.display()
+            ));
+        }
+        match backend.placement {
+            BackendPlacement::Windows => {
+                check_command(
+                    Command::new("node").arg("--version"),
+                    "Node.js 22 or newer is required on Windows",
+                )?;
+                check_command(
+                    Command::new(pnpm_executable()).arg("--version"),
+                    "PNPM is required on Windows; enable the pinned version with Corepack",
+                )?;
+                let mut dependency = Command::new(pnpm_executable());
+                dependency
+                    .args([
+                        "--filter",
+                        "@soloe/runtime",
+                        "exec",
+                        "node",
+                        "-e",
+                        "require('node-pty')",
+                    ])
+                    .current_dir(&self.repository_root);
+                check_command(
+                    &mut dependency,
+                    "Windows backend dependencies are missing or incompatible; run pnpm install in the Windows checkout",
+                )
+            }
+            BackendPlacement::Wsl => {
+                let script = format!(
+                    "cd -- {} && test -f package.json && \
+                     command -v node >/dev/null && command -v pnpm >/dev/null && \
+                     pnpm --filter @soloe/runtime exec node -e \"require('node-pty')\"",
+                    shell_quote(&backend.wsl_repository_root)
+                );
+                let mut command = Command::new("wsl.exe");
+                command.args([
+                    "--distribution",
+                    &backend.wsl_distro,
+                    "--exec",
+                    "bash",
+                    "-lc",
+                    &script,
+                ]);
+                check_command(
+                    &mut command,
+                    "WSL backend prerequisites are unavailable; verify the distribution, runtime path, login-shell Node/PNPM, and run pnpm install inside WSL",
+                )
+            }
+        }
+    }
+
     fn spawn_workspace(
         &self,
         workspace: &str,
@@ -301,33 +510,206 @@ impl BackendSupervisor {
                 command
                     .args(["--filter", workspace, "start"])
                     .current_dir(&self.repository_root)
-                    .env("SOLOE_DATA_DIR", &self.data_directory);
+                    .env("SOLOE_DATA_DIR", &self.data_directory)
+                    .env("SOLOE_OWNER_ID", &self.owner_id)
+                    .env("SOLOE_WEB_ROOT", "");
                 command
             }
             BackendPlacement::Wsl => {
-                let data_directory = self.wsl_path(&backend.wsl_distro, &self.data_directory)?;
-                let script =
-                    wsl_start_script(&backend.wsl_repository_root, &data_directory, workspace);
-                let mut command = Command::new("wsl.exe");
-                command.args([
-                    "--distribution",
-                    &backend.wsl_distro,
-                    "--exec",
-                    "bash",
-                    "-lc",
-                    &script,
-                ]);
-                command
+                return Err(format!(
+                    "{service} must be started through the WSL ownership supervisor"
+                ));
             }
         };
         command
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(error_log));
-        command
-            .spawn()
-            .map(|_| ())
+        self.spawn_owned(command, false)
             .map_err(|error| format!("failed to start {workspace}: {error}"))
+    }
+
+    fn spawn_wsl_supervisor(&self, backend: &ActiveBackend) -> Result<(), String> {
+        let data_directory = self.wsl_path(&backend.wsl_distro, &self.data_directory)?;
+        let lease_path = self.wsl_path(
+            &backend.wsl_distro,
+            &self.data_directory.join("tray-lease.json"),
+        )?;
+        let script = wsl_supervisor_script(
+            &backend.wsl_repository_root,
+            &data_directory,
+            &lease_path,
+            &self.owner_id,
+        );
+        let mut command = Command::new("wsl.exe");
+        command.args([
+            "--distribution",
+            &backend.wsl_distro,
+            "--exec",
+            "bash",
+            "-lc",
+            &script,
+        ]);
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.data_directory.join("supervisor.log"))
+            .map_err(|error| format!("failed to open supervisor log: {error}"))?;
+        let error_log = log
+            .try_clone()
+            .map_err(|error| format!("failed to clone supervisor log: {error}"))?;
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(error_log));
+        self.spawn_owned(command, false)
+            .map_err(|error| format!("failed to start WSL backend supervisor: {error}"))
+    }
+
+    fn spawn_owned(&self, mut command: Command, client: bool) -> Result<(), String> {
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("process spawn failed: {error}"))?;
+        if let Err(error) = self.native_owner.assign(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        let children = if client {
+            &self.client_children
+        } else {
+            &self.backend_children
+        };
+        let mut children = children
+            .lock()
+            .map_err(|_| "managed child lock poisoned".to_string())?;
+        children.retain_mut(|existing| existing.try_wait().ok().flatten().is_none());
+        children.push(child);
+        Ok(())
+    }
+
+    fn stop_clients(&self) -> Result<(), String> {
+        let mut children = self
+            .client_children
+            .lock()
+            .map_err(|_| "client process lock poisoned".to_string())?;
+        let mut failures = Vec::new();
+        for child in children.iter_mut() {
+            if child.try_wait().ok().flatten().is_some() {
+                continue;
+            }
+            if let Err(error) = child.kill() {
+                failures.push(format!("PID {}: {error}", child.id()));
+                continue;
+            }
+            if let Err(error) = child.wait() {
+                failures.push(format!("PID {} wait failed: {error}", child.id()));
+            }
+        }
+        children.clear();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    fn stop_wsl_backend(&self, backend: &ActiveBackend) -> Result<(), String> {
+        self.stop_lease();
+        let mut failures = Vec::new();
+        if let Some(supervisor) = self.read_info("supervisor") {
+            if supervisor.owner_id.as_deref() == Some(self.owner_id.as_str()) {
+                if let Err(error) = self.processes.terminate(supervisor.pid, false, backend) {
+                    eprintln!(
+                        "[tray] graceful WSL supervisor shutdown failed for PID {}: {error}",
+                        supervisor.pid
+                    );
+                }
+            }
+        }
+
+        let server_stopped = self
+            .wait_until("server", false, WSL_STOP_TIMEOUT, backend)
+            .is_ok();
+        let runtime_stopped = self
+            .wait_until("runtime", false, WSL_STOP_TIMEOUT, backend)
+            .is_ok();
+        if !server_stopped {
+            if let Err(error) = self.stop_service("server", backend) {
+                failures.push(format!("server: {error}"));
+            }
+        }
+        if !runtime_stopped {
+            if let Err(error) = self.stop_service("runtime", backend) {
+                failures.push(format!("runtime: {error}"));
+            }
+        }
+        if !self.is_running_on("server", backend) && !self.is_running_on("runtime", backend) {
+            self.remove_stale_info("supervisor");
+            self.remove_active_backend();
+        } else {
+            failures.push("WSL supervisor left managed processes running".to_string());
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "backend cleanup incomplete; {}",
+                failures.join("; ")
+            ))
+        }
+    }
+
+    fn start_lease(&self) -> Result<(), String> {
+        let mut lease = self
+            .lease
+            .lock()
+            .map_err(|_| "ownership lease lock poisoned".to_string())?;
+        if lease.is_none() {
+            *lease = Some(OwnershipLease::start(
+                &self.data_directory,
+                &self.owner_id,
+                std::process::id(),
+            )?);
+        }
+        Ok(())
+    }
+
+    fn stop_lease(&self) {
+        if let Ok(mut lease) = self.lease.lock() {
+            lease.take();
+        }
+    }
+
+    fn reconciled_lifecycle(&self, backend: &ActiveBackend) -> LifecycleState {
+        let current = self
+            .lifecycle
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or_else(|_| LifecycleState::Failed("status lock poisoned".to_string()));
+        if matches!(
+            current,
+            LifecycleState::Starting | LifecycleState::Stopping | LifecycleState::Failed(_)
+        ) {
+            return current;
+        }
+        let runtime = self.is_running_on("runtime", backend);
+        let server = self.is_running_on("server", backend);
+        let reconciled = match (runtime, server) {
+            (true, true) => LifecycleState::Running,
+            (true, false) => LifecycleState::Degraded("runtime only".to_string()),
+            (false, true) => LifecycleState::Degraded("server without runtime".to_string()),
+            (false, false) => LifecycleState::Stopped,
+        };
+        self.set_lifecycle(reconciled.clone());
+        reconciled
+    }
+
+    fn set_lifecycle(&self, state: LifecycleState) {
+        if let Ok(mut current) = self.lifecycle.lock() {
+            *current = state;
+        }
     }
 
     fn wsl_path(&self, distro: &str, windows_path: &Path) -> Result<String, String> {
@@ -359,7 +741,22 @@ impl BackendSupervisor {
         let Some(info) = self.read_info(service) else {
             return Ok(());
         };
-        if info.service != service || !self.processes.is_running(info.pid, backend) {
+        if info.owner_id.as_deref() != Some(backend.owner_id.as_str()) {
+            if self.processes.is_running(info.pid, backend) {
+                return Err(format!(
+                    "refusing to stop PID {} because its service record is not owned by this tray",
+                    info.pid
+                ));
+            }
+            self.remove_stale_info(service);
+            return Ok(());
+        }
+        if info.service != service
+            || !self.processes.is_running(info.pid, backend)
+            || !self
+                .processes
+                .has_owner(info.pid, backend, &backend.owner_id)
+        {
             self.remove_stale_info(service);
             return Ok(());
         }
@@ -420,13 +817,24 @@ impl BackendSupervisor {
 
     fn is_running_on(&self, service: &str, backend: &ActiveBackend) -> bool {
         self.read_info(service).is_some_and(|info| {
-            info.service == service && self.processes.is_running(info.pid, backend)
+            info.service == service
+                && info.owner_id.as_deref() == Some(backend.owner_id.as_str())
+                && self.processes.is_running(info.pid, backend)
+                && self
+                    .processes
+                    .has_owner(info.pid, backend, &backend.owner_id)
+                && (backend.placement == BackendPlacement::Wsl
+                    || self.native_owner.owns_pid(info.pid))
         })
     }
 
     fn backend_for_existing_services(&self) -> ActiveBackend {
-        self.read_active_backend()
-            .unwrap_or_else(|| self.configured_backend().unwrap_or_default().into())
+        self.read_active_backend().unwrap_or_else(|| {
+            ActiveBackend::from_settings(
+                self.configured_backend().unwrap_or_default(),
+                &self.owner_id,
+            )
+        })
     }
 
     fn active_backend_path(&self) -> PathBuf {
@@ -462,20 +870,59 @@ fn default_wsl_distro() -> String {
     "Ubuntu".to_string()
 }
 
-fn wsl_start_script(repository_root: &str, data_directory: &str, workspace: &str) -> String {
+fn wsl_supervisor_script(
+    repository_root: &str,
+    data_directory: &str,
+    lease_path: &str,
+    owner_id: &str,
+) -> String {
     format!(
-        "cd -- {} && mkdir -p \"$HOME/.local/state/soloe\" && \
+        "cd -- {} && test -f package.json && test -f scripts/wsl-backend-supervisor.mjs && \
+         command -v node >/dev/null && command -v pnpm >/dev/null && \
+         mkdir -p \"$HOME/.local/state/soloe\" && \
          export SOLOE_DATA_DIR={} && \
+         export SOLOE_OWNER_ID={} && \
+         export SOLOE_TRAY_LEASE={} && \
          export SOLOE_RUNTIME_ENDPOINT=\"$HOME/.local/state/soloe/runtime.sock\" && \
-         exec pnpm --filter {} start",
+         exec node scripts/wsl-backend-supervisor.mjs",
         shell_quote(repository_root),
         shell_quote(data_directory),
-        shell_quote(workspace),
+        shell_quote(owner_id),
+        shell_quote(lease_path),
     )
 }
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn new_owner_id() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("tray-{}-{timestamp:x}", std::process::id())
+}
+
+fn check_command(command: &mut Command, remediation: &str) -> Result<(), String> {
+    let output = command
+        .output()
+        .map_err(|error| format!("{remediation}: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    Err(if detail.is_empty() {
+        remediation.to_string()
+    } else {
+        format!("{remediation}: {detail}")
+    })
 }
 
 fn repository_root() -> PathBuf {
@@ -556,6 +1003,47 @@ fn is_pid_running(pid: u32, backend: &ActiveBackend) -> bool {
     status
 }
 
+fn process_has_owner(pid: u32, backend: &ActiveBackend, owner_id: &str) -> bool {
+    if backend.placement == BackendPlacement::Wsl {
+        let command = format!(
+            "test -r /proc/{pid}/environ && tr '\\0' '\\n' < /proc/{pid}/environ | grep -Fqx -- {}",
+            shell_quote(&format!("SOLOE_OWNER_ID={owner_id}"))
+        );
+        return Command::new("wsl.exe")
+            .args([
+                "--distribution",
+                &backend.wsl_distro,
+                "--exec",
+                "bash",
+                "-lc",
+                &command,
+            ])
+            .status()
+            .is_ok_and(|status| status.success());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (pid, owner_id);
+        true
+    }
+    #[cfg(all(unix, not(target_os = "windows")))]
+    {
+        fs::read(format!("/proc/{pid}/environ"))
+            .ok()
+            .is_some_and(|environment| {
+                environment
+                    .split(|byte| *byte == 0)
+                    .any(|entry| entry == format!("SOLOE_OWNER_ID={owner_id}").as_bytes())
+            })
+    }
+    #[cfg(not(any(target_os = "windows", unix)))]
+    {
+        let _ = (pid, owner_id);
+        false
+    }
+}
+
 fn terminate_pid(pid: u32, force: bool, backend: &ActiveBackend) -> Result<(), String> {
     let status = if backend.placement == BackendPlacement::Wsl {
         Command::new("wsl.exe")
@@ -634,6 +1122,10 @@ mod tests {
             self.running.lock().unwrap().contains(&pid)
         }
 
+        fn has_owner(&self, _pid: u32, _backend: &ActiveBackend, _owner_id: &str) -> bool {
+            true
+        }
+
         fn terminate(&self, pid: u32, force: bool, _backend: &ActiveBackend) -> Result<(), String> {
             self.calls.lock().unwrap().push((pid, force));
             let failures = if force {
@@ -679,6 +1171,8 @@ mod tests {
             Some(ServiceInfo {
                 service: "server".to_string(),
                 pid: 42,
+                owner_id: None,
+                started_at: None,
                 endpoint: None,
                 address: Some("http://127.0.0.1:4317".to_string()),
                 token: None,
@@ -716,17 +1210,23 @@ mod tests {
 
     #[test]
     fn wsl_launch_script_keeps_runtime_socket_inside_linux() {
-        let script = wsl_start_script(
+        let script = wsl_supervisor_script(
             "/home/me/Soloe source",
             "/mnt/c/Users/Me/AppData/Local/Soloe",
-            "@soloe/runtime",
+            "/mnt/c/Users/Me/AppData/Local/Soloe/tray-lease.json",
+            "tray-owner",
         );
         assert!(script.contains("cd -- '/home/me/Soloe source'"));
         assert!(script.contains("SOLOE_DATA_DIR='/mnt/c/Users/Me/AppData/Local/Soloe'"));
+        assert!(script.contains("SOLOE_OWNER_ID='tray-owner'"));
+        assert!(
+            script
+                .contains("SOLOE_TRAY_LEASE='/mnt/c/Users/Me/AppData/Local/Soloe/tray-lease.json'")
+        );
         assert!(
             script.contains("SOLOE_RUNTIME_ENDPOINT=\"$HOME/.local/state/soloe/runtime.sock\"")
         );
-        assert!(script.ends_with("exec pnpm --filter '@soloe/runtime' start"));
+        assert!(script.ends_with("exec node scripts/wsl-backend-supervisor.mjs"));
     }
 
     #[test]
@@ -749,14 +1249,17 @@ mod tests {
         let _ = fs::create_dir_all(&directory);
         fs::write(
             directory.join("server.json"),
-            r#"{"service":"server","pid":49424}"#,
+            r#"{"service":"server","pid":49424,"ownerId":"test-owner"}"#,
         )
         .unwrap();
         let processes = Arc::new(FakeProcessOperations::with_running([49424]));
         processes.graceful_failures.lock().unwrap().insert(49424);
         let supervisor = test_supervisor(directory.clone(), processes.clone());
 
-        expect_ok(supervisor.stop_service("server", &BackendSettings::default().into()));
+        expect_ok(supervisor.stop_service(
+            "server",
+            &ActiveBackend::from_settings(BackendSettings::default(), "test-owner"),
+        ));
         assert_eq!(
             processes.calls.lock().unwrap().as_slice(),
             &[(49424, false), (49424, true)]
@@ -772,12 +1275,12 @@ mod tests {
         let _ = fs::create_dir_all(&directory);
         fs::write(
             directory.join("server.json"),
-            r#"{"service":"server","pid":1001}"#,
+            r#"{"service":"server","pid":1001,"ownerId":"test-owner"}"#,
         )
         .unwrap();
         fs::write(
             directory.join("runtime.json"),
-            r#"{"service":"runtime","pid":1002}"#,
+            r#"{"service":"runtime","pid":1002,"ownerId":"test-owner"}"#,
         )
         .unwrap();
         let processes = Arc::new(FakeProcessOperations::with_running([1001, 1002]));

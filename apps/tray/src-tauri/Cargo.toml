@@ -9,6 +9,14 @@ repository.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+fs2 = "0.4"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = ["tray-icon"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

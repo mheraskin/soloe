@@ -1,8 +1,10 @@
+mod ownership;
 mod services;
 
 use services::BackendSupervisor;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -10,7 +12,9 @@ use tauri::tray::TrayIconBuilder;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let supervisor = Arc::new(Mutex::new(BackendSupervisor::discover()));
+            let (discovered, instance_guard) =
+                BackendSupervisor::discover().map_err(std::io::Error::other)?;
+            let supervisor = Arc::new(Mutex::new(discovered));
             let initial_status = supervisor
                 .lock()
                 .map(|service| service.status_label())
@@ -27,6 +31,8 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let open_logs =
+                MenuItem::with_id(app, "open_logs", "Open Soloe logs", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Soloe", true, None::<&str>)?;
             let menu = Menu::with_items(
@@ -38,6 +44,7 @@ pub fn run() {
                     &separator,
                     &open_browser,
                     &open_electron,
+                    &open_logs,
                     &separator,
                     &quit,
                 ],
@@ -45,6 +52,9 @@ pub fn run() {
 
             let menu_supervisor = Arc::clone(&supervisor);
             let menu_status = status.clone();
+            let menu_quit = quit.clone();
+            let quit_confirmation = Arc::new(Mutex::new(None::<Instant>));
+            let menu_quit_confirmation = Arc::clone(&quit_confirmation);
             let mut tray = TrayIconBuilder::new()
                 .tooltip("Soloe service")
                 .menu(&menu)
@@ -53,6 +63,8 @@ pub fn run() {
                     let id = event.id().as_ref().to_string();
                     let supervisor = Arc::clone(&menu_supervisor);
                     let status = menu_status.clone();
+                    let quit = menu_quit.clone();
+                    let quit_confirmation = Arc::clone(&menu_quit_confirmation);
                     let app = app.clone();
                     thread::spawn(move || {
                         let result = match id.as_str() {
@@ -72,11 +84,40 @@ pub fn run() {
                                 .lock()
                                 .map_err(|_| "backend supervisor lock poisoned".to_string())
                                 .and_then(|service| service.open_electron()),
+                            "open_logs" => supervisor
+                                .lock()
+                                .map_err(|_| "backend supervisor lock poisoned".to_string())
+                                .and_then(|service| service.open_logs()),
                             "quit" => {
+                                let requires_confirmation = supervisor
+                                    .lock()
+                                    .map_err(|_| "backend supervisor lock poisoned".to_string())
+                                    .map(|service| service.requires_quit_confirmation());
+                                let confirmed = quit_confirmation
+                                    .lock()
+                                    .map_err(|_| "quit confirmation lock poisoned".to_string())
+                                    .map(|mut deadline| {
+                                        if deadline.is_some_and(|until| until > Instant::now()) {
+                                            true
+                                        } else {
+                                            *deadline =
+                                                Some(Instant::now() + Duration::from_secs(10));
+                                            false
+                                        }
+                                    });
+                                if requires_confirmation == Ok(true) && confirmed == Ok(false) {
+                                    let _ = quit.set_text(
+                                        "Confirm quit — stop active agents and all services",
+                                    );
+                                    let _ = status.set_text(
+                                        "Quit requested: select Quit again within 10 seconds",
+                                    );
+                                    return;
+                                }
                                 let result = supervisor
                                     .lock()
                                     .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                    .and_then(|service| service.stop());
+                                    .and_then(|service| service.shutdown_all());
                                 app.exit(if result.is_ok() { 0 } else { 1 });
                                 result
                             }
@@ -85,6 +126,7 @@ pub fn run() {
                         if let Err(error) = result {
                             eprintln!("[tray] {error}");
                         }
+                        let _ = quit.set_text("Quit Soloe");
                         if let Ok(service) = supervisor.lock() {
                             let _ = status.set_text(service.status_label());
                         }
@@ -105,6 +147,19 @@ pub fn run() {
                     let _ = startup_status.set_text(service.status_label());
                 }
             });
+
+            let polling_supervisor = Arc::clone(&supervisor);
+            let polling_status = status.clone();
+            thread::spawn(move || {
+                loop {
+                    thread::sleep(Duration::from_secs(1));
+                    let Ok(service) = polling_supervisor.lock() else {
+                        break;
+                    };
+                    let _ = polling_status.set_text(service.status_label());
+                }
+            });
+            app.manage(instance_guard);
             app.manage(supervisor);
             Ok(())
         })

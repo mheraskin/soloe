@@ -13,6 +13,7 @@ import {
 } from "./RuntimeSocket.js";
 
 const dataDirectory = resolveSoloeDataDirectory();
+const ownerId = process.env.SOLOE_OWNER_ID;
 const endpoint =
   process.env.SOLOE_RUNTIME_ENDPOINT ?? resolveRuntimeEndpoint({ dataDirectory });
 if (process.platform !== "win32") {
@@ -30,6 +31,7 @@ await writeServiceInfo(dataDirectory, {
   service: "runtime",
   pid: process.pid,
   startedAt: new Date().toISOString(),
+  ...(ownerId ? { ownerId } : {}),
   endpoint,
 });
 process.stdout.write(`${JSON.stringify({ service: "runtime", endpoint, ready: true })}\n`);
@@ -39,7 +41,7 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   await runtime.shutdown();
-  await removeServiceInfo(dataDirectory, "runtime", process.pid);
+  await removeServiceInfo(dataDirectory, "runtime", process.pid, ownerId);
   process.exitCode = 0;
 }
 

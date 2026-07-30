@@ -8,6 +8,7 @@ export interface ServiceInfo {
   service: ServiceName;
   pid: number;
   startedAt: string;
+  ownerId?: string;
   endpoint?: string;
   address?: string;
   token?: string;
@@ -59,11 +60,13 @@ export async function removeServiceInfo(
   dataDirectory: string,
   service: ServiceName,
   ownerPid: number,
+  ownerId?: string,
 ): Promise<void> {
   const file = serviceInfoPath(dataDirectory, service);
   try {
     const current = JSON.parse(await readFile(file, "utf8")) as ServiceInfo;
     if (current.pid !== ownerPid) return;
+    if (ownerId !== undefined && current.ownerId !== ownerId) return;
     await rm(file, { force: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
