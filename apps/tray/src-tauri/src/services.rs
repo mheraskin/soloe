@@ -238,17 +238,17 @@ impl BackendSupervisor {
             }
             self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
             self.wait_until("server", true, START_TIMEOUT, &backend)?;
-            return Ok(());
+        } else {
+            if !self.is_running_on("runtime", &backend) {
+                self.spawn_workspace("@soloe/runtime", "runtime", &backend)?;
+                self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
+            }
+            if !self.is_running_on("server", &backend) {
+                self.spawn_workspace("@soloe/server", "server", &backend)?;
+                self.wait_until("server", true, START_TIMEOUT, &backend)?;
+            }
         }
-
-        if !self.is_running_on("runtime", &backend) {
-            self.spawn_workspace("@soloe/runtime", "runtime", &backend)?;
-            self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
-        }
-        if !self.is_running_on("server", &backend) {
-            self.spawn_workspace("@soloe/server", "server", &backend)?;
-            self.wait_until("server", true, START_TIMEOUT, &backend)?;
-        }
+        self.start_web_host(&backend)?;
         Ok(())
     }
 
@@ -264,18 +264,25 @@ impl BackendSupervisor {
 
     fn stop_inner(&self) -> Result<(), String> {
         let backend = self.backend_for_existing_services();
-        if backend.placement == BackendPlacement::Wsl {
-            return self.stop_wsl_backend(&backend);
-        }
         let mut failures = Vec::new();
-        for service in ["server", "runtime"] {
-            if let Err(error) = self.stop_service(service, &backend) {
-                failures.push(format!("{service}: {error}"));
-            }
+        if let Err(error) = self.stop_web_host(&backend) {
+            failures.push(format!("web: {error}"));
         }
-        if !self.is_running_on("server", &backend) && !self.is_running_on("runtime", &backend) {
-            self.remove_active_backend();
-            self.stop_lease();
+
+        if backend.placement == BackendPlacement::Wsl {
+            if let Err(error) = self.stop_wsl_backend(&backend) {
+                failures.push(error);
+            }
+        } else {
+            for service in ["server", "runtime"] {
+                if let Err(error) = self.stop_service(service, &backend) {
+                    failures.push(format!("{service}: {error}"));
+                }
+            }
+            if !self.is_running_on("server", &backend) && !self.is_running_on("runtime", &backend) {
+                self.remove_active_backend();
+                self.stop_lease();
+            }
         }
         if failures.is_empty() {
             Ok(())
@@ -338,9 +345,9 @@ impl BackendSupervisor {
     }
 
     pub fn browser_address(&self) -> Option<String> {
-        let backend = self.backend_for_existing_services();
-        self.read_info("server")
-            .filter(|info| is_pid_running(info.pid, &backend))
+        let backend = self.windows_client_target();
+        self.read_info("web")
+            .filter(|info| self.service_info_is_running(info, &backend))
             .and_then(|info| {
                 let address = info.address?;
                 let token = info.token?;
@@ -439,6 +446,7 @@ impl BackendSupervisor {
                 self.repository_root.display()
             ));
         }
+        self.preflight_windows_client()?;
         match backend.placement {
             BackendPlacement::Windows => {
                 check_command(
@@ -487,6 +495,25 @@ impl BackendSupervisor {
                 )
             }
         }
+    }
+
+    fn preflight_windows_client(&self) -> Result<(), String> {
+        check_command(
+            Command::new("node").arg("--version"),
+            "Node.js 22 or newer is required on Windows for the browser and desktop clients",
+        )?;
+        check_command(
+            Command::new(pnpm_executable()).arg("--version"),
+            "PNPM is required on Windows; enable the pinned version with Corepack",
+        )?;
+        let mut dependency = Command::new(pnpm_executable());
+        dependency
+            .args(["--filter", "@soloe/web", "exec", "vite", "--version"])
+            .current_dir(&self.repository_root);
+        check_command(
+            &mut dependency,
+            "Windows client dependencies are missing; run pnpm install in the Windows checkout",
+        )
     }
 
     fn spawn_workspace(
@@ -564,6 +591,62 @@ impl BackendSupervisor {
             .stderr(Stdio::from(error_log));
         self.spawn_owned(command, false)
             .map_err(|error| format!("failed to start WSL backend supervisor: {error}"))
+    }
+
+    fn start_web_host(&self, backend: &ActiveBackend) -> Result<(), String> {
+        let windows = self.windows_client_target();
+        if self.is_running_on("web", &windows) {
+            return Ok(());
+        }
+        let server = self
+            .read_info("server")
+            .filter(|info| self.service_info_is_running(info, backend))
+            .ok_or_else(|| "application server is not ready for the browser host".to_string())?;
+        let address = server
+            .address
+            .ok_or_else(|| "application server did not publish an address".to_string())?;
+        let token = server
+            .token
+            .ok_or_else(|| "application server did not publish an access token".to_string())?;
+        let mode = env::var("SOLOE_WEB_MODE").unwrap_or_else(|_| "dev".to_string());
+        if mode != "dev" && mode != "preview" {
+            return Err(format!(
+                "invalid SOLOE_WEB_MODE {mode:?}; expected dev or preview"
+            ));
+        }
+
+        let mut command = Command::new(pnpm_executable());
+        command
+            .args(["--filter", "@soloe/web", mode.as_str()])
+            .current_dir(&self.repository_root)
+            .env("SOLOE_DATA_DIR", &self.data_directory)
+            .env("SOLOE_OWNER_ID", &self.owner_id)
+            .env("SOLOE_SERVER_URL", &address)
+            .env("SOLOE_SERVER_TOKEN", &token);
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.data_directory.join("web.log"))
+            .map_err(|error| format!("failed to open web host log: {error}"))?;
+        let error_log = log
+            .try_clone()
+            .map_err(|error| format!("failed to clone web host log: {error}"))?;
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(error_log));
+        self.spawn_owned(command, false)
+            .map_err(|error| format!("failed to start Windows browser host: {error}"))?;
+        self.wait_until("web", true, START_TIMEOUT, &windows)
+            .map_err(|error| {
+                format!(
+                    "Windows browser host did not become ready: {error}; run pnpm install in the Windows checkout"
+                )
+            })
+    }
+
+    fn stop_web_host(&self, _backend: &ActiveBackend) -> Result<(), String> {
+        self.stop_service("web", &self.windows_client_target())
     }
 
     fn spawn_owned(&self, mut command: Command, client: bool) -> Result<(), String> {
@@ -696,11 +779,18 @@ impl BackendSupervisor {
         }
         let runtime = self.is_running_on("runtime", backend);
         let server = self.is_running_on("server", backend);
-        let reconciled = match (runtime, server) {
-            (true, true) => LifecycleState::Running,
-            (true, false) => LifecycleState::Degraded("runtime only".to_string()),
-            (false, true) => LifecycleState::Degraded("server without runtime".to_string()),
-            (false, false) => LifecycleState::Stopped,
+        let web = self.is_running_on("web", &self.windows_client_target());
+        let reconciled = match (runtime, server, web) {
+            (true, true, true) => LifecycleState::Running,
+            (true, true, false) => {
+                LifecycleState::Degraded("backend running; browser host unavailable".to_string())
+            }
+            (true, false, _) => LifecycleState::Degraded("runtime only".to_string()),
+            (false, true, _) => LifecycleState::Degraded("server without runtime".to_string()),
+            (false, false, true) => {
+                LifecycleState::Degraded("browser host without backend".to_string())
+            }
+            (false, false, false) => LifecycleState::Stopped,
         };
         self.set_lifecycle(reconciled.clone());
         reconciled
@@ -817,15 +907,17 @@ impl BackendSupervisor {
 
     fn is_running_on(&self, service: &str, backend: &ActiveBackend) -> bool {
         self.read_info(service).is_some_and(|info| {
-            info.service == service
-                && info.owner_id.as_deref() == Some(backend.owner_id.as_str())
-                && self.processes.is_running(info.pid, backend)
-                && self
-                    .processes
-                    .has_owner(info.pid, backend, &backend.owner_id)
-                && (backend.placement == BackendPlacement::Wsl
-                    || self.native_owner.owns_pid(info.pid))
+            info.service == service && self.service_info_is_running(&info, backend)
         })
+    }
+
+    fn service_info_is_running(&self, info: &ServiceInfo, backend: &ActiveBackend) -> bool {
+        info.owner_id.as_deref() == Some(backend.owner_id.as_str())
+            && self.processes.is_running(info.pid, backend)
+            && self
+                .processes
+                .has_owner(info.pid, backend, &backend.owner_id)
+            && (backend.placement == BackendPlacement::Wsl || self.native_owner.owns_pid(info.pid))
     }
 
     fn backend_for_existing_services(&self) -> ActiveBackend {
@@ -835,6 +927,16 @@ impl BackendSupervisor {
                 &self.owner_id,
             )
         })
+    }
+
+    fn windows_client_target(&self) -> ActiveBackend {
+        ActiveBackend {
+            placement: BackendPlacement::Windows,
+            wsl_distro: String::new(),
+            wsl_repository_root: String::new(),
+            owner_id: self.owner_id.clone(),
+            tray_pid: std::process::id(),
+        }
     }
 
     fn active_backend_path(&self) -> PathBuf {

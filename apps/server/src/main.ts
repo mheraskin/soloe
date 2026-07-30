@@ -7,7 +7,6 @@ import {
   RuntimeClient,
 } from "@soloe/runtime";
 import { SoloeServer } from "./SoloeServer.js";
-import { fileURLToPath } from "node:url";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 const dataDirectory = resolveSoloeDataDirectory();
@@ -24,9 +23,7 @@ const server = new SoloeServer({
   host: process.env.SOLOE_SERVER_HOST ?? "127.0.0.1",
   port: Number(process.env.SOLOE_SERVER_PORT ?? "4317"),
   token,
-  webRoot:
-    process.env.SOLOE_WEB_ROOT ??
-    fileURLToPath(new URL("../../../out/web", import.meta.url)),
+  webRoot: process.env.SOLOE_WEB_ROOT ?? "",
   rpcHandler: (call) => domain.invoke(call),
 });
 domain.on("event", (event, payload) => server.publish(event, payload));

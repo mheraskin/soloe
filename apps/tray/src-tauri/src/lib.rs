@@ -23,7 +23,7 @@ pub fn run() {
             let start = MenuItem::with_id(app, "start", "Start backend", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Stop backend", true, None::<&str>)?;
             let open_browser =
-                MenuItem::with_id(app, "open_browser", "Open in browser", true, None::<&str>)?;
+                MenuItem::with_id(app, "open_browser", "Open in browser", false, None::<&str>)?;
             let open_electron = MenuItem::with_id(
                 app,
                 "open_electron",
@@ -150,6 +150,7 @@ pub fn run() {
 
             let polling_supervisor = Arc::clone(&supervisor);
             let polling_status = status.clone();
+            let polling_browser = open_browser.clone();
             thread::spawn(move || {
                 loop {
                     thread::sleep(Duration::from_secs(1));
@@ -157,6 +158,7 @@ pub fn run() {
                         break;
                     };
                     let _ = polling_status.set_text(service.status_label());
+                    let _ = polling_browser.set_enabled(service.browser_address().is_some());
                 }
             });
             app.manage(instance_guard);

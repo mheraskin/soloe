@@ -24,7 +24,7 @@
   },
   "main": "out/main/main.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "pnpm dev:tray",
     "dev:runtime": "pnpm --filter @soloe/runtime dev",
     "dev:server": "pnpm --filter @soloe/server dev",
     "dev:web": "pnpm --filter @soloe/web dev",
