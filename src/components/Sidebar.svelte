@@ -233,21 +233,21 @@
 
 <aside
   bind:this={asideEl}
-  class="relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
+  class="app-sidebar relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
   class:select-none={resizing}
   style={`width: ${width}px`}
   ondragover={onAsideDragOver}
   ondragleave={onSidebarDragLeave}
 >
-  <div class="flex flex-col gap-2 border-b border-border p-2.5">
-    <div class="flex items-center gap-1.5">
+  <div class="soloe-pane-header">
+    <div class="flex w-full min-w-0 items-center gap-1.5">
       <div class="relative min-w-0 flex-1">
         <Search class="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
           placeholder="Filter sessions"
           bind:value={query}
-          class="h-7 pr-7 pl-7 text-xs [&::-webkit-search-cancel-button]:hidden"
+          class="h-6 pr-6 pl-6 text-[11px] [&::-webkit-search-cancel-button]:hidden"
           aria-label="Filter sessions"
         />
         {#if query}
@@ -264,8 +264,8 @@
       </div>
       <Button
         variant="ghost"
-        size="icon-sm"
-        class="size-7 shrink-0"
+        size="icon-xs"
+        class="size-6 shrink-0"
         onclick={() => commandPalette.open('open-project')}
         aria-label="Open project"
         title="Open project"
@@ -278,13 +278,13 @@
         branch={newSessionContext.branch}
         side="bottom"
         align="end"
-        class="size-7"
+        class="size-6"
         title="New session"
         ariaLabel="New session"
       />
       <button
         type="button"
-        class="flex h-7 shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        class="flex h-6 shrink-0 items-center gap-1 rounded-md border border-transparent px-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         aria-label="Hide sidebar"
         title="Hide sidebar"
         onclick={() => sidebar.hide()}
@@ -295,7 +295,7 @@
     </div>
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
-    <div class="flex flex-col gap-3 p-2">
+    <div class="flex flex-col gap-1 p-1.5">
       {#if standaloneVisible.length > 0}
         <div class="flex flex-col gap-px">
           {#each standaloneVisible as session (session.id)}
@@ -318,7 +318,7 @@
   </ScrollArea>
   <button
     type="button"
-    class={`absolute top-0 right-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
+    class={`sidebar-resize-handle absolute top-0 right-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
     aria-label="Resize sidebar"
     onpointerdown={startResize}
   >

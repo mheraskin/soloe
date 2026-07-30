@@ -54,7 +54,7 @@
   }
 </script>
 
-<section bind:this={rootEl} class="flex flex-col gap-2 p-3">
+<section bind:this={rootEl} class="mobile-inspector-surface flex flex-col gap-2 p-3">
   <div class="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">Session</div>
   {#if selected}
     <div class="grid grid-cols-[80px_minmax(0,1fr)] items-baseline gap-2 text-xs">

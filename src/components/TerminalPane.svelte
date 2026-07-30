@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import type { SearchAddon } from '@xterm/addon-search';
@@ -53,12 +53,15 @@
   } = $props();
 
   let fontSize = $derived(settings.current.terminal.fontSize);
+  let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
+  let terminalFontSize = $derived(compactViewport ? Math.max(14, fontSize) : fontSize);
 
   let host: HTMLDivElement | undefined = $state();
   let findInput: HTMLInputElement | null = $state(null);
   let findOpen = $state(false);
   let findQuery = $state('');
   let ready = $state(false);
+  let mobileCommand = $state('');
   let loadingLabel = $derived(
     sessions.runtime[sessionId]?.status === 'starting' ? 'Starting' : 'Restoring terminal'
   );
@@ -93,6 +96,30 @@
   const READY_HARD_CAP_MS = 5000;
   let quietTimer: ReturnType<typeof setTimeout> | null = null;
   let capTimer: ReturnType<typeof setTimeout> | null = null;
+
+  onMount(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const update = () => {
+      compactViewport = media.matches;
+    };
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  });
+
+  function shouldAutofocusTerminal(): boolean {
+    return !compactViewport || !window.matchMedia('(pointer: coarse)').matches;
+  }
+
+  async function sendMobileCommand(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    const command = mobileCommand;
+    mobileCommand = '';
+    const data = command ? `${command.replaceAll('\n', '\r')}\r` : '\r';
+    await ipc.terminal.input(terminalId, data).catch(() => {
+      // Silent — the terminal probably exited while the input was open.
+    });
+  }
 
   function clearReadyTimers(): void {
     if (quietTimer) {
@@ -408,7 +435,7 @@
 
   $effect(() => {
     if (!host) return;
-    const initFontSize = untrack(() => fontSize);
+    const initFontSize = untrack(() => terminalFontSize);
     const t = new Terminal({
       fontFamily: 'JetBrains Mono, Cascadia Code, ui-monospace, monospace',
       fontSize: initFontSize,
@@ -664,7 +691,9 @@
     const onSave = () => { void saveBuffer().catch(reportError); };
     const onCopy = () => { void copyBuffer().catch(reportError); };
     const onCopyMarkdown = () => { void copyMarkdown().catch(reportError); };
-    const onRefocus = () => term?.focus();
+    const onRefocus = () => {
+      if (shouldAutofocusTerminal()) term?.focus();
+    };
 
     window.addEventListener('mousedown', onDocMouseDown, true);
     window.addEventListener('keydown', onDocKeyDown);
@@ -689,15 +718,15 @@
     const currentTerm = term;
     const currentFit = fit;
     const currentHost = host;
-    term.options.fontSize = fontSize;
+    term.options.fontSize = terminalFontSize;
     // Font subsets and atlas repair are needed only for panes that can draw.
     // Browser font loads are cached, but avoiding four requests per hidden
     // terminal also avoids a Promise/listener fan-out during session restore.
     void Promise.all([
-      document.fonts.load(`400 ${fontSize}px "JetBrains Mono"`),
-      document.fonts.load(`700 ${fontSize}px "JetBrains Mono"`),
-      document.fonts.load(`400 ${fontSize}px "Cascadia Code"`, '─'),
-      document.fonts.load(`700 ${fontSize}px "Cascadia Code"`, '─')
+      document.fonts.load(`400 ${terminalFontSize}px "JetBrains Mono"`),
+      document.fonts.load(`700 ${terminalFontSize}px "JetBrains Mono"`),
+      document.fonts.load(`400 ${terminalFontSize}px "Cascadia Code"`, '─'),
+      document.fonts.load(`700 ${terminalFontSize}px "Cascadia Code"`, '─')
     ]).then(repaintFontAtlas).catch(() => {});
     requestAnimationFrame(() => {
       if (!visible || term !== currentTerm || fit !== currentFit || host !== currentHost) return;
@@ -792,11 +821,12 @@
   // in the same tick.
   $effect(() => {
     if (!focused || !term) return;
+    if (!shouldAutofocusTerminal()) return;
     requestAnimationFrame(() => term?.focus());
   });
 </script>
 
-<div class="relative h-full w-full bg-[#0f0f10] p-2">
+<div class="terminal-pane-shell relative h-full w-full bg-[#0f0f10] p-2">
   {#if !ready}
     <div
       class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
@@ -815,7 +845,7 @@
     </div>
   {/if}
   {#if findOpen && focused}
-    <div class="absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
+    <div class="terminal-find absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
       <Input
         bind:ref={findInput}
         bind:value={findQuery}
@@ -852,13 +882,35 @@
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
+  <form class="mobile-terminal-input" onsubmit={sendMobileCommand}>
+    <label class="sr-only" for={`mobile-terminal-input-${terminalId}`}>
+      Terminal command
+    </label>
+    <input
+      id={`mobile-terminal-input-${terminalId}`}
+      bind:value={mobileCommand}
+      class="mobile-terminal-input-field"
+      type="text"
+      inputmode="text"
+      enterkeyhint="send"
+      autocomplete="off"
+      autocapitalize="none"
+      autocorrect="off"
+      spellcheck={false}
+      placeholder="Type a command…"
+      aria-label="Terminal command"
+    />
+    <button type="submit" aria-label="Send command" title="Send command">
+      <Send class="size-4" />
+    </button>
+  </form>
 </div>
 
 {#if chipText || askOpen}
   <button
     bind:this={chipEl}
     type="button"
-    class="fixed z-50 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 font-sans text-[11px] text-popover-foreground shadow-md hover:bg-accent hover:text-accent-foreground"
+    class="mobile-selection-menu fixed z-50 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 font-sans text-[11px] text-popover-foreground shadow-md hover:bg-accent hover:text-accent-foreground"
     style:top="{chipAnchor?.top ?? 0}px"
     style:left="{chipAnchor?.left ?? 0}px"
     style:visibility={chipAnchor ? 'visible' : 'hidden'}
@@ -890,5 +942,91 @@
   :global(.xterm-screen),
   :global(.xterm-viewport) {
     background: #0f0f10 !important;
+  }
+
+  .mobile-terminal-input {
+    display: none;
+  }
+
+  @media (max-width: 767px) {
+    .terminal-pane-shell {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      padding: 0.25rem;
+    }
+
+    .terminal-find {
+      top: 0.5rem;
+      right: 0.5rem;
+      left: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .terminal-find :global([data-slot='input']) {
+      width: min(100%, 15rem);
+      height: 2.75rem;
+      flex: 1 1 10rem;
+    }
+
+    .terminal-find :global([data-slot='button']) {
+      min-width: 2.75rem;
+      min-height: 2.75rem;
+    }
+
+    .mobile-terminal-input {
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem max(0.25rem, env(safe-area-inset-right))
+        max(0.5rem, env(safe-area-inset-bottom)) max(0.25rem, env(safe-area-inset-left));
+      border-top: 1px solid color-mix(in oklab, white 12%, transparent);
+      background: #151518;
+    }
+
+    .mobile-terminal-input-field {
+      min-width: 0;
+      height: 2.75rem;
+      flex: 1;
+      border: 1px solid color-mix(in oklab, white 16%, transparent);
+      border-radius: 0.65rem;
+      background: #0f0f10;
+      padding: 0 0.875rem;
+      color: #f5f5f5;
+      font-family: 'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;
+      font-size: 16px;
+      outline: none;
+    }
+
+    .mobile-terminal-input-field::placeholder {
+      color: #85858d;
+    }
+
+    .mobile-terminal-input-field:focus-visible {
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);
+    }
+
+    .mobile-terminal-input button {
+      display: inline-flex;
+      width: 2.75rem;
+      height: 2.75rem;
+      flex: none;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 0.65rem;
+      background: var(--primary);
+      color: var(--primary-foreground);
+      touch-action: manipulation;
+    }
+
+    :global(.xterm) {
+      padding: 0.25rem;
+    }
+
+    :global(.xterm-helper-textarea) {
+      font-size: 16px !important;
+    }
   }
 </style>

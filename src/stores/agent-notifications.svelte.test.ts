@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
+import type { ObservedAgentSnapshot, ObserverEvent } from '@shared/types/agents.js';
 import type { Session } from '@shared/types/sessions.js';
 import { agentNotifications } from './agent-notifications.svelte';
 
@@ -29,6 +29,17 @@ function snapshot(
     sessionId: session.id,
     lastEventAt: '2026-05-04T00:00:00.000Z',
     ...overrides
+  };
+}
+
+function event(state: ObserverEvent['state'], summary: string): ObserverEvent {
+  return {
+    id: `event-${state}`,
+    subjectId: session.id,
+    subjectKind: 'session',
+    timestamp: '2026-05-04T00:00:00.000Z',
+    state,
+    summary
   };
 }
 
@@ -60,12 +71,48 @@ describe('agentNotifications', () => {
     expect(agentNotifications.toasts).toHaveLength(1);
   });
 
-  it('does not notify the active session for completed states', () => {
+  it('notifies the active session when it completes', () => {
     agentNotifications.observeSnapshot(snapshot('working'), session, session.id);
     agentNotifications.observeSnapshot(snapshot('completed'), session, session.id);
 
-    expect(agentNotifications.markerFor(session.id)).toBeNull();
-    expect(agentNotifications.toasts).toHaveLength(0);
+    expect(agentNotifications.markerFor(session.id)?.state).toBe('completed');
+    expect(agentNotifications.toasts).toHaveLength(1);
+  });
+
+  it('does not dismiss a toast when the matching snapshot follows its observer event', () => {
+    agentNotifications.observeEvent(
+      event('waiting_for_approval', 'approval: ExitPlanMode'),
+      session,
+      session.id,
+      session.id
+    );
+    agentNotifications.observeSnapshot(snapshot('waiting_for_approval'), session, session.id);
+
+    expect(agentNotifications.markerFor(session.id)?.state).toBe('waiting_for_approval');
+    expect(agentNotifications.toasts).toMatchObject([
+      {
+        state: 'waiting_for_approval',
+        reason: 'approval: ExitPlanMode'
+      }
+    ]);
+  });
+
+  it('keeps completion visible when the matching snapshot follows its observer event', () => {
+    agentNotifications.observeEvent(
+      event('completed', 'task completed'),
+      session,
+      session.id,
+      session.id
+    );
+    agentNotifications.observeSnapshot(snapshot('completed'), session, session.id);
+
+    expect(agentNotifications.markerFor(session.id)?.state).toBe('completed');
+    expect(agentNotifications.toasts).toMatchObject([
+      {
+        state: 'completed',
+        reason: 'task completed'
+      }
+    ]);
   });
 
   it('dedupes toasts per session and replaces the older notice', () => {

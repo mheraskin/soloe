@@ -3,6 +3,8 @@
   import type { NotifyState } from '../stores/agent-notifications.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { projects } from '../stores/projects.svelte';
+  import { agentNotificationBreadcrumb } from '../lib/agent-notification-context';
   import { CheckCircle2, Gauge, MessageSquareText, ShieldAlert, X, XCircle } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import KindIcon from './KindIcon.svelte';
@@ -53,19 +55,44 @@
     {#each agentNotifications.toasts as toast (toast.sessionId)}
       {@const stateIcon = stateIcons[toast.state]}
       {@const StateIcon = stateIcon.icon}
+      {@const session = sessions.sessions.find((candidate) => candidate.id === toast.sessionId)}
+      {@const breadcrumbSession = session ?? {
+        name: toast.sessionName,
+        cwd: toast.cwd,
+        runMode: toast.runMode,
+        lastBranch: toast.lastBranch
+      }}
+      {@const breadcrumb = agentNotificationBreadcrumb(
+        breadcrumbSession,
+        projects.get(session?.projectId ?? toast.projectId)
+      )}
       <div
         class="pointer-events-auto relative rounded-md border border-border bg-popover/95 text-popover-foreground shadow-lg backdrop-blur transition-colors hover:bg-accent focus-within:ring-2 focus-within:ring-ring"
       >
         <button
           type="button"
-          class="grid w-full grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-2 px-3 py-2 pr-8 text-left focus-visible:outline-none"
+          class="grid w-full grid-cols-[16px_minmax(0,1fr)] items-center gap-2 px-3 py-2 pr-8 text-left focus-visible:outline-none"
           onclick={() => activate(toast.sessionId)}
-          aria-label={`${toast.sessionName}: ${toast.reason}`}
+          aria-label={`${breadcrumb.join(' › ')}: ${toast.reason}`}
         >
-          <KindIcon kind={toast.sessionKind} size={14} />
-          <StateIcon class={cn('size-3.5', stateIcon.class)} />
+          <span class="flex flex-col items-center justify-center gap-0.5" aria-hidden="true">
+            <KindIcon kind={toast.sessionKind} size={12} />
+            <StateIcon class={cn('size-3', stateIcon.class)} />
+          </span>
           <span class="grid min-w-0 gap-0.5">
-            <span class="truncate text-xs leading-4 font-medium">{toast.sessionName}</span>
+            <span class="flex min-w-0 items-center gap-1 overflow-hidden text-xs leading-4">
+              {#each breadcrumb as crumb, index (index)}
+                {#if index > 0}
+                  <span class="shrink-0 text-muted-foreground/50" aria-hidden="true">›</span>
+                {/if}
+                <span
+                  class={index === breadcrumb.length - 1
+                    ? 'min-w-0 truncate font-medium text-foreground'
+                    : 'min-w-0 truncate text-muted-foreground'}
+                  title={crumb}
+                >{crumb}</span>
+              {/each}
+            </span>
             <span class="truncate text-[11px] leading-3.5 text-muted-foreground">
               {toast.reason}
             </span>

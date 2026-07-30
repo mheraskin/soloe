@@ -266,7 +266,7 @@
   {onOpenChange}
   bind:value={highlight}
   shouldFilter={commandPalette.mode === 'commands'}
-  class="sm:max-w-xl"
+  class="mobile-command-dialog sm:max-w-xl"
 >
   <Command.Input
     placeholder={commandPalette.mode === 'open-project'
@@ -275,7 +275,7 @@
     bind:value={query}
   />
   {#if commandPalette.mode === 'open-project'}
-    <div class="flex items-center gap-1.5 border-b border-border px-3 py-1.5">
+    <div class="mobile-command-scope flex items-center gap-1.5 border-b border-border px-3 py-1.5">
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Search</span>
       <div class="flex items-center gap-1 rounded-md border border-border bg-muted/30 p-0.5">
         <button
@@ -305,7 +305,7 @@
         </button>
         {/if}
       </div>
-      <span class="ml-auto text-[10px] text-muted-foreground">
+      <span class="mobile-desktop-hint ml-auto text-[10px] text-muted-foreground">
         <kbd class="rounded border border-border bg-muted px-1 font-mono">Tab</kbd>
         <span class="mx-0.5">enter folder</span>
         <span class="opacity-50">·</span>

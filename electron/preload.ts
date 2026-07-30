@@ -69,6 +69,7 @@ import type {
   DiscardFilesRequest,
   FileLinesRequest,
   GitCheckoutRequest,
+  GitCreateWorktreeRequest,
   GitChangeEvent,
   GitCommitRequest,
   GitRecentCommitsRequest,
@@ -245,6 +246,8 @@ const soloe: SoloeApi = {
     resolveRefs: (request: ResolveRefsRequest) =>
       ipcRenderer.invoke(IpcChannels.git.resolveRefs, request),
     checkout: (request: GitCheckoutRequest) => ipcRenderer.invoke(IpcChannels.git.checkout, request),
+    createWorktree: (request: GitCreateWorktreeRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.createWorktree, request),
     workingChanges: (request: WorkingChangesRequest) =>
       ipcRenderer.invoke(IpcChannels.git.workingChanges, request),
     workingTreeSnapshot: (request: WorkingTreeSnapshotRequest) =>

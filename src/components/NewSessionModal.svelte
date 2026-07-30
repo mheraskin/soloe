@@ -100,7 +100,7 @@
         />
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
+      <div class="mobile-form-grid grid grid-cols-2 gap-3">
         <div class="flex flex-col gap-1.5">
           <Label class="text-xs text-muted-foreground">Run mode</Label>
           <Select.Root
