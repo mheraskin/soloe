@@ -3,7 +3,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const RENDERER_ROOT = path.resolve(process.cwd(), 'src');
-const ELECTRON_ADAPTER = path.join(RENDERER_ROOT, 'lib', 'ipc.ts');
+const RENDERER_ADAPTERS = new Set([
+  path.join(RENDERER_ROOT, 'lib', 'ipc.ts'),
+  path.join(RENDERER_ROOT, 'lib', 'browser-api.ts')
+]);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.svelte']);
 
 async function rendererSources(root: string): Promise<string[]> {
@@ -21,7 +24,7 @@ describe('Renderer Backend Interface compatibility', () => {
     const violations: string[] = [];
 
     for (const filename of await rendererSources(RENDERER_ROOT)) {
-      if (filename === ELECTRON_ADAPTER || filename.endsWith('.test.ts')) continue;
+      if (RENDERER_ADAPTERS.has(filename) || filename.endsWith('.test.ts')) continue;
       const source = await fs.readFile(filename, 'utf8');
       if (/\bwindow\s*\.\s*soloe\b/.test(source)) {
         violations.push(`${path.relative(process.cwd(), filename)} accesses window.soloe`);

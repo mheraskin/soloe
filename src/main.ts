@@ -9,13 +9,21 @@ import '@fontsource/jetbrains-mono/700.css';
 // so it's loaded as a secondary monospace family for the terminal stack.
 import '@fontsource/cascadia-code/400.css';
 import '@fontsource/cascadia-code/700.css';
-import App from './App.svelte';
-import { initCommentsBridge } from './lib/comments-bridge';
-import { initDiffBridge } from './lib/diff-bridge-handler';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('Missing #app root element');
 
+const { installBrowserApi } = await import('./lib/browser-api');
+installBrowserApi();
+const [
+  { default: App },
+  { initCommentsBridge },
+  { initDiffBridge }
+] = await Promise.all([
+  import('./App.svelte'),
+  import('./lib/comments-bridge'),
+  import('./lib/diff-bridge-handler')
+]);
 initCommentsBridge();
 initDiffBridge();
 mount(App, { target });

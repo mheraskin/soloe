@@ -12,7 +12,7 @@ export default defineConfig({
       }
     },
     build: {
-      outDir: 'out/main',
+      outDir: resolve(__dirname, 'out/main'),
       lib: {
         entry: resolve(__dirname, 'electron/main.ts'),
         formats: ['cjs']
@@ -30,7 +30,7 @@ export default defineConfig({
       }
     },
     build: {
-      outDir: 'out/preload',
+      outDir: resolve(__dirname, 'out/preload'),
       rollupOptions: {
         // The browser pane preload runs inside the <webview> guest process
         // and forwards Soloe shortcuts back to the host renderer; it must
@@ -38,6 +38,7 @@ export default defineConfig({
         // can load it from disk.
         input: {
           preload: resolve(__dirname, 'electron/preload.ts'),
+          'preload-remote': resolve(__dirname, 'electron/preload-remote.ts'),
           'preload-webview': resolve(__dirname, 'electron/preload-webview.ts')
         },
         external: ['electron'],
@@ -49,7 +50,8 @@ export default defineConfig({
     }
   },
   renderer: {
-    root: 'src',
+    root: resolve(__dirname, 'src'),
+    publicDir: resolve(__dirname, 'build'),
     plugins: [tailwindcss(), svelte()],
     resolve: {
       alias: {
@@ -59,7 +61,7 @@ export default defineConfig({
       }
     },
     build: {
-      outDir: 'out/renderer',
+      outDir: resolve(__dirname, 'out/renderer'),
       rollupOptions: {
         input: resolve(__dirname, 'src/index.html')
       }

@@ -170,6 +170,29 @@ describe('TerminalOutputRouter', () => {
     expect(sink.write).toHaveBeenCalledWith('onetwo');
   });
 
+  it('replays visible terminals when the server transport reconnects', async () => {
+    const reconnect = createReconnectSource();
+    const replay = vi
+      .fn()
+      .mockResolvedValueOnce(snapshot('t-1', 's-1', 1, 0, ''))
+      .mockResolvedValueOnce(snapshot('t-1', 's-1', 1, 1, 'while-offline'));
+    const sink = createSink();
+    const router = new TerminalOutputRouter(
+      createLiveSource().source,
+      replay,
+      undefined,
+      reconnect.source
+    );
+    router.attach('t-1', 's-1', sink, true);
+    await settle();
+
+    reconnect.emit();
+    await settle();
+
+    expect(replay).toHaveBeenNthCalledWith(2, 't-1', 0);
+    expect(sink.write).toHaveBeenCalledWith('while-offline');
+  });
+
   it('serializes visible writes and coalesces output behind xterm', async () => {
     const live = createLiveSource();
     const firstWrite = deferred<void>();
@@ -286,6 +309,19 @@ function createLiveSource() {
     source,
     detach,
     emit: (value: TerminalOutputEvent) => listener?.(value)
+  };
+}
+
+function createReconnectSource() {
+  let listener: (() => void) | null = null;
+  return {
+    source: (next: () => void) => {
+      listener = next;
+      return () => {
+        listener = null;
+      };
+    },
+    emit: () => listener?.()
   };
 }
 

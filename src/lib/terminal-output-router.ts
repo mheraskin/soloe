@@ -11,6 +11,7 @@ type ReplaySource = (
   afterSeq: number
 ) => Promise<TerminalReplaySnapshot | null>;
 type DemandSource = (terminalId: TerminalId, active: boolean) => Promise<void>;
+type ReconnectSource = (listener: () => void) => () => void;
 
 const TRUNCATED_REPLAY_PREFIX =
   '\r\n\x1b[33m[Earlier terminal output omitted to bound memory]\x1b[0m\r\n';
@@ -70,12 +71,14 @@ export class TerminalOutputRouter {
   private readonly presentations = new Map<TerminalId, Set<PresentationState>>();
   private readonly demandByTerminal = new Map<TerminalId, OutputDemandState>();
   private sourceDetach: (() => void) | null = null;
+  private reconnectDetach: (() => void) | null = null;
   private visibleCount = 0;
 
   constructor(
     private readonly source: OutputSource,
     private readonly replaySource?: ReplaySource,
-    private readonly demandSource?: DemandSource
+    private readonly demandSource?: DemandSource,
+    private readonly reconnectSource?: ReconnectSource
   ) {}
 
   attach(
@@ -158,11 +161,28 @@ export class TerminalOutputRouter {
 
   private ensureSource(): void {
     this.sourceDetach ??= this.source((event) => this.route(event));
+    this.reconnectDetach ??= this.reconnectSource?.(() => this.recoverAfterReconnect()) ?? null;
   }
 
   private detachSource(): void {
     this.sourceDetach?.();
     this.sourceDetach = null;
+    this.reconnectDetach?.();
+    this.reconnectDetach = null;
+  }
+
+  private recoverAfterReconnect(): void {
+    for (const group of this.presentations.values()) {
+      for (const state of group) {
+        if (!state.active || !state.visible) continue;
+        state.pending.length = 0;
+        state.coveredSeq = state.writing ? state.writeToSeq : state.appliedSeq;
+        state.recovering = true;
+        state.replayRequired = true;
+        state.highestObservedSeq = state.appliedSeq;
+        if (!state.writing) this.requestReplay(state);
+      }
+    }
   }
 
   private route(event: TerminalOutputEvent): void {

@@ -1,0 +1,16 @@
+{
+  "name": "Soloe",
+  "short_name": "Soloe",
+  "description": "Manage coding agents and terminal sessions",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f10",
+  "theme_color": "#0f0f10",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

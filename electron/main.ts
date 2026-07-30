@@ -10,7 +10,8 @@ import { SessionCommandBuilder } from './sessions/SessionCommandBuilder.js';
 import { ShellDetector } from './terminal/ShellDetector.js';
 import { TerminalOutputBatcher } from './terminal/TerminalOutputBatcher.js';
 import { PtyManager } from './terminal/PtyManager.js';
-import { selectTerminalBackend } from './terminal/TerminalBackend.js';
+import { RemoteRuntimePtyProcessFactory } from './terminal/RemoteRuntimePtyProcessFactory.js';
+import { resolveRuntimeEndpoint } from '@soloe/runtime';
 import { SettingsStore } from './settings/SettingsStore.js';
 import { ProjectStore } from './projects/ProjectStore.js';
 import { NotesStore } from './notes/NotesStore.js';
@@ -100,6 +101,10 @@ interface AppServices {
 let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
+let remoteWindowIpc: WindowIpc | null = null;
+let remoteBrowserIpc: BrowserIpc | null = null;
+
+const remoteServerUrl = process.env.SOLOE_CLIENT_SERVER_URL?.trim() || null;
 
 interface DiffIntent {
   commits?: string[];
@@ -299,15 +304,9 @@ async function setupServices(): Promise<AppServices> {
   mcpInfo = startedInfo;
 
   let manager: PtyManager;
-  const terminalBackend = selectTerminalBackend({
-    appPath: app.getAppPath(),
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    log: (message, detail) => console.warn(message, detail)
-  });
-  console.info(
-    `[terminal] using ${terminalBackend.name} backend${terminalBackend.sidecarPath ? ` (${terminalBackend.sidecarPath})` : ''}`
-  );
+  const runtimeEndpoint = process.env.SOLOE_RUNTIME_ENDPOINT ?? resolveRuntimeEndpoint();
+  const runtimeProcessFactory = await RemoteRuntimePtyProcessFactory.connect(runtimeEndpoint);
+  console.info(`[terminal] connected to Environment Runtime at ${runtimeEndpoint}`);
   const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
     manager.forwardBatchedOutput(events);
   });
@@ -318,8 +317,9 @@ async function setupServices(): Promise<AppServices> {
     observer,
     bridgeInfo: getBridgeInfo,
     getBinaries,
-    processFactory: terminalBackend.processFactory
+    processFactory: runtimeProcessFactory
   });
+  await manager.rehydrate();
   const terminalIpc = new TerminalIpc({
     pty: manager,
     getWindows: () => BrowserWindow.getAllWindows()
@@ -567,7 +567,10 @@ async function createWindow(): Promise<BrowserWindow> {
     icon: appIcon,
     backgroundColor: '#0f0f10',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.js'),
+      preload: path.join(
+        __dirname,
+        remoteServerUrl ? '../preload/preload-remote.js' : '../preload/preload.js'
+      ),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -628,7 +631,9 @@ async function createWindow(): Promise<BrowserWindow> {
   });
 
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (!app.isPackaged && devUrl) {
+  if (remoteServerUrl) {
+    await win.loadURL(remoteServerUrl);
+  } else if (!app.isPackaged && devUrl) {
     await win.loadURL(devUrl);
   } else {
     await win.loadFile(path.join(__dirname, '../renderer/index.html'));
@@ -672,6 +677,10 @@ async function cleanup(): Promise<void> {
     await services.mcp.stop();
     services = null;
   }
+  remoteWindowIpc?.dispose();
+  remoteWindowIpc = null;
+  remoteBrowserIpc?.dispose();
+  remoteBrowserIpc = null;
 }
 
 function ensureSingleInstance(): boolean {
@@ -726,7 +735,15 @@ if (ensureSingleInstance()) {
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     ensureWindowsDevShellShortcut(resolveAppIcon());
-    services = await setupServices();
+    if (remoteServerUrl) {
+      remoteWindowIpc = new WindowIpc();
+      remoteBrowserIpc = new BrowserIpc();
+      remoteWindowIpc.register();
+      remoteBrowserIpc.register();
+      console.info(`[desktop] using Application Server at ${new URL(remoteServerUrl).origin}`);
+    } else {
+      services = await setupServices();
+    }
     mainWindow = await createWindow();
     if (pendingDiffIntent) {
       const intent = pendingDiffIntent;

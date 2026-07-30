@@ -113,12 +113,18 @@ export function toIpcPayload<T>(value: T): T {
 }
 
 const c = globalThis.window?.soloe as Window['soloe'];
+const terminalReconnect = (
+  c?.terminal as (typeof c.terminal & {
+    onReconnect?: (listener: () => void) => () => void;
+  }) | undefined
+)?.onReconnect;
 const terminalOutputRouter = new TerminalOutputRouter(
   (listener) => c.terminal.onOutput(listener),
   async (terminalId, afterSeq) => unwrap(await c.terminal.replay(terminalId, afterSeq)),
   async (terminalId, active) => {
     unwrap(await c.terminal.setOutputDemand({ terminalId, active }));
-  }
+  },
+  terminalReconnect ? (listener) => terminalReconnect(listener) : undefined
 );
 
 export const backend = {
