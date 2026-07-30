@@ -66,7 +66,12 @@ export interface FileReadResult {
   relativePath: string;
   content: string;
   binary: boolean;
+  truncated: boolean;
+  oversized: boolean;
+  unavailable: boolean;
+  unavailableReason?: string;
   size: number;
+  maxBytes?: number;
 }
 
 export interface FileWriteRequest {

@@ -41,6 +41,9 @@ importers:
       '@pierre/trees':
         specifier: ^1.0.0-beta.3
         version: 1.0.0-beta.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@soloe/domain':
+        specifier: workspace:*
+        version: link:packages/domain
       '@soloe/protocol':
         specifier: workspace:*
         version: link:packages/protocol
@@ -195,6 +198,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@soloe/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@soloe/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -212,6 +218,8 @@ importers:
   apps/tray: {}
 
   apps/web: {}
+
+  packages/domain: {}
 
   packages/protocol: {}
 

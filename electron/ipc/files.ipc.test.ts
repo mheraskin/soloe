@@ -86,7 +86,8 @@ function createIpc(fileIndex: ReturnType<typeof fakeIndex>): FilesIpc {
   return new FilesIpc({
     fileIndex: fileIndex as never,
     store: {} as never,
-    pty: {} as never
+    pty: {} as never,
+    authorizeScope: async () => true
   });
 }
 
