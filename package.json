@@ -13,9 +13,24 @@
     "url": "https://github.com/mheraskin/soloe/issues"
   },
   "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "electron-winstaller",
+      "esbuild",
+      "node-pty"
+    ]
+  },
   "main": "out/main/main.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:runtime": "pnpm --filter @soloe/runtime dev",
+    "dev:server": "pnpm --filter @soloe/server dev",
+    "dev:web": "pnpm --filter @soloe/web dev",
+    "dev:desktop": "pnpm --filter @soloe/desktop-electron dev",
+    "dev:tray": "pnpm --filter @soloe/tray dev",
+    "configure:backend": "node scripts/configure-backend.mjs",
     "dev:tauri-ui": "vite --config vite.tauri.config.ts",
     "dev:tauri": "tauri dev",
     "build": "electron-vite build",
@@ -23,15 +38,15 @@
     "build:tauri": "tauri build --no-bundle",
     "build:rust": "cargo build --release -p soloe-terminal",
     "check:renderer-budget": "node scripts/check-renderer-entry-budget.mjs",
-    "benchmark:electron": "npm run build && node scripts/benchmark-electron.mjs",
-    "benchmark:rust": "npm run build:rust && npm run build && node scripts/benchmark-electron.mjs --terminal-backend=rust",
-    "benchmark:tauri": "npm run build:tauri && node scripts/benchmark-tauri.mjs",
+    "benchmark:electron": "pnpm build && node scripts/benchmark-electron.mjs",
+    "benchmark:rust": "pnpm build:rust && pnpm build && node scripts/benchmark-electron.mjs --terminal-backend=rust",
+    "benchmark:tauri": "pnpm build:tauri && node scripts/benchmark-tauri.mjs",
     "build:icon:win": "node scripts/generate-windows-icon.mjs",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck:svelte": "svelte-check --tsconfig tsconfig.web.json",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:svelte",
+    "typecheck": "pnpm typecheck:node && pnpm typecheck:web && pnpm typecheck:svelte",
     "package": "electron-vite build && electron-builder --publish never",
     "package:windows": "electron-vite build && electron-builder --win --x64 --publish never",
     "package:linux": "electron-vite build && electron-builder --linux AppImage deb --x64 --publish never",
@@ -63,7 +78,8 @@
     "highlight.js": "^11.11.1",
     "marked": "^18.0.3",
     "node-pty": "^1.0.0",
-    "smol-toml": "^1.6.1"
+    "smol-toml": "^1.6.1",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
@@ -74,6 +90,7 @@
     "@tailwindcss/vite": "^4.2.4",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^25.6.0",
+    "@types/ws": "^8.18.1",
     "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",
     "electron": "^41.5.0",
@@ -88,12 +105,13 @@
     "tailwind-merge": "^3.5.0",
     "tailwind-variants": "^3.2.2",
     "tailwindcss": "^4.2.4",
+    "tsx": "^4.23.1",
     "tw-animate-css": "^1.4.0",
     "typescript": "^6.0.3",
     "vite": "^7.3.2",
     "vitest": "^4.1.5"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

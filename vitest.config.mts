@@ -3,7 +3,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-// When npm is launched from Windows into WSL it can inherit TEMP/TMP values
+// When the package manager is launched from Windows into WSL it can inherit TEMP/TMP values
 // under /mnt/c. Filesystem-heavy tests are dramatically slower there and can
 // exceed Vitest's timeout despite passing normally. Keep test scratch data on
 // the native Linux filesystem while leaving native Windows/macOS/Linux runs
@@ -23,7 +23,15 @@ export default defineConfig({
   test: {
     ...(testTmpDir ? { env: { TMPDIR: testTmpDir } } : {}),
     environment: 'node',
+    environmentOptions: {
+      jsdom: {
+        url: 'http://localhost/'
+      }
+    },
+    setupFiles: ['tests/setup-environment.ts'],
     include: [
+      'apps/**/*.test.ts',
+      'packages/**/*.test.ts',
       'electron/**/*.test.ts',
       'shared/**/*.test.ts',
       'src/**/*.test.ts',

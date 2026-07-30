@@ -19,7 +19,7 @@ async function main() {
   if (config.terminalBackend === 'rust') {
     await fs.access(config.sidecarPath).catch(() => {
       throw new Error(
-        `Rust terminal sidecar not found at ${config.sidecarPath}; run npm run build:rust first`
+        `Rust terminal sidecar not found at ${config.sidecarPath}; run pnpm build:rust first`
       );
     });
   }

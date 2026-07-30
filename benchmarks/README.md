@@ -5,8 +5,8 @@ opt-in Rust PTY sidecar behind the same renderer and Electron IPC Interface.
 Run them on each target platform with the machine otherwise idle:
 
 ```bash
-npm run benchmark:electron
-npm run benchmark:rust
+pnpm benchmark:electron
+pnpm benchmark:rust
 ```
 
 The command builds the production application, launches it with an isolated
@@ -67,13 +67,13 @@ sudo apt install pkg-config libdbus-1-dev libwebkit2gtk-4.1-dev build-essential 
 Launch the interactive terminal laboratory:
 
 ```bash
-npm run dev:tauri
+pnpm dev:tauri
 ```
 
 Or build the release binary and run the automated 5/10/20-terminal comparison:
 
 ```bash
-npm run benchmark:tauri
+pnpm benchmark:tauri
 ```
 
 The automated workload is transport-only (`paintsXterm: false`) so it can be

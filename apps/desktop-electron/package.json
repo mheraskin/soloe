@@ -1,0 +1,13 @@
+{
+  "name": "@soloe/desktop-electron",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@soloe/runtime": "workspace:*"
+  },
+  "scripts": {
+    "dev": "electron-vite dev --config ../../electron.vite.config.ts",
+    "build": "electron-vite build --config ../../electron.vite.config.ts",
+    "preview": "electron-vite preview --config ../../electron.vite.config.ts"
+  }
+}

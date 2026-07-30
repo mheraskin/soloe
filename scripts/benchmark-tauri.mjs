@@ -21,7 +21,7 @@ const binaryPath = path.resolve(
 );
 
 await fs.access(binaryPath).catch(() => {
-  throw new Error(`Tauri spike binary not found at ${binaryPath}; run npm run build:tauri first`);
+  throw new Error(`Tauri spike binary not found at ${binaryPath}; run pnpm build:tauri first`);
 });
 await fs.mkdir(path.dirname(outputPath), { recursive: true });
 await fs.rm(outputPath, { force: true });

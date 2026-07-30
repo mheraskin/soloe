@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.soloe.tauri-spike",
   "build": {
-    "beforeDevCommand": "npm run dev:tauri-ui",
-    "beforeBuildCommand": "npm run build:tauri-ui",
+    "beforeDevCommand": "pnpm dev:tauri-ui",
+    "beforeBuildCommand": "pnpm build:tauri-ui",
     "devUrl": "http://localhost:5174",
     "frontendDist": "../out/tauri-renderer"
   },
