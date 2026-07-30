@@ -72,8 +72,15 @@ corepack enable
 pnpm install
 ```
 
+On Windows, one command starts the tray, the selected Windows/WSL backend, and
+the Windows-hosted PWA development server:
+
+```bash
+pnpm dev
+```
+
 The long-lived runtime, replaceable server, browser/PWA, optional Electron
-client, and windowless tray host are independently runnable:
+client, and windowless tray host also remain independently runnable:
 
 ```bash
 pnpm dev:runtime
@@ -84,7 +91,8 @@ pnpm dev:tray
 ```
 
 Start the runtime before the server when launching them manually. Rebuilding or
-stopping a client or the server does not stop runtime-owned agent PTYs. See
+stopping a client or the server does not stop runtime-owned agent PTYs. Exiting
+the tray does stop all owned clients, services, PTYs, and agents. See
 [the process architecture](./docs/architecture/process-model.md) for lifecycle
 and packaging details. Windows contributors should use the
 [Windows/WSL backend guide](./docs/development/windows-backends.md) for the

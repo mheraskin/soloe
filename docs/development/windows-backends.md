@@ -1,31 +1,31 @@
 # Windows development with Windows or WSL backends
 
-This is the supported source-development arrangement:
+Soloe has one Windows client side and a selectable backend side:
 
-| Component | Windows backend | WSL backend |
-| --- | --- | --- |
-| Tauri Tray Host | Windows | Windows |
-| Electron client | Windows | Windows |
-| Browser/PWA client | Windows browser | Windows browser |
-| Application Server | Windows | selected WSL distribution |
-| Environment Runtime | Windows | selected WSL distribution |
-| PTYs and agents | Windows | selected WSL distribution |
+| Component | Always runs on |
+| --- | --- |
+| Tauri tray/supervisor | Windows |
+| Web/PWA host and hot reload | Windows |
+| Electron client | Windows |
+| Application Server | Selected Windows or WSL backend |
+| Environment Runtime, PTYs, and agents | Selected Windows or WSL backend |
 
-There is no Docker dependency. Node.js is required and is not bundled.
+There is no Docker dependency. Node.js 22 or newer is required and is not
+bundled.
 
-## 1. Install the Windows prerequisites
+## One-time Windows setup
 
 Install:
 
-- Node.js 22 or newer
-- Corepack and PNPM
-- Git
-- Rust with the stable MSVC toolchain
-- Visual Studio 2022 Build Tools with **Desktop development with C++**
-- WebView2 Runtime (normally already present on Windows 10/11)
-- WSL and a distribution such as Ubuntu, if the WSL backend will be used
+- Node.js 22 or newer;
+- Corepack and the pinned PNPM version;
+- Git;
+- Rust stable with the MSVC toolchain;
+- Visual Studio 2022 Build Tools with **Desktop development with C++**;
+- WebView2 Runtime (normally present on Windows 10/11);
+- WSL and the desired distribution when using a WSL backend.
 
-Open a new PowerShell and verify:
+Open Developer PowerShell for Visual Studio and verify:
 
 ```powershell
 node --version
@@ -33,185 +33,210 @@ corepack --version
 git --version
 rustc --version
 cargo --version
-wsl --status
+wsl --list --verbose
 ```
 
-The Node version must be at least 22.
-
-## 2. Prepare the Windows checkout
-
-Use a normal Windows path, not `\\wsl$`:
+Prepare the Windows checkout:
 
 ```powershell
-git clone https://github.com/mheraskin/soloe.git C:\src\soloe
-Set-Location C:\src\soloe
+Set-Location D:\projects\soloe-win-2
 corepack enable
 corepack prepare pnpm@10.34.5 --activate
 pnpm install
-pnpm --filter @soloe/web build
 ```
 
-Verify the Windows toolchain:
+The Windows checkout owns the tray, Electron dependencies, and browser/PWA
+dependencies. Do not install them from WSL into this checkout.
 
-```powershell
-pnpm typecheck
-pnpm --filter @soloe/desktop-electron build
-pnpm --filter @soloe/tray exec tauri build --no-bundle
-```
+## One-time WSL setup
 
-## 3. Prepare the WSL checkout
+Skip this section for a Windows backend.
 
-Skip this section if only the Windows backend is needed.
-
-Open the selected distribution:
-
-```powershell
-wsl --distribution Ubuntu
-```
-
-Inside WSL, install Node.js 22 or newer, Corepack/PNPM, and Git. Rust and Visual
-Studio are not needed inside WSL because the tray remains a Windows program.
-
-Verify that a non-interactive login shell can find the tools:
-
-```bash
-bash -lc 'node --version && pnpm --version && git --version'
-```
-
-This exact check matters because the Windows tray starts WSL services through
-`bash -lc`. If it fails, add the Node/PNPM initialization to the WSL login
-profile and repeat the check.
-
-Create a separate WSL-native checkout and install its Linux dependencies:
-
-```bash
-mkdir -p ~/src
-git clone https://github.com/mheraskin/soloe.git ~/src/soloe
-cd ~/src/soloe
-corepack enable
-corepack prepare pnpm@10.34.5 --activate
-pnpm install
-pnpm --filter @soloe/web build
-```
-
-Do not share `node_modules` between Windows and WSL. `node-pty` is
-platform-specific, which is why the two checkouts need separate installs.
-
-## 4. Select the WSL backend before first launch
-
-From the Windows checkout in PowerShell:
-
-```powershell
-Set-Location C:\src\soloe
-pnpm configure:backend -- --placement wsl --distro Ubuntu --root /home/YOUR_WSL_USER/src/soloe
-```
-
-Use the exact Linux path printed by this WSL command if unsure:
-
-```powershell
-wsl --distribution Ubuntu -- bash -lc 'printf "%s\n" "$HOME/src/soloe"'
-```
-
-The configuration command writes the shared launcher setting to
-`%LOCALAPPDATA%\Soloe\settings.json`.
-
-## 5. Start Soloe with the WSL backend
-
-Still in the Windows checkout:
-
-```powershell
-pnpm dev:tray
-```
-
-The tray starts on Windows and automatically launches, in order:
-
-1. the Environment Runtime inside the selected WSL distribution;
-2. the Application Server inside the same distribution.
-
-Right-click the Soloe tray icon. Its status should say
-`Backend: running on WSL`.
-
-Then choose either:
-
-- **Open Electron client** — starts Electron on Windows, connected to the WSL
-  Application Server;
-- **Open in browser** — opens the authenticated PWA in the Windows browser.
-
-The WSL Unix socket is never exposed to Windows. Only the token-protected
-localhost server on port 4317 crosses the Windows/WSL boundary.
-
-## 6. Change placement from Settings
-
-Open **Settings → Backend** in either client.
-
-Choose:
-
-- **Windows**, or
-- **WSL**, then enter the distribution and absolute WSL repository path.
-
-The change is intentionally restart-applied:
-
-1. right-click the tray;
-2. choose **Stop backend**;
-3. choose **Start backend**.
-
-Stop uses the recorded active placement, not the newly selected placement. This
-prevents a settings change from leaving the old agent-owning runtime behind.
-
-## 7. Run with the Windows backend
-
-The Windows checkout already contains the required Windows dependencies. Select
-Windows from Settings and use Stop then Start, or configure it before launch:
-
-```powershell
-Set-Location C:\src\soloe
-pnpm configure:backend -- --placement windows
-pnpm dev:tray
-```
-
-The tray, server, runtime, PTYs, Electron, and browser transport now all run
-natively on Windows. Electron and the browser still connect to the Application
-Server rather than owning PTYs.
-
-## 8. Confirm agent continuity
-
-Start a terminal, Codex, or Claude session, then:
-
-1. close Electron;
-2. rebuild a client with `pnpm --filter @soloe/desktop-electron build` or
-   `pnpm --filter @soloe/web build`;
-3. reopen Electron or the browser from the tray.
-
-The agent continues because its PTY belongs to the Environment Runtime.
-Rebuilding a client does not touch that process. Rebuilding or restarting the
-Application Server also does not stop the runtime.
-
-Only these actions stop running agents:
-
-- explicitly stopping their terminal/session;
-- choosing **Stop backend**;
-- choosing **Quit Soloe**, which performs a backend stop before exiting.
-
-## 9. Logs and troubleshooting
-
-Windows-side shared state and logs:
+The current Ubuntu development checkout is:
 
 ```text
-%LOCALAPPDATA%\Soloe\settings.json
-%LOCALAPPDATA%\Soloe\active-backend.json
-%LOCALAPPDATA%\Soloe\runtime.log
-%LOCALAPPDATA%\Soloe\server.log
+/home/user/projects/soloe-2
 ```
 
-If WSL startup times out:
+Inside Ubuntu, install Node.js 22 or newer, Corepack/PNPM, and Git. Rust and
+Visual Studio are not needed inside WSL because the tray remains on Windows.
+
+Verify the exact non-interactive login environment used by the tray:
 
 ```powershell
-wsl --distribution Ubuntu -- bash -lc 'node --version && pnpm --version'
-wsl --distribution Ubuntu -- bash -lc 'test -f /home/YOUR_WSL_USER/src/soloe/package.json && echo ok'
-Get-Content "$env:LOCALAPPDATA\Soloe\runtime.log" -Tail 100
-Get-Content "$env:LOCALAPPDATA\Soloe\server.log" -Tail 100
+wsl --distribution Ubuntu -- bash -lc 'node --version && pnpm --version && git --version'
 ```
 
-If the tray says the backend is running but a Windows client cannot connect,
-verify that `http://127.0.0.1:4317` is reachable from Windows and that WSL
-localhost forwarding has not been disabled.
+Install the Linux-native dependencies once:
+
+```powershell
+wsl --distribution Ubuntu -- bash -lc 'cd /home/user/projects/soloe-2 && pnpm install'
+```
+
+Windows and WSL must not share `node_modules`; `node-pty` is
+platform-specific.
+
+## Select the backend
+
+For Ubuntu WSL:
+
+```powershell
+Set-Location D:\projects\soloe-win-2
+pnpm configure:backend -- --placement wsl --distro Ubuntu --root /home/user/projects/soloe-2
+```
+
+For native Windows:
+
+```powershell
+Set-Location D:\projects\soloe-win-2
+pnpm configure:backend -- --placement windows
+```
+
+The setting is stored at `%LOCALAPPDATA%\Soloe\settings.json`. A placement
+change applies after choosing **Stop backend (Windows/WSL)**, then using the
+same action when it changes to **Start backend (Windows/WSL)**.
+
+## Everyday startup
+
+From the Windows checkout:
+
+```powershell
+Set-Location D:\projects\soloe-win-2
+pnpm dev
+```
+
+That is the normal startup command. It:
+
+1. starts the lightweight Windows tray;
+2. validates Windows Node/PNPM and client dependencies;
+3. validates the selected Windows or WSL backend and `node-pty`;
+4. starts the Environment Runtime;
+5. starts the Application Server;
+6. starts the Windows Web Host with hot reload;
+7. enables **Open in browser** only after the authenticated PWA is ready.
+
+No routine web build is required in either checkout. The Windows Web Host
+proxies authenticated `/api` HTTP/WebSocket traffic to the selected backend.
+
+Right-click the Soloe tray icon and choose:
+
+- the single **Start backend (WSL/Windows)** or
+  **Stop backend (WSL/Windows)** action;
+- **Open in browser** for the Windows PWA;
+- **Open Electron client** for the disposable Windows desktop client;
+- **Open Soloe logs** for diagnostics.
+
+## Client-only development
+
+Closing or rebuilding Electron or the browser does not affect runtime-owned
+agents. The tray-managed web host provides hot reload automatically.
+
+Electron can be built separately:
+
+```powershell
+pnpm --filter @soloe/desktop-electron build
+```
+
+The Application Server can be restarted independently while the Environment
+Runtime remains running. Reconnected clients request terminal replay from the
+last observed output sequence.
+
+## Stop backend versus Quit Soloe
+
+The tray has one dynamic lifecycle action, not separate start, stop, and status
+rows. **Stop backend (WSL/Windows)** keeps the tray running but stops:
+
+1. the Windows Web Host;
+2. the Application Server;
+3. the Environment Runtime;
+4. all runtime-owned PTYs and agents.
+
+After shutdown, that same item becomes **Start backend (WSL/Windows)** and
+starts the placement currently selected in Settings. While transitioning it is
+disabled and displays **Starting backend (…)** or **Stopping backend (…)**.
+
+**Quit Soloe** is a complete shutdown. It stops tray-launched Electron
+processes, the Web Host, the Application Server, and the Environment Runtime
+before exiting. When the runtime may own active agents, the tray asks for a
+second confirmation.
+
+The tray is the definitive owner. A killed/crashed Windows tray closes its Job
+Object, terminating native process trees. For WSL, a heartbeat lease expires
+and the WSL supervisor stops server then runtime within a bounded interval.
+Soloe currently has no tray ownership-handoff mode.
+
+## Validation
+
+Run from Developer PowerShell:
+
+```powershell
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm --filter @soloe/web build
+pnpm --filter @soloe/desktop-electron build
+cargo fmt --check
+cargo test --workspace
+pnpm --filter @soloe/tray exec tauri build --no-bundle
+git diff --check
+```
+
+Smoke-test both placements:
+
+1. run `pnpm dev`;
+2. confirm the single tray action changes between
+   **Start backend (WSL/Windows)** and **Stop backend (WSL/Windows)**;
+3. open the browser and confirm initial loading has no unsupported startup RPC;
+4. create a project/session and start a terminal;
+5. close and reopen browser and Electron; confirm output replay;
+6. rebuild either client; confirm the terminal remains;
+7. restart only the Application Server; confirm the terminal remains;
+8. choose **Stop backend**; confirm the terminal stops;
+9. restart, then choose **Quit Soloe**; confirm every managed process stops;
+10. restart, kill the tray process, and confirm no managed Windows/WSL process
+    remains after the ownership timeout.
+
+## Logs and troubleshooting
+
+The tray menu opens this directory:
+
+```text
+%LOCALAPPDATA%\Soloe
+```
+
+Important files:
+
+```text
+settings.json
+active-backend.json
+tray-lease.json
+runtime.log
+server.log
+web.log
+supervisor.log
+```
+
+Useful checks:
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 4317
+Test-NetConnection 127.0.0.1 -Port 4318
+Get-Content "$env:LOCALAPPDATA\Soloe\runtime.log" -Tail 100
+Get-Content "$env:LOCALAPPDATA\Soloe\server.log" -Tail 100
+Get-Content "$env:LOCALAPPDATA\Soloe\web.log" -Tail 100
+Get-Content "$env:LOCALAPPDATA\Soloe\supervisor.log" -Tail 100
+wsl --distribution Ubuntu -- bash -lc 'node --version && pnpm --version'
+```
+
+Tray failures include actionable diagnostics for missing Windows or WSL
+Node/PNPM, invalid WSL source paths, missing platform dependencies, failed
+runtime/server/web startup, graceful shutdown fallback, and incomplete cleanup.
+A port 4317 or 4318 conflict is recorded in `server.log` or `web.log`.
+
+The Windows checkout in this development setup is a WSL-created linked
+worktree. Use PowerShell for PNPM, Cargo, Electron, and Tauri commands. Perform
+Git operations through WSL:
+
+```powershell
+wsl --distribution Ubuntu -- git -C /mnt/d/projects/soloe-win-2 status
+```
