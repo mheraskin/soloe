@@ -52,4 +52,22 @@ describe('materializeReviewDiffs', () => {
   it('omits targets absent from the patch so callers can fall back lazily', () => {
     expect(materializeReviewDiffs('', [{ path: 'untracked.txt' }])).toEqual([]);
   });
+
+  it('bounds the materialized rows for a very large file diff', () => {
+    const changed = Array.from({ length: 8_000 }, (_, index) => `+line ${index}`);
+    const patch = [
+      'diff --git a/generated.txt b/generated.txt',
+      '--- a/generated.txt',
+      '+++ b/generated.txt',
+      '@@ -0,0 +1,8000 @@',
+      ...changed,
+      ''
+    ].join('\n');
+
+    const [diff] = materializeReviewDiffs(patch, [{ path: 'generated.txt' }]);
+
+    expect(diff?.truncated).toBe(true);
+    expect(diff?.hunks.flatMap((hunk) => hunk.lines).length).toBeLessThan(changed.length);
+    expect(diff?.hunks.flatMap((hunk) => hunk.lines).length).toBeGreaterThan(0);
+  });
 });
