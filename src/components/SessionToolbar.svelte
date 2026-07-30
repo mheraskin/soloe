@@ -58,31 +58,32 @@
   }
 </script>
 
-<div class="session-toolbar flex items-center justify-between gap-3 border-b border-border bg-card px-3 py-2 min-h-[48px]">
+<div class="session-toolbar soloe-pane-header justify-between">
   {#if selected}
-    <div class="flex min-w-0 items-center gap-2.5">
+    <div class="flex min-w-0 flex-1 items-center gap-1.5">
       <StatusDot {status} />
-      <KindIcon kind={displayKind} size={16} />
-      <div class="session-toolbar-title flex min-w-0 flex-col leading-tight">
-        <span class="truncate text-sm font-medium text-foreground">{selected.name}</span>
-        <Tooltip.Provider delayDuration={250}>
-          <Tooltip.Root>
-            <Tooltip.Trigger>
-              {#snippet child({ props })}
-                <span
-                  {...props}
-                  class="block max-w-[min(36vw,32rem)] overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-[11px] text-muted-foreground [direction:rtl]"
-                >
-                  <bdi dir="ltr">{selected.cwd}</bdi>
-                </span>
-              {/snippet}
-            </Tooltip.Trigger>
-            <Tooltip.Content class="max-w-[min(90vw,40rem)] break-all font-mono text-[11px]">
-              {selected.cwd}
-            </Tooltip.Content>
-          </Tooltip.Root>
-        </Tooltip.Provider>
-      </div>
+      <KindIcon kind={displayKind} size={13} />
+      <span class="session-toolbar-title max-w-44 shrink truncate text-xs font-medium text-foreground">
+        {selected.name}
+      </span>
+      <span class="shrink-0 text-muted-foreground/35" aria-hidden="true">·</span>
+      <Tooltip.Provider delayDuration={250}>
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <span
+                {...props}
+                class="block min-w-0 max-w-[min(32vw,30rem)] flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-[10px] text-muted-foreground [direction:rtl]"
+              >
+                <bdi dir="ltr">{selected.cwd}</bdi>
+              </span>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content class="max-w-[min(90vw,40rem)] break-all font-mono text-[11px]">
+            {selected.cwd}
+          </Tooltip.Content>
+        </Tooltip.Root>
+      </Tooltip.Provider>
       <div class="session-toolbar-branch">
         <GitBranchWidget
           cwd={selected.cwd}
@@ -93,11 +94,11 @@
     </div>
 
     <Tooltip.Provider delayDuration={250}>
-      <div class="session-toolbar-actions flex items-center gap-1">
+      <div class="session-toolbar-actions flex shrink-0 items-center gap-0.5">
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-sm" onclick={openCwd} aria-label="Open working directory">
+              <Button {...props} variant="ghost" size="icon-xs" onclick={openCwd} aria-label="Open working directory">
                 <FolderOpen />
               </Button>
             {/snippet}
@@ -108,7 +109,7 @@
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-sm" onclick={openInEditor} aria-label="Open in editor">
+              <Button {...props} variant="ghost" size="icon-xs" onclick={openInEditor} aria-label="Open in editor">
                 <Code2 />
               </Button>
             {/snippet}
@@ -116,12 +117,12 @@
           <Tooltip.Content>Open in editor</Tooltip.Content>
         </Tooltip.Root>
 
-        <Separator orientation="vertical" class="mx-1 h-5" />
+        <Separator orientation="vertical" class="mx-0.5 h-4" />
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
             {#snippet child({ props })}
-              <Button {...props} variant="ghost" size="icon-sm" aria-label="More actions">
+              <Button {...props} variant="ghost" size="icon-xs" aria-label="More actions">
                 <MoreHorizontal />
               </Button>
             {/snippet}

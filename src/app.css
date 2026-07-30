@@ -9,6 +9,19 @@
   }
 }
 
+@layer components {
+  .soloe-pane-header {
+    display: flex;
+    height: 2rem;
+    min-height: 2rem;
+    align-items: center;
+    gap: 0.375rem;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in oklab, var(--card) 72%, transparent);
+    padding-inline: 0.5rem;
+  }
+}
+
 :root {
   --background: oklch(1.0000 0 0);
   --foreground: oklch(0.2007 0.0302 263.5405);

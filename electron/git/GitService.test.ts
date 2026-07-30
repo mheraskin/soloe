@@ -462,6 +462,29 @@ describe.skipIf(!hasGit)('GitService', () => {
     }
   });
 
+  it('createWorktree: creates a new branch and returns the discovered worktree', async () => {
+    await initRepo(tmpRoot);
+    const worktreePath = path.join(path.dirname(tmpRoot), `${path.basename(tmpRoot)}-created`);
+
+    try {
+      const created = await svc.createWorktree(
+        tmpRoot,
+        worktreePath,
+        'feature/created',
+        'main'
+      );
+
+      expect(created).toMatchObject({
+        path: worktreePath,
+        branch: 'feature/created',
+        detached: false
+      });
+      expect((await fs.stat(worktreePath)).isDirectory()).toBe(true);
+    } finally {
+      await fs.rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it('listWorktrees: reads WSL worktrees when native path resolution cannot stat the repo', async () => {
     const wslSvc = new GitService({
       runWslGit: async (_distro, _cwd, args) => {

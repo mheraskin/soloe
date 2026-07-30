@@ -10,14 +10,20 @@
     Copy
   } from '@lucide/svelte';
   import type { AgentRuntimeProvider, Session, SessionStatus } from '@shared/types/sessions.js';
+  import type { QuickLaunchPreset } from '@shared/types/settings.js';
   import { launchKind, launchProvider } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
+  import { settings } from '../stores/settings.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { kindLabel } from '../lib/sessions-helpers';
   import { Keymap } from '../lib/keymap';
   import { Button } from '$lib/components/ui/button';
   import { displaySessionKind } from '../lib/session-agent';
+  import {
+    exitedSessionQuickLaunchPresets,
+    quickLaunchExtraArgs
+  } from '../lib/quick-launch';
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
 
@@ -25,10 +31,14 @@
 
   let busy = $state(false);
   let busyProvider = $state<AgentRuntimeProvider | null>(null);
+  let busyPresetId = $state<string | null>(null);
   let observed = $derived(session ? sessions.observationFor(session.id) : null);
   let displayKind = $derived(session ? displaySessionKind(session, observed) : 'terminal');
   let canContinueAcrossAgents = $derived(
     session !== null && (displayKind === 'claude_code' || displayKind === 'codex')
+  );
+  let quickLaunchPresets = $derived(
+    exitedSessionQuickLaunchPresets(settings.current.quickLaunch)
   );
   let providerSessionId = $derived.by(() => {
     if (!session) return null;
@@ -110,6 +120,28 @@
       reportError(err);
     } finally {
       busyProvider = null;
+    }
+  }
+
+  async function launchPreset(preset: QuickLaunchPreset): Promise<void> {
+    if (!session || busyPresetId) return;
+    busyPresetId = preset.id;
+    try {
+      const args = quickLaunchExtraArgs(preset);
+      const created = await sessions.createAgentWithDefaults(preset.provider, {
+        ...(session.projectId ? { projectId: session.projectId } : {}),
+        cwd: session.cwd,
+        ...(session.lastBranch ? { branch: session.lastBranch } : {}),
+        runMode: session.runMode,
+        ...(session.wslDistro ? { wslDistro: session.wslDistro } : {}),
+        ...(preset.model ? { model: preset.model } : {}),
+        ...(args.length > 0 ? { extraArgs: args } : {})
+      });
+      sessions.select(created.id);
+    } catch (err) {
+      reportError(err);
+    } finally {
+      busyPresetId = null;
     }
   }
 
@@ -280,6 +312,29 @@
               {/if}
               <span>Codex</span>
             </Button>
+          </div>
+        </div>
+      {/if}
+      {#if quickLaunchPresets.length > 0}
+        <div class="mt-2 flex flex-col items-center gap-1.5">
+          <span class="text-[11px] leading-4 text-muted-foreground">Quick launch</span>
+          <div class="flex flex-wrap items-center justify-center gap-2">
+            {#each quickLaunchPresets as preset (preset.id)}
+              <Button
+                size="sm"
+                variant="outline"
+                class="gap-2"
+                onclick={() => void launchPreset(preset)}
+                disabled={busyPresetId !== null}
+              >
+                {#if busyPresetId === preset.id}
+                  <Loader2 class="size-3.5 animate-spin" />
+                {:else}
+                  <KindIcon kind={preset.provider} size={14} />
+                {/if}
+                <span>{preset.label}</span>
+              </Button>
+            {/each}
           </div>
         </div>
       {/if}

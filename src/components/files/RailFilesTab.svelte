@@ -341,10 +341,11 @@
 </script>
 
 <div bind:this={rootEl} class="mobile-files-surface flex min-h-0 min-w-0 flex-1 flex-col">
-  <header class="mobile-rail-header flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-    <div class="flex min-w-0 flex-col">
-      <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Files</span>
-      <span class="truncate text-xs text-foreground" title={activeCwd ?? ''}>
+  <header class="mobile-rail-header soloe-pane-header justify-between">
+    <div class="flex min-w-0 items-center gap-1.5">
+      <span class="shrink-0 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Files</span>
+      <span class="text-muted-foreground/35" aria-hidden="true">·</span>
+      <span class="truncate text-[11px] text-foreground" title={activeCwd ?? ''}>
         {cwdLabel || 'No session selected'}
       </span>
     </div>

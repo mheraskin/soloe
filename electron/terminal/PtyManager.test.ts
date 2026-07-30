@@ -158,6 +158,31 @@ describe('PtyManager', () => {
     expect(statuses[1]?.terminalId).toEqual(expect.any(String));
   });
 
+  it('reattaches to an already-running session instead of spawning a competing terminal', async () => {
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+
+    const first = await manager.start({ sessionId: session.id });
+    const resumed = await manager.start({ sessionId: session.id });
+
+    expect(resumed).toEqual(first);
+    expect(pty.spawn).toHaveBeenCalledOnce();
+  });
+
   it('emits cwd updates from OSC 7 location sequences', async () => {
     const manager = new PtyManager({
       commandBuilder: {
@@ -425,6 +450,49 @@ describe('PtyManager', () => {
     expect(
       observer.listEvents(codexSession.id).filter((event) => event.summary === 'waiting for approval')
     ).toHaveLength(1);
+  });
+
+  it('ignores approval-looking terminal output for auto-approved agents', async () => {
+    const codexSession: Session = {
+      ...session,
+      id: 'codex-auto-approve',
+      name: 'Codex',
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        extraArgs: ['--dangerously-bypass-approvals-and-sandbox']
+      }
+    };
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => codexSession),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      observer,
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: codexSession.id });
+    observer.setTuiObservedState(codexSession.id, 'working', 'thinking');
+    manager.forwardBatchedOutput([{
+      terminalId: started.terminalId,
+      sessionId: codexSession.id,
+      data: 'Do you want to allow this command to run?',
+      seq: 1
+    }]);
+
+    expect(observer.getSnapshot(codexSession.id)?.state).toBe('working');
   });
 
   it('detects ANSI-decorated agent signals split across output chunks', async () => {

@@ -9,6 +9,7 @@ import type {
   SessionStatus
 } from '@shared/types/sessions.js';
 import { effectiveAgentProvider } from '@shared/types/sessions.js';
+import { sessionAutoApprovesPermissions } from '@shared/agent-permissions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
@@ -49,6 +50,7 @@ interface TerminalInstance {
   usageLimitBuffer: string;
   usageLimitDetected: boolean;
   agentProvider: AgentRuntimeProvider | null;
+  autoApprovesPermissions: boolean;
   exitedAt?: string;
   exitCode?: number | null;
   signal?: number | null;
@@ -120,7 +122,17 @@ export class PtyManager extends EventEmitter {
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
     if (this.disposed) throw new Error('PtyManager disposed');
     const { sessionId } = options;
-    if (this.sessionToTerminal.has(sessionId)) {
+    const existingTerminalId = this.sessionToTerminal.get(sessionId);
+    if (existingTerminalId) {
+      const existing = this.terminals.get(existingTerminalId);
+      if (existing?.status === 'running') {
+        return {
+          terminalId: existing.terminalId,
+          sessionId: existing.sessionId,
+          pid: existing.pty.pid,
+          spec: existing.spec
+        };
+      }
       throw new Error(`Session ${sessionId} is already running`);
     }
     const session = await this.opts.store.get(sessionId);
@@ -182,7 +194,8 @@ export class PtyManager extends EventEmitter {
       agentSignalTail: '',
       usageLimitBuffer: '',
       usageLimitDetected: false,
-      agentProvider
+      agentProvider,
+      autoApprovesPermissions: sessionAutoApprovesPermissions(session)
     };
     this.terminals.set(terminalId, instance);
     this.attachProcess(instance);
@@ -228,7 +241,8 @@ export class PtyManager extends EventEmitter {
         agentSignalTail: '',
         usageLimitBuffer: '',
         usageLimitDetected: false,
-        agentProvider: effectiveAgentProvider(session) ?? legacyAgentProvider(session)
+        agentProvider: effectiveAgentProvider(session) ?? legacyAgentProvider(session),
+        autoApprovesPermissions: sessionAutoApprovesPermissions(session)
       };
       this.terminals.set(terminal.terminalId, instance);
       this.sessionToTerminal.set(terminal.sessionId, terminal.terminalId);
@@ -475,6 +489,7 @@ export class PtyManager extends EventEmitter {
     const observedState = this.opts.observer?.getSnapshot(instance.sessionId)?.state;
     if (
       isApprovalPromptOutput(signalText)
+      && !instance.autoApprovesPermissions
       && observedState !== 'waiting_for_approval'
       && observedState !== 'usage_limited'
     ) {
