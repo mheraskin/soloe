@@ -7,9 +7,23 @@ import type {
   RuntimeProcess,
   RuntimeProcessFactory
 } from '@soloe/runtime';
-import { RuntimeClient, RuntimeHost } from '@soloe/runtime';
+import {
+  resolveRuntimeEndpoint,
+  RuntimeClient,
+  RuntimeHost
+} from '@soloe/runtime';
 import { SoloeServer } from './SoloeServer.js';
 import { SoloeDomain } from './SoloeDomain.js';
+
+let endpointSequence = 0;
+
+function testRuntimeEndpoint(directory: string): string {
+  endpointSequence += 1;
+  return resolveRuntimeEndpoint({
+    dataDirectory: directory,
+    userIdentity: `test-${process.pid}-${endpointSequence}`
+  });
+}
 
 class PersistentProcess extends EventEmitter implements RuntimeProcess {
   readonly pid = 8080;
@@ -32,7 +46,7 @@ class PersistentProcess extends EventEmitter implements RuntimeProcess {
 describe('Soloe Server lifecycle', () => {
   it('reconnects to running Sessions after the server is replaced', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
     const processFactory: RuntimeProcessFactory = { spawn: () => process };
     const runtime = new RuntimeHost({ endpoint: runtimeEndpoint, processFactory });
@@ -87,7 +101,7 @@ describe('Soloe Server lifecycle', () => {
 
   it('exposes runtime control without owning the terminal process', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-api-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,
@@ -160,7 +174,7 @@ describe('Soloe Server lifecycle', () => {
 
   it('streams live runtime output to browser clients over WebSocket', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-events-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,
@@ -224,7 +238,7 @@ describe('Soloe Server lifecycle', () => {
 
   it('rejects browser control without the local service token', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-auth-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,
       processFactory: { spawn: () => new PersistentProcess() }
@@ -245,7 +259,7 @@ describe('Soloe Server lifecycle', () => {
 
   it('bootstraps a secure cookie and serves the built browser client', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-web-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const webRoot = path.join(directory, 'web');
     await mkdir(webRoot);
     await writeFile(path.join(webRoot, 'index.html'), '<main>Soloe browser client</main>');
@@ -287,7 +301,7 @@ describe('Soloe Server lifecycle', () => {
 
   it('returns an actionable response when browser assets are missing', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-web-missing-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,
       processFactory: { spawn: () => new PersistentProcess() }
@@ -324,7 +338,7 @@ describe('Soloe Server lifecycle', () => {
 
   it('routes authenticated browser RPC calls to the server domain', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-rpc-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,
       processFactory: { spawn: () => new PersistentProcess() }
@@ -363,7 +377,7 @@ describe('Soloe Server lifecycle', () => {
 
   it('supports browser startup, project/session creation, terminal output, and replay', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-browser-contract-'));
-    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,

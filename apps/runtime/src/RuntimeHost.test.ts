@@ -10,6 +10,17 @@ import type {
 import { RuntimeClient } from './RuntimeClient.js';
 import { RuntimeHost } from './RuntimeHost.js';
 import { NodePtyRuntimeProcessFactory } from './NodePtyRuntimeProcessFactory.js';
+import { resolveRuntimeEndpoint } from './RuntimeEndpoint.js';
+
+let endpointSequence = 0;
+
+function testRuntimeEndpoint(directory: string): string {
+  endpointSequence += 1;
+  return resolveRuntimeEndpoint({
+    dataDirectory: directory,
+    userIdentity: `test-${process.pid}-${endpointSequence}`
+  });
+}
 
 class FakeRuntimeProcess extends EventEmitter implements RuntimeProcess {
   readonly pid = 4242;
@@ -31,7 +42,7 @@ class FakeRuntimeProcess extends EventEmitter implements RuntimeProcess {
 describe('Environment Runtime lifecycle', () => {
   it('keeps a running Session alive while control clients disconnect and reconnect', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
-    const endpoint = path.join(directory, 'runtime.sock');
+    const endpoint = testRuntimeEndpoint(directory);
     const process = new FakeRuntimeProcess();
     const processFactory: RuntimeProcessFactory = {
       spawn: () => process
@@ -73,7 +84,7 @@ describe('Environment Runtime lifecycle', () => {
 
   it('replays Terminal output produced while no control client is connected', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
-    const endpoint = path.join(directory, 'runtime.sock');
+    const endpoint = testRuntimeEndpoint(directory);
     const process = new FakeRuntimeProcess();
     const host = new RuntimeHost({
       endpoint,
@@ -117,7 +128,7 @@ describe('Environment Runtime lifecycle', () => {
 
   it('publishes ordered Terminal output to connected control clients', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
-    const endpoint = path.join(directory, 'runtime.sock');
+    const endpoint = testRuntimeEndpoint(directory);
     const process = new FakeRuntimeProcess();
     const host = new RuntimeHost({
       endpoint,
@@ -157,7 +168,7 @@ describe('Environment Runtime lifecycle', () => {
 
   it('delivers Terminal input through the stable runtime connection', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
-    const endpoint = path.join(directory, 'runtime.sock');
+    const endpoint = testRuntimeEndpoint(directory);
     const process = new FakeRuntimeProcess();
     const host = new RuntimeHost({
       endpoint,
@@ -191,7 +202,7 @@ describe('Environment Runtime lifecycle', () => {
 
   it('stops a running Session only when explicitly requested', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
-    const endpoint = path.join(directory, 'runtime.sock');
+    const endpoint = testRuntimeEndpoint(directory);
     const process = new FakeRuntimeProcess();
     const host = new RuntimeHost({
       endpoint,
@@ -226,7 +237,7 @@ describe('Environment Runtime lifecycle', () => {
 
   it('owns a real interactive PTY independently of the connecting client', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
-    const endpoint = path.join(directory, 'runtime.sock');
+    const endpoint = testRuntimeEndpoint(directory);
     const host = new RuntimeHost({
       endpoint,
       processFactory: new NodePtyRuntimeProcessFactory()

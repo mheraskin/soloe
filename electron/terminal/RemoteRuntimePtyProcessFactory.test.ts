@@ -7,7 +7,7 @@ import type {
   RuntimeProcess,
   RuntimeProcessFactory,
 } from "@soloe/runtime";
-import { RuntimeHost } from "@soloe/runtime";
+import { resolveRuntimeEndpoint, RuntimeHost } from "@soloe/runtime";
 import { RemoteRuntimePtyProcessFactory } from "./RemoteRuntimePtyProcessFactory.js";
 
 class HostedProcess extends EventEmitter implements RuntimeProcess {
@@ -33,7 +33,10 @@ class HostedProcess extends EventEmitter implements RuntimeProcess {
 describe("RemoteRuntimePtyProcessFactory", () => {
   it("disconnects without terminating runtime-owned PTYs", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-remote-pty-"));
-    const endpoint = path.join(directory, "runtime.sock");
+    const endpoint = resolveRuntimeEndpoint({
+      dataDirectory: directory,
+      userIdentity: `remote-pty-test-${process.pid}`,
+    });
     const hostedProcess = new HostedProcess();
     const processFactory: RuntimeProcessFactory = { spawn: () => hostedProcess };
     const runtime = new RuntimeHost({ endpoint, processFactory });
