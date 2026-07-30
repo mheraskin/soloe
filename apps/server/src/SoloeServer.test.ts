@@ -9,6 +9,7 @@ import type {
 } from '@soloe/runtime';
 import { RuntimeClient, RuntimeHost } from '@soloe/runtime';
 import { SoloeServer } from './SoloeServer.js';
+import { SoloeDomain } from './SoloeDomain.js';
 
 class PersistentProcess extends EventEmitter implements RuntimeProcess {
   readonly pid = 8080;
@@ -359,7 +360,109 @@ describe('Soloe Server lifecycle', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it('supports browser startup, project/session creation, terminal output, and replay', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-browser-contract-'));
+    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const process = new PersistentProcess();
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => process }
+    });
+    let domainRuntime: RuntimeClient | undefined;
+    let domain: SoloeDomain | undefined;
+    let server: SoloeServer | undefined;
+
+    try {
+      await runtime.listen();
+      domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
+      domain = new SoloeDomain({ dataDirectory: directory, runtime: domainRuntime });
+      await domain.init();
+      server = new SoloeServer({
+        runtimeEndpoint,
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        rpcHandler: (call) => domain!.invoke(call)
+      });
+      domain.on('event', (event, payload) => server!.publish(event, payload));
+      const baseUrl = await server.listen();
+
+      await expect(rpc(baseUrl, 'sessions', 'list')).resolves.toEqual([]);
+      await expect(rpc(baseUrl, 'sessions', 'listArchived')).resolves.toEqual([]);
+      await expect(rpc(baseUrl, 'terminal', 'listRunning')).resolves.toEqual([]);
+      await expect(rpc(baseUrl, 'observer', 'list')).resolves.toEqual([]);
+
+      const project = await rpc<{ id: string }>(baseUrl, 'projects', 'create', [
+        { name: 'Browser project', path: directory }
+      ]);
+      expect(await rpc(baseUrl, 'projects', 'list')).toEqual([
+        expect.objectContaining({ id: project.id })
+      ]);
+
+      const session = await rpc<{ id: string }>(baseUrl, 'sessions', 'create', [
+        {
+          name: 'Browser session',
+          projectId: project.id,
+          cwd: directory,
+          runMode: 'linux',
+          launch: { type: 'terminal', shell: 'auto' }
+        }
+      ]);
+      const started = await rpc<{ terminalId: string }>(baseUrl, 'terminal', 'start', [
+        { sessionId: session.id, cols: 100, rows: 30 }
+      ]);
+      process.emit('data', 'browser contract output');
+
+      expect(await rpc(baseUrl, 'terminal', 'replay', [started.terminalId, 0])).toEqual(
+        expect.objectContaining({
+          data: 'browser contract output',
+          fromSeq: 1,
+          toSeq: 1
+        })
+      );
+      expect(await rpc(baseUrl, 'observer', 'list')).toEqual([
+        expect.objectContaining({
+          id: session.id,
+          state: 'idle'
+        })
+      ]);
+
+      const unsupported = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: { namespace: 'git', method: 'status', args: [] }
+      });
+      expect(await unsupported.json()).toEqual({
+        ok: false,
+        error: 'RPC git.status is not supported by the application server',
+        code: 'rpc_not_supported'
+      });
+    } finally {
+      await server?.close();
+      await domain?.dispose();
+      domainRuntime?.disconnect();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
+
+async function rpc<T = unknown>(
+  baseUrl: string,
+  namespace: string,
+  method: string,
+  args: unknown[] = []
+): Promise<T> {
+  const response = await request(baseUrl, '/api/rpc', {
+    method: 'POST',
+    body: { namespace, method, args }
+  });
+  const result = await response.json() as
+    | { ok: true; value: T }
+    | { ok: false; error: string; code?: string };
+  if (!result.ok) throw new Error(`${result.code ?? 'rpc_failed'}: ${result.error}`);
+  return result.value;
+}
 
 async function sessionsAt(baseUrl: string): Promise<unknown> {
   const response = await fetch(new URL('/api/runtime/sessions', baseUrl), {

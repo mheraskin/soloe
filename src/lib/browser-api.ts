@@ -9,6 +9,7 @@ import type {
   TerminalOutputEvent,
   TerminalStatusEvent,
 } from "@shared/types/terminal.js";
+import { supportsRpc, type SoloeTransportKind } from "@shared/api-contract.js";
 
 interface SocketLike {
   addEventListener(event: string, listener: (event: Event) => void): void;
@@ -20,6 +21,7 @@ export interface BrowserApiOptions {
   reconnectDelayMs?: number;
   baseUrl?: string;
   token?: string;
+  transport?: Extract<SoloeTransportKind, "browser" | "remote-electron">;
 }
 
 type Listener = (payload: never) => void;
@@ -28,6 +30,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = options.baseUrl ?? window.location.href;
   const listeners = new Map<string, Set<Listener>>();
+  const transport = options.transport ?? "browser";
   const rpc = async <T>(
     namespace: string,
     method: string,
@@ -110,6 +113,14 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
             const eventName = `${name}.${method.slice(2, 3).toLowerCase()}${method.slice(3)}`;
             return (listener: Listener) => subscribe(eventName, listener);
           }
+          if (!supportsRpc(transport, name, method)) {
+            return () =>
+              Promise.resolve({
+                ok: false,
+                error: `RPC ${name}.${method} is unavailable over ${transport}`,
+                code: "rpc_not_supported",
+              });
+          }
           return (...args: unknown[]) => rpc(name, method, args);
         },
       },
@@ -138,6 +149,11 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
   };
 
   return {
+    transport: {
+      kind: transport,
+      supports: (namespace: string, method: string) =>
+        supportsRpc(transport, namespace, method),
+    },
     sessions: namespace("sessions"),
     terminal,
     observer: namespace("observer"),

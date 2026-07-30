@@ -17,6 +17,7 @@ if (!serverUrl) {
 
 const api = createBrowserApi({
   baseUrl: serverUrl,
+  transport: 'remote-electron',
   ...(process.env.SOLOE_SERVER_TOKEN
     ? { token: process.env.SOLOE_SERVER_TOKEN }
     : {})

@@ -43,6 +43,7 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   await server.close();
+  await domain.dispose();
   domainRuntime.disconnect();
   await removeServiceInfo(dataDirectory, "server", process.pid, ownerId);
   process.exitCode = 0;

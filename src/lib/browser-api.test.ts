@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
+import { UI_STARTUP_RPCS } from "@shared/api-contract.js";
 import { createBrowserApi } from "./browser-api.js";
 
 describe("browser API", () => {
@@ -124,6 +125,26 @@ describe("browser API", () => {
     expect(sockets).toHaveLength(2);
     expect(reconnect).toHaveBeenCalledOnce();
     vi.useRealTimers();
+  });
+
+  it("advertises every startup RPC and rejects unsupported features before fetching", async () => {
+    const fetchImpl = vi.fn();
+    const api = createBrowserApi({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    for (const rpc of UI_STARTUP_RPCS) {
+      const [namespace, method] = rpc.split(".");
+      expect(api.transport?.supports(namespace!, method!)).toBe(true);
+    }
+    expect(api.transport?.supports("git", "status")).toBe(false);
+    await expect(api.git.status({ cwd: "/repo" } as never)).resolves.toEqual({
+      ok: false,
+      error: "RPC git.status is unavailable over browser",
+      code: "rpc_not_supported",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 

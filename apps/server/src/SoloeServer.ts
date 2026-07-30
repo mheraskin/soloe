@@ -222,9 +222,10 @@ export class SoloeServer {
           value: await this.options.rpcHandler(call),
         });
       } catch (error) {
+        const failure = rpcFailure(error);
         this.json(response, 200, {
           ok: false,
-          error: error instanceof Error ? error.message : String(error),
+          ...failure,
         });
       }
       return;
@@ -368,6 +369,28 @@ export class SoloeServer {
       },
     });
   }
+}
+
+function rpcFailure(error: unknown): {
+  error: string;
+  code: string;
+  remediation?: string;
+} {
+  if (error && typeof error === "object") {
+    const value = error as {
+      message?: unknown;
+      code?: unknown;
+      remediation?: unknown;
+    };
+    return {
+      error: typeof value.message === "string" ? value.message : String(error),
+      code: typeof value.code === "string" ? value.code : "rpc_failed",
+      ...(typeof value.remediation === "string"
+        ? { remediation: value.remediation }
+        : {}),
+    };
+  }
+  return { error: String(error), code: "rpc_failed" };
 }
 
 function contentType(file: string): string {

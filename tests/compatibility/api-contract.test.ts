@@ -1,0 +1,34 @@
+import { describe, expect, it } from "vitest";
+import {
+  REMOTE_ELECTRON_NATIVE_METHODS,
+  SERVER_RPC_METHODS,
+  UI_STARTUP_RPCS,
+  supportsRpc,
+} from "../../shared/api-contract.js";
+
+describe("Soloe API transport contract", () => {
+  it("implements every shared UI startup call on the application server", () => {
+    expect(UI_STARTUP_RPCS.filter((rpc) => !SERVER_RPC_METHODS.has(rpc))).toEqual([]);
+  });
+
+  it("keeps remote Electron PTY operations on the application server", () => {
+    for (const method of [
+      "terminal.start",
+      "terminal.stop",
+      "terminal.input",
+      "terminal.resize",
+      "terminal.listRunning",
+      "terminal.replay",
+    ]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
+
+  it("limits remote Electron native overrides to window and embedded-browser controls", () => {
+    expect([...REMOTE_ELECTRON_NATIVE_METHODS].every((method) =>
+      method.startsWith("window.") || method.startsWith("browser.")
+    )).toBe(true);
+  });
+});

@@ -325,7 +325,9 @@ export type IpcChannel =
   | (typeof IpcChannels.vault)[keyof typeof IpcChannels.vault]
   | (typeof IpcChannels.browser)[keyof typeof IpcChannels.browser];
 
-export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
+export type IpcResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string; code?: string; remediation?: string };
 
 export interface SessionsApi {
   list(): Promise<IpcResult<Session[]>>;
@@ -621,7 +623,13 @@ export interface BrowserApi {
   closeDevTools(request: CloseDevToolsRequest): Promise<IpcResult<true>>;
 }
 
+export interface TransportCapabilities {
+  kind: import("../api-contract.js").SoloeTransportKind;
+  supports(namespace: string, method: string): boolean;
+}
+
 export interface SoloeApi {
+  transport?: TransportCapabilities;
   sessions: SessionsApi;
   terminal: TerminalApi;
   observer: ObserverApi;

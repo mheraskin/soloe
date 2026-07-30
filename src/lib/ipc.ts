@@ -97,7 +97,12 @@ import type {
 import { TerminalOutputRouter } from './terminal-output-router';
 
 function unwrap<T>(r: IpcResult<T>): T {
-  if (!r.ok) throw new Error(r.error);
+  if (!r.ok) {
+    const error = new Error(r.error) as Error & { code?: string; remediation?: string };
+    if (r.code) error.code = r.code;
+    if (r.remediation) error.remediation = r.remediation;
+    throw error;
+  }
   return r.value;
 }
 
