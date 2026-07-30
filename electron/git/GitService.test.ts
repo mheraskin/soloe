@@ -725,6 +725,49 @@ describe.skipIf(!hasGit)('GitService', () => {
     expect(diffs.every((diff) => !diff.empty && diff.hunks.length > 0)).toBe(true);
   });
 
+  it('getReviewDiffs: splits an oversized batch and limits only the oversized file', async () => {
+    const smallPatch = [
+      'diff --git a/small.txt b/small.txt',
+      '--- a/small.txt',
+      '+++ b/small.txt',
+      '@@ -1 +1 @@',
+      '-before',
+      '+after',
+      ''
+    ].join('\n');
+    const runGit = vi.fn(async (_cwd: string, args: string[]) => {
+      if (args.join(' ') === 'rev-parse --show-toplevel') {
+        return { code: 0, stdout: `${tmpRoot}\n`, stderr: '' };
+      }
+      if (args.join(' ') === 'rev-parse --git-dir') {
+        return { code: 0, stdout: '.git\n', stderr: '' };
+      }
+      const hasSmall = args.includes('small.txt');
+      const hasLarge = args.includes('large.txt');
+      if (hasSmall && !hasLarge) return { code: 0, stdout: smallPatch, stderr: '' };
+      return {
+        code: null,
+        stdout: 'partial patch',
+        stderr: 'Git command output exceeded 2097152 bytes'
+      };
+    });
+    const bounded = new GitService({ runGit });
+
+    const diffs = await bounded.getReviewDiffs(tmpRoot, [
+      { path: 'small.txt' },
+      { path: 'large.txt' }
+    ]);
+
+    expect(diffs.find((diff) => diff.path === 'small.txt')).toMatchObject({
+      truncated: false,
+      empty: false
+    });
+    expect(diffs.find((diff) => diff.path === 'large.txt')).toMatchObject({
+      truncated: true,
+      hunks: []
+    });
+  });
+
   it('getFileLines: reads the requested historical commit rather than current HEAD', async () => {
     await initRepo(tmpRoot);
     const base = spawnSync('git', ['rev-parse', 'HEAD'], {
