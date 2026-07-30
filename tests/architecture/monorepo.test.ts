@@ -105,6 +105,14 @@ describe("monorepo boundaries", () => {
     }
   });
 
+  it("bundles source-only runtime code into the Electron main process", async () => {
+    const config = await readFile(path.join(root, "electron.vite.config.ts"), "utf8");
+
+    expect(config).toContain(
+      "externalizeDepsPlugin({ exclude: ['@soloe/runtime'] })",
+    );
+  });
+
   it("keeps tray, Tauri hooks, and benchmark tooling on PNPM", async () => {
     const integrationFiles = [
       "apps/tray/src-tauri/src/services.rs",

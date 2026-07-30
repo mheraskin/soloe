@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['@soloe/runtime'] })],
     resolve: {
       alias: {
         '@shared': resolve(__dirname, 'shared')
