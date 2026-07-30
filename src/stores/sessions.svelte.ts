@@ -236,6 +236,7 @@ export class SessionsStore {
 
   private detachers: Array<() => void> = [];
   private locationVersions = new Map<SessionId, number>();
+  private startVersions = new Map<SessionId, number>();
   // The single most-recently-focused session, persisted across restarts so the
   // app reopens on the exact tab that was active when it closed — not just the
   // first project's last-selected tab.
@@ -890,6 +891,9 @@ export class SessionsStore {
     // `focus: false` starts a session without making it the focused pane —
     // used when adding a companion to the split so the current pane keeps focus.
     if (opts.focus !== false) this.select(id);
+    const previous = this.runtime[id];
+    const startVersion = (this.startVersions.get(id) ?? 0) + 1;
+    this.startVersions.set(id, startVersion);
     this.runtime = {
       ...this.runtime,
       [id]: {
@@ -899,15 +903,38 @@ export class SessionsStore {
         terminalId: null
       }
     };
-    const result = await ipc.terminal.start({ sessionId: id });
+    let result: Awaited<ReturnType<typeof ipc.terminal.start>>;
+    try {
+      result = await ipc.terminal.start({ sessionId: id });
+    } catch (error) {
+      if (this.startVersions.get(id) === startVersion) {
+        this.startVersions.delete(id);
+        const current = this.runtime[id];
+        if (current?.status === 'starting' && current.terminalId === null) {
+          if (previous) {
+            this.runtime = { ...this.runtime, [id]: previous };
+          } else {
+            const next = { ...this.runtime };
+            delete next[id];
+            this.runtime = next;
+          }
+        }
+      }
+      throw error;
+    }
+    if (this.startVersions.get(id) !== startVersion) return;
+    this.startVersions.delete(id);
+    const current = this.runtime[id];
+    if (!current || (current.status !== 'starting' && current.status !== 'running')) return;
+    if (current.terminalId && current.terminalId !== result.terminalId) return;
     this.runtime = {
       ...this.runtime,
       [id]: {
-        ...(this.runtime[id] ?? { sessionId: id, terminalId: result.terminalId }),
+        ...current,
         sessionId: id,
         status: 'running',
         terminalId: result.terminalId,
-        startedAt: new Date().toISOString()
+        startedAt: current.startedAt ?? new Date().toISOString()
       }
     };
   }

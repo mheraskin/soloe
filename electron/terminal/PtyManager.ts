@@ -122,7 +122,17 @@ export class PtyManager extends EventEmitter {
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
     if (this.disposed) throw new Error('PtyManager disposed');
     const { sessionId } = options;
-    if (this.sessionToTerminal.has(sessionId)) {
+    const existingTerminalId = this.sessionToTerminal.get(sessionId);
+    if (existingTerminalId) {
+      const existing = this.terminals.get(existingTerminalId);
+      if (existing?.status === 'running') {
+        return {
+          terminalId: existing.terminalId,
+          sessionId: existing.sessionId,
+          pid: existing.pty.pid,
+          spec: existing.spec
+        };
+      }
       throw new Error(`Session ${sessionId} is already running`);
     }
     const session = await this.opts.store.get(sessionId);

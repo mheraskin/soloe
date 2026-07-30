@@ -3,13 +3,31 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@shared/types/sessions.js';
+import type {
+  TerminalExitEvent,
+  TerminalStartResult,
+  TerminalStatusEvent
+} from '@shared/types/terminal.js';
 
-const { off, listener, inventoryOff, onWorktrees, projectGet, loadWorktrees } = vi.hoisted(() => {
+const {
+  off,
+  listener,
+  terminalStart,
+  terminalStatusListeners,
+  terminalExitListeners,
+  inventoryOff,
+  onWorktrees,
+  projectGet,
+  loadWorktrees
+} = vi.hoisted(() => {
   const detach = vi.fn();
   const detachInventory = vi.fn();
   return {
     off: detach,
     listener: vi.fn(() => detach),
+    terminalStart: vi.fn(),
+    terminalStatusListeners: [] as Array<(event: TerminalStatusEvent) => void>,
+    terminalExitListeners: [] as Array<(event: TerminalExitEvent) => void>,
     inventoryOff: detachInventory,
     onWorktrees: vi.fn(() => detachInventory),
     projectGet: vi.fn(() => null as { path: string } | null),
@@ -20,8 +38,15 @@ const { off, listener, inventoryOff, onWorktrees, projectGet, loadWorktrees } = 
 vi.mock('../lib/ipc', () => ({
   ipc: {
     terminal: {
-      onStatus: listener,
-      onExit: listener,
+      start: terminalStart,
+      onStatus: vi.fn((callback: (event: TerminalStatusEvent) => void) => {
+        terminalStatusListeners.push(callback);
+        return off;
+      }),
+      onExit: vi.fn((callback: (event: TerminalExitEvent) => void) => {
+        terminalExitListeners.push(callback);
+        return off;
+      }),
       onLocation: listener
     },
     observer: {
@@ -71,10 +96,13 @@ function setVisibility(state: DocumentVisibilityState): void {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
-describe('SessionsStore worktree sweep lifecycle', () => {
+describe('SessionsStore', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     listener.mockClear();
+    terminalStart.mockReset();
+    terminalStatusListeners.length = 0;
+    terminalExitListeners.length = 0;
     off.mockClear();
     inventoryOff.mockClear();
     onWorktrees.mockClear();
@@ -163,6 +191,84 @@ describe('SessionsStore worktree sweep lifecycle', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(archive).not.toHaveBeenCalled();
+    store.detach();
+  });
+
+  it('stays resumable when the backend rejects a duplicate start', async () => {
+    const store = new SessionsStore();
+    store.sessions = [session()];
+    store.runtime = {
+      session: {
+        sessionId: 'session',
+        terminalId: null,
+        status: 'exited',
+        exitCode: 0
+      }
+    };
+    terminalStart.mockRejectedValueOnce(new Error('Session session is already running'));
+
+    await expect(store.start('session', { focus: false })).rejects.toThrow(
+      'Session session is already running'
+    );
+
+    expect(store.runtime.session).toMatchObject({
+      sessionId: 'session',
+      terminalId: null,
+      status: 'exited',
+      exitCode: 0
+    });
+  });
+
+  it('does not overwrite a fast terminal exit with the delayed start response', async () => {
+    const store = new SessionsStore();
+    store.sessions = [session()];
+    store.runtime = {
+      session: {
+        sessionId: 'session',
+        terminalId: null,
+        status: 'exited'
+      }
+    };
+    let resolveStart!: (result: TerminalStartResult) => void;
+    terminalStart.mockReturnValueOnce(
+      new Promise<TerminalStartResult>((resolve) => {
+        resolveStart = resolve;
+      })
+    );
+    store.attachListeners();
+
+    const start = store.start('session', { focus: false });
+    terminalStatusListeners[0]?.({
+      sessionId: 'session',
+      terminalId: 'terminal-new',
+      status: 'running'
+    });
+    terminalExitListeners[0]?.({
+      sessionId: 'session',
+      terminalId: 'terminal-new',
+      exitCode: 1,
+      signal: null
+    });
+    resolveStart({
+      terminalId: 'terminal-new',
+      sessionId: 'session',
+      pid: 123,
+      spec: {
+        file: 'codex',
+        args: ['resume', 'thread-id'],
+        cwd: '/repo/worktree',
+        env: {},
+        description: 'codex resume thread-id'
+      }
+    });
+    await start;
+
+    expect(store.runtime.session).toMatchObject({
+      sessionId: 'session',
+      terminalId: null,
+      status: 'exited',
+      exitCode: 1
+    });
     store.detach();
   });
 });

@@ -157,6 +157,31 @@ describe('PtyManager', () => {
     expect(statuses[1]?.terminalId).toEqual(expect.any(String));
   });
 
+  it('reattaches to an already-running session instead of spawning a competing terminal', async () => {
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+
+    const first = await manager.start({ sessionId: session.id });
+    const resumed = await manager.start({ sessionId: session.id });
+
+    expect(resumed).toEqual(first);
+    expect(pty.spawn).toHaveBeenCalledOnce();
+  });
+
   it('emits cwd updates from OSC 7 location sequences', async () => {
     const manager = new PtyManager({
       commandBuilder: {
