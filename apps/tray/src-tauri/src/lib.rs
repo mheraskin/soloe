@@ -15,13 +15,12 @@ pub fn run() {
             let (discovered, instance_guard) =
                 BackendSupervisor::discover().map_err(std::io::Error::other)?;
             let supervisor = Arc::new(Mutex::new(discovered));
-            let initial_status = supervisor
+            let initial_action = supervisor
                 .lock()
-                .map(|service| service.status_label())
-                .unwrap_or_else(|_| "Backend: unavailable".to_string());
-            let status = MenuItem::with_id(app, "status", initial_status, false, None::<&str>)?;
-            let start = MenuItem::with_id(app, "start", "Start backend", true, None::<&str>)?;
-            let stop = MenuItem::with_id(app, "stop", "Stop backend", true, None::<&str>)?;
+                .map(|service| service.backend_action_label())
+                .unwrap_or_else(|_| "Start backend (unavailable)".to_string());
+            let backend_action =
+                MenuItem::with_id(app, "toggle_backend", initial_action, true, None::<&str>)?;
             let open_browser =
                 MenuItem::with_id(app, "open_browser", "Open in browser", false, None::<&str>)?;
             let open_electron = MenuItem::with_id(
@@ -38,9 +37,7 @@ pub fn run() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &status,
-                    &start,
-                    &stop,
+                    &backend_action,
                     &separator,
                     &open_browser,
                     &open_electron,
@@ -51,7 +48,7 @@ pub fn run() {
             )?;
 
             let menu_supervisor = Arc::clone(&supervisor);
-            let menu_status = status.clone();
+            let menu_backend_action = backend_action.clone();
             let menu_quit = quit.clone();
             let quit_confirmation = Arc::new(Mutex::new(None::<Instant>));
             let menu_quit_confirmation = Arc::clone(&quit_confirmation);
@@ -62,20 +59,16 @@ pub fn run() {
                 .on_menu_event(move |app, event| {
                     let id = event.id().as_ref().to_string();
                     let supervisor = Arc::clone(&menu_supervisor);
-                    let status = menu_status.clone();
+                    let backend_action = menu_backend_action.clone();
                     let quit = menu_quit.clone();
                     let quit_confirmation = Arc::clone(&menu_quit_confirmation);
                     let app = app.clone();
                     thread::spawn(move || {
                         let result = match id.as_str() {
-                            "start" => supervisor
+                            "toggle_backend" => supervisor
                                 .lock()
                                 .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.start()),
-                            "stop" => supervisor
-                                .lock()
-                                .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.stop()),
+                                .and_then(|service| service.toggle_backend()),
                             "open_browser" => supervisor
                                 .lock()
                                 .map_err(|_| "backend supervisor lock poisoned".to_string())
@@ -109,9 +102,6 @@ pub fn run() {
                                     let _ = quit.set_text(
                                         "Confirm quit — stop active agents and all services",
                                     );
-                                    let _ = status.set_text(
-                                        "Quit requested: select Quit again within 10 seconds",
-                                    );
                                     return;
                                 }
                                 let result = supervisor
@@ -128,7 +118,8 @@ pub fn run() {
                         }
                         let _ = quit.set_text("Quit Soloe");
                         if let Ok(service) = supervisor.lock() {
-                            let _ = status.set_text(service.status_label());
+                            let _ = backend_action.set_text(service.backend_action_label());
+                            let _ = backend_action.set_enabled(service.backend_action_enabled());
                         }
                     });
                 });
@@ -138,18 +129,19 @@ pub fn run() {
             tray.build(app)?;
 
             let startup_supervisor = Arc::clone(&supervisor);
-            let startup_status = status.clone();
+            let startup_backend_action = backend_action.clone();
             thread::spawn(move || {
                 if let Ok(service) = startup_supervisor.lock() {
                     if let Err(error) = service.start() {
                         eprintln!("[tray] failed to start backend: {error}");
                     }
-                    let _ = startup_status.set_text(service.status_label());
+                    let _ = startup_backend_action.set_text(service.backend_action_label());
+                    let _ = startup_backend_action.set_enabled(service.backend_action_enabled());
                 }
             });
 
             let polling_supervisor = Arc::clone(&supervisor);
-            let polling_status = status.clone();
+            let polling_backend_action = backend_action.clone();
             let polling_browser = open_browser.clone();
             thread::spawn(move || {
                 loop {
@@ -157,7 +149,8 @@ pub fn run() {
                     let Ok(service) = polling_supervisor.lock() else {
                         break;
                     };
-                    let _ = polling_status.set_text(service.status_label());
+                    let _ = polling_backend_action.set_text(service.backend_action_label());
+                    let _ = polling_backend_action.set_enabled(service.backend_action_enabled());
                     let _ = polling_browser.set_enabled(service.browser_address().is_some());
                 }
             });
