@@ -106,6 +106,7 @@ describe('NativeGitEvidenceAdapter resource contract', () => {
   });
 
   it('applies one generation deadline and kills every live native Git child', async () => {
+    vi.useFakeTimers();
     const children: FakeChild[] = [];
     const spawnMock = vi.fn(() => {
       const child = new FakeChild();
@@ -117,14 +118,15 @@ describe('NativeGitEvidenceAdapter resource contract', () => {
       timeoutMs: 5
     });
 
-    const startedAt = Date.now();
-    const raw = await adapter.collect('/repo', 'main');
+    const result = adapter.collect('/repo', 'main');
+    await vi.advanceTimersByTimeAsync(30);
+    const raw = await result;
 
-    expect(Date.now() - startedAt).toBeLessThan(100);
     expect(spawnMock).toHaveBeenCalledTimes(2);
     expect(children.every((child) => child.killed)).toBe(true);
     expect(raw.head).toMatchObject({ code: null });
     expect(raw.head.stderr).toContain('native Git evidence timed out');
+    vi.useRealTimers();
   });
 
   it('does not publish digest metadata for a failed partial patch', async () => {
