@@ -10,6 +10,7 @@ import type {
 import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
 import { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
+import type { PtyProcessFactory } from './PtyProcess.js';
 
 vi.mock('node-pty', () => ({
   spawn: vi.fn(() => ({
@@ -549,5 +550,105 @@ describe('PtyManager', () => {
     manager.write(started.terminalId, '\x03');
 
     expect(observer.getSnapshot(codexSession.id)?.state).toBe('idle');
+  });
+
+  it('does not stop externally owned terminal processes when the client is disposed', async () => {
+    const kill = vi.fn();
+    const processFactory: PtyProcessFactory = {
+      preservesProcessesOnDispose: true,
+      spawn: () => ({
+        pid: 3333,
+        onData: () => ({ dispose: vi.fn() }),
+        onExit: () => ({ dispose: vi.fn() }),
+        write: vi.fn(),
+        resize: vi.fn(),
+        kill
+      }),
+      dispose: vi.fn()
+    };
+    const batcher = {
+      push: vi.fn(),
+      flushTerminal: vi.fn(),
+      removeTerminal: vi.fn(),
+      destroy: vi.fn()
+    };
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: batcher as unknown as PtyManagerOptions['batcher'],
+      processFactory,
+      baseEnv: {}
+    });
+
+    await manager.start({ sessionId: session.id });
+    await manager.dispose();
+
+    expect(kill).not.toHaveBeenCalled();
+    expect(processFactory.dispose).toHaveBeenCalledOnce();
+    expect(batcher.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('rehydrates terminal state after the Electron client restarts', async () => {
+    const attachedProcess = {
+      pid: 4545,
+      onData: vi.fn(() => ({ dispose: vi.fn() })),
+      onExit: vi.fn(() => ({ dispose: vi.fn() })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn()
+    };
+    const processFactory: PtyProcessFactory = {
+      preservesProcessesOnDispose: true,
+      spawn: vi.fn(),
+      listRunning: vi.fn(async () => [
+        {
+          terminalId: 'existing-terminal',
+          sessionId: session.id,
+          pid: 4545,
+          status: 'running' as const,
+          startedAt: '2026-07-30T10:00:00.000Z',
+          spec,
+          cols: 110,
+          rows: 35
+        }
+      ]),
+      attach: vi.fn(() => attachedProcess)
+    };
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      processFactory,
+      baseEnv: {}
+    });
+
+    await manager.rehydrate();
+
+    expect(manager.listRunning()).toEqual([
+      expect.objectContaining({
+        terminalId: 'existing-terminal',
+        sessionId: session.id,
+        status: 'running',
+        startedAt: '2026-07-30T10:00:00.000Z'
+      })
+    ]);
+    expect(processFactory.attach).toHaveBeenCalledOnce();
+    expect(attachedProcess.onData).toHaveBeenCalledOnce();
+    expect(attachedProcess.onExit).toHaveBeenCalledOnce();
   });
 });

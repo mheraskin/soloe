@@ -185,24 +185,56 @@ export class PtyManager extends EventEmitter {
       agentProvider
     };
     this.terminals.set(terminalId, instance);
-
-    proc.onData((data) => {
-      if (this.processFactory.outputIsPrebatched) {
-        this.opts.batcher.pushPrebatched(terminalId, sessionId, data);
-      } else {
-        this.opts.batcher.push(terminalId, sessionId, data);
-      }
-    });
-
-    proc.onExit(({ exitCode, signal }) => {
-      this.handleExit(terminalId, exitCode, signal ?? null);
-    });
+    this.attachProcess(instance);
 
     void this.opts.store.touch(sessionId).catch(() => {});
 
     this.emitStatus(sessionId, terminalId, 'running');
 
     return { terminalId, sessionId, pid: proc.pid, spec };
+  }
+
+  async rehydrate(): Promise<void> {
+    if (!this.processFactory.listRunning || !this.processFactory.attach) return;
+    const running = await this.processFactory.listRunning();
+    for (const terminal of running) {
+      if (
+        this.terminals.has(terminal.terminalId)
+        || this.sessionToTerminal.has(terminal.sessionId)
+      ) {
+        continue;
+      }
+      const session = await this.opts.store.get(terminal.sessionId);
+      if (!session) continue;
+      const proc = this.processFactory.attach(terminal);
+      const spec: SpawnSpec = {
+        ...terminal.spec,
+        description:
+          terminal.spec.description
+          ?? [terminal.spec.file, ...terminal.spec.args].join(' ')
+      };
+      const instance: TerminalInstance = {
+        terminalId: terminal.terminalId,
+        sessionId: terminal.sessionId,
+        pty: proc,
+        spec,
+        runMode: session.runMode,
+        cols: terminal.cols,
+        rows: terminal.rows,
+        status: 'running',
+        startedAt: terminal.startedAt,
+        cwd: session.cwd,
+        locationBuffer: '',
+        agentSignalTail: '',
+        usageLimitBuffer: '',
+        usageLimitDetected: false,
+        agentProvider: effectiveAgentProvider(session) ?? legacyAgentProvider(session)
+      };
+      this.terminals.set(terminal.terminalId, instance);
+      this.sessionToTerminal.set(terminal.sessionId, terminal.terminalId);
+      this.opts.observer?.registerTuiSession(session);
+      this.attachProcess(instance);
+    }
   }
 
   async stop(terminalId: TerminalId): Promise<void> {
@@ -293,8 +325,12 @@ export class PtyManager extends EventEmitter {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    const ids = [...this.terminals.keys()];
-    await Promise.all(ids.map((id) => this.stopAndAwait(id, 1500)));
+    if (!this.processFactory.preservesProcessesOnDispose) {
+      const ids = [...this.terminals.keys()];
+      await Promise.all(ids.map((id) => this.stopAndAwait(id, 1500)));
+    }
+    this.terminals.clear();
+    this.sessionToTerminal.clear();
     this.opts.batcher.destroy();
     this.replayBuffer.clear();
     this.removeAllListeners();
@@ -315,6 +351,19 @@ export class PtyManager extends EventEmitter {
     this.agentSpawnQueues.set(kind, previous.then(() => next));
     await previous;
     return release;
+  }
+
+  private attachProcess(instance: TerminalInstance): void {
+    instance.pty.onData((data) => {
+      if (this.processFactory.outputIsPrebatched) {
+        this.opts.batcher.pushPrebatched(instance.terminalId, instance.sessionId, data);
+      } else {
+        this.opts.batcher.push(instance.terminalId, instance.sessionId, data);
+      }
+    });
+    instance.pty.onExit(({ exitCode, signal }) => {
+      this.handleExit(instance.terminalId, exitCode, signal ?? null);
+    });
   }
 
   private async stopAndAwait(terminalId: TerminalId, timeoutMs = 2000): Promise<void> {

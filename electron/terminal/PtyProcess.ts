@@ -1,5 +1,6 @@
 import type { SessionId } from '@shared/types/sessions.js';
 import type { SpawnSpec, TerminalId } from '@shared/types/terminal.js';
+import type { RuntimeTerminalState } from '@soloe/protocol';
 
 export interface PtyProcessDisposable {
   dispose(): void;
@@ -34,6 +35,9 @@ export interface PtyProcessSpawnOptions {
  */
 export interface PtyProcessFactory {
   readonly outputIsPrebatched?: boolean;
+  readonly preservesProcessesOnDispose?: boolean;
   spawn(options: PtyProcessSpawnOptions): Promise<PtyProcess> | PtyProcess;
+  listRunning?(): Promise<RuntimeTerminalState[]>;
+  attach?(terminal: RuntimeTerminalState): PtyProcess;
   dispose?(): Promise<void> | void;
 }
