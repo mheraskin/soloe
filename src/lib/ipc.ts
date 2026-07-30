@@ -36,6 +36,7 @@ import type {
   GitRecentCommitsRequest,
   GitObservationDemandRequest,
   GitRemoteOpRequest,
+  GitRefHistoryRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
@@ -248,6 +249,8 @@ export const backend = {
       unwrap(await c.git.branches(toIpcPayload(request))),
     recentCommits: async (request: GitRecentCommitsRequest) =>
       unwrap(await c.git.recentCommits(toIpcPayload(request))),
+    refHistory: async (request: GitRefHistoryRequest) =>
+      unwrap(await c.git.refHistory(toIpcPayload(request))),
     checkout: async (request: GitCheckoutRequest) =>
       unwrap(await c.git.checkout(toIpcPayload(request))),
     workingChanges: async (request: WorkingChangesRequest) =>

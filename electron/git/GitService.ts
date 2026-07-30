@@ -11,6 +11,8 @@ import type {
   GitCommit,
   GitCommitResult,
   GitDirty,
+  GitHistoryCommit,
+  GitHistoryRef,
   GitRemoteOpResult,
   GitShortstat,
   GitStatus,
@@ -58,6 +60,7 @@ interface RepoCache {
   worktrees: GitWorktree[] | null;
   branches: GitBranch[] | null;
   commitsByLimit: Map<number, GitCommit[]>;
+  refHistoryByLimit: Map<number, GitHistoryCommit[]>;
   workingTreeSnapshot: WorkingTreeSnapshot | null;
   epoch: number;
   watchers: FSWatcher[];
@@ -367,6 +370,31 @@ export class GitService {
     const commits = output.code === 0 ? parseCommits(output.stdout) : [];
     cache.commitsByLimit.set(cacheKey, commits);
     return clone(commits);
+  }
+
+  async listRefHistory(
+    repoPath: string,
+    limit = 100,
+    force = false,
+    context: GitRepoContext = {}
+  ): Promise<GitHistoryCommit[]> {
+    const safeLimit = Math.max(1, Math.trunc(limit));
+    const info = await this.resolveRepo(repoPath, context);
+    if (!info) return [];
+    const cache = this.ensureCache(info);
+    const cached = cache.refHistoryByLimit.get(safeLimit);
+    if (!force && cached) return clone(cached);
+    const output = await this.runInRepo(info, [
+      'log',
+      '--all',
+      '--topo-order',
+      `-${safeLimit}`,
+      '--decorate=full',
+      '--pretty=format:%H%x00%h%x00%an%x00%aI%x00%s%x00%P%x00%D'
+    ]);
+    const history = output.code === 0 ? parseRefHistory(output.stdout) : [];
+    cache.refHistoryByLimit.set(safeLimit, history);
+    return clone(history);
   }
 
   async checkout(
@@ -1012,6 +1040,7 @@ export class GitService {
       worktrees: null,
       branches: null,
       commitsByLimit: new Map(),
+      refHistoryByLimit: new Map(),
       workingTreeSnapshot: null,
       epoch: 0,
       watchers: [],
@@ -1060,6 +1089,7 @@ export class GitService {
     cache.worktrees = null;
     cache.branches = null;
     cache.commitsByLimit.clear();
+    cache.refHistoryByLimit.clear();
     cache.workingTreeSnapshot = null;
     cache.epoch += 1;
     if (cache.debounce) clearTimeout(cache.debounce);
@@ -1344,6 +1374,62 @@ function parseCommits(output: string): GitCommit[] {
       return { hash, shortHash, author, authoredAt, subject };
     })
     .filter((commit) => commit.hash.length > 0);
+}
+
+function parseRefHistory(output: string): GitHistoryCommit[] {
+  return output
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [
+        hash = '',
+        shortHash = '',
+        author = '',
+        authoredAt = '',
+        subject = '',
+        parents = '',
+        decorations = ''
+      ] = line.split('\0');
+      return {
+        hash,
+        shortHash,
+        author,
+        authoredAt,
+        subject,
+        parents: parents.split(' ').filter(Boolean),
+        refs: parseHistoryRefs(decorations)
+      };
+    })
+    .filter((commit) => commit.hash.length > 0);
+}
+
+function parseHistoryRefs(decorations: string): GitHistoryRef[] {
+  const refs = new Map<string, GitHistoryRef>();
+  for (const rawPart of decorations.split(',')) {
+    let part = rawPart.trim();
+    if (!part) continue;
+    let current = false;
+    if (part.startsWith('HEAD -> ')) {
+      current = true;
+      part = part.slice('HEAD -> '.length);
+    }
+    if (part.startsWith('refs/heads/')) {
+      const name = part.slice('refs/heads/'.length);
+      refs.set(`branch:${name}`, { name, kind: 'branch', current });
+    } else if (part.startsWith('refs/remotes/')) {
+      const name = part.slice('refs/remotes/'.length);
+      if (!name.endsWith('/HEAD')) {
+        refs.set(`remote:${name}`, { name, kind: 'remote', current: false });
+      }
+    } else if (part.startsWith('tag: refs/tags/')) {
+      const name = part.slice('tag: refs/tags/'.length);
+      refs.set(`tag:${name}`, { name, kind: 'tag', current: false });
+    } else if (part.startsWith('refs/tags/')) {
+      const name = part.slice('refs/tags/'.length);
+      refs.set(`tag:${name}`, { name, kind: 'tag', current: false });
+    }
+  }
+  return Array.from(refs.values());
 }
 
 // `git blame --line-porcelain` emits one record per output line. Each record

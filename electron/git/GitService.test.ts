@@ -394,6 +394,38 @@ describe.skipIf(!hasGit)('GitService', () => {
     ]);
   });
 
+  it('listRefHistory: returns one decorated graph across local branches', async () => {
+    await initRepo(tmpRoot);
+    spawnSync('git', ['switch', '-c', 'feature/history'], { cwd: tmpRoot });
+    await fs.writeFile(path.join(tmpRoot, 'feature.txt'), 'feature\n', 'utf8');
+    spawnSync('git', ['add', 'feature.txt'], { cwd: tmpRoot });
+    spawnSync('git', ['commit', '-m', 'feature commit'], { cwd: tmpRoot });
+    spawnSync('git', ['switch', 'main'], { cwd: tmpRoot });
+
+    const history = await svc.listRefHistory(tmpRoot, 50, true);
+    const feature = history.find((commit) => commit.subject === 'feature commit');
+    const main = history.find((commit) => commit.subject === 'initial');
+
+    expect(feature).toMatchObject({
+      parents: [main?.hash],
+      refs: [
+        expect.objectContaining({
+          name: 'feature/history',
+          kind: 'branch'
+        })
+      ]
+    });
+    expect(main?.refs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'main',
+          kind: 'branch',
+          current: true
+        })
+      ])
+    );
+  });
+
   it('listWorktrees: returns the main worktree', async () => {
     await initRepo(tmpRoot);
 

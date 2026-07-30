@@ -74,6 +74,7 @@ import type {
   GitRecentCommitsRequest,
   GitObservationDemandRequest,
   GitRemoteOpRequest,
+  GitRefHistoryRequest,
   GitRepoRequest,
   GitStatusRequest,
   RangeChangesRequest,
@@ -235,6 +236,8 @@ const soloe: SoloeApi = {
     branches: (request: GitRepoRequest) => ipcRenderer.invoke(IpcChannels.git.branches, request),
     recentCommits: (request: GitRecentCommitsRequest) =>
       ipcRenderer.invoke(IpcChannels.git.recentCommits, request),
+    refHistory: (request: GitRefHistoryRequest) =>
+      ipcRenderer.invoke(IpcChannels.git.refHistory, request),
     commitsBetween: (request: CommitsBetweenRequest) =>
       ipcRenderer.invoke(IpcChannels.git.commitsBetween, request),
     rangeChanges: (request: RangeChangesRequest) =>

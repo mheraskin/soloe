@@ -22,7 +22,9 @@ import type {
   GitChangeEvent,
   GitCommit,
   GitDirty,
+  GitHistoryCommit,
   GitObservationDemandRequest,
+  GitRefHistoryRequest,
   GitRecentCommitsRequest,
   GitRepoRequest,
   GitShortstat,
@@ -209,6 +211,7 @@ export const IpcChannels = {
     worktrees: 'git:worktrees',
     branches: 'git:branches',
     recentCommits: 'git:recent-commits',
+    refHistory: 'git:ref-history',
     commitsBetween: 'git:commits-between',
     rangeChanges: 'git:range-changes',
     resolveRefs: 'git:resolve-refs',
@@ -449,6 +452,7 @@ export interface GitApi {
   worktrees(request: GitRepoRequest): Promise<IpcResult<GitWorktree[]>>;
   branches(request: GitRepoRequest): Promise<IpcResult<GitBranch[]>>;
   recentCommits(request: GitRecentCommitsRequest): Promise<IpcResult<GitCommit[]>>;
+  refHistory(request: GitRefHistoryRequest): Promise<IpcResult<GitHistoryCommit[]>>;
   commitsBetween(request: CommitsBetweenRequest): Promise<IpcResult<CommitsBetweenResult>>;
   rangeChanges(request: RangeChangesRequest): Promise<IpcResult<RangeChangesResult>>;
   resolveRefs(request: ResolveRefsRequest): Promise<IpcResult<ResolveRefsResult>>;

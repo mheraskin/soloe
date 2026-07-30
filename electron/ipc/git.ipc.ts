@@ -9,6 +9,7 @@ import type {
   GitCheckoutRequest,
   GitCommitRequest,
   GitObservationDemandRequest,
+  GitRefHistoryRequest,
   GitRecentCommitsRequest,
   GitRemoteOpRequest,
   GitRepoRequest,
@@ -104,6 +105,19 @@ export class GitIpc {
           runMode: request.runMode,
           wslDistro: request.wslDistro
         })
+      )
+    );
+    ipcMain.handle(IpcChannels.git.refHistory, (_e, request: GitRefHistoryRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.listRefHistory(
+          request.repoPath,
+          request.limit,
+          request.force,
+          {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          }
+        )
       )
     );
     ipcMain.handle(IpcChannels.git.commitsBetween, (_e, request: CommitsBetweenRequest) =>
@@ -305,6 +319,7 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.worktrees);
     ipcMain.removeHandler(IpcChannels.git.branches);
     ipcMain.removeHandler(IpcChannels.git.recentCommits);
+    ipcMain.removeHandler(IpcChannels.git.refHistory);
     ipcMain.removeHandler(IpcChannels.git.commitsBetween);
     ipcMain.removeHandler(IpcChannels.git.rangeChanges);
     ipcMain.removeHandler(IpcChannels.git.resolveRefs);

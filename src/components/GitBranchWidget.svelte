@@ -1,15 +1,33 @@
 <script lang="ts">
-  import { AlertCircle, Check, GitBranch, GitCommitHorizontal, Loader2 } from '@lucide/svelte';
+  import {
+    AlertCircle,
+    Check,
+    GitBranch,
+    GitCommitHorizontal,
+    Loader2,
+    Search,
+    Tag
+  } from '@lucide/svelte';
   import { untrack } from 'svelte';
-  import type { GitBranch as GitBranchInfo, GitCommit } from '@shared/types/git.js';
+  import type {
+    GitHistoryCommit,
+    GitHistoryRef,
+    GitStatus
+  } from '@shared/types/git.js';
   import type { RunMode } from '@shared/types/sessions.js';
+  import {
+    buildGitHistoryGraph,
+    filterGitHistory,
+    type GitHistoryFilter
+  } from '../lib/git-history-graph';
   import { ipc } from '../lib/ipc';
-  import { reportError } from '../stores/toast.svelte';
   import { git } from '../stores/git.svelte';
-  import { Button } from '$lib/components/ui/button';
+  import { reportError } from '../stores/toast.svelte';
   import { Badge } from '$lib/components/ui/badge';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Popover from '$lib/components/ui/popover';
-  import * as Command from '$lib/components/ui/command';
 
   let { cwd, runMode, wslDistro }: {
     cwd: string;
@@ -17,44 +35,69 @@
     wslDistro?: string;
   } = $props();
 
+  const INITIAL_HISTORY_LIMIT = 100;
+  const HISTORY_STEP = 100;
+  const LANE_WIDTH = 12;
+  const LANE_COLORS = [
+    'var(--primary)',
+    '#22c55e',
+    '#f59e0b',
+    '#a855f7',
+    '#06b6d4',
+    '#f43f5e'
+  ];
+
   let context = $derived({
     ...(runMode ? { runMode } : {}),
     ...(wslDistro ? { wslDistro } : {})
   });
-
-  const INITIAL_COMMIT_LIMIT = 10;
-
+  let status = $derived(git.statusFor(cwd, context));
+  let shortstat = $derived(git.shortstatFor(cwd, context));
   let switcherOpen = $state(false);
-  let branches = $state<GitBranchInfo[]>([]);
-  let commits = $state<GitCommit[]>([]);
-  let commitLimit = $state<number | null>(INITIAL_COMMIT_LIMIT);
+  let history = $state<GitHistoryCommit[]>([]);
+  let historyStatus = $state<GitStatus | null>(null);
+  let historyLimit = $state(INITIAL_HISTORY_LIMIT);
+  let query = $state('');
+  let resultFilter = $state<GitHistoryFilter>('all');
   let checkingOut = $state<string | null>(null);
   let loading = $state(false);
   let loadError = $state<string | null>(null);
+  let loadGeneration = 0;
 
-  async function refresh(force = false): Promise<void> {
-    const status = await git.loadStatus(cwd, force, context);
-    if (status?.repoPath) void git.loadShortstat(status.repoPath, force, context);
+  let filteredHistory = $derived(filterGitHistory(history, query, resultFilter));
+  let graphRows = $derived(buildGitHistoryGraph(filteredHistory));
+  let maxLanes = $derived(
+    Math.max(1, ...graphRows.map((row) => Math.max(row.laneCount, row.nextLaneCount)))
+  );
+  let graphWidth = $derived(maxLanes * LANE_WIDTH + 8);
+
+  async function refresh(force = false): Promise<GitStatus | null> {
+    const next = await git.loadStatus(cwd, force, context);
+    if (next?.repoPath) void git.loadShortstat(next.repoPath, force, context);
+    return next;
   }
 
   $effect(() => {
     void cwd;
+    void runMode;
+    void wslDistro;
     untrack(() => {
+      loadGeneration += 1;
+      historyStatus = null;
+      history = [];
       void refresh(false);
     });
   });
 
-  let status = $derived(git.statusFor(cwd, context));
-  let shortstat = $derived(git.shortstatFor(cwd, context));
-
   let shortHead = $derived(status?.head ? status.head.slice(0, 7) : null);
-
   let label = $derived.by<string | null>(() => {
     if (!status || !status.isRepo) return null;
     if (status.detached) return shortHead ?? 'detached';
     return status.branch ?? null;
   });
-
+  let worktreeName = $derived(
+    baseName(historyStatus?.repoPath ?? status?.repoPath ?? cwd)
+  );
   let badge = $derived.by<string>(() => {
     if (!status || !status.isRepo) return '';
     const dirty = status.dirty ? '●' : '';
@@ -62,77 +105,76 @@
     const behind = status.behind > 0 ? `↓${status.behind}` : '';
     return [dirty, ahead, behind].filter(Boolean).join(' ');
   });
-
   let hasDiff = $derived(
     !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
   );
-
   let title = $derived.by<string>(() => {
     if (!status || !status.isRepo) return 'Not a git repository';
-    const parts: string[] = [];
+    const parts = [`Worktree: ${status.repoPath ?? cwd}`];
     if (status.staged > 0) parts.push(`${status.staged} staged`);
     if (status.unstaged > 0) parts.push(`${status.unstaged} unstaged`);
     if (status.untracked > 0) parts.push(`${status.untracked} untracked`);
-    if (parts.length === 0) parts.push('clean');
+    if (parts.length === 1) parts.push('clean');
     if (status.ahead > 0) parts.push(`ahead ${status.ahead}`);
     if (status.behind > 0) parts.push(`behind ${status.behind}`);
-    if (shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)) {
-      parts.push(`${shortstat.filesChanged} files +${shortstat.insertions} −${shortstat.deletions}`);
-    }
     return parts.join(' · ');
   });
 
   $effect(() => {
-    if (!switcherOpen) {
+    const open = switcherOpen;
+    const limit = historyLimit;
+    void cwd;
+    void runMode;
+    void wslDistro;
+    if (!open) {
+      loadGeneration += 1;
       untrack(() => {
-        commitLimit = INITIAL_COMMIT_LIMIT;
+        historyLimit = INITIAL_HISTORY_LIMIT;
+        query = '';
+        resultFilter = 'all';
         loadError = null;
       });
       return;
     }
-    if (!status?.repoPath) return;
-    const repoPath = status.repoPath;
-    const ctx = git.contextFor(cwd, context);
-    const limit = commitLimit;
-    untrack(() => {
-      loading = true;
-      loadError = null;
-    });
-    Promise.all([
-      ipc.git.branches({ repoPath, force: true, ...ctx }),
-      ipc.git.recentCommits({
-        repoPath,
-        force: true,
-        ...(limit === null ? {} : { limit }),
-        ...ctx
-      })
-    ])
-      .then(([nextBranches, nextCommits]) => {
-        branches = nextBranches;
-        commits = nextCommits;
-        loading = false;
-      })
-      .catch((err) => {
-        loading = false;
-        loadError = err instanceof Error ? err.message : String(err);
-        reportError(err);
-      });
+    untrack(() => void loadHistory(limit));
   });
 
-  function loadAllCommits() {
-    commitLimit = null;
+  async function loadHistory(limit: number): Promise<void> {
+    const generation = ++loadGeneration;
+    loading = true;
+    loadError = null;
+    try {
+      const nextStatus = await refresh(true);
+      if (generation !== loadGeneration) return;
+      if (!nextStatus?.repoPath) throw new Error('Not a git repository');
+      historyStatus = nextStatus;
+      const nextHistory = await ipc.git.refHistory({
+        repoPath: nextStatus.repoPath,
+        limit,
+        force: true,
+        ...git.contextFor(cwd, context)
+      });
+      if (generation !== loadGeneration) return;
+      history = nextHistory;
+    } catch (err) {
+      if (generation !== loadGeneration) return;
+      loadError = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (generation === loadGeneration) loading = false;
+    }
   }
 
   async function checkout(ref: string): Promise<void> {
-    if (!status?.repoPath || checkingOut) return;
+    const activeStatus = historyStatus ?? status;
+    if (!activeStatus?.repoPath || checkingOut) return;
     checkingOut = ref;
     try {
       const next = await ipc.git.checkout({
-        repoPath: status.repoPath,
+        repoPath: activeStatus.repoPath,
         ref,
         ...git.contextFor(cwd, context)
       });
-      git.setStatus(status.cwd, next, context);
+      git.setStatus(activeStatus.cwd, next, context);
       switcherOpen = false;
     } catch (err) {
       reportError(err);
@@ -140,10 +182,40 @@
       checkingOut = null;
     }
   }
+
+  function refIcon(ref: GitHistoryRef) {
+    return ref.kind === 'tag' ? Tag : GitBranch;
+  }
+
+  function laneColor(lane: number): string {
+    return LANE_COLORS[lane % LANE_COLORS.length]!;
+  }
+
+  function graphX(lane: number): number {
+    return 4 + lane * LANE_WIDTH;
+  }
+
+  function edgePath(from: number, to: number): string {
+    const fromX = graphX(from);
+    const toX = graphX(to);
+    return `M ${fromX} 0 C ${fromX} 12, ${toX} 32, ${toX} 44`;
+  }
+
+  function baseName(path: string): string {
+    const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
+    return parts.at(-1) || path;
+  }
+
+  function formattedDate(value: string): string {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? value
+      : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
+  }
 </script>
 
 {#if label}
-  <div class="inline-flex items-center">
+  <div class="inline-flex min-w-0 items-center">
     <Popover.Root bind:open={switcherOpen}>
       <Popover.Trigger>
         {#snippet child({ props })}
@@ -151,7 +223,7 @@
             {...props}
             variant="outline"
             size="xs"
-            class={`gap-1.5 ${status?.dirty ? 'text-foreground' : ''}`}
+            class={`min-w-0 gap-1.5 ${status?.dirty ? 'text-foreground' : ''}`}
             {title}
           >
             {#if status?.detached}
@@ -159,9 +231,15 @@
             {:else}
               <GitBranch />
             {/if}
-            <span class={`max-w-[160px] truncate ${status?.detached ? 'font-mono' : ''}`}>{label}</span>
+            <span class="max-w-[110px] truncate font-medium">{worktreeName}</span>
+            <span class="text-muted-foreground/50">/</span>
+            <span class={`max-w-[130px] truncate ${status?.detached ? 'font-mono' : ''}`}>
+              {label}
+            </span>
             {#if badge}
-              <span class={`text-[10px] ${status?.dirty ? 'text-amber-500' : 'text-muted-foreground'}`}>{badge}</span>
+              <span class={`text-[10px] ${status?.dirty ? 'text-amber-500' : 'text-muted-foreground'}`}>
+                {badge}
+              </span>
             {/if}
             {#if hasDiff && shortstat}
               <span class="inline-flex items-center gap-1 font-mono text-[10px] tabular-nums">
@@ -176,93 +254,165 @@
           </Button>
         {/snippet}
       </Popover.Trigger>
-      <Popover.Content align="start" class="w-[36rem] p-0">
-        <div class="flex divide-x divide-border">
-          <Command.Root class="flex-1 rounded-none!">
-            <Command.Input placeholder="Filter branches…" />
-            <Command.List>
-              {#if loading && branches.length === 0}
-                <div class="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
-                  <Loader2 class="size-3 animate-spin" />
-                  Loading branches…
-                </div>
-              {:else if loadError && branches.length === 0}
-                <div class="flex items-start gap-2 px-3 py-4 text-xs text-destructive">
-                  <AlertCircle class="size-3 shrink-0" />
-                  <span class="break-words">{loadError}</span>
-                </div>
-              {:else}
-                <Command.Empty>No branches</Command.Empty>
-              {/if}
-              {#if branches.length > 0}
-                <Command.Group heading="Branches">
-                  {#each branches as branch (branch.name)}
-                    <Command.Item
-                      value={branch.name}
-                      disabled={branch.current || checkingOut !== null}
-                      onSelect={() => checkout(branch.name)}
-                    >
-                      <span class="inline-flex w-3 shrink-0 items-center">
-                        {#if branch.current}<Check class="size-3 text-primary" />{/if}
-                      </span>
-                      <span class="flex-1 truncate">{branch.name}</span>
-                      {#if branch.upstream}
-                        <Badge variant="outline" class="font-mono text-[10px]">{branch.upstream}</Badge>
-                      {/if}
-                    </Command.Item>
-                  {/each}
-                </Command.Group>
-              {/if}
-            </Command.List>
-          </Command.Root>
-          <Command.Root class="flex-1 rounded-none!">
-            <Command.Input placeholder="Filter commits…" />
-            <Command.List>
-              {#if loading && commits.length === 0}
-                <div class="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
-                  <Loader2 class="size-3 animate-spin" />
-                  Loading commits…
-                </div>
-              {:else if loadError && commits.length === 0}
-                <div class="flex items-start gap-2 px-3 py-4 text-xs text-destructive">
-                  <AlertCircle class="size-3 shrink-0" />
-                  <span class="break-words">{loadError}</span>
-                </div>
-              {:else}
-                <Command.Empty>No commits</Command.Empty>
-              {/if}
-              {#if commits.length > 0}
-                <Command.Group heading="Recent commits">
-                  {#each commits as commit (commit.hash)}
-                    {@const isCurrent = status?.detached && status.head === commit.hash}
-                    <Command.Item
-                      value={commit.hash}
-                      disabled={isCurrent || checkingOut !== null}
-                      onSelect={() => checkout(commit.hash)}
-                    >
-                      <span class="inline-flex w-3 shrink-0 items-center">
-                        {#if isCurrent}<Check class="size-3 text-primary" />{/if}
-                      </span>
-                      <span class="w-12 shrink-0 truncate font-mono text-[10px] text-muted-foreground">{commit.shortHash}</span>
-                      <span class="flex-1 truncate">{commit.subject}</span>
-                    </Command.Item>
-                  {/each}
-                  {#if commitLimit !== null && commits.length >= commitLimit}
-                    <Command.Item
-                      value="__load_all_commits__"
-                      forceMount
-                      disabled={checkingOut !== null}
-                      onSelect={loadAllCommits}
-                    >
-                      <span class="w-3 shrink-0"></span>
-                      <span class="flex-1 truncate text-xs text-muted-foreground">Load all commits…</span>
-                    </Command.Item>
-                  {/if}
-                </Command.Group>
-              {/if}
-            </Command.List>
-          </Command.Root>
+
+      <Popover.Content
+        align="start"
+        class="flex h-[min(34rem,calc(100vh-4rem))] w-[min(46rem,calc(100vw-2rem))] min-h-0 flex-col overflow-hidden p-0"
+      >
+        <div class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+          <GitBranch class="size-4 text-muted-foreground" />
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-xs font-medium">{worktreeName}</div>
+            <div class="truncate font-mono text-[10px] text-muted-foreground">
+              {historyStatus?.repoPath ?? status?.repoPath ?? cwd}
+            </div>
+          </div>
+          <Badge variant="outline" class="shrink-0 font-mono text-[10px]">{label}</Badge>
         </div>
+
+        <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-border p-2">
+          <div class="relative min-w-[12rem] flex-1">
+            <Search class="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              bind:value={query}
+              class="h-7 pl-7 text-[11px]"
+              placeholder="Search branches, commits, authors, or hashes…"
+              aria-label="Search branches and commits"
+            />
+          </div>
+          <div class="inline-flex rounded-md border border-border bg-muted/30 p-0.5" aria-label="Result type">
+            {#each [
+              ['all', 'All'],
+              ['branches', 'Branches'],
+              ['commits', 'Commits']
+            ] as option (option[0])}
+              <button
+                type="button"
+                class={`rounded px-2 py-1 text-[10px] transition-colors ${
+                  resultFilter === option[0]
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-pressed={resultFilter === option[0]}
+                onclick={() => (resultFilter = option[0] as GitHistoryFilter)}
+              >
+                {option[1]}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <ScrollArea class="min-h-0 flex-1">
+          {#if loading && history.length === 0}
+            <div class="flex items-center gap-2 px-4 py-8 text-xs text-muted-foreground">
+              <Loader2 class="size-3 animate-spin" />
+              Loading branches and commits…
+            </div>
+          {:else if loadError && history.length === 0}
+            <div class="flex items-start gap-2 px-4 py-8 text-xs text-destructive">
+              <AlertCircle class="mt-0.5 size-3 shrink-0" />
+              <div class="min-w-0">
+                <div class="break-words">{loadError}</div>
+                <button
+                  type="button"
+                  class="mt-2 underline underline-offset-2"
+                  onclick={() => loadHistory(historyLimit)}
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          {:else if graphRows.length === 0}
+            <div class="px-4 py-8 text-center text-xs text-muted-foreground">
+              No matching branches or commits
+            </div>
+          {:else}
+            <div class="py-1">
+              {#each graphRows as row (row.commit.hash)}
+                <div class="group flex min-h-11 items-stretch border-b border-border/40 last:border-b-0 hover:bg-muted/40">
+                  <svg
+                    class="shrink-0 overflow-visible"
+                    style={`width: ${graphWidth}px;`}
+                    viewBox={`0 0 ${graphWidth} 44`}
+                    aria-hidden="true"
+                  >
+                    {#each row.edges as edge, edgeIndex (`${edge.from}:${edge.to}:${edgeIndex}`)}
+                      <path
+                        d={edgePath(edge.from, edge.to)}
+                        fill="none"
+                        stroke={laneColor(edge.from)}
+                        stroke-width="1.5"
+                      />
+                    {/each}
+                    <circle
+                      cx={graphX(row.nodeLane)}
+                      cy="22"
+                      r="3.5"
+                      fill="var(--background)"
+                      stroke={laneColor(row.nodeLane)}
+                      stroke-width="2"
+                    />
+                  </svg>
+
+                  <button
+                    type="button"
+                    class="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-2 text-left"
+                    disabled={checkingOut !== null || status?.head === row.commit.hash}
+                    onclick={() => checkout(row.commit.hash)}
+                  >
+                    <span class="w-13 shrink-0 font-mono text-[10px] text-muted-foreground">
+                      {row.commit.shortHash}
+                    </span>
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-[11px] text-foreground">
+                        {row.commit.subject}
+                      </span>
+                      <span class="block truncate text-[10px] text-muted-foreground">
+                        {row.commit.author} · {formattedDate(row.commit.authoredAt)}
+                      </span>
+                    </span>
+                    {#if status?.head === row.commit.hash}
+                      <Check class="size-3 shrink-0 text-primary" />
+                    {/if}
+                  </button>
+
+                  {#if row.commit.refs.length > 0}
+                    <div class="flex max-w-[46%] flex-wrap items-center justify-end gap-1 py-1.5 pr-2">
+                      {#each row.commit.refs as ref (`${ref.kind}:${ref.name}`)}
+                        {@const RefIcon = refIcon(ref)}
+                        <button
+                          type="button"
+                          class={`inline-flex h-5 min-w-0 items-center gap-1 rounded border px-1.5 text-[9px] ${
+                            ref.current
+                              ? 'border-primary/50 bg-primary/10 text-foreground'
+                              : 'border-border bg-background text-muted-foreground hover:text-foreground'
+                          }`}
+                          disabled={ref.current || checkingOut !== null}
+                          title={`${ref.kind}: ${ref.name}`}
+                          onclick={() => checkout(ref.name)}
+                        >
+                          <RefIcon class="size-2.5 shrink-0" />
+                          <span class="max-w-32 truncate">{ref.name}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+              {#if history.length >= historyLimit}
+                <button
+                  type="button"
+                  class="flex h-9 w-full items-center justify-center gap-2 text-[11px] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                  disabled={loading || checkingOut !== null}
+                  onclick={() => (historyLimit += HISTORY_STEP)}
+                >
+                  {#if loading}<Loader2 class="size-3 animate-spin" />{/if}
+                  Show {HISTORY_STEP} more
+                </button>
+              {/if}
+            </div>
+          {/if}
+        </ScrollArea>
       </Popover.Content>
     </Popover.Root>
   </div>

@@ -41,6 +41,10 @@ export interface GitRecentCommitsRequest extends GitRepoRequest {
   limit?: number;
 }
 
+export interface GitRefHistoryRequest extends GitRepoRequest {
+  limit?: number;
+}
+
 export interface GitCheckoutRequest extends GitRepoRequest {
   ref: string;
   force?: boolean;
@@ -93,6 +97,19 @@ export interface GitCommit {
   author: string;
   authoredAt: string;
   subject: string;
+}
+
+export type GitHistoryRefKind = 'branch' | 'remote' | 'tag';
+
+export interface GitHistoryRef {
+  name: string;
+  kind: GitHistoryRefKind;
+  current: boolean;
+}
+
+export interface GitHistoryCommit extends GitCommit {
+  parents: string[];
+  refs: GitHistoryRef[];
 }
 
 export interface GitChangeEvent {
