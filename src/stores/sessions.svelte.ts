@@ -538,14 +538,7 @@ export class SessionsStore {
     );
     this.detachers.push(
       ipc.sessions.onChange((session) => {
-        const idx = this.sessions.findIndex((s) => s.id === session.id);
-        if (idx === -1) {
-          this.sessions = [...this.sessions, session];
-        } else {
-          const next = [...this.sessions];
-          next[idx] = session;
-          this.sessions = next;
-        }
+        this.upsertSession(session);
       })
     );
     this.detachers.push(
@@ -597,12 +590,23 @@ export class SessionsStore {
 
   async create(draft: SessionDraft): Promise<Session> {
     const created = await ipc.sessions.create(draft);
-    // New sessions get the highest sortIndex from the backend, so appending
-    // here matches the persisted order. Selection routes through select()
-    // so the rail fullscreen collapse stays consistent with manual switches.
-    this.sessions = [...this.sessions, created];
+    // Remote transports can publish sessions.change before this RPC resolves.
+    // Upserting keeps that event/response race from rendering the same Session
+    // twice while preserving its first observed position.
+    this.upsertSession(created);
     this.select(created.id);
     return created;
+  }
+
+  private upsertSession(session: Session): void {
+    const existingIndex = this.sessions.findIndex((item) => item.id === session.id);
+    if (existingIndex === -1) {
+      this.sessions = [...this.sessions, session];
+      return;
+    }
+    const next = this.sessions.filter((item) => item.id !== session.id);
+    next.splice(Math.min(existingIndex, next.length), 0, session);
+    this.sessions = next;
   }
 
   async createWithDefaults(opts: {

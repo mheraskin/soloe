@@ -4,16 +4,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@shared/types/sessions.js';
 
-const { off, listener, inventoryOff, onWorktrees, projectGet, loadWorktrees } = vi.hoisted(() => {
+const {
+  off,
+  listener,
+  inventoryOff,
+  onWorktrees,
+  projectGet,
+  loadWorktrees,
+  sessionCreate,
+  sessionChanges,
+  sessionChangeListener
+} = vi.hoisted(() => {
   const detach = vi.fn();
   const detachInventory = vi.fn();
+  const changes = {
+    emit: (_session: unknown): void => {}
+  };
   return {
     off: detach,
     listener: vi.fn(() => detach),
     inventoryOff: detachInventory,
     onWorktrees: vi.fn(() => detachInventory),
     projectGet: vi.fn(() => null as { path: string } | null),
-    loadWorktrees: vi.fn(async () => [] as Array<{ path: string }>)
+    loadWorktrees: vi.fn(async () => [] as Array<{ path: string }>),
+    sessionCreate: vi.fn(),
+    sessionChanges: changes,
+    sessionChangeListener: vi.fn((cb: (session: unknown) => void) => {
+      changes.emit = cb;
+      return detach;
+    })
   };
 });
 
@@ -32,7 +51,8 @@ vi.mock('../lib/ipc', () => ({
       onActivateSession: listener
     },
     sessions: {
-      onChange: listener
+      create: sessionCreate,
+      onChange: sessionChangeListener
     }
   }
 }));
@@ -52,7 +72,8 @@ vi.mock('./settings.svelte', () => ({
 vi.mock('./agent-notifications.svelte', () => ({
   agentNotifications: {
     observeSnapshot: vi.fn(),
-    observeEvent: vi.fn()
+    observeEvent: vi.fn(),
+    markSessionOpened: vi.fn()
   },
   rowSessionIdFor: vi.fn(() => null)
 }));
@@ -163,6 +184,32 @@ describe('SessionsStore worktree sweep lifecycle', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(archive).not.toHaveBeenCalled();
+    store.detach();
+  });
+});
+
+describe('SessionsStore session changes', () => {
+  it('does not duplicate a created session when its change event arrives before the response', async () => {
+    const store = new SessionsStore();
+    const created = session({
+      id: 'onyx',
+      name: 'Onyx',
+      projectId: undefined
+    });
+    sessionCreate.mockImplementationOnce(async () => {
+      sessionChanges.emit(created);
+      return created;
+    });
+    store.attachListeners();
+
+    await store.create({
+      name: 'Onyx',
+      cwd: '/repo/worktree',
+      runMode: 'windows',
+      launch: { type: 'terminal', shell: 'auto' }
+    });
+
+    expect(store.sessions.map((item) => item.id)).toEqual(['onyx']);
     store.detach();
   });
 });
