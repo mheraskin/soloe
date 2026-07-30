@@ -2,6 +2,7 @@
   "name": "@soloe/desktop-electron",
   "version": "0.1.0",
   "private": true,
+  "main": "../../out/main/main.js",
   "dependencies": {
     "@soloe/runtime": "workspace:*"
   },

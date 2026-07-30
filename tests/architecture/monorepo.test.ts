@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 interface PackageManifest {
   dependencies?: Record<string, string>;
+  main?: string;
   name?: string;
   packageManager?: string;
   pnpm?: {
@@ -88,6 +89,7 @@ describe("monorepo boundaries", () => {
     expect(serverManifest.dependencies?.["@soloe/runtime"]).toBe("workspace:*");
     expect(serverManifest.dependencies?.["@soloe/protocol"]).toBe("workspace:*");
     expect(desktopManifest.dependencies?.["@soloe/runtime"]).toBe("workspace:*");
+    expect(desktopManifest.main).toBe("../../out/main/main.js");
 
     for (const file of [
       "apps/server/src/SoloeServer.ts",
