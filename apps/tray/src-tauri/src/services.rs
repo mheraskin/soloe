@@ -3,6 +3,7 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -71,10 +72,28 @@ impl From<BackendSettings> for ActiveBackend {
     }
 }
 
-#[derive(Clone, Debug)]
+trait ProcessOperations: Send + Sync {
+    fn is_running(&self, pid: u32, backend: &ActiveBackend) -> bool;
+    fn terminate(&self, pid: u32, force: bool, backend: &ActiveBackend) -> Result<(), String>;
+}
+
+struct SystemProcessOperations;
+
+impl ProcessOperations for SystemProcessOperations {
+    fn is_running(&self, pid: u32, backend: &ActiveBackend) -> bool {
+        is_pid_running(pid, backend)
+    }
+
+    fn terminate(&self, pid: u32, force: bool, backend: &ActiveBackend) -> Result<(), String> {
+        terminate_pid(pid, force, backend)
+    }
+}
+
+#[derive(Clone)]
 pub struct BackendSupervisor {
     repository_root: PathBuf,
     data_directory: PathBuf,
+    processes: Arc<dyn ProcessOperations>,
 }
 
 impl BackendSupervisor {
@@ -82,14 +101,20 @@ impl BackendSupervisor {
         Self {
             repository_root: repository_root(),
             data_directory: data_directory(),
+            processes: Arc::new(SystemProcessOperations),
         }
     }
 
     #[cfg(test)]
-    fn new(repository_root: PathBuf, data_directory: PathBuf) -> Self {
+    fn new(
+        repository_root: PathBuf,
+        data_directory: PathBuf,
+        processes: Arc<dyn ProcessOperations>,
+    ) -> Self {
         Self {
             repository_root,
             data_directory,
+            processes,
         }
     }
 
@@ -139,10 +164,23 @@ impl BackendSupervisor {
 
     pub fn stop(&self) -> Result<(), String> {
         let backend = self.backend_for_existing_services();
-        self.stop_service("server", &backend)?;
-        self.stop_service("runtime", &backend)?;
-        self.remove_active_backend();
-        Ok(())
+        let mut failures = Vec::new();
+        for service in ["server", "runtime"] {
+            if let Err(error) = self.stop_service(service, &backend) {
+                failures.push(format!("{service}: {error}"));
+            }
+        }
+        if !self.is_running_on("server", &backend) && !self.is_running_on("runtime", &backend) {
+            self.remove_active_backend();
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "backend cleanup incomplete; {}",
+                failures.join("; ")
+            ))
+        }
     }
 
     pub fn browser_address(&self) -> Option<String> {
@@ -321,18 +359,41 @@ impl BackendSupervisor {
         let Some(info) = self.read_info(service) else {
             return Ok(());
         };
-        if !is_pid_running(info.pid, backend) {
+        if info.service != service || !self.processes.is_running(info.pid, backend) {
             self.remove_stale_info(service);
             return Ok(());
         }
-        terminate_pid(info.pid, false, backend)?;
-        if self
+
+        let graceful = self.processes.terminate(info.pid, false, backend);
+        if let Err(error) = &graceful {
+            eprintln!(
+                "[tray] graceful shutdown failed for {service} (PID {}): {error}; forcing cleanup",
+                info.pid
+            );
+        } else if self
             .wait_until(service, false, STOP_TIMEOUT, backend)
-            .is_err()
+            .is_ok()
         {
-            terminate_pid(info.pid, true, backend)?;
-            self.wait_until(service, false, STOP_TIMEOUT, backend)?;
+            self.remove_stale_info(service);
+            return Ok(());
         }
+
+        let forced = self.processes.terminate(info.pid, true, backend);
+        if let Err(error) = forced
+            && self.processes.is_running(info.pid, backend)
+        {
+            return Err(format!(
+                "forced shutdown failed for PID {} after graceful shutdown {}: {error}",
+                info.pid,
+                if graceful.is_ok() {
+                    "timed out"
+                } else {
+                    "failed"
+                }
+            ));
+        }
+        self.wait_until(service, false, STOP_TIMEOUT, backend)?;
+        self.remove_stale_info(service);
         Ok(())
     }
 
@@ -358,8 +419,9 @@ impl BackendSupervisor {
     }
 
     fn is_running_on(&self, service: &str, backend: &ActiveBackend) -> bool {
-        self.read_info(service)
-            .is_some_and(|info| info.service == service && is_pid_running(info.pid, backend))
+        self.read_info(service).is_some_and(|info| {
+            info.service == service && self.processes.is_running(info.pid, backend)
+        })
     }
 
     fn backend_for_existing_services(&self) -> ActiveBackend {
@@ -547,6 +609,56 @@ fn open_target(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct FakeProcessOperations {
+        running: Mutex<HashSet<u32>>,
+        graceful_failures: Mutex<HashSet<u32>>,
+        forced_failures: Mutex<HashSet<u32>>,
+        calls: Mutex<Vec<(u32, bool)>>,
+    }
+
+    impl FakeProcessOperations {
+        fn with_running(pids: impl IntoIterator<Item = u32>) -> Self {
+            Self {
+                running: Mutex::new(pids.into_iter().collect()),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl ProcessOperations for FakeProcessOperations {
+        fn is_running(&self, pid: u32, _backend: &ActiveBackend) -> bool {
+            self.running.lock().unwrap().contains(&pid)
+        }
+
+        fn terminate(&self, pid: u32, force: bool, _backend: &ActiveBackend) -> Result<(), String> {
+            self.calls.lock().unwrap().push((pid, force));
+            let failures = if force {
+                &self.forced_failures
+            } else {
+                &self.graceful_failures
+            };
+            if failures.lock().unwrap().contains(&pid) {
+                return Err(if force {
+                    "forced termination failed".to_string()
+                } else {
+                    "graceful termination failed".to_string()
+                });
+            }
+            self.running.lock().unwrap().remove(&pid);
+            Ok(())
+        }
+    }
+
+    fn test_supervisor(
+        directory: PathBuf,
+        processes: Arc<dyn ProcessOperations>,
+    ) -> BackendSupervisor {
+        BackendSupervisor::new(PathBuf::from("/repo"), directory, processes)
+    }
 
     #[test]
     fn reads_only_the_requested_service_record() {
@@ -557,7 +669,10 @@ mod tests {
             r#"{"service":"server","pid":42,"address":"http://127.0.0.1:4317"}"#,
         )
         .unwrap();
-        let supervisor = BackendSupervisor::new(PathBuf::from("/repo"), directory.clone());
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
 
         assert_eq!(
             supervisor.read_info("server"),
@@ -583,7 +698,10 @@ mod tests {
             r#"{"backend":{"placement":"wsl","wslDistro":"Debian","wslRepositoryRoot":"/home/me/soloe"}}"#,
         )
         .unwrap();
-        let supervisor = BackendSupervisor::new(PathBuf::from("/repo"), directory.clone());
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
 
         assert_eq!(
             supervisor.configured_backend().unwrap(),
@@ -622,5 +740,70 @@ mod tests {
     #[test]
     fn development_repository_root_contains_the_workspace_manifest() {
         assert!(repository_root().join("package.json").is_file());
+    }
+
+    #[test]
+    fn graceful_failure_falls_back_to_forced_termination() {
+        let directory =
+            env::temp_dir().join(format!("soloe-tray-stop-fallback-{}", std::process::id()));
+        let _ = fs::create_dir_all(&directory);
+        fs::write(
+            directory.join("server.json"),
+            r#"{"service":"server","pid":49424}"#,
+        )
+        .unwrap();
+        let processes = Arc::new(FakeProcessOperations::with_running([49424]));
+        processes.graceful_failures.lock().unwrap().insert(49424);
+        let supervisor = test_supervisor(directory.clone(), processes.clone());
+
+        expect_ok(supervisor.stop_service("server", &BackendSettings::default().into()));
+        assert_eq!(
+            processes.calls.lock().unwrap().as_slice(),
+            &[(49424, false), (49424, true)]
+        );
+        assert!(!directory.join("server.json").exists());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn stop_attempts_runtime_cleanup_after_server_failure() {
+        let directory =
+            env::temp_dir().join(format!("soloe-tray-stop-order-{}", std::process::id()));
+        let _ = fs::create_dir_all(&directory);
+        fs::write(
+            directory.join("server.json"),
+            r#"{"service":"server","pid":1001}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("runtime.json"),
+            r#"{"service":"runtime","pid":1002}"#,
+        )
+        .unwrap();
+        let processes = Arc::new(FakeProcessOperations::with_running([1001, 1002]));
+        processes
+            .graceful_failures
+            .lock()
+            .unwrap()
+            .extend([1001, 1002]);
+        processes.forced_failures.lock().unwrap().insert(1001);
+        let supervisor = test_supervisor(directory.clone(), processes.clone());
+
+        let error = supervisor.stop().unwrap_err();
+
+        assert!(error.contains("server"));
+        assert_eq!(
+            processes.calls.lock().unwrap().as_slice(),
+            &[(1001, false), (1001, true), (1002, false), (1002, true)]
+        );
+        assert!(processes.running.lock().unwrap().contains(&1001));
+        assert!(!processes.running.lock().unwrap().contains(&1002));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    fn expect_ok(result: Result<(), String>) {
+        if let Err(error) = result {
+            panic!("expected success, got {error}");
+        }
     }
 }
