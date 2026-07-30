@@ -53,8 +53,31 @@ One resident renderer-side terminal emulator for a running Session, independent 
 _Avoid_: Terminal process, terminal tab
 
 **Terminal Replay Tail**:
-A bounded, sequence-qualified main-process output tail used to initialize or resume a Terminal Presentation before live output is admitted.
+A bounded, sequence-qualified Environment Runtime output tail used to initialize or resume a Terminal Presentation before live output is admitted.
 _Avoid_: Terminal cache, output backlog
+
+**Environment Runtime**:
+The long-lived local process that exclusively owns agent PTYs, terminal replay,
+and terminal input/resize/stop control independently of every UI and
+Application Server connection.
+_Avoid_: Electron main process, terminal container
+
+**Application Server**:
+The replaceable local process that owns domain state and exposes authenticated
+HTTP, RPC, and WebSocket transports to browser and desktop clients without
+owning agent PTY lifetime.
+_Avoid_: Environment Runtime, tray backend
+
+**Tray Host**:
+The windowless native supervisor that reports service state and explicitly
+starts or stops the Environment Runtime and Application Server.
+_Avoid_: Desktop client, background Electron window
+
+**Backend Placement**:
+The restart-applied setting that places the Application Server and Environment
+Runtime together on either Windows or one selected WSL distribution while
+clients and the Tray Host remain on Windows.
+_Avoid_: Session run mode, terminal shell, WSL connector
 
 **Terminal Output Demand**:
 Ref-counted intent from a visible Terminal Presentation to publish one PTY's live output across the main-to-renderer boundary.
@@ -162,6 +185,18 @@ _Avoid_: Renderer backend, IPC implementation
 - **Notes Draft Durability** keys Worktree-owned state by **Worktree Identity**, keeps the latest in-memory text immediate, coalesces durable writes by immutable note address, flushes on shutdown, and cancels pending writes before discard
 - **Saved Note Recovery** remains restart-safe until the authoritative note write succeeds; navigation never replaces a dirty saved-note buffer after a failed flush
 - A running Session may outlive its **Terminal Presentation**; visible Sessions and a small recent set own the resident presentations
+- A running Session may outlive every **Application Server** and client; only
+  explicit stop intent sent to the **Environment Runtime** ends its PTY
+- Replacing or rebuilding an **Application Server** disconnects transports but
+  never shuts down the **Environment Runtime**
+- Exiting a browser or Electron client releases only its presentations and
+  connections; **Tray Host** quit is the explicit whole-backend stop boundary
+- One **Backend Placement** owns both the **Application Server** and
+  **Environment Runtime**; changing it never moves or adopts running PTYs and
+  therefore requires an explicit Tray Host stop followed by start
+- The Tray Host remembers the active **Backend Placement** independently from
+  the newly selected setting so stop intent always reaches the processes that
+  actually own the running agents
 - A **Terminal Replay Tail** is capped at 4 MiB and 4,096 live events per Session, plus 32 MiB and 32,768 live events globally; its chronologies contain only retained chunks, and snapshot overlap is removed before ordered live output is admitted
 - A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
 - The first visible **Terminal Presentation** acquires **Terminal Output Demand** for its PTY; the final hidden owner releases cross-process publication without stopping replay retention or agent observation
@@ -179,6 +214,8 @@ _Avoid_: Renderer backend, IPC implementation
 - One active **Feature Artifact Observation** exists per subscribed **Worktree Identity**, regardless of renderer count
 - A **Feature Artifact Observation** traverses only the fixed-depth semantic artifact grammar and publishes only to exact subscribed owners
 - Every Svelte Module crosses the **Renderer Backend Interface**; only a **Renderer Backend Adapter** may access shell-specific globals or transport primitives
+- Electron IPC and browser HTTP/WebSocket are separate **Renderer Backend
+  Adapters** over the same UI; neither owns agent process lifetime
 
 ## Example dialogue
 

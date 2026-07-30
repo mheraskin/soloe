@@ -24,10 +24,10 @@ So I built Soloe. On Windows it drives existing WSL or Windows `claude` and `cod
 ## What Soloe does
 
 - **Wraps the CLIs you already use.** Shells out to installed `claude` and `codex` binaries in *interactive mode*—natively on Linux and Windows, or inside WSL on Windows.
-- **Project → worktree → session.** Long-lived terminal, Claude Code, or Codex sessions per worktree. Resume across app restarts.
+- **Project → worktree → session.** Long-lived terminal, Claude Code, or Codex sessions per worktree. Sessions keep running while browser, Electron, or the replaceable application server restarts.
 - **Multi-commit diff review.** Pick a range of commits and review the whole feature. Line-level commit attribution.
 - **Tag agents from line comments.** A local MCP bridge (`127.0.0.1`, token-protected) delivers comments to the running session. The agent reads, fixes, marks resolved.
-- **Local-only.** Stored in your Electron `userData` directory. No cloud sync. No telemetry.
+- **Local-only.** Runtime, server, and clients communicate over authenticated local transports. No cloud sync. No telemetry.
 
 ## How Soloe differs
 
@@ -63,6 +63,32 @@ Install `git` and at least one of `claude` or `codex` on your normal Linux `PATH
 ## Contributing
 
 Issues welcome—especially Linux and Windows + WSL edge cases. Please file before opening large PRs; the surface area is still in flux. Worktree-per-feature today; per-session is on the roadmap.
+
+Soloe is a PNPM workspace monorepo. Install the pinned toolchain and
+dependencies with:
+
+```bash
+corepack enable
+pnpm install
+```
+
+The long-lived runtime, replaceable server, browser/PWA, optional Electron
+client, and windowless tray host are independently runnable:
+
+```bash
+pnpm dev:runtime
+pnpm dev:server
+pnpm dev:web
+pnpm dev:desktop
+pnpm dev:tray
+```
+
+Start the runtime before the server when launching them manually. Rebuilding or
+stopping a client or the server does not stop runtime-owned agent PTYs. See
+[the process architecture](./docs/architecture/process-model.md) for lifecycle
+and packaging details. Windows contributors should use the
+[Windows/WSL backend guide](./docs/development/windows-backends.md) for the
+supported tray-managed launch flow.
 
 ## License
 
