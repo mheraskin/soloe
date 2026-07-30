@@ -746,43 +746,31 @@ export class GitService {
     const contextLines = Math.max(0, Math.trunc(options.contextLines ?? 3));
     const rangeMode = !!(options.base && options.head);
     const rangeArg = rangeMode ? `${options.base}..${options.head}` : 'HEAD';
-    const loadBatch = async (batch: readonly ReviewDiffTarget[]): Promise<FileDiff[]> => {
-      const paths = Array.from(
-        new Set(
-          batch.flatMap((file) => [file.fromPath, file.path]).filter((p): p is string => !!p)
-        )
-      );
-      const output = await this.runInRepo(
-        info,
-        [
-          '-c',
-          'core.quotePath=false',
-          'diff',
-          '--no-color',
-          '--no-ext-diff',
-          '-M',
-          '-C',
-          `--unified=${contextLines}`,
-          rangeArg,
-          '--',
-          ...paths
-        ],
-        { stdoutLimitBytes: REVIEW_DIFF_OUTPUT_LIMIT_BYTES }
-      );
-      if (reviewOutputExceeded(output)) {
-        if (batch.length === 1) {
-          const file = batch[0]!;
-          return [truncatedFileDiff(file.path, file.fromPath ?? null)];
-        }
-        const middle = Math.ceil(batch.length / 2);
-        const left = await loadBatch(batch.slice(0, middle));
-        const right = await loadBatch(batch.slice(middle));
-        return [...left, ...right];
-      }
-      if (output.code !== 0 || !output.stdout.trim()) return [];
-      return materializeReviewDiffs(output.stdout, batch);
-    };
-    return loadBatch(files);
+    const paths = Array.from(
+      new Set(files.flatMap((file) => [file.fromPath, file.path]).filter((p): p is string => !!p))
+    );
+    const output = await this.runInRepo(
+      info,
+      [
+        '-c',
+        'core.quotePath=false',
+        'diff',
+        '--no-color',
+        '--no-ext-diff',
+        '-M',
+        '-C',
+        `--unified=${contextLines}`,
+        rangeArg,
+        '--',
+        ...paths
+      ],
+      { stdoutLimitBytes: REVIEW_DIFF_OUTPUT_LIMIT_BYTES }
+    );
+    if (reviewOutputExceeded(output)) {
+      return files.map((file) => truncatedFileDiff(file.path, file.fromPath ?? null));
+    }
+    if (output.code !== 0 || !output.stdout.trim()) return [];
+    return materializeReviewDiffs(output.stdout, files);
   }
 
   private async untrackedInsertions(
