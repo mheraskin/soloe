@@ -65,9 +65,23 @@
       <KindIcon kind={displayKind} size={16} />
       <div class="flex min-w-0 flex-col leading-tight">
         <span class="truncate text-sm font-medium text-foreground">{selected.name}</span>
-        <span class="truncate font-mono text-[11px] text-muted-foreground" title={selected.cwd}>
-          {selected.cwd}
-        </span>
+        <Tooltip.Provider delayDuration={250}>
+          <Tooltip.Root>
+            <Tooltip.Trigger>
+              {#snippet child({ props })}
+                <span
+                  {...props}
+                  class="block max-w-[min(36vw,32rem)] overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-[11px] text-muted-foreground [direction:rtl]"
+                >
+                  <bdi dir="ltr">{selected.cwd}</bdi>
+                </span>
+              {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content class="max-w-[min(90vw,40rem)] break-all font-mono text-[11px]">
+              {selected.cwd}
+            </Tooltip.Content>
+          </Tooltip.Root>
+        </Tooltip.Provider>
       </div>
       <GitBranchWidget
         cwd={selected.cwd}

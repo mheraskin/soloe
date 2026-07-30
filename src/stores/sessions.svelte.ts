@@ -582,7 +582,12 @@ export class SessionsStore {
       s.id === id ? { ...s, cwd, lastBranch: undefined } : s
     );
 
-    const status = await ipc.git.status({ cwd, force: true }).catch(() => null);
+    const status = await ipc.git.status({
+      cwd,
+      force: true,
+      ...(current.runMode ? { runMode: current.runMode } : {}),
+      ...(current.wslDistro ? { wslDistro: current.wslDistro } : {})
+    }).catch(() => null);
     if (this.locationVersions.get(id) !== version) return;
     const patch: SessionUpdate = { cwd, lastBranch: status?.branch ?? undefined };
     const updated = await ipc.sessions.update(id, patch).catch(() => null);
