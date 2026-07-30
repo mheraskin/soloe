@@ -451,7 +451,7 @@
               size="xs"
               class="gap-1.5 px-2"
               onclick={onSave}
-              disabled={!dirty || openFile.saving || openFile.binary || openFile.truncated}
+              disabled={!dirty || openFile.saving || openFile.binary}
               aria-label="Save file"
               title="Save (Ctrl/Cmd+S)"
             >
@@ -476,18 +476,8 @@
               Binary file — preview not available.
             </div>
           {:else if openFile.truncated}
-            <div class="flex min-h-0 flex-1 flex-col">
-              <div class="border-b border-border bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground">
-                Read-only preview — showing the first 256 KiB of
-                {Math.max(1, Math.ceil(openFile.size / 1024)).toLocaleString()} KiB.
-              </div>
-              <div
-                class="min-h-0 flex-1 overflow-auto"
-                role="region"
-                aria-label={`Preview of ${openFile.relativePath}`}
-              >
-                <pre class="p-3 font-mono text-[11px] leading-4 whitespace-pre">{openFile.content}</pre>
-              </div>
+            <div class="flex flex-1 items-center justify-center px-3 text-center text-xs text-muted-foreground">
+              File too large to open in the in-rail editor.
             </div>
           {:else}
             {#await loadFileEditorSurface()}
