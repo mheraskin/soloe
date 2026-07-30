@@ -146,6 +146,22 @@ describe("browser API", () => {
     });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("materializes namespaces for the Electron context bridge", () => {
+    const api = createBrowserApi({
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    for (const [namespace, value] of Object.entries(api)) {
+      expect(
+        Object.keys(value as object).length,
+        `${namespace} must be a plain facade with own methods`,
+      ).toBeGreaterThan(0);
+    }
+    expect(Object.hasOwn(api.sessions, "list")).toBe(true);
+    expect(Object.hasOwn(api.observer, "onSnapshot")).toBe(true);
+  });
 });
 
 class FakeSocket {

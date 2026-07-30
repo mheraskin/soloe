@@ -113,6 +113,12 @@ describe("monorepo boundaries", () => {
     );
   });
 
+  it("keeps the remote Electron renderer on the Windows client side", async () => {
+    const main = await readFile(path.join(root, "electron/main.ts"), "utf8");
+
+    expect(main).not.toContain("win.loadURL(remoteServerUrl)");
+  });
+
   it("keeps tray, Tauri hooks, and benchmark tooling on PNPM", async () => {
     const integrationFiles = [
       "apps/tray/src-tauri/src/services.rs",

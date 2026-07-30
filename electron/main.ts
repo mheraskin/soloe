@@ -631,9 +631,7 @@ async function createWindow(): Promise<BrowserWindow> {
   });
 
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (remoteServerUrl) {
-    await win.loadURL(remoteServerUrl);
-  } else if (!app.isPackaged && devUrl) {
+  if (!app.isPackaged && devUrl) {
     await win.loadURL(devUrl);
   } else {
     await win.loadFile(path.join(__dirname, '../renderer/index.html'));
