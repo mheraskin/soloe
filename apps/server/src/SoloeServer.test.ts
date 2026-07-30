@@ -344,6 +344,7 @@ describe('Soloe Server lifecycle', () => {
       processFactory: { spawn: () => new PersistentProcess() }
     });
     const invoke = vi.fn(async () => ({ platform: 'linux' }));
+    const writeLog = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const server = new SoloeServer({
       runtimeEndpoint,
       host: '127.0.0.1',
@@ -367,6 +368,73 @@ describe('Soloe Server lifecycle', () => {
         namespace: 'system',
         method: 'platform',
         args: []
+      });
+      const logs = writeLog.mock.calls.map(([entry]) => String(entry)).join('');
+      expect(logs).toContain('"event":"rpc_start"');
+      expect(logs).toContain('"event":"rpc_end"');
+      expect(logs).toContain('"namespace":"system"');
+      expect(logs).toContain('"method":"platform"');
+      expect(logs).toContain('"durationMs":');
+      expect(logs).toContain('"requestBytes":');
+      expect(logs).toContain('"responseBytes":');
+      expect(logs).not.toContain('test-token');
+    } finally {
+      writeLog.mockRestore();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed and oversized RPC bodies with structured errors', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-rpc-validation-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      rpcHandler: async () => true
+    });
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const malformed = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: { namespace: 'files', method: 'readFile', args: 'not-an-array' }
+      });
+      expect(malformed.status).toBe(400);
+      expect(await malformed.json()).toEqual({
+        error: {
+          code: 'malformed_rpc_body',
+          message: 'RPC body must contain a valid namespace, method, and args array'
+        }
+      });
+
+      const oversized = await fetch(new URL('/api/rpc', baseUrl), {
+        method: 'POST',
+        headers: {
+          ...authorizationHeaders(),
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          namespace: 'files',
+          method: 'writeFile',
+          args: ['x'.repeat(1024 * 1024)]
+        })
+      });
+      expect(oversized.status).toBe(413);
+      expect(await oversized.json()).toEqual({
+        error: {
+          code: 'request_too_large',
+          message: 'JSON request exceeds the 1048576-byte limit',
+          remediation: 'Send a smaller request'
+        }
       });
     } finally {
       await server.close();
@@ -440,6 +508,39 @@ describe('Soloe Server lifecycle', () => {
           id: session.id,
           state: 'idle'
         })
+      ]);
+
+      await expect(rpc(baseUrl, 'files', 'writeFile', [{
+        cwd: directory,
+        relativePath: 'browser-file.txt',
+        content: 'server-backed file\n',
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+      }])).resolves.toBe(true);
+      await expect(rpc(baseUrl, 'files', 'listTree', [{
+        cwd: directory,
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+        force: true
+      }])).resolves.toEqual(expect.objectContaining({
+        cwd: directory,
+        paths: expect.arrayContaining(['browser-file.txt'])
+      }));
+      await expect(rpc(baseUrl, 'files', 'readFile', [{
+        cwd: directory,
+        relativePath: 'browser-file.txt',
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+      }])).resolves.toEqual(expect.objectContaining({
+        content: 'server-backed file\n',
+        binary: false,
+        truncated: false,
+        unavailable: false
+      }));
+      await expect(rpc(baseUrl, 'files', 'search', [{
+        cwd: directory,
+        query: 'browser-file',
+        limit: 10,
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+      }])).resolves.toEqual([
+        expect.objectContaining({ path: 'browser-file.txt' })
       ]);
 
       const unsupported = await request(baseUrl, '/api/rpc', {
