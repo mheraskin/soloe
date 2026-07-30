@@ -50,6 +50,12 @@ export interface GitCheckoutRequest extends GitRepoRequest {
   force?: boolean;
 }
 
+export interface GitCreateWorktreeRequest extends GitRepoRequest {
+  path: string;
+  branch: string;
+  baseRef: string;
+}
+
 export interface GitAheadBehind {
   repoPath: string;
   isRepo: boolean;

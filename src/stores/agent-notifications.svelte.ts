@@ -24,6 +24,10 @@ export interface AgentEdgeMarker {
 export interface AgentToastNotice extends AgentEdgeMarker {
   sessionName: string;
   sessionKind: SessionLaunchKind;
+  projectId?: string;
+  cwd: string;
+  runMode: Session['runMode'];
+  lastBranch?: string;
 }
 
 const COMPLETED_DISMISS_MS = 4000;
@@ -42,6 +46,7 @@ class AgentNotificationsStore {
 
   private lastStates = new Map<string, AgentObservedState>();
   private lastEvents = new Map<string, ObserverEvent>();
+  private pendingSnapshots = new Map<string, AgentObservedState>();
   private toastTimers = new Map<SessionId, ReturnType<typeof setTimeout>>();
   private sequence = 0;
 
@@ -96,6 +101,8 @@ class AgentNotificationsStore {
   ): void {
     const rowSessionId = rowSessionIdFor(snapshot);
     const reason = reasonFor(snapshot, this.lastEvents.get(snapshot.id) ?? null);
+    const pendingState = this.pendingSnapshots.get(snapshot.id);
+    this.pendingSnapshots.delete(snapshot.id);
     this.log('observe snapshot', {
       subjectId: snapshot.id,
       rowSessionId,
@@ -104,6 +111,13 @@ class AgentNotificationsStore {
       sessionId: session?.id ?? null,
       activeSessionId
     });
+    if (pendingState === snapshot.state) {
+      this.log('skip matching snapshot already handled by event', {
+        subjectId: snapshot.id,
+        state: snapshot.state
+      });
+      return;
+    }
     this.trackState({
       subjectId: snapshot.id,
       rowSessionId,
@@ -121,6 +135,7 @@ class AgentNotificationsStore {
     rowSessionId: SessionId | null
   ): void {
     this.rememberEvent(event);
+    this.pendingSnapshots.set(event.subjectId, event.state);
     this.log('observe event', {
       subjectId: event.subjectId,
       rowSessionId,
@@ -162,6 +177,7 @@ class AgentNotificationsStore {
     this.toastTimers.clear();
     this.lastStates.clear();
     this.lastEvents.clear();
+    this.pendingSnapshots.clear();
     this.markers = {};
     this.toasts = [];
     this.sequence = 0;
@@ -212,15 +228,6 @@ class AgentNotificationsStore {
       return;
     }
 
-    if (opts.rowSessionId === opts.activeSessionId && !shouldNotifyActive(opts.state)) {
-      this.log('acknowledge active non-attention state', {
-        rowSessionId: opts.rowSessionId,
-        state: opts.state
-      });
-      this.acknowledge(opts.rowSessionId);
-      return;
-    }
-
     if (opts.rowSessionId === opts.activeSessionId && previous === opts.state) {
       this.log('acknowledge active repeated notify state', {
         rowSessionId: opts.rowSessionId,
@@ -249,7 +256,11 @@ class AgentNotificationsStore {
     this.upsertToast({
       ...marker,
       sessionName: opts.session.name || '(unnamed)',
-      sessionKind: launchKind(opts.session)
+      sessionKind: launchKind(opts.session),
+      projectId: opts.session.projectId,
+      cwd: opts.session.cwd,
+      runMode: opts.session.runMode,
+      lastBranch: opts.session.lastBranch
     });
   }
 
@@ -310,10 +321,6 @@ export function isNotifyState(state: AgentObservedState): state is NotifyState {
     || state === 'completed'
     || state === 'failed'
   );
-}
-
-function shouldNotifyActive(state: NotifyState): boolean {
-  return state === 'waiting_for_input' || state === 'waiting_for_approval';
 }
 
 export function rowSessionIdFor(snapshot: ObservedAgentSnapshot): SessionId | null {

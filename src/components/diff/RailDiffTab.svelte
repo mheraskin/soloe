@@ -38,6 +38,8 @@
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { diffComments } from '../../stores/diff-comments.svelte';
+
+  let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   import { settings } from '../../stores/settings.svelte';
   import { confirmStore } from '../../stores/confirm.svelte';
   import type { WorkingChange } from '@shared/types/git.js';
@@ -806,6 +808,12 @@
   });
 
   onMount(() => {
+    const compactMedia = window.matchMedia('(max-width: 767px)');
+    const updateCompactViewport = () => {
+      compactViewport = compactMedia.matches;
+    };
+    compactMedia.addEventListener('change', updateCompactViewport);
+
     const raw = localStorage.getItem(LIST_HEIGHT_KEY);
     if (raw !== null) {
       const stored = Number(raw);
@@ -849,6 +857,7 @@
     };
     window.addEventListener('mouseup', onDocMouseup);
     return () => {
+      compactMedia.removeEventListener('change', updateCompactViewport);
       window.removeEventListener('soloe:refocus-rail', onRefocus);
       window.removeEventListener('soloe:focus-pane', onFocusPane);
       window.removeEventListener('mouseup', onDocMouseup);
@@ -857,8 +866,8 @@
   });
 </script>
 
-<div class="flex min-h-0 min-w-0 flex-1 flex-col" class:select-none={resizingList}>
-  <header class="flex min-w-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+<div class="mobile-diff-surface flex min-h-0 min-w-0 flex-1 flex-col" class:select-none={resizingList}>
+  <header class="mobile-rail-header soloe-pane-header min-w-0 justify-between">
     <div class="flex min-w-0 flex-1 items-center">
       <Popover.Root bind:open={pickerOpen}>
         <Popover.Trigger>
@@ -979,7 +988,7 @@
         </DropdownMenu.Trigger>
         <DropdownMenu.Content align="end" class="w-52">
           <DropdownMenu.Item
-            disabled={!activeCwd}
+            disabled={!activeCwd || compactViewport}
             onSelect={() =>
               (workingDiff.viewMode = workingDiff.viewMode === 'unified' ? 'split' : 'unified')}
           >
@@ -1456,7 +1465,7 @@
                         {gapRevision}
                         reviewSection={reviewEntrySection(change)}
                         diff={fileDiff}
-                        mode={workingDiff.viewMode}
+                        mode={compactViewport ? 'unified' : workingDiff.viewMode}
                         gutterWidth={gutter}
                         {canExpand}
                         wrap={workingDiff.wordWrap}

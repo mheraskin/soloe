@@ -7,6 +7,7 @@ import type {
   FileDiffRequest,
   FileLinesRequest,
   GitCheckoutRequest,
+  GitCreateWorktreeRequest,
   GitCommitRequest,
   GitObservationDemandRequest,
   GitRefHistoryRequest,
@@ -162,6 +163,20 @@ export class GitIpc {
           runMode: request.runMode,
           wslDistro: request.wslDistro
         })
+      )
+    );
+    ipcMain.handle(IpcChannels.git.createWorktree, (_e, request: GitCreateWorktreeRequest) =>
+      ipcInvoke(() =>
+        this.opts.service.createWorktree(
+          request.repoPath,
+          request.path,
+          request.branch,
+          request.baseRef,
+          {
+            runMode: request.runMode,
+            wslDistro: request.wslDistro
+          }
+        )
       )
     );
     ipcMain.handle(IpcChannels.git.workingChanges, (_e, request: WorkingChangesRequest) =>
@@ -324,6 +339,7 @@ export class GitIpc {
     ipcMain.removeHandler(IpcChannels.git.rangeChanges);
     ipcMain.removeHandler(IpcChannels.git.resolveRefs);
     ipcMain.removeHandler(IpcChannels.git.checkout);
+    ipcMain.removeHandler(IpcChannels.git.createWorktree);
     ipcMain.removeHandler(IpcChannels.git.workingChanges);
     ipcMain.removeHandler(IpcChannels.git.workingTreeSnapshot);
     ipcMain.removeHandler(IpcChannels.git.observationDemand);

@@ -333,7 +333,7 @@
     const slot = slotOf(id);
     const ringed = visible && slot !== null && rightRail.focusedPaneSlot === slot;
     return [
-      'relative flex min-w-0 flex-col border-r border-border',
+      'rail-pane relative flex min-w-0 flex-col border-r border-border',
       visible ? (fullscreen ? 'flex-1' : 'flex-shrink-0') : 'hidden',
       visible ? slotOrderClass(id) : '',
       // Inset ring so the accent appears inside the pane without nudging
@@ -347,12 +347,13 @@
 <aside
   bind:this={asideEl}
   class={[
-    'relative flex border-l border-border bg-sidebar',
+    'mobile-rail relative flex border-l border-border bg-sidebar',
     fullscreen ? 'min-w-0 flex-1' : 'flex-shrink-0',
     !railOpen && 'w-10',
     railOpen && 'overflow-hidden'
   ]}
   class:select-none={resizing}
+  data-open={railOpen ? 'true' : 'false'}
   style={railOpen && !fullscreen ? `width: ${asideWidth}px` : undefined}
   aria-label="Session rail"
 >
@@ -382,6 +383,12 @@
 
   {#if inspectorMountedHere}
     <div class={paneClasses('inspector')} style={paneStyle('inspector')} data-pane-slot={slotOf('inspector')}>
+      <header class="soloe-pane-header">
+        <Activity class="size-3.5 text-muted-foreground" />
+        <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+          Inspector
+        </span>
+      </header>
       <ScrollArea class="min-h-0 flex-1">
         <RailInspectorTab />
       </ScrollArea>
@@ -397,14 +404,14 @@
   {#if twoPane && !fullscreen}
     <button
       type="button"
-      class={`order-2 relative z-10 h-full w-1 flex-shrink-0 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'splitter' ? 'bg-ring/20' : 'bg-transparent'}`}
+      class={`rail-pane-splitter order-2 relative z-10 h-full w-1 flex-shrink-0 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'splitter' ? 'bg-ring/20' : 'bg-transparent'}`}
       aria-label="Resize pane split"
       onpointerdown={startSplitterResize}
     ></button>
   {/if}
 
   <Tooltip.Provider delayDuration={250}>
-    <nav class="order-[99] flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
+    <nav class="rail-tabbar order-[99] flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = openTabs.includes(tab.id)}
         {@const showDot = tab.id === 'feature' && featureNeedsSetup && !isActive}
@@ -461,7 +468,7 @@
               {...props}
               role="note"
               aria-label="Switch focus between terminal and pane: Ctrl+;"
-              class="flex flex-col items-center gap-0.5 pb-1 text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+              class="rail-focus-hint flex flex-col items-center gap-0.5 pb-1 text-muted-foreground/60 transition-colors hover:text-muted-foreground"
             >
               <ArrowLeftRight class="size-3" />
               <kbd
@@ -477,14 +484,16 @@
         </Tooltip.Trigger>
         <Tooltip.Content side="left">Switch focus between terminal and pane</Tooltip.Content>
       </Tooltip.Root>
-      <ProcessUsageWidget />
+      <div class="rail-process">
+        <ProcessUsageWidget />
+      </div>
     </nav>
   </Tooltip.Provider>
 
   {#if railOpen && !fullscreen}
     <button
       type="button"
-      class={`absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'outer' ? 'bg-ring/20' : 'bg-transparent'}`}
+      class={`rail-resize-handle absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'outer' ? 'bg-ring/20' : 'bg-transparent'}`}
       aria-label="Resize rail"
       onpointerdown={startOuterResize}
     >

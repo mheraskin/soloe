@@ -6,6 +6,7 @@ import type {
   SessionUpdate
 } from '@shared/types/sessions.js';
 import { launchProvider } from '@shared/types/sessions.js';
+import { sessionAutoApprovesPermissions } from '@shared/agent-permissions.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AutoRenameService } from './AutoRenameService.js';
@@ -70,7 +71,11 @@ export class AgentHookDispatcher {
       await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'claude_code', hookEvent);
       return;
     }
-    const mapping = mapClaudeHook(hookEvent, payload);
+    const mapping = await this.resolvePermissionMapping(
+      soloeSessionId,
+      mapClaudeHook(hookEvent, payload),
+      payload
+    );
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'claude_code', hookEvent);
   }
@@ -102,7 +107,11 @@ export class AgentHookDispatcher {
       await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'codex', hookEvent);
       return;
     }
-    const mapping = mapCodexHook(hookEvent, payload);
+    const mapping = await this.resolvePermissionMapping(
+      soloeSessionId,
+      mapCodexHook(hookEvent, payload),
+      payload
+    );
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'codex', hookEvent);
   }
@@ -137,6 +146,22 @@ export class AgentHookDispatcher {
     void this.opts.autoRename
       .maybeRename({ sessionId: soloeSessionId, firstPrompt: prompt })
       .catch((err) => this.opts.log?.('auto-rename dispatch failed', err));
+  }
+
+  private async resolvePermissionMapping(
+    soloeSessionId: SessionId,
+    mapping: HookMapping | null,
+    payload: Record<string, unknown>
+  ): Promise<HookMapping | null> {
+    if (mapping?.state !== 'waiting_for_approval') return mapping;
+    const session = await this.opts.sessionStore.get(soloeSessionId).catch(() => null);
+    if (!session || !sessionAutoApprovesPermissions(session)) {
+      return mapping;
+    }
+    return {
+      state: 'running_tool',
+      summary: autoApprovedToolSummary(payload)
+    };
   }
 
   private async logUsageLimitDetection(input: {
@@ -639,6 +664,14 @@ function codexPermissionSummary(payload: Record<string, unknown>): string {
   if (toolName) return `approval: ${toolName}`;
 
   return 'waiting for approval';
+}
+
+function autoApprovedToolSummary(payload: Record<string, unknown>): string {
+  const toolName =
+    stringField(payload, 'tool_name')
+    ?? stringField(payload, 'tool')
+    ?? nestedStringField(payload, ['tool', 'name']);
+  return toolName ? `tool: ${toolName}` : 'running tool';
 }
 
 function normalizeEventName(value: string | undefined): string {

@@ -84,6 +84,37 @@ describe('AgentHookDispatcher', () => {
       expect(observer.listEvents('sess-1')[0]?.summary).toBe('approval: Bash');
     });
 
+    it('keeps auto-approved Claude permission hooks in a working state', async () => {
+      const created = await sessionStore.create({
+        name: 'Claude',
+        cwd: '/tmp',
+        runMode: 'linux',
+        launch: {
+          type: 'agent',
+          provider: 'claude_code',
+          resumeMode: 'new',
+          extraArgs: ['--dangerously-skip-permissions']
+        }
+      });
+      observer.setTuiObservedState(created.id, 'working', 'thinking');
+
+      await dispatcher.dispatch({
+        provider: 'claude_code',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'PermissionRequest',
+          tool_name: 'ExitPlanMode'
+        }
+      });
+
+      expect(observer.getSnapshot(created.id)?.state).toBe('running_tool');
+      expect(observer.listEvents(created.id)).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ state: 'waiting_for_approval' })
+        ])
+      );
+    });
+
     it('preserves Claude permission notification messages for approval summaries', async () => {
       await dispatcher.dispatch({
         provider: 'claude_code',
@@ -221,6 +252,37 @@ describe('AgentHookDispatcher', () => {
       expect(observer.getSnapshot('sess-2')?.state).toBe('waiting_for_approval');
       expect(observer.listEvents('sess-2').map((e) => e.summary)).toContain(
         'approval: docker compose up'
+      );
+    });
+
+    it('keeps auto-approved Codex permission hooks in a working state', async () => {
+      const created = await sessionStore.create({
+        name: 'Codex',
+        cwd: '/tmp',
+        runMode: 'linux',
+        launch: {
+          type: 'agent',
+          provider: 'codex',
+          resumeMode: 'new',
+          extraArgs: ['--dangerously-bypass-approvals-and-sandbox']
+        }
+      });
+      observer.setTuiObservedState(created.id, 'working', 'thinking');
+
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'PermissionRequest',
+          command: 'find the dogs'
+        }
+      });
+
+      expect(observer.getSnapshot(created.id)?.state).toBe('running_tool');
+      expect(observer.listEvents(created.id)).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ state: 'waiting_for_approval' })
+        ])
       );
     });
 

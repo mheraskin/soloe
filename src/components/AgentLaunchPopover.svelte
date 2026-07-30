@@ -7,6 +7,7 @@
   import { sessions } from '../stores/sessions.svelte';
   import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
+  import { quickLaunchExtraArgs } from '../lib/quick-launch';
   import { Button } from '$lib/components/ui/button';
   import * as Popover from '$lib/components/ui/popover';
   import KindIcon from './KindIcon.svelte';
@@ -123,11 +124,7 @@
 
   function launchPreset(preset: QuickLaunchPreset): void {
     open = false;
-    const args: string[] = [];
-    if (preset.dangerouslySkipPermissions) args.push('--dangerously-skip-permissions');
-    if (preset.extraArgs) {
-      args.push(...preset.extraArgs.split(/\s+/).filter(Boolean));
-    }
+    const args = quickLaunchExtraArgs(preset);
     void sessions
       .createAgentWithDefaults(preset.provider, {
         ...(projectId ? { projectId } : {}),
@@ -170,7 +167,7 @@
     onpointerenter={clearCloseTimer}
     onpointerleave={scheduleClose}
   >
-    <div class="grid grid-cols-3 gap-1">
+    <div class="mobile-session-picker grid grid-cols-3 gap-1">
       <Button
         variant="ghost"
         class="h-14 flex-col gap-1 px-1 text-xs"

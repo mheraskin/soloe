@@ -109,7 +109,7 @@
     </div>
   {/if}
 
-  <div class="grid grid-cols-3 gap-px border-t border-border bg-border/60">
+  <div class="mobile-feature-stats grid grid-cols-3 gap-px border-t border-border bg-border/60">
     <div class="flex flex-col items-center justify-center gap-0.5 bg-card px-2 py-2">
       <span class="inline-flex items-center gap-1 text-sm font-semibold tabular-nums text-foreground">
         <GitBranch class="size-3 text-muted-foreground" />

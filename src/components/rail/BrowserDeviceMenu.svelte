@@ -73,7 +73,7 @@
   }
 </script>
 
-<div class="flex max-h-[480px] w-[300px] flex-col">
+<div class="mobile-device-menu flex max-h-[480px] w-[300px] flex-col">
   <div class="flex items-center gap-2 border-b border-border px-3 py-2">
     <Smartphone class="size-4 text-muted-foreground" />
     <span class="text-xs font-medium">Responsive viewer</span>
@@ -136,7 +136,7 @@
         <div class="px-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
           Custom size
         </div>
-        <div class="grid grid-cols-2 gap-2">
+        <div class="mobile-form-grid grid grid-cols-2 gap-2">
           <div class="flex flex-col gap-1">
             <Label class="text-[10px]" for="device-width">Width</Label>
             <Input

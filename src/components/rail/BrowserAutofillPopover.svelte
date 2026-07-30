@@ -195,8 +195,8 @@
   {/if}
 {/snippet}
 
-<div class="flex h-[min(34rem,calc(100vh-4rem))] w-[min(40rem,calc(100vw-2rem))] min-h-0 overflow-hidden">
-  <nav class="flex w-28 shrink-0 flex-col border-r border-border bg-muted/20 p-1.5" aria-label="Credential sections">
+<div class="mobile-autofill flex h-[min(34rem,calc(100vh-4rem))] w-[min(40rem,calc(100vw-2rem))] min-h-0 overflow-hidden">
+  <nav class="mobile-autofill-nav flex w-28 shrink-0 flex-col border-r border-border bg-muted/20 p-1.5" aria-label="Credential sections">
     <div class="flex items-center gap-1.5 px-1.5 py-2">
       <KeyRound class="size-3.5 text-muted-foreground" />
       <span class="text-[11px] font-medium">Autofill</span>

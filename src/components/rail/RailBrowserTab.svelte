@@ -1372,8 +1372,8 @@
   }
 </script>
 
-<div class="flex h-full min-w-0 flex-col bg-background">
-  <div class="flex items-center gap-0.5 overflow-x-auto border-b border-border bg-sidebar px-1 py-1">
+<div class="mobile-browser-surface flex h-full min-w-0 flex-col bg-background">
+  <div class="mobile-browser-tabs flex h-8 min-h-8 items-center gap-0.5 overflow-x-auto border-b border-border bg-sidebar px-1">
     {#each browserStore.tabs as tab (tab.id)}
       {@const isActive = tab.id === activeId}
       {@const isPausedTab = tab.pausedAt !== undefined}
@@ -1384,7 +1384,7 @@
             <button
               {...props}
               type="button"
-              class={`group flex h-7 max-w-[160px] min-w-0 shrink-0 items-center gap-1 rounded-md px-2 text-xs transition-colors ${
+              class={`group flex h-6 max-w-[160px] min-w-0 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors ${
                 isActive
                   ? 'bg-background text-foreground'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
@@ -1449,7 +1449,7 @@
     {/each}
     <button
       type="button"
-      class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+      class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
       aria-label="New tab"
       onclick={addTab}
     >
@@ -1458,7 +1458,7 @@
   </div>
 
   <form
-    class="relative flex min-w-0 items-center gap-1 border-b border-border bg-sidebar px-1 py-1"
+    class="mobile-browser-toolbar relative flex h-8 min-h-8 min-w-0 items-center gap-1 border-b border-border bg-sidebar px-1"
     onsubmit={submitUrl}
   >
     <Button
@@ -1765,6 +1765,7 @@
           class={fillAnchor
             ? 'fixed z-30 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'
             : 'absolute top-2 right-2 z-20 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'}
+          class:mobile-browser-prompt={true}
           style={fillAnchor ? `left: ${fillAnchor.left}px; top: ${fillAnchor.top}px;` : undefined}
           role="dialog"
           aria-label="Autofill suggestion"
@@ -1801,7 +1802,7 @@
 
       {#if savePrompt}
         <div
-          class="absolute top-2 right-2 z-20 flex w-72 flex-col gap-2 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+          class="mobile-browser-prompt absolute top-2 right-2 z-20 flex w-72 flex-col gap-2 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg"
           role="dialog"
           aria-label="Save password"
         >
