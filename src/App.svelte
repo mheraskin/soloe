@@ -10,7 +10,9 @@
     Minus,
     PanelLeftOpen,
     Plus,
+    RotateCcw,
     Settings,
+    TriangleAlert,
     X
   } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
@@ -74,6 +76,7 @@
   import AgentLaunchPopover from './components/AgentLaunchPopover.svelte';
   import SessionContextMenu from './components/SessionContextMenu.svelte';
   import KindIcon from './components/KindIcon.svelte';
+  import AppSkeleton from './components/AppSkeleton.svelte';
   import appIconUrl from '../build/favicon.svg';
 
   const loadNewSessionModal = () => import('./components/NewSessionModal.svelte');
@@ -89,6 +92,8 @@
 
   let appliedTheme: string | null = null;
   let suppressCollapsedDropdownSelect = false;
+  let initialLoadState = $state<'loading' | 'ready' | 'error'>('loading');
+  let initialLoadError = $state<string | null>(null);
 
   onMount(() => {
     sessions.attachListeners();
@@ -141,10 +146,15 @@
   }
 
   async function loadInitialState(): Promise<void> {
+    initialLoadState = 'loading';
+    initialLoadError = null;
     try {
       await Promise.all([platform.load(), settings.load(), projects.load(), sessions.load()]);
-      await promptForAgentIntegrationSetup();
+      initialLoadState = 'ready';
+      void promptForAgentIntegrationSetup().catch(reportError);
     } catch (err) {
+      initialLoadError = err instanceof Error ? err.message : String(err);
+      initialLoadState = 'error';
       reportError(err);
     }
   }
@@ -1026,6 +1036,36 @@
 
 <ModeWatcher defaultMode="dark" />
 
+{#if initialLoadState === 'loading'}
+  <AppSkeleton label="Loading workspace" />
+{:else if initialLoadState === 'error'}
+  <div class="flex h-full flex-col overflow-hidden bg-background text-foreground">
+    <header
+      class="flex h-7 shrink-0 items-center border-b border-border bg-card select-none"
+      style="-webkit-app-region: drag"
+    >
+      <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
+      <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
+    </header>
+    <main class="flex min-h-0 flex-1 items-center justify-center p-6">
+      <div class="flex max-w-md flex-col items-center text-center">
+        <span
+          class="mb-4 flex size-11 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/10 text-destructive"
+        >
+          <TriangleAlert class="size-5" />
+        </span>
+        <h1 class="text-base font-semibold">Soloe could not finish loading</h1>
+        <p class="mt-1.5 text-sm text-muted-foreground">
+          {initialLoadError ?? 'The application backend did not respond.'}
+        </p>
+        <Button class="mt-5 gap-2" onclick={() => void loadInitialState()}>
+          <RotateCcw class="size-3.5" />
+          Retry
+        </Button>
+      </div>
+    </main>
+  </div>
+{:else}
 <div class="flex h-full flex-col overflow-hidden">
   <header
     use:closeMenusFromTitleBar
@@ -1355,8 +1395,10 @@
   {#if agentNotifications.toasts.length > 0}
     <LazyOverlay label="agent notifications" load={loadAgentNotificationToasts} />
   {/if}
-  <Toaster richColors closeButton />
 </div>
+{/if}
+
+<Toaster richColors closeButton />
 
 <style>
   .collapsed-session-chip[data-chip-color] {

@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import AppSkeleton from './components/AppSkeleton.svelte';
 import '@fontsource-variable/inter/index.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/700.css';
@@ -13,6 +14,11 @@ import '@fontsource/cascadia-code/700.css';
 const target = document.getElementById('app');
 if (!target) throw new Error('Missing #app root element');
 
+const bootstrapSkeleton = mount(AppSkeleton, {
+  target,
+  props: { label: 'Starting Soloe' }
+});
+
 const { installBrowserApi } = await import('./lib/browser-api');
 installBrowserApi();
 const [
@@ -26,5 +32,6 @@ const [
 ]);
 initCommentsBridge();
 initDiffBridge();
+await unmount(bootstrapSkeleton);
 mount(App, { target });
 performance.mark('soloe:renderer-mounted');

@@ -119,6 +119,15 @@ describe("monorepo boundaries", () => {
     expect(main).not.toContain("win.loadURL(remoteServerUrl)");
   });
 
+  it("shows the application shell before loading deferred renderer modules", async () => {
+    const main = await readFile(path.join(root, "src/main.ts"), "utf8");
+    const skeletonMount = main.indexOf("mount(AppSkeleton");
+    const deferredModules = main.indexOf("await Promise.all");
+
+    expect(skeletonMount).toBeGreaterThan(-1);
+    expect(deferredModules).toBeGreaterThan(skeletonMount);
+  });
+
   it("keeps tray, Tauri hooks, and benchmark tooling on PNPM", async () => {
     const integrationFiles = [
       "apps/tray/src-tauri/src/services.rs",
