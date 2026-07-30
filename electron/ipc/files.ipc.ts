@@ -39,7 +39,11 @@ export interface FilesIpcOptions {
 const MAX_PASTED_IMAGES = 4;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
-const MAX_READ_BYTES = 5 * 1024 * 1024;
+// Keep renderer work bounded. Large files are still useful in the Files
+// surface, but sending several MiB through structured clone and then asking
+// CodeMirror to index it creates a long renderer task. Return a read-only
+// prefix instead; the full file remains available through an external editor.
+const MAX_PREVIEW_BYTES = 256 * 1024;
 
 export class FilesIpc {
   private registered = false;
@@ -233,17 +237,31 @@ async function readFileSafe(request: FileReadRequest): Promise<FileReadResult> {
   const absolute = resolveInsideCwd(host, request.relativePath);
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error('Not a regular file');
-  if (stat.size > MAX_READ_BYTES) {
-    return { relativePath: request.relativePath, content: '', binary: false, size: stat.size };
+  const bytesToRead = Math.min(stat.size, MAX_PREVIEW_BYTES);
+  const handle = await fs.open(absolute, 'r');
+  let buf: Buffer;
+  try {
+    buf = Buffer.allocUnsafe(bytesToRead);
+    const { bytesRead } = await handle.read(buf, 0, bytesToRead, 0);
+    buf = buf.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
   }
-  const buf = await fs.readFile(absolute);
+  const truncated = stat.size > buf.length;
   if (looksBinary(buf)) {
-    return { relativePath: request.relativePath, content: '', binary: true, size: stat.size };
+    return {
+      relativePath: request.relativePath,
+      content: '',
+      binary: true,
+      truncated,
+      size: stat.size
+    };
   }
   return {
     relativePath: request.relativePath,
     content: buf.toString('utf8'),
     binary: false,
+    truncated,
     size: stat.size
   };
 }

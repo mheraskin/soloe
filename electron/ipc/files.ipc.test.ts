@@ -71,6 +71,34 @@ describe('FilesIpc Worktree File Index routing', () => {
     );
     ipc.dispose();
   });
+
+  it('returns a bounded text preview instead of materializing a large file', async () => {
+    const fileIndex = fakeIndex();
+    const ipc = createIpc(fileIndex);
+    ipc.register();
+    const content = '0123456789abcdef\n'.repeat(40_000);
+    await fs.writeFile(path.join(root, 'large.txt'), content, 'utf8');
+
+    const result = await invoke(IpcChannels.files.readFile, {
+      cwd: root,
+      relativePath: 'large.txt',
+      runMode: 'windows'
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        relativePath: 'large.txt',
+        binary: false,
+        truncated: true,
+        size: Buffer.byteLength(content)
+      }
+    });
+    const preview = (result as { value: { content: string } }).value.content;
+    expect(preview.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(preview)).toBeLessThan(Buffer.byteLength(content));
+    ipc.dispose();
+  });
 });
 
 function fakeIndex() {

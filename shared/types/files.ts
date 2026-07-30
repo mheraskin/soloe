@@ -66,6 +66,8 @@ export interface FileReadResult {
   relativePath: string;
   content: string;
   binary: boolean;
+  /** True when content is a bounded, read-only prefix of the file. */
+  truncated: boolean;
   size: number;
 }
 
