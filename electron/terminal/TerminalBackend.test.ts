@@ -38,6 +38,20 @@ describe('terminal backend selection', () => {
       .toBe('/opt/soloe/resources/bin/soloe-terminal-sidecar');
   });
 
+  it('preserves Windows drive and UNC path semantics on every host', () => {
+    expect(defaultRustSidecarPath({
+      ...baseOptions,
+      appPath: 'D:\\projects\\soloe',
+      platform: 'win32'
+    })).toBe('D:\\projects\\soloe\\target\\release\\soloe-terminal-sidecar.exe');
+    expect(defaultRustSidecarPath({
+      ...baseOptions,
+      isPackaged: true,
+      resourcesPath: '\\\\server\\share\\soloe',
+      platform: 'win32'
+    })).toBe('\\\\server\\share\\soloe\\bin\\soloe-terminal-sidecar.exe');
+  });
+
   it('fails early when the requested sidecar is absent', () => {
     expect(() => selectTerminalBackend({
       ...baseOptions,

@@ -51,7 +51,11 @@ export function defaultRustSidecarPath(options: TerminalBackendOptions): string 
   const filename = options.platform === 'win32' || (!options.platform && process.platform === 'win32')
     ? 'soloe-terminal-sidecar.exe'
     : 'soloe-terminal-sidecar';
+  const root = options.isPackaged ? options.resourcesPath : options.appPath;
+  const pathApi = root.startsWith('\\\\') || /^[a-zA-Z]:[\\/]/u.test(root)
+    ? path.win32
+    : path.posix;
   return options.isPackaged
-    ? path.join(options.resourcesPath, 'bin', filename)
-    : path.join(options.appPath, 'target', 'release', filename);
+    ? pathApi.join(root, 'bin', filename)
+    : pathApi.join(root, 'target', 'release', filename);
 }

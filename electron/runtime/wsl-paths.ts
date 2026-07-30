@@ -50,7 +50,7 @@ export function worktreeHostPath(
 // filesystem represented by `host`. Select win32 semantics from the path shape
 // so UNC and drive paths remain valid even when inspected from WSL or Linux.
 export function joinHostPath(host: string, ...segments: string[]): string {
-  return (isWindowsHostPath(host) ? path.win32 : path).join(host, ...segments);
+  return (isWindowsHostPath(host) ? path.win32 : path.posix).join(host, ...segments);
 }
 
 function isWindowsHostPath(value: string): boolean {

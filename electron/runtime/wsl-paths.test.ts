@@ -78,7 +78,7 @@ describe('joinHostPath', () => {
       .toBe('\\\\wsl.localhost\\Ubuntu\\home\\me\\docs\\plans');
   });
 
-  it('uses native separators for POSIX host paths', () => {
+  it('uses POSIX separators for POSIX host paths on every host', () => {
     expect(joinHostPath('/home/me/repo', 'docs', 'plans')).toBe('/home/me/repo/docs/plans');
   });
 });
