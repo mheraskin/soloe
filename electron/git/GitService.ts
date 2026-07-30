@@ -329,7 +329,9 @@ export class GitService {
     const cache = this.ensureCache(info);
     if (!force && cache.worktrees) return clone(cache.worktrees);
     const output = await this.runInRepo(info, ['worktree', 'list', '--porcelain']);
-    cache.worktrees = output.code === 0 ? parseWorktrees(output.stdout) : [];
+    cache.worktrees = output.code === 0
+      ? parseWorktrees(output.stdout, info.runMode === 'native')
+      : [];
     return clone(cache.worktrees);
   }
 
@@ -998,7 +1000,7 @@ export class GitService {
     }
     const toplevel = await this.run(cwd, ['rev-parse', '--show-toplevel']);
     if (toplevel.code !== 0) return null;
-    const repoPath = toplevel.stdout.trim();
+    const repoPath = normalizeNativeGitPath(toplevel.stdout.trim());
     if (!repoPath) return null;
     const gitDirResult = await this.run(repoPath, ['rev-parse', '--git-dir']);
     if (gitDirResult.code !== 0) return null;
@@ -1314,7 +1316,7 @@ function changeKindFromStatus(code: string): WorkingChangeKind {
   return 'modified';
 }
 
-function parseWorktrees(output: string): GitWorktree[] {
+function parseWorktrees(output: string, native = false): GitWorktree[] {
   const out: GitWorktree[] = [];
   let current: GitWorktree | null = null;
   for (const line of output.split('\n')) {
@@ -1326,7 +1328,9 @@ function parseWorktrees(output: string): GitWorktree[] {
     if (line.startsWith('worktree ')) {
       if (current) out.push(current);
       current = {
-        path: line.slice('worktree '.length),
+        path: native
+          ? normalizeNativeGitPath(line.slice('worktree '.length))
+          : line.slice('worktree '.length),
         branch: null,
         head: null,
         detached: false,
@@ -1346,6 +1350,14 @@ function parseWorktrees(output: string): GitWorktree[] {
   if (current) out.push(current);
   if (out.length > 0) out[0]!.isMain = true;
   return out;
+}
+
+function normalizeNativeGitPath(value: string): string {
+  if (process.platform !== 'win32') return value;
+  if (/^[a-zA-Z]:[\\/]/u.test(value) || /^[/\\]{2}[^/\\]/u.test(value)) {
+    return path.win32.normalize(value.replace(/\//g, '\\'));
+  }
+  return value;
 }
 
 function parseBranches(output: string): GitBranch[] {

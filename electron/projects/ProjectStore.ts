@@ -35,6 +35,7 @@ const VALID_RUN_MODES = new Set(['windows', 'linux', 'wsl']);
 export interface ProjectStoreOptions {
   gitBinary?: string;
   platform?: SupportedHostPlatform;
+  homeDir?: string;
   faviconCatalog?: ProjectFaviconCatalog;
   faviconCatalogOptions?: ProjectFaviconCatalogOptions;
 }
@@ -209,7 +210,8 @@ export class ProjectStore {
     const requested: ProjectSuggestOptions = options ?? {
       scope: this.options.platform === 'linux' ? 'linux' : 'windows'
     };
-    const parsed = parseProjectQuery(query, requested);
+    const nativeHome = this.options.homeDir ?? os.homedir();
+    const parsed = parseProjectQuery(query, requested, nativeHome);
     const scope = parsed.scope;
     const wslDistro = scope === 'wsl' ? parsed.wslDistro ?? 'Ubuntu' : undefined;
     const byPath = new Map<string, ProjectPathSuggestion>();
@@ -277,7 +279,7 @@ export class ProjectStore {
       }
     }
 
-    const home = scope === 'wsl' ? await resolveWslHome(wslDistro!) : os.homedir();
+    const home = scope === 'wsl' ? await resolveWslHome(wslDistro!) : nativeHome;
     const suggestions = [...byPath.values()]
       .slice(0, limit)
       .map((s) => ({ ...s, displayPath: toDisplayPath(s.path, home, scope) }));
@@ -520,7 +522,8 @@ const WSL_UNC_RE = /^\\\\wsl(?:\$|\.localhost)\\([^\\]+)\\?(.*)$/i;
 
 function parseProjectQuery(
   query: string,
-  options: ProjectSuggestOptions
+  options: ProjectSuggestOptions,
+  nativeHome: string
 ): ParsedProjectQuery {
   const trimmed = query.trim();
 
@@ -530,11 +533,11 @@ function parseProjectQuery(
   }
   if (trimmed.toLowerCase().startsWith('win:')) {
     const remainder = trimmed.slice(4).replace(/^[\s]+/, '');
-    return buildNativeParsed(remainder, remainder, 'windows');
+    return buildNativeParsed(remainder, remainder, 'windows', nativeHome);
   }
   if (trimmed.toLowerCase().startsWith('linux:')) {
     const remainder = trimmed.slice(6).replace(/^[\s]+/, '');
-    return buildNativeParsed(remainder, remainder, 'linux');
+    return buildNativeParsed(remainder, remainder, 'linux', nativeHome);
   }
   const uncMatch = trimmed.match(WSL_UNC_RE);
   if (uncMatch) {
@@ -546,25 +549,31 @@ function parseProjectQuery(
   if (options.scope === 'wsl') {
     return buildWslParsed(trimmed, options.wslDistro ?? 'Ubuntu', trimmed);
   }
-  return buildNativeParsed(trimmed, trimmed, options.scope === 'linux' ? 'linux' : 'windows');
+  return buildNativeParsed(
+    trimmed,
+    trimmed,
+    options.scope === 'linux' ? 'linux' : 'windows',
+    nativeHome
+  );
 }
 
 function buildNativeParsed(
   query: string,
   original: string,
-  scope: Exclude<ProjectSearchScope, 'wsl'>
+  scope: Exclude<ProjectSearchScope, 'wsl'>,
+  nativeHome: string
 ): ParsedProjectQuery {
   if (!query) {
     return {
       scope,
-      baseDir: os.homedir(),
+      baseDir: nativeHome,
       fragment: '',
       original,
       queryForKnown: original
     };
   }
-  const resolved = isNativeAbsolute(query, scope) ? query : joinNativeHome(query);
-  const expanded = expandNativeHome(resolved);
+  const resolved = isNativeAbsolute(query, scope) ? query : joinNativeHome(nativeHome, query);
+  const expanded = expandNativeHome(nativeHome, resolved);
   const endsWithSep = resolved.endsWith('/') || resolved.endsWith('\\');
   if (endsWithSep) {
     return {
@@ -587,7 +596,7 @@ function buildNativeParsed(
   }
   return {
     scope,
-    baseDir: os.homedir(),
+    baseDir: nativeHome,
     fragment: expanded,
     original,
     queryForKnown: original
@@ -650,14 +659,14 @@ function isWslAbsolute(query: string): boolean {
   return false;
 }
 
-function joinNativeHome(query: string): string {
-  return `${os.homedir()}${path.sep}${query}`;
+function joinNativeHome(home: string, query: string): string {
+  return `${home}${path.sep}${query}`;
 }
 
-function expandNativeHome(input: string): string {
-  if (input === '~') return os.homedir();
+function expandNativeHome(home: string, input: string): string {
+  if (input === '~') return home;
   if (input.startsWith(`~${path.sep}`) || input.startsWith('~/') || input.startsWith('~\\')) {
-    return path.join(os.homedir(), input.slice(2));
+    return path.join(home, input.slice(2));
   }
   return input;
 }
