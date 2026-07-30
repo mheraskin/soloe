@@ -284,6 +284,43 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
+  it('returns an actionable response when browser assets are missing', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-web-missing-'));
+    const runtimeEndpoint = path.join(directory, 'runtime.sock');
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      webRoot: path.join(directory, 'missing-web-root')
+    });
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const response = await fetch(new URL('/', baseUrl), {
+        headers: { cookie: 'soloe_token=test-token' }
+      });
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: {
+          code: 'browser_assets_missing',
+          message: 'The Soloe browser application is not available',
+          remediation: 'Start the Windows web client from the Soloe tray'
+        }
+      });
+    } finally {
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('routes authenticated browser RPC calls to the server domain', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-rpc-'));
     const runtimeEndpoint = path.join(directory, 'runtime.sock');

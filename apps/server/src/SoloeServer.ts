@@ -265,6 +265,10 @@ export class SoloeServer {
       await this.serveWebClient(url, response);
       return;
     }
+    if (request.method === "GET" && url.pathname === "/") {
+      this.browserUnavailable(response);
+      return;
+    }
 
     this.json(response, 404, { error: "not_found" });
   }
@@ -326,21 +330,43 @@ export class SoloeServer {
     try {
       body = await readFile(file);
     } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
-        path.extname(relativePath)
-      ) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      if (requestedPath === "/") {
+        this.browserUnavailable(response);
+        return;
+      }
+      if (path.extname(relativePath)) {
         this.json(response, 404, { error: "not_found" });
         return;
       }
       file = path.join(root, "index.html");
-      body = await readFile(file);
+      try {
+        body = await readFile(file);
+      } catch (fallbackError) {
+        if ((fallbackError as NodeJS.ErrnoException).code === "ENOENT") {
+          this.browserUnavailable(response);
+          return;
+        }
+        throw fallbackError;
+      }
     }
     response.writeHead(200, {
       "content-type": contentType(file),
       "cache-control": path.basename(file) === "index.html" ? "no-cache" : "public, max-age=31536000, immutable",
     });
     response.end(body);
+  }
+
+  private browserUnavailable(response: ServerResponse): void {
+    this.json(response, 503, {
+      error: {
+        code: "browser_assets_missing",
+        message: "The Soloe browser application is not available",
+        remediation: "Start the Windows web client from the Soloe tray",
+      },
+    });
   }
 }
 
