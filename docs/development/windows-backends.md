@@ -36,6 +36,13 @@ cargo --version
 wsl --list --verbose
 ```
 
+If `rustc` or `cargo` is not found after installing Rust, open a new Developer
+PowerShell or add Rustup to the current shell:
+
+```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+```
+
 Prepare the Windows checkout:
 
 ```powershell
