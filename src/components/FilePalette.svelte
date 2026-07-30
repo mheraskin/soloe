@@ -93,7 +93,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<Command.Dialog open={filePalette.open} {onOpenChange} shouldFilter={false} class="sm:max-w-2xl">
+<Command.Dialog open={filePalette.open} {onOpenChange} shouldFilter={false} class="mobile-command-dialog sm:max-w-2xl">
   <Command.Input bind:value={query} placeholder="Find file" />
   <div class="flex items-center gap-1.5 border-b border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground" title={rootPath}>
     <FolderOpen class="size-2.5" />
@@ -116,6 +116,7 @@
             <FileText />
             <span class="flex-1 truncate font-mono text-xs">{result.path}</span>
             <button
+              type="button"
               class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
               onclick={(e) => {
                 e.stopPropagation();

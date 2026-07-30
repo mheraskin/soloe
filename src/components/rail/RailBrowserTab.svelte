@@ -1372,8 +1372,8 @@
   }
 </script>
 
-<div class="flex h-full min-w-0 flex-col bg-background">
-  <div class="flex items-center gap-0.5 overflow-x-auto border-b border-border bg-sidebar px-1 py-1">
+<div class="mobile-browser-surface flex h-full min-w-0 flex-col bg-background">
+  <div class="mobile-browser-tabs flex items-center gap-0.5 overflow-x-auto border-b border-border bg-sidebar px-1 py-1">
     {#each browserStore.tabs as tab (tab.id)}
       {@const isActive = tab.id === activeId}
       {@const isPausedTab = tab.pausedAt !== undefined}
@@ -1458,7 +1458,7 @@
   </div>
 
   <form
-    class="relative flex min-w-0 items-center gap-1 border-b border-border bg-sidebar px-1 py-1"
+    class="mobile-browser-toolbar relative flex min-w-0 items-center gap-1 border-b border-border bg-sidebar px-1 py-1"
     onsubmit={submitUrl}
   >
     <Button
@@ -1765,6 +1765,7 @@
           class={fillAnchor
             ? 'fixed z-30 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'
             : 'absolute top-2 right-2 z-20 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'}
+          class:mobile-browser-prompt={true}
           style={fillAnchor ? `left: ${fillAnchor.left}px; top: ${fillAnchor.top}px;` : undefined}
           role="dialog"
           aria-label="Autofill suggestion"
@@ -1801,7 +1802,7 @@
 
       {#if savePrompt}
         <div
-          class="absolute top-2 right-2 z-20 flex w-72 flex-col gap-2 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg"
+          class="mobile-browser-prompt absolute top-2 right-2 z-20 flex w-72 flex-col gap-2 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg"
           role="dialog"
           aria-label="Save password"
         >

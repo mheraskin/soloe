@@ -257,7 +257,7 @@
 
       <Popover.Content
         align="start"
-        class="flex h-[min(34rem,calc(100vh-4rem))] w-[min(46rem,calc(100vw-2rem))] min-h-0 flex-col overflow-hidden p-0"
+        class="mobile-branch-popover flex h-[min(34rem,calc(100vh-4rem))] w-[min(46rem,calc(100vw-2rem))] min-h-0 flex-col overflow-hidden p-0"
       >
         <div class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
           <GitBranch class="size-4 text-muted-foreground" />
@@ -271,7 +271,7 @@
         </div>
 
         <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-border p-2">
-          <div class="relative min-w-[12rem] flex-1">
+          <div class="mobile-branch-search relative min-w-[12rem] flex-1">
             <Search class="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
             <Input
               bind:value={query}
@@ -377,7 +377,7 @@
                   </button>
 
                   {#if row.commit.refs.length > 0}
-                    <div class="flex max-w-[46%] flex-wrap items-center justify-end gap-1 py-1.5 pr-2">
+                    <div class="mobile-branch-refs flex max-w-[46%] flex-wrap items-center justify-end gap-1 py-1.5 pr-2">
                       {#each row.commit.refs as ref (`${ref.kind}:${ref.name}`)}
                         {@const RefIcon = refIcon(ref)}
                         <button

@@ -340,8 +340,8 @@
   });
 </script>
 
-<div bind:this={rootEl} class="flex min-h-0 min-w-0 flex-1 flex-col">
-  <header class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+<div bind:this={rootEl} class="mobile-files-surface flex min-h-0 min-w-0 flex-1 flex-col">
+  <header class="mobile-rail-header flex items-center justify-between gap-2 border-b border-border px-3 py-2">
     <div class="flex min-w-0 flex-col">
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Files</span>
       <span class="truncate text-xs text-foreground" title={activeCwd ?? ''}>

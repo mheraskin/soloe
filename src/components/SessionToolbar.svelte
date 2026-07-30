@@ -58,12 +58,12 @@
   }
 </script>
 
-<div class="flex items-center justify-between gap-3 border-b border-border bg-card px-3 py-2 min-h-[48px]">
+<div class="session-toolbar flex items-center justify-between gap-3 border-b border-border bg-card px-3 py-2 min-h-[48px]">
   {#if selected}
     <div class="flex min-w-0 items-center gap-2.5">
       <StatusDot {status} />
       <KindIcon kind={displayKind} size={16} />
-      <div class="flex min-w-0 flex-col leading-tight">
+      <div class="session-toolbar-title flex min-w-0 flex-col leading-tight">
         <span class="truncate text-sm font-medium text-foreground">{selected.name}</span>
         <Tooltip.Provider delayDuration={250}>
           <Tooltip.Root>
@@ -83,15 +83,17 @@
           </Tooltip.Root>
         </Tooltip.Provider>
       </div>
-      <GitBranchWidget
-        cwd={selected.cwd}
-        runMode={selected.runMode}
-        wslDistro={selected.wslDistro}
-      />
+      <div class="session-toolbar-branch">
+        <GitBranchWidget
+          cwd={selected.cwd}
+          runMode={selected.runMode}
+          wslDistro={selected.wslDistro}
+        />
+      </div>
     </div>
 
     <Tooltip.Provider delayDuration={250}>
-      <div class="flex items-center gap-1">
+      <div class="session-toolbar-actions flex items-center gap-1">
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}

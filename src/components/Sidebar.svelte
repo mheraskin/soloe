@@ -233,7 +233,7 @@
 
 <aside
   bind:this={asideEl}
-  class="relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
+  class="app-sidebar relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
   class:select-none={resizing}
   style={`width: ${width}px`}
   ondragover={onAsideDragOver}
@@ -318,7 +318,7 @@
   </ScrollArea>
   <button
     type="button"
-    class={`absolute top-0 right-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
+    class={`sidebar-resize-handle absolute top-0 right-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing ? 'bg-ring/20' : 'bg-transparent'}`}
     aria-label="Resize sidebar"
     onpointerdown={startResize}
   >

@@ -170,7 +170,7 @@
     onpointerenter={clearCloseTimer}
     onpointerleave={scheduleClose}
   >
-    <div class="grid grid-cols-3 gap-1">
+    <div class="mobile-session-picker grid grid-cols-3 gap-1">
       <Button
         variant="ghost"
         class="h-14 flex-col gap-1 px-1 text-xs"

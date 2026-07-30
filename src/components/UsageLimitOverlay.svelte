@@ -96,7 +96,7 @@
 
 <button
   type="button"
-  class="absolute inset-0 z-20 flex cursor-default items-center justify-center bg-background/35 p-6 text-left backdrop-blur-[1px]"
+  class="mobile-usage-overlay absolute inset-0 z-20 flex cursor-default items-center justify-center bg-background/35 p-6 text-left backdrop-blur-[1px]"
   onclick={onClose}
   aria-label="Dismiss handoff overlay"
 >
@@ -129,7 +129,7 @@
       </span>
     </div>
 
-    <div class="grid grid-cols-2 gap-2">
+    <div class="mobile-provider-grid grid grid-cols-2 gap-2">
       <div class="flex h-20 flex-col items-center justify-center gap-1.5 rounded-md border border-warning/45 bg-warning/10 px-3 text-xs text-warning">
         <KindIcon kind={currentKind} size={24} />
         <span class="max-w-full truncate font-medium">{currentLabel}</span>

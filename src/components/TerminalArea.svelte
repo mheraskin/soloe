@@ -105,8 +105,11 @@
   function onSplitResize(event: PointerEvent): void {
     if (!containerEl) return;
     const rect = containerEl.getBoundingClientRect();
-    if (rect.width < 1) return;
-    sessions.setSplitRatio((event.clientX - rect.left) / rect.width);
+    const compact = window.matchMedia('(max-width: 767px)').matches;
+    const available = compact ? rect.height : rect.width;
+    if (available < 1) return;
+    const offset = compact ? event.clientY - rect.top : event.clientX - rect.left;
+    sessions.setSplitRatio(offset / available);
   }
 
   function stopSplitResize(): void {
@@ -115,7 +118,7 @@
   }
 </script>
 
-<section class="flex min-w-[220px] flex-1 flex-col bg-background">
+<section class="terminal-area flex min-w-[220px] flex-1 flex-col bg-background">
   <SessionToolbar />
   <div class="relative min-h-0 flex-1 overflow-hidden" bind:this={containerEl}>
     {#each residentPanes as pane (pane.terminalId)}
@@ -140,18 +143,21 @@
         recovers, leaving fit() a permanent no-op for panes that mount hidden).
       -->
       <div
-        class={`group absolute inset-y-0 ${
+        class={`terminal-surface group absolute inset-y-0 ${
           visible ? 'z-10' : 'z-0 pointer-events-none'
         } ${role === 'left' || role === 'right' ? '' : 'inset-x-0'} ${
           split && focused ? 'rounded-sm ring-1 ring-ring/70 ring-inset' : ''
         }`}
-        style={role === 'hidden'
+        data-terminal-pane-role={role}
+        style={`--terminal-split-ratio:${(ratio * 100).toFixed(3)}%;${
+          role === 'hidden'
           ? 'transform:translateX(-200vw)'
           : role === 'left'
             ? `left:0;width:calc(${(ratio * 100).toFixed(3)}% - 2px)`
             : role === 'right'
               ? `right:0;width:calc(${((1 - ratio) * 100).toFixed(3)}% - 2px)`
-              : ''}
+              : ''
+        }`}
         onfocusin={() => {
           if (split && pane.sessionId !== split.focusedId) sessions.select(pane.sessionId);
         }}
@@ -198,7 +204,7 @@
       <button
         type="button"
         aria-label="Resize split panes"
-        class={`absolute inset-y-0 z-20 w-1 -translate-x-1/2 cursor-col-resize border-0 bg-transparent p-0 outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizingSplit ? 'bg-ring/30' : ''}`}
+        class={`terminal-splitter absolute inset-y-0 z-20 w-1 -translate-x-1/2 cursor-col-resize border-0 bg-transparent p-0 outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizingSplit ? 'bg-ring/30' : ''}`}
         style={`left:${(split.ratio * 100).toFixed(3)}%`}
         onpointerdown={startSplitResize}
       ></button>

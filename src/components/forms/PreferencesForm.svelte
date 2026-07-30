@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { Tabs } from 'bits-ui';
   import {
     Box,
@@ -106,8 +107,19 @@
   ];
 
   let activeTab = $state<string>('backend');
+  let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   let lastAppliedTabNonce = -1;
   let draftPreset: QuickLaunchPreset | null = $state(null);
+
+  onMount(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const update = () => {
+      compactViewport = media.matches;
+    };
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  });
 
   // React to settings.openDialog('integration') and similar by jumping to
   // the requested tab. The nonce changes on every call so reopening with
@@ -121,14 +133,14 @@
   });
 
   const triggerClass = cn(
-    'group/tab flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium',
+    'settings-tab-trigger group/tab flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium',
     'text-muted-foreground transition-colors outline-none',
     'hover:bg-muted hover:text-foreground',
     'focus-visible:ring-2 focus-visible:ring-ring/50',
     'data-[state=active]:bg-muted data-[state=active]:text-foreground'
   );
 
-  const contentClass = 'flex flex-col gap-4 px-5 py-4 outline-none';
+  const contentClass = 'settings-tab-content flex flex-col gap-4 px-5 py-4 outline-none';
 
   function modelKey(value: ModelSelection | undefined): string {
     return value ? `${value.provider}:${value.id}` : '';
@@ -327,13 +339,13 @@
 </script>
 
 <Tabs.Root
-  orientation="vertical"
+  orientation={compactViewport ? 'horizontal' : 'vertical'}
   value={activeTab}
   onValueChange={(v) => (activeTab = v)}
-  class="flex min-h-0 flex-1 overflow-hidden"
+  class="settings-layout flex min-h-0 flex-1 overflow-hidden"
 >
   <Tabs.List
-    class="flex w-44 shrink-0 flex-col items-stretch gap-0.5 border-r border-border bg-muted/30 p-2"
+    class="settings-nav flex w-44 shrink-0 flex-col items-stretch gap-0.5 border-r border-border bg-muted/30 p-2"
   >
     {#each tabs as tab, i (tab.kind === 'tab' ? tab.value : `divider-${i}`)}
       {#if tab.kind === 'tab'}
@@ -343,7 +355,7 @@
         </Tabs.Trigger>
       {:else}
         <div
-          class="mt-2 mb-1 px-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70"
+          class="settings-divider mt-2 mb-1 px-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70"
         >
           {tab.label}
         </div>
@@ -351,7 +363,7 @@
     {/each}
   </Tabs.List>
 
-  <ScrollArea class="min-h-0 flex-1">
+  <ScrollArea class="settings-content min-h-0 flex-1">
     <Tabs.Content value="backend" class={contentClass}>
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground">Backend placement</Label>

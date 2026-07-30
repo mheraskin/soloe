@@ -100,7 +100,7 @@
 {#if anchor}
   <button
     type="button"
-    class="fixed z-50 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 font-sans text-[11px] text-popover-foreground shadow-md hover:bg-accent hover:text-accent-foreground"
+    class="mobile-selection-menu fixed z-50 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 font-sans text-[11px] text-popover-foreground shadow-md hover:bg-accent hover:text-accent-foreground"
     style:top="{anchor.top}px"
     style:left="{anchor.left}px"
     onpointerdown={preserveSelection}

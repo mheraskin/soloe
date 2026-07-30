@@ -64,7 +64,7 @@
       <Dialog.Title>New session</Dialog.Title>
       <Dialog.Description class="sr-only">Pick a session kind.</Dialog.Description>
     </Dialog.Header>
-    <div class="grid grid-cols-3 gap-2">
+    <div class="mobile-session-picker grid grid-cols-3 gap-2">
       <Button
         bind:ref={claudeButton}
         variant="ghost"

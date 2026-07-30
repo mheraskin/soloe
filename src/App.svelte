@@ -63,6 +63,7 @@
   } from './lib/session-display-state';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
+  import { attachMobileViewport } from './lib/mobile-viewport';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -91,6 +92,7 @@
   let suppressCollapsedDropdownSelect = false;
 
   onMount(() => {
+    const detachMobileViewport = attachMobileViewport();
     sessions.attachListeners();
     settings.attachListeners();
     projects.attachListeners();
@@ -110,6 +112,7 @@
     window.addEventListener('keydown', onClearPaneRing, true);
     window.addEventListener('beforeunload', flushRendererPersistence);
     return () => {
+      detachMobileViewport();
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('keydown', onClearPaneRing, true);
       window.removeEventListener('beforeunload', flushRendererPersistence);
@@ -1026,10 +1029,10 @@
 
 <ModeWatcher defaultMode="dark" />
 
-<div class="flex h-full flex-col overflow-hidden">
+<div class="app-shell flex flex-col overflow-hidden">
   <header
     use:closeMenusFromTitleBar
-    class="flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
+    class="app-titlebar flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
     style="-webkit-app-region: drag"
   >
     <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
@@ -1048,7 +1051,7 @@
       </div>
       {#if collapsedNav}
         <div
-          class="ml-1 flex min-w-0 shrink items-center gap-0.5"
+          class="collapsed-nav ml-1 flex min-w-0 shrink items-center gap-0.5"
           style="-webkit-app-region: no-drag"
         >
           <DropdownMenu.Root>
@@ -1276,10 +1279,10 @@
       {/if}
     {/if}
     <div class="flex-1 self-stretch" aria-hidden="true"></div>
-    <div class="flex shrink-0 self-stretch" style="-webkit-app-region: no-drag">
+    <div class="titlebar-actions flex shrink-0 self-stretch" style="-webkit-app-region: no-drag">
       <Button
         variant="ghost"
-        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+        class="mobile-settings-action h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
         onclick={() => settings.openDialog()}
         aria-label="Settings"
         title="Settings (Ctrl+,)"
@@ -1288,7 +1291,7 @@
       </Button>
       <Button
         variant="ghost"
-        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+        class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
         onclick={() => ipc.window.minimize()}
         aria-label="Minimize"
         title="Minimize"
@@ -1297,7 +1300,7 @@
       </Button>
       <Button
         variant="ghost"
-        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+        class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
         onclick={() => ipc.window.toggleMaximize()}
         aria-label="Maximize"
         title="Maximize"
@@ -1306,7 +1309,7 @@
       </Button>
       <Button
         variant="ghost"
-        class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+        class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
         onclick={() => ipc.window.close()}
         aria-label="Close"
         title="Close"
@@ -1315,8 +1318,14 @@
       </Button>
     </div>
   </header>
-  <div class="relative flex min-h-0 flex-1">
+  <div class="app-main relative flex min-h-0 flex-1">
     {#if !sidebar.hidden}
+      <button
+        type="button"
+        class="mobile-sidebar-backdrop"
+        onclick={() => sidebar.hide()}
+        aria-label="Close navigation"
+      ></button>
       <Sidebar />
     {/if}
     <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
