@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { FileTree, type GitStatusEntry } from '@pierre/trees';
+  import {
+    FileTree,
+    preparePresortedFileTreeInput,
+    type GitStatusEntry
+  } from '@pierre/trees';
 
   interface Props {
     paths: readonly string[];
@@ -22,7 +26,7 @@
     mountedPaths = paths;
     mountedGitStatus = gitStatus;
     tree = new FileTree({
-      paths: paths.slice(),
+      preparedInput: preparePresortedFileTreeInput(paths),
       flattenEmptyDirectories: true,
       initialExpansion: 'closed',
       search: true,
@@ -52,7 +56,7 @@
     if (!tree) return;
     if (paths === mountedPaths) return;
     mountedPaths = paths;
-    tree.resetPaths(paths.slice());
+    tree.resetPaths({ preparedInput: preparePresortedFileTreeInput(paths) });
   });
 
   // Push live git status updates onto the tree. Pierre fingerprints the entry
