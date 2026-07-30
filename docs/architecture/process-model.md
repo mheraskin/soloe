@@ -63,11 +63,12 @@ terminals after reconnect.
 ## Tray semantics
 
 The Tauri tray is windowless and therefore remains small while Electron is
-opened only on demand. Its menu has one dynamic backend action: `Start` or
-`Stop`. During a transition the same disabled action reads `Starting…` or
-`Stopping…`. Backend Placement remains visible and configurable in Settings.
-The menu also opens the authenticated browser URL, opens Electron, exposes
-logs, and quits Soloe; there is no redundant backend-status row.
+opened only on demand. Its menu has one dynamic backend action:
+`Start (WSL/Windows)` or `Stop (WSL/Windows)`. During a transition the same
+disabled action reads `Starting (WSL/Windows)…` or `Stopping (WSL/Windows)…`.
+Backend Placement remains visible and configurable in Settings. The menu also
+opens the authenticated browser URL, opens Electron, exposes logs, and quits
+Soloe; there is no redundant backend-status row.
 
 Every tray launch creates a unique owner identity. Service records include that
 identity, and the tray refuses to kill a process based only on a stale PID.

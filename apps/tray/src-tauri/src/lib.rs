@@ -15,8 +15,12 @@ pub fn run() {
             let (discovered, instance_guard) =
                 BackendSupervisor::discover().map_err(std::io::Error::other)?;
             let supervisor = Arc::new(Mutex::new(discovered));
+            let initial_action = supervisor
+                .lock()
+                .map(|service| service.backend_transition_label())
+                .unwrap_or_else(|_| "Starting…".to_string());
             let backend_action =
-                MenuItem::with_id(app, "toggle_backend", "Starting…", false, None::<&str>)?;
+                MenuItem::with_id(app, "toggle_backend", initial_action, false, None::<&str>)?;
             let open_browser =
                 MenuItem::with_id(app, "open_browser", "Open in browser", false, None::<&str>)?;
             let open_electron = MenuItem::with_id(
@@ -63,14 +67,8 @@ pub fn run() {
                         if id == "toggle_backend" {
                             let transition = supervisor
                                 .lock()
-                                .map(|service| {
-                                    if service.backend_action_label() == "Stop" {
-                                        "Stopping…"
-                                    } else {
-                                        "Starting…"
-                                    }
-                                })
-                                .unwrap_or("Starting…");
+                                .map(|service| service.backend_transition_label())
+                                .unwrap_or_else(|_| "Starting…".to_string());
                             let _ = backend_action.set_text(transition);
                             let _ = backend_action.set_enabled(false);
                         }

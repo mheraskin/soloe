@@ -100,8 +100,8 @@ pnpm configure:backend -- --placement windows
 ```
 
 The setting is stored at `%LOCALAPPDATA%\Soloe\settings.json`. A placement
-change applies after choosing **Stop**, then using the same action when it
-changes to **Start**.
+change applies after choosing **Stop (WSL/Windows)**, then using the same action
+when it changes to **Start (WSL/Windows)**.
 
 ## Everyday startup
 
@@ -127,7 +127,7 @@ proxies authenticated `/api` HTTP/WebSocket traffic to the selected backend.
 
 Right-click the Soloe tray icon and choose:
 
-- the single **Start** or **Stop** action;
+- the single **Start (WSL/Windows)** or **Stop (WSL/Windows)** action;
 - **Open in browser** for the Windows PWA;
 - **Open Electron client** for the disposable Windows desktop client;
 - **Open Soloe logs** for diagnostics.
@@ -150,16 +150,17 @@ last observed output sequence.
 ## Stop versus Quit Soloe
 
 The tray has one dynamic lifecycle action, not separate start, stop, and status
-rows. **Stop** keeps the tray running but stops:
+rows. **Stop (WSL/Windows)** keeps the tray running but stops:
 
 1. the Windows Web Host;
 2. the Application Server;
 3. the Environment Runtime;
 4. all runtime-owned PTYs and agents.
 
-After shutdown, that same item becomes **Start** and starts the placement
-currently selected in Settings. While transitioning it remains disabled and
-displays **Starting…** or **Stopping…**.
+After shutdown, that same item becomes **Start (WSL/Windows)** and starts the
+placement currently selected in Settings. While transitioning it remains
+disabled and displays **Starting (WSL/Windows)…** or
+**Stopping (WSL/Windows)…**.
 
 **Quit Soloe** is a complete shutdown. It stops tray-launched Electron
 processes, the Web Host, the Application Server, and the Environment Runtime
@@ -190,13 +191,14 @@ git diff --check
 Smoke-test both placements:
 
 1. run `pnpm dev`;
-2. confirm the single tray action changes between **Start** and **Stop**;
+2. confirm the single tray action changes between **Start (WSL/Windows)** and
+   **Stop (WSL/Windows)**;
 3. open the browser and confirm initial loading has no unsupported startup RPC;
 4. create a project/session and start a terminal;
 5. close and reopen browser and Electron; confirm output replay;
 6. rebuild either client; confirm the terminal remains;
 7. restart only the Application Server; confirm the terminal remains;
-8. choose **Stop**; confirm the terminal stops;
+8. choose **Stop (WSL/Windows)**; confirm the terminal stops;
 9. restart, then choose **Quit Soloe**; confirm every managed process stops;
 10. restart, kill the tray process, and confirm no managed Windows/WSL process
     remains after the ownership timeout.

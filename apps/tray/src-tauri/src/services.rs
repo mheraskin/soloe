@@ -179,11 +179,35 @@ impl BackendSupervisor {
 
     pub fn backend_action_label(&self) -> String {
         let backend = self.backend_for_existing_services();
+        let host = match backend.placement {
+            BackendPlacement::Windows => "Windows",
+            BackendPlacement::Wsl => "WSL",
+        };
         match self.reconciled_lifecycle(&backend) {
-            LifecycleState::Starting => "Starting…".to_string(),
-            LifecycleState::Stopping => "Stopping…".to_string(),
-            LifecycleState::Running | LifecycleState::Degraded(_) => "Stop".to_string(),
-            LifecycleState::Stopped | LifecycleState::Failed(_) => "Start".to_string(),
+            LifecycleState::Starting => format!("Starting ({host})…"),
+            LifecycleState::Stopping => format!("Stopping ({host})…"),
+            LifecycleState::Running | LifecycleState::Degraded(_) => {
+                format!("Stop ({host})")
+            }
+            LifecycleState::Stopped | LifecycleState::Failed(_) => {
+                format!("Start ({host})")
+            }
+        }
+    }
+
+    pub fn backend_transition_label(&self) -> String {
+        let backend = self.backend_for_existing_services();
+        let host = match backend.placement {
+            BackendPlacement::Windows => "Windows",
+            BackendPlacement::Wsl => "WSL",
+        };
+        match self.reconciled_lifecycle(&backend) {
+            LifecycleState::Running | LifecycleState::Degraded(_) | LifecycleState::Stopping => {
+                format!("Stopping ({host})…")
+            }
+            LifecycleState::Starting | LifecycleState::Stopped | LifecycleState::Failed(_) => {
+                format!("Starting ({host})…")
+            }
         }
     }
 
@@ -1347,6 +1371,8 @@ mod tests {
                 wsl_repository_root: "/home/me/soloe".to_string(),
             }
         );
+        assert_eq!(supervisor.backend_action_label(), "Start (WSL)");
+        assert_eq!(supervisor.backend_transition_label(), "Starting (WSL)…");
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -1477,10 +1503,11 @@ mod tests {
         let _ = fs::create_dir_all(&directory);
         let processes = Arc::new(FakeProcessOperations::with_running([2001, 2002, 2003]));
         let supervisor = test_supervisor(directory.clone(), processes.clone());
-        assert_eq!(supervisor.backend_action_label(), "Start");
+        assert_eq!(supervisor.backend_action_label(), "Start (Windows)");
+        assert_eq!(supervisor.backend_transition_label(), "Starting (Windows)…");
         assert!(supervisor.backend_action_enabled());
         supervisor.set_lifecycle(LifecycleState::Starting);
-        assert_eq!(supervisor.backend_action_label(), "Starting…");
+        assert_eq!(supervisor.backend_action_label(), "Starting (Windows)…");
         assert!(!supervisor.backend_action_enabled());
         supervisor.set_lifecycle(LifecycleState::Stopped);
         fs::write(
@@ -1488,7 +1515,8 @@ mod tests {
             r#"{"service":"runtime","pid":2001,"ownerId":"test-owner"}"#,
         )
         .unwrap();
-        assert_eq!(supervisor.backend_action_label(), "Stop");
+        assert_eq!(supervisor.backend_action_label(), "Stop (Windows)");
+        assert_eq!(supervisor.backend_transition_label(), "Stopping (Windows)…");
         assert!(supervisor.backend_action_enabled());
 
         fs::write(
@@ -1496,16 +1524,16 @@ mod tests {
             r#"{"service":"server","pid":2002,"ownerId":"test-owner"}"#,
         )
         .unwrap();
-        assert_eq!(supervisor.backend_action_label(), "Stop");
+        assert_eq!(supervisor.backend_action_label(), "Stop (Windows)");
 
         fs::write(
             directory.join("web.json"),
             r#"{"service":"web","pid":2003,"ownerId":"test-owner"}"#,
         )
         .unwrap();
-        assert_eq!(supervisor.backend_action_label(), "Stop");
+        assert_eq!(supervisor.backend_action_label(), "Stop (Windows)");
         supervisor.set_lifecycle(LifecycleState::Stopping);
-        assert_eq!(supervisor.backend_action_label(), "Stopping…");
+        assert_eq!(supervisor.backend_action_label(), "Stopping (Windows)…");
         assert!(!supervisor.backend_action_enabled());
         let _ = fs::remove_dir_all(directory);
     }
