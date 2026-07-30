@@ -31,4 +31,21 @@ describe("Soloe API transport contract", () => {
       method.startsWith("window.") || method.startsWith("browser.")
     )).toBe(true);
   });
+
+  it("keeps Files data and terminal paste operations on the application server", () => {
+    for (const method of [
+      "files.search",
+      "files.pasteIntoTerminal",
+      "files.pasteImagesIntoTerminal",
+      "files.listTree",
+      "files.readFile",
+      "files.writeFile",
+    ]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+    expect(supportsRpc("browser", "files", "openInEditor")).toBe(false);
+  });
 });

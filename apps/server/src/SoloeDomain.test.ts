@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -203,6 +203,125 @@ describe("SoloeDomain", () => {
           expect.objectContaining({ event: "observer.event" }),
         ]),
       );
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("owns file tree, search, read, write, and terminal paste operations", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-files-"));
+    const worktree = path.join(directory, "worktree");
+    const outside = path.join(directory, "outside");
+    await mkdir(path.join(worktree, "src"), { recursive: true });
+    await mkdir(outside);
+    await writeFile(path.join(worktree, "src", "app.ts"), "export const app = true;\n");
+    await writeFile(path.join(outside, "secret.txt"), "outside\n");
+    await symlink(outside, path.join(worktree, "escape"));
+
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => [
+        {
+          terminalId: "files-terminal",
+          sessionId: "files-session",
+          pid: 7002,
+          status: "running" as const,
+          startedAt: "2026-07-31T00:00:00.000Z",
+          spec: { file: "shell", args: [], cwd: worktree, env: {} },
+          cols: 100,
+          rows: 30,
+        },
+      ]),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+
+    try {
+      await domain.init();
+      await domain.invoke({
+        namespace: "projects",
+        method: "create",
+        args: [{ name: "Files project", path: worktree }],
+      });
+
+      const scope = { cwd: worktree, runMode: hostPlatform() };
+      await expect(
+        domain.invoke({ namespace: "files", method: "listTree", args: [scope] }),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          cwd: worktree,
+          paths: expect.arrayContaining(["src/app.ts"]),
+          truncated: false,
+        }),
+      );
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "search",
+          args: [{ ...scope, query: "app", limit: 20 }],
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({ rootPath: worktree, path: "src/app.ts" }),
+      ]);
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "readFile",
+          args: [{ ...scope, relativePath: "src/app.ts" }],
+        }),
+      ).resolves.toEqual({
+        relativePath: "src/app.ts",
+        content: "export const app = true;\n",
+        binary: false,
+        truncated: false,
+        oversized: false,
+        unavailable: false,
+        size: 25,
+      });
+
+      await domain.invoke({
+        namespace: "files",
+        method: "writeFile",
+        args: [{ ...scope, relativePath: "src/app.ts", content: "saved\n" }],
+      });
+      expect(await readFile(path.join(worktree, "src", "app.ts"), "utf8")).toBe(
+        "saved\n",
+      );
+
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "readFile",
+          args: [{ ...scope, relativePath: "../outside/secret.txt" }],
+        }),
+      ).rejects.toMatchObject({ code: "path_traversal" });
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "readFile",
+          args: [{ ...scope, relativePath: "escape/secret.txt" }],
+        }),
+      ).rejects.toMatchObject({ code: "path_symlink_escape" });
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "readFile",
+          args: [{ ...scope, cwd: outside, relativePath: "secret.txt" }],
+        }),
+      ).rejects.toMatchObject({ code: "worktree_not_authorized" });
+
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "pasteIntoTerminal",
+          args: [{ terminalId: "files-terminal", path: "src/app.ts" }],
+        }),
+      ).resolves.toBe(true);
+      expect(runtime.write).toHaveBeenCalledWith("files-terminal", "src/app.ts");
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

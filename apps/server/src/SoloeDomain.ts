@@ -24,7 +24,21 @@ import type {
   ProjectSuggestOptions,
   ProjectUpdate,
 } from "../../../shared/types/projects.js";
+import type {
+  FilePasteRequest,
+  FileReadRequest,
+  FileSearchRequest,
+  FileTreeRequest,
+  FileWriteRequest,
+  ImagePasteRequest,
+} from "../../../shared/types/files.js";
+import type { WorktreeScope } from "../../../shared/worktree-identity.js";
 import { hostPlatform, platformInfo } from "../../../shared/platform.js";
+import {
+  FileService,
+  WorktreeFileIndex,
+  type FileIndexScope,
+} from "@soloe/domain";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
 import { SessionCommandBuilder } from "../../../electron/sessions/SessionCommandBuilder.js";
 import { ShellDetector } from "../../../electron/terminal/ShellDetector.js";
@@ -67,6 +81,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly sessions: SessionStore;
   private readonly settings: SettingsStore;
   private readonly projects: ProjectStore;
+  private readonly files: FileService;
   private readonly observerStore: AgentObserverStore;
   private observer!: AgentObserverManager;
   private workerRuntime!: AgentRuntimeManager;
@@ -88,6 +103,15 @@ export class SoloeDomain extends EventEmitter {
     );
     this.projects = new ProjectStore(path.join(options.dataDirectory, "projects.json"), {
       platform: hostPlatform(),
+    });
+    this.files = new FileService({
+      fileIndex: new WorktreeFileIndex({
+        getBinaries: async () => (await this.settings.get()).binaries,
+        useWslHostBridge: process.platform === "win32",
+      }),
+      runtime: options.runtime,
+      getSession: (sessionId) => this.sessions.get(sessionId),
+      authorizeScope: (scope) => this.isAuthorizedWorktree(scope),
     });
     this.observerStore = new AgentObserverStore(
       path.join(options.dataDirectory, "observer.json"),
@@ -125,6 +149,7 @@ export class SoloeDomain extends EventEmitter {
   }
 
   async dispose(): Promise<void> {
+    this.files.dispose();
     await this.workerRuntime.dispose();
     await this.observerStore.dispose();
   }
@@ -138,6 +163,9 @@ export class SoloeDomain extends EventEmitter {
     }
     if (call.namespace === "projects") {
       return this.projectsCall(call.method, call.args);
+    }
+    if (call.namespace === "files") {
+      return this.filesCall(call.method, call.args);
     }
     if (call.namespace === "observer") {
       return this.observerCall(call.method, call.args);
@@ -160,6 +188,40 @@ export class SoloeDomain extends EventEmitter {
     throw new RpcError(
       "rpc_not_supported",
       `RPC ${call.namespace}.${call.method} is not supported by the application server`,
+    );
+  }
+
+  private async filesCall(method: string, args: unknown[]): Promise<unknown> {
+    switch (method) {
+      case "search":
+        return this.files.search(args[0] as FileSearchRequest);
+      case "pasteIntoTerminal":
+        return this.files.pasteIntoTerminal(args[0] as FilePasteRequest);
+      case "pasteImagesIntoTerminal":
+        return this.files.pasteImagesIntoTerminal(args[0] as ImagePasteRequest);
+      case "listTree":
+        return this.files.listTree(args[0] as FileTreeRequest);
+      case "readFile":
+        return this.files.readFile(args[0] as FileReadRequest);
+      case "writeFile":
+        return this.files.writeFile(args[0] as FileWriteRequest);
+      default:
+        throw unsupportedRpc("files", method);
+    }
+  }
+
+  private async isAuthorizedWorktree(scope: FileIndexScope): Promise<boolean> {
+    const [projects, sessions] = await Promise.all([
+      this.projects.list(),
+      this.sessions.list(),
+    ]);
+    if (projects.some((project) => sameLogicalPath(project.path, scope.cwd))) {
+      return true;
+    }
+    return sessions.some(
+      (session) =>
+        sameLogicalPath(session.cwd, scope.cwd) &&
+        sameWorktreePlacement(session, scope),
     );
   }
 
@@ -412,6 +474,29 @@ function unsupportedRpc(namespace: string, method: string): RpcError {
     "rpc_not_supported",
     `RPC ${namespace}.${method} is not supported by the application server`,
   );
+}
+
+function sameLogicalPath(left: string, right: string): boolean {
+  const windowsPath =
+    /^[a-zA-Z]:[\\/]/u.test(left) ||
+    /^[a-zA-Z]:[\\/]/u.test(right) ||
+    left.startsWith("\\\\") ||
+    right.startsWith("\\\\");
+  const pathApi = windowsPath ? path.win32 : path.posix;
+  const normalizedLeft = pathApi.normalize(left).replace(/[\\/]+$/u, "");
+  const normalizedRight = pathApi.normalize(right).replace(/[\\/]+$/u, "");
+  return windowsPath
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function sameWorktreePlacement(
+  session: Pick<Session, "runMode" | "wslDistro">,
+  scope: WorktreeScope,
+): boolean {
+  if (session.runMode !== scope.runMode) return false;
+  if (session.runMode !== "wsl") return true;
+  return session.wslDistro?.trim() === scope.wslDistro?.trim();
 }
 
 function mergeEnvironment(
