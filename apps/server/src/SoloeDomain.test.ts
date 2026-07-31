@@ -1076,6 +1076,32 @@ describe("SoloeDomain", () => {
           expect.objectContaining({ event: "observer.event" }),
         ]),
       );
+      for (const call of [
+        {
+          namespace: "observer",
+          method: "listEvents",
+          args: [{ limit: 1_001 }],
+        },
+        {
+          namespace: "observer",
+          method: "listEvents",
+          args: [{ subjectId: worker.workerId, unexpected: true }],
+        },
+        {
+          namespace: "observer",
+          method: "createWorkerSession",
+          args: [{ originSessionId: session.id, provider: "unknown" }],
+        },
+        {
+          namespace: "observer",
+          method: "sendWorkerPrompt",
+          args: [{ workerId: worker.workerId, prompt: "x".repeat(131_073) }],
+        },
+      ]) {
+        await expect(domain.invoke(call)).rejects.toMatchObject({
+          code: "invalid_observer_request",
+        });
+      }
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

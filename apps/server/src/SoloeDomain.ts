@@ -1417,23 +1417,35 @@ export class SoloeDomain extends EventEmitter {
   private async observerCall(method: string, args: unknown[]): Promise<unknown> {
     switch (method) {
       case "list":
+        requireArgumentCount("observer.list", args, 0);
         return this.observer.listSnapshots();
       case "listEvents": {
-        const request = args[0] as ListObserverEventsRequest | undefined;
+        if (args.length > 1) {
+          throw invalidObserverRequest("listEvents expects at most one argument");
+        }
+        const request = validateListObserverEventsRequest(args[0]);
         return this.observer.listEvents(request?.subjectId, request?.limit);
       }
       case "createWorkerSession":
+        requireArgumentCount("observer.createWorkerSession", args, 1);
         return this.workerRuntime.createWorkerSession(
-          args[0] as CreateWorkerSessionRequest,
+          validateCreateWorkerSessionRequest(args[0]),
         );
       case "sendWorkerPrompt":
+        requireArgumentCount("observer.sendWorkerPrompt", args, 1);
         return this.workerRuntime.sendWorkerPrompt(
-          args[0] as SendWorkerPromptRequest,
+          validateSendWorkerPromptRequest(args[0]),
         );
       case "getWorkerStatus":
-        return this.workerRuntime.getWorkerStatus(args[0] as string);
+        requireArgumentCount("observer.getWorkerStatus", args, 1);
+        return this.workerRuntime.getWorkerStatus(
+          requireObserverString(args[0], "workerId", 256),
+        );
       case "stopWorkerSession":
-        return this.workerRuntime.stopWorkerSession(args[0] as string);
+        requireArgumentCount("observer.stopWorkerSession", args, 1);
+        return this.workerRuntime.stopWorkerSession(
+          requireObserverString(args[0], "workerId", 256),
+        );
       default:
         throw new RpcError(
           "rpc_not_supported",
@@ -2396,6 +2408,126 @@ function requireArgumentCount(
       `${method} expects ${expected} arguments`,
     );
   }
+}
+
+function validateListObserverEventsRequest(
+  value: unknown,
+): ListObserverEventsRequest | undefined {
+  if (value === undefined || value === null) return undefined;
+  const request = requireObserverRecord(value, "listEvents request");
+  requireObserverKeys(request, ["subjectId", "limit"], "listEvents request");
+  const subjectId = request.subjectId === undefined
+    ? undefined
+    : requireObserverString(request.subjectId, "subjectId", 256);
+  const limit = request.limit === undefined
+    ? undefined
+    : requireObserverInteger(request.limit, "limit", 1, 1_000);
+  return {
+    ...(subjectId ? { subjectId } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  };
+}
+
+function validateCreateWorkerSessionRequest(
+  value: unknown,
+): CreateWorkerSessionRequest {
+  const request = requireObserverRecord(value, "createWorkerSession request");
+  requireObserverKeys(
+    request,
+    ["originSessionId", "provider", "cwd", "promptSummary"],
+    "createWorkerSession request",
+  );
+  const originSessionId = requireObserverString(
+    request.originSessionId,
+    "originSessionId",
+    256,
+  );
+  if (request.provider !== "claude_code" && request.provider !== "codex") {
+    throw invalidObserverRequest("provider must be claude_code or codex");
+  }
+  const cwd = request.cwd === undefined
+    ? undefined
+    : requireObserverString(request.cwd, "cwd", 4_096);
+  const promptSummary = request.promptSummary === undefined
+    ? undefined
+    : requireObserverString(request.promptSummary, "promptSummary", 4_096);
+  return {
+    originSessionId,
+    provider: request.provider,
+    ...(cwd ? { cwd } : {}),
+    ...(promptSummary ? { promptSummary } : {}),
+  };
+}
+
+function validateSendWorkerPromptRequest(
+  value: unknown,
+): SendWorkerPromptRequest {
+  const request = requireObserverRecord(value, "sendWorkerPrompt request");
+  requireObserverKeys(request, ["workerId", "prompt"], "sendWorkerPrompt request");
+  return {
+    workerId: requireObserverString(request.workerId, "workerId", 256),
+    prompt: requireObserverString(request.prompt, "prompt", 131_072),
+  };
+}
+
+function requireObserverRecord(
+  value: unknown,
+  name: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidObserverRequest(`${name} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireObserverKeys(
+  value: Record<string, unknown>,
+  allowed: string[],
+  name: string,
+): void {
+  const allowedKeys = new Set(allowed);
+  const unexpected = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unexpected) {
+    throw invalidObserverRequest(`${name} contains unexpected field ${unexpected}`);
+  }
+}
+
+function requireObserverString(
+  value: unknown,
+  name: string,
+  maximum: number,
+): string {
+  if (
+    typeof value !== "string"
+    || !value.trim()
+    || value.length > maximum
+    || value.includes("\0")
+  ) {
+    throw invalidObserverRequest(`${name} must be a non-empty bounded string`);
+  }
+  return value;
+}
+
+function requireObserverInteger(
+  value: unknown,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (
+    !Number.isInteger(value)
+    || (value as number) < minimum
+    || (value as number) > maximum
+  ) {
+    throw invalidObserverRequest(
+      `${name} must be an integer between ${minimum} and ${maximum}`,
+    );
+  }
+  return value as number;
+}
+
+function invalidObserverRequest(message: string): RpcError {
+  return new RpcError("invalid_observer_request", message);
 }
 
 function detectBackendPlacement(): "native" | "wsl" {
