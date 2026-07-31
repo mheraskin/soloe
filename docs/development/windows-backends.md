@@ -181,6 +181,7 @@ Run from Developer PowerShell:
 pnpm install
 pnpm typecheck
 pnpm test
+pnpm test:browser-integration
 pnpm --filter @soloe/web build
 pnpm --filter @soloe/desktop-electron build
 cargo fmt --check
@@ -189,19 +190,50 @@ pnpm --filter @soloe/tray exec tauri build --no-bundle
 git diff --check
 ```
 
-Smoke-test both placements:
+First run the automated browser/remote-Electron profile. It creates isolated
+normal and large Git repositories, starts a Runtime and Server, and verifies
+the production clients:
 
-1. run `pnpm dev`;
-2. confirm the single tray action changes between **Start (WSL/Windows)** and
-   **Stop (WSL/Windows)**;
-3. open the browser and confirm initial loading has no unsupported startup RPC;
-4. create a project/session and start a terminal;
-5. close and reopen browser and Electron; confirm output replay;
-6. rebuild either client; confirm the terminal remains;
-7. restart only the Application Server; confirm the terminal remains;
-8. choose **Stop (WSL/Windows)**; confirm the terminal stops;
-9. restart, then choose **Quit Soloe**; confirm every managed process stops;
-10. restart, kill the tray process, and confirm no managed Windows/WSL process
+```powershell
+pnpm test:browser-integration
+```
+
+Then smoke-test both Backend Placements. Do not substitute the WSL run for the
+native Windows run; path, process, and filesystem behavior differ.
+
+1. Run `pnpm dev` and confirm the tray action changes between
+   **Start (WSL/Windows)** and **Stop (WSL/Windows)**.
+2. Open the authenticated PWA and remote Electron. Confirm Electron reports the
+   remote transport, not local IPC.
+3. Create and reopen a project/session. Exercise Inspector, Files, Working
+   Diff, Feature Lab, Notes, and Process Usage in both clients.
+4. In Files, create/edit/save/read/search a text file, refresh the tree, and
+   verify binary/truncated states. For WSL placement, confirm the file exists
+   inside Ubuntu rather than in a translated Windows checkout.
+5. In Working Diff, select a file, stage and unstage it, review a commit range,
+   and exercise a safe fixture commit/fetch/pull/push flow. Confirm destructive
+   actions retain their dialog.
+6. In Notes, run CRUD and image insertion/cleanup in one client and observe the
+   change in the other.
+7. In Feature Lab, scan the fixture and update branch and issue state.
+8. Open Worktree Overview, regenerate it, observe streamed output, and cancel
+   only that task.
+9. Open backend diagnostics and a bounded log tail. Confirm the Process Usage
+   report identifies backend services and does not claim arbitrary Chrome
+   metrics.
+10. In Settings, run Vault metadata CRUD, explicitly reveal one secret, and
+    verify list/event/log payloads do not contain it. Check real Claude/Codex
+    integration status without overwriting unrelated configuration.
+11. Start a terminal, produce a recognizable marker, close/rebuild PWA and
+    Electron, and confirm replay. Closing remote Electron must not stop it.
+12. Keep two clients open, edit a Note, and confirm both observe the event.
+13. Restart only the Application Server. Confirm both clients reconnect,
+    shared state refreshes, and the terminal marker remains replayable.
+14. In Electron, confirm the embedded Browser pane still mounts its native
+    `<webview>`. Confirm the pane is absent—not inert—in the PWA.
+15. Choose **Stop (WSL/Windows)** and confirm the Runtime and terminal stop.
+16. Restart, choose **Quit Soloe**, and confirm every managed process stops.
+17. Restart, kill the tray process, and confirm no managed Windows/WSL process
     remains after the ownership timeout.
 
 ## Logs and troubleshooting
@@ -240,6 +272,18 @@ Tray failures include actionable diagnostics for missing Windows or WSL
 Node/PNPM, invalid WSL source paths, missing platform dependencies, failed
 runtime/server/web startup, graceful shutdown fallback, and incomplete cleanup.
 A port 4317 or 4318 conflict is recorded in `server.log` or `web.log`.
+
+If a visible shared control reports `rpc_not_supported`, do not add a renderer
+stub. Confirm the Windows client and selected backend use the same revision,
+then compare `shared/api-contract.ts` with the Server startup log. The contract
+tests fail when a PWA pane requirement lacks a real handler.
+
+Structured RPC failures identify the namespace, method, elapsed duration, and
+safe request/response sizes. Files, Git, Notes, Feature, Overview, Vault, and
+event reconnect failures appear in `server.log`; Runtime/PTY failures appear in
+`runtime.log`; WSL lease and cleanup failures appear in `supervisor.log`.
+Authorization tokens, terminal input, file/Note contents, provider
+credentials, and Vault secrets must not appear in any of those logs.
 
 The Windows checkout in this development setup is a WSL-created linked
 worktree. Use PowerShell for PNPM, Cargo, Electron, and Tauri commands. Perform

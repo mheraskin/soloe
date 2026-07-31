@@ -60,6 +60,76 @@ Windows window and embedded-browser controls over local Electron IPC. The
 browser uses the local HTTP/WebSocket API directly. Both replay visible
 terminals after reconnect.
 
+The Server composes platform-independent domain services; none import Electron
+globals, `BrowserWindow`, `WebContents`, `ipcMain`, or renderer APIs:
+
+| Service | Backend-owned responsibility |
+| --- | --- |
+| Files | scoped tree/search/read/write, binary and size metadata, terminal paste |
+| Git | repository reads/mutations, review materialization, demand-based observation |
+| Notes | revision-aware CRUD, images, cleanup, multi-client change events |
+| Features | scans, branch/issue state, reference-counted artifact observation |
+| Overview | worktree evidence, cache, streamed generation, task-scoped cancellation |
+| Diagnostics | known-service metadata and bounded safe log tails |
+| Vault | protected credential storage, metadata events, explicit secret retrieval |
+| Agent integrations | placement-aware Claude/Codex configuration and status |
+| System usage | Server, Runtime, agent/PTY, supervisor, and aggregate backend samples |
+
+Backend placement is carried in the request scope. Native Windows operations
+use Windows paths and processes. WSL operations use the selected distribution,
+translate only at the boundary, and retain the distribution in worktree
+identity and event keys.
+
+Process Usage deliberately reports `scope: backend`. A PWA cannot inspect
+arbitrary Chrome processes and does not fabricate client metrics. Electron may
+augment the backend report with its own native metrics. Sampling is
+demand-driven, bounded, and non-overlapping.
+
+## Reconnect and event guarantees
+
+Server events are advisory updates backed by authoritative snapshots. Sessions,
+projects, settings, Notes, Git, Features, Vault, integrations, observers, and
+Overview refresh after reconnect so a missed WebSocket message cannot leave a
+client permanently stale. Subscription ownership uses stable client IDs and
+disconnect cleanup removes only that client's demand.
+
+The Runtime is unaffected by browser, Electron, or Server replacement. A
+server-only restart reconnects to the existing Runtime; clients reconnect to
+the Server, refresh shared state, and replay terminal output by sequence. An
+explicit terminal stop, **Stop Backend**, or **Quit Soloe** is required to end
+runtime-owned agents.
+
+## Security and diagnostics boundary
+
+Both RPC and event connections require the per-install token and bind to the
+local boundary. The Server applies request/body and response limits before
+dispatch, validates every namespace and method, and returns structured errors
+without production stack traces. Worktree authorization prevents traversal,
+symlink escape, arbitrary absolute-path access, invalid WSL distributions, and
+mismatched placement identity.
+
+RPC logs include start/end, elapsed time, safe payload sizes, outcome, and
+structured failure code. Known service logs can be viewed through bounded
+diagnostic tails. Tokens, cookies, terminal input, file and Note contents,
+provider credentials, and Vault secrets are never diagnostic fields. The tray's
+**Open Soloe logs** action remains the way to open the host log directory.
+
+## Renderer responsiveness
+
+The real-browser integration profile uses production PWA and Electron builds.
+It records time to a loading state, completion time, RPC resource duration/body
+size, and a 16 ms renderer heartbeat for Files, Working Diff, and Feature Lab
+against normal and deliberately large repositories. Cold lazy-chunk startup is
+reported separately from warmed large-data rendering.
+
+The deterministic 160-change Diff case proved that DOM construction—not the
+roughly 20 KB RPC payload—caused a long renderer task. Diff therefore mounts
+the compact rows and review section shells in small animation-frame batches and
+reports `Rendering n of n files…`; the test waits for the final batch and
+enforces a 300 ms large-data event-loop-gap ceiling. The original Files freeze
+did not reproduce with a 4,000-file tree, so Files did not receive speculative
+streaming or pagination.
+
 ## Tray semantics
 
 The Tauri tray is windowless and therefore remains small while Electron is
@@ -114,10 +184,11 @@ pnpm install
 pnpm typecheck
 pnpm --filter @soloe/protocol --filter @soloe/runtime --filter @soloe/server typecheck
 pnpm test
+pnpm test:browser-integration
 pnpm --filter @soloe/desktop-electron build
 pnpm --filter @soloe/web build
 pnpm --filter @soloe/tray exec tauri build --no-bundle
-cargo test -p soloe-tray
+cargo test --workspace
 ```
 
 Everyday Windows development:
