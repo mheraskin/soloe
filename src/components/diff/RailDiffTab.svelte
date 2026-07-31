@@ -84,6 +84,7 @@
   const ROW_HEIGHT_PX = 36;
   const LIST_VERTICAL_PADDING_PX = 12;
   const GROUP_HEADER_PX = 24;
+  const CHANGE_RENDER_BATCH_SIZE = 8;
   let userListHeightOverride = $state<number | null>(null);
   let resizingList = $state(false);
   let resizeStartY = 0;
@@ -181,6 +182,61 @@
         ? [...stagedChanges, ...unstagedChanges]
         : filteredChanges
   );
+
+  // A large review used to mount every file twice in one update: once in the
+  // compact picker and once as a review section. Diff bodies are viewport
+  // resident, but constructing all of those outer components still produced a
+  // long renderer task. Keep the complete review model while yielding between
+  // small DOM batches so controls, scrolling, and loading feedback stay live.
+  let changeRenderBatch = $state({ key: '', limit: 0 });
+  let changeRenderKey = $derived.by(() => {
+    const entries = stackChanges
+      .map((change) => reviewEntryId(change, reviewMode))
+      .join('\0');
+    return `${selectionContextKey}\0${entries}`;
+  });
+  let renderedChangeCount = $derived(
+    Math.min(
+      stackChanges.length,
+      changeRenderBatch.key === changeRenderKey
+        ? changeRenderBatch.limit
+        : CHANGE_RENDER_BATCH_SIZE
+    )
+  );
+  let renderingChanges = $derived(renderedChangeCount < stackChanges.length);
+  let renderedStackChanges = $derived(stackChanges.slice(0, renderedChangeCount));
+  let renderedWtSectionChanges = $derived(
+    renderedStackChanges.filter((change) => change.section !== 'committed')
+  );
+  let renderedCommittedSectionChanges = $derived(
+    renderedStackChanges.filter((change) => change.section === 'committed')
+  );
+  let renderedStagedChanges = $derived(
+    renderedStackChanges.filter((change) => change.staged && change.section !== 'committed')
+  );
+  let renderedUnstagedChanges = $derived(
+    renderedStackChanges.filter((change) => !change.staged && change.section !== 'committed')
+  );
+
+  $effect(() => {
+    const key = changeRenderKey;
+    const total = stackChanges.length;
+    const initialLimit = Math.min(total, CHANGE_RENDER_BATCH_SIZE);
+    untrack(() => {
+      changeRenderBatch = { key, limit: initialLimit };
+    });
+    if (initialLimit >= total) return;
+
+    let frame = requestAnimationFrame(appendBatch);
+    function appendBatch(): void {
+      if (changeRenderBatch.key !== key) return;
+      const limit = Math.min(total, changeRenderBatch.limit + CHANGE_RENDER_BATCH_SIZE);
+      changeRenderBatch = { key, limit };
+      if (limit < total) frame = requestAnimationFrame(appendBatch);
+    }
+
+    return () => cancelAnimationFrame(frame);
+  });
 
   let commitScopeText = $derived.by<string>(() => {
     if (reviewMode.kind !== 'range') return 'Working tree';
@@ -1207,28 +1263,28 @@
             {/if}
           </div>
         {:else if showRangeGroups}
-          {#if wtSectionChanges.length > 0}
+          {#if renderedWtSectionChanges.length > 0}
             <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
               <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
                 Working tree ({wtSectionChanges.length})
               </span>
             </div>
-            {#each wtSectionChanges as change (change.path)}
+            {#each renderedWtSectionChanges as change (change.path)}
               {@render wtChangeRow(change)}
             {/each}
           {/if}
-          {#if committedSectionChanges.length > 0}
+          {#if renderedCommittedSectionChanges.length > 0}
             <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
               <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
                 Commits ({committedSectionChanges.length})
               </span>
             </div>
-            {#each committedSectionChanges as change (change.path)}
+            {#each renderedCommittedSectionChanges as change (change.path)}
               {@render committedChangeRow(change)}
             {/each}
           {/if}
         {:else if showWtModeGroups}
-          {#if stagedChanges.length > 0}
+          {#if renderedStagedChanges.length > 0}
             <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
               <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
                 Staged ({stagedChanges.length})
@@ -1243,11 +1299,11 @@
                 <Minus class="size-3" />
               </button>
             </div>
-            {#each stagedChanges as change (change.path)}
+            {#each renderedStagedChanges as change (change.path)}
               {@render wtChangeRow(change)}
             {/each}
           {/if}
-          {#if unstagedChanges.length > 0}
+          {#if renderedUnstagedChanges.length > 0}
             <div class="flex items-center justify-between px-2 pt-1.5 pb-0.5">
               <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
                 Changes ({unstagedChanges.length})
@@ -1262,17 +1318,25 @@
                 <Plus class="size-3" />
               </button>
             </div>
-            {#each unstagedChanges as change (change.path)}
+            {#each renderedUnstagedChanges as change (change.path)}
               {@render wtChangeRow(change)}
             {/each}
           {/if}
         {:else}
-          {#each filteredChanges as change (change.path)}
+          {#each renderedStackChanges as change (change.path)}
             {@render wtChangeRow(change)}
           {/each}
         {/if}
       </div>
     </ScrollArea>
+    {#if renderingChanges}
+      <div
+        class="shrink-0 border-b border-border px-2 py-1 text-[10px] text-muted-foreground"
+        aria-live="polite"
+      >
+        Rendering {renderedChangeCount} of {stackChanges.length} files…
+      </div>
+    {/if}
     <button
       type="button"
       class={[
@@ -1301,7 +1365,7 @@
             class="flex flex-col"
             style:overflow-anchor="none"
           >
-            {#each stackChanges as change (reviewEntryId(change, reviewMode))}
+            {#each renderedStackChanges as change (reviewEntryId(change, reviewMode))}
               {@const entryId = reviewEntryId(change, reviewMode)}
               {@const isCommitted = change.section === 'committed'}
               {@const rangeBase = isCommitted && reviewMode.kind === 'range' ? reviewMode.base : null}
