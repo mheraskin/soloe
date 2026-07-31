@@ -206,7 +206,10 @@ describe('agentNotifications', () => {
     agentNotifications.observeSnapshot(snapshot('completed', { resultSummary: 'done' }), session, null);
 
     expect(agentNotifications.toasts).toHaveLength(1);
-    vi.advanceTimersByTime(4000);
+    vi.advanceTimersByTime(5999);
+
+    expect(agentNotifications.toasts).toHaveLength(1);
+    vi.advanceTimersByTime(1);
 
     expect(agentNotifications.toasts).toHaveLength(0);
     expect(agentNotifications.markerFor(session.id)?.state).toBe('completed');

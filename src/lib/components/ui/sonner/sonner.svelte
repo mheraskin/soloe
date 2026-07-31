@@ -32,3 +32,11 @@
 		<TriangleAlertIcon class="size-4" />
 	{/snippet}
 </Sonner>
+
+<style>
+	:global(.toaster [data-sonner-toast][data-styled='true'] [data-close-button]) {
+		left: auto !important;
+		right: 0 !important;
+		transform: translate(35%, -35%) !important;
+	}
+</style>

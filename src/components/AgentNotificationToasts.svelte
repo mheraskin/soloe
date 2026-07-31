@@ -52,7 +52,7 @@
 
 {#if agentNotifications.toasts.length > 0}
   <div
-    class="pointer-events-none fixed top-9 left-1/2 z-50 flex w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
+    class="pointer-events-none fixed top-9 left-1/2 z-50 flex w-[min(360px,calc(100vw-1.5rem))] -translate-x-1/2 flex-col gap-1.5"
     aria-live="polite"
     aria-atomic="false"
   >
@@ -75,20 +75,20 @@
       >
         <button
           type="button"
-          class="grid w-full grid-cols-[22px_minmax(0,1fr)] items-start gap-2.5 px-3 py-2.5 pr-8 text-left focus-visible:outline-none"
+          class="grid w-full grid-cols-[18px_minmax(0,1fr)] items-center gap-2 px-2.5 py-2 pr-7 text-left focus-visible:outline-none"
           onclick={() => activate(toast.sessionId)}
           aria-label={`${agentNotificationStateLabel(toast.state)} · ${agentProviderLabel(toast.sessionKind)} · ${breadcrumb.join(' › ')}`}
         >
-          <span class="flex size-[22px] items-center justify-center" aria-hidden="true">
-            <StateIcon class={cn('size-5', stateIcon.class)} />
+          <span class="flex size-[18px] items-center justify-center self-center" aria-hidden="true">
+            <StateIcon class={cn('size-4', stateIcon.class)} />
           </span>
-          <span class="grid min-w-0 gap-0.5">
-            <span class="truncate text-sm font-semibold leading-5 text-foreground">
+          <span class="grid min-w-0 gap-px">
+            <span class="truncate text-[13px] font-semibold leading-4 text-foreground">
               {agentNotificationStateLabel(toast.state)}
             </span>
-            <span class="flex min-w-0 items-center gap-1 overflow-hidden text-[11px] leading-4 text-muted-foreground">
+            <span class="flex min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-3.5 text-muted-foreground">
               <span class="flex shrink-0 items-center gap-1 font-medium text-foreground/80">
-                <KindIcon kind={toast.sessionKind} size={12} />
+                <KindIcon kind={toast.sessionKind} size={11} />
                 {agentProviderLabel(toast.sessionKind)}
               </span>
               {#each breadcrumb as crumb, index (index)}
@@ -105,12 +105,12 @@
         </button>
         <button
           type="button"
-          class="absolute top-1.5 right-1.5 inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          class="absolute top-1 right-1 inline-flex size-4.5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           onclick={(e) => dismiss(e, toast.sessionId)}
           aria-label={`Dismiss notification for ${toast.sessionName}`}
           title="Dismiss"
         >
-          <X class="size-3" />
+          <X class="size-2.5" />
         </button>
       </div>
     {/each}

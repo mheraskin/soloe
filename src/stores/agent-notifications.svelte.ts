@@ -32,7 +32,7 @@ export interface AgentToastNotice extends AgentEdgeMarker {
   lastBranch?: string;
 }
 
-const COMPLETED_DISMISS_MS = 4000;
+const COMPLETED_DISMISS_MS = 6000;
 
 const stateUrgency = {
   waiting_for_approval: 4,
