@@ -4,7 +4,16 @@ import type {
   OverviewSessionInput,
   WorktreeOverview
 } from '@shared/types/overview.js';
-import type { ModelProvider, ModelSelection, Settings } from '@shared/types/settings.js';
+import type {
+  ModelCatalogEntry,
+  ModelProvider,
+  ModelSelection,
+  Settings
+} from '@shared/types/settings.js';
+import {
+  CLI_DEFAULT_MODEL_CATALOG,
+  modelCandidatesForTask
+} from '@shared/model-catalog.js';
 import type { RunMode } from '@shared/types/sessions.js';
 import { nativeRunMode } from '@shared/platform.js';
 import { SessionTranscriptReader } from './SessionTranscriptReader.js';
@@ -31,6 +40,7 @@ export interface WorktreeOverviewServiceOptions {
   facts: WorktreeFactsCollector;
   cache: SummaryCacheStore;
   getSettings: () => Promise<Settings> | Settings;
+  getModelCatalog?: () => Promise<ModelCatalogEntry[]>;
   execution: OverviewAgentExecution;
   evidence?: WorktreeEvidence;
   resolveExecutionScope?: (scope: OverviewExecutionScope) => OverviewExecutionScope;
@@ -184,7 +194,8 @@ export class WorktreeOverviewService {
     });
 
     const settings = await this.opts.getSettings();
-    const providerPolicy = providerCandidates(settings);
+    const catalog = await (this.opts.getModelCatalog?.() ?? Promise.resolve(CLI_DEFAULT_MODEL_CATALOG));
+    const providerPolicy = providerCandidates(settings, catalog);
     console.log('[overview.service] provider policy', providerPolicy);
     if (providerPolicy.reason === 'claude_blocked') {
       return {
@@ -279,7 +290,8 @@ export class WorktreeOverviewService {
     });
 
     const settings = await this.opts.getSettings();
-    const providerPolicy = providerCandidates(settings);
+    const catalog = await (this.opts.getModelCatalog?.() ?? Promise.resolve(CLI_DEFAULT_MODEL_CATALOG));
+    const providerPolicy = providerCandidates(settings, catalog);
     if (providerPolicy.reason === 'claude_blocked') {
       yield {
         type: 'error',
@@ -321,34 +333,16 @@ type ProviderPolicy =
   | { candidates: ModelSelection[]; reason?: never }
   | { candidates: []; reason: 'claude_blocked' };
 
-function providerCandidates(settings: Settings): ProviderPolicy {
-  // Prefer the dedicated overview slot; fall back to the older textGeneration
-  // slot for settings written before worktreeOverview existed.
-  const configured = settings.models.worktreeOverview ?? settings.models.textGeneration ?? null;
-  const claudeAllowed = settings.integrations.allowClaudeHeadless === true;
-  // Honor a saved Claude pick only when the user has opted into headless
-  // Claude usage; otherwise the renderer will have surfaced the disabled
-  // state and the service refuses rather than billing surprise API calls.
-  if (configured) {
-    if (configured.provider === 'claude' && !claudeAllowed) {
-      return { candidates: [], reason: 'claude_blocked' };
-    }
-    const candidates = [configured];
-    if (configured.provider === 'codex' && claudeAllowed) {
-      candidates.push({ provider: 'claude', id: 'sonnet' });
-    } else if (configured.provider === 'claude') {
-      candidates.push({ provider: 'codex', id: 'gpt-5.4' });
-    }
-    return { candidates };
-  }
-  return {
-    candidates: claudeAllowed
-      ? [
-          { provider: 'claude', id: 'sonnet' },
-          { provider: 'codex', id: 'gpt-5.4' }
-        ]
-      : [{ provider: 'codex', id: 'gpt-5.4' }]
-  };
+function providerCandidates(
+  settings: Settings,
+  catalog: ModelCatalogEntry[]
+): ProviderPolicy {
+  return modelCandidatesForTask(
+    settings,
+    catalog,
+    'worktreeOverview',
+    'textGeneration'
+  );
 }
 
 function dedupeProviders(arr: OverviewProvider[]): OverviewProvider[] {

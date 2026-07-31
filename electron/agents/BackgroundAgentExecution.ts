@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import type { ModelSelection, SettingsBinaries } from '@shared/types/settings.js';
+import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
 import type { RunMode } from '@shared/types/sessions.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
 import {
@@ -469,14 +470,16 @@ function buildArgv(
   binaries: SettingsBinaries
 ): { executable: string; args: string[] } {
   if (target.provider === 'codex') {
+    const modelArgs = target.id === CLI_DEFAULT_MODEL_ID ? [] : ['-m', target.id];
     return {
       executable: binaries.codex || 'codex',
-      args: ['exec', '--skip-git-repo-check', '--color', 'never', '-m', target.id]
+      args: ['exec', '--skip-git-repo-check', '--color', 'never', ...modelArgs]
     };
   }
+  const modelArgs = target.id === CLI_DEFAULT_MODEL_ID ? [] : ['--model', target.id];
   return {
     executable: binaries.claude || 'claude',
-    args: ['-p', '--model', target.id, '--output-format', 'text']
+    args: ['-p', ...modelArgs, '--output-format', 'text']
   };
 }
 

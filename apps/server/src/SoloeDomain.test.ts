@@ -46,6 +46,7 @@ describe("SoloeDomain", () => {
     const domain = new SoloeDomain({
       dataDirectory: directory,
       runtime,
+      modelCatalog: { getCatalog: vi.fn(async () => []) },
       integrationInstaller: {
         status: vi.fn(async () => integrationStatus),
         installClaude: vi.fn(),
@@ -61,6 +62,7 @@ describe("SoloeDomain", () => {
         Promise.all([
           domain.invoke({ namespace: "system", method: "platform", args: [] }),
           domain.invoke({ namespace: "settings", method: "get", args: [] }),
+          domain.invoke({ namespace: "settings", method: "modelCatalog", args: [] }),
           domain.invoke({ namespace: "projects", method: "list", args: [] }),
           domain.invoke({ namespace: "sessions", method: "list", args: [] }),
           domain.invoke({ namespace: "sessions", method: "listArchived", args: [] }),
@@ -71,6 +73,7 @@ describe("SoloeDomain", () => {
       ).resolves.toEqual([
         expect.any(Object),
         expect.any(Object),
+        [],
         [],
         [],
         [],
@@ -97,6 +100,7 @@ describe("SoloeDomain", () => {
     const domain = new SoloeDomain({
       dataDirectory: directory,
       runtime,
+      modelCatalog: { getCatalog: vi.fn(async () => []) },
       integrationInstaller: {
         status: vi.fn(async () => ({ hosts: [] })),
         installClaude: vi.fn(),

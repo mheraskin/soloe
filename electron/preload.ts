@@ -188,6 +188,7 @@ const soloe: SoloeApi = {
   settings: {
     get: () => ipcRenderer.invoke(IpcChannels.settings.get),
     update: (patch: SettingsUpdate) => ipcRenderer.invoke(IpcChannels.settings.update, patch),
+    modelCatalog: () => ipcRenderer.invoke(IpcChannels.settings.modelCatalog),
     onChange: (cb: (settings: Settings) => void) =>
       subscribe<Settings>(IpcChannels.settings.change, cb)
   },

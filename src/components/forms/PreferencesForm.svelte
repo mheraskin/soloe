@@ -33,7 +33,7 @@
     ThemePref,
     ShiftNumberNavigationTarget
   } from '@shared/types/settings.js';
-  import { MODEL_CATALOG, modelCatalogFor } from '@shared/types/settings.js';
+  import { modelCatalogFor } from '@shared/model-catalog.js';
   import type { AgentRuntimeProvider, RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
   import { runModeLabel } from '@shared/platform.js';
   import { Keymap } from '../../lib/keymap';
@@ -175,7 +175,7 @@
 
   function modelLabel(value: ModelSelection | undefined): string {
     if (!value) return 'Select a model';
-    const entry = MODEL_CATALOG.find(
+    const entry = settings.availableModels.find(
       (m) => m.provider === value.provider && m.id === value.id
     );
     return entry?.label ?? `${value.provider}: ${value.id}`;
@@ -616,7 +616,7 @@
               </span>
             </Select.Trigger>
             <Select.Content>
-              {#each MODEL_CATALOG as entry (modelKey(entry))}
+              {#each settings.availableModels as entry (modelKey(entry))}
                 <Select.Item value={modelKey(entry)} label={entry.label}>
                   <span class="flex items-center gap-2">
                     <KindIcon kind={providerKind(entry.provider)} size={14} />
@@ -637,7 +637,7 @@
         launching.
       </p>
       {#each settings.current.quickLaunch as preset (preset.id)}
-        {@const presetModelOptions = modelCatalogFor(presetProviderToModel(preset.provider))}
+        {@const presetModelOptions = modelCatalogFor(settings.availableModels, presetProviderToModel(preset.provider))}
         {@const presetSelectedModel = presetModelOptions.find((m) => m.id === preset.model)}
         <div class="flex flex-col gap-2 rounded-md border border-border p-3">
           <div class="flex items-center justify-between gap-2">
@@ -753,7 +753,7 @@
         </div>
       {/each}
       {#if draftPreset}
-        {@const draftModelOptions = modelCatalogFor(presetProviderToModel(draftPreset.provider))}
+        {@const draftModelOptions = modelCatalogFor(settings.availableModels, presetProviderToModel(draftPreset.provider))}
         {@const draftSelectedModel = draftModelOptions.find((m) => m.id === draftPreset?.model)}
         <div class="flex flex-col gap-2 rounded-md border border-primary/40 bg-primary/5 p-3">
           <div class="flex items-center justify-between gap-2">

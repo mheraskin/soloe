@@ -1,8 +1,11 @@
 import { spawn } from 'node:child_process';
 import type {
-  ModelSelection,
-  Settings
+  ModelCatalogEntry
 } from '@shared/types/settings.js';
+import {
+  CLI_DEFAULT_MODEL_CATALOG,
+  modelCandidatesForTask
+} from '@shared/model-catalog.js';
 import type { Session, SessionId } from '@shared/types/sessions.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { SettingsStore } from '../settings/SettingsStore.js';
@@ -18,6 +21,7 @@ export interface AutoRenameServiceOptions {
   // Override binary spawn in tests; production calls runProcess.
   spawnImpl?: typeof spawn;
   execution?: BackgroundAgentExecution;
+  getModelCatalog?: () => Promise<ModelCatalogEntry[]>;
 }
 
 interface RenameInputs {
@@ -53,13 +57,7 @@ export class AutoRenameService {
   }
 
   async maybeRename(input: RenameInputs): Promise<void> {
-    console.log(`[soloe-rename] service: maybeRename entered for ${input.sessionId}`);
-    if (this.runningRenames.has(input.sessionId)) {
-      console.log(
-        `[soloe-rename] service: skip — rename already running for ${input.sessionId}`
-      );
-      return;
-    }
+    if (this.runningRenames.has(input.sessionId)) return;
     this.runningRenames.add(input.sessionId);
     try {
       await this.runMaybeRename(input);
@@ -70,30 +68,15 @@ export class AutoRenameService {
 
   private async runMaybeRename(input: RenameInputs): Promise<void> {
     const session = await this.opts.sessionStore.get(input.sessionId);
-    if (!session) {
-      console.log(`[soloe-rename] service: skip — session not found for ${input.sessionId}`);
-      return;
-    }
-    if (session.autoNamed === false) {
-      console.log(
-        `[soloe-rename] service: skip — autoNamed=false for ${input.sessionId} (manually renamed)`
-      );
-      return;
-    }
-    if (session.launch.type === 'terminal' && !session.currentAgentRuntime) {
-      console.log(
-        `[soloe-rename] service: skip — terminal launch for ${input.sessionId}`
-      );
-      return;
-    }
+    if (!session) return;
+    if (session.autoNamed === false) return;
+    if (session.launch.type === 'terminal' && !session.currentAgentRuntime) return;
     const trimmed = input.firstPrompt.trim();
-    if (!trimmed) {
-      console.log(`[soloe-rename] service: skip — empty trimmed prompt for ${input.sessionId}`);
-      return;
-    }
+    if (!trimmed) return;
 
     const settings = await this.opts.settings.get();
-    const candidates = providerCandidates(settings);
+    const catalog = await (this.opts.getModelCatalog?.() ?? Promise.resolve(CLI_DEFAULT_MODEL_CATALOG));
+    const candidates = modelCandidatesForTask(settings, catalog, 'textGeneration').candidates;
     const truncated = trimmed.length > PROMPT_MAX_LENGTH ? trimmed.slice(0, PROMPT_MAX_LENGTH) : trimmed;
     const result = await this.execution.execute({
       candidates,
@@ -120,14 +103,8 @@ export class AutoRenameService {
       return;
     }
     const raw = result.text;
-    console.log(
-      `[soloe-rename] service: ${result.provider.provider}/${result.provider.id} returned ${raw.length}b for ${input.sessionId}: ${JSON.stringify(raw.slice(0, 200))}`
-    );
     const name = sanitizeName(raw);
     if (!name) {
-      console.log(
-        `[soloe-rename] service: skip — sanitized output was empty for ${input.sessionId}`
-      );
       this.opts.log?.('auto-rename produced empty output', { sessionId: session.id });
       return;
     }
@@ -135,35 +112,17 @@ export class AutoRenameService {
     // many seconds, during which the user may have manually renamed it (which
     // sets autoNamed=false). Without this guard we'd clobber the manual name.
     const latest = await this.opts.sessionStore.get(session.id);
-    if (!latest) {
-      console.log(`[soloe-rename] service: skip — session vanished for ${input.sessionId}`);
-      return;
-    }
-    if (latest.autoNamed === false) {
-      console.log(
-        `[soloe-rename] service: skip — autoNamed=false for ${input.sessionId} (renamed during spawn)`
-      );
-      return;
-    }
-    if (name === latest.name) {
-      console.log(
-        `[soloe-rename] service: skip — proposed name "${name}" matches existing for ${input.sessionId}`
-      );
-      return;
-    }
+    if (!latest) return;
+    if (latest.autoNamed === false) return;
+    if (name === latest.name) return;
 
     try {
       const updated = await this.opts.sessionStore.update(session.id, {
         name,
         autoNamed: true
       });
-      console.log(`[soloe-rename] service: renamed ${input.sessionId} to "${name}"`);
       this.opts.onSessionChange?.(updated);
     } catch (err) {
-      console.log(
-        `[soloe-rename] service: persist failed for ${input.sessionId}:`,
-        err instanceof Error ? err.message : err
-      );
       this.opts.log?.('auto-rename persist failed', err);
     }
   }
@@ -180,30 +139,6 @@ export class AutoRenameService {
     });
   }
 
-}
-
-function providerCandidates(settings: Settings): ModelSelection[] {
-  const configured = settings.models.textGeneration ?? null;
-  const claudeAllowed = settings.integrations.allowClaudeHeadless === true;
-  if (configured) {
-    const candidates = configured.provider === 'claude' && !claudeAllowed ? [] : [configured];
-    if (configured.provider !== 'codex') {
-      candidates.push({ provider: 'codex', id: 'gpt-5.4-mini' });
-    } else if (claudeAllowed) {
-      candidates.push({ provider: 'claude', id: 'haiku' });
-    }
-    return candidates;
-  }
-  const candidates: ModelSelection[] = [];
-  if (settings.binaries.codex) candidates.push({ provider: 'codex', id: 'gpt-5.4-mini' });
-  if (settings.binaries.claude && claudeAllowed) {
-    candidates.push({ provider: 'claude', id: 'haiku' });
-  }
-  if (candidates.length === 0) {
-    candidates.push({ provider: 'codex', id: 'gpt-5.4-mini' });
-    if (claudeAllowed) candidates.push({ provider: 'claude', id: 'haiku' });
-  }
-  return candidates;
 }
 
 export function sanitizeName(raw: string): string {

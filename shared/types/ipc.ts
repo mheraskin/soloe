@@ -93,7 +93,7 @@ import type {
   SessionRuntimeState,
   SessionUpdate
 } from './sessions.js';
-import type { Settings, SettingsUpdate } from './settings.js';
+import type { ModelCatalogEntry, Settings, SettingsUpdate } from './settings.js';
 import type { CommentsRpcRequest, CommentsRpcResponse } from './comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from './diff-rpc.js';
 import type {
@@ -182,6 +182,7 @@ export const IpcChannels = {
   settings: {
     get: 'settings:get',
     update: 'settings:update',
+    modelCatalog: 'settings:model-catalog',
     change: 'settings:change'
   },
   projects: {
@@ -407,6 +408,7 @@ export interface SystemApi {
 export interface SettingsApi {
   get(): Promise<IpcResult<Settings>>;
   update(patch: SettingsUpdate): Promise<IpcResult<Settings>>;
+  modelCatalog(): Promise<IpcResult<ModelCatalogEntry[]>>;
   onChange(listener: (settings: Settings) => void): () => void;
 }
 

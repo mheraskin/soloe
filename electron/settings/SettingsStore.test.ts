@@ -120,6 +120,25 @@ describe('SettingsStore — update', () => {
     expect(updated.defaults.runMode).toBe(DEFAULT_SETTINGS.defaults.runMode);
   });
 
+  it('preserves model ids that are newer than the local catalog', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({
+      models: { textGeneration: { provider: 'codex', id: 'gpt-future' } }
+    });
+
+    expect(updated.models.textGeneration).toEqual({
+      provider: 'codex',
+      id: 'gpt-future'
+    });
+    await expect(new SettingsStore(storePath).get()).resolves.toEqual(
+      expect.objectContaining({
+        models: expect.objectContaining({
+          textGeneration: { provider: 'codex', id: 'gpt-future' }
+        })
+      })
+    );
+  });
+
   it('removes a binary path when set to empty string', async () => {
     const store = new SettingsStore(storePath);
     await store.update({ binaries: { claude: '/usr/bin/claude' } });

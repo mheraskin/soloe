@@ -131,6 +131,8 @@ import {
   type SoloeMcpServerInfo,
 } from "../../../electron/agents/SoloeMcpServer.js";
 import { BackgroundAgentExecution } from "../../../electron/agents/BackgroundAgentExecution.js";
+import { AutoRenameService } from "../../../electron/agents/AutoRenameService.js";
+import { ModelCatalogService } from "../../../electron/agents/ModelCatalogService.js";
 import { BridgePersistence } from "../../../electron/integrations/BridgePersistence.js";
 import { ProcessTreeUsageSampler } from "@soloe/runtime";
 import { BackendUsageObservation } from "./BackendUsageObservation.js";
@@ -161,6 +163,8 @@ export interface SoloeDomainOptions {
     WorktreeOverviewService,
     "getOverview" | "regenerate" | "streamFollowUp"
   >;
+  modelCatalog?: Pick<ModelCatalogService, "getCatalog">;
+  autoRename?: Pick<AutoRenameService, "maybeRename">;
   integrationInstaller?: Pick<
     HookInstaller,
     | "status"
@@ -223,6 +227,8 @@ export class SoloeDomain extends EventEmitter {
   private readonly observerStore: AgentObserverStore;
   private readonly usage: Pick<BackendUsageObservation, "observe" | "reset">;
   private readonly backgroundAgentExecution: BackgroundAgentExecution;
+  private readonly modelCatalog: Pick<ModelCatalogService, "getCatalog">;
+  private readonly autoRename: Pick<AutoRenameService, "maybeRename">;
   private readonly overview: Pick<
     WorktreeOverviewService,
     "getOverview" | "regenerate" | "streamFollowUp"
@@ -249,6 +255,9 @@ export class SoloeDomain extends EventEmitter {
       path.join(options.dataDirectory, "settings.json"),
       hostPlatform(),
     );
+    this.modelCatalog = options.modelCatalog ?? new ModelCatalogService({
+      getSettings: () => this.settings.get(),
+    });
     this.projects = new ProjectStore(path.join(options.dataDirectory, "projects.json"), {
       platform: hostPlatform(),
     });
@@ -293,6 +302,14 @@ export class SoloeDomain extends EventEmitter {
       options.featureArtifacts ?? new FeatureArtifactObservation();
     this.features = new FeatureService(this.featureArtifacts);
     this.backgroundAgentExecution = new BackgroundAgentExecution();
+    this.autoRename = options.autoRename ?? new AutoRenameService({
+      sessionStore: this.sessions,
+      settings: this.settings,
+      execution: this.backgroundAgentExecution,
+      getModelCatalog: () => this.modelCatalog.getCatalog(),
+      onSessionChange: (session) => this.emit("event", "sessions.change", session),
+      log: (message, detail) => console.warn(`[auto-rename] ${message}`, detail),
+    });
     const backendPlacement = detectBackendPlacement();
     this.overview = options.overviewService ?? new WorktreeOverviewService({
       reader: new SessionTranscriptReader({
@@ -306,6 +323,7 @@ export class SoloeDomain extends EventEmitter {
         path.join(options.dataDirectory, "overview-cache.json"),
       ),
       getSettings: () => this.settings.get(),
+      getModelCatalog: () => this.modelCatalog.getCatalog(),
       execution: this.backgroundAgentExecution,
       ...(backendPlacement === "wsl"
         ? {
@@ -412,6 +430,7 @@ export class SoloeDomain extends EventEmitter {
     const dispatcher = new AgentHookDispatcher({
       observer: this.observer,
       sessionStore: this.sessions,
+      autoRename: this.autoRename,
       onSessionChange: (session) => {
         this.emit("event", "sessions.change", session);
       },
@@ -582,6 +601,7 @@ export class SoloeDomain extends EventEmitter {
       if (call.method === "update") {
         return this.settings.update(call.args[0] as SettingsUpdate);
       }
+      if (call.method === "modelCatalog") return this.modelCatalog.getCatalog();
     }
     if (call.namespace === "system") {
       return this.systemCall(call.method, call.args);

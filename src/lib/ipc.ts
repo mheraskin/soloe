@@ -217,6 +217,7 @@ export const backend = {
   settings: {
     get: async () => unwrap(await c.settings.get()),
     update: async (patch: SettingsUpdate) => unwrap(await c.settings.update(toIpcPayload(patch))),
+    modelCatalog: async () => unwrap(await c.settings.modelCatalog()),
     onChange: (cb: (s: Settings) => void) => c.settings.onChange(cb)
   },
   projects: {

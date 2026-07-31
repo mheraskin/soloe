@@ -1,13 +1,13 @@
 <script lang="ts" module>
   import type { Session, AgentRuntimeProvider } from '@shared/types/sessions.js';
   import type { ModelCatalogEntry } from '@shared/types/settings.js';
-  import { MODEL_CATALOG } from '@shared/types/settings.js';
   import {
     sameWorktreeIdentity,
     type WorktreeScope
   } from '@shared/worktree-identity.js';
   import { commentAgents, type CommentAgent } from '../../stores/comment-agents.svelte';
   import { sessions } from '../../stores/sessions.svelte';
+  import { settings } from '../../stores/settings.svelte';
 
   export type MentionItem =
     | { kind: 'agent'; agent: CommentAgent; label: string; provider: AgentRuntimeProvider; model?: string }
@@ -57,7 +57,7 @@
     items.push({ kind: 'new-provider', provider: 'codex', label: 'Codex' });
 
     // 4) Specific models from the catalog.
-    for (const entry of MODEL_CATALOG) {
+    for (const entry of settings.availableModels) {
       items.push({
         kind: 'new-model',
         provider: modelProviderToRuntime(entry.provider),
