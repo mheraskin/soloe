@@ -50,6 +50,75 @@ describe("SoloeDomain", () => {
     }
   });
 
+  it("validates and returns backend process usage through system RPC", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-usage-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const usageObservation = {
+      observe: vi.fn(async () => ({
+        scope: "backend" as const,
+        availability: "available" as const,
+        backendPlacement: "native" as const,
+        cpuPercent: 3,
+        memoryBytes: 1024,
+        processCount: 2,
+        electronProcessCount: null,
+        childProcessCount: 1,
+        components: [],
+        wslActive: false,
+        wsl: null,
+        sampledAt: "2026-07-31T12:00:00.000Z",
+      })),
+      reset: vi.fn(),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      usageObservation,
+    });
+    try {
+      await domain.init();
+      await expect(
+        domain.invoke({
+          namespace: "system",
+          method: "usage",
+          args: [{ detail: "summary" }],
+        }),
+      ).resolves.toMatchObject({
+        scope: "backend",
+        availability: "available",
+        electronProcessCount: null,
+      });
+      expect(usageObservation.observe).toHaveBeenCalledWith({
+        detail: "summary",
+      });
+
+      await expect(
+        domain.invoke({
+          namespace: "system",
+          method: "usage",
+          args: [{ detail: "browser-processes" }],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_system_usage_request" });
+      await expect(
+        domain.invoke({
+          namespace: "system",
+          method: "usage",
+          args: [{ detail: "summary", injected: true }],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_system_usage_request" });
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("persists a Session and starts it through the independent runtime", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-"));
     const runtime = {

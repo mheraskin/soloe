@@ -101,8 +101,8 @@
     };
   });
 
-  let appMemoryLabel = $derived(usage ? formatBytes(usage.memoryBytes) : '--');
-  let appCpuLabel = $derived(usage ? `${usage.cpuPercent.toFixed(1)}%` : '--');
+  let appMemoryLabel = $derived(formatBytes(usage?.memoryBytes ?? null));
+  let appCpuLabel = $derived(formatPercent(usage?.cpuPercent ?? null));
   let wslCpuLabel = $derived(
     usage?.wsl?.cpuPercent == null ? '--' : `${usage.wsl.cpuPercent.toFixed(1)}%`
   );
@@ -122,15 +122,20 @@
   let title = $derived(
     error
       ? 'Usage unavailable'
-      : usage?.wslActive
-        ? `Soloe Electron processes: CPU ${appCpuLabel} · Memory ${appMemoryLabel} · WSL VM-wide: CPU ${wslCpuLabel} · Memory ${wslMemoryTitle}. ${wslDetailTitle}`
-        : `Soloe Electron processes: CPU ${appCpuLabel} · Memory ${appMemoryLabel}`
+      : usage
+        ? `${usage.scope === 'backend' ? 'Soloe backend' : 'Soloe Electron client'}${usage.availability === 'available' ? '' : ` (${usage.availability})`}: CPU ${appCpuLabel} · Memory ${appMemoryLabel}${usage.wslActive ? ` · WSL VM-wide: CPU ${wslCpuLabel} · Memory ${wslMemoryTitle}. ${wslDetailTitle}` : ''}${usage.message ? `. ${usage.message}` : ''}`
+        : 'Gathering usage…'
   );
 
-  function formatBytes(bytes: number): string {
+  function formatBytes(bytes: number | null): string {
+    if (bytes === null) return '--';
     const mib = bytes / 1024 / 1024;
     if (mib < 1024) return `${Math.round(mib)}M`;
     return `${(mib / 1024).toFixed(1)}G`;
+  }
+
+  function formatPercent(percent: number | null): string {
+    return percent === null ? '--' : `${percent.toFixed(1)}%`;
   }
 </script>
 
@@ -144,7 +149,9 @@
   onfocus={() => setWslFocused(true)}
   onblur={() => setWslFocused(false)}
 >
-  <span class="text-[8px] font-semibold leading-none tracking-wide text-muted-foreground/70">APP</span>
+  <span class="text-[8px] font-semibold leading-none tracking-wide text-muted-foreground/70">
+    {usage?.scope === 'backend' ? 'BACK' : 'APP'}
+  </span>
   <div
     class={`flex w-8 flex-col items-center gap-0.5 rounded-md px-0.5 py-1 ${
       error ? 'bg-destructive/10 text-destructive' : 'bg-muted/45 text-muted-foreground'

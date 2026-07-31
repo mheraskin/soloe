@@ -96,6 +96,7 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "git.fetch",
   "system.platform",
   "system.listWslDistros",
+  "system.usage",
   "agentIntegration.status",
 ]);
 

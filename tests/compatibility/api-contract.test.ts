@@ -48,4 +48,10 @@ describe("Soloe API transport contract", () => {
     }
     expect(supportsRpc("browser", "files", "openInEditor")).toBe(false);
   });
+
+  it("keeps process usage on the application server for shared clients", () => {
+    expect(supportsRpc("browser", "system", "usage")).toBe(true);
+    expect(supportsRpc("remote-electron", "system", "usage")).toBe(true);
+    expect(REMOTE_ELECTRON_NATIVE_METHODS.has("system.usage")).toBe(false);
+  });
 });

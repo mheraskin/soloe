@@ -4,6 +4,7 @@ import type {
   RuntimeReplaySnapshot,
   RuntimeTerminalStart,
   RuntimeTerminalState,
+  RuntimeUsageSnapshot,
 } from "@soloe/protocol";
 import type {
   CreateWorkerSessionRequest,
@@ -17,6 +18,7 @@ import type {
   SessionUpdate,
 } from "../../../shared/types/sessions.js";
 import type { SettingsUpdate } from "../../../shared/types/settings.js";
+import type { SystemUsageRequest } from "../../../shared/types/system.js";
 import type {
   ProjectDraft,
   ProjectId,
@@ -83,6 +85,8 @@ import { ProjectStore } from "../../../electron/projects/ProjectStore.js";
 import { AgentObserverManager } from "../../../electron/agents/AgentObserverManager.js";
 import { AgentObserverStore } from "../../../electron/agents/AgentObserverStore.js";
 import { AgentRuntimeManager } from "../../../electron/agents/AgentRuntimeManager.js";
+import { ProcessTreeUsageSampler } from "@soloe/runtime";
+import { BackendUsageObservation } from "./BackendUsageObservation.js";
 
 export interface RuntimeControl {
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
@@ -91,6 +95,7 @@ export interface RuntimeControl {
   write(terminalId: string, data: string): Promise<unknown>;
   resize(terminalId: string, cols: number, rows: number): Promise<unknown>;
   stop(terminalId: string): Promise<unknown>;
+  usage?(): Promise<RuntimeUsageSnapshot>;
 }
 
 export interface DomainCall {
@@ -104,6 +109,7 @@ export interface SoloeDomainOptions {
   dataDirectory: string;
   runtime: RuntimeControl;
   featureArtifacts?: FeatureArtifactObservation;
+  usageObservation?: Pick<BackendUsageObservation, "observe" | "reset">;
 }
 
 export interface SoloeDomain {
@@ -131,6 +137,7 @@ export class SoloeDomain extends EventEmitter {
     Map<string, () => void>
   >();
   private readonly observerStore: AgentObserverStore;
+  private readonly usage: Pick<BackendUsageObservation, "observe" | "reset">;
   private observer!: AgentObserverManager;
   private workerRuntime!: AgentRuntimeManager;
   private readonly commandBuilder = new SessionCommandBuilder(
@@ -168,6 +175,16 @@ export class SoloeDomain extends EventEmitter {
     this.featureArtifacts =
       options.featureArtifacts ?? new FeatureArtifactObservation();
     this.features = new FeatureService(this.featureArtifacts);
+    const serverUsage = new ProcessTreeUsageSampler();
+    this.usage =
+      options.usageObservation ??
+      new BackendUsageObservation({
+        collectServerUsage: () => serverUsage.sample(),
+        ...(options.runtime.usage
+          ? { collectRuntimeUsage: () => options.runtime.usage!() }
+          : {}),
+        backendPlacement: detectBackendPlacement(),
+      });
     this.git.onChange((event) => {
       this.emit("event", "git.change", event);
     });
@@ -213,6 +230,7 @@ export class SoloeDomain extends EventEmitter {
   }
 
   async dispose(): Promise<void> {
+    this.usage.reset();
     for (
       const clientId of new Set([
         ...this.gitObservationReleases.keys(),
@@ -275,11 +293,8 @@ export class SoloeDomain extends EventEmitter {
         return this.settings.update(call.args[0] as SettingsUpdate);
       }
     }
-    if (call.namespace === "system" && call.method === "platform") {
-      return platformInfo();
-    }
-    if (call.namespace === "system" && call.method === "listWslDistros") {
-      return [];
+    if (call.namespace === "system") {
+      return this.systemCall(call.method, call.args);
     }
     if (call.namespace === "agentIntegration" && call.method === "status") {
       return { hosts: [] };
@@ -288,6 +303,28 @@ export class SoloeDomain extends EventEmitter {
       "rpc_not_supported",
       `RPC ${call.namespace}.${call.method} is not supported by the application server`,
     );
+  }
+
+  private async systemCall(method: string, args: unknown[]): Promise<unknown> {
+    if (method === "platform") {
+      requireArgumentCount("system.platform", args, 0);
+      return platformInfo();
+    }
+    if (method === "listWslDistros") {
+      requireArgumentCount("system.listWslDistros", args, 0);
+      const distro = process.env.WSL_DISTRO_NAME?.trim();
+      return distro ? [distro] : [];
+    }
+    if (method === "usage") {
+      if (args.length > 1) {
+        throw new RpcError(
+          "invalid_system_usage_request",
+          "system.usage accepts at most one request object",
+        );
+      }
+      return this.usage.observe(validateSystemUsageRequest(args[0]));
+    }
+    throw unsupportedRpc("system", method);
   }
 
   releaseClient(clientId: string): void {
@@ -770,7 +807,11 @@ export class SoloeDomain extends EventEmitter {
 
   private setFeatureSubscription(
     clientId: string | undefined,
-    request: { cwd: string; runMode: WorktreeScope["runMode"]; wslDistro?: string },
+    request: {
+      cwd: string;
+      runMode: NonNullable<WorktreeScope["runMode"]>;
+      wslDistro?: string;
+    },
     active: boolean,
   ): true {
     if (!clientId) {
@@ -1066,6 +1107,55 @@ function unsupportedRpc(namespace: string, method: string): RpcError {
   );
 }
 
+function validateSystemUsageRequest(value: unknown): SystemUsageRequest {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RpcError(
+      "invalid_system_usage_request",
+      "system.usage request must be an object",
+    );
+  }
+  const request = value as Record<string, unknown>;
+  const keys = Object.keys(request);
+  if (keys.some((key) => key !== "detail")) {
+    throw new RpcError(
+      "invalid_system_usage_request",
+      "system.usage request contains an unknown field",
+    );
+  }
+  if (
+    request.detail !== undefined &&
+    request.detail !== "summary" &&
+    request.detail !== "wsl"
+  ) {
+    throw new RpcError(
+      "invalid_system_usage_request",
+      "system.usage detail must be summary or wsl",
+    );
+  }
+  return request as SystemUsageRequest;
+}
+
+function requireArgumentCount(
+  method: string,
+  args: unknown[],
+  expected: number,
+): void {
+  if (args.length !== expected) {
+    throw new RpcError(
+      "invalid_rpc_arguments",
+      `${method} expects ${expected} arguments`,
+    );
+  }
+}
+
+function detectBackendPlacement(): "native" | "wsl" {
+  return process.platform === "linux" &&
+    (Boolean(process.env.WSL_DISTRO_NAME) || Boolean(process.env.WSL_INTEROP))
+    ? "wsl"
+    : "native";
+}
+
 function sameLogicalPath(left: string, right: string): boolean {
   const windowsPath =
     /^[a-zA-Z]:[\\/]/u.test(left) ||
@@ -1109,7 +1199,7 @@ const FEATURE_RPC_METHODS = new Set([
 
 function validateFeatureRequest(value: unknown): Record<string, unknown> & {
   cwd: string;
-  runMode: WorktreeScope["runMode"];
+  runMode: NonNullable<WorktreeScope["runMode"]>;
   wslDistro?: string;
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

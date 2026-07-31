@@ -142,11 +142,46 @@ async function collectAppUsage(): Promise<Omit<SystemUsageSnapshot, 'wslActive' 
   const processCount = selectedPids.size;
 
   return {
+    scope: 'client',
+    availability: 'available',
+    backendPlacement: null,
     cpuPercent: round(cpuPercent, 1),
     memoryBytes,
     processCount,
     electronProcessCount,
     childProcessCount: Math.max(0, processCount - electronProcessCount),
+    components: [
+      {
+        kind: 'electron',
+        availability: 'available',
+        cpuPercent: round(
+          [...electronByPid.values()].reduce(
+            (total, metric) => total + metric.cpu.percentCPUUsage,
+            0
+          ),
+          1
+        ),
+        memoryBytes: [...electronByPid.values()].reduce(
+          (total, metric) => total + metric.memory.workingSetSize * 1024,
+          0
+        ),
+        processCount: electronProcessCount
+      },
+      {
+        kind: 'client-child',
+        availability: 'available',
+        cpuPercent: round(
+          [...selectedPids]
+            .filter((pid) => !electronByPid.has(pid))
+            .reduce((total, pid) => total + (rows.get(pid)?.cpuPercent ?? 0), 0),
+          1
+        ),
+        memoryBytes: [...selectedPids]
+          .filter((pid) => !electronByPid.has(pid))
+          .reduce((total, pid) => total + (rows.get(pid)?.rssKb ?? 0) * 1024, 0),
+        processCount: Math.max(0, processCount - electronProcessCount)
+      }
+    ],
     sampledAt: new Date().toISOString()
   };
 }

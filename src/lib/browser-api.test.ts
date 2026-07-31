@@ -157,6 +157,29 @@ describe("browser API", () => {
     ]);
   });
 
+  it("requests backend process usage without claiming browser process metrics", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: { scope: "backend" } }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "usage-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    await api.system.usage({ detail: "summary" });
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "system",
+      method: "usage",
+      args: [{ detail: "summary" }],
+      clientId: "usage-browser",
+    });
+  });
+
   it("supports an absolute server URL and bearer token for the Electron shell", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -270,6 +293,7 @@ describe("browser API", () => {
     expect(api.transport?.supports("notes", "saveImage")).toBe(true);
     expect(api.transport?.supports("features", "scan")).toBe(true);
     expect(api.transport?.supports("features", "subscribe")).toBe(true);
+    expect(api.transport?.supports("system", "usage")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
