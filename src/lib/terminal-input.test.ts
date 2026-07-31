@@ -5,8 +5,10 @@ import {
   isClipboardPasteShortcut,
   SHIFT_ENTER_SEQUENCE,
   shouldPasteImageViaSavedPath,
+  shouldPassCtrlSlashToTerminal,
   shouldSendShiftEnterSequence
 } from './terminal-input';
+import { Keymap } from './keymap';
 
 function key(overrides: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -30,6 +32,24 @@ describe('terminal input helpers', () => {
     expect(shouldSendShiftEnterSequence(key({ key: 'Enter', shiftKey: true }))).toBe(true);
     expect(shouldSendShiftEnterSequence(key({ key: 'Enter' }))).toBe(false);
     expect(shouldSendShiftEnterSequence(key({ key: 'Enter', shiftKey: true, ctrlKey: true }))).toBe(false);
+  });
+
+  it('passes layout-shifted Ctrl+/ through the split-terminal shortcut', () => {
+    const ctrlSlash = key({
+      code: 'Slash',
+      ctrlKey: true,
+      key: '/',
+      shiftKey: true
+    });
+
+    expect(Keymap.splitTerminal.match(ctrlSlash)).toBe(true);
+    expect(shouldPassCtrlSlashToTerminal(ctrlSlash)).toBe(true);
+    expect(shouldPassCtrlSlashToTerminal(key({
+      code: 'Slash',
+      ctrlKey: true,
+      key: '?',
+      shiftKey: true
+    }))).toBe(false);
   });
 
   it('uses the CSI-u Shift+Enter sequence Codex-compatible terminals emit', () => {

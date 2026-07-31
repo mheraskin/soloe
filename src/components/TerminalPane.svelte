@@ -32,6 +32,7 @@
     isClipboardPasteShortcut,
     SHIFT_ENTER_SEQUENCE,
     shouldPasteImageViaSavedPath,
+    shouldPassCtrlSlashToTerminal,
     shouldSendShiftEnterSequence
   } from '../lib/terminal-input';
   import { deferTerminalDispose, TerminalFitController } from '../lib/terminal-fit';
@@ -495,6 +496,7 @@
 
     t.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
+      if (shouldPassCtrlSlashToTerminal(e)) return true;
 
       if (tabIndexFromEvent(e) !== null) return false;
       if (shiftNumberIndexFromEvent(e) !== null) return false;

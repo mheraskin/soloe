@@ -30,6 +30,12 @@ export function shouldSendShiftEnterSequence(event: KeyboardLike): boolean {
   );
 }
 
+export function shouldPassCtrlSlashToTerminal(event: KeyboardLike): boolean {
+  // Some keyboard layouts require Shift to produce '/', which otherwise
+  // collides with Soloe's physical Ctrl+Shift+Slash split shortcut.
+  return event.ctrlKey && !event.metaKey && !event.altKey && event.key === '/';
+}
+
 // Sequences emitted for Alt-modified word edit/navigation. Caller must have
 // verified altKey is set with no ctrl/meta. xterm.js's defaults
 // (\x1b\x7f for Alt+Backspace, \x1b[3;3~ for Alt+Delete) parse cleanly in
