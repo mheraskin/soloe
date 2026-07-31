@@ -131,6 +131,10 @@ impl NativeProcessOwner {
     pub fn owns_pid(&self, pid: u32) -> bool {
         self.inner.owns_pid(pid)
     }
+
+    pub fn terminate_all(&self) -> Result<(), String> {
+        self.inner.terminate_all()
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -149,6 +153,10 @@ impl NativeProcessOwnerInner {
     fn owns_pid(&self, _pid: u32) -> bool {
         true
     }
+
+    fn terminate_all(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -161,7 +169,7 @@ mod windows_job {
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
@@ -224,6 +232,17 @@ mod windows_job {
             unsafe { CloseHandle(process) };
             checked != 0 && result != 0
         }
+
+        pub(super) fn terminate_all(&self) -> Result<(), String> {
+            let terminated = unsafe { TerminateJobObject(self.handle, 1) };
+            if terminated == 0 {
+                return Err(format!(
+                    "failed to terminate the Soloe process Job Object: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(())
+        }
     }
 
     impl Drop for NativeProcessOwnerInner {
@@ -240,6 +259,15 @@ use windows_job::NativeProcessOwnerInner;
 mod tests {
     use super::*;
     use std::env;
+
+    #[cfg(target_os = "windows")]
+    use std::process::{Command, Stdio};
+
+    #[cfg(target_os = "windows")]
+    use std::thread;
+
+    #[cfg(target_os = "windows")]
+    use std::time::{Duration, Instant};
 
     #[test]
     fn a_second_tray_cannot_acquire_the_same_lock() {
@@ -269,5 +297,66 @@ mod tests {
         drop(lease);
         assert!(!directory.join("tray-lease.json").exists());
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn terminate_all_ends_descendants_after_the_launcher_exits() {
+        let pid_file =
+            env::temp_dir().join(format!("soloe-owned-descendant-{}.pid", std::process::id()));
+        let _ = fs::remove_file(&pid_file);
+        let owner = NativeProcessOwner::new().unwrap();
+        let mut launcher = Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ownership::tests::owned_descendant_launcher",
+                "--nocapture",
+            ])
+            .env("SOLOE_TEST_DESCENDANT_PID_FILE", &pid_file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        owner.assign(&launcher).unwrap();
+        assert!(launcher.wait().unwrap().success());
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let descendant_pid = loop {
+            if let Ok(value) = fs::read_to_string(&pid_file) {
+                break value.trim().parse::<u32>().unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "descendant PID was not published"
+            );
+            thread::sleep(Duration::from_millis(25));
+        };
+        assert!(owner.owns_pid(descendant_pid));
+
+        owner.terminate_all().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while owner.owns_pid(descendant_pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert!(!owner.owns_pid(descendant_pid));
+        let _ = fs::remove_file(pid_file);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn owned_descendant_launcher() {
+        let Some(pid_file) = env::var_os("SOLOE_TEST_DESCENDANT_PID_FILE") else {
+            return;
+        };
+        thread::sleep(Duration::from_millis(200));
+        let child = Command::new("ping")
+            .args(["127.0.0.1", "-n", "60"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        fs::write(pid_file, child.id().to_string()).unwrap();
     }
 }
