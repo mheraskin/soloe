@@ -53,7 +53,13 @@ export function defaultDraft(kind: SessionLaunchKind, defaults?: SettingsDefault
 }
 
 export function toDraft(s: Session): SessionDraft {
-  const { id: _id, createdAt: _c, lastUsedAt: _l, ...rest } = s;
+  const {
+    id: _id,
+    createdAt: _c,
+    lastUsedAt: _l,
+    autoNamed: _autoNamed,
+    ...rest
+  } = s;
   return rest as SessionDraft;
 }
 

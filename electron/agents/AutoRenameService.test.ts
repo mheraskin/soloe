@@ -91,6 +91,33 @@ describe('AutoRenameService', () => {
     expect(final?.autoNamed).toBe(false);
   });
 
+  it('does not start automatic renaming again after a manual rename', async () => {
+    const session = await sessionStore.create({
+      name: 'new codex',
+      cwd: tmpDir,
+      runMode: 'windows',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    });
+    await sessionStore.update(session.id, { name: 'keep-this-name', autoNamed: false });
+    const spawnImpl = vi.fn() as unknown as typeof spawn;
+    const service = new AutoRenameService({
+      sessionStore,
+      settings: settingsStore,
+      spawnImpl
+    });
+
+    await service.maybeRename({
+      sessionId: session.id,
+      firstPrompt: 'this could be a later resume prompt'
+    });
+
+    expect(spawnImpl).not.toHaveBeenCalled();
+    await expect(sessionStore.get(session.id)).resolves.toMatchObject({
+      name: 'keep-this-name',
+      autoNamed: false
+    });
+  });
+
   it('falls back to an explicitly available Claude binary when no model is configured', async () => {
     const session = await sessionStore.create({
       name: 'new agent',
