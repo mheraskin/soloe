@@ -7,4 +7,6 @@ export * from "./git/GitService.js";
 export * from "./git/ReviewDiffMaterializer.js";
 export * from "./git/UntrackedFileCounter.js";
 export * from "./notes/NotesStore.js";
+export * from "./features/FeatureService.js";
+export * from "./features/FeatureArtifactObservation.js";
 export * from "./runtime/wsl-paths.js";
