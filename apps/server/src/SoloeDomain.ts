@@ -45,6 +45,7 @@ import type {
   ProjectUpdate,
 } from "../../../shared/types/projects.js";
 import type {
+  FileOpenRequest,
   FilePasteRequest,
   FileReadRequest,
   FileSearchRequest,
@@ -161,6 +162,7 @@ export interface SoloeDomainOptions {
   enableAgentBridge?: boolean;
   pathService?: Pick<BackendPathService, "openSessionPath">;
   wslHostDetector?: Pick<WslHostDetector, "detect">;
+  fileEditorLauncher?: (editor: string, absolutePath: string) => Promise<void>;
 }
 
 export interface SoloeDomain {
@@ -242,6 +244,10 @@ export class SoloeDomain extends EventEmitter {
       runtime: options.runtime,
       getSession: (sessionId) => this.sessions.get(sessionId),
       authorizeScope: (scope) => this.isAuthorizedWorktree(scope),
+      getEditor: async () => (await this.settings.get()).binaries.editor,
+      ...(options.fileEditorLauncher
+        ? { launchEditor: options.fileEditorLauncher }
+        : {}),
     });
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
@@ -1172,6 +1178,9 @@ export class SoloeDomain extends EventEmitter {
     switch (method) {
       case "search":
         return this.files.search(args[0] as FileSearchRequest);
+      case "openInEditor":
+        requireArgumentCount("files.openInEditor", args, 1);
+        return this.files.openInEditor(validateFileOpenRequest(args[0]));
       case "pasteIntoTerminal":
         return this.files.pasteIntoTerminal(args[0] as FilePasteRequest);
       case "pasteImagesIntoTerminal":
@@ -1708,6 +1717,38 @@ function validateSystemSessionId(value: unknown): SessionId {
     );
   }
   return value;
+}
+
+function validateFileOpenRequest(value: unknown): FileOpenRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RpcError(
+      "invalid_file_request",
+      "files.openInEditor request must be an object",
+    );
+  }
+  const request = value as Record<string, unknown>;
+  const allowed = new Set(["absolutePath", "cwd", "runMode", "wslDistro"]);
+  if (Object.keys(request).some((key) => !allowed.has(key))) {
+    throw new RpcError(
+      "invalid_file_request",
+      "files.openInEditor request contains an unknown field",
+    );
+  }
+  if (
+    typeof request.absolutePath !== "string" ||
+    typeof request.cwd !== "string" ||
+    (request.runMode !== "linux" &&
+      request.runMode !== "windows" &&
+      request.runMode !== "wsl") ||
+    (request.wslDistro !== undefined &&
+      typeof request.wslDistro !== "string")
+  ) {
+    throw new RpcError(
+      "invalid_file_request",
+      "files.openInEditor request fields are invalid",
+    );
+  }
+  return request as unknown as FileOpenRequest;
 }
 
 function validateSystemUsageRequest(value: unknown): SystemUsageRequest {

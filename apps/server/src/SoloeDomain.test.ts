@@ -3,6 +3,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -976,7 +977,12 @@ describe("SoloeDomain", () => {
       resize: vi.fn(),
       stop: vi.fn(),
     };
-    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+    const fileEditorLauncher = vi.fn(async () => {});
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      fileEditorLauncher,
+    });
 
     try {
       await domain.init();
@@ -1005,6 +1011,22 @@ describe("SoloeDomain", () => {
       ).resolves.toEqual([
         expect.objectContaining({ rootPath: worktree, path: "src/app.ts" }),
       ]);
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "openInEditor",
+          args: [
+            {
+              ...scope,
+              absolutePath: path.join(worktree, "src", "app.ts"),
+            },
+          ],
+        }),
+      ).resolves.toBe(true);
+      expect(fileEditorLauncher).toHaveBeenCalledWith(
+        expect.any(String),
+        await realpath(path.join(worktree, "src", "app.ts")),
+      );
       await expect(
         domain.invoke({
           namespace: "files",
@@ -1051,6 +1073,31 @@ describe("SoloeDomain", () => {
           args: [{ ...scope, cwd: outside, relativePath: "secret.txt" }],
         }),
       ).rejects.toMatchObject({ code: "worktree_not_authorized" });
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "openInEditor",
+          args: [
+            {
+              ...scope,
+              absolutePath: path.join(outside, "secret.txt"),
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "path_not_authorized" });
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "openInEditor",
+          args: [
+            {
+              ...scope,
+              absolutePath: path.join(worktree, "src", "app.ts"),
+              command: "arbitrary-shell",
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_file_request" });
 
       await expect(
         domain.invoke({

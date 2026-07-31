@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type {
   FilePasteRequest,
+  FileOpenRequest,
   FileReadRequest,
   FileReadResult,
   FileSearchRequest,
@@ -48,6 +50,8 @@ export interface FileServiceOptions {
   runtime: FilesRuntime;
   getSession(sessionId: string): Promise<Session | null>;
   authorizeScope(scope: FileIndexScope): Promise<boolean>;
+  getEditor?: () => Promise<string | undefined>;
+  launchEditor?: (editor: string, absolutePath: string) => Promise<void>;
 }
 
 interface ResolvedRoot {
@@ -67,6 +71,41 @@ export class FileService {
     const scope = fileIndexScope(request);
     await this.authorize(scope);
     return this.fileIndex.search(scope, request.query, request.limit);
+  }
+
+  async openInEditor(request: FileOpenRequest): Promise<true> {
+    const scope = fileIndexScope(request);
+    const root = await this.resolveRoot(scope);
+    if (
+      typeof request.absolutePath !== "string" ||
+      !request.absolutePath.trim() ||
+      request.absolutePath.length > 16_384 ||
+      request.absolutePath.includes("\0") ||
+      !root.pathApi.isAbsolute(request.absolutePath)
+    ) {
+      throw new DomainError(
+        "invalid_file_path",
+        "Editor target must be a bounded absolute path",
+      );
+    }
+    const relativePath = root.pathApi.relative(root.hostRoot, request.absolutePath);
+    if (
+      root.pathApi.isAbsolute(relativePath) ||
+      relativePath === ".." ||
+      relativePath.startsWith(`..${root.pathApi.sep}`)
+    ) {
+      throw new DomainError(
+        "path_not_authorized",
+        "Editor target is outside the authorized Worktree",
+      );
+    }
+    const target = await this.resolveExisting(root, relativePath || ".");
+    const editor =
+      (await this.options.getEditor?.())?.trim() ||
+      process.env.EDITOR?.trim() ||
+      "code";
+    await (this.options.launchEditor ?? launchEditor)(editor, target);
+    return true;
   }
 
   async listTree(request: FileTreeRequest): Promise<FileTreeResult> {
@@ -460,6 +499,21 @@ function looksBinary(buffer: Buffer): boolean {
     if (byte === 0) return true;
   }
   return false;
+}
+
+function launchEditor(editor: string, absolutePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(editor, [absolutePath], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
 }
 
 function unavailableRead(

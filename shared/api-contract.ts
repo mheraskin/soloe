@@ -49,6 +49,7 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "projects.detectFromPath",
   "projects.suggestPaths",
   "files.search",
+  "files.openInEditor",
   "files.pasteIntoTerminal",
   "files.pasteImagesIntoTerminal",
   "files.listTree",

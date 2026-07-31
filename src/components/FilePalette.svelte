@@ -65,12 +65,12 @@
 
   async function openResult(result: FileSearchResult): Promise<void> {
     filePalette.close();
-    if (supportsBackendOperation('files', 'openInEditor')) {
-      await ipc.files.openInEditor({ absolutePath: result.absolutePath });
-      return;
-    }
     const scope = fileScope;
     if (!scope) return;
+    if (supportsBackendOperation('files', 'openInEditor')) {
+      await ipc.files.openInEditor({ ...scope, absolutePath: result.absolutePath });
+      return;
+    }
     rightRail.openTab('files');
     await filesStore.openFileAt(scope, result.path);
     window.dispatchEvent(new CustomEvent('soloe:focus-pane', { detail: { tabId: 'files' } }));

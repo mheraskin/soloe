@@ -17,6 +17,9 @@ export interface FileSearchResult {
 
 export interface FileOpenRequest {
   absolutePath: string;
+  cwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
 }
 
 export interface FilePasteRequest {

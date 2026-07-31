@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { ipcMain } from 'electron';
 import { FileService, type FileIndexScope } from '@soloe/domain';
 import { IpcChannels } from '@shared/types/ipc.js';
@@ -41,6 +40,10 @@ export class FilesIpc {
         write: async (terminalId, data) => opts.pty.write(terminalId, data)
       },
       getSession: (sessionId) => opts.store.get(sessionId),
+      getEditor: async () => {
+        const binaries = opts.getBinaries ? await opts.getBinaries() : {};
+        return binaries.editor;
+      },
       authorizeScope: opts.authorizeScope ?? (async (scope) => {
         const sessions = await opts.store.list();
         return sessions.some((session) =>
@@ -61,10 +64,7 @@ export class FilesIpc {
     );
 
     ipcMain.handle(IpcChannels.files.openInEditor, (_e, request: FileOpenRequest) =>
-      ipcInvoke(async () => {
-        await this.openInEditor(request.absolutePath);
-        return true as const;
-      })
+      ipcInvoke(() => this.service.openInEditor(request))
     );
 
     ipcMain.handle(IpcChannels.files.pasteIntoTerminal, (_e, request: FilePasteRequest) =>
@@ -99,19 +99,5 @@ export class FilesIpc {
     ipcMain.removeHandler(IpcChannels.files.writeFile);
     this.service.dispose();
     this.registered = false;
-  }
-
-  private async openInEditor(absolutePath: string): Promise<void> {
-    const binaries = this.opts.getBinaries ? await this.opts.getBinaries() : {};
-    const editor = binaries.editor ?? process.env['EDITOR'] ?? 'code';
-    const child = spawn(editor, [absolutePath], {
-      detached: true,
-      stdio: 'ignore'
-    });
-    await new Promise<void>((resolve, reject) => {
-      child.once('error', reject);
-      child.once('spawn', () => resolve());
-    });
-    child.unref();
   }
 }

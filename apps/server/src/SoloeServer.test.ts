@@ -1,7 +1,15 @@
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   RuntimeProcess,
@@ -658,6 +666,7 @@ describe('Soloe Server lifecycle', () => {
     const pathService = {
       openSessionPath: vi.fn(async () => true as const)
     };
+    const fileEditorLauncher = vi.fn(async () => {});
 
     try {
       await runtime.listen();
@@ -667,7 +676,8 @@ describe('Soloe Server lifecycle', () => {
         runtime: domainRuntime,
         integrationInstaller,
         enableAgentBridge: true,
-        pathService
+        pathService,
+        fileEditorLauncher
       });
       await domain.init();
       server = new SoloeServer({
@@ -864,6 +874,15 @@ describe('Soloe Server lifecycle', () => {
         truncated: false,
         unavailable: false
       }));
+      await expect(rpc(baseUrl, 'files', 'openInEditor', [{
+        cwd: directory,
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+        absolutePath: path.join(directory, 'browser-file.txt')
+      }])).resolves.toBe(true);
+      expect(fileEditorLauncher).toHaveBeenCalledWith(
+        expect.any(String),
+        await realpath(path.join(directory, 'browser-file.txt'))
+      );
       await expect(rpc(baseUrl, 'files', 'search', [{
         cwd: directory,
         query: 'browser-file',

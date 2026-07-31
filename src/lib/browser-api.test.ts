@@ -52,13 +52,34 @@ describe("browser API", () => {
     });
 
     await api.files.listTree({ cwd: "/repo", runMode: "linux" });
-
-    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
-      namespace: "files",
-      method: "listTree",
-      args: [{ cwd: "/repo", runMode: "linux" }],
-      clientId: "browser-test",
+    await api.files.openInEditor({
+      cwd: "/repo",
+      runMode: "linux",
+      absolutePath: "/repo/src/app.ts",
     });
+
+    expect(
+      fetchImpl.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      {
+        namespace: "files",
+        method: "listTree",
+        args: [{ cwd: "/repo", runMode: "linux" }],
+        clientId: "browser-test",
+      },
+      {
+        namespace: "files",
+        method: "openInEditor",
+        args: [
+          {
+            cwd: "/repo",
+            runMode: "linux",
+            absolutePath: "/repo/src/app.ts",
+          },
+        ],
+        clientId: "browser-test",
+      },
+    ]);
   });
 
   it("sends Git reads and observation demand with a stable client identity", async () => {
@@ -520,7 +541,7 @@ describe("browser API", () => {
     expect(api.transport?.supports("files", "listTree")).toBe(true);
     expect(api.transport?.supports("files", "readFile")).toBe(true);
     expect(api.transport?.supports("files", "writeFile")).toBe(true);
-    expect(api.transport?.supports("files", "openInEditor")).toBe(false);
+    expect(api.transport?.supports("files", "openInEditor")).toBe(true);
     expect(api.transport?.supports("git", "status")).toBe(true);
     expect(api.transport?.supports("notes", "list")).toBe(true);
     expect(api.transport?.supports("notes", "saveImage")).toBe(true);

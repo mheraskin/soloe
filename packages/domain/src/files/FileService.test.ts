@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -123,6 +130,48 @@ describe("FileService", () => {
         path: "src/app.ts",
       }),
     ).rejects.toMatchObject({ code: "terminal_not_found" });
+    service.dispose();
+  });
+
+  it("opens only existing targets inside an authorized Worktree", async () => {
+    const target = path.join(root, "src", "app.ts");
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "export {};\n");
+    await writeFile(path.join(outside, "secret.txt"), "secret\n");
+    await symlink(outside, path.join(root, "escape"));
+    const launchEditor = vi.fn(async () => {});
+    const service = createService({
+      getEditor: async () => "test-editor",
+      launchEditor,
+    });
+    const scope = { cwd: root, runMode: "linux" as const };
+
+    await expect(
+      service.openInEditor({ ...scope, absolutePath: target }),
+    ).resolves.toBe(true);
+    expect(launchEditor).toHaveBeenCalledWith(
+      "test-editor",
+      await realpath(target),
+    );
+    await expect(
+      service.openInEditor({
+        ...scope,
+        absolutePath: path.join(outside, "secret.txt"),
+      }),
+    ).rejects.toMatchObject({ code: "path_not_authorized" });
+    await expect(
+      service.openInEditor({
+        ...scope,
+        absolutePath: path.join(root, "escape", "secret.txt"),
+      }),
+    ).rejects.toMatchObject({ code: "path_symlink_escape" });
+    await expect(
+      service.openInEditor({
+        cwd: outside,
+        runMode: "linux",
+        absolutePath: path.join(outside, "secret.txt"),
+      }),
+    ).rejects.toMatchObject({ code: "worktree_not_authorized" });
     service.dispose();
   });
 });
