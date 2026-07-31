@@ -12,9 +12,9 @@ const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 const electronVersion = require('electron/package.json').version;
 const root = path.resolve(import.meta.dirname, '..');
-const config = parseArgs(process.argv.slice(2));
-const token = `browser-integration-${process.pid}`;
 const nativeRunMode = process.platform === 'win32' ? 'windows' : 'linux';
+const config = parseArgs(process.argv.slice(2));
+const token = config.serverToken ?? `browser-integration-${process.pid}`;
 const children = new Set();
 const browsers = new Set();
 let scratchRoot;
@@ -22,6 +22,10 @@ let runtime;
 let server;
 
 async function main() {
+  if (config.serverUrl) {
+    await runExistingServerSmoke();
+    return;
+  }
   await fs.access(path.join(root, 'out', 'web', 'index.html')).catch(() => {
     throw new Error('Browser bundle is missing; run pnpm --filter @soloe/web build first');
   });
@@ -217,6 +221,195 @@ async function main() {
     }
   };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+async function runExistingServerSmoke() {
+  assert(config.webUrl, '--web-url is required with --server-url');
+  assert(config.serverToken, '--server-token is required with --server-url');
+  assert(config.smokeCwd, '--smoke-cwd is required with --server-url');
+  await fs.access(path.join(root, 'out', 'web', 'index.html')).catch(() => {
+    throw new Error('Browser bundle is missing; run pnpm --filter @soloe/web build first');
+  });
+  scratchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-browser-integration-'));
+  const baseUrl = config.serverUrl;
+  const fixtureRoot = path.posix.join(
+    config.smokeCwd,
+    `soloe-browser-integration-${process.pid}-${Date.now()}`
+  );
+  const readyMarker = `soloe-fixture-ready-${process.pid}`;
+  const bootstrapSession = await rpc(baseUrl, 'sessions', 'create', [{
+    name: 'WSL bootstrap',
+    cwd: config.smokeCwd,
+    runMode: config.runMode,
+    launch: { type: 'terminal', shell: 'auto' }
+  }]);
+  const bootstrapTerminal = await rpc(baseUrl, 'terminal', 'start', [{
+    sessionId: bootstrapSession.id,
+    cols: 100,
+    rows: 30
+  }]);
+  const fixtureCommand = [
+    `mkdir -p '${fixtureRoot}/src' '${fixtureRoot}/docs/grill/alpha' '${fixtureRoot}/.scratch/alpha/issues'`,
+    `printf '# Fixture\\n\\n## Agent skills\\n\\nFixture configuration.\\n' > '${fixtureRoot}/AGENTS.md'`,
+    `printf '# Coverage\\n\\n## Branches\\n\\n### 1. Core\\n- [ ] 1A. Browser integration\\n' > '${fixtureRoot}/docs/grill/alpha/coverage-map.md'`,
+    `printf '# Browser integration\\nStatus: open\\n' > '${fixtureRoot}/.scratch/alpha/issues/01-browser.md'`,
+    `printf 'export const value = 1;\\n' > '${fixtureRoot}/src/app.ts'`,
+    `cd '${fixtureRoot}'`,
+    'git init -b main >/dev/null',
+    "git config user.name 'Soloe Integration'",
+    "git config user.email 'integration@soloe.test'",
+    'git config core.autocrlf false',
+    'git add .',
+    "git commit -m 'test: create browser fixture' >/dev/null",
+    "printf 'export const value = 2;\\n' > src/app.ts",
+    "printf 'browser integration\\n' > untracked.txt",
+    `printf '${readyMarker}\\n'`
+  ].join(' && ');
+  await rpc(baseUrl, 'terminal', 'input', [{
+    terminalId: bootstrapTerminal.terminalId,
+    data: `${fixtureCommand}\n`
+  }]);
+  await waitFor(async () => {
+    const replay = await rpc(baseUrl, 'terminal', 'replay', [
+      bootstrapTerminal.terminalId,
+      0
+    ]);
+    return replay.data.includes(readyMarker);
+  }, 20_000, 'WSL fixture repository');
+
+  const project = await rpc(baseUrl, 'projects', 'create', [{
+    name: 'WSL browser integration',
+    path: fixtureRoot,
+    defaultRunMode: config.runMode
+  }]);
+  const normalSession = await rpc(baseUrl, 'sessions', 'create', [{
+    name: 'Browser fixture',
+    projectId: project.id,
+    cwd: fixtureRoot,
+    runMode: config.runMode,
+    launch: { type: 'terminal', shell: 'auto' }
+  }]);
+  const largeSession = await rpc(baseUrl, 'sessions', 'create', [{
+    name: 'Large fixture',
+    projectId: project.id,
+    cwd: fixtureRoot,
+    runMode: config.runMode,
+    launch: { type: 'terminal', shell: 'auto' }
+  }]);
+
+  const first = await launchBrowser(
+    `${config.webUrl}/?token=${encodeURIComponent(token)}`,
+    'wsl-one'
+  );
+  browsers.add(first);
+  const workflow = await first.cdp.evaluate(
+    `(${runBrowserWorkflow.toString()})(${JSON.stringify({
+      projectId: project.id,
+      sessionId: normalSession.id,
+      normalCwd: fixtureRoot,
+      largeProjectId: project.id,
+      largeSessionId: largeSession.id,
+      largeCwd: fixtureRoot,
+      runMode: config.runMode,
+      largeFileCount: 1,
+      largeChangeCount: 1
+    })})`
+  );
+
+  const second = await launchBrowser(
+    `${config.webUrl}/?token=${encodeURIComponent(token)}`,
+    'wsl-two'
+  );
+  browsers.add(second);
+  const remote = await launchRemoteElectron(baseUrl, 'wsl-remote');
+  browsers.add(remote);
+  const remoteWorkflow = await remote.cdp.evaluate(
+    `(${runRemoteElectronWorkflow.toString()})(${JSON.stringify({
+      projectId: project.id,
+      sessionId: normalSession.id,
+      normalCwd: fixtureRoot,
+      runMode: config.runMode
+    })})`
+  );
+  await second.cdp.evaluate(`(() => {
+    window.__soloeNotesEvents = [];
+    window.soloe.notes.onChange((event) => window.__soloeNotesEvents.push(event));
+    return true;
+  })()`);
+  await remote.cdp.evaluate(`(() => {
+    window.__soloeNotesEvents = [];
+    window.soloe.notes.onChange((event) => window.__soloeNotesEvents.push(event));
+    return true;
+  })()`);
+  await first.cdp.evaluate(`(async () => {
+    const result = await window.soloe.notes.write(
+      ${JSON.stringify(project.id)},
+      'multi-client.md',
+      'shared WSL update'
+    );
+    if (!result.ok) throw new Error(result.error);
+    return result.value;
+  })()`);
+  await waitFor(async () => (
+    await second.cdp.evaluate(
+      `window.__soloeNotesEvents.some((event) => event.projectId === ${JSON.stringify(project.id)})`
+    )
+  ), 10_000, 'second WSL browser notes event');
+  await waitFor(async () => (
+    await remote.cdp.evaluate(
+      `window.__soloeNotesEvents.some((event) => event.projectId === ${JSON.stringify(project.id)})`
+    )
+  ), 10_000, 'WSL remote Electron notes event');
+
+  const runningBeforeClose = await rpc(baseUrl, 'terminal', 'listRunning');
+  assert(
+    runningBeforeClose.some((entry) => entry.terminalId === workflow.terminal.terminalId),
+    'WSL runtime-owned terminal was not running before client close'
+  );
+  await remote.close();
+  browsers.delete(remote);
+  await first.close();
+  browsers.delete(first);
+  const runningAfterClose = await rpc(baseUrl, 'terminal', 'listRunning');
+  assert(
+    runningAfterClose.some((entry) => entry.terminalId === workflow.terminal.terminalId),
+    'closing WSL-backed clients stopped a runtime-owned terminal'
+  );
+  const replay = await second.cdp.evaluate(`(async () => {
+    const result = await window.soloe.terminal.replay(
+      ${JSON.stringify(workflow.terminal.terminalId)},
+      0
+    );
+    if (!result.ok) throw new Error(result.error);
+    return result.value;
+  })()`);
+  assert(
+    replay?.data?.includes(workflow.terminal.marker),
+    'replacement WSL browser could not replay terminal output'
+  );
+
+  process.stdout.write(`${JSON.stringify({
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    environment: {
+      platform: process.platform,
+      node: process.version,
+      electron: electronVersion,
+      backend: 'wsl',
+      serverUrl: baseUrl,
+      webUrl: config.webUrl
+    },
+    fixtureRoot,
+    workflow,
+    remoteElectron: remoteWorkflow,
+    multiClient: {
+      notesChangeObserved: true,
+      remoteElectronNotesChangeObserved: true,
+      terminalSurvivedRemoteElectronClose: true,
+      terminalSurvivedBrowserClose: true,
+      replayRecoveredByReplacementClient: true
+    }
+  }, null, 2)}\n`);
 }
 
 async function createFixtureRepository(directory, fileCount, changedCount) {
@@ -604,7 +797,12 @@ function parseArgs(args) {
   }
   return {
     largeFiles: positiveInteger(values.get('large-files') ?? '4000', 'large-files'),
-    largeChanges: positiveInteger(values.get('large-changes') ?? '160', 'large-changes')
+    largeChanges: positiveInteger(values.get('large-changes') ?? '160', 'large-changes'),
+    serverUrl: values.get('server-url'),
+    webUrl: values.get('web-url'),
+    serverToken: values.get('server-token'),
+    smokeCwd: values.get('smoke-cwd'),
+    runMode: values.get('run-mode') ?? nativeRunMode
   };
 }
 
