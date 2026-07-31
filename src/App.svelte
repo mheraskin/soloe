@@ -68,6 +68,7 @@
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
   import { attachMobileViewport } from './lib/mobile-viewport';
+  import { changePageZoom } from './lib/page-zoom';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -1037,6 +1038,8 @@
       consume(e);
       if (isBrowserTabActive()) {
         dispatchBrowserZoom('in');
+      } else if (!supportsBackendOperation('window', 'zoomIn')) {
+        changePageZoom('in');
       } else {
         void ipc.window.zoomIn().catch(reportError);
       }
@@ -1046,6 +1049,8 @@
       consume(e);
       if (isBrowserTabActive()) {
         dispatchBrowserZoom('out');
+      } else if (!supportsBackendOperation('window', 'zoomOut')) {
+        changePageZoom('out');
       } else {
         void ipc.window.zoomOut().catch(reportError);
       }
@@ -1055,9 +1060,11 @@
       consume(e);
       if (isBrowserTabActive()) {
         dispatchBrowserZoom('reset');
+      } else if (!supportsBackendOperation('window', 'zoomIn')) {
+        changePageZoom('reset');
       }
-      // No global "reset zoom" action — only forwarded when the browser is
-      // active, since the IDE chrome doesn't currently expose a reset.
+      // Native hosts do not expose a global reset action. Web clients reset
+      // their local page zoom above without sending an unsupported RPC.
       return;
     }
     if (Keymap.toggleNotesRail.match(e)) {

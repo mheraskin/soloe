@@ -58,7 +58,16 @@ describe('browser application assets', () => {
       readFile(path.join(repositoryRoot, 'build/sw.js'), 'utf8')
     ]);
 
-    expect(index).toContain('<link rel="apple-touch-icon" href="/icon-192.png" />');
+    expect(index).toContain(
+      '<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />'
+    );
+    const [appleTouchIcon, iconGenerator] = await Promise.all([
+      readFile(path.join(repositoryRoot, 'build/apple-touch-icon.png')),
+      readFile(path.join(repositoryRoot, 'scripts/generate-pwa-icons.mjs'), 'utf8')
+    ]);
+    expect(appleTouchIcon.readUInt32BE(16)).toBe(180);
+    expect(appleTouchIcon.readUInt32BE(20)).toBe(180);
+    expect(iconGenerator).toContain("const sourcePath = resolve(root, 'build/favicon.svg')");
     expect(index).toContain('apple-mobile-web-app-capable');
     expect(main).toContain("navigator.serviceWorker.register('/sw.js', { scope: '/' })");
     expect(serviceWorker).toContain("url.pathname.startsWith('/api/')");
