@@ -20,6 +20,7 @@ import type {
 } from "../../../shared/types/sessions.js";
 import type { SettingsUpdate } from "../../../shared/types/settings.js";
 import type { SystemUsageRequest } from "../../../shared/types/system.js";
+import type { DiagnosticLogsRequest } from "../../../shared/types/diagnostics.js";
 import type {
   AskFollowUpChunk,
   AskFollowUpRequest,
@@ -74,6 +75,7 @@ import {
 import { hostPlatform, platformInfo } from "../../../shared/platform.js";
 import {
   FileService,
+  DiagnosticsService,
   FeatureArtifactObservation,
   FeatureService,
   GitService,
@@ -148,6 +150,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly settings: SettingsStore;
   private readonly projects: ProjectStore;
   private readonly files: FileService;
+  private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
   private readonly notes: NotesStore;
   private readonly featureArtifacts: FeatureArtifactObservation;
@@ -200,6 +203,13 @@ export class SoloeDomain extends EventEmitter {
     });
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
+    });
+    this.diagnostics = new DiagnosticsService({
+      settings: this.settings,
+      projects: this.projects,
+      git: this.git,
+      crashDir: path.join(options.dataDirectory, "crashes"),
+      logDirectory: options.dataDirectory,
     });
     this.notes = new NotesStore(path.join(options.dataDirectory, "notes"));
     this.featureArtifacts =
@@ -318,6 +328,9 @@ export class SoloeDomain extends EventEmitter {
     if (call.namespace === "files") {
       return this.filesCall(call.method, call.args);
     }
+    if (call.namespace === "diagnostics") {
+      return this.diagnosticsCall(call.method, call.args);
+    }
     if (call.namespace === "git") {
       try {
         return await this.gitCall(call.method, call.args, call.clientId);
@@ -391,6 +404,37 @@ export class SoloeDomain extends EventEmitter {
       return this.usage.observe(validateSystemUsageRequest(args[0]));
     }
     throw unsupportedRpc("system", method);
+  }
+
+  private async diagnosticsCall(
+    method: string,
+    args: unknown[],
+  ): Promise<unknown> {
+    if (method === "list") {
+      requireArgumentCount("diagnostics.list", args, 0);
+      return this.diagnostics.list();
+    }
+    if (method === "crashLogs") {
+      if (args.length > 1) {
+        throw new RpcError(
+          "invalid_diagnostics_request",
+          "diagnostics.crashLogs accepts at most one request object",
+        );
+      }
+      const request = validateDiagnosticLogsRequest(args[0]);
+      try {
+        return await this.diagnostics.crashLogs(request);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.startsWith("tailBytes must")
+        ) {
+          throw new RpcError("invalid_diagnostics_request", error.message);
+        }
+        throw error;
+      }
+    }
+    throw unsupportedRpc("diagnostics", method);
   }
 
   private async overviewCall(
@@ -1347,6 +1391,40 @@ function validateSystemUsageRequest(value: unknown): SystemUsageRequest {
     );
   }
   return request as SystemUsageRequest;
+}
+
+function validateDiagnosticLogsRequest(
+  value: unknown,
+): DiagnosticLogsRequest {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RpcError(
+      "invalid_diagnostics_request",
+      "diagnostics.crashLogs request must be an object",
+    );
+  }
+  const request = value as Record<string, unknown>;
+  if (Object.keys(request).some((key) => key !== "tailBytes")) {
+    throw new RpcError(
+      "invalid_diagnostics_request",
+      "diagnostics.crashLogs request contains an unknown field",
+    );
+  }
+  if (
+    request.tailBytes !== undefined &&
+    (
+      typeof request.tailBytes !== "number" ||
+      !Number.isInteger(request.tailBytes) ||
+      request.tailBytes < 0 ||
+      request.tailBytes > 65_536
+    )
+  ) {
+    throw new RpcError(
+      "invalid_diagnostics_request",
+      "tailBytes must be an integer from 0 to 65536",
+    );
+  }
+  return request as DiagnosticLogsRequest;
 }
 
 function validateOverviewRequest(

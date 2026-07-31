@@ -101,6 +101,8 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "overview.regenerate",
   "overview.askStart",
   "overview.askCancel",
+  "diagnostics.list",
+  "diagnostics.crashLogs",
   "agentIntegration.status",
 ]);
 

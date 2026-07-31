@@ -55,6 +55,15 @@ describe("Soloe API transport contract", () => {
     expect(REMOTE_ELECTRON_NATIVE_METHODS.has("system.usage")).toBe(false);
   });
 
+  it("keeps bounded diagnostics on the application server for shared clients", () => {
+    for (const method of ["diagnostics.list", "diagnostics.crashLogs"]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
+
   it("keeps Overview generation and streams on the application server", () => {
     for (const method of [
       "overview.get",

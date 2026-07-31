@@ -120,6 +120,83 @@ describe("SoloeDomain", () => {
     }
   });
 
+  it("serves bounded redacted diagnostics without exposing host paths", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-diagnostics-"));
+    const crashDirectory = path.join(directory, "crashes");
+    await mkdir(crashDirectory);
+    await writeFile(
+      path.join(directory, "server.log"),
+      `request complete token=server-secret\n${"x".repeat(80)}`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(crashDirectory, "server-crash.log"),
+      "Authorization: Bearer crash-secret\n",
+      "utf8",
+    );
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+
+    try {
+      await domain.init();
+
+      await expect(
+        domain.invoke({
+          namespace: "diagnostics",
+          method: "list",
+          args: [],
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          id: "crashes.recent",
+          severity: "warn",
+        }),
+      ]);
+
+      const logs = await domain.invoke({
+        namespace: "diagnostics",
+        method: "crashLogs",
+        args: [{ tailBytes: 48 }],
+      });
+      expect(logs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            fileName: "server.log",
+            service: "server",
+            truncated: true,
+          }),
+          expect.objectContaining({
+            fileName: "server-crash.log",
+            service: "crash",
+            severity: "error",
+          }),
+        ]),
+      );
+      expect(JSON.stringify(logs)).not.toContain(directory);
+      expect(JSON.stringify(logs)).not.toMatch(/server-secret|crash-secret/u);
+
+      for (const request of [{ tailBytes: 65_537 }, { path: "/etc/passwd" }]) {
+        await expect(
+          domain.invoke({
+            namespace: "diagnostics",
+            method: "crashLogs",
+            args: [request],
+          }),
+        ).rejects.toMatchObject({ code: "invalid_diagnostics_request" });
+      }
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("serves authorized Overview reads and client-scoped stream chunks", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-overview-"));
     const runtime = {

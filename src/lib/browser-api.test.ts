@@ -180,6 +180,40 @@ describe("browser API", () => {
     });
   });
 
+  it("requests bounded diagnostics from the application server", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: [] }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "diagnostics-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    await api.diagnostics.list();
+    await api.diagnostics.crashLogs({ tailBytes: 4_096 });
+
+    expect(
+      fetchImpl.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      {
+        namespace: "diagnostics",
+        method: "list",
+        args: [],
+        clientId: "diagnostics-browser",
+      },
+      {
+        namespace: "diagnostics",
+        method: "crashLogs",
+        args: [{ tailBytes: 4_096 }],
+        clientId: "diagnostics-browser",
+      },
+    ]);
+  });
+
   it("routes Overview streams through RPC and WebSocket events", async () => {
     const socket = new FakeSocket();
     const fetchImpl = vi.fn(
@@ -348,6 +382,8 @@ describe("browser API", () => {
     expect(api.transport?.supports("features", "scan")).toBe(true);
     expect(api.transport?.supports("features", "subscribe")).toBe(true);
     expect(api.transport?.supports("system", "usage")).toBe(true);
+    expect(api.transport?.supports("diagnostics", "list")).toBe(true);
+    expect(api.transport?.supports("diagnostics", "crashLogs")).toBe(true);
     expect(api.transport?.supports("overview", "regenerate")).toBe(true);
     expect(api.transport?.supports("overview", "askStart")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
