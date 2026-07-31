@@ -49,6 +49,17 @@ beforeEach(() => {
 });
 
 describe('shared store reconnect recovery', () => {
+  it('fills shortcut defaults when an older backend returns legacy settings', async () => {
+    const legacy = structuredClone(DEFAULT_SETTINGS) as Partial<Settings>;
+    delete legacy.shortcuts;
+    mocks.settingsGet.mockResolvedValueOnce(legacy as Settings);
+    const store = new SettingsStore();
+
+    await store.load();
+
+    expect(store.current.shortcuts).toEqual(DEFAULT_SETTINGS.shortcuts);
+  });
+
   it('keeps a project change event that arrives during a reconnect refresh', async () => {
     const pending = deferred<Project[]>();
     mocks.projectList.mockReturnValueOnce(pending.promise);

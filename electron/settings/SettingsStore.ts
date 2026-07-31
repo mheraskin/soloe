@@ -22,6 +22,7 @@ const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
 const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
 const VALID_BACKEND_PLACEMENTS = new Set(['windows', 'wsl']);
+const VALID_SHIFT_NUMBER_NAVIGATION_TARGETS = new Set(['worktree', 'project']);
 const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration', 'worktreeOverview'];
 
 export class SettingsStore {
@@ -66,7 +67,8 @@ export class SettingsStore {
         patch.quickLaunch ? true : this.cache!.quickLaunchDefaultsSeeded
       ),
       integrations: { ...this.cache!.integrations, ...(patch.integrations ?? {}) },
-      notes: { ...this.cache!.notes, ...(patch.notes ?? {}) }
+      notes: { ...this.cache!.notes, ...(patch.notes ?? {}) },
+      shortcuts: { ...this.cache!.shortcuts, ...(patch.shortcuts ?? {}) }
     };
     validateSettings(next, this.platform);
     this.cache = next;
@@ -262,7 +264,8 @@ function parseSettings(
     quickLaunch: parseQuickLaunch(raw['quickLaunch'], quickLaunchDefaultsSeeded),
     quickLaunchDefaultsSeeded: true,
     integrations: parseIntegrations(raw['integrations']),
-    notes: parseNotes(raw['notes'])
+    notes: parseNotes(raw['notes']),
+    shortcuts: parseShortcuts(raw['shortcuts'])
   };
   if (out.defaults.runMode !== 'wsl') delete out.defaults.wslDistro;
   validateSettings(out, platform);
@@ -276,6 +279,17 @@ function parseNotes(raw: unknown): Settings['notes'] {
       raw['draftsPerWorktree'],
       DEFAULT_SETTINGS.notes.draftsPerWorktree
     )
+  };
+}
+
+function parseShortcuts(raw: unknown): Settings['shortcuts'] {
+  if (!isObject(raw)) return { ...DEFAULT_SETTINGS.shortcuts };
+  return {
+    shiftNumberNavigation: pickEnum(
+      raw['shiftNumberNavigation'],
+      VALID_SHIFT_NUMBER_NAVIGATION_TARGETS,
+      DEFAULT_SETTINGS.shortcuts.shiftNumberNavigation
+    ) as Settings['shortcuts']['shiftNumberNavigation']
   };
 }
 
@@ -458,6 +472,10 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   if (!isObject(s.notes as unknown)) throw new Error('notes must be an object');
   if (typeof s.notes.draftsPerWorktree !== 'boolean') {
     throw new Error('notes.draftsPerWorktree must be a boolean');
+  }
+  if (!isObject(s.shortcuts as unknown)) throw new Error('shortcuts must be an object');
+  if (!VALID_SHIFT_NUMBER_NAVIGATION_TARGETS.has(s.shortcuts.shiftNumberNavigation)) {
+    throw new Error(`Invalid shortcuts.shiftNumberNavigation: ${s.shortcuts.shiftNumberNavigation}`);
   }
 }
 

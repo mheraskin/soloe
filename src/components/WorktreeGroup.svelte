@@ -4,6 +4,7 @@
   import type { ProjectId } from '@shared/types/projects.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
+  import { settings } from '../stores/settings.svelte';
   import { git } from '../stores/git.svelte';
   import { sidebarExpansion } from '../stores/sidebar-expansion.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -79,7 +80,11 @@
   let hasDiff = $derived(
     !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
   );
-  let kbdIndex = $derived(nav.worktreeIndexHints[cwd] ?? null);
+  let kbdIndex = $derived(
+    settings.current.shortcuts.shiftNumberNavigation === 'worktree'
+      ? nav.worktreeIndexHints[cwd] ?? null
+      : null
+  );
   let diffTitle = $derived.by<string>(() => {
     if (!shortstat || !shortstat.isRepo) return '';
     if (shortstat.insertions === 0 && shortstat.deletions === 0) return 'no changes';
@@ -208,8 +213,8 @@
         {#if kbdIndex !== null}
           <span
             class="pointer-events-none absolute top-0.5 left-0.5 font-mono text-[9px] leading-none text-muted-foreground/55"
-            title={`Ctrl+Shift+${kbdIndex}`}
-            aria-label={`Ctrl+Shift+${kbdIndex}`}
+            title={`Ctrl/Cmd+Shift+${kbdIndex}`}
+            aria-label={`Ctrl or Command plus Shift plus ${kbdIndex}`}
           >
             {kbdIndex}
           </span>

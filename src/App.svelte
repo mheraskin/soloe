@@ -51,8 +51,8 @@
   import {
     Keymap,
     shouldIgnoreInTextInput,
-    tabIndexFromEvent,
-    worktreeIndexFromEvent
+    shiftNumberIndexFromEvent,
+    tabIndexFromEvent
   } from './lib/keymap';
   import { toggleRailTabAndFocus } from './lib/rail-focus';
   import { buildWorktreeGroups } from './lib/worktree-groups';
@@ -85,11 +85,11 @@
   import SessionContextMenu from './components/SessionContextMenu.svelte';
   import KindIcon from './components/KindIcon.svelte';
   import AppSkeleton from './components/AppSkeleton.svelte';
+  import SettingsDialog from './components/SettingsDialog.svelte';
   import appIconUrl from '../build/favicon.svg';
 
   const loadNewSessionModal = () => import('./components/NewSessionModal.svelte');
   const loadConfirmDialog = () => import('./components/ConfirmDialog.svelte');
-  const loadSettingsDialog = () => import('./components/SettingsDialog.svelte');
   const loadProjectModal = () => import('./components/ProjectModal.svelte');
   const loadCommandPalette = () => import('./components/CommandPalette.svelte');
   const loadFilePalette = () => import('./components/FilePalette.svelte');
@@ -274,6 +274,7 @@
     path: string;
     active: boolean;
     sessionCount: number;
+    shortcutIndex: number | null;
   };
   type CollapsedWorktreeOption = {
     cwd: string;
@@ -450,12 +451,14 @@
         session: s
       };
     });
-    const projectOptions = projects.recents.map((p) => ({
+    const projectOptions = projects.recents.map((p, i) => ({
       id: p.id,
       name: p.name,
       path: p.path,
       active: p.id === sel.projectId,
-      sessionCount: (sessions.byProject[p.id] ?? []).length
+      sessionCount: (sessions.byProject[p.id] ?? []).length,
+      shortcutIndex:
+        settings.current.shortcuts.shiftNumberNavigation === 'project' && i < 9 ? i + 1 : null
     }));
     const worktreeOptions: CollapsedWorktreeOption[] = [];
     if (project) {
@@ -483,7 +486,11 @@
             sessions.lastSelectedIdForWorktree({ projectId: project.id, cwd: group.cwd })
             ?? firstId,
           firstSessionId: firstId,
-          shortcutIndex: worktreeOptions.length < 9 ? worktreeOptions.length + 1 : null
+          shortcutIndex:
+            settings.current.shortcuts.shiftNumberNavigation === 'worktree'
+              && worktreeOptions.length < 9
+              ? worktreeOptions.length + 1
+              : null
         });
       }
     }
@@ -1134,11 +1141,16 @@
       void nav.closeActive();
       return;
     }
-    const worktreeIdx = worktreeIndexFromEvent(e);
-    if (worktreeIdx !== null) {
+    const shiftNumberIdx = shiftNumberIndexFromEvent(e);
+    if (shiftNumberIdx !== null) {
       consume(e);
-      const target = nav.worktreeByIndex(worktreeIdx);
-      if (target) selectWorktreeTarget(target);
+      if (settings.current.shortcuts.shiftNumberNavigation === 'project') {
+        const project = projects.recents[shiftNumberIdx];
+        if (project) selectCollapsedProject(project.id);
+      } else {
+        const target = nav.worktreeByIndex(shiftNumberIdx);
+        if (target) selectWorktreeTarget(target);
+      }
       return;
     }
     const idx = tabIndexFromEvent(e);
@@ -1266,6 +1278,15 @@
                       aria-hidden="true"
                     ></span>
                   {/if}
+                  {#if project.shortcutIndex !== null}
+                    <span
+                      class="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border/60 bg-background/40 px-0.5 font-mono text-[9px] leading-none text-muted-foreground"
+                      title={`Ctrl/Cmd+Shift+${project.shortcutIndex}`}
+                      aria-label={`Ctrl or Command plus Shift plus ${project.shortcutIndex}`}
+                    >
+                      {project.shortcutIndex}
+                    </span>
+                  {/if}
                   <FolderOpen />
                   <span class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate">{project.name}</span>
@@ -1346,8 +1367,8 @@
                   {#if worktree.shortcutIndex !== null}
                     <span
                       class="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border/60 bg-background/40 px-0.5 font-mono text-[9px] leading-none text-muted-foreground"
-                      title={`Ctrl+Shift+${worktree.shortcutIndex}`}
-                      aria-label={`Ctrl+Shift+${worktree.shortcutIndex}`}
+                      title={`Ctrl/Cmd+Shift+${worktree.shortcutIndex}`}
+                      aria-label={`Ctrl or Command plus Shift plus ${worktree.shortcutIndex}`}
                     >
                       {worktree.shortcutIndex}
                     </span>
@@ -1594,7 +1615,7 @@
     <LazyOverlay label="agent integration setup" load={loadAgentIntegrationSetup} />
   {/if}
   {#if settings.dialogOpen}
-    <LazyOverlay label="settings" load={loadSettingsDialog} />
+    <SettingsDialog />
   {/if}
   {#if agentNotifications.toasts.length > 0}
     <LazyOverlay label="agent notifications" load={loadAgentNotificationToasts} />
