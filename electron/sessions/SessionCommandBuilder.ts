@@ -7,6 +7,9 @@ import type {
 } from '@shared/types/sessions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { InnerCommand } from '../runtime/InnerCommand.js';
 import { NativeCommandBuilder } from '../runtime/WindowsCommandBuilder.js';
 import { WslCommandBuilder } from '../runtime/WslCommandBuilder.js';
@@ -84,7 +87,9 @@ export class SessionCommandBuilder {
     const args = isKnownEmptyCodexSession(s)
       ? []
       : threadId
-        ? ['resume', threadId]
+        ? shouldResumeCodexThread(s, threadId, ctx)
+          ? ['resume', threadId]
+          : []
         : ['resume'];
     if (s.launch.type === 'agent' && s.launch.provider === 'codex') {
       appendAgentLaunchArgs(args, s.launch, 'codex');
@@ -170,11 +175,13 @@ export class SessionCommandBuilder {
   private buildCodex(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
     const args: string[] = [];
     switch (launch.resumeMode) {
-      case 'new':
-        if (!isKnownEmptyCodexSession(s) && (launch.codexSessionId ?? s.providerThreadId)) {
-          args.push('resume', launch.codexSessionId ?? s.providerThreadId!);
+      case 'new': {
+        const threadId = launch.codexSessionId ?? s.providerThreadId;
+        if (threadId && shouldResumeCodexThread(s, threadId, ctx)) {
+          args.push('resume', threadId);
         }
         break;
+      }
       case 'resume_last':
         args.push('resume');
         break;
@@ -227,6 +234,56 @@ function isKnownEmptyClaudeSession(session: Session): boolean {
 
 function isKnownEmptyCodexSession(session: Session): boolean {
   return session.hasUserInput === false;
+}
+
+function shouldResumeCodexThread(
+  session: Session,
+  threadId: string,
+  ctx: SessionBuildContext
+): boolean {
+  if (isKnownEmptyCodexSession(session)) return false;
+  if (session.hasUserInput === true) return true;
+  return codexThreadPersistence(threadId, ctx.baseEnv) !== false;
+}
+
+const CODEX_THREAD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+function codexThreadPersistence(
+  threadId: string,
+  env: Record<string, string | undefined>
+): boolean | undefined {
+  if (!CODEX_THREAD_UUID.test(threadId)) return undefined;
+  const codexHome = env['CODEX_HOME']?.trim()
+    || join(env['HOME']?.trim() || env['USERPROFILE']?.trim() || homedir(), '.codex');
+  let inspectedDirectory = false;
+  let readFailed = false;
+  for (const root of [join(codexHome, 'sessions'), join(codexHome, 'archived_sessions')]) {
+    if (!existsSync(root)) continue;
+    inspectedDirectory = true;
+    const found = directoryContainsThread(root, threadId);
+    if (found === true) return true;
+    if (found === undefined) readFailed = true;
+  }
+  return inspectedDirectory && !readFailed ? false : undefined;
+}
+
+function directoryContainsThread(root: string, threadId: string): boolean | undefined {
+  const pending = [root];
+  try {
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          pending.push(join(directory, entry.name));
+        } else if (entry.isFile() && entry.name.includes(threadId)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch {
+    return undefined;
+  }
 }
 
 function buildAgentCommand(

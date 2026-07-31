@@ -457,6 +457,69 @@ describe('SessionCommandBuilder — codex kind', () => {
     expect(script).not.toContain('codex-empty-123');
   });
 
+  it('starts fresh when a legacy captured Codex thread was never persisted', () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'soloe-codex-home-'));
+    const threadId = '019fb818-46d2-7e22-be0a-c6724e77931e';
+    try {
+      mkdirSync(join(codexHome, 'sessions'));
+      const s: Session = {
+        ...baseFields(),
+        runMode: 'linux',
+        launch: {
+          type: 'agent',
+          provider: 'codex',
+          resumeMode: 'new',
+          codexSessionId: threadId
+        },
+        providerThreadId: threadId,
+        currentAgentRuntime: {
+          provider: 'codex',
+          status: 'active',
+          providerThreadId: threadId
+        }
+      };
+      const script = decodeAgentScript(
+        innerLine(builder.build(s, { baseEnv: { CODEX_HOME: codexHome } }).args)
+      );
+      expect(script).not.toContain('resume');
+      expect(script).not.toContain(threadId);
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes a persisted legacy Codex thread', () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'soloe-codex-home-'));
+    const threadId = '019fb4fd-8e4d-72e0-8d4f-88a36e3e629d';
+    try {
+      const sessionDirectory = join(codexHome, 'sessions', '2026', '07', '30');
+      mkdirSync(sessionDirectory, { recursive: true });
+      writeFileSync(join(sessionDirectory, `rollout-${threadId}.jsonl`), '{}\n');
+      const s: Session = {
+        ...baseFields(),
+        runMode: 'linux',
+        launch: {
+          type: 'agent',
+          provider: 'codex',
+          resumeMode: 'new',
+          codexSessionId: threadId
+        },
+        providerThreadId: threadId,
+        currentAgentRuntime: {
+          provider: 'codex',
+          status: 'active',
+          providerThreadId: threadId
+        }
+      };
+      const script = decodeAgentScript(
+        innerLine(builder.build(s, { baseEnv: { CODEX_HOME: codexHome } }).args)
+      );
+      expect(script).toContain(`resume ${threadId}`);
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
+  });
+
   it('rewrites the bridge host to host.wsl.internal for wsl codex sessions', () => {
     const s: Session = {
       ...baseFields(),
