@@ -144,7 +144,8 @@ export const IpcChannels = {
     delete: 'sessions:delete',
     reorder: 'sessions:reorder',
     previewCommand: 'sessions:preview-command',
-    changed: 'sessions:changed'
+    changed: 'sessions:changed',
+    deleted: 'sessions:deleted'
   },
   terminal: {
     start: 'terminal:start',
@@ -348,6 +349,7 @@ export interface SessionsApi {
   previewCommand(id: SessionId): Promise<IpcResult<SpawnSpec>>;
 
   onChange(listener: (session: Session) => void): () => void;
+  onDelete(listener: (sessionId: SessionId) => void): () => void;
 }
 
 export interface TerminalInputPayload {

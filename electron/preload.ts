@@ -133,7 +133,9 @@ const soloe: SoloeApi = {
     previewCommand: (id: SessionId) =>
       ipcRenderer.invoke(IpcChannels.sessions.previewCommand, id),
     onChange: (cb: (session: Session) => void) =>
-      subscribe<Session>(IpcChannels.sessions.changed, cb)
+      subscribe<Session>(IpcChannels.sessions.changed, cb),
+    onDelete: (cb: (sessionId: SessionId) => void) =>
+      subscribe<SessionId>(IpcChannels.sessions.deleted, cb)
   },
   terminal: {
     start: (opts: TerminalStartOptions) => ipcRenderer.invoke(IpcChannels.terminal.start, opts),

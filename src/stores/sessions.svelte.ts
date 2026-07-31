@@ -32,6 +32,48 @@ const STANDALONE_KEY = '__standalone__';
 const SPLIT_RATIO_KEY = 'soloe.terminalSplitRatio.v1';
 const SPLIT_RATIO_MIN = 0.2;
 const SPLIT_RATIO_MAX = 0.8;
+const OBSERVER_EVENT_HISTORY_LIMIT = 1000;
+const OBSERVER_EVENTS_PER_SUBJECT = 30;
+
+function compareSessions(a: Session, b: Session): number {
+  const ai = a.sortIndex ?? Number.MAX_SAFE_INTEGER;
+  const bi = b.sortIndex ?? Number.MAX_SAFE_INTEGER;
+  if (ai !== bi) return ai - bi;
+  return a.createdAt.localeCompare(b.createdAt);
+}
+
+function compareArchivedSessions(a: Session, b: Session): number {
+  return (b.archivedAt ?? '').localeCompare(a.archivedAt ?? '');
+}
+
+function groupObserverEvents(events: ObserverEvent[]): Record<string, ObserverEvent[]> {
+  const grouped: Record<string, ObserverEvent[]> = {};
+  for (const event of events) {
+    const current = grouped[event.subjectId] ?? [];
+    current.push(event);
+    current.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    if (current.length > OBSERVER_EVENTS_PER_SUBJECT) current.length = OBSERVER_EVENTS_PER_SUBJECT;
+    grouped[event.subjectId] = current;
+  }
+  return grouped;
+}
+
+function mergeObserverEvents(
+  fetched: Record<string, ObserverEvent[]>,
+  current: Record<string, ObserverEvent[]>
+): Record<string, ObserverEvent[]> {
+  const merged: Record<string, ObserverEvent[]> = {};
+  for (const subjectId of new Set([...Object.keys(fetched), ...Object.keys(current)])) {
+    const byId = new Map<string, ObserverEvent>();
+    for (const event of [...(fetched[subjectId] ?? []), ...(current[subjectId] ?? [])]) {
+      byId.set(event.id, event);
+    }
+    merged[subjectId] = [...byId.values()]
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, OBSERVER_EVENTS_PER_SUBJECT);
+  }
+  return merged;
+}
 
 function clampSplitRatio(value: number): number {
   if (!Number.isFinite(value)) return 0.5;
@@ -237,6 +279,15 @@ export class SessionsStore {
   private detachers: Array<() => void> = [];
   private locationVersions = new Map<SessionId, number>();
   private startVersions = new Map<SessionId, number>();
+  private sessionEventVersion = 0;
+  private sessionMutations = new Map<
+    SessionId,
+    { version: number; session: Session | null }
+  >();
+  private runtimeEventVersion = 0;
+  private observerSnapshotVersion = 0;
+  private observerEventVersion = 0;
+  private reconnectRecovery: Promise<void> | null = null;
   // The single most-recently-focused session, persisted across restarts so the
   // app reopens on the exact tab that was active when it closed — not just the
   // first project's last-selected tab.
@@ -281,20 +332,61 @@ export class SessionsStore {
   }
 
   async load(): Promise<void> {
+    const previouslyActiveIds = new Set(this.sessions.map((session) => session.id));
+    const sessionVersion = this.sessionEventVersion;
+    const runtimeVersion = this.runtimeEventVersion;
+    const snapshotVersion = this.observerSnapshotVersion;
+    const observerEventVersion = this.observerEventVersion;
     this.loading = true;
     try {
-      const [list, archived, running, observed] = await Promise.all([
+      const [fetchedSessions, fetchedArchived, running, observed, events] = await Promise.all([
         ipc.sessions.list(),
         ipc.sessions.listArchived(),
         ipc.terminal.listRunning(),
-        ipc.observer.list()
+        ipc.observer.list(),
+        ipc.observer.listEvents({ limit: OBSERVER_EVENT_HISTORY_LIMIT })
       ]);
-      this.sessions = list;
-      this.archived = archived;
+      let list = fetchedSessions;
+      let archived = fetchedArchived;
+      const appliedMutationVersion = this.sessionEventVersion;
+      for (const [id, mutation] of this.sessionMutations) {
+        if (mutation.version <= sessionVersion) continue;
+        list = list.filter((session) => session.id !== id);
+        archived = archived.filter((session) => session.id !== id);
+        if (!mutation.session) continue;
+        if (mutation.session.archivedAt) archived.push(mutation.session);
+        else list.push(mutation.session);
+      }
+      this.sessions = list.sort(compareSessions);
+      this.archived = archived.sort(compareArchivedSessions);
+      for (const [id, mutation] of this.sessionMutations) {
+        if (mutation.version <= appliedMutationVersion) this.sessionMutations.delete(id);
+      }
+
       const next: Record<SessionId, RuntimeEntry> = {};
       for (const r of running) next[r.sessionId] = { ...r };
-      this.runtime = next;
-      this.observed = Object.fromEntries(observed.map((s) => [s.id, s]));
+      this.runtime = this.runtimeEventVersion === runtimeVersion
+        ? next
+        : { ...next, ...this.runtime };
+      const fetchedObserved = Object.fromEntries(observed.map((s) => [s.id, s]));
+      this.observed = this.observerSnapshotVersion === snapshotVersion
+        ? fetchedObserved
+        : { ...fetchedObserved, ...this.observed };
+      const fetchedEvents = groupObserverEvents(events);
+      this.observerEvents = this.observerEventVersion === observerEventVersion
+        ? fetchedEvents
+        : mergeObserverEvents(fetchedEvents, this.observerEvents);
+      const activeIds = new Set(this.sessions.map((session) => session.id));
+      for (const id of previouslyActiveIds) {
+        if (activeIds.has(id)) continue;
+        this.clearSplitIfInvolves(id);
+        agentNotifications.removeSession(id);
+        const runtime = { ...this.runtime };
+        delete runtime[id];
+        this.runtime = runtime;
+        this.forgetLastSelectedId(id);
+      }
+      if (this.selectedId && !activeIds.has(this.selectedId)) this.selectedId = null;
       this.pruneLastSelected();
       if (!this.selectedId && list.length > 0) {
         const initial = this.pickInitialSelection(list);
@@ -469,6 +561,7 @@ export class SessionsStore {
     this.detach();
     this.detachers.push(
       ipc.terminal.onStatus((e) => {
+        this.runtimeEventVersion += 1;
         const prev = this.runtime[e.sessionId];
         const merged: RuntimeEntry = {
           sessionId: e.sessionId,
@@ -488,6 +581,7 @@ export class SessionsStore {
     );
     this.detachers.push(
       ipc.terminal.onExit((e) => {
+        this.runtimeEventVersion += 1;
         const prev = this.runtime[e.sessionId];
         this.runtime = {
           ...this.runtime,
@@ -510,6 +604,7 @@ export class SessionsStore {
     );
     this.detachers.push(
       ipc.observer.onSnapshot((snapshot) => {
+        this.observerSnapshotVersion += 1;
         const rowSessionId = rowSessionIdFor(snapshot);
         const session = rowSessionId
           ? this.sessions.find((s) => s.id === rowSessionId) ?? null
@@ -520,6 +615,7 @@ export class SessionsStore {
     );
     this.detachers.push(
       ipc.observer.onEvent((event) => {
+        this.observerEventVersion += 1;
         const rowSessionId = this.rowSessionIdForEvent(event);
         const session = rowSessionId
           ? this.sessions.find((s) => s.id === rowSessionId) ?? null
@@ -528,7 +624,7 @@ export class SessionsStore {
         const current = this.observerEvents[event.subjectId] ?? [];
         this.observerEvents = {
           ...this.observerEvents,
-          [event.subjectId]: [event, ...current].slice(0, 30)
+          [event.subjectId]: [event, ...current].slice(0, OBSERVER_EVENTS_PER_SUBJECT)
         };
       })
     );
@@ -539,7 +635,19 @@ export class SessionsStore {
     );
     this.detachers.push(
       ipc.sessions.onChange((session) => {
+        this.recordSessionMutation(session.id, session);
         this.upsertSession(session);
+      })
+    );
+    this.detachers.push(
+      ipc.sessions.onDelete((sessionId) => {
+        this.recordSessionMutation(sessionId, null);
+        this.applySessionDelete(sessionId);
+      })
+    );
+    this.detachers.push(
+      ipc.connection.onReconnect(() => {
+        void this.recoverAfterReconnect();
       })
     );
     this.detachers.push(
@@ -560,6 +668,16 @@ export class SessionsStore {
     const snapshot = this.observed[event.subjectId];
     if (snapshot) return rowSessionIdFor(snapshot);
     return this.sessions.some((s) => s.id === event.subjectId) ? event.subjectId : null;
+  }
+
+  private recoverAfterReconnect(): Promise<void> {
+    if (this.reconnectRecovery) return this.reconnectRecovery;
+    this.reconnectRecovery = this.load()
+      .catch(() => undefined)
+      .finally(() => {
+        this.reconnectRecovery = null;
+      });
+    return this.reconnectRecovery;
   }
 
   detach(): void {
@@ -600,14 +718,70 @@ export class SessionsStore {
   }
 
   private upsertSession(session: Session): void {
-    const existingIndex = this.sessions.findIndex((item) => item.id === session.id);
-    if (existingIndex === -1) {
-      this.sessions = [...this.sessions, session];
+    if (session.archivedAt) {
+      const nextSelectedId = this.selectedId === session.id
+        ? this.pickNextAfterRemoval(session.id)
+        : null;
+      this.sessions = this.sessions.filter((item) => item.id !== session.id);
+      this.archived = [
+        session,
+        ...this.archived.filter((item) => item.id !== session.id)
+      ].sort(compareArchivedSessions);
+      this.clearActiveSessionState(session.id, nextSelectedId);
       return;
     }
-    const next = this.sessions.filter((item) => item.id !== session.id);
-    next.splice(Math.min(existingIndex, next.length), 0, session);
-    this.sessions = next;
+    this.archived = this.archived.filter((item) => item.id !== session.id);
+    this.sessions = [
+      ...this.sessions.filter((item) => item.id !== session.id),
+      session
+    ].sort(compareSessions);
+  }
+
+  private recordSessionMutation(id: SessionId, session: Session | null): void {
+    this.sessionEventVersion += 1;
+    this.sessionMutations.set(id, {
+      version: this.sessionEventVersion,
+      session
+    });
+  }
+
+  private clearActiveSessionState(
+    id: SessionId,
+    nextSelectedId: SessionId | null
+  ): void {
+    this.clearSplitIfInvolves(id);
+    agentNotifications.removeSession(id);
+    this.runtimeEventVersion += 1;
+    const next = { ...this.runtime };
+    delete next[id];
+    this.runtime = next;
+    this.forgetLastSelectedId(id);
+    if (this.selectedId === id) {
+      if (nextSelectedId) this.select(nextSelectedId);
+      else this.selectedId = null;
+    }
+  }
+
+  private applySessionDelete(id: SessionId): void {
+    const nextSelectedId = this.selectedId === id ? this.pickNextAfterRemoval(id) : null;
+    this.sessions = this.sessions.filter((session) => session.id !== id);
+    this.archived = this.archived.filter((session) => session.id !== id);
+    this.clearActiveSessionState(id, nextSelectedId);
+
+    this.observerSnapshotVersion += 1;
+    this.observerEventVersion += 1;
+    const removedSubjectIds = new Set<string>([id]);
+    const observed = { ...this.observed };
+    for (const snapshot of Object.values(observed)) {
+      if (snapshot.id === id || snapshot.originSessionId === id) {
+        removedSubjectIds.add(snapshot.id);
+        delete observed[snapshot.id];
+      }
+    }
+    this.observed = observed;
+    const events = { ...this.observerEvents };
+    for (const subjectId of removedSubjectIds) delete events[subjectId];
+    this.observerEvents = events;
   }
 
   async createWithDefaults(opts: {
@@ -778,7 +952,7 @@ export class SessionsStore {
 
   async update(id: SessionId, patch: SessionUpdate): Promise<Session> {
     const updated = await ipc.sessions.update(id, patch);
-    this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
+    this.upsertSession(updated);
     return updated;
   }
 
@@ -799,24 +973,8 @@ export class SessionsStore {
         // continue with delete even if stop fails
       }
     }
-    const nextSelectedId = this.selectedId === id ? this.pickNextAfterRemoval(id) : null;
     await ipc.sessions.delete(id);
-    this.sessions = this.sessions.filter((s) => s.id !== id);
-    agentNotifications.removeSession(id);
-    const next = { ...this.runtime };
-    delete next[id];
-    this.runtime = next;
-    const observed = { ...this.observed };
-    delete observed[id];
-    for (const snapshot of Object.values(observed)) {
-      if (snapshot.originSessionId === id) delete observed[snapshot.id];
-    }
-    this.observed = observed;
-    this.forgetLastSelectedId(id);
-    if (this.selectedId === id) {
-      if (nextSelectedId) this.select(nextSelectedId);
-      else this.selectedId = null;
-    }
+    this.applySessionDelete(id);
   }
 
   async archive(id: SessionId): Promise<void> {
@@ -834,19 +992,8 @@ export class SessionsStore {
         // continue with archive even if stop fails
       }
     }
-    const nextSelectedId = this.selectedId === id ? this.pickNextAfterRemoval(id) : null;
     const updated = await ipc.sessions.update(id, { archivedAt: new Date().toISOString() });
-    this.sessions = this.sessions.filter((s) => s.id !== id);
-    this.archived = [updated, ...this.archived.filter((s) => s.id !== id)];
-    agentNotifications.removeSession(id);
-    const next = { ...this.runtime };
-    delete next[id];
-    this.runtime = next;
-    this.forgetLastSelectedId(id);
-    if (this.selectedId === id) {
-      if (nextSelectedId) this.select(nextSelectedId);
-      else this.selectedId = null;
-    }
+    this.upsertSession(updated);
   }
 
   private forgetLastSelectedId(id: SessionId): void {
@@ -885,10 +1032,7 @@ export class SessionsStore {
     const session = this.archived.find((s) => s.id === id);
     if (!session) return;
     const updated = await ipc.sessions.update(id, { archivedAt: undefined });
-    this.archived = this.archived.filter((s) => s.id !== id);
-    // Append so the restored row keeps its existing sortIndex position relative
-    // to siblings; insertion order matches what the backend will send next.
-    this.sessions = [...this.sessions.filter((s) => s.id !== id), updated];
+    this.upsertSession(updated);
   }
 
   async start(id: SessionId, opts: { focus?: boolean } = {}): Promise<void> {

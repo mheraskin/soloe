@@ -114,6 +114,35 @@ describe('VaultStore project scopes', () => {
     await vi.waitFor(() => expect(vaultApi.list).toHaveBeenCalledWith({ cwd: '/repo' }));
     store.detach();
   });
+
+  it('keeps a newer metadata event when an older reconnect refresh resolves later', async () => {
+    const store = new VaultStore();
+    store.setActiveContext({ cwd: '/repo', projectCwd: '/repo' });
+    await store.ensureLoaded();
+    store.attachListeners();
+    const onChange = vaultApi.onChange.mock.calls[0]?.[0] as
+      | ((event: { cwd: string; entries: VaultEntry[]; changedAt: string }) => void)
+      | undefined;
+    const onReconnect = connectionApi.onReconnect.mock.calls[0]?.[0] as
+      | (() => void)
+      | undefined;
+    const pending = deferred<VaultEntry[]>();
+    vaultApi.list.mockReturnValueOnce(pending.promise);
+
+    onReconnect?.();
+    await vi.waitFor(() => expect(vaultApi.list).toHaveBeenCalledTimes(2));
+    onChange?.({
+      cwd: '/repo',
+      entries: [entry('newer-event', 'event-user')],
+      changedAt: '2026-07-31T12:00:01.000Z'
+    });
+    pending.resolve([entry('stale-refresh', 'stale-user')]);
+    await pending.promise;
+    await Promise.resolve();
+
+    expect(store.entries).toEqual([entry('newer-event', 'event-user')]);
+    store.detach();
+  });
 });
 
 function entry(id: string, username: string): VaultEntry {
@@ -124,4 +153,15 @@ function entry(id: string, username: string): VaultEntry {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z'
   };
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }

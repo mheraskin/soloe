@@ -35,6 +35,8 @@ export class VaultStore {
   private projectCwds = $state<string[]>([]);
   private byCwd = $state<Record<CwdKey, CwdCache>>({});
   private detachers: Array<() => void> = [];
+  private eventVersions = new Map<CwdKey, number>();
+  private refreshVersions = new Map<CwdKey, number>();
 
   attachListeners(): void {
     this.detach();
@@ -42,6 +44,7 @@ export class VaultStore {
       backend.vault.onChange((event) => {
         const current = this.byCwd[event.cwd];
         if (!current?.loaded && !this.projectCwds.includes(event.cwd)) return;
+        this.eventVersions.set(event.cwd, (this.eventVersions.get(event.cwd) ?? 0) + 1);
         this.byCwd = {
           ...this.byCwd,
           [event.cwd]: {
@@ -194,14 +197,25 @@ export class VaultStore {
   }
 
   private async refreshCwd(cwd: string): Promise<void> {
+    const eventVersion = this.eventVersions.get(cwd) ?? 0;
+    const refreshVersion = (this.refreshVersions.get(cwd) ?? 0) + 1;
+    this.refreshVersions.set(cwd, refreshVersion);
     this.byCwd = { ...this.byCwd, [cwd]: { ...this.cache(cwd), loading: true, error: null } };
     try {
       const entries = await backend.vault.list({ cwd });
+      if (
+        this.refreshVersions.get(cwd) !== refreshVersion
+        || (this.eventVersions.get(cwd) ?? 0) !== eventVersion
+      ) return;
       this.byCwd = {
         ...this.byCwd,
         [cwd]: { entries, loaded: true, loading: false, error: null }
       };
     } catch (err) {
+      if (
+        this.refreshVersions.get(cwd) !== refreshVersion
+        || (this.eventVersions.get(cwd) ?? 0) !== eventVersion
+      ) return;
       this.byCwd = {
         ...this.byCwd,
         [cwd]: {

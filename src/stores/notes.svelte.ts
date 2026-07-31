@@ -190,6 +190,8 @@ export class NotesStore {
   private savedFlushTimers = new Map<ProjectId, ReturnType<typeof setTimeout>>();
   private savedFlushRequests = new Map<ProjectId, Promise<void>>();
   private selectionGeneration = new Map<ProjectId, number>();
+  private listChangeVersions = new Map<ProjectId, number>();
+  private reconnectRecovery: Promise<void> | null = null;
 
   constructor(
     private readonly draftPersistence: NotesDraftPersistence = new NotesDraftPersistence()
@@ -204,25 +206,27 @@ export class NotesStore {
     this.detach();
     this.detachers.push(
       ipc.notes.onChange((event) => {
-        this.listsByProject = { ...this.listsByProject, [event.projectId]: event.notes };
-        this.loadedProjects = { ...this.loadedProjects, [event.projectId]: true };
-        const known = new Set(event.notes.map((n) => n.filename));
-        const activeFilename = this.viewByProject[event.projectId];
-        if (activeFilename && !known.has(activeFilename)) {
-          // selected note was deleted/renamed externally; revert to draft
-          this.invalidateSelection(event.projectId);
-          this.viewByProject = { ...this.viewByProject, [event.projectId]: null };
-          this.savedContentByProject = { ...this.savedContentByProject, [event.projectId]: '' };
-          this.savedDiskByProject = { ...this.savedDiskByProject, [event.projectId]: '' };
-          this.savedRevisionByProject = {
-            ...this.savedRevisionByProject,
-            [event.projectId]: ''
-          };
-        }
-        // Drop any worktree memory pointing at notes that no longer exist for
-        // this project, so a future worktree switch doesn't try to reload a
-        // file that's gone.
-        this.dropWorktreeMemoryFor(event.projectId, (filename) => !known.has(filename));
+        this.listChangeVersions.set(
+          event.projectId,
+          (this.listChangeVersions.get(event.projectId) ?? 0) + 1
+        );
+        this.applyNoteList(event.projectId, event.notes);
+      })
+    );
+    this.detachers.push(
+      ipc.connection.onReconnect(() => {
+        if (this.reconnectRecovery) return;
+        const loadedProjectIds = Object.entries(this.loadedProjects)
+          .filter(([, loaded]) => loaded)
+          .map(([projectId]) => projectId);
+        this.reconnectRecovery = Promise.all(
+          loadedProjectIds.map((projectId) => this.refresh(projectId))
+        )
+          .then(() => undefined)
+          .catch(() => undefined)
+          .finally(() => {
+            this.reconnectRecovery = null;
+          });
       })
     );
   }
@@ -245,9 +249,27 @@ export class NotesStore {
   }
 
   async refresh(projectId: ProjectId): Promise<void> {
+    const changeVersion = this.listChangeVersions.get(projectId) ?? 0;
     const list = await ipc.notes.list(projectId);
-    this.listsByProject = { ...this.listsByProject, [projectId]: list };
+    if ((this.listChangeVersions.get(projectId) ?? 0) === changeVersion) {
+      this.applyNoteList(projectId, list);
+    }
+  }
+
+  private applyNoteList(projectId: ProjectId, notes: NoteSummary[]): void {
+    this.listsByProject = { ...this.listsByProject, [projectId]: notes };
     this.loadedProjects = { ...this.loadedProjects, [projectId]: true };
+    const known = new Set(notes.map((note) => note.filename));
+    const activeFilename = this.viewByProject[projectId];
+    if (activeFilename && !known.has(activeFilename)) {
+      // The selected note was deleted or renamed by another client.
+      this.invalidateSelection(projectId);
+      this.viewByProject = { ...this.viewByProject, [projectId]: null };
+      this.savedContentByProject = { ...this.savedContentByProject, [projectId]: '' };
+      this.savedDiskByProject = { ...this.savedDiskByProject, [projectId]: '' };
+      this.savedRevisionByProject = { ...this.savedRevisionByProject, [projectId]: '' };
+    }
+    this.dropWorktreeMemoryFor(projectId, (filename) => !known.has(filename));
   }
 
   async newDraft(): Promise<void> {

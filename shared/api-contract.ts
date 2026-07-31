@@ -11,6 +11,7 @@ export const SOLOE_API_METHODS = {
     "reorder",
     "previewCommand",
     "onChange",
+    "onDelete",
   ],
   terminal: [
     "start",
@@ -313,6 +314,7 @@ export const CLIENT_NATIVE_METHODS = new Set<string>([
 
 export const SERVER_EVENT_METHODS = new Set<string>([
   "sessions.onChange",
+  "sessions.onDelete",
   "terminal.onOutput",
   "terminal.onExit",
   "terminal.onStatus",

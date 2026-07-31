@@ -20,13 +20,28 @@ const {
   projectGet,
   loadWorktrees,
   sessionCreate,
+  sessionList,
+  sessionListArchived,
   sessionChanges,
-  sessionChangeListener
+  sessionChangeListener,
+  sessionDeletes,
+  sessionDeleteListener,
+  connectionReconnects,
+  connectionReconnectListener,
+  terminalListRunning,
+  observerList,
+  observerListEvents
 } = vi.hoisted(() => {
   const detach = vi.fn();
   const detachInventory = vi.fn();
   const changes = {
     emit: (_session: unknown): void => {}
+  };
+  const deletes = {
+    emit: (_sessionId: string): void => {}
+  };
+  const reconnects = {
+    emit: (): void => {}
   };
   return {
     off: detach,
@@ -39,11 +54,26 @@ const {
     projectGet: vi.fn(() => null as { path: string } | null),
     loadWorktrees: vi.fn(async () => [] as Array<{ path: string }>),
     sessionCreate: vi.fn(),
+    sessionList: vi.fn(),
+    sessionListArchived: vi.fn(),
     sessionChanges: changes,
     sessionChangeListener: vi.fn((cb: (session: unknown) => void) => {
       changes.emit = cb;
       return detach;
-    })
+    }),
+    sessionDeletes: deletes,
+    sessionDeleteListener: vi.fn((cb: (sessionId: string) => void) => {
+      deletes.emit = cb;
+      return detach;
+    }),
+    connectionReconnects: reconnects,
+    connectionReconnectListener: vi.fn((cb: () => void) => {
+      reconnects.emit = cb;
+      return detach;
+    }),
+    terminalListRunning: vi.fn(),
+    observerList: vi.fn(),
+    observerListEvents: vi.fn()
   };
 });
 
@@ -59,18 +89,27 @@ vi.mock('../lib/ipc', () => ({
         terminalExitListeners.push(callback);
         return off;
       }),
-      onLocation: listener
+      onLocation: listener,
+      listRunning: terminalListRunning
     },
     observer: {
       onSnapshot: listener,
-      onEvent: listener
+      onEvent: listener,
+      list: observerList,
+      listEvents: observerListEvents
     },
     notify: {
       onActivateSession: listener
     },
     sessions: {
       create: sessionCreate,
-      onChange: sessionChangeListener
+      list: sessionList,
+      listArchived: sessionListArchived,
+      onChange: sessionChangeListener,
+      onDelete: sessionDeleteListener
+    },
+    connection: {
+      onReconnect: connectionReconnectListener
     }
   }
 }));
@@ -91,7 +130,9 @@ vi.mock('./agent-notifications.svelte', () => ({
   agentNotifications: {
     observeSnapshot: vi.fn(),
     observeEvent: vi.fn(),
-    markSessionOpened: vi.fn()
+    markSessionOpened: vi.fn(),
+    primeSnapshot: vi.fn(),
+    removeSession: vi.fn()
   },
   rowSessionIdFor: vi.fn(() => null)
 }));
@@ -124,6 +165,16 @@ describe('SessionsStore', () => {
     projectGet.mockReturnValue(null);
     loadWorktrees.mockReset();
     loadWorktrees.mockResolvedValue([]);
+    sessionList.mockReset();
+    sessionList.mockResolvedValue([]);
+    sessionListArchived.mockReset();
+    sessionListArchived.mockResolvedValue([]);
+    terminalListRunning.mockReset();
+    terminalListRunning.mockResolvedValue([]);
+    observerList.mockReset();
+    observerList.mockResolvedValue([]);
+    observerListEvents.mockReset();
+    observerListEvents.mockResolvedValue([]);
     setVisibility('visible');
   });
 
@@ -309,6 +360,57 @@ describe('SessionsStore session changes', () => {
     });
 
     expect(store.sessions.map((item) => item.id)).toEqual(['onyx']);
+    store.detach();
+  });
+
+  it('applies deletion events idempotently to active and archived state', () => {
+    const store = new SessionsStore();
+    store.sessions = [session({ id: 'onyx' }), session({ id: 'ember' })];
+    store.archived = [session({ id: 'onyx', archivedAt: '2026-01-02T00:00:00.000Z' })];
+    store.selectedId = 'onyx';
+    store.attachListeners();
+
+    sessionDeletes.emit('onyx');
+    sessionDeletes.emit('onyx');
+
+    expect(store.sessions.map((item) => item.id)).toEqual(['ember']);
+    expect(store.archived).toEqual([]);
+    expect(store.selectedId).toBe('ember');
+    store.detach();
+  });
+
+  it('does not let a reconnect refresh restore a session deleted mid-flight', async () => {
+    let resolveList!: (sessions: Session[]) => void;
+    sessionList.mockReturnValueOnce(new Promise<Session[]>((resolve) => {
+      resolveList = resolve;
+    }));
+    const store = new SessionsStore();
+    store.sessions = [session({ id: 'onyx' })];
+    store.attachListeners();
+
+    connectionReconnects.emit();
+    await Promise.resolve();
+    sessionDeletes.emit('onyx');
+    resolveList([session({ id: 'onyx' })]);
+
+    await vi.waitFor(() => expect(sessionList).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(store.loading).toBe(false));
+    expect(store.sessions).toEqual([]);
+    store.detach();
+  });
+
+  it('selects a surviving session when reconnect reveals a missed deletion', async () => {
+    sessionList.mockResolvedValueOnce([session({ id: 'ember' })]);
+    const store = new SessionsStore();
+    store.sessions = [session({ id: 'onyx' }), session({ id: 'ember' })];
+    store.selectedId = 'onyx';
+    store.attachListeners();
+
+    connectionReconnects.emit();
+
+    await vi.waitFor(() => expect(store.loading).toBe(false));
+    expect(store.sessions.map((item) => item.id)).toEqual(['ember']);
+    expect(store.selectedId).toBe('ember');
     store.detach();
   });
 });

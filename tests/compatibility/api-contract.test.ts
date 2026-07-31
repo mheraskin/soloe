@@ -40,13 +40,13 @@ describe("Soloe API transport contract", () => {
       "files.listTree",
       "files.readFile",
       "files.writeFile",
+      "files.openInEditor",
     ]) {
       const [namespace, name] = method.split(".");
       expect(supportsRpc("browser", namespace!, name!)).toBe(true);
       expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
       expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
     }
-    expect(supportsRpc("browser", "files", "openInEditor")).toBe(false);
   });
 
   it("keeps process usage on the application server for shared clients", () => {

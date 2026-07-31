@@ -2,11 +2,18 @@
  * @vitest-environment jsdom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NoteSummary } from '@shared/types/notes.js';
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(),
   write: vi.fn(),
-  list: vi.fn(async () => []),
+  list: vi.fn<(_projectId: string) => Promise<NoteSummary[]>>(async () => []),
+  noteChanges: {
+    emit: (_event: { projectId: string; notes: NoteSummary[] }): void => {}
+  },
+  reconnects: {
+    emit: (): void => {}
+  },
   selected: {
     id: 'session',
     projectId: 'project',
@@ -26,7 +33,19 @@ vi.mock('../lib/ipc', () => ({
       delete: vi.fn(),
       saveImage: vi.fn(),
       cleanupImages: vi.fn(),
-      onChange: vi.fn(() => () => undefined)
+      onChange: vi.fn((callback: (event: {
+        projectId: string;
+        notes: NoteSummary[];
+      }) => void) => {
+        mocks.noteChanges.emit = callback;
+        return () => undefined;
+      })
+    },
+    connection: {
+      onReconnect: vi.fn((callback: () => void) => {
+        mocks.reconnects.emit = callback;
+        return () => undefined;
+      })
     }
   }
 }));
@@ -150,6 +169,28 @@ describe('NotesStore durability', () => {
     expect(restarted.savedContent).toBe('recovered edit');
     expect(restarted.savedDirty).toBe(true);
   });
+
+  it('refreshes loaded projects after reconnect without replacing a newer event', async () => {
+    const store = createStore();
+    mocks.list.mockResolvedValueOnce([summary('initial.md')]);
+    await store.ensureLoaded('project');
+    store.attachListeners();
+    const pending = deferred<Array<ReturnType<typeof summary>>>();
+    mocks.list.mockReturnValueOnce(pending.promise);
+
+    mocks.reconnects.emit();
+    await vi.waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+    mocks.noteChanges.emit({
+      projectId: 'project',
+      notes: [summary('newer.md')]
+    });
+    pending.resolve([summary('stale.md')]);
+    await pending.promise;
+    await Promise.resolve();
+
+    expect(store.listsByProject.project).toEqual([summary('newer.md')]);
+    store.detach();
+  });
 });
 
 function createStore(): NotesStore {
@@ -158,6 +199,10 @@ function createStore(): NotesStore {
 
 function note(filename: string, content: string) {
   return { filename, content, updatedAt: 1 };
+}
+
+function summary(filename: string) {
+  return { filename, size: 1, updatedAt: 1 };
 }
 
 function deferred<T>(): {

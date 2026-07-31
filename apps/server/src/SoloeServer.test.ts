@@ -785,6 +785,47 @@ describe('Soloe Server lifecycle', () => {
         rpc(baseUrl, 'system', 'openPath', [session.id])
       ).resolves.toBe(true);
       expect(pathService.openSessionPath).toHaveBeenCalledWith(session.id);
+      const firstSessionCreated = nextEvent(firstClient, 'sessions.change');
+      const secondSessionCreated = nextEvent(secondClient, 'sessions.change');
+      const disposableSession = await rpc<{ id: string }>(
+        baseUrl,
+        'sessions',
+        'create',
+        [{
+          name: 'Disposable browser session',
+          projectId: project.id,
+          cwd: directory,
+          runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+          launch: { type: 'terminal', shell: 'auto' }
+        }]
+      );
+      for (
+        const created of await Promise.all([
+          firstSessionCreated,
+          secondSessionCreated
+        ])
+      ) {
+        expect(created).toEqual({
+          event: 'sessions.change',
+          payload: expect.objectContaining({ id: disposableSession.id })
+        });
+      }
+      const firstSessionDelete = nextEvent(firstClient, 'sessions.delete');
+      const secondSessionDelete = nextEvent(secondClient, 'sessions.delete');
+      await expect(
+        rpc(baseUrl, 'sessions', 'delete', [disposableSession.id])
+      ).resolves.toBe(true);
+      for (
+        const deleted of await Promise.all([
+          firstSessionDelete,
+          secondSessionDelete
+        ])
+      ) {
+        expect(deleted).toEqual({
+          event: 'sessions.delete',
+          payload: disposableSession.id
+        });
+      }
       const started = await rpc<{
         terminalId: string;
         spec: { env: Record<string, string> };
@@ -1050,5 +1091,22 @@ async function nextMessage(socket: WebSocket): Promise<unknown> {
       },
       { once: true }
     );
+  });
+}
+
+async function nextEvent(socket: WebSocket, eventName: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.removeEventListener('message', onMessage);
+      reject(new Error(`WebSocket event ${eventName} timed out`));
+    }, 500);
+    const onMessage = (event: MessageEvent) => {
+      const message = JSON.parse(String(event.data)) as { event?: unknown };
+      if (message.event !== eventName) return;
+      clearTimeout(timeout);
+      socket.removeEventListener('message', onMessage);
+      resolve(message);
+    };
+    socket.addEventListener('message', onMessage);
   });
 }

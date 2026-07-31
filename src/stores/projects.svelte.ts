@@ -11,7 +11,7 @@ import type {
 } from '@shared/types/projects.js';
 import { ipc } from '../lib/ipc';
 
-class ProjectsStore {
+export class ProjectsStore {
   projects = $state<Project[]>([]);
   loaded = $state(false);
   // Set when the renderer just added a project so the sidebar can center-scroll
@@ -30,10 +30,13 @@ class ProjectsStore {
   recents = $derived([...this.projects].sort(compareProjects));
 
   private detachers: Array<() => void> = [];
+  private changeVersion = 0;
+  private reconnectRecovery: Promise<void> | null = null;
 
   async load(): Promise<void> {
+    const changeVersion = this.changeVersion;
     const list = await ipc.projects.list();
-    this.projects = list;
+    if (this.changeVersion === changeVersion) this.projects = list;
     this.loaded = true;
   }
 
@@ -41,7 +44,18 @@ class ProjectsStore {
     this.detach();
     this.detachers.push(
       ipc.projects.onChange((projects) => {
+        this.changeVersion += 1;
         this.projects = projects;
+      })
+    );
+    this.detachers.push(
+      ipc.connection.onReconnect(() => {
+        if (this.reconnectRecovery) return;
+        this.reconnectRecovery = this.load()
+          .catch(() => undefined)
+          .finally(() => {
+            this.reconnectRecovery = null;
+          });
       })
     );
   }

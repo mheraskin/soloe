@@ -151,7 +151,8 @@ export const backend = {
     reorder: async (orderedIds: SessionId[]) =>
       unwrap(await c.sessions.reorder([...orderedIds])),
     previewCommand: async (id: SessionId) => unwrap(await c.sessions.previewCommand(id)),
-    onChange: (cb: (session: Session) => void) => c.sessions.onChange(cb)
+    onChange: (cb: (session: Session) => void) => c.sessions.onChange(cb),
+    onDelete: (cb: (sessionId: SessionId) => void) => c.sessions.onDelete(cb)
   },
   terminal: {
     start: async (opts: TerminalStartOptions) => unwrap(await c.terminal.start(toIpcPayload(opts))),

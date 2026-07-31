@@ -1504,11 +1504,14 @@ export class SoloeDomain extends EventEmitter {
         const id = args[0] as SessionId;
         await this.sessions.delete(args[0] as SessionId);
         this.observer.removeSession(id);
-        this.emit("event", "sessions.delete", { id });
+        this.emit("event", "sessions.delete", id);
         return true;
       }
-      case "reorder":
-        return this.sessions.reorder(args[0] as SessionId[]);
+      case "reorder": {
+        const sessions = await this.sessions.reorder(args[0] as SessionId[]);
+        for (const session of sessions) this.changeSession(session);
+        return sessions;
+      }
       case "previewCommand": {
         const session = await this.requireSession(args[0] as SessionId);
         const settings = await this.settings.get();

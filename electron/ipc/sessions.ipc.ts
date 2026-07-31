@@ -36,6 +36,15 @@ export class SessionsIpc {
     }
   }
 
+  broadcastDelete(sessionId: SessionId): void {
+    const windows = this.opts.getWindows?.() ?? [];
+    for (const win of windows) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IpcChannels.sessions.deleted, sessionId);
+      }
+    }
+  }
+
   register(): void {
     if (this.registered) return;
     this.registered = true;
@@ -60,6 +69,7 @@ export class SessionsIpc {
       ipcInvoke(async () => {
         const session = await this.opts.store.create({ ...draft, runtimeMode: 'tui' });
         this.opts.observer?.registerTuiSession(session);
+        this.broadcastChange(session);
         return session;
       })
     );
@@ -68,6 +78,7 @@ export class SessionsIpc {
       ipcInvoke(async () => {
         const session = await this.opts.store.update(id, patch);
         this.opts.observer?.registerTuiSession(session);
+        this.broadcastChange(session);
         return session;
       })
     );
@@ -76,12 +87,17 @@ export class SessionsIpc {
       ipcInvoke(async () => {
         await this.opts.store.delete(id);
         this.opts.observer?.removeSession(id);
+        this.broadcastDelete(id);
         return true as const;
       })
     );
 
     ipcMain.handle(IpcChannels.sessions.reorder, (_e, orderedIds: SessionId[]) =>
-      ipcInvoke(() => this.opts.store.reorder(orderedIds))
+      ipcInvoke(async () => {
+        const sessions = await this.opts.store.reorder(orderedIds);
+        for (const session of sessions) this.broadcastChange(session);
+        return sessions;
+      })
     );
 
     ipcMain.handle(IpcChannels.sessions.previewCommand, (_e, id: SessionId) =>

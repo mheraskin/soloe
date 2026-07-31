@@ -591,6 +591,23 @@ describe("browser API", () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it("publishes session deletion events through the preload subscription contract", () => {
+    const socket = new FakeSocket();
+    const api = createBrowserApi({
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      socketFactory: () => socket,
+    });
+    const listener = vi.fn();
+    api.sessions.onDelete(listener);
+
+    socket.message({
+      event: "sessions.delete",
+      payload: "session-1",
+    });
+
+    expect(listener).toHaveBeenCalledWith("session-1");
+  });
+
   it("reconnects the event stream and announces replay recovery", async () => {
     vi.useFakeTimers();
     const sockets: FakeSocket[] = [];
