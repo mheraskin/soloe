@@ -88,6 +88,40 @@ describe('TerminalFitController', () => {
     expect(fit.fit).toHaveBeenCalledOnce();
     expect(onFit).toHaveBeenCalledWith({ cols: 132, rows: 46 });
   });
+
+  it('does not starve redraws while layout fits continue every frame', () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const terminal = { cols: 80, rows: 24, refresh: vi.fn() };
+    const fit = {
+      fit: vi.fn(() => {
+        terminal.cols += 1;
+      })
+    };
+    const controller = new TerminalFitController(
+      (callback) => {
+        const handle = nextFrame++;
+        frames.set(handle, callback);
+        return handle;
+      },
+      (handle) => {
+        frames.delete(handle);
+      }
+    );
+    const runFrame = () => {
+      const pending = [...frames.entries()];
+      frames.clear();
+      for (const [, callback] of pending) callback(0);
+    };
+
+    controller.scheduleFit(terminal, fit);
+    runFrame();
+    controller.scheduleFit(terminal, fit);
+    runFrame();
+
+    expect(fit.fit).toHaveBeenCalledTimes(2);
+    expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
+  });
 });
 
 describe('deferTerminalDispose', () => {
