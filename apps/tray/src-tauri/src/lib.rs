@@ -163,8 +163,9 @@ pub fn run() {
                                 if let Err(error) = &result {
                                     eprintln!("[tray] {error}");
                                 }
-                                app.exit(if result.is_ok() { 0 } else { 1 });
-                                return;
+                                let exit_code = if result.is_ok() { 0 } else { 1 };
+                                app.cleanup_before_exit();
+                                std::process::exit(exit_code);
                             }
                             _ => Ok(()),
                         };
