@@ -5,6 +5,8 @@ export * from "./files/WorktreeFileIndex.js";
 export * from "./git/GitCommandRunner.js";
 export * from "./git/GitProcessExecutor.js";
 export * from "./git/GitService.js";
+export * from "./integrations/HookInstaller.js";
+export * from "./integrations/WslHostDetector.js";
 export * from "./git/ReviewDiffMaterializer.js";
 export * from "./git/UntrackedFileCounter.js";
 export * from "./notes/NotesStore.js";

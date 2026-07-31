@@ -41,6 +41,23 @@ describe('HookInstaller', () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
+  it('does not expose backend home paths in public status', async () => {
+    const status = await installer.status();
+
+    expect(status.hosts).toEqual([
+      {
+        host: {
+          kind: 'windows',
+          label: 'Test Local',
+          available: true
+        },
+        claude: { installed: false, current: false },
+        codex: { installed: false, current: false }
+      }
+    ]);
+    expect(JSON.stringify(status)).not.toContain(homeDir);
+  });
+
   describe('claude install/uninstall', () => {
     it('writes hooks for all supported events on first install', async () => {
       await installer.installClaude(LOCAL);
