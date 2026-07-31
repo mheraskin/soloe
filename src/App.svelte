@@ -76,6 +76,7 @@
   import TerminalArea from './components/TerminalArea.svelte';
   import RightRail from './components/RightRail.svelte';
   import MobileWorkspaceNav, {
+    type MobileWorkspaceMode,
     type MobileWorkspacePage
   } from './components/MobileWorkspaceNav.svelte';
   import LazyOverlay from './components/LazyOverlay.svelte';
@@ -102,7 +103,11 @@
   let initialLoadState = $state<'loading' | 'ready' | 'error'>('loading');
   let initialLoadError = $state<string | null>(null);
   let isMobile = $state(false);
-  let mobilePage = $state<MobileWorkspacePage>('terminal');
+  let mobilePage = $state<MobileWorkspacePage>('workspace');
+  let requestedMobileMode = $state<MobileWorkspaceMode>('terminal');
+  let mobileMode = $derived<MobileWorkspaceMode>(
+    requestedMobileMode === 'pane' && rightRail.open ? 'pane' : 'terminal'
+  );
   let swipeStart: { pointerId: number; x: number; y: number } | null = null;
 
   onMount(() => {
@@ -112,10 +117,15 @@
       isMobile = mobileQuery.matches;
       rightRail.setPaneLimit(isMobile ? 1 : 2);
       if (isMobile) rightRail.fullscreen = false;
-      else mobilePage = 'terminal';
+      else {
+        mobilePage = 'workspace';
+        requestedMobileMode = 'terminal';
+      }
     };
     const openFocusedPane = () => {
-      if (mobileQuery.matches && rightRail.open) navigateMobile('pane');
+      if (!mobileQuery.matches || !rightRail.open) return;
+      requestedMobileMode = 'pane';
+      navigateMobile('workspace');
     };
     syncMobileLayout();
     mobileQuery.addEventListener('change', syncMobileLayout);
@@ -160,18 +170,18 @@
   });
 
   function navigateMobile(page: MobileWorkspacePage): void {
-    if (page === 'pane' && !rightRail.open) return;
     mobilePage = page;
   }
 
-  // Pane headers can close themselves through the shared store. If the last
-  // mobile pane disappears while its page is visible, return to the terminal
-  // instead of leaving the user on a blank workspace page.
-  $effect(() => {
-    if (isMobile && mobilePage === 'pane' && !rightRail.open) {
-      mobilePage = 'terminal';
-    }
-  });
+  function selectMobileMode(mode: MobileWorkspaceMode): void {
+    if (mode === 'pane' && !rightRail.open) return;
+    requestedMobileMode = mode;
+  }
+
+  function openMobileTerminal(): void {
+    requestedMobileMode = 'terminal';
+    mobilePage = 'workspace';
+  }
 
   function onMobilePointerDown(event: PointerEvent): void {
     if (event.pointerType !== 'touch' || !event.isPrimary) return;
@@ -195,13 +205,11 @@
     const deltaY = event.clientY - start.y;
     if (Math.abs(deltaX) < 56 || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) return;
     if (deltaX > 0) {
-      navigateMobile(mobilePage === 'pane' ? 'terminal' : 'navigation');
+      navigateMobile('navigation');
       return;
     }
     if (mobilePage === 'navigation') {
-      navigateMobile('terminal');
-    } else if (mobilePage === 'terminal' && rightRail.open) {
-      navigateMobile('pane');
+      navigateMobile('workspace');
     }
   }
 
@@ -1488,6 +1496,7 @@
     <main
       class="mobile-workspace min-h-0 flex-1"
       data-page={mobilePage}
+      data-mode={mobileMode}
       aria-label="Mobile workspace"
       onpointerdown={onMobilePointerDown}
       onpointerup={finishMobileSwipe}
@@ -1497,21 +1506,41 @@
         <section class="mobile-workspace-page mobile-workspace-navigation" aria-label="Session list">
           <Sidebar
             mobileWorkspace
-            onRequestTerminal={() => navigateMobile('terminal')}
-            onSessionActivate={() => navigateMobile('terminal')}
+            onRequestTerminal={openMobileTerminal}
+            onSessionActivate={openMobileTerminal}
           />
         </section>
-        <section class="mobile-workspace-page mobile-workspace-terminal" aria-label="Terminal">
-          <TerminalArea onOpenNavigation={() => navigateMobile('navigation')} />
-        </section>
-        <section class="mobile-workspace-page mobile-workspace-pane" aria-label="Open pane">
-          <RightRail
-            mobileWorkspace
-            onOpenNavigation={() => navigateMobile('navigation')}
-          />
+        <section class="mobile-workspace-page mobile-workspace-stage" aria-label="Workspace">
+          <div
+            class="mobile-workspace-surface mobile-workspace-terminal"
+            class:active={mobileMode === 'terminal'}
+            aria-hidden={mobileMode !== 'terminal'}
+            inert={mobileMode !== 'terminal'}
+          >
+            <TerminalArea
+              active={mobilePage === 'workspace' && mobileMode === 'terminal'}
+              onOpenNavigation={() => navigateMobile('navigation')}
+            />
+          </div>
+          <div
+            class="mobile-workspace-surface mobile-workspace-pane"
+            class:active={mobileMode === 'pane'}
+            aria-hidden={mobileMode !== 'pane'}
+            inert={mobileMode !== 'pane'}
+          >
+            <RightRail
+              mobileWorkspace
+              onOpenNavigation={() => navigateMobile('navigation')}
+            />
+          </div>
         </section>
       </div>
-      <MobileWorkspaceNav page={mobilePage} onNavigate={navigateMobile} />
+      <MobileWorkspaceNav
+        page={mobilePage}
+        mode={mobileMode}
+        onNavigate={navigateMobile}
+        onSelectMode={selectMobileMode}
+      />
     </main>
   {:else}
     <div class="app-main relative flex min-h-0 flex-1">

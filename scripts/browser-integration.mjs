@@ -110,7 +110,9 @@ async function main() {
     mobile: true
   });
   const mobileWorkspace = await first.cdp.evaluate(
-    `(${runMobileWorkspaceWorkflow.toString()})()`
+    `(${runMobileWorkspaceWorkflow.toString()})(${JSON.stringify({
+      sessionId: normalSession.id
+    })})`
   );
   await first.cdp.send('Emulation.clearDeviceMetricsOverride');
 
@@ -973,7 +975,7 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function runMobileWorkspaceWorkflow() {
+async function runMobileWorkspaceWorkflow(input) {
   const assert = (condition, message) => {
     if (!condition) throw new Error(message);
   };
@@ -993,21 +995,64 @@ async function runMobileWorkspaceWorkflow() {
     throw new Error(`Timed out waiting for ${label}`);
   };
   const page = () => document.querySelector('.mobile-workspace')?.getAttribute('data-page');
+  const mode = () => document.querySelector('.mobile-workspace')?.getAttribute('data-mode');
 
   await waitUntil(
-    () => page() === 'terminal',
+    () => page() === 'workspace' && mode() === 'terminal',
     5_000,
     'mobile terminal workspace'
   );
   assert(!document.querySelector('.app-titlebar'), 'Mobile rendered the shared application title bar');
   assert(!document.querySelector('button[aria-label="Inspector"]'), 'Inspector still exists on mobile');
   assert(visible(document.querySelector('.mobile-workspace-dock')), 'Mobile workspace dock is hidden');
+  assert(
+    document.querySelectorAll('.mobile-page-indicator button').length === 2,
+    'Mobile rendered more than the Sessions and Workspace pages'
+  );
+  const sessionRow = document.querySelector(
+    `[data-session-id="${CSS.escape(input.sessionId)}"]`
+  );
+  assert(sessionRow, 'Mobile terminal fixture session is missing');
+  sessionRow.click();
+  await waitUntil(
+    () => sessionRow.getAttribute('data-row-selected') === 'true'
+      && page() === 'workspace'
+      && mode() === 'terminal',
+    5_000,
+    'mobile terminal session'
+  );
+  await waitUntil(
+    () => document.querySelector(
+      '.terminal-surface[data-terminal-pane-role="full"] .xterm-screen'
+    ),
+    5_000,
+    'mobile terminal renderer'
+  );
+  const terminalFitsViewport = () => {
+    const terminalHost = document.querySelector(
+      '.terminal-surface[data-terminal-pane-role="full"] .xterm'
+    );
+    const terminalScreen = document.querySelector(
+      '.terminal-surface[data-terminal-pane-role="full"] .xterm-screen'
+    );
+    if (!terminalHost || !terminalScreen) return false;
+    const terminalHostRect = terminalHost.getBoundingClientRect();
+    const terminalScreenRect = terminalScreen.getBoundingClientRect();
+    return terminalScreenRect.width <= terminalHostRect.width + 1
+      && terminalHostRect.right <= window.innerWidth + 1;
+  };
+  await waitUntil(
+    terminalFitsViewport,
+    5_000,
+    'mobile terminal to fit its viewport'
+  );
 
   const files = document.querySelector('.mobile-pane-destination[aria-label="Files"]');
   assert(files, 'Mobile Files destination is missing');
   files.click();
   await waitUntil(
-    () => page() === 'pane'
+    () => page() === 'workspace'
+      && mode() === 'pane'
       && document.querySelectorAll('[data-pane-slot]').length === 1
       && visible(document.querySelector('.mobile-files-surface')),
     10_000,
@@ -1018,7 +1063,8 @@ async function runMobileWorkspaceWorkflow() {
   assert(notes, 'Mobile Notes destination is missing');
   notes.click();
   await waitUntil(
-    () => page() === 'pane'
+    () => page() === 'workspace'
+      && mode() === 'pane'
       && document.querySelectorAll('[data-pane-slot]').length === 1
       && visible(document.querySelector('.mobile-notes-surface')),
     10_000,
@@ -1030,8 +1076,17 @@ async function runMobileWorkspaceWorkflow() {
     'Mobile allowed more than one pane to remain active'
   );
 
-  document.querySelector('.mobile-page-indicator button[aria-label="Terminal"]')?.click();
-  await waitUntil(() => page() === 'terminal', 5_000, 'mobile terminal page');
+  document.querySelector('.mobile-pane-destination[aria-label="Terminal"]')?.click();
+  await waitUntil(
+    () => page() === 'workspace' && mode() === 'terminal',
+    5_000,
+    'mobile terminal tool'
+  );
+  await waitUntil(
+    terminalFitsViewport,
+    5_000,
+    'mobile terminal refit after returning from a pane'
+  );
   const workspace = document.querySelector('.mobile-workspace');
   assert(workspace, 'Mobile workspace root is missing');
   const swipe = (fromX, toX, pointerId) => {
@@ -1055,7 +1110,11 @@ async function runMobileWorkspaceWorkflow() {
   swipe(120, 310, 1);
   await waitUntil(() => page() === 'navigation', 5_000, 'swipe to session list');
   swipe(310, 90, 2);
-  await waitUntil(() => page() === 'terminal', 5_000, 'swipe back to terminal');
+  await waitUntil(
+    () => page() === 'workspace' && mode() === 'terminal',
+    5_000,
+    'swipe back to workspace'
+  );
 
   if ('serviceWorker' in navigator) {
     await Promise.race([
@@ -1070,6 +1129,7 @@ async function runMobileWorkspaceWorkflow() {
     sharedTitlebarHidden: true,
     inspectorRemoved: true,
     singlePaneReplacement: true,
+    twoPageNavigation: true,
     swipeNavigation: true,
     serviceWorkerReady: 'serviceWorker' in navigator
   };
