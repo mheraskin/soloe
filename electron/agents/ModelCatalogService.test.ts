@@ -8,28 +8,47 @@ import {
 
 describe('ModelCatalogService', () => {
   it('resolves bare Linux harnesses through the NVM-aware agent shell', () => {
-    const command = buildModelCatalogCommand('codex', ['debug', 'models'], 'linux');
+    const command = buildModelCatalogCommand(
+      'codex',
+      ['app-server', '--listen', 'stdio://'],
+      'linux'
+    );
 
     expect(command.executable).toBe('bash');
     expect(command.args[0]).toBe('-lc');
     const script = decodeAgentScript(command.args[1] ?? '');
     expect(script).toContain('NVM_DIR');
     expect(script).toContain('__soloe_agent_bin="$(command -v codex 2>/dev/null)"');
-    expect(script).toContain('exec "$__soloe_agent_bin" debug models');
+    expect(script).toContain('exec "$__soloe_agent_bin" app-server --listen stdio://');
   });
 
   it('discovers visible Codex models and Claude aliases from installed harnesses', async () => {
-    const runCommand = vi.fn(async (executable: string) => {
+    const runCommand = vi.fn(async (executable: string, _args: string[], stdin?: string) => {
       if (executable === 'codex') {
+        expect(stdin).toContain('"method":"model/list"');
+        expect(stdin).toContain('"includeHidden":false');
         return {
           exitCode: 0,
           stderr: '',
-          stdout: JSON.stringify({
-            models: [
-              { slug: 'hidden', display_name: 'Hidden', visibility: 'hide', supported_in_api: true },
-              { slug: 'gpt-current', display_name: 'GPT Current', visibility: 'list', supported_in_api: true, priority: 1 }
-            ]
-          })
+          stdout: [
+            JSON.stringify({ id: 1, result: {} }),
+            JSON.stringify({
+              id: 2,
+              result: {
+                data: [
+                  { id: 'hidden', model: 'hidden', displayName: 'Hidden', hidden: true },
+                  {
+                    id: 'gpt-current',
+                    model: 'gpt-current',
+                    displayName: 'GPT Current',
+                    hidden: false,
+                    isDefault: true
+                  }
+                ],
+                nextCursor: null
+              }
+            })
+          ].join('\n')
         };
       }
       return {
