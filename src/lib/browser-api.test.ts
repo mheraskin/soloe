@@ -122,6 +122,41 @@ describe("browser API", () => {
     });
   });
 
+  it("sends Feature Lab scans and subscriptions to the application server", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "features-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+    const scope = { cwd: "/repo", runMode: "linux" as const };
+
+    await api.features.scan({ ...scope, slug: "alpha" });
+    await api.features.subscribe(scope);
+
+    expect(
+      fetchImpl.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      {
+        namespace: "features",
+        method: "scan",
+        args: [{ ...scope, slug: "alpha" }],
+        clientId: "features-browser",
+      },
+      {
+        namespace: "features",
+        method: "subscribe",
+        args: [scope],
+        clientId: "features-browser",
+      },
+    ]);
+  });
+
   it("supports an absolute server URL and bearer token for the Electron shell", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -233,6 +268,8 @@ describe("browser API", () => {
     expect(api.transport?.supports("git", "status")).toBe(true);
     expect(api.transport?.supports("notes", "list")).toBe(true);
     expect(api.transport?.supports("notes", "saveImage")).toBe(true);
+    expect(api.transport?.supports("features", "scan")).toBe(true);
+    expect(api.transport?.supports("features", "subscribe")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

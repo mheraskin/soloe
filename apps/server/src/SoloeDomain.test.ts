@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { FeatureArtifactObservation } from "@soloe/domain";
 import { hostPlatform } from "../../../shared/platform.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
@@ -903,6 +904,201 @@ describe("SoloeDomain", () => {
           args: ["unregistered-project"],
         }),
       ).rejects.toMatchObject({ code: "project_not_found" });
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("owns Feature Lab scans, mutations, subscriptions, and placement identity", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-features-"));
+    await mkdir(path.join(directory, "docs", "agents"), { recursive: true });
+    await mkdir(path.join(directory, "docs", "grill", "alpha"), {
+      recursive: true,
+    });
+    await mkdir(path.join(directory, "docs", "plans"), { recursive: true });
+    await mkdir(path.join(directory, ".scratch", "alpha", "issues"), {
+      recursive: true,
+    });
+    await Promise.all([
+      writeFile(path.join(directory, "AGENTS.md"), "# Agent\n\n## Agent skills\n"),
+      writeFile(
+        path.join(directory, "docs", "agents", "issue-tracker.md"),
+        "# Issue tracker\n\nUse local markdown in .scratch/.\n",
+      ),
+      writeFile(
+        path.join(directory, "docs", "grill", "alpha", "coverage-map.md"),
+        "# Coverage\n\n## Branches\n\n### 1. Core\n- [ ] 1A. First branch\n",
+      ),
+      writeFile(
+        path.join(directory, "docs", "plans", "alpha-feature.md"),
+        "# Alpha plan\n",
+      ),
+      writeFile(
+        path.join(directory, ".scratch", "alpha", "issues", "01-first.md"),
+        "# First issue\nStatus: open\n",
+      ),
+    ]);
+    const artifacts = new FeatureArtifactObservation({
+      intervalMs: 25,
+      retireAfterMs: 0,
+    });
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      featureArtifacts: artifacts,
+    });
+    const events: unknown[] = [];
+    domain.on("event", (event, payload) => {
+      if (event === "features.change") events.push(payload);
+    });
+
+    try {
+      await domain.init();
+      await domain.invoke({
+        namespace: "projects",
+        method: "create",
+        args: [{ name: "Feature project", path: directory }],
+      });
+      const scope = { cwd: directory, runMode: hostPlatform() };
+      const snapshot = await domain.invoke({
+        namespace: "features",
+        method: "scan",
+        args: [{ ...scope, slug: "alpha" }],
+      });
+      expect(snapshot).toEqual(
+        expect.objectContaining({
+          selectedSlug: "alpha",
+          features: [
+            expect.objectContaining({
+              slug: "alpha",
+              hasCoverage: true,
+              hasIssues: true,
+              hasPlans: true,
+            }),
+          ],
+          setup: { hasAgentSkillsBlock: true, inFile: "AGENTS.md" },
+          tracker: expect.objectContaining({ provider: "local-markdown" }),
+          coverage: expect.objectContaining({
+            counts: expect.objectContaining({ todo: 1 }),
+          }),
+          plans: [
+            expect.objectContaining({
+              relativePath: "docs/plans/alpha-feature.md",
+            }),
+          ],
+          issues: [
+            expect.objectContaining({
+              relativePath: ".scratch/alpha/issues/01-first.md",
+              status: "open",
+            }),
+          ],
+        }),
+      );
+
+      await expect(
+        domain.invoke({
+          namespace: "features",
+          method: "setBranchStatus",
+          args: [
+            {
+              ...scope,
+              slug: "alpha",
+              branchId: "1A",
+              status: "resolved",
+            },
+          ],
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          counts: expect.objectContaining({ resolved: 1 }),
+        }),
+      );
+      await expect(
+        domain.invoke({
+          namespace: "features",
+          method: "setIssueStatus",
+          args: [
+            {
+              ...scope,
+              relativePath: ".scratch/alpha/issues/01-first.md",
+              status: "solved",
+            },
+          ],
+        }),
+      ).resolves.toEqual(expect.objectContaining({ status: "solved" }));
+      await expect(
+        domain.invoke({
+          namespace: "features",
+          method: "setIssueStatus",
+          args: [
+            {
+              ...scope,
+              relativePath: "../outside.md",
+              status: "solved",
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_feature_path" });
+      await expect(
+        domain.invoke({
+          namespace: "features",
+          method: "scan",
+          args: [{ cwd: path.join(directory, "outside"), runMode: hostPlatform() }],
+        }),
+      ).rejects.toMatchObject({ code: "worktree_not_authorized" });
+
+      for (const clientId of ["feature-client-a", "feature-client-b"]) {
+        await domain.invoke({
+          namespace: "features",
+          method: "subscribe",
+          args: [scope],
+          clientId,
+        });
+      }
+      await vi.waitFor(
+        () => {
+          expect(
+            artifacts.current({ cwd: directory, runMode: hostPlatform() }),
+          ).not.toBeNull();
+        },
+        { timeout: 1_000 },
+      );
+      domain.releaseClient("feature-client-a");
+      await writeFile(
+        path.join(directory, "docs", "plans", "alpha-second.md"),
+        "# Another plan\n",
+      );
+      await vi.waitFor(
+        () => {
+          expect(events).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                cwd: directory,
+                runMode: hostPlatform(),
+                kind: "features",
+              }),
+            ]),
+          );
+        },
+        { timeout: 1_000 },
+      );
+      domain.releaseClient("feature-client-b");
+      await expect(
+        domain.invoke({
+          namespace: "features",
+          method: "subscribe",
+          args: [scope],
+        }),
+      ).rejects.toMatchObject({ code: "client_identity_required" });
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

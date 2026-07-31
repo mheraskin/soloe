@@ -329,6 +329,19 @@ class FeaturesStore {
     await this.queueSubscriptionReconcile(key);
   }
 
+  recoverAfterReconnect(): void {
+    for (const [key, scope] of this.subscribedScopes) {
+      void ipc.features.subscribe(toSubscriptionRequest(scope))
+        .then(() => {
+          if (!this.subscribedScopes.has(key)) return;
+          return this.refresh(scope);
+        })
+        .catch(() => {
+          untrack(() => this.patch(key, { subscribed: false }));
+        });
+    }
+  }
+
   private queueSubscriptionReconcile(key: string): Promise<void> {
     const previous = this.subscriptionQueues.get(key) ?? Promise.resolve();
     const next = previous
@@ -429,5 +442,8 @@ if (hasBackendTransport()) {
   // Single, app-wide listener that routes change events to the matching cwd.
   ipc.features.onChange((event) => {
     featuresStore.applyChangeEvent(event);
+  });
+  ipc.connection?.onReconnect(() => {
+    featuresStore.recoverAfterReconnect();
   });
 }

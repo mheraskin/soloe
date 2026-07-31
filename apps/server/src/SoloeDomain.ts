@@ -54,6 +54,11 @@ import type {
   WorkingChangesRequest,
   WorkingTreeSnapshotRequest,
 } from "../../../shared/types/git.js";
+import type {
+  FeatureScanRequest,
+  FeatureSetBranchStatusRequest,
+  FeatureSetIssueStatusRequest,
+} from "../../../shared/types/features.js";
 import {
   worktreeIdentityKey,
   type WorktreeScope,
@@ -61,6 +66,8 @@ import {
 import { hostPlatform, platformInfo } from "../../../shared/platform.js";
 import {
   FileService,
+  FeatureArtifactObservation,
+  FeatureService,
   GitService,
   NotesStore,
   WorktreeFileIndex,
@@ -96,6 +103,7 @@ export interface DomainCall {
 export interface SoloeDomainOptions {
   dataDirectory: string;
   runtime: RuntimeControl;
+  featureArtifacts?: FeatureArtifactObservation;
 }
 
 export interface SoloeDomain {
@@ -112,6 +120,12 @@ export class SoloeDomain extends EventEmitter {
   private readonly files: FileService;
   private readonly git: GitService;
   private readonly notes: NotesStore;
+  private readonly featureArtifacts: FeatureArtifactObservation;
+  private readonly features: FeatureService;
+  private readonly featureSubscriptionReleases = new Map<
+    string,
+    Map<string, () => void>
+  >();
   private readonly gitObservationReleases = new Map<
     string,
     Map<string, () => void>
@@ -151,11 +165,17 @@ export class SoloeDomain extends EventEmitter {
       getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
     this.notes = new NotesStore(path.join(options.dataDirectory, "notes"));
+    this.featureArtifacts =
+      options.featureArtifacts ?? new FeatureArtifactObservation();
+    this.features = new FeatureService(this.featureArtifacts);
     this.git.onChange((event) => {
       this.emit("event", "git.change", event);
     });
     this.notes.onChange((event) => {
       this.emit("event", "notes.change", event);
+    });
+    this.featureArtifacts.onChange((event) => {
+      this.emit("event", "features.change", event);
     });
     this.observerStore = new AgentObserverStore(
       path.join(options.dataDirectory, "observer.json"),
@@ -193,9 +213,15 @@ export class SoloeDomain extends EventEmitter {
   }
 
   async dispose(): Promise<void> {
-    for (const clientId of this.gitObservationReleases.keys()) {
+    for (
+      const clientId of new Set([
+        ...this.gitObservationReleases.keys(),
+        ...this.featureSubscriptionReleases.keys(),
+      ])
+    ) {
       this.releaseClient(clientId);
     }
+    this.featureArtifacts.dispose();
     this.git.dispose();
     this.files.dispose();
     await this.workerRuntime.dispose();
@@ -226,6 +252,20 @@ export class SoloeDomain extends EventEmitter {
     if (call.namespace === "notes") {
       return this.notesCall(call.method, call.args);
     }
+    if (call.namespace === "features") {
+      try {
+        return await this.featuresCall(call.method, call.args, call.clientId);
+      } catch (error) {
+        if (error instanceof RpcError) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new RpcError(
+          /path|slug|indexed feature issue/iu.test(message)
+            ? "invalid_feature_path"
+            : "feature_failed",
+          message,
+        );
+      }
+    }
     if (call.namespace === "observer") {
       return this.observerCall(call.method, call.args);
     }
@@ -251,10 +291,16 @@ export class SoloeDomain extends EventEmitter {
   }
 
   releaseClient(clientId: string): void {
-    const releases = this.gitObservationReleases.get(clientId);
-    if (!releases) return;
-    this.gitObservationReleases.delete(clientId);
-    for (const release of releases.values()) release();
+    const gitReleases = this.gitObservationReleases.get(clientId);
+    if (gitReleases) {
+      this.gitObservationReleases.delete(clientId);
+      for (const release of gitReleases.values()) release();
+    }
+    const featureReleases = this.featureSubscriptionReleases.get(clientId);
+    if (featureReleases) {
+      this.featureSubscriptionReleases.delete(clientId);
+      for (const release of featureReleases.values()) release();
+    }
   }
 
   private async gitCall(
@@ -694,6 +740,66 @@ export class SoloeDomain extends EventEmitter {
     }
   }
 
+  private async featuresCall(
+    method: string,
+    args: unknown[],
+    clientId?: string,
+  ): Promise<unknown> {
+    if (!FEATURE_RPC_METHODS.has(method)) {
+      throw unsupportedRpc("features", method);
+    }
+    const request = validateFeatureRequest(args[0]);
+    await this.authorizeGitPath(request.cwd, request);
+    switch (method) {
+      case "scan":
+        return this.features.scan(request as FeatureScanRequest);
+      case "setBranchStatus":
+        return this.features.writeBranchStatus(
+          request as unknown as FeatureSetBranchStatusRequest,
+        );
+      case "setIssueStatus":
+        return this.features.writeIssueStatus(
+          request as unknown as FeatureSetIssueStatusRequest,
+        );
+      case "subscribe":
+        return this.setFeatureSubscription(clientId, request, true);
+      case "unsubscribe":
+        return this.setFeatureSubscription(clientId, request, false);
+    }
+  }
+
+  private setFeatureSubscription(
+    clientId: string | undefined,
+    request: { cwd: string; runMode: WorktreeScope["runMode"]; wslDistro?: string },
+    active: boolean,
+  ): true {
+    if (!clientId) {
+      throw new RpcError(
+        "client_identity_required",
+        "Feature subscriptions require a client identity",
+      );
+    }
+    const key = worktreeIdentityKey(request.cwd, request);
+    let releases = this.featureSubscriptionReleases.get(clientId);
+    if (!releases) {
+      if (!active) return true;
+      releases = new Map();
+      this.featureSubscriptionReleases.set(clientId, releases);
+    }
+    const existing = releases.get(key);
+    if (active) {
+      existing?.();
+      releases.set(key, this.featureArtifacts.acquire(request));
+    } else if (existing) {
+      existing();
+      releases.delete(key);
+      if (releases.size === 0) {
+        this.featureSubscriptionReleases.delete(clientId);
+      }
+    }
+    return true;
+  }
+
   private async isAuthorizedWorktree(scope: FileIndexScope): Promise<boolean> {
     const [projects, sessions] = await Promise.all([
       this.projects.list(),
@@ -993,6 +1099,62 @@ const NOTES_RPC_METHODS = new Set([
   "readImage",
   "cleanupImages",
 ]);
+const FEATURE_RPC_METHODS = new Set([
+  "scan",
+  "setBranchStatus",
+  "setIssueStatus",
+  "subscribe",
+  "unsubscribe",
+]);
+
+function validateFeatureRequest(value: unknown): Record<string, unknown> & {
+  cwd: string;
+  runMode: WorktreeScope["runMode"];
+  wslDistro?: string;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RpcError(
+      "invalid_feature_request",
+      "Feature RPC calls require a request object",
+    );
+  }
+  const request = value as Record<string, unknown>;
+  const cwd = requireNotesString(request.cwd, "cwd", 16_384);
+  if (
+    request.runMode !== "windows" &&
+    request.runMode !== "linux" &&
+    request.runMode !== "wsl"
+  ) {
+    throw new RpcError("invalid_feature_request", "runMode is invalid");
+  }
+  const wslDistro =
+    request.wslDistro === undefined
+      ? undefined
+      : requireNotesString(request.wslDistro, "wslDistro", 128);
+  if (request.runMode === "wsl" && !wslDistro) {
+    throw new RpcError(
+      "invalid_feature_request",
+      "wslDistro is required for WSL Feature requests",
+    );
+  }
+  for (const [name, maximum] of [
+    ["slug", 128],
+    ["observedRevision", 256],
+    ["branchId", 128],
+    ["relativePath", 16_384],
+    ["status", 256],
+  ] as const) {
+    if (request[name] !== undefined) {
+      requireNotesString(request[name], name, maximum);
+    }
+  }
+  return {
+    ...request,
+    cwd,
+    runMode: request.runMode,
+    ...(wslDistro ? { wslDistro } : {}),
+  };
+}
 
 function requireNotesString(
   value: unknown,
