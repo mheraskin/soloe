@@ -80,3 +80,11 @@ ipcRenderer.on(
     );
   }
 );
+
+ipcRenderer.on('soloe:webview-toggle-devtools', () => {
+  window.dispatchEvent(new CustomEvent('soloe:browser-toggle-devtools'));
+});
+
+ipcRenderer.on('soloe:webview-restore-tab', () => {
+  window.dispatchEvent(new CustomEvent('soloe:browser-restore-tab'));
+});

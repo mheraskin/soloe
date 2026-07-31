@@ -89,6 +89,65 @@ describe('BrowserStore residency', () => {
     expect(store.residentTabs(2).map((tab) => tab.id)).toEqual([first.id, second.id]);
   });
 
+  it('reorders tabs around a drop target without changing the active tab', () => {
+    const store = new BrowserStore();
+    const first = add(store, 'https://first.test');
+    const second = add(store, 'https://second.test');
+    const third = add(store, 'https://third.test');
+
+    store.reorderTab(first.id, second.id, 'after');
+    expect(store.tabs.map((tab) => tab.id)).toEqual([second.id, first.id, third.id]);
+    expect(store.activeTabId).toBe(third.id);
+
+    store.reorderTab(third.id, second.id, 'before');
+    expect(store.tabs.map((tab) => tab.id)).toEqual([third.id, second.id, first.id]);
+  });
+
+  it('duplicates a tab beside its source and activates an independent copy', () => {
+    const store = new BrowserStore();
+    const source = add(store, 'https://first.test');
+    store.navigate(source.id, 'https://second.test');
+    store.setPageZoom(source.id, 1.25);
+
+    const duplicate = store.duplicateTab(source.id);
+
+    expect(duplicate).not.toBeNull();
+    expect(store.tabs.map((tab) => tab.id)).toEqual([source.id, duplicate!.id]);
+    expect(duplicate).toMatchObject({
+      history: ['https://first.test', 'https://second.test'],
+      historyIndex: 1,
+      pageZoom: 1.25
+    });
+    expect(store.activeTabId).toBe(duplicate!.id);
+
+    store.navigate(source.id, 'https://third.test');
+    expect(duplicate!.history).toEqual(['https://first.test', 'https://second.test']);
+  });
+
+  it('restores closed tabs in last-closed-first order and their prior positions', () => {
+    const store = new BrowserStore();
+    const first = add(store, 'https://first.test');
+    const second = add(store, 'https://second.test');
+    const third = add(store, 'https://third.test');
+
+    store.closeTab(second.id);
+    store.closeTab(first.id);
+    expect(store.canRestoreClosedTab).toBe(true);
+
+    const restoredFirst = store.restoreClosedTab();
+    expect(restoredFirst?.history).toEqual(['https://first.test']);
+    expect(store.tabs.map((tab) => tab.id)).toEqual([restoredFirst!.id, third.id]);
+
+    const restoredSecond = store.restoreClosedTab();
+    expect(restoredSecond?.history).toEqual(['https://second.test']);
+    expect(store.tabs.map((tab) => tab.id)).toEqual([
+      restoredFirst!.id,
+      restoredSecond!.id,
+      third.id
+    ]);
+    expect(store.canRestoreClosedTab).toBe(false);
+  });
+
   it('releases all background residents when the Browser rail hides', () => {
     const store = new BrowserStore();
     add(store, 'https://first.test');

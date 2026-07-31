@@ -409,3 +409,11 @@ ipcRenderer.on(
     window.dispatchEvent(new CustomEvent('soloe:browser-zoom', { detail: { direction: payload.direction } }));
   }
 );
+
+ipcRenderer.on('soloe:webview-toggle-devtools', () => {
+  window.dispatchEvent(new CustomEvent('soloe:browser-toggle-devtools'));
+});
+
+ipcRenderer.on('soloe:webview-restore-tab', () => {
+  window.dispatchEvent(new CustomEvent('soloe:browser-restore-tab'));
+});

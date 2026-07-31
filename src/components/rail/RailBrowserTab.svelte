@@ -849,6 +849,8 @@
       if (next === current) return;
       applyPageZoom(tabId, next);
     };
+    const onToggleDevTools = () => toggleDevTools();
+    const onRestoreTab = () => restoreClosedTab();
     const onResizeStart = () => suspendDevToolsView();
     const onResizeEnd = () => resumeDevToolsView();
     const onFocusPane = (e: Event) => {
@@ -877,6 +879,8 @@
     // rail-resize-end fires when the user drops the splitter.
     const onLayoutShift = () => refreshFillAnchor();
     window.addEventListener('soloe:browser-zoom', onZoom);
+    window.addEventListener('soloe:browser-toggle-devtools', onToggleDevTools);
+    window.addEventListener('soloe:browser-restore-tab', onRestoreTab);
     window.addEventListener('soloe:rail-resize-start', onResizeStart);
     window.addEventListener('soloe:rail-resize-end', onResizeEnd);
     window.addEventListener('soloe:rail-resize-end', onLayoutShift);
@@ -888,6 +892,8 @@
 
     return () => {
       window.removeEventListener('soloe:browser-zoom', onZoom);
+      window.removeEventListener('soloe:browser-toggle-devtools', onToggleDevTools);
+      window.removeEventListener('soloe:browser-restore-tab', onRestoreTab);
       window.removeEventListener('soloe:rail-resize-start', onResizeStart);
       window.removeEventListener('soloe:rail-resize-end', onResizeEnd);
       window.removeEventListener('soloe:rail-resize-end', onLayoutShift);
@@ -1171,6 +1177,46 @@
     browserStore.addTab();
   }
 
+  function duplicateTab(id: string) {
+    browserStore.duplicateTab(id);
+  }
+
+  function restoreClosedTab() {
+    browserStore.restoreClosedTab();
+  }
+
+  let draggedTabId = $state<string | null>(null);
+  let tabDropTarget = $state<{ id: string; position: 'before' | 'after' } | null>(null);
+
+  function onTabDragStart(event: DragEvent, id: string) {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+    draggedTabId = id;
+    tabDropTarget = null;
+  }
+
+  function onTabDragOver(event: DragEvent, targetId: string) {
+    if (!draggedTabId || draggedTabId === targetId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const position = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+    tabDropTarget = { id: targetId, position };
+  }
+
+  function onTabDrop(event: DragEvent, targetId: string) {
+    if (!draggedTabId || draggedTabId === targetId) return;
+    event.preventDefault();
+    const position = tabDropTarget?.id === targetId ? tabDropTarget.position : 'after';
+    browserStore.reorderTab(draggedTabId, targetId, position);
+    onTabDragEnd();
+  }
+
+  function onTabDragEnd() {
+    draggedTabId = null;
+    tabDropTarget = null;
+  }
 
   function selectTab(id: string) {
     // Selection atomically resumes a manually-paused tab and promotes an
@@ -1347,7 +1393,7 @@
   }
 </script>
 
-<div class="mobile-browser-surface flex h-full min-w-0 flex-col bg-background">
+<div data-browser-surface class="mobile-browser-surface flex h-full min-w-0 flex-col bg-background">
   <div class="mobile-browser-tabs flex h-8 min-h-8 items-center gap-0.5 overflow-x-auto border-b border-border bg-sidebar px-1">
     {#each browserStore.tabs as tab (tab.id)}
       {@const isActive = tab.id === activeId}
@@ -1359,12 +1405,18 @@
             <button
               {...props}
               type="button"
-              class={`group flex h-6 max-w-[160px] min-w-0 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors ${
+              class={`group relative flex h-6 max-w-[160px] min-w-0 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors ${
                 isActive
                   ? 'bg-background text-foreground'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
               } ${isPausedTab || !isResidentTab ? 'opacity-60' : ''}`}
               onclick={() => selectTab(tab.id)}
+              draggable={true}
+              aria-grabbed={draggedTabId === tab.id}
+              ondragstart={(event) => onTabDragStart(event, tab.id)}
+              ondragover={(event) => onTabDragOver(event, tab.id)}
+              ondrop={(event) => onTabDrop(event, tab.id)}
+              ondragend={onTabDragEnd}
               title={`${tab.history[tab.historyIndex] ?? ''}${
                 isPausedTab
                   ? ' — paused'
@@ -1373,6 +1425,14 @@
                     : ''
               }`}
             >
+              {#if tabDropTarget?.id === tab.id && draggedTabId !== tab.id}
+                <span
+                  aria-hidden="true"
+                  class={`pointer-events-none absolute inset-y-0 w-0.5 rounded-full bg-primary ${
+                    tabDropTarget.position === 'before' ? 'left-0' : 'right-0'
+                  }`}
+                ></span>
+              {/if}
               {#if isPausedTab || !isResidentTab}
                 <PowerOff class="size-3 shrink-0" />
               {:else}
@@ -1397,7 +1457,20 @@
             </button>
           {/snippet}
         </ContextMenu.Trigger>
-        <ContextMenu.Content class="w-44">
+        <ContextMenu.Content class="w-64">
+          <ContextMenu.Item onclick={() => duplicateTab(tab.id)}>
+            <Plus class="mr-2 size-3.5" />
+            Duplicate tab
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            disabled={!browserStore.canRestoreClosedTab}
+            onclick={restoreClosedTab}
+          >
+            <History class="mr-2 size-3.5" />
+            Reopen closed tab
+            <ContextMenu.Shortcut>Ctrl/Cmd+Shift+T</ContextMenu.Shortcut>
+          </ContextMenu.Item>
+          <ContextMenu.Separator />
           {#if isPausedTab}
             <ContextMenu.Item onclick={() => resumeTabAction(tab.id)}>
               <Power class="mr-2 size-3.5" />

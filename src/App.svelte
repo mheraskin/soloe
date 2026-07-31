@@ -572,6 +572,11 @@
     return rightRail.open && rightRail.activeTab === 'browser';
   }
 
+  function isBrowserKeyTarget(e: KeyboardEvent): boolean {
+    return e.target instanceof Element
+      && Boolean(e.target.closest('[data-browser-surface]'));
+  }
+
   function dispatchBrowserZoom(direction: 'in' | 'out' | 'reset'): void {
     window.dispatchEvent(new CustomEvent('soloe:browser-zoom', { detail: { direction } }));
   }
@@ -1038,6 +1043,10 @@
     }
     if (Keymap.newSessionPicker.match(e)) {
       consume(e);
+      if (isBrowserKeyTarget(e)) {
+        window.dispatchEvent(new CustomEvent('soloe:browser-restore-tab'));
+        return;
+      }
       void sessions
         .createPreferredWithDefaults(selectedSessionContext())
         .catch(reportError);
