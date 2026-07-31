@@ -88,7 +88,7 @@ export class PtyManager extends EventEmitter {
   private readonly sessionToTerminal = new Map<SessionId, TerminalId>();
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly agentSpawnQueues = new Map<string, Promise<void>>();
-  private readonly pendingAgentInputPersistence = new Set<SessionId>();
+  private readonly pendingAgentInputPersistence = new Map<SessionId, Promise<void>>();
   private readonly replayBuffer: TerminalReplayBuffer;
   private readonly processFactory: PtyProcessFactory;
   private disposed = false;
@@ -135,6 +135,7 @@ export class PtyManager extends EventEmitter {
       }
       throw new Error(`Session ${sessionId} is already running`);
     }
+    await this.pendingAgentInputPersistence.get(sessionId);
     const session = await this.opts.store.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
 
@@ -284,8 +285,7 @@ export class PtyManager extends EventEmitter {
 
   private markAgentSessionResumable(sessionId: SessionId): void {
     if (this.pendingAgentInputPersistence.has(sessionId)) return;
-    this.pendingAgentInputPersistence.add(sessionId);
-    void this.opts.store
+    const persistence = this.opts.store
       .get(sessionId)
       .then(async (session) => {
         if (!session || session.hasUserInput === true) return;
@@ -295,8 +295,11 @@ export class PtyManager extends EventEmitter {
         console.warn(`[terminal] failed to persist agent input for ${sessionId}`, err);
       })
       .finally(() => {
-        this.pendingAgentInputPersistence.delete(sessionId);
+        if (this.pendingAgentInputPersistence.get(sessionId) === persistence) {
+          this.pendingAgentInputPersistence.delete(sessionId);
+        }
       });
+    this.pendingAgentInputPersistence.set(sessionId, persistence);
   }
 
   private clearApprovalStateOnInput(sessionId: SessionId, data: string): void {

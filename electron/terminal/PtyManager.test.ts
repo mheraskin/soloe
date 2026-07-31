@@ -436,6 +436,65 @@ describe('PtyManager', () => {
     });
   });
 
+  it('waits for submitted agent input to persist before restarting', async () => {
+    let storedSession: Session = {
+      ...session,
+      id: 'codex-restart-input',
+      name: 'Codex',
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        codexSessionId: 'codex-resumed-thread'
+      },
+      hasUserInput: false
+    };
+    let releaseUpdate!: () => void;
+    const updateGate = new Promise<void>((resolve) => {
+      releaseUpdate = resolve;
+    });
+    const update = vi.fn(async () => {
+      await updateGate;
+      storedSession = { ...storedSession, hasUserInput: true };
+      return storedSession;
+    });
+    const build = vi.fn((_session: Session) => spec);
+    const manager = new PtyManager({
+      commandBuilder: { build } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => storedSession),
+        touch: vi.fn(async () => {}),
+        update
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: storedSession.id });
+    manager.write(started.terminalId, '\r');
+    await vi.waitFor(() => expect(update).toHaveBeenCalledOnce());
+
+    const firstProc = vi.mocked(pty.spawn).mock.results.at(-1)?.value as {
+      onExit: { mock: { calls: Array<[(event: { exitCode: number }) => void]> } };
+      kill: { mock: { calls: unknown[][] } };
+    };
+    const restarted = manager.restart(storedSession.id);
+    await vi.waitFor(() => expect(firstProc.kill.mock.calls.length).toBeGreaterThan(0));
+    for (const [onExit] of firstProc.onExit.mock.calls) onExit({ exitCode: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(build).toHaveBeenCalledOnce();
+    releaseUpdate();
+    await restarted;
+    expect(build).toHaveBeenCalledTimes(2);
+    expect(build.mock.calls[1]?.[0]).toMatchObject({ hasUserInput: true });
+  });
+
   it('marks an agent as waiting for approval from terminal output', async () => {
     const codexSession: Session = {
       ...session,

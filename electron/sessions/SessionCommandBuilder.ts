@@ -84,12 +84,12 @@ export class SessionCommandBuilder {
     }
 
     const threadId = runtime.providerThreadId ?? s.providerThreadId;
-    const args = isKnownEmptyCodexSession(s)
-      ? []
-      : threadId
-        ? shouldResumeCodexThread(s, threadId, ctx)
-          ? ['resume', threadId]
-          : []
+    const args = threadId
+      ? shouldResumeCodexThread(s, threadId, ctx)
+        ? ['resume', threadId]
+        : []
+      : isKnownEmptyCodexSession(s)
+        ? []
         : ['resume'];
     if (s.launch.type === 'agent' && s.launch.provider === 'codex') {
       appendAgentLaunchArgs(args, s.launch, 'codex');
@@ -241,9 +241,11 @@ function shouldResumeCodexThread(
   threadId: string,
   ctx: SessionBuildContext
 ): boolean {
+  const persistence = codexThreadPersistence(threadId, ctx.baseEnv);
+  if (persistence === true) return true;
   if (isKnownEmptyCodexSession(session)) return false;
   if (session.hasUserInput === true) return true;
-  return codexThreadPersistence(threadId, ctx.baseEnv) !== false;
+  return persistence !== false;
 }
 
 const CODEX_THREAD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
