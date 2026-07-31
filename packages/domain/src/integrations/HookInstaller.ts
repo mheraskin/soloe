@@ -172,6 +172,7 @@ export class HookInstaller {
   private readonly detector: WslHostDetector;
   private readonly bridge: BridgeIdentity | null;
   private readonly wslHostnameProbe: (distro: string) => Promise<string>;
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(opts: HookInstallerOptions = {}) {
     this.hostsList = opts.hosts ?? [defaultLocalHost()];
@@ -214,6 +215,10 @@ export class HookInstaller {
   // MCP entry lands in claude.json. As a migration step we also scrub any
   // stale mcpServers.soloe left behind in settings.json by ≤v13.
   async installClaude(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.installClaudeNow(host));
+  }
+
+  private async installClaudeNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
 
     const settingsPath = this.claudeUserPath(target);
@@ -243,6 +248,10 @@ export class HookInstaller {
   }
 
   async uninstallClaude(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.uninstallClaudeNow(host));
+  }
+
+  private async uninstallClaudeNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
 
     const settingsPath = this.claudeUserPath(target);
@@ -263,6 +272,10 @@ export class HookInstaller {
   }
 
   async installCodex(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.installCodexNow(host));
+  }
+
+  private async installCodexNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
     const keyPath = codexConfigKeyPath(target);
@@ -276,6 +289,10 @@ export class HookInstaller {
   }
 
   async uninstallCodex(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.uninstallCodexNow(host));
+  }
+
+  private async uninstallCodexNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
     const keyPath = codexConfigKeyPath(target);
@@ -295,6 +312,10 @@ export class HookInstaller {
   // were actually rewritten so the caller can log/notify. Bridge must be
   // configured.
   async refreshMcpForInstalledHosts(): Promise<RefreshMcpResult> {
+    return this.serializeMutation(() => this.refreshMcpForInstalledHostsNow());
+  }
+
+  private async refreshMcpForInstalledHostsNow(): Promise<RefreshMcpResult> {
     const result: RefreshMcpResult = { rewritten: [], errors: [] };
     if (!this.bridge) return result;
     for (const host of this.hostsList) {
@@ -322,7 +343,7 @@ export class HookInstaller {
     const status = combineClaudeSoloeStatus(settings, claudeJson);
     if (!status.installed) return false;
     if (typeof status.version === 'number' && status.version < SOLOE_HOOK_VERSION) {
-      await this.installClaude(key);
+      await this.installClaudeNow(key);
       return true;
     }
     return this.refreshClaudeMcp(host, url);
@@ -336,7 +357,7 @@ export class HookInstaller {
     const status = codexSoloeStatus(original);
     if (!status.installed) return false;
     if (typeof status.version === 'number' && status.version < SOLOE_HOOK_VERSION) {
-      await this.installCodex(key);
+      await this.installCodexNow(key);
       return true;
     }
     return this.refreshCodexMcp(host, url);
@@ -434,15 +455,28 @@ export class HookInstaller {
         try {
           await fs.access(backupPath);
         } catch {
-          await fs.writeFile(backupPath, existing, 'utf8');
+          await fs.writeFile(backupPath, existing, {
+            encoding: 'utf8',
+            mode: 0o600
+          });
         }
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       }
     }
     const tmp = `${filePath}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
-    await fs.writeFile(tmp, content, 'utf8');
+    await fs.writeFile(tmp, content, { encoding: 'utf8', mode: 0o600 });
     await fs.rename(tmp, filePath);
+    await fs.chmod(filePath, 0o600).catch(() => {});
+  }
+
+  private async serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationQueue.then(operation, operation);
+    this.mutationQueue = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
   }
 }
 

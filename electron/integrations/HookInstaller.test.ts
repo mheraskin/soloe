@@ -707,6 +707,9 @@ describe('HookInstaller with bridge — MCP registration', () => {
       url: 'http://127.0.0.1:17896/mcp',
       headers: { Authorization: 'Bearer tok-123' }
     });
+    if (process.platform !== 'win32') {
+      expect((await fs.stat(join(homeDir, '.claude.json'))).mode & 0o777).toBe(0o600);
+    }
   });
 
   it('uninstallClaude strips hooks from settings.json and MCP from ~/.claude.json', async () => {
@@ -749,6 +752,29 @@ describe('HookInstaller with bridge — MCP registration', () => {
     await installer.installClaude(LOCAL);
     const claudeJson = JSON.parse(await fs.readFile(join(homeDir, '.claude.json'), 'utf8'));
     expect(Object.keys(claudeJson.mcpServers)).toEqual(['soloe']);
+  });
+
+  it('serializes concurrent mutations without corrupting agent config', async () => {
+    await Promise.all([
+      installer.installClaude(LOCAL),
+      installer.uninstallClaude(LOCAL),
+      installer.installClaude(LOCAL),
+      installer.installCodex(LOCAL),
+      installer.uninstallCodex(LOCAL),
+      installer.installCodex(LOCAL)
+    ]);
+
+    const status = await installer.status();
+    expect(status.hosts[0]).toMatchObject({
+      claude: { installed: true, current: true },
+      codex: { installed: true, current: true }
+    });
+    await expect(
+      fs.readFile(join(homeDir, '.claude', 'settings.json'), 'utf8')
+    ).resolves.toContain('SessionStart');
+    await expect(
+      fs.readFile(join(homeDir, '.codex', 'config.toml'), 'utf8')
+    ).resolves.toContain('[mcp_servers.soloe]');
   });
 
   it('routes WSL host MCP URL through host.wsl.internal', async () => {
