@@ -41,6 +41,12 @@
   ];
 
   function openPane(tab: RailTabId): void {
+    if (mode === 'pane' && rightRail.openTabs.includes(tab)) {
+      rightRail.toggleTab(tab);
+      onSelectMode('terminal');
+      onNavigate('workspace');
+      return;
+    }
     rightRail.openTab(tab);
     onSelectMode('pane');
     onNavigate('workspace');
@@ -98,9 +104,10 @@
     {/if}
   </nav>
 
-  <nav class="mobile-page-indicator" aria-label="Workspace pages">
+  <nav class="mobile-page-indicator" data-page={page} aria-label="Workspace pages">
     <button
       type="button"
+      data-indicator-page="navigation"
       class:active={page === 'navigation'}
       onclick={() => onNavigate('navigation')}
       aria-label="Session list"
@@ -110,6 +117,7 @@
     </button>
     <button
       type="button"
+      data-indicator-page="workspace"
       class:active={page === 'workspace'}
       onclick={() => onNavigate('workspace')}
       aria-label="Workspace"

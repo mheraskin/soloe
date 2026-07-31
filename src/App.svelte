@@ -1518,7 +1518,8 @@
             inert={mobileMode !== 'terminal'}
           >
             <TerminalArea
-              active={mobilePage === 'workspace' && mobileMode === 'terminal'}
+              active={mobilePage === 'workspace'}
+              interactive={mobilePage === 'workspace' && mobileMode === 'terminal'}
               onOpenNavigation={() => navigateMobile('navigation')}
             />
           </div>
