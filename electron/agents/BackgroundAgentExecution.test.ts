@@ -15,6 +15,38 @@ const request = (overrides: Partial<BackgroundAgentRequest> = {}): BackgroundAge
 });
 
 describe('BackgroundAgentExecution', () => {
+  it('finds bare Linux executables through the same NVM-aware resolver used for launch', async () => {
+    let callCount = 0;
+    const spawnMock = vi.fn((...args: Parameters<typeof spawn>) => {
+      callCount += 1;
+      const call = callCount;
+      const child = new FakeChild();
+      const commandArgs = args[1] ?? [];
+      queueMicrotask(() => {
+        const script = decodeWslScript(commandArgs[1] ?? '');
+        if (call === 1) {
+          child.close(script.includes('NVM_DIR') ? 0 : 1);
+          return;
+        }
+        child.succeed('nvm-resolved');
+      });
+      return child;
+    });
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn
+    });
+
+    await expect(execution.execute(request({
+      scope: { cwd: '/repo', runMode: 'linux' }
+    }))).resolves.toMatchObject({ ok: true, text: 'nvm-resolved' });
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(spawnMock.mock.calls[0]?.[0]).toBe('bash');
+    const probeArgs = spawnMock.mock.calls[0]?.[1] ?? [];
+    expect(probeArgs[0]).toBe('-lc');
+    expect(decodeWslScript(probeArgs[1] ?? '')).toContain('NVM_DIR');
+  });
+
   it('finds bare WSL executables through the same NVM-aware resolver used for launch', async () => {
     const spawnMock = vi.fn((...args: Parameters<typeof spawn>) => {
       const child = new FakeChild();

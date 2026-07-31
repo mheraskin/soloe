@@ -7,6 +7,7 @@ import type {
 import {
   CLI_DEFAULT_MODEL_CATALOG
 } from '@shared/model-catalog.js';
+import { buildWslAgentLine } from '../sessions/SessionCommandBuilder.js';
 
 export interface ModelCatalogCommandResult {
   exitCode: number;
@@ -163,7 +164,8 @@ async function runCatalogCommand(
       clearTimeout(timeout);
       resolve({ exitCode, stdout, stderr });
     };
-    const child = spawn(executable, args, {
+    const command = buildModelCatalogCommand(executable, args);
+    const child = spawn(command.executable, command.args, {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -180,4 +182,24 @@ async function runCatalogCommand(
       finish(-1);
     }, 10_000);
   });
+}
+
+export function buildModelCatalogCommand(
+  executable: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform
+): { executable: string; args: string[] } {
+  if (platform !== 'win32') {
+    return {
+      executable: 'bash',
+      args: ['-lc', buildWslAgentLine({}, executable, args)]
+    };
+  }
+  if (!/\.[a-z0-9]+$/iu.test(executable) || /\.(?:bat|cmd)$/iu.test(executable)) {
+    return {
+      executable: process.env['ComSpec'] ?? 'cmd.exe',
+      args: ['/d', '/s', '/c', executable, ...args]
+    };
+  }
+  return { executable, args };
 }

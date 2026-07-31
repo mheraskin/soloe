@@ -1,9 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
 import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
-import { ModelCatalogService } from './ModelCatalogService.js';
+import {
+  buildModelCatalogCommand,
+  ModelCatalogService
+} from './ModelCatalogService.js';
 
 describe('ModelCatalogService', () => {
+  it('resolves bare Linux harnesses through the NVM-aware agent shell', () => {
+    const command = buildModelCatalogCommand('codex', ['debug', 'models'], 'linux');
+
+    expect(command.executable).toBe('bash');
+    expect(command.args[0]).toBe('-lc');
+    const script = decodeAgentScript(command.args[1] ?? '');
+    expect(script).toContain('NVM_DIR');
+    expect(script).toContain('__soloe_agent_bin="$(command -v codex 2>/dev/null)"');
+    expect(script).toContain('exec "$__soloe_agent_bin" debug models');
+  });
+
   it('discovers visible Codex models and Claude aliases from installed harnesses', async () => {
     const runCommand = vi.fn(async (executable: string) => {
       if (executable === 'codex') {
@@ -52,3 +66,8 @@ describe('ModelCatalogService', () => {
     expect(runCommand).toHaveBeenCalledTimes(6);
   });
 });
+
+function decodeAgentScript(line: string): string {
+  const encoded = line.match(/printf %s ([A-Za-z0-9+/=]+) \| base64 -d/u)?.[1];
+  return encoded ? Buffer.from(encoded, 'base64').toString('utf8') : line;
+}

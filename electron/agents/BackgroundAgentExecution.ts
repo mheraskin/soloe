@@ -352,13 +352,19 @@ export class BackgroundAgentExecution {
     if (scope.runMode !== 'wsl' && hasPathSeparator(executable)) {
       return fs.access(executable, fsConstants.F_OK).then(() => true, () => false);
     }
-    const command = scope.runMode === 'wsl' ? WslCommandBuilder.WSL_EXE : nativeProbeCommand();
+    const command = scope.runMode === 'wsl'
+      ? WslCommandBuilder.WSL_EXE
+      : scope.runMode === 'linux'
+        ? 'bash'
+        : nativeProbeCommand();
     const args = scope.runMode === 'wsl'
       ? [
           '-d', scope.wslDistro ?? 'Ubuntu',
           'bash', '-lc', buildWslAgentProbeLine(executable)
         ]
-      : nativeProbeArgs(executable);
+      : scope.runMode === 'linux'
+        ? ['-lc', buildWslAgentProbeLine(executable)]
+        : nativeProbeArgs(executable);
     return new Promise<boolean>((resolve) => {
       let settled = false;
       let child: ChildProcess;
