@@ -16,6 +16,11 @@ import type {
   AgentIntegrationHostKey,
   AgentIntegrationStatus,
 } from "../../../shared/types/ipc.js";
+import type { CommentsRpcResponse } from "../../../shared/types/comments-rpc.js";
+import type {
+  DiffRpcResponse,
+  DiffWorktreeTarget,
+} from "../../../shared/types/diff-rpc.js";
 import type {
   Session,
   SessionDraft,
@@ -95,6 +100,7 @@ import {
   GitService,
   HookInstaller,
   NotesStore,
+  RendererBridgeService,
   SessionTranscriptReader,
   SummaryCacheStore,
   WorktreeFactsCollector,
@@ -163,6 +169,10 @@ export interface SoloeDomainOptions {
   pathService?: Pick<BackendPathService, "openSessionPath">;
   wslHostDetector?: Pick<WslHostDetector, "detect">;
   fileEditorLauncher?: (editor: string, absolutePath: string) => Promise<void>;
+  rendererBridgeTimeouts?: {
+    commentsTimeoutMs?: number;
+    diffTimeoutMs?: number;
+  };
 }
 
 export interface SoloeDomain {
@@ -194,6 +204,7 @@ export class SoloeDomain extends EventEmitter {
     SoloeDomainOptions["integrationInstaller"]
   >;
   private readonly notes: NotesStore;
+  private readonly rendererBridge: RendererBridgeService;
   private readonly vault: VaultStore;
   private readonly featureArtifacts: FeatureArtifactObservation;
   private readonly features: FeatureService;
@@ -268,6 +279,10 @@ export class SoloeDomain extends EventEmitter {
       logDirectory: options.dataDirectory,
     });
     this.notes = new NotesStore(path.join(options.dataDirectory, "notes"));
+    this.rendererBridge = new RendererBridgeService({
+      publish: (event, payload) => this.emit("event", event, payload),
+      ...options.rendererBridgeTimeouts,
+    });
     this.vault = new VaultStore(path.join(options.dataDirectory, "vault"));
     this.featureArtifacts =
       options.featureArtifacts ?? new FeatureArtifactObservation();
@@ -373,6 +388,7 @@ export class SoloeDomain extends EventEmitter {
     this.featureArtifacts.dispose();
     this.git.dispose();
     this.files.dispose();
+    this.rendererBridge.dispose();
     await this.agentBridge?.stop();
     this.agentBridge = null;
     this.agentBridgeInfo = null;
@@ -404,6 +420,10 @@ export class SoloeDomain extends EventEmitter {
         port,
         token: initial.token,
         onHookEvent: (event) => dispatcher.dispatch(event),
+        commentsBridge: this.rendererBridge,
+        diffBridge: this.rendererBridge,
+        git: this.git,
+        resolveDiffTarget: (input) => this.resolveDiffTarget(input),
       });
       const info = await bridge.start();
       return { bridge, info };
@@ -444,6 +464,36 @@ export class SoloeDomain extends EventEmitter {
         }
       }
     }
+  }
+
+  private async resolveDiffTarget(input: {
+    sessionId?: string;
+    cwd?: string;
+  }): Promise<DiffWorktreeTarget> {
+    let session: Session | null = null;
+    if (input.sessionId) {
+      session = await this.sessions.get(input.sessionId);
+    } else if (input.cwd) {
+      session =
+        (await this.sessions.list()).find(
+          (candidate) => sameSessionPath(input.cwd!, candidate),
+        ) ?? null;
+    }
+    if (!session) {
+      throw new Error("Diff target must match an existing Soloe session");
+    }
+    if (input.cwd && !sameSessionPath(input.cwd, session)) {
+      throw new Error("Diff target cwd does not match the selected session");
+    }
+    const scope: FileIndexScope = {
+      cwd: session.cwd,
+      runMode: session.runMode,
+      ...(session.wslDistro ? { wslDistro: session.wslDistro } : {}),
+    };
+    if (!(await this.isAuthorizedWorktree(scope))) {
+      throw new Error("Diff target Worktree is not authorized");
+    }
+    return { sessionId: session.id, scope };
   }
 
   async invoke(call: DomainCall): Promise<unknown> {
@@ -511,6 +561,18 @@ export class SoloeDomain extends EventEmitter {
     }
     if (call.namespace === "agentIntegration") {
       return this.agentIntegrationCall(call.method, call.args);
+    }
+    if (call.namespace === "comments" && call.method === "sendRpcResponse") {
+      requireArgumentCount("comments.sendRpcResponse", call.args, 1);
+      return this.rendererBridge.handleCommentsResponse(
+        validateCommentsResponse(call.args[0]),
+      );
+    }
+    if (call.namespace === "diff" && call.method === "sendRpcResponse") {
+      requireArgumentCount("diff.sendRpcResponse", call.args, 1);
+      return this.rendererBridge.handleDiffResponse(
+        validateDiffResponse(call.args[0]),
+      );
     }
     throw new RpcError(
       "rpc_not_supported",
@@ -1607,6 +1669,140 @@ function unsupportedRpc(namespace: string, method: string): RpcError {
     "rpc_not_supported",
     `RPC ${namespace}.${method} is not supported by the application server`,
   );
+}
+
+function validateCommentsResponse(value: unknown): CommentsRpcResponse {
+  const response = requireBridgeRecord(value, "comments response");
+  requireBridgeKeys(response, ["requestId", "result"], "comments response");
+  const requestId = requireBridgeRequestId(response.requestId);
+  const result = requireBridgeRecord(response.result, "comments result");
+  if (result.ok === true) {
+    requireBridgeKeys(result, ["ok"], "successful comments result");
+    return { requestId, result: { ok: true } };
+  }
+  if (result.ok === false) {
+    requireBridgeKeys(result, ["ok", "error"], "failed comments result");
+    return {
+      requestId,
+      result: {
+        ok: false,
+        error: requireBridgeString(result.error, "comments error", 2_048),
+      },
+    };
+  }
+  throw invalidBridgeResponse("Comments result must contain a boolean ok field");
+}
+
+function validateDiffResponse(value: unknown): DiffRpcResponse {
+  const response = requireBridgeRecord(value, "diff response");
+  requireBridgeKeys(response, ["requestId", "result"], "diff response");
+  const requestId = requireBridgeRequestId(response.requestId);
+  const result = requireBridgeRecord(response.result, "diff result");
+  if (result.ok === false) {
+    requireBridgeKeys(result, ["ok", "error"], "failed diff result");
+    return {
+      requestId,
+      result: {
+        ok: false,
+        error: requireBridgeString(result.error, "diff error", 2_048),
+      },
+    };
+  }
+  if (result.ok !== true) {
+    throw invalidBridgeResponse("Diff result must contain a boolean ok field");
+  }
+  requireBridgeKeys(
+    result,
+    ["ok", "sessionId", "cwd", "base", "head", "commitCount"],
+    "successful diff result",
+  );
+  if (
+    typeof result.commitCount !== "number" ||
+    !Number.isInteger(result.commitCount) ||
+    result.commitCount < 0 ||
+    result.commitCount > 10_000
+  ) {
+    throw invalidBridgeResponse(
+      "Diff commitCount must be an integer from 0 to 10000",
+    );
+  }
+  return {
+    requestId,
+    result: {
+      ok: true,
+      sessionId: requireBridgeString(result.sessionId, "diff sessionId", 256),
+      cwd: requireBridgeString(result.cwd, "diff cwd", 16_384),
+      base: requireBridgeString(result.base, "diff base", 1_024),
+      head: requireBridgeString(result.head, "diff head", 1_024),
+      commitCount: result.commitCount,
+    },
+  };
+}
+
+function requireBridgeRecord(
+  value: unknown,
+  name: string,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidBridgeResponse(`${name} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireBridgeKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  name: string,
+): void {
+  const keys = Object.keys(value);
+  if (
+    keys.length !== expected.length ||
+    keys.some((key) => !expected.includes(key))
+  ) {
+    throw invalidBridgeResponse(`${name} contains unexpected fields`);
+  }
+}
+
+function requireBridgeRequestId(value: unknown): string {
+  const requestId = requireBridgeString(value, "bridge requestId", 128);
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      requestId,
+    )
+  ) {
+    throw invalidBridgeResponse("Bridge requestId must be a UUID");
+  }
+  return requestId;
+}
+
+function requireBridgeString(
+  value: unknown,
+  name: string,
+  maximum: number,
+): string {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > maximum ||
+    value.includes("\0")
+  ) {
+    throw invalidBridgeResponse(`${name} must be a non-empty bounded string`);
+  }
+  return value;
+}
+
+function invalidBridgeResponse(message: string): RpcError {
+  return new RpcError("invalid_bridge_response", message);
+}
+
+function sameSessionPath(value: string, session: Session): boolean {
+  const normalize = (candidate: string): string => {
+    const trimmed = candidate.trim().replace(/\\/gu, "/").replace(/\/+$/gu, "");
+    return session.runMode === "windows"
+      ? trimmed.toLocaleLowerCase("en-US")
+      : trimmed;
+  };
+  return normalize(value) === normalize(session.cwd);
 }
 
 function requireIntegrationArgumentCount(

@@ -129,6 +129,94 @@ describe("SoloeDomain", () => {
     }
   });
 
+  it("strictly validates comments and diff renderer responses", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-bridge-"));
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime: {
+        start: vi.fn(),
+        listRunning: vi.fn(async () => []),
+        replay: vi.fn(),
+        write: vi.fn(),
+        resize: vi.fn(),
+        stop: vi.fn(),
+      },
+      integrationInstaller: {
+        status: vi.fn(async () => ({ hosts: [] })),
+        installClaude: vi.fn(),
+        uninstallClaude: vi.fn(),
+        installCodex: vi.fn(),
+        uninstallCodex: vi.fn(),
+      },
+    });
+    const requestId = "123e4567-e89b-42d3-a456-426614174000";
+
+    try {
+      await domain.init();
+      await expect(
+        domain.invoke({
+          namespace: "comments",
+          method: "sendRpcResponse",
+          args: [{ requestId, result: { ok: true } }],
+        }),
+      ).resolves.toBe(true);
+      await expect(
+        domain.invoke({
+          namespace: "diff",
+          method: "sendRpcResponse",
+          args: [
+            {
+              requestId,
+              result: {
+                ok: true,
+                sessionId: "session-1",
+                cwd: "/repo",
+                base: "base",
+                head: "head",
+                commitCount: 1,
+              },
+            },
+          ],
+        }),
+      ).resolves.toBe(true);
+
+      await expect(
+        domain.invoke({
+          namespace: "comments",
+          method: "sendRpcResponse",
+          args: [
+            {
+              requestId,
+              result: { ok: true, injected: "unexpected" },
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_bridge_response" });
+      await expect(
+        domain.invoke({
+          namespace: "diff",
+          method: "sendRpcResponse",
+          args: [
+            {
+              requestId,
+              result: {
+                ok: true,
+                sessionId: "session-1",
+                cwd: "/repo",
+                base: "base",
+                head: "head",
+                commitCount: -1,
+              },
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_bridge_response" });
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("manages backend agent integrations and publishes sanitized status", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-integrations-"));
     const homeDirectory = path.join(directory, "backend-home");

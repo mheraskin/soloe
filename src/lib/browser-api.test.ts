@@ -437,6 +437,96 @@ describe("browser API", () => {
     ]);
   });
 
+  it("routes comments and diff renderer bridges through server events and RPC", async () => {
+    const socket = new FakeSocket();
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "bridge-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => socket,
+    });
+    const commentRequest = vi.fn();
+    const diffRequest = vi.fn();
+    api.comments.onRpcRequest(commentRequest);
+    api.diff.onRpcRequest(diffRequest);
+    const requestId = "123e4567-e89b-42d3-a456-426614174000";
+
+    socket.message({
+      event: "comments.rpcRequest",
+      payload: { requestId, op: "resolve", args: { id: "comment-1" } },
+    });
+    socket.message({
+      event: "diff.rpcRequest",
+      payload: {
+        requestId,
+        op: "open_for_commits",
+        args: {
+          target: {
+            sessionId: "session-1",
+            scope: { cwd: "/repo", runMode: "linux" },
+          },
+          base: "base",
+          head: "head",
+          commits: [],
+          includeWorkingTree: false,
+        },
+      },
+    });
+    api.comments.sendRpcResponse({ requestId, result: { ok: true } });
+    api.diff.sendRpcResponse({
+      requestId,
+      result: {
+        ok: true,
+        sessionId: "session-1",
+        cwd: "/repo",
+        base: "base",
+        head: "head",
+        commitCount: 1,
+      },
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+
+    expect(commentRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId, op: "resolve" }),
+    );
+    expect(diffRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId, op: "open_for_commits" }),
+    );
+    expect(
+      fetchImpl.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      {
+        namespace: "comments",
+        method: "sendRpcResponse",
+        args: [{ requestId, result: { ok: true } }],
+        clientId: "bridge-browser",
+      },
+      {
+        namespace: "diff",
+        method: "sendRpcResponse",
+        args: [
+          {
+            requestId,
+            result: {
+              ok: true,
+              sessionId: "session-1",
+              cwd: "/repo",
+              base: "base",
+              head: "head",
+              commitCount: 1,
+            },
+          },
+        ],
+        clientId: "bridge-browser",
+      },
+    ]);
+  });
+
   it("supports an absolute server URL and bearer token for the Electron shell", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -562,6 +652,10 @@ describe("browser API", () => {
     expect(api.transport?.supports("overview", "askStart")).toBe(true);
     expect(api.transport?.supports("agentIntegration", "installClaude")).toBe(true);
     expect(api.transport?.supports("agentIntegration", "uninstallCodex")).toBe(true);
+    expect(api.transport?.supports("comments", "onRpcRequest")).toBe(true);
+    expect(api.transport?.supports("comments", "sendRpcResponse")).toBe(true);
+    expect(api.transport?.supports("diff", "onRpcRequest")).toBe(true);
+    expect(api.transport?.supports("diff", "sendRpcResponse")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

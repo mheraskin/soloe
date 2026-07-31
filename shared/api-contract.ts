@@ -288,6 +288,8 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "agentIntegration.uninstallClaude",
   "agentIntegration.installCodex",
   "agentIntegration.uninstallCodex",
+  "comments.sendRpcResponse",
+  "diff.sendRpcResponse",
 ]);
 
 export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
@@ -323,6 +325,8 @@ export const SERVER_EVENT_METHODS = new Set<string>([
   "git.onChange",
   "agentIntegration.onChange",
   "overview.onChunk",
+  "comments.onRpcRequest",
+  "diff.onRpcRequest",
   "features.onChange",
   "vault.onChange",
 ]);

@@ -807,6 +807,52 @@ describe('Soloe Server lifecycle', () => {
       if (globalThis.process.platform !== 'win32') {
         expect((await stat(path.join(directory, 'bridge.json'))).mode & 0o777).toBe(0o600);
       }
+      const firstCommentRequest = nextMessage(firstClient);
+      const secondCommentRequest = nextMessage(secondClient);
+      const commentCall = fetch(
+        `http://127.0.0.1:${bridgeConfig.port}/mcp`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${bridgeConfig.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            tool: 'comment_resolve',
+            arguments: { id: 'browser-comment' }
+          })
+        }
+      ).then(async (response) => {
+        expect(response.status).toBe(200);
+        return response.json();
+      });
+      const commentRequests = await Promise.all([
+        firstCommentRequest,
+        secondCommentRequest
+      ]) as Array<{
+        event: string;
+        payload: { requestId: string };
+      }>;
+      expect(commentRequests[0]).toEqual({
+        event: 'comments.rpcRequest',
+        payload: expect.objectContaining({
+          requestId: expect.any(String),
+          op: 'resolve',
+          args: { id: 'browser-comment' }
+        })
+      });
+      expect(commentRequests[1]).toEqual(commentRequests[0]);
+      const commentRequestId = commentRequests[0]!.payload.requestId;
+      await rpc(baseUrl, 'comments', 'sendRpcResponse', [{
+        requestId: commentRequestId,
+        result: { ok: false, error: 'comment not present in first client' }
+      }]);
+      await rpc(baseUrl, 'comments', 'sendRpcResponse', [{
+        requestId: commentRequestId,
+        result: { ok: true }
+      }]);
+      await expect(commentCall).resolves.toEqual({ ok: true });
+
       const hookResponse = await fetch(
         `http://127.0.0.1:${bridgeConfig.port}/hook/codex`,
         {
