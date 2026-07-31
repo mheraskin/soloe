@@ -161,10 +161,12 @@ design instead of accidentally orphaning them.
 The placement setting lives in the shared Windows Soloe data directory. For a
 WSL backend, the tray translates that directory with `wslpath`, launches both
 services through `wsl.exe`, and keeps the Unix runtime socket in the selected
-distribution at `$HOME/.local/state/soloe/runtime.sock`. It records the active
-placement separately, so changing Settings cannot cause Stop to target the
-wrong operating system. A placement change applies only after an explicit Stop
-then Start.
+distribution at
+`$HOME/.local/state/soloe/runtime-<ownerId>.sock`. Owner-scoped socket names
+let isolated tray data roots coexist without sharing a Runtime. The tray
+records the active placement separately, so changing Settings cannot cause Stop
+to target the wrong operating system. A placement change applies only after an
+explicit Stop then Start.
 
 In repository development, `pnpm dev` launches the tray. The tray validates the
 Windows and selected backend prerequisites, starts the backend, and starts the
