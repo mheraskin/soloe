@@ -269,6 +269,43 @@ describe("browser API", () => {
     ]);
   });
 
+  it("routes agent integration changes through the selected backend", async () => {
+    const socket = new FakeSocket();
+    const status = {
+      hosts: [
+        {
+          host: { kind: "linux", label: "Backend", available: true },
+          claude: { installed: true, current: true, version: 14 },
+          codex: { installed: false, current: false },
+        },
+      ],
+    };
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: status }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "integration-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => socket,
+    });
+    const change = vi.fn();
+    api.agentIntegration.onChange(change);
+
+    await api.agentIntegration.installClaude({ host: { kind: "linux" } });
+    socket.message({ event: "agentIntegration.change", payload: status });
+
+    expect(change).toHaveBeenCalledWith(status);
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "agentIntegration",
+      method: "installClaude",
+      args: [{ host: { kind: "linux" } }],
+      clientId: "integration-browser",
+    });
+  });
+
   it("routes Overview streams through RPC and WebSocket events", async () => {
     const socket = new FakeSocket();
     const fetchImpl = vi.fn(
@@ -443,6 +480,8 @@ describe("browser API", () => {
     expect(api.transport?.supports("vault", "getSecret")).toBe(true);
     expect(api.transport?.supports("overview", "regenerate")).toBe(true);
     expect(api.transport?.supports("overview", "askStart")).toBe(true);
+    expect(api.transport?.supports("agentIntegration", "installClaude")).toBe(true);
+    expect(api.transport?.supports("agentIntegration", "uninstallCodex")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

@@ -109,6 +109,10 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "vault.delete",
   "vault.getSecret",
   "agentIntegration.status",
+  "agentIntegration.installClaude",
+  "agentIntegration.uninstallClaude",
+  "agentIntegration.installCodex",
+  "agentIntegration.uninstallCodex",
 ]);
 
 export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([

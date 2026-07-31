@@ -13,6 +13,10 @@ import type {
   SendWorkerPromptRequest,
 } from "../../../shared/types/agents.js";
 import type {
+  AgentIntegrationHostKey,
+  AgentIntegrationStatus,
+} from "../../../shared/types/ipc.js";
+import type {
   Session,
   SessionDraft,
   SessionId,
@@ -86,6 +90,7 @@ import {
   FeatureArtifactObservation,
   FeatureService,
   GitService,
+  HookInstaller,
   NotesStore,
   SessionTranscriptReader,
   SummaryCacheStore,
@@ -106,7 +111,13 @@ import { ProjectStore } from "../../../electron/projects/ProjectStore.js";
 import { AgentObserverManager } from "../../../electron/agents/AgentObserverManager.js";
 import { AgentObserverStore } from "../../../electron/agents/AgentObserverStore.js";
 import { AgentRuntimeManager } from "../../../electron/agents/AgentRuntimeManager.js";
+import { AgentHookDispatcher } from "../../../electron/agents/AgentHookDispatcher.js";
+import {
+  SoloeMcpServer,
+  type SoloeMcpServerInfo,
+} from "../../../electron/agents/SoloeMcpServer.js";
 import { BackgroundAgentExecution } from "../../../electron/agents/BackgroundAgentExecution.js";
+import { BridgePersistence } from "../../../electron/integrations/BridgePersistence.js";
 import { ProcessTreeUsageSampler } from "@soloe/runtime";
 import { BackendUsageObservation } from "./BackendUsageObservation.js";
 
@@ -136,6 +147,15 @@ export interface SoloeDomainOptions {
     WorktreeOverviewService,
     "getOverview" | "regenerate" | "streamFollowUp"
   >;
+  integrationInstaller?: Pick<
+    HookInstaller,
+    | "status"
+    | "installClaude"
+    | "uninstallClaude"
+    | "installCodex"
+    | "uninstallCodex"
+  >;
+  enableAgentBridge?: boolean;
 }
 
 export interface SoloeDomain {
@@ -161,6 +181,9 @@ export class SoloeDomain extends EventEmitter {
   private readonly files: FileService;
   private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
+  private integrationInstaller: NonNullable<
+    SoloeDomainOptions["integrationInstaller"]
+  >;
   private readonly notes: NotesStore;
   private readonly vault: VaultStore;
   private readonly featureArtifacts: FeatureArtifactObservation;
@@ -183,6 +206,8 @@ export class SoloeDomain extends EventEmitter {
   private readonly overviewStreams = new Map<string, ActiveOverviewStream>();
   private observer!: AgentObserverManager;
   private workerRuntime!: AgentRuntimeManager;
+  private agentBridge: SoloeMcpServer | null = null;
+  private agentBridgeInfo: SoloeMcpServerInfo | null = null;
   private readonly commandBuilder = new SessionCommandBuilder(
     new ShellDetector(),
     new NativeCommandBuilder(),
@@ -214,6 +239,8 @@ export class SoloeDomain extends EventEmitter {
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
+    this.integrationInstaller =
+      options.integrationInstaller ?? new HookInstaller();
     this.diagnostics = new DiagnosticsService({
       settings: this.settings,
       projects: this.projects,
@@ -305,6 +332,9 @@ export class SoloeDomain extends EventEmitter {
     for (const session of await this.sessions.list()) {
       this.observer.registerTuiSession(session);
     }
+    if (this.options.enableAgentBridge) {
+      await this.startAgentBridge();
+    }
   }
 
   async dispose(): Promise<void> {
@@ -324,9 +354,77 @@ export class SoloeDomain extends EventEmitter {
     this.featureArtifacts.dispose();
     this.git.dispose();
     this.files.dispose();
+    await this.agentBridge?.stop();
+    this.agentBridge = null;
+    this.agentBridgeInfo = null;
     await this.workerRuntime.dispose();
     await this.backgroundAgentExecution.dispose();
     await this.observerStore.dispose();
+  }
+
+  private async startAgentBridge(): Promise<void> {
+    const persistence = new BridgePersistence(
+      path.join(this.options.dataDirectory, "bridge.json"),
+    );
+    const initial = await persistence.loadOrCreate();
+    const dispatcher = new AgentHookDispatcher({
+      observer: this.observer,
+      sessionStore: this.sessions,
+      onSessionChange: (session) => {
+        this.emit("event", "sessions.change", session);
+      },
+    });
+    const start = async (port: number): Promise<{
+      bridge: SoloeMcpServer;
+      info: SoloeMcpServerInfo;
+    }> => {
+      const bridge = new SoloeMcpServer({
+        observer: this.observer,
+        runtime: this.workerRuntime,
+        host: "127.0.0.1",
+        port,
+        token: initial.token,
+        onHookEvent: (event) => dispatcher.dispatch(event),
+      });
+      const info = await bridge.start();
+      return { bridge, info };
+    };
+
+    let started: { bridge: SoloeMcpServer; info: SoloeMcpServerInfo };
+    try {
+      started = await start(initial.port);
+    } catch (error) {
+      if (initial.port === 0) throw error;
+      console.warn("[agent-bridge] persisted port unavailable; selecting a new port");
+      started = await start(0);
+    }
+    const port = portFromBridgeUrl(started.info.url);
+    if (port === null) {
+      await started.bridge.stop();
+      throw new Error("Agent bridge did not report a valid TCP port");
+    }
+    await persistence.save({ port, token: initial.token });
+    this.agentBridge = started.bridge;
+    this.agentBridgeInfo = started.info;
+    if (!this.options.integrationInstaller) {
+      const installer = new HookInstaller({
+        bridge: { port, token: initial.token },
+      });
+      this.integrationInstaller = installer;
+      if ((await this.settings.get()).integrations.autoRefreshMcpUrl) {
+        const refreshed = await installer.refreshMcpForInstalledHosts();
+        if (refreshed.rewritten.length > 0) {
+          console.log(
+            `[agent-bridge] refreshed ${refreshed.rewritten.length} integration target(s)`,
+          );
+        }
+        for (const item of refreshed.errors) {
+          console.warn(
+            `[agent-bridge] failed to refresh ${describeIntegrationHost(item.host)}`,
+          );
+        }
+      }
+    }
   }
 
   async invoke(call: DomainCall): Promise<unknown> {
@@ -392,8 +490,8 @@ export class SoloeDomain extends EventEmitter {
     if (call.namespace === "system") {
       return this.systemCall(call.method, call.args);
     }
-    if (call.namespace === "agentIntegration" && call.method === "status") {
-      return { hosts: [] };
+    if (call.namespace === "agentIntegration") {
+      return this.agentIntegrationCall(call.method, call.args);
     }
     throw new RpcError(
       "rpc_not_supported",
@@ -421,6 +519,36 @@ export class SoloeDomain extends EventEmitter {
       return this.usage.observe(validateSystemUsageRequest(args[0]));
     }
     throw unsupportedRpc("system", method);
+  }
+
+  private async agentIntegrationCall(
+    method: string,
+    args: unknown[],
+  ): Promise<AgentIntegrationStatus> {
+    if (method === "status") {
+      requireIntegrationArgumentCount(method, args, 0);
+      return this.integrationInstaller.status();
+    }
+    if (
+      method !== "installClaude" &&
+      method !== "uninstallClaude" &&
+      method !== "installCodex" &&
+      method !== "uninstallCodex"
+    ) {
+      throw unsupportedRpc("agentIntegration", method);
+    }
+
+    requireIntegrationArgumentCount(method, args, 1);
+    const host = validateIntegrationRequest(args[0]);
+    try {
+      await this.integrationInstaller[method](host);
+      const status = await this.integrationInstaller.status();
+      this.emit("event", "agentIntegration.change", status);
+      return status;
+    } catch (error) {
+      if (error instanceof RpcError) throw error;
+      throw structuredIntegrationError(error);
+    }
   }
 
   private async diagnosticsCall(
@@ -1347,6 +1475,7 @@ export class SoloeDomain extends EventEmitter {
     const spec = this.commandBuilder.build(session, {
       baseEnv: process.env,
       binaries: settings.binaries,
+      ...(this.agentBridgeInfo ? { bridge: this.agentBridgeInfo } : {}),
     });
     this.emit("event", "status", {
       sessionId: session.id,
@@ -1378,11 +1507,16 @@ export class SoloeDomain extends EventEmitter {
       status: "running",
     });
     await this.sessions.touch(session.id);
+    const publicSpec = {
+      ...spec,
+      env: { ...spec.env },
+    };
+    delete publicSpec.env.SOLOE_BRIDGE_TOKEN;
     return {
       terminalId: terminal.terminalId,
       sessionId: terminal.sessionId,
       pid: terminal.pid,
-      spec,
+      spec: publicSpec,
     };
   }
 
@@ -1430,6 +1564,100 @@ function unsupportedRpc(namespace: string, method: string): RpcError {
     "rpc_not_supported",
     `RPC ${namespace}.${method} is not supported by the application server`,
   );
+}
+
+function requireIntegrationArgumentCount(
+  method: string,
+  args: unknown[],
+  expected: number,
+): void {
+  if (args.length !== expected) {
+    throw new RpcError(
+      "invalid_integration_request",
+      `agentIntegration.${method} expects ${expected} argument${expected === 1 ? "" : "s"}`,
+    );
+  }
+}
+
+function validateIntegrationRequest(value: unknown): AgentIntegrationHostKey {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidIntegrationRequest("Agent integration request must be an object");
+  }
+  const request = value as Record<string, unknown>;
+  if (
+    Object.keys(request).some((key) => key !== "host") ||
+    !request.host ||
+    typeof request.host !== "object" ||
+    Array.isArray(request.host)
+  ) {
+    throw invalidIntegrationRequest(
+      "Agent integration request must contain only a host object",
+    );
+  }
+  const host = request.host as Record<string, unknown>;
+  if (
+    Object.keys(host).some((key) => key !== "kind" && key !== "distro") ||
+    (host.kind !== "windows" && host.kind !== "linux" && host.kind !== "wsl")
+  ) {
+    throw invalidIntegrationRequest("Agent integration host is invalid");
+  }
+  if (host.kind !== "wsl") {
+    if (host.distro !== undefined) {
+      throw invalidIntegrationRequest(
+        "Only a WSL integration host may specify a distro",
+      );
+    }
+    return { kind: host.kind };
+  }
+  if (
+    typeof host.distro !== "string" ||
+    !host.distro.trim() ||
+    host.distro.length > 256 ||
+    host.distro.includes("\0") ||
+    /[\\/]/u.test(host.distro)
+  ) {
+    throw invalidIntegrationRequest(
+      "WSL integration host distro must be a bounded distro name",
+    );
+  }
+  return { kind: "wsl", distro: host.distro };
+}
+
+function invalidIntegrationRequest(message: string): RpcError {
+  return new RpcError("invalid_integration_request", message);
+}
+
+function structuredIntegrationError(error: unknown): RpcError {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("Unknown host:")) {
+    return new RpcError(
+      "integration_host_not_found",
+      "The selected integration host is not available on this backend",
+    );
+  }
+  if (message.startsWith("Host is unavailable:")) {
+    return new RpcError(
+      "integration_host_unavailable",
+      "The selected integration host is currently unavailable",
+    );
+  }
+  return new RpcError(
+    "integration_failed",
+    "The backend could not update the selected agent integration",
+  );
+}
+
+function portFromBridgeUrl(value: string): number | null {
+  try {
+    const port = Number(new URL(value).port);
+    return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+function describeIntegrationHost(host: AgentIntegrationHostKey): string {
+  return host.kind === "wsl" ? `wsl:${host.distro}` : host.kind;
 }
 
 function validateSystemUsageRequest(value: unknown): SystemUsageRequest {

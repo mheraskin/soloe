@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { FeatureArtifactObservation } from "@soloe/domain";
+import { FeatureArtifactObservation, HookInstaller } from "@soloe/domain";
 import { hostPlatform } from "../../../shared/platform.js";
 import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
@@ -28,7 +28,30 @@ describe("SoloeDomain", () => {
       stop: vi.fn(),
     };
 
-    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+    const integrationStatus = {
+      hosts: [
+        {
+          host: {
+            kind: "linux" as const,
+            label: "Backend",
+            available: true,
+          },
+          claude: { installed: false, current: false },
+          codex: { installed: false, current: false },
+        },
+      ],
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      integrationInstaller: {
+        status: vi.fn(async () => integrationStatus),
+        installClaude: vi.fn(),
+        uninstallClaude: vi.fn(),
+        installCodex: vi.fn(),
+        uninstallCodex: vi.fn(),
+      },
+    });
     try {
       await domain.init();
 
@@ -51,8 +74,176 @@ describe("SoloeDomain", () => {
         [],
         [],
         [],
-        { hosts: [] },
+        integrationStatus,
       ]);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("manages backend agent integrations and publishes sanitized status", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-integrations-"));
+    const homeDirectory = path.join(directory, "backend-home");
+    await mkdir(path.join(homeDirectory, ".claude"), { recursive: true });
+    await mkdir(path.join(homeDirectory, ".codex"), { recursive: true });
+    await writeFile(
+      path.join(homeDirectory, ".claude", "settings.json"),
+      JSON.stringify({ env: { USER_SETTING: "preserved" } }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(homeDirectory, ".codex", "config.toml"),
+      'model = "user-choice"\n',
+      "utf8",
+    );
+    const installer = new HookInstaller({
+      hosts: [
+        {
+          kind: "linux",
+          label: "Backend",
+          homeDir: homeDirectory,
+          available: true,
+        },
+      ],
+    });
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      integrationInstaller: installer,
+    });
+    const changes: unknown[] = [];
+    domain.on("event", (name, payload) => {
+      if (name === "agentIntegration.change") changes.push(payload);
+    });
+
+    try {
+      await domain.init();
+      const request = { host: { kind: "linux" as const } };
+      const afterClaude = await domain.invoke({
+        namespace: "agentIntegration",
+        method: "installClaude",
+        args: [request],
+      });
+      expect(afterClaude).toMatchObject({
+        hosts: [
+          {
+            host: { kind: "linux", label: "Backend", available: true },
+            claude: { installed: true, current: true },
+          },
+        ],
+      });
+      expect(JSON.stringify(afterClaude)).not.toContain(homeDirectory);
+      expect(JSON.stringify(changes)).not.toContain(homeDirectory);
+
+      await domain.invoke({
+        namespace: "agentIntegration",
+        method: "installCodex",
+        args: [request],
+      });
+      expect(
+        JSON.parse(
+          await readFile(
+            path.join(homeDirectory, ".claude", "settings.json"),
+            "utf8",
+          ),
+        ).env,
+      ).toEqual({ USER_SETTING: "preserved" });
+      expect(
+        await readFile(path.join(homeDirectory, ".codex", "config.toml"), "utf8"),
+      ).toContain('model = "user-choice"');
+      expect(changes).toHaveLength(2);
+
+      await domain.invoke({
+        namespace: "agentIntegration",
+        method: "uninstallClaude",
+        args: [request],
+      });
+      const finalStatus = await domain.invoke({
+        namespace: "agentIntegration",
+        method: "uninstallCodex",
+        args: [request],
+      });
+      expect(finalStatus).toMatchObject({
+        hosts: [
+          {
+            claude: { installed: false, current: false },
+            codex: { installed: false, current: false },
+          },
+        ],
+      });
+      expect(changes).toHaveLength(4);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed and non-backend agent integration targets", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-integrations-"));
+    const homeDirectory = path.join(directory, "backend-home");
+    const installer = new HookInstaller({
+      hosts: [
+        {
+          kind: "linux",
+          label: "Backend",
+          homeDir: homeDirectory,
+          available: true,
+        },
+      ],
+    });
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      integrationInstaller: installer,
+    });
+
+    try {
+      await domain.init();
+      for (const args of [
+        [],
+        [{ host: { kind: "linux" }, injected: true }],
+        [{ host: { kind: "linux", distro: "Ubuntu" } }],
+        [{ host: { kind: "wsl", distro: "../Ubuntu" } }],
+      ]) {
+        await expect(
+          domain.invoke({
+            namespace: "agentIntegration",
+            method: "installClaude",
+            args,
+          }),
+        ).rejects.toMatchObject({ code: "invalid_integration_request" });
+      }
+      await expect(
+        domain.invoke({
+          namespace: "agentIntegration",
+          method: "installClaude",
+          args: [{ host: { kind: "windows" } }],
+        }),
+      ).rejects.toMatchObject({ code: "integration_host_not_found" });
+      await expect(
+        domain.invoke({
+          namespace: "agentIntegration",
+          method: "status",
+          args: [{}],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_integration_request" });
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

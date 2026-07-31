@@ -16,7 +16,11 @@ const token =
 const runtimeEndpoint =
   process.env.SOLOE_RUNTIME_ENDPOINT ?? resolveRuntimeEndpoint({ dataDirectory });
 const domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
-const domain = new SoloeDomain({ dataDirectory, runtime: domainRuntime });
+const domain = new SoloeDomain({
+  dataDirectory,
+  runtime: domainRuntime,
+  enableAgentBridge: true,
+});
 await domain.init();
 const server = new SoloeServer({
   runtimeEndpoint,

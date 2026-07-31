@@ -47,7 +47,13 @@
     const off = ipc.agentIntegration.onChange((s) => {
       status = s;
     });
-    return off;
+    const offReconnect = ipc.connection.onReconnect(() => {
+      void refresh();
+    });
+    return () => {
+      off();
+      offReconnect();
+    };
   });
 </script>
 

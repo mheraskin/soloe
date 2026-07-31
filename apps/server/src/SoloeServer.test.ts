@@ -1,11 +1,12 @@
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   RuntimeProcess,
-  RuntimeProcessFactory
+  RuntimeProcessFactory,
+  RuntimeSpawnSpec
 } from '@soloe/runtime';
 import {
   resolveRuntimeEndpoint,
@@ -614,20 +615,56 @@ describe('Soloe Server lifecycle', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-browser-contract-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
+    let spawnedSpec: RuntimeSpawnSpec | undefined;
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,
-      processFactory: { spawn: () => process }
+      processFactory: {
+        spawn: (options) => {
+          spawnedSpec = options.spec;
+          return process;
+        }
+      }
     });
     let domainRuntime: RuntimeClient | undefined;
     let domain: SoloeDomain | undefined;
     let server: SoloeServer | undefined;
     let firstClient: WebSocket | undefined;
     let secondClient: WebSocket | undefined;
+    let claudeInstalled = false;
+    const integrationStatus = () => ({
+      hosts: [
+        {
+          host: { kind: 'linux' as const, label: 'Backend', available: true },
+          claude: {
+            installed: claudeInstalled,
+            current: claudeInstalled,
+            ...(claudeInstalled ? { version: 14 } : {})
+          },
+          codex: { installed: false, current: false }
+        }
+      ]
+    });
+    const integrationInstaller = {
+      status: vi.fn(async () => integrationStatus()),
+      installClaude: vi.fn(async () => {
+        claudeInstalled = true;
+      }),
+      uninstallClaude: vi.fn(async () => {
+        claudeInstalled = false;
+      }),
+      installCodex: vi.fn(),
+      uninstallCodex: vi.fn()
+    };
 
     try {
       await runtime.listen();
       domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
-      domain = new SoloeDomain({ dataDirectory: directory, runtime: domainRuntime });
+      domain = new SoloeDomain({
+        dataDirectory: directory,
+        runtime: domainRuntime,
+        integrationInstaller,
+        enableAgentBridge: true
+      });
       await domain.init();
       server = new SoloeServer({
         runtimeEndpoint,
@@ -699,6 +736,28 @@ describe('Soloe Server lifecycle', () => {
         password: 'browser-vault-secret'
       });
 
+      const firstIntegrationChange = nextMessage(firstClient);
+      const secondIntegrationChange = nextMessage(secondClient);
+      const installedStatus = await rpc(
+        baseUrl,
+        'agentIntegration',
+        'installClaude',
+        [{ host: { kind: 'linux' } }]
+      );
+      expect(installedStatus).toEqual(integrationStatus());
+      for (
+        const change of await Promise.all([
+          firstIntegrationChange,
+          secondIntegrationChange
+        ])
+      ) {
+        expect(change).toEqual({
+          event: 'agentIntegration.change',
+          payload: integrationStatus()
+        });
+        expect(JSON.stringify(change)).not.toMatch(/homeDir|homeLinux/u);
+      }
+
       const session = await rpc<{ id: string }>(baseUrl, 'sessions', 'create', [
         {
           name: 'Browser session',
@@ -708,9 +767,53 @@ describe('Soloe Server lifecycle', () => {
           launch: { type: 'terminal', shell: 'auto' }
         }
       ]);
-      const started = await rpc<{ terminalId: string }>(baseUrl, 'terminal', 'start', [
+      const started = await rpc<{
+        terminalId: string;
+        spec: { env: Record<string, string> };
+      }>(baseUrl, 'terminal', 'start', [
         { sessionId: session.id, cols: 100, rows: 30 }
       ]);
+      const bridgeConfig = JSON.parse(
+        await readFile(path.join(directory, 'bridge.json'), 'utf8')
+      ) as { port: number; token: string };
+      expect(spawnedSpec?.env).toMatchObject({
+        SOLOE_SESSION_ID: session.id,
+        SOLOE_BRIDGE_URL: `http://127.0.0.1:${bridgeConfig.port}`,
+        SOLOE_BRIDGE_TOKEN: bridgeConfig.token
+      });
+      expect(started.spec.env).toMatchObject({
+        SOLOE_SESSION_ID: session.id,
+        SOLOE_BRIDGE_URL: `http://127.0.0.1:${bridgeConfig.port}`
+      });
+      expect(started.spec.env).not.toHaveProperty('SOLOE_BRIDGE_TOKEN');
+      if (globalThis.process.platform !== 'win32') {
+        expect((await stat(path.join(directory, 'bridge.json'))).mode & 0o777).toBe(0o600);
+      }
+      const hookResponse = await fetch(
+        `http://127.0.0.1:${bridgeConfig.port}/hook/codex`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${bridgeConfig.token}`,
+            'content-type': 'application/json',
+            'x-soloe-session-id': session.id
+          },
+          body: JSON.stringify({
+            hook_event_name: 'SessionStart',
+            session_id: 'codex-thread-1'
+          })
+        }
+      );
+      expect(hookResponse.status).toBe(200);
+      await expect(rpc(baseUrl, 'sessions', 'get', [session.id])).resolves.toEqual(
+        expect.objectContaining({
+          currentAgentRuntime: expect.objectContaining({
+            provider: 'codex',
+            providerThreadId: 'codex-thread-1',
+            status: 'active'
+          })
+        })
+      );
       process.emit('data', 'browser contract output');
 
       expect(await rpc(baseUrl, 'terminal', 'replay', [started.terminalId, 0])).toEqual(
@@ -723,7 +826,9 @@ describe('Soloe Server lifecycle', () => {
       expect(await rpc(baseUrl, 'observer', 'list')).toEqual([
         expect.objectContaining({
           id: session.id,
-          state: 'idle'
+          state: 'starting',
+          provider: 'codex',
+          providerThreadId: 'codex-thread-1'
         })
       ]);
 
