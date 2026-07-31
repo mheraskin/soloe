@@ -1,4 +1,5 @@
 export * from "./errors.js";
+export * from "./bridge/RendererBridgeService.js";
 export * from "./diagnostics/DiagnosticsService.js";
 export * from "./files/FileService.js";
 export * from "./files/WorktreeFileIndex.js";
