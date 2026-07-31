@@ -11,15 +11,27 @@ export function isBrowserDevToolsToggleInput(
   input: BrowserShortcutInput,
   platform: NodeJS.Platform = process.platform
 ): boolean {
-  if (input.type !== 'keyDown' || input.alt) return false;
+  if (input.type !== 'keyDown') return false;
 
   const key = input.key.toLowerCase();
   const isControlShiftI =
-    key === 'i' && input.control && input.shift && !input.meta;
+    key === 'i' && input.control && input.shift && !input.meta && !input.alt;
   const isMacCommandShiftC =
-    platform === 'darwin' && key === 'c' && input.meta && input.shift && !input.control;
+    platform === 'darwin'
+    && key === 'c'
+    && input.meta
+    && input.shift
+    && !input.control
+    && !input.alt;
+  const isMacCommandOptionI =
+    platform === 'darwin'
+    && key === 'i'
+    && input.meta
+    && input.alt
+    && !input.control
+    && !input.shift;
 
-  return isControlShiftI || isMacCommandShiftC;
+  return isControlShiftI || isMacCommandShiftC || isMacCommandOptionI;
 }
 
 export function isBrowserRestoreTabInput(

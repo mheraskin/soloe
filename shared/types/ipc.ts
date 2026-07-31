@@ -133,6 +133,10 @@ import type {
   SetDevToolsLayoutRequest,
   SetUserAgentRequest
 } from './browser.js';
+import type {
+  BrowserSessionSnapshot,
+  BrowserSessionUpdateRequest
+} from './browser-sessions.js';
 
 export const IpcChannels = {
   sessions: {
@@ -311,6 +315,10 @@ export const IpcChannels = {
     openDevTools: 'browser:open-devtools',
     setDevToolsLayout: 'browser:set-devtools-layout',
     closeDevTools: 'browser:close-devtools'
+  },
+  browserSessions: {
+    get: 'browser-sessions:get',
+    update: 'browser-sessions:update'
   }
 } as const;
 
@@ -333,7 +341,8 @@ export type IpcChannel =
   | (typeof IpcChannels.diff)[keyof typeof IpcChannels.diff]
   | (typeof IpcChannels.features)[keyof typeof IpcChannels.features]
   | (typeof IpcChannels.vault)[keyof typeof IpcChannels.vault]
-  | (typeof IpcChannels.browser)[keyof typeof IpcChannels.browser];
+  | (typeof IpcChannels.browser)[keyof typeof IpcChannels.browser]
+  | (typeof IpcChannels.browserSessions)[keyof typeof IpcChannels.browserSessions];
 
 export type IpcResult<T> =
   | { ok: true; value: T }
@@ -638,6 +647,11 @@ export interface BrowserApi {
   closeDevTools(request: CloseDevToolsRequest): Promise<IpcResult<true>>;
 }
 
+export interface BrowserSessionsApi {
+  get(): Promise<IpcResult<BrowserSessionSnapshot>>;
+  update(request: BrowserSessionUpdateRequest): Promise<IpcResult<true>>;
+}
+
 export interface TransportCapabilities {
   kind: import("../api-contract.js").SoloeTransportKind;
   supports(namespace: string, method: string): boolean;
@@ -664,6 +678,7 @@ export interface SoloeApi {
   features: FeaturesApi;
   vault: VaultApi;
   browser: BrowserApi;
+  browserSessions: BrowserSessionsApi;
 }
 
 declare global {

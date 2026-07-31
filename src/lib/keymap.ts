@@ -49,6 +49,15 @@ export const Keymap = {
     match: (e: KeyboardEvent) =>
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && key(e) === 't'
   },
+  browserDevTools: {
+    id: 'browser.devtools',
+    description: 'Toggle browser developer tools',
+    keys: ['Ctrl', 'Shift', 'I'],
+    match: (e: KeyboardEvent) =>
+      (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && key(e) === 'i')
+      || (e.metaKey && !e.ctrlKey && !e.shiftKey && e.altKey && key(e) === 'i')
+      || (e.metaKey && !e.ctrlKey && e.shiftKey && !e.altKey && key(e) === 'c')
+  },
   openProject: {
     id: 'project.open',
     description: 'Open project',

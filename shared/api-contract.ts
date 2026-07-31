@@ -142,6 +142,7 @@ export const SOLOE_API_METHODS = {
     "setDevToolsLayout",
     "closeDevTools",
   ],
+  browserSessions: ["get", "update"],
 } as const;
 
 export const PWA_PANE_REQUIREMENTS = {
@@ -177,6 +178,7 @@ export const UI_STARTUP_RPCS = [
   "system.platform",
   "settings.get",
   "settings.modelCatalog",
+  "browserSessions.get",
   "projects.list",
   "sessions.list",
   "sessions.listArchived",
@@ -285,6 +287,8 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "vault.update",
   "vault.delete",
   "vault.getSecret",
+  "browserSessions.get",
+  "browserSessions.update",
   "agentIntegration.status",
   "agentIntegration.installClaude",
   "agentIntegration.uninstallClaude",

@@ -87,6 +87,10 @@ import type {
   SetDevToolsLayoutRequest,
   SetUserAgentRequest
 } from '@shared/types/browser.js';
+import type {
+  BrowserSessionSnapshot,
+  BrowserSessionUpdateRequest
+} from '@shared/types/browser-sessions.js';
 import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
 import type {
@@ -203,6 +207,12 @@ export const backend = {
       unwrap(await c.browser.setDevToolsLayout(toIpcPayload(request))),
     closeDevTools: async (request: CloseDevToolsRequest) =>
       unwrap(await c.browser.closeDevTools(toIpcPayload(request)))
+  },
+  browserSessions: {
+    get: async (): Promise<BrowserSessionSnapshot> =>
+      unwrap(await c.browserSessions.get()),
+    update: async (request: BrowserSessionUpdateRequest) =>
+      unwrap(await c.browserSessions.update(toIpcPayload(request)))
   },
   system: {
     platform: async () => unwrap(await c.system.platform()),

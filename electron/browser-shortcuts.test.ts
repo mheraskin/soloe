@@ -32,9 +32,24 @@ describe('isBrowserDevToolsToggleInput', () => {
     ).toBe(true);
   });
 
+  it('matches Command-Option-I on macOS', () => {
+    expect(
+      isBrowserDevToolsToggleInput(
+        input({ control: false, meta: true, shift: false, alt: true }),
+        'darwin'
+      )
+    ).toBe(true);
+  });
+
   it('rejects partial, modified, and platform-inappropriate shortcuts', () => {
     expect(isBrowserDevToolsToggleInput(input({ shift: false }), 'linux')).toBe(false);
     expect(isBrowserDevToolsToggleInput(input({ alt: true }), 'linux')).toBe(false);
+    expect(
+      isBrowserDevToolsToggleInput(
+        input({ control: false, meta: true, shift: false, alt: true }),
+        'linux'
+      )
+    ).toBe(false);
     expect(isBrowserDevToolsToggleInput(input({ type: 'keyUp' }), 'linux')).toBe(false);
     expect(
       isBrowserDevToolsToggleInput(

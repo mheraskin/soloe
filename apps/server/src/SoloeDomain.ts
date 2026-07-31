@@ -49,6 +49,7 @@ import type {
   ProjectSuggestOptions,
   ProjectUpdate,
 } from "../../../shared/types/projects.js";
+import type { BrowserSessionUpdateRequest } from "../../../shared/types/browser-sessions.js";
 import type {
   FileOpenRequest,
   FilePasteRequest,
@@ -118,6 +119,7 @@ import { NativeCommandBuilder } from "../../../electron/runtime/WindowsCommandBu
 import { WslCommandBuilder } from "../../../electron/runtime/WslCommandBuilder.js";
 import { SettingsStore } from "../../../electron/settings/SettingsStore.js";
 import { ProjectStore } from "../../../electron/projects/ProjectStore.js";
+import { BrowserSessionStore } from "../../../electron/browser/BrowserSessionStore.js";
 import { AgentObserverManager } from "../../../electron/agents/AgentObserverManager.js";
 import { AgentObserverStore } from "../../../electron/agents/AgentObserverStore.js";
 import { AgentRuntimeManager } from "../../../electron/agents/AgentRuntimeManager.js";
@@ -203,6 +205,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly sessions: SessionStore;
   private readonly settings: SettingsStore;
   private readonly projects: ProjectStore;
+  private readonly browserSessions: BrowserSessionStore;
   private readonly files: FileService;
   private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
@@ -261,6 +264,9 @@ export class SoloeDomain extends EventEmitter {
     this.projects = new ProjectStore(path.join(options.dataDirectory, "projects.json"), {
       platform: hostPlatform(),
     });
+    this.browserSessions = new BrowserSessionStore(
+      path.join(options.dataDirectory, "browser-sessions.json"),
+    );
     this.files = new FileService({
       fileIndex: new WorktreeFileIndex({
         getBinaries: async () => (await this.settings.get()).binaries,
@@ -551,6 +557,16 @@ export class SoloeDomain extends EventEmitter {
     }
     if (call.namespace === "projects") {
       return this.projectsCall(call.method, call.args);
+    }
+    if (call.namespace === "browserSessions") {
+      if (call.method === "get") {
+        requireArgumentCount("browserSessions.get", call.args, 0);
+        return this.browserSessions.get();
+      }
+      if (call.method === "update") {
+        requireArgumentCount("browserSessions.update", call.args, 1);
+        return this.browserSessions.update(call.args[0] as BrowserSessionUpdateRequest);
+      }
     }
     if (call.namespace === "files") {
       return this.filesCall(call.method, call.args);

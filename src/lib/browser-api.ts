@@ -222,6 +222,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     features: namespace("features", SOLOE_API_METHODS.features),
     vault: namespace("vault", SOLOE_API_METHODS.vault),
     browser: namespace("browser", SOLOE_API_METHODS.browser),
+    browserSessions: namespace("browserSessions", SOLOE_API_METHODS.browserSessions),
   } as SoloeApi;
 }
 
