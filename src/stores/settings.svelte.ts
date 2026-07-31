@@ -1,9 +1,10 @@
-import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
+import type { ModelCatalogEntry, Settings, SettingsUpdate } from '@shared/types/settings.js';
 import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
 import { ipc } from '../lib/ipc';
 
 export class SettingsStore {
   current = $state<Settings>(structuredClone(DEFAULT_SETTINGS));
+  availableModels = $state<ModelCatalogEntry[]>([]);
   loaded = $state(false);
   dialogOpen = $state(false);
   // Tab the dialog should land on the next time it opens. Bumped each
@@ -18,8 +19,12 @@ export class SettingsStore {
 
   async load(): Promise<void> {
     const changeVersion = this.changeVersion;
-    const s = await ipc.settings.get();
+    const [s, availableModels] = await Promise.all([
+      ipc.settings.get(),
+      ipc.settings.modelCatalog().catch(() => [] as ModelCatalogEntry[])
+    ]);
     if (this.changeVersion === changeVersion) this.current = withSettingsDefaults(s);
+    this.availableModels = availableModels;
     this.loaded = true;
   }
 
@@ -51,9 +56,15 @@ export class SettingsStore {
   async update(patch: SettingsUpdate): Promise<void> {
     const next = await ipc.settings.update(patch);
     this.current = withSettingsDefaults(next);
+    if (patch.binaries) await this.refreshModelCatalog();
+  }
+
+  async refreshModelCatalog(): Promise<void> {
+    this.availableModels = await ipc.settings.modelCatalog().catch(() => this.availableModels);
   }
 
   openDialog(tab?: string): void {
+    void this.refreshModelCatalog();
     if (tab) {
       this.targetTabNonce += 1;
       this.targetTab = { tab, nonce: this.targetTabNonce };

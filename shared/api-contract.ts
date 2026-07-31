@@ -45,7 +45,7 @@ export const SOLOE_API_METHODS = {
     "listWslDistros",
     "usage",
   ],
-  settings: ["get", "update", "onChange"],
+  settings: ["get", "update", "modelCatalog", "onChange"],
   projects: [
     "list",
     "get",
@@ -176,6 +176,7 @@ export const PWA_PANE_REQUIREMENTS = {
 export const UI_STARTUP_RPCS = [
   "system.platform",
   "settings.get",
+  "settings.modelCatalog",
   "projects.list",
   "sessions.list",
   "sessions.listArchived",
@@ -209,6 +210,7 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "observer.stopWorkerSession",
   "settings.get",
   "settings.update",
+  "settings.modelCatalog",
   "projects.list",
   "projects.get",
   "projects.create",

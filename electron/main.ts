@@ -62,6 +62,7 @@ import { FeaturesIpc } from './ipc/features.ipc.js';
 import { VaultStore } from './vault/VaultStore.js';
 import { VaultIpc } from './ipc/vault.ipc.js';
 import { BrowserIpc } from './ipc/browser.ipc.js';
+import { ModelCatalogService } from './agents/ModelCatalogService.js';
 
 interface AppServices {
   store: SessionStore;
@@ -216,6 +217,9 @@ async function setupServices(): Promise<AppServices> {
   await store.init();
   const settings = new SettingsStore(settingsFile, hostPlatform());
   await settings.init();
+  const modelCatalog = new ModelCatalogService({
+    getSettings: () => settings.get()
+  });
   const getBinaries = async () => (await settings.get()).binaries;
   const projects = new ProjectStore(projectsFile, {
     gitBinary: (await settings.get()).binaries.git ?? 'git',
@@ -264,6 +268,7 @@ async function setupServices(): Promise<AppServices> {
     sessionStore: store,
     settings,
     execution: backgroundAgentExecution,
+    getModelCatalog: () => modelCatalog.getCatalog(),
     notifier,
     onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[auto-rename] ${message}`, detail)
@@ -355,6 +360,7 @@ async function setupServices(): Promise<AppServices> {
   });
   const settingsIpc = new SettingsIpc({
     store: settings,
+    modelCatalog,
     getWindows: () => BrowserWindow.getAllWindows()
   });
   const projectsIpc = new ProjectsIpc({
@@ -431,6 +437,7 @@ async function setupServices(): Promise<AppServices> {
     facts: overviewFacts,
     cache: overviewCache,
     getSettings: () => settings.get(),
+    getModelCatalog: () => modelCatalog.getCatalog(),
     execution: backgroundAgentExecution
   });
   const overviewIpc = new OverviewIpc({

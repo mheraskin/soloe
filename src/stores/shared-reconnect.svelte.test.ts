@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, type Settings } from '@shared/types/settings.js';
 const mocks = vi.hoisted(() => ({
   projectList: vi.fn(),
   settingsGet: vi.fn(),
+  settingsModelCatalog: vi.fn(async () => []),
   projectChanges: {
     emit: (_projects: Project[]): void => {}
   },
@@ -27,6 +28,7 @@ vi.mock('../lib/ipc', () => ({
     },
     settings: {
       get: mocks.settingsGet,
+      modelCatalog: mocks.settingsModelCatalog,
       onChange: vi.fn((callback: (settings: Settings) => void) => {
         mocks.settingsChanges.emit = callback;
         return () => undefined;

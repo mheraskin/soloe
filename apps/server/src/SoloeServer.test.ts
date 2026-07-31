@@ -720,6 +720,7 @@ describe('Soloe Server lifecycle', () => {
     let firstClient: WebSocket | undefined;
     let secondClient: WebSocket | undefined;
     let claudeInstalled = false;
+    const maybeRename = vi.fn(async () => undefined);
     const integrationStatus = () => ({
       hosts: [
         {
@@ -757,6 +758,7 @@ describe('Soloe Server lifecycle', () => {
         runtime: domainRuntime,
         integrationInstaller,
         enableAgentBridge: true,
+        autoRename: { maybeRename },
         pathService,
         fileEditorLauncher
       });
@@ -991,6 +993,26 @@ describe('Soloe Server lifecycle', () => {
         }
       );
       expect(hookResponse.status).toBe(200);
+      const promptHookResponse = await fetch(
+        `http://127.0.0.1:${bridgeConfig.port}/hook/codex`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${bridgeConfig.token}`,
+            'content-type': 'application/json',
+            'x-soloe-session-id': session.id
+          },
+          body: JSON.stringify({
+            hook_event_name: 'UserPromptSubmit',
+            prompt: 'repair automatic tab naming'
+          })
+        }
+      );
+      expect(promptHookResponse.status).toBe(200);
+      expect(maybeRename).toHaveBeenCalledWith({
+        sessionId: session.id,
+        firstPrompt: 'repair automatic tab naming'
+      });
       await expect(rpc(baseUrl, 'sessions', 'get', [session.id])).resolves.toEqual(
         expect.objectContaining({
           currentAgentRuntime: expect.objectContaining({
@@ -1012,7 +1034,7 @@ describe('Soloe Server lifecycle', () => {
       expect(await rpc(baseUrl, 'observer', 'list')).toEqual([
         expect.objectContaining({
           id: session.id,
-          state: 'starting',
+          state: 'working',
           provider: 'codex',
           providerThreadId: 'codex-thread-1'
         })

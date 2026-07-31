@@ -2,10 +2,12 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
 import type { SettingsStore } from '../settings/SettingsStore.js';
+import type { ModelCatalogService } from '../agents/ModelCatalogService.js';
 import { ipcInvoke } from './result.js';
 
 export interface SettingsIpcOptions {
   store: SettingsStore;
+  modelCatalog: ModelCatalogService;
   getWindows: () => BrowserWindow[];
 }
 
@@ -27,6 +29,10 @@ export class SettingsIpc {
       ipcInvoke(() => this.opts.store.update(patch))
     );
 
+    ipcMain.handle(IpcChannels.settings.modelCatalog, () =>
+      ipcInvoke(() => this.opts.modelCatalog.getCatalog())
+    );
+
     this.detachListener = this.opts.store.onChange((s: Settings) => {
       for (const win of this.opts.getWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IpcChannels.settings.change, s);
@@ -38,6 +44,7 @@ export class SettingsIpc {
     if (!this.registered) return;
     ipcMain.removeHandler(IpcChannels.settings.get);
     ipcMain.removeHandler(IpcChannels.settings.update);
+    ipcMain.removeHandler(IpcChannels.settings.modelCatalog);
     this.detachListener?.();
     this.detachListener = null;
     this.registered = false;

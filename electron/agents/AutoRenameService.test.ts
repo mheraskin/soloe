@@ -9,6 +9,7 @@ import { SessionStore } from '../sessions/SessionStore.js';
 import { SettingsStore } from '../settings/SettingsStore.js';
 import type { spawn } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
+import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
 
 let tmpDir: string;
 let sessionStore: SessionStore;
@@ -115,6 +116,38 @@ describe('AutoRenameService', () => {
     expect(spawnMock.mock.calls[0]?.[0]).toBe('/opt/claude');
     child.succeed('provider-fallback\n');
     await pending;
+  });
+
+  it('replaces a stale saved model with a model discovered from the Codex harness', async () => {
+    const session = await sessionStore.create({
+      name: 'new codex',
+      cwd: tmpDir,
+      runMode: 'windows',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    });
+    await settingsStore.update({
+      models: { textGeneration: { provider: 'codex', id: 'gpt-retired' } }
+    });
+    const child = new FakeChild();
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
+    const service = new AutoRenameService({
+      sessionStore,
+      settings: settingsStore,
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      getModelCatalog: async () => [
+        { provider: 'codex', id: CLI_DEFAULT_MODEL_ID, label: 'Codex default', isDefault: true },
+        { provider: 'codex', id: 'gpt-current', label: 'GPT Current' }
+      ]
+    });
+
+    const pending = service.maybeRename({ sessionId: session.id, firstPrompt: 'fix stale model' });
+    await waitFor(() => spawnMock.mock.calls.length === 1);
+    expect(spawnMock.mock.calls[0]?.[1]).not.toContain('gpt-retired');
+    expect(spawnMock.mock.calls[0]?.[1]).not.toContain('-m');
+    child.succeed('fix-stale-model\n');
+    await pending;
+
+    expect((await sessionStore.get(session.id))?.name).toBe('fix-stale-model');
   });
 
   it('serializes background renames across different sessions', async () => {

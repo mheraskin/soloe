@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
+import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
 import type { WorktreeFacts } from '@shared/types/overview.js';
 import type { BackgroundAgentExecution } from '../agents/BackgroundAgentExecution.js';
 import { WorktreeOverviewService } from './WorktreeOverviewService.js';
@@ -59,8 +60,8 @@ describe('WorktreeOverviewService background execution', () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({
       priority: 'interactive',
       candidates: [
-        DEFAULT_SETTINGS.models.worktreeOverview,
-        { provider: 'claude', id: 'sonnet' }
+        { provider: 'codex', id: CLI_DEFAULT_MODEL_ID },
+        { provider: 'claude', id: CLI_DEFAULT_MODEL_ID }
       ]
     }));
     expect(overview).toMatchObject({

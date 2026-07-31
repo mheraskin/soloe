@@ -4,7 +4,6 @@ import { randomBytes } from 'node:crypto';
 import {
   DEFAULT_SETTINGS,
   defaultSettingsForRunMode,
-  MODEL_CATALOG,
   type ModelSelection,
   type QuickLaunchPreset,
   type Settings,
@@ -165,8 +164,6 @@ function parseModelSelection(raw: unknown): ModelSelection | null {
   const id = raw['id'];
   if (typeof provider !== 'string' || !VALID_MODEL_PROVIDERS.has(provider)) return null;
   if (typeof id !== 'string' || !id.trim()) return null;
-  const known = MODEL_CATALOG.find((m) => m.provider === provider && m.id === id);
-  if (!known) return null;
   return { provider: provider as ModelSelection['provider'], id };
 }
 

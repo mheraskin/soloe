@@ -14,7 +14,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import * as Select from '$lib/components/ui/select';
-  import { MODEL_CATALOG, type ModelProvider, type ModelSelection } from '@shared/types/settings.js';
+  import { type ModelProvider, type ModelSelection } from '@shared/types/settings.js';
   import { renderMarkdown } from '../lib/markdown';
   import ChatPanel, { type ChatPanelMessage } from './ChatPanel.svelte';
   import KindIcon from './KindIcon.svelte';
@@ -273,8 +273,8 @@
   // list explains how to re-enable.
   let allowedCatalog = $derived.by(() =>
     claudeHeadlessAllowed
-      ? MODEL_CATALOG
-      : MODEL_CATALOG.filter((m) => m.provider !== 'claude')
+      ? settings.availableModels
+      : settings.availableModels.filter((m) => m.provider !== 'claude')
   );
 
   // Model the next regenerate will use. Falls back to textGeneration for
@@ -306,7 +306,9 @@
   }
   function modelLabel(value: ModelSelection | null | undefined): string {
     if (!value) return 'Default model';
-    const entry = MODEL_CATALOG.find((m) => m.provider === value.provider && m.id === value.id);
+    const entry = settings.availableModels.find(
+      (m) => m.provider === value.provider && m.id === value.id
+    );
     return entry?.label ?? `${value.provider}: ${value.id}`;
   }
   function providerKind(provider: ModelProvider): 'claude_code' | 'codex' {
