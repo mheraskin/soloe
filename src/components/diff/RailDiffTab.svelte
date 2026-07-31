@@ -84,7 +84,7 @@
   const ROW_HEIGHT_PX = 36;
   const LIST_VERTICAL_PADDING_PX = 12;
   const GROUP_HEADER_PX = 24;
-  const CHANGE_RENDER_BATCH_SIZE = 8;
+  const CHANGE_RENDER_BATCH_SIZE = 2;
   let userListHeightOverride = $state<number | null>(null);
   let resizingList = $state(false);
   let resizeStartY = 0;
