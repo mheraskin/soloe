@@ -125,6 +125,34 @@ That is the normal startup command. It:
 No routine web build is required in either checkout. The Windows Web Host
 proxies authenticated `/api` HTTP/WebSocket traffic to the selected backend.
 
+## Tailscale Serve access
+
+The Windows Web Host accepts the identity headers injected by Tailscale Serve.
+This lets a signed-in tailnet user open the stable HTTPS URL without first
+launching a tokenized URL from the tray. The web host remains bound to
+`127.0.0.1`; do not expose its port directly to the LAN or tailnet.
+
+Expose the default web port from a Windows terminal:
+
+```powershell
+tailscale serve --bg 4318
+```
+
+By default, any authenticated Tailscale user who can reach this Serve endpoint
+is accepted. Shared users can therefore access Soloe when the tailnet policy
+permits it. To restrict access to specific Tailscale login names, set a
+comma-separated allowlist before starting the tray:
+
+```powershell
+$env:SOLOE_TAILSCALE_ALLOWED_USERS = "owner@example.com"
+pnpm dev
+```
+
+The comparison is case-insensitive. A Tailscale-authenticated request receives
+a `Secure`, `HttpOnly`, `SameSite=Strict` session cookie and is redirected to
+the clean root URL. The existing tray-token launch remains available as a
+localhost fallback.
+
 Right-click the Soloe tray icon and choose:
 
 - the single **Start (WSL/Windows)** or **Stop (WSL/Windows)** action;
