@@ -17,6 +17,7 @@
   import { projects } from '../stores/projects.svelte';
   import { git } from '../stores/git.svelte';
   import { nav } from '../stores/nav.svelte';
+  import { settings } from '../stores/settings.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { confirmStore } from '../stores/confirm.svelte';
@@ -131,6 +132,11 @@
     nav.activeProjectId === project.id
       || (containsSelectedSession && !effectiveExpanded)
   );
+  let kbdIndex = $derived.by<number | null>(() => {
+    if (settings.current.shortcuts.shiftNumberNavigation !== 'project') return null;
+    const index = projects.recents.findIndex((candidate) => candidate.id === project.id);
+    return index >= 0 && index < 9 ? index + 1 : null;
+  });
 
   function onProjectOpenChange(open: boolean) {
     if (isFiltering) return;
@@ -343,11 +349,20 @@
           <span class="relative flex min-w-0 flex-1">
             <Collapsible.Trigger
               class={cn(
-                'group flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground transition-colors',
+                'group relative flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground transition-colors',
                 isActiveProject ? 'bg-accent/60 border-border' : 'hover:bg-muted'
               )}
               aria-label={`Toggle ${project.name} project`}
             >
+              {#if kbdIndex !== null}
+                <span
+                  class="pointer-events-none absolute top-0.5 left-0.5 font-mono text-[9px] leading-none text-muted-foreground/55"
+                  title={`Ctrl/Cmd+Shift+${kbdIndex}`}
+                  aria-label={`Ctrl or Command plus Shift plus ${kbdIndex}`}
+                >
+                  {kbdIndex}
+                </span>
+              {/if}
               {#if effectiveExpanded}
                 <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
               {:else}

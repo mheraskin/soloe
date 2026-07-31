@@ -19,7 +19,7 @@ export class SettingsStore {
   async load(): Promise<void> {
     const changeVersion = this.changeVersion;
     const s = await ipc.settings.get();
-    if (this.changeVersion === changeVersion) this.current = s;
+    if (this.changeVersion === changeVersion) this.current = withSettingsDefaults(s);
     this.loaded = true;
   }
 
@@ -28,7 +28,7 @@ export class SettingsStore {
     this.detachers.push(
       ipc.settings.onChange((s) => {
         this.changeVersion += 1;
-        this.current = s;
+        this.current = withSettingsDefaults(s);
       })
     );
     this.detachers.push(
@@ -50,7 +50,7 @@ export class SettingsStore {
 
   async update(patch: SettingsUpdate): Promise<void> {
     const next = await ipc.settings.update(patch);
-    this.current = next;
+    this.current = withSettingsDefaults(next);
   }
 
   openDialog(tab?: string): void {
@@ -68,6 +68,16 @@ export class SettingsStore {
   toggleDialog(): void {
     this.dialogOpen = !this.dialogOpen;
   }
+}
+
+function withSettingsDefaults(settings: Settings): Settings {
+  return {
+    ...settings,
+    shortcuts: {
+      ...DEFAULT_SETTINGS.shortcuts,
+      ...settings.shortcuts
+    }
+  };
 }
 
 export const settings = new SettingsStore();

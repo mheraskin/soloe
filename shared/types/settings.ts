@@ -125,6 +125,14 @@ export interface SettingsNotes {
   draftsPerWorktree: boolean;
 }
 
+export type ShiftNumberNavigationTarget = 'worktree' | 'project';
+
+export interface SettingsShortcuts {
+  // Cmd/Ctrl+Shift+1..9 follows the visible order of either the current
+  // project's worktrees or all projects in the sidebar.
+  shiftNumberNavigation: ShiftNumberNavigationTarget;
+}
+
 // Single source of truth for model selection across Settings (background
 // tasks), Quick Launch presets, and the @-mention picker. Refresh by checking
 // platform.claude.com/docs/en/about-claude/models/overview and
@@ -175,6 +183,7 @@ export interface Settings {
   quickLaunchDefaultsSeeded: boolean;
   integrations: SettingsIntegrations;
   notes: SettingsNotes;
+  shortcuts: SettingsShortcuts;
 }
 
 export type SettingsUpdate = {
@@ -190,6 +199,7 @@ export type SettingsUpdate = {
   quickLaunchDefaultsSeeded?: boolean;
   integrations?: Partial<SettingsIntegrations>;
   notes?: Partial<SettingsNotes>;
+  shortcuts?: Partial<SettingsShortcuts>;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -219,7 +229,8 @@ export const DEFAULT_SETTINGS: Settings = {
   quickLaunch: DEFAULT_QUICK_LAUNCH_PRESETS,
   quickLaunchDefaultsSeeded: true,
   integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false },
-  notes: { draftsPerWorktree: false }
+  notes: { draftsPerWorktree: false },
+  shortcuts: { shiftNumberNavigation: 'worktree' }
 };
 
 export function defaultSettingsForRunMode(runMode: Exclude<RunMode, 'wsl'> | 'wsl'): Settings {

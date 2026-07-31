@@ -16,7 +16,8 @@
     KeyRound,
     NotebookPen,
     ServerCog,
-    Bell
+    Bell,
+    Keyboard
   } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import { platform } from '../../stores/platform.svelte';
@@ -29,11 +30,13 @@
     SettingsBinaries,
     BackendPlacement,
     TerminalFontSizePref,
-    ThemePref
+    ThemePref,
+    ShiftNumberNavigationTarget
   } from '@shared/types/settings.js';
   import { MODEL_CATALOG, modelCatalogFor } from '@shared/types/settings.js';
   import type { AgentRuntimeProvider, RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
   import { runModeLabel } from '@shared/platform.js';
+  import { Keymap } from '../../lib/keymap';
   import { reportError } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -54,6 +57,7 @@
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
   const diffFontSizes: DiffFontSizePref[] = [11, 12, 13, 14, 15, 16];
+  const builtInShortcuts = Object.values(Keymap);
   let runModes = $derived<RunMode[]>(platform.current.availableRunModes);
   let shells = $derived<ShellKind[]>(
     platform.current.platform === 'linux'
@@ -102,6 +106,7 @@
     { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
     { kind: 'tab', value: 'vault', label: 'Vault', icon: KeyRound },
     { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
+    { kind: 'tab', value: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
     { kind: 'tab', value: 'notifications', label: 'Notifications', icon: Bell },
     { kind: 'tab', value: 'models', label: 'Models', icon: Cpu },
     { kind: 'tab', value: 'quicklaunch', label: 'Quick Launch', icon: Rocket },
@@ -243,6 +248,16 @@
     try {
       await settings.update({ terminal: { confirmDeleteTabs: value } });
     } catch (e) { reportError(e); }
+  }
+
+  async function setShiftNumberNavigation(value: ShiftNumberNavigationTarget) {
+    try {
+      await settings.update({ shortcuts: { shiftNumberNavigation: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  function shortcutKeyLabel(key: string): string {
+    return key === 'Ctrl' ? 'Ctrl/Cmd' : key;
   }
 
   async function setDefault<K extends 'runMode' | 'wslDistro' | 'shell'>(
@@ -461,6 +476,90 @@
             {/each}
           </Select.Content>
         </Select.Root>
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="shortcuts" class={contentClass}>
+      <div class="flex flex-col gap-1">
+        <h2 class="m-0 text-sm font-medium">Keyboard shortcuts</h2>
+        <p class="m-0 text-[11px] leading-4 text-muted-foreground">
+          Choose what numbered navigation targets, and use the reference below to see the current
+          app-wide bindings.
+        </p>
+      </div>
+
+      <div class="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div class="min-w-0">
+            <Label class="text-sm font-medium">Shift-number navigation</Label>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Applies to <kbd class="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">Ctrl/Cmd</kbd>
+              + <kbd class="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">Shift</kbd>
+              + <kbd class="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">1–9</kbd>.
+            </p>
+          </div>
+          <Select.Root
+            type="single"
+            value={settings.current.shortcuts.shiftNumberNavigation}
+            onValueChange={(v) => setShiftNumberNavigation(v as ShiftNumberNavigationTarget)}
+          >
+            <Select.Trigger class="w-full shrink-0 sm:w-56">
+              {settings.current.shortcuts.shiftNumberNavigation === 'project'
+                ? 'Projects'
+                : 'Worktrees'}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="worktree" label="Worktrees">Worktrees</Select.Item>
+              <Select.Item value="project" label="Projects">Projects</Select.Item>
+            </Select.Content>
+          </Select.Root>
+        </div>
+        <p class="m-0 text-[11px] leading-4 text-muted-foreground">
+          Numbering follows the order shown in the sidebar. A project or worktree without a session
+          opens the new-session picker for that location.
+        </p>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <h3 class="m-0 text-xs font-medium text-muted-foreground">Current bindings</h3>
+        <div class="overflow-hidden rounded-md border border-border">
+          <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+            <span class="text-xs">Switch to session 1–9</span>
+            <span class="flex shrink-0 items-center gap-1" aria-label="Ctrl or Command plus 1 through 9">
+              {#each ['Ctrl/Cmd', '1–9'] as key (key)}
+                <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{key}</kbd>
+              {/each}
+            </span>
+          </div>
+          <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+            <span class="text-xs">
+              Switch to {settings.current.shortcuts.shiftNumberNavigation === 'project'
+                ? 'project'
+                : 'worktree'} 1–9
+            </span>
+            <span class="flex shrink-0 items-center gap-1" aria-label="Ctrl or Command plus Shift plus 1 through 9">
+              {#each ['Ctrl/Cmd', 'Shift', '1–9'] as key (key)}
+                <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{key}</kbd>
+              {/each}
+            </span>
+          </div>
+          {#each builtInShortcuts as shortcut, i (shortcut.id)}
+            <div
+              class={`flex items-center justify-between gap-3 px-3 py-2.5 ${
+                i < builtInShortcuts.length - 1 ? 'border-b border-border' : ''
+              }`}
+            >
+              <span class="text-xs">{shortcut.description}</span>
+              <span class="flex shrink-0 items-center gap-1" aria-label={shortcut.keys.map(shortcutKeyLabel).join(' plus ')}>
+                {#each shortcut.keys as key (key)}
+                  <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    {shortcutKeyLabel(key)}
+                  </kbd>
+                {/each}
+              </span>
+            </div>
+          {/each}
+        </div>
       </div>
     </Tabs.Content>
 

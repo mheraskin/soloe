@@ -175,12 +175,15 @@ export function tabIndexFromEvent(e: KeyboardEvent): number | null {
   return null;
 }
 
-export function worktreeIndexFromEvent(e: KeyboardEvent): number | null {
+export function shiftNumberIndexFromEvent(e: KeyboardEvent): number | null {
   if (!isCtrlOrCmd(e) || e.altKey || !e.shiftKey) return null;
   const m = e.code.match(/^Digit([1-9])$/);
   if (!m) return null;
   return Number(m[1]) - 1;
 }
+
+// Keep in-flight HMR clients compatible while the shortcut helper rename propagates.
+export const worktreeIndexFromEvent = shiftNumberIndexFromEvent;
 
 export function shouldIgnoreInTextInput(e: KeyboardEvent): boolean {
   const target = e.target as HTMLElement | null;
