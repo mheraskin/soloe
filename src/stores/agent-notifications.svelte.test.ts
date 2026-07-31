@@ -16,6 +16,16 @@ const session = {
   lastUsedAt: '2026-05-04T00:00:00.000Z'
 } satisfies Session;
 
+const autoApprovedSession = {
+  ...session,
+  launch: {
+    type: 'agent',
+    provider: 'codex',
+    resumeMode: 'new',
+    extraArgs: ['--dangerously-bypass-approvals-and-sandbox']
+  }
+} satisfies Session;
+
 function snapshot(
   state: ObservedAgentSnapshot['state'],
   overrides: Partial<ObservedAgentSnapshot> = {}
@@ -69,6 +79,28 @@ describe('agentNotifications', () => {
 
     expect(agentNotifications.markerFor(session.id)?.state).toBe('waiting_for_approval');
     expect(agentNotifications.toasts).toHaveLength(1);
+  });
+
+  it('never notifies for approval when the Codex session auto-approves permissions', () => {
+    agentNotifications.observeSnapshot(snapshot('working'), autoApprovedSession, null);
+    agentNotifications.observeSnapshot(
+      snapshot('waiting_for_approval'),
+      autoApprovedSession,
+      null
+    );
+
+    expect(agentNotifications.markerFor(autoApprovedSession.id)).toBeNull();
+    expect(agentNotifications.toasts).toHaveLength(0);
+  });
+
+  it('does not restore an approval marker for an auto-approved Codex snapshot', () => {
+    agentNotifications.primeSnapshot(
+      snapshot('waiting_for_approval'),
+      autoApprovedSession,
+      null
+    );
+
+    expect(agentNotifications.markerFor(autoApprovedSession.id)).toBeNull();
   });
 
   it('suppresses notifications and blinking for the focused active session', () => {

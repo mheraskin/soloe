@@ -54,11 +54,60 @@ describe('Notifier', () => {
     await vi.waitFor(() => {
       expect(shown).toEqual([
         {
-          title: 'Codex: approval needed',
-          body: 'approval: docker compose up'
+          title: 'Approval needed',
+          body: 'Codex'
         }
       ]);
     });
+  });
+
+  it('uses a compact completion notification', async () => {
+    const session = await sessions.create({
+      name: 'Codex',
+      cwd: '/workspace',
+      runMode: 'windows',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    });
+    observer.registerTuiSession(session);
+    notifier.attachAgentObserver(observer, sessions);
+
+    observer.setTuiObservedState(session.id, 'working', 'thinking');
+    observer.setTuiObservedState(session.id, 'completed', 'implementation finished');
+
+    await vi.waitFor(() => {
+      expect(shown).toEqual([
+        {
+          title: 'Tab finished working',
+          body: 'Codex'
+        }
+      ]);
+    });
+  });
+
+  it('never shows approval notifications for auto-approved Codex sessions', async () => {
+    const session = await sessions.create({
+      name: 'Codex',
+      cwd: '/workspace',
+      runMode: 'windows',
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        extraArgs: ['--dangerously-bypass-approvals-and-sandbox']
+      }
+    });
+    observer.registerTuiSession(session);
+    notifier.attachAgentObserver(observer, sessions);
+
+    observer.setTuiObservedState(session.id, 'working', 'thinking');
+    observer.setTuiObservedState(
+      session.id,
+      'waiting_for_approval',
+      'approval: docker compose up'
+    );
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(shown).toEqual([]);
   });
 
   it('dedupes repeated native notifications for the same state', async () => {
@@ -77,7 +126,7 @@ describe('Notifier', () => {
     await vi.waitFor(() => {
       expect(shown).toHaveLength(1);
     });
-    expect(shown[0]?.title).toBe('Claude: input needed');
+    expect(shown[0]?.title).toBe('Input needed');
   });
 
   it('respects native notification suppression', async () => {

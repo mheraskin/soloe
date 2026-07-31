@@ -25,8 +25,8 @@ const notice = {
 describe('agent system notifications', () => {
   it('puts the state first and provider plus session context on the subline', () => {
     expect(agentSystemNotificationContent(notice)).toEqual({
-      title: 'Completed',
-      body: 'Codex · storefront · Checkout fix\nimplementation finished',
+      title: 'Tab finished working',
+      body: 'Codex · storefront · Checkout fix',
       tag: 'soloe-agent-codex-1'
     });
   });

@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron';
+import { sessionAutoApprovesPermissions } from '@shared/agent-permissions.js';
 import type { ObservedAgentSnapshot, ObserverEvent } from '@shared/types/agents.js';
 import { IpcChannels, type ToastNotification } from '@shared/types/ipc.js';
 import type { AgentObservedState, Session, SessionId } from '@shared/types/sessions.js';
@@ -94,8 +95,12 @@ export class Notifier {
         .get(sessionId)
         .then((session) => {
           if (!session) return;
+          if (
+            state === 'waiting_for_approval'
+            && sessionAutoApprovesPermissions(session)
+          ) return;
           this.native(
-            nativeAgentNotification(session, state, event.summary, event.detail),
+            nativeAgentNotification(session, state),
             () => this.activateSession(session.id)
           );
         })
@@ -146,28 +151,19 @@ function rowSessionIdFor(
 
 function nativeAgentNotification(
   session: Session,
-  state: NativeNotifyState,
-  summary: string,
-  detail?: string
+  state: NativeNotifyState
 ): NativeNotificationOptions {
   const sessionName = session.name || '(unnamed)';
-  const body = shortBody(detail ?? summary);
   switch (state) {
     case 'waiting_for_approval':
-      return { title: `${sessionName}: approval needed`, body };
+      return { title: 'Approval needed', body: sessionName };
     case 'waiting_for_input':
-      return { title: `${sessionName}: input needed`, body };
+      return { title: 'Input needed', body: sessionName };
     case 'usage_limited':
-      return { title: `${sessionName}: usage limit reached`, body };
+      return { title: 'Usage limit reached', body: sessionName };
     case 'completed':
-      return { title: `${sessionName}: done`, body };
+      return { title: 'Tab finished working', body: sessionName };
     case 'failed':
-      return { title: `${sessionName}: failed`, body };
+      return { title: 'Tab failed', body: sessionName };
   }
-}
-
-function shortBody(value: string): string {
-  const normalized = value.trim().replace(/\s+/g, ' ');
-  if (normalized.length <= 120) return normalized;
-  return `${normalized.slice(0, 117)}...`;
 }

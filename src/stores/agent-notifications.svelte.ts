@@ -1,4 +1,5 @@
 import type { ObservedAgentSnapshot, ObserverEvent } from '@shared/types/agents.js';
+import { sessionAutoApprovesPermissions } from '@shared/agent-permissions.js';
 import type {
   AgentObservedState,
   Session,
@@ -91,6 +92,10 @@ class AgentNotificationsStore {
     });
     this.lastStates.set(snapshot.id, snapshot.state);
     if (!rowSessionId || !session || !isNotifyState(snapshot.state)) return;
+    if (
+      snapshot.state === 'waiting_for_approval'
+      && sessionAutoApprovesPermissions(session)
+    ) return;
     if (rowSessionId === activeSessionId) return;
     this.setMarker(rowSessionId, snapshot.id, snapshot.state, reasonFor(snapshot, null));
   }
@@ -221,6 +226,19 @@ class AgentNotificationsStore {
 
     if (!opts.rowSessionId) {
       this.log('skip notification: no row session id', { subjectId: opts.subjectId });
+      return;
+    }
+
+    if (
+      opts.state === 'waiting_for_approval'
+      && opts.session
+      && sessionAutoApprovesPermissions(opts.session)
+    ) {
+      this.log('suppress notification: session auto-approves permissions', {
+        rowSessionId: opts.rowSessionId,
+        subjectId: opts.subjectId
+      });
+      this.clearSubject(opts.rowSessionId, opts.subjectId);
       return;
     }
 
