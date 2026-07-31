@@ -79,8 +79,12 @@
   let askSelection = $state<string>('');
   // Context menu enabled-state mirror. Re-read when the menu opens.
   let menuHasSelection = $state(false);
-  let term: Terminal | null = null;
-  let fit: FitAddon | null = null;
+  // These assignments happen after the host binding effect has already run.
+  // Keep them reactive so an initially-visible, newly created Session starts
+  // its resize observer immediately instead of waiting for a tab switch to
+  // change `visible` and accidentally wake the layout effect up.
+  let term = $state.raw<Terminal | null>(null);
+  let fit = $state.raw<FitAddon | null>(null);
   let search: SearchAddon | null = null;
   let searchLoading: Promise<SearchAddon | null> | null = null;
   let renderer: WebglAddon | CanvasAddon | null = null;

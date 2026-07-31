@@ -47,7 +47,6 @@ export class TerminalFitController {
     onError: (error: unknown) => void = () => {}
   ): void {
     if (this.scheduledFitFrame !== null) return;
-    this.cancelRedraw();
     const generation = this.generation;
     this.scheduledFitFrame = this.requestFrame(() => {
       this.scheduledFitFrame = null;
