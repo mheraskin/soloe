@@ -304,6 +304,7 @@ export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
   "browser.openDevTools",
   "browser.setDevToolsLayout",
   "browser.closeDevTools",
+  ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`),
 ]);
 
 export const CLIENT_NATIVE_METHODS = new Set<string>([
@@ -357,14 +358,14 @@ export function operationOwner(
       : "local-electron";
   }
   if (CLIENT_NATIVE_METHODS.has(key)) return "client-native";
-  if (SERVER_RPC_METHODS.has(key) || SERVER_EVENT_METHODS.has(key)) {
-    return RUNTIME_OWNED_METHODS.has(key) ? "runtime" : "application-server";
-  }
   if (
     transport === "remote-electron" &&
     REMOTE_ELECTRON_NATIVE_METHODS.has(key)
   ) {
     return "electron-native";
+  }
+  if (SERVER_RPC_METHODS.has(key) || SERVER_EVENT_METHODS.has(key)) {
+    return RUNTIME_OWNED_METHODS.has(key) ? "runtime" : "application-server";
   }
   return "unsupported";
 }

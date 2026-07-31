@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { IpcChannels, type BrowserApi, type WindowApi } from '@shared/types/ipc.js';
+import {
+  IpcChannels,
+  type BrowserApi,
+  type VaultApi,
+  type WindowApi
+} from '@shared/types/ipc.js';
+import type { VaultChangeEvent } from '@shared/types/vault.js';
 import type {
   CloseDevToolsRequest,
   DisableDeviceEmulationRequest,
@@ -46,8 +52,24 @@ const browserApi: BrowserApi = {
     ipcRenderer.invoke(IpcChannels.browser.closeDevTools, request)
 };
 
+function subscribe<T>(channel: string, cb: (event: T) => void): () => void {
+  const handler = (_event: IpcRendererEvent, payload: T) => cb(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.off(channel, handler);
+}
+
+const vaultApi: VaultApi = {
+  list: (request) => ipcRenderer.invoke(IpcChannels.vault.list, request),
+  save: (request) => ipcRenderer.invoke(IpcChannels.vault.save, request),
+  update: (request) => ipcRenderer.invoke(IpcChannels.vault.update, request),
+  delete: (request) => ipcRenderer.invoke(IpcChannels.vault.delete, request),
+  getSecret: (request) => ipcRenderer.invoke(IpcChannels.vault.getSecret, request),
+  onChange: (cb) => subscribe<VaultChangeEvent>(IpcChannels.vault.change, cb)
+};
+
 api.window = windowApi;
 api.browser = browserApi;
+api.vault = vaultApi;
 contextBridge.exposeInMainWorld('soloe', api);
 
 ipcRenderer.on(
