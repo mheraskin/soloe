@@ -36,10 +36,22 @@
   // runtime, so the whole editor surface must share the lazy boundary. The
   // promise is retained so later files reuse the module.
   let fileEditorSurfacePromise: Promise<FileEditorSurfaceComponent> | null = null;
+  let fileEditorSurfaceLoadAttempt = $state(0);
 
   function loadFileEditorSurface(): Promise<FileEditorSurfaceComponent> {
-    fileEditorSurfacePromise ??= import('./FileEditorSurface.svelte').then((module) => module.default);
+    void fileEditorSurfaceLoadAttempt;
+    fileEditorSurfacePromise ??= import('./FileEditorSurface.svelte')
+      .then((module) => module.default)
+      .catch((error: unknown) => {
+        fileEditorSurfacePromise = null;
+        throw error;
+      });
     return fileEditorSurfacePromise;
+  }
+
+  function retryFileEditorSurface(): void {
+    fileEditorSurfacePromise = null;
+    fileEditorSurfaceLoadAttempt += 1;
   }
 
   let rootEl: HTMLDivElement | null = $state(null);
@@ -499,6 +511,15 @@
                 onChange={onChange}
                 onSave={onSave}
               />
+            {:catch}
+              <div class="flex flex-1 flex-col items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
+                <AlertCircle class="size-4 text-destructive" />
+                <span>The editor module could not be loaded.</span>
+                <Button size="sm" variant="outline" onclick={retryFileEditorSurface}>
+                  <RefreshCw class="size-3.5" />
+                  Retry
+                </Button>
+              </div>
             {/await}
           {/if}
         {:else if isSplit}

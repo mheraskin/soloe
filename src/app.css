@@ -571,10 +571,6 @@
     opacity: 0.45;
   }
 
-  html[data-mobile-keyboard-open] .mobile-workspace-page {
-    padding-bottom: 0;
-  }
-
   html[data-mobile-keyboard-open] .mobile-workspace-dock {
     display: none;
   }
@@ -658,6 +654,10 @@
   [data-slot='button'] {
     touch-action: manipulation;
     min-height: 2.75rem;
+  }
+
+  .closed-session-actions [data-slot='button'] {
+    min-height: 1.75rem;
   }
 
   [data-slot='dropdown-menu-content'],

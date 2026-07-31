@@ -251,7 +251,7 @@
           <span>Session exited.</span>
         {/if}
       </div>
-      <div class="mt-2 flex items-center gap-2">
+      <div class="closed-session-actions mt-2 flex items-center gap-2">
         <Button size="sm" onclick={resume} disabled={busy}>
           <Play /> <span>Resume</span>
         </Button>

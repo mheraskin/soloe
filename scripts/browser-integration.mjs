@@ -1047,6 +1047,46 @@ async function runMobileWorkspaceWorkflow(input) {
     'mobile terminal to fit its viewport'
   );
 
+  const root = document.documentElement;
+  const terminalShell = document.querySelector('.terminal-pane-shell');
+  const mobileCommandBar = document.querySelector('.mobile-terminal-input');
+  const xtermViewport = document.querySelector(
+    '.terminal-surface[data-terminal-pane-role="full"] .xterm-viewport'
+  );
+  const xtermRoot = document.querySelector(
+    '.terminal-surface[data-terminal-pane-role="full"] .xterm'
+  );
+  assert(
+    terminalShell && mobileCommandBar && xtermViewport && xtermRoot,
+    'Mobile terminal keyboard surfaces are missing'
+  );
+  const xtermBeforeKeyboard = xtermRoot.getBoundingClientRect();
+  root.style.setProperty('--keyboard-inset', '300px');
+  root.setAttribute('data-mobile-keyboard-open', '');
+  window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
+    detail: { keyboardOpen: true, keyboardClosed: false }
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const xtermWithKeyboard = xtermRoot.getBoundingClientRect();
+  const commandBarStyle = getComputedStyle(mobileCommandBar);
+  const viewportStyle = getComputedStyle(xtermViewport);
+  assert(
+    Math.abs(xtermBeforeKeyboard.width - xtermWithKeyboard.width) <= 1
+      && Math.abs(xtermBeforeKeyboard.height - xtermWithKeyboard.height) <= 1,
+    'Mobile keyboard resized the terminal renderer'
+  );
+  assert(
+    commandBarStyle.position === 'fixed'
+      && Math.abs(Number.parseFloat(commandBarStyle.bottom) - 300) <= 1
+      && viewportStyle.touchAction === 'pan-y',
+    'Mobile command bar or momentum terminal scrolling was not configured'
+  );
+  root.removeAttribute('data-mobile-keyboard-open');
+  root.style.removeProperty('--keyboard-inset');
+  window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
+    detail: { keyboardOpen: false, keyboardClosed: true }
+  }));
+
   const activeIndicatorIsCentered = () => {
     const indicator = document.querySelector('.mobile-page-indicator');
     const activeDot = indicator?.querySelector('button.active span');
@@ -1190,6 +1230,8 @@ async function runMobileWorkspaceWorkflow(input) {
     paneOverlay: true,
     selectedPaneToggle: true,
     centeredActiveIndicator: true,
+    stableKeyboardOverlay: true,
+    momentumTerminalScroll: true,
     twoPageNavigation: true,
     swipeNavigation: true,
     serviceWorkerReady: 'serviceWorker' in navigator
@@ -1329,6 +1371,30 @@ async function runBrowserWorkflow(input) {
       `Electron-only ${label} window control was visible in the PWA`
     );
   }
+  window.dispatchEvent(new KeyboardEvent('keydown', {
+    key: '+',
+    code: 'Equal',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true
+  }));
+  await sleep(0);
+  assert(
+    document.documentElement.style.zoom === '1.1',
+    'Web Ctrl+plus did not apply local page zoom'
+  );
+  window.dispatchEvent(new KeyboardEvent('keydown', {
+    key: '-',
+    code: 'Minus',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true
+  }));
+  await sleep(0);
+  assert(
+    document.documentElement.style.zoom === '',
+    'Web Ctrl+minus did not restore local page zoom'
+  );
   const sessions = await unwrap(api.sessions.list(), 'sessions.list');
   assert(sessions.some((session) => session.id === input.sessionId), 'fixture session was not loaded');
   await selectSession(input.sessionId, 'Browser fixture');

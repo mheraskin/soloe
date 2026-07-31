@@ -771,13 +771,23 @@
       fit === currentFit &&
       host === currentHost &&
       currentHost.isConnected;
-    const scheduleFit = () => {
+    let scrollAfterFit = false;
+    const mobileKeyboardOpen = () =>
+      compactViewport
+      && document.documentElement.hasAttribute('data-mobile-keyboard-open');
+    const scheduleFit = (scrollToBottom = false) => {
+      if (mobileKeyboardOpen()) return;
+      scrollAfterFit ||= scrollToBottom;
       terminalFit.scheduleFit(
         currentTerm,
         currentFit,
         canFit,
         ({ cols, rows }) => {
           void ipc.terminal.resize(terminalId, cols, rows).catch(() => {});
+          if (scrollAfterFit) {
+            scrollAfterFit = false;
+            currentTerm.scrollToBottom();
+          }
         },
         (err) => {
           console.warn('[DEBUG-xterm] scheduled layout fit failed', {
@@ -790,13 +800,24 @@
     };
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (!entry || !visible || term !== currentTerm) return;
+      if (!entry || !visible || term !== currentTerm || mobileKeyboardOpen()) return;
       const { width, height } = entry.contentRect;
       if (width < 4 || height < 4) return;
       scheduleFit();
     });
+    const onRailLayout = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        keyboardOpen?: boolean;
+        keyboardClosed?: boolean;
+      }>).detail;
+      if (detail?.keyboardOpen) {
+        currentTerm.scrollToBottom();
+        return;
+      }
+      scheduleFit(detail?.keyboardClosed === true);
+    };
     ro.observe(currentHost);
-    window.addEventListener('soloe:rail-layout', scheduleFit);
+    window.addEventListener('soloe:rail-layout', onRailLayout);
     if (renderer && 'clearTextureAtlas' in renderer) {
       renderer.clearTextureAtlas();
     }
@@ -804,7 +825,7 @@
     scheduleFit();
     return () => {
       ro.disconnect();
-      window.removeEventListener('soloe:rail-layout', scheduleFit);
+      window.removeEventListener('soloe:rail-layout', onRailLayout);
       terminalFit.cancel();
       document.fonts.removeEventListener('loadingdone', repaintFontAtlas);
       try {
@@ -950,12 +971,15 @@
 
   @media (max-width: 767px) {
     .terminal-pane-shell {
+      --mobile-terminal-input-height: calc(
+        3.8125rem + max(0px, calc(env(safe-area-inset-bottom) - 0.5rem))
+      );
       display: grid;
       width: 100%;
       max-width: 100%;
       min-width: 0;
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr) var(--mobile-terminal-input-height);
       overflow: hidden;
       padding: 0.25rem;
     }
@@ -987,6 +1011,15 @@
         max(0.5rem, env(safe-area-inset-bottom)) max(0.25rem, env(safe-area-inset-left));
       border-top: 1px solid color-mix(in oklab, white 12%, transparent);
       background: #151518;
+    }
+
+    :global(html[data-mobile-keyboard-open]) .mobile-terminal-input {
+      position: fixed;
+      right: 0;
+      bottom: var(--keyboard-inset, 0px);
+      left: 0;
+      z-index: 80;
+      padding-bottom: 0.5rem;
     }
 
     .mobile-terminal-input-field {
@@ -1028,6 +1061,12 @@
 
     :global(.xterm) {
       padding: 0.25rem;
+    }
+
+    :global(.xterm-viewport) {
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-y: contain;
+      touch-action: pan-y;
     }
 
     :global(.xterm-helper-textarea) {
