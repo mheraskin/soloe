@@ -1119,7 +1119,13 @@ async function runBrowserWorkflow(input) {
   assert(document.querySelector('.rail-process'), 'Process Usage widget is missing');
 
   const scope = { cwd: input.normalCwd, runMode: input.runMode };
-  const tree = await unwrap(api.files.listTree({ ...scope, force: true }), 'files.listTree');
+  let tree;
+  const treeDeadline = performance.now() + 5_000;
+  do {
+    tree = await unwrap(api.files.listTree({ ...scope, force: true }), 'files.listTree');
+    if (tree.paths.includes('src/app.ts')) break;
+    await sleep(100);
+  } while (performance.now() < treeDeadline);
   assert(tree.paths.includes('src/app.ts'), 'Files tree omitted src/app.ts');
   const original = await unwrap(
     api.files.readFile({ ...scope, relativePath: 'src/app.ts' }),
