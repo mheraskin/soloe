@@ -20,6 +20,7 @@ export interface AgentHookDispatcherOptions {
   autoRename?: AutoRenameService;
   onSessionChange?: (session: Session) => void;
   onLocation?: (sessionId: SessionId, cwd: string) => void | Promise<void>;
+  autoApprovesPermissions?: (session: Session) => boolean | Promise<boolean>;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -169,7 +170,11 @@ export class AgentHookDispatcher {
   ): Promise<HookMapping | null> {
     if (mapping?.state !== 'waiting_for_approval') return mapping;
     const session = await this.opts.sessionStore.get(soloeSessionId).catch(() => null);
-    if (!session || !sessionAutoApprovesPermissions(session)) {
+    const autoApproves = session
+      ? await (this.opts.autoApprovesPermissions?.(session)
+        ?? sessionAutoApprovesPermissions(session))
+      : false;
+    if (!autoApproves) {
       return mapping;
     }
     return {

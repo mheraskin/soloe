@@ -28,6 +28,7 @@ describe('sessionAutoApprovesPermissions', () => {
     ['codex', ['--ask-for-approval', 'never']],
     ['codex', ['--ask-for-approval=never']],
     ['codex', ['-c', 'approval_policy="never"']],
+    ['codex', ['-c', 'approvals_reviewer="auto_review"']],
     ['claude_code', ['--dangerously-skip-permissions']],
     ['claude_code', ['--permission-mode', 'bypassPermissions']],
     ['claude_code', ['--permission-mode=bypassPermissions']]

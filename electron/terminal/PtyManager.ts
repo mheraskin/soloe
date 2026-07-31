@@ -9,7 +9,7 @@ import type {
   SessionStatus
 } from '@shared/types/sessions.js';
 import { effectiveAgentProvider } from '@shared/types/sessions.js';
-import { sessionAutoApprovesPermissions } from '@shared/agent-permissions.js';
+import { sessionAutoApprovesPermissions as launchAutoApprovesPermissions } from '@shared/agent-permissions.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
@@ -27,6 +27,11 @@ import { DEFAULT_COLS, DEFAULT_ROWS } from '@shared/types/terminal.js';
 import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
+import {
+  CodexConfigReader,
+  codexApprovalsAreAutomatic,
+  type CodexEffectiveConfig
+} from '../agents/CodexConfigReader.js';
 import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
 import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
 import { detectUsageLimitPlainText, stripAnsi } from '../agents/UsageLimitDetector.js';
@@ -73,6 +78,7 @@ export interface PtyManagerOptions {
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
   replayBuffer?: TerminalReplayBuffer;
   processFactory?: PtyProcessFactory;
+  codexConfigReader?: CodexConfigReader;
 }
 
 export declare interface PtyManager {
@@ -91,6 +97,7 @@ export class PtyManager extends EventEmitter {
   private readonly pendingAgentInputPersistence = new Map<SessionId, Promise<void>>();
   private readonly replayBuffer: TerminalReplayBuffer;
   private readonly processFactory: PtyProcessFactory;
+  private readonly codexConfigReader: CodexConfigReader;
   private disposed = false;
 
   constructor(private readonly opts: PtyManagerOptions) {
@@ -98,6 +105,12 @@ export class PtyManager extends EventEmitter {
     this.baseEnv = opts.baseEnv ?? process.env;
     this.replayBuffer = opts.replayBuffer ?? new TerminalReplayBuffer();
     this.processFactory = opts.processFactory ?? new NodePtyProcessFactory();
+    this.codexConfigReader = opts.codexConfigReader ?? new CodexConfigReader({
+      commandBuilder: opts.commandBuilder,
+      processFactory: this.processFactory,
+      baseEnv: this.baseEnv,
+      log: (message, detail) => console.warn(`[codex-config] ${message}`, detail)
+    });
   }
 
   forwardBatchedOutput(events: TerminalOutputEvent[]): void {
@@ -156,6 +169,11 @@ export class PtyManager extends EventEmitter {
     await nextTick();
 
     const agentProvider = effectiveAgentProvider(session) ?? legacyAgentProvider(session);
+    const autoApprovesPermissions = await this.sessionAutoApprovesPermissions(
+      session,
+      binaries,
+      true
+    );
     const release = agentProvider ? await this.acquireAgentSpawnSlot(agentProvider) : noop;
     let proc: PtyProcess;
     try {
@@ -196,7 +214,7 @@ export class PtyManager extends EventEmitter {
       usageLimitBuffer: '',
       usageLimitDetected: false,
       agentProvider,
-      autoApprovesPermissions: sessionAutoApprovesPermissions(session)
+      autoApprovesPermissions
     };
     this.terminals.set(terminalId, instance);
     this.attachProcess(instance);
@@ -211,6 +229,7 @@ export class PtyManager extends EventEmitter {
   async rehydrate(): Promise<void> {
     if (!this.processFactory.listRunning || !this.processFactory.attach) return;
     const running = await this.processFactory.listRunning();
+    const binaries = this.opts.getBinaries ? await this.opts.getBinaries() : undefined;
     for (const terminal of running) {
       if (
         this.terminals.has(terminal.terminalId)
@@ -243,7 +262,7 @@ export class PtyManager extends EventEmitter {
         usageLimitBuffer: '',
         usageLimitDetected: false,
         agentProvider: effectiveAgentProvider(session) ?? legacyAgentProvider(session),
-        autoApprovesPermissions: sessionAutoApprovesPermissions(session)
+        autoApprovesPermissions: await this.sessionAutoApprovesPermissions(session, binaries)
       };
       this.terminals.set(terminal.terminalId, instance);
       this.sessionToTerminal.set(terminal.sessionId, terminal.terminalId);
@@ -339,6 +358,25 @@ export class PtyManager extends EventEmitter {
     return instance ? this.toRuntimeState(instance) : null;
   }
 
+  async readCodexConfig(
+    session: Session,
+    binaries?: SettingsBinaries,
+    refresh = false
+  ): Promise<CodexEffectiveConfig | null> {
+    if (effectiveAgentProvider(session) !== 'codex') return null;
+    return this.codexConfigReader.read(session, binaries, refresh);
+  }
+
+  async sessionAutoApprovesPermissions(
+    session: Session,
+    binaries?: SettingsBinaries,
+    refresh = false
+  ): Promise<boolean> {
+    if (launchAutoApprovesPermissions(session)) return true;
+    if (effectiveAgentProvider(session) !== 'codex') return false;
+    return codexApprovalsAreAutomatic(await this.readCodexConfig(session, binaries, refresh));
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
@@ -349,6 +387,7 @@ export class PtyManager extends EventEmitter {
     this.terminals.clear();
     this.sessionToTerminal.clear();
     this.opts.batcher.destroy();
+    this.codexConfigReader.clear();
     this.replayBuffer.clear();
     this.removeAllListeners();
     await this.processFactory.dispose?.();

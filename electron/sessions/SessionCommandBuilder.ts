@@ -34,6 +34,29 @@ export class SessionCommandBuilder {
 
   build(session: Session, ctx: SessionBuildContext): SpawnSpec {
     const inner = this.buildInner(session, ctx);
+    return this.wrap(session, inner, ctx);
+  }
+
+  buildCodexConfigRead(session: Session, ctx: SessionBuildContext): SpawnSpec {
+    const launch = session.launch.type === 'agent' && session.launch.provider === 'codex'
+      ? session.launch
+      : null;
+    const args = [
+      ...codexConfigOverrides(launch?.extraArgs),
+      'app-server',
+      '--listen',
+      'stdio://'
+    ];
+    const inner = buildAgentCommand(
+      ctx.binaries?.codex ?? 'codex',
+      args,
+      {},
+      session.runMode
+    );
+    return this.wrap(session, inner, ctx);
+  }
+
+  private wrap(session: Session, inner: InnerCommand, ctx: SessionBuildContext): SpawnSpec {
     if (session.runMode === 'wsl') {
       if (!session.wslDistro) {
         throw new Error('wslDistro is required for WSL sessions');
@@ -196,6 +219,7 @@ export class SessionCommandBuilder {
     if (launch.reasoningEffort) {
       args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
     }
+    appendCodexTerminalMode(args, launch.extraArgs);
     appendExtraArgs(args, launch.extraArgs);
     return {
       ...buildAgentCommand(
@@ -220,7 +244,84 @@ function appendAgentLaunchArgs(
   if (provider === 'codex' && launch.reasoningEffort) {
     args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
   }
+  if (provider === 'codex') appendCodexTerminalMode(args, launch.extraArgs);
   appendExtraArgs(args, launch.extraArgs);
+}
+
+function appendCodexTerminalMode(args: string[], extraArgs: string[] | undefined): void {
+  if (extraArgs?.some((arg) => arg.trim().toLowerCase() === '--no-alt-screen')) return;
+  args.push('--no-alt-screen');
+}
+
+export function codexConfigOverrides(extraArgs: string[] | undefined): string[] {
+  const source = extraArgs ?? [];
+  const result: string[] = [];
+  for (let index = 0; index < source.length; index += 1) {
+    const arg = source[index]?.trim() ?? '';
+    const normalized = arg.toLowerCase();
+    const next = source[index + 1];
+    if (
+      normalized === '-c'
+      || normalized === '--config'
+      || normalized === '-p'
+      || normalized === '--profile'
+      || normalized === '--enable'
+      || normalized === '--disable'
+    ) {
+      if (next !== undefined) {
+        result.push(arg, next);
+        index += 1;
+      }
+      continue;
+    }
+    if (
+      normalized.startsWith('--config=')
+      || normalized.startsWith('--profile=')
+      || normalized.startsWith('--enable=')
+      || normalized.startsWith('--disable=')
+      || normalized === '--strict-config'
+    ) {
+      result.push(arg);
+      continue;
+    }
+    if (normalized === '--dangerously-bypass-approvals-and-sandbox') {
+      result.push('-c', 'approval_policy="never"', '-c', 'sandbox_mode="danger-full-access"');
+      continue;
+    }
+    if (normalized === '--ask-for-approval' || normalized === '-a') {
+      if (next !== undefined) {
+        result.push('-c', `approval_policy=${JSON.stringify(next)}`);
+        index += 1;
+      }
+      continue;
+    }
+    const approvalValue = optionValue(arg, ['--ask-for-approval', '-a']);
+    if (approvalValue !== null) {
+      result.push('-c', `approval_policy=${JSON.stringify(approvalValue)}`);
+      continue;
+    }
+    if (normalized === '--sandbox' || normalized === '-s') {
+      if (next !== undefined) {
+        result.push('-c', `sandbox_mode=${JSON.stringify(next)}`);
+        index += 1;
+      }
+      continue;
+    }
+    const sandboxValue = optionValue(arg, ['--sandbox', '-s']);
+    if (sandboxValue !== null) {
+      result.push('-c', `sandbox_mode=${JSON.stringify(sandboxValue)}`);
+    }
+  }
+  return result;
+}
+
+function optionValue(arg: string, flags: string[]): string | null {
+  const normalized = arg.toLowerCase();
+  for (const flag of flags) {
+    const prefix = `${flag}=`;
+    if (normalized.startsWith(prefix)) return arg.slice(prefix.length);
+  }
+  return null;
 }
 
 function appendExtraArgs(args: string[], extraArgs: string[] | undefined): void {

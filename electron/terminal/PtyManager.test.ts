@@ -317,6 +317,53 @@ describe('PtyManager', () => {
     expect(observer.listEvents(session.id).map((e) => e.summary)).toContain('approval answered');
   });
 
+  it('does not publish approval state when effective Codex config uses auto-review', async () => {
+    const codexSession: Session = {
+      ...session,
+      name: 'Codex',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    };
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => codexSession),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      codexConfigReader: {
+        read: vi.fn(async () => ({
+          approvalPolicy: 'on-request',
+          approvalsReviewer: 'auto_review',
+          sandboxMode: 'workspace-write',
+          config: {},
+          layers: [],
+          origins: {}
+        })),
+        clear: vi.fn()
+      } as unknown as PtyManagerOptions['codexConfigReader'],
+      observer,
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: codexSession.id });
+    manager.forwardBatchedOutput([{
+      terminalId: started.terminalId,
+      sessionId: codexSession.id,
+      seq: 1,
+      data: 'Do you want to allow this command?'
+    }]);
+
+    expect(observer.getSnapshot(codexSession.id)?.state).not.toBe('waiting_for_approval');
+  });
+
   it('does not infer Claude session ids from transcript files', async () => {
     const claudeSession: Session = {
       ...session,

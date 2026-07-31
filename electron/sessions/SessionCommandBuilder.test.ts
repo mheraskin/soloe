@@ -237,7 +237,7 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     };
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain(
-      'resume codex-attached-123 -m gpt-5.5 -c model_reasoning_effort=high --sandbox danger-full-access'
+      'resume codex-attached-123 -m gpt-5.5 -c model_reasoning_effort=high --no-alt-screen --sandbox danger-full-access'
     );
   });
 
@@ -395,6 +395,48 @@ describe('SessionCommandBuilder — claude_code kind', () => {
 });
 
 describe('SessionCommandBuilder — codex kind', () => {
+  it('uses inline mode so Codex output remains in terminal scrollback', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    };
+
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+
+    expect(script).toContain('--no-alt-screen');
+  });
+
+  it('builds config/read with the same profile and approval overrides as the session', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        extraArgs: [
+          '--profile', 'work',
+          '--ask-for-approval', 'never',
+          '-c', 'approvals_reviewer="auto_review"',
+          '--model', 'ignored-for-config-read'
+        ]
+      }
+    };
+
+    const script = decodeAgentScript(
+      innerLine(builder.buildCodexConfigRead(s, ctx).args)
+    );
+
+    expect(script).toContain('--profile work');
+    expect(script).toContain('approval_policy="never"');
+    expect(script).toContain("approvals_reviewer=\"auto_review\"");
+    expect(script).toContain('app-server --listen stdio://');
+    expect(script).not.toContain('ignored-for-config-read');
+  });
+
   it('appends -m and model_reasoning_effort to the codex argv', () => {
     const s: Session = {
       ...baseFields(),

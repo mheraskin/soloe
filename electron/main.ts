@@ -281,10 +281,13 @@ async function setupServices(): Promise<AppServices> {
     onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[auto-rename] ${message}`, detail)
   });
+  let manager: PtyManager | undefined;
   const hookDispatcher = new AgentHookDispatcher({
     observer,
     sessionStore: store,
     autoRename,
+    autoApprovesPermissions: async (session) =>
+      manager ? manager.sessionAutoApprovesPermissions(session) : false,
     onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[hook-dispatcher] ${message}`, detail)
   });
@@ -329,12 +332,11 @@ async function setupServices(): Promise<AppServices> {
   }
   mcpInfo = startedInfo;
 
-  let manager: PtyManager;
   const runtimeEndpoint = process.env.SOLOE_RUNTIME_ENDPOINT ?? resolveRuntimeEndpoint();
   const runtimeProcessFactory = await RemoteRuntimePtyProcessFactory.connect(runtimeEndpoint);
   console.info(`[terminal] connected to Environment Runtime at ${runtimeEndpoint}`);
   const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
-    manager.forwardBatchedOutput(events);
+    manager?.forwardBatchedOutput(events);
   });
   manager = new PtyManager({
     commandBuilder,

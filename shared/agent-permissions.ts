@@ -11,10 +11,10 @@ export function sessionAutoApprovesPermissions(
     return hasFlag(args, '--dangerously-bypass-approvals-and-sandbox')
       || hasOptionValue(args, ['--ask-for-approval', '-a'], 'never')
       || args.some((arg, index) =>
-        isCodexNeverApprovalConfig(arg)
+        isCodexAutomaticApprovalConfig(arg)
         || (
           (arg === '-c' || arg === '--config')
-          && isCodexNeverApprovalConfig(args[index + 1] ?? '')
+          && isCodexAutomaticApprovalConfig(args[index + 1] ?? '')
         )
       );
   }
@@ -46,10 +46,12 @@ function hasOptionValue(args: string[], flags: string[], expected: string): bool
   return false;
 }
 
-function isCodexNeverApprovalConfig(arg: string): boolean {
+function isCodexAutomaticApprovalConfig(arg: string): boolean {
   const normalized = normalizeValue(arg).replace(/["'\s]+/g, '');
   return normalized === 'approval_policy=never'
-    || normalized === 'approvalpolicy=never';
+    || normalized === 'approvalpolicy=never'
+    || normalized === 'approvals_reviewer=auto_review'
+    || normalized === 'approvalsreviewer=auto_review';
 }
 
 function normalizeValue(value: string | undefined): string {

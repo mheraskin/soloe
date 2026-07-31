@@ -315,6 +315,36 @@ describe('AgentHookDispatcher', () => {
       );
     });
 
+    it('uses the effective session config resolver for Codex permission hooks', async () => {
+      const created = await sessionStore.create({
+        name: 'Codex',
+        cwd: '/tmp',
+        runMode: 'linux',
+        launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+      });
+      const autoApprovesPermissions = vi.fn(async () => true);
+      const effectiveConfigDispatcher = new AgentHookDispatcher({
+        observer,
+        sessionStore,
+        autoApprovesPermissions
+      });
+      observer.setTuiObservedState(created.id, 'working', 'thinking');
+
+      await effectiveConfigDispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'PermissionRequest',
+          command: 'docker compose up'
+        }
+      });
+
+      expect(autoApprovesPermissions).toHaveBeenCalledWith(
+        expect.objectContaining({ id: created.id })
+      );
+      expect(observer.getSnapshot(created.id)?.state).toBe('running_tool');
+    });
+
     it('keeps Codex in approval after the normal prompt and tool hook sequence', async () => {
       const created = await sessionStore.create({
         name: 'Codex',
