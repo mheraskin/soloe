@@ -1089,6 +1089,12 @@ async function runBrowserWorkflow(input) {
     !document.querySelector('button[aria-label="Browser"]'),
     'Electron-only embedded Browser pane was visible in the PWA'
   );
+  for (const label of ['Minimize', 'Maximize', 'Close']) {
+    assert(
+      !document.querySelector(`button[aria-label="${label}"]`),
+      `Electron-only ${label} window control was visible in the PWA`
+    );
+  }
   const sessions = await unwrap(api.sessions.list(), 'sessions.list');
   assert(sessions.some((session) => session.id === input.sessionId), 'fixture session was not loaded');
   await selectSession(input.sessionId, 'Browser fixture');
@@ -1513,6 +1519,13 @@ async function runRemoteElectronWorkflow(input) {
   assert(
     api.transport?.kind === 'remote-electron',
     'Remote Electron did not install the server transport'
+  );
+  await waitUntil(
+    () => ['Minimize', 'Maximize', 'Close'].every((label) =>
+      document.querySelector(`button[aria-label="${label}"]`)
+    ),
+    10_000,
+    'remote Electron native window controls'
   );
   await waitUntil(
     () => Boolean(

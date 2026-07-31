@@ -1386,33 +1386,35 @@
       >
         <Settings class="size-3.5" />
       </Button>
-      <Button
-        variant="ghost"
-        class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
-        onclick={() => ipc.window.minimize()}
-        aria-label="Minimize"
-        title="Minimize"
-      >
-        <Minus class="size-3.5" />
-      </Button>
-      <Button
-        variant="ghost"
-        class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
-        onclick={() => ipc.window.toggleMaximize()}
-        aria-label="Maximize"
-        title="Maximize"
-      >
-        <Maximize2 class="size-3" />
-      </Button>
-      <Button
-        variant="ghost"
-        class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
-        onclick={() => ipc.window.close()}
-        aria-label="Close"
-        title="Close"
-      >
-        <X class="size-3.5" />
-      </Button>
+      {#if supportsBackendOperation('window', 'minimize')}
+        <Button
+          variant="ghost"
+          class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+          onclick={() => ipc.window.minimize()}
+          aria-label="Minimize"
+          title="Minimize"
+        >
+          <Minus class="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+          onclick={() => ipc.window.toggleMaximize()}
+          aria-label="Maximize"
+          title="Maximize"
+        >
+          <Maximize2 class="size-3" />
+        </Button>
+        <Button
+          variant="ghost"
+          class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+          onclick={() => ipc.window.close()}
+          aria-label="Close"
+          title="Close"
+        >
+          <X class="size-3.5" />
+        </Button>
+      {/if}
     </div>
   </header>
   <div class="app-main relative flex min-h-0 flex-1">

@@ -81,6 +81,21 @@ export class SoloeServer {
     const server = createServer(async (request, response) => {
       try {
         const url = new URL(request.url ?? "/", "http://localhost");
+        const rpcOrigin =
+          url.pathname === "/api/rpc"
+            ? this.allowedRendererOrigin(request.headers.origin)
+            : null;
+        if (rpcOrigin) {
+          this.applyRpcCors(response, rpcOrigin);
+        }
+        if (request.method === "OPTIONS" && url.pathname === "/api/rpc") {
+          if (!rpcOrigin || !this.isAllowedRpcPreflight(request)) {
+            this.json(response, 403, { error: "cors_origin_rejected" });
+            return;
+          }
+          response.writeHead(204).end();
+          return;
+        }
         if (
           request.method === "GET" &&
           url.pathname === "/" &&
@@ -431,6 +446,49 @@ export class SoloeServer {
       }
     }
     return false;
+  }
+
+  private allowedRendererOrigin(origin: string | undefined): string | null {
+    if (!origin) return null;
+    try {
+      const url = new URL(origin);
+      if (url.protocol !== "http:") return null;
+      if (
+        url.hostname !== "localhost" &&
+        url.hostname !== "127.0.0.1" &&
+        url.hostname !== "[::1]"
+      ) {
+        return null;
+      }
+      return url.origin;
+    } catch {
+      return null;
+    }
+  }
+
+  private isAllowedRpcPreflight(request: IncomingMessage): boolean {
+    if (request.headers["access-control-request-method"] !== "POST") {
+      return false;
+    }
+    const requestedHeaders = String(
+      request.headers["access-control-request-headers"] ?? "",
+    )
+      .split(",")
+      .map((header) => header.trim().toLowerCase())
+      .filter(Boolean);
+    return requestedHeaders.every(
+      (header) => header === "authorization" || header === "content-type",
+    );
+  }
+
+  private applyRpcCors(response: ServerResponse, origin: string): void {
+    response.setHeader("access-control-allow-origin", origin);
+    response.setHeader("access-control-allow-methods", "POST");
+    response.setHeader(
+      "access-control-allow-headers",
+      "Authorization, Content-Type",
+    );
+    response.setHeader("vary", "Origin");
   }
 
   private tokensMatch(candidate: string | null | undefined): boolean {

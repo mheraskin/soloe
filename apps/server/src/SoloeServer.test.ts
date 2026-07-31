@@ -108,6 +108,77 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
+  it('allows authenticated RPC calls from loopback renderer origins', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-cors-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      rpcHandler: async () => 'renderer-rpc'
+    });
+    const rendererOrigin = 'http://localhost:5173';
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const preflight = await fetch(new URL('/api/rpc', baseUrl), {
+        method: 'OPTIONS',
+        headers: {
+          origin: rendererOrigin,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'authorization,content-type'
+        }
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe(rendererOrigin);
+      expect(preflight.headers.get('access-control-allow-methods')).toBe('POST');
+      expect(preflight.headers.get('access-control-allow-headers')).toBe(
+        'Authorization, Content-Type'
+      );
+
+      const rpcResponse = await fetch(new URL('/api/rpc', baseUrl), {
+        method: 'POST',
+        headers: {
+          ...authorizationHeaders(),
+          'content-type': 'application/json',
+          origin: rendererOrigin
+        },
+        body: JSON.stringify({
+          namespace: 'system',
+          method: 'platform',
+          args: []
+        })
+      });
+      expect(rpcResponse.status).toBe(200);
+      expect(rpcResponse.headers.get('access-control-allow-origin')).toBe(rendererOrigin);
+      await expect(rpcResponse.json()).resolves.toEqual({
+        ok: true,
+        value: 'renderer-rpc'
+      });
+
+      const untrustedPreflight = await fetch(new URL('/api/rpc', baseUrl), {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'https://attacker.example',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'authorization,content-type'
+        }
+      });
+      expect(untrustedPreflight.status).toBe(403);
+      expect(untrustedPreflight.headers.has('access-control-allow-origin')).toBe(false);
+    } finally {
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('exposes runtime control without owning the terminal process', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-api-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);

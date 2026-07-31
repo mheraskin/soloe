@@ -132,6 +132,12 @@ Right-click the Soloe tray icon and choose:
 - **Open Electron client** for the disposable Windows desktop client;
 - **Open Soloe logs** for diagnostics.
 
+Browser and Electron launch actions temporarily disable both launch items,
+change the selected item to **Opening…**, and update the native tray tooltip.
+The longer Electron launch keeps progress feedback visible for a longer
+minimum interval so a slow development startup is not mistaken for a missed
+click.
+
 ## Client-only development
 
 Closing or rebuilding Electron or the browser does not affect runtime-owned
