@@ -52,24 +52,49 @@ describe('attachMobileViewport', () => {
     detach();
   });
 
-  it('keeps the standalone layout height stable while the keyboard opens', () => {
+  it('uses the visible standalone height while the keyboard opens', () => {
     mockDisplayMode(true);
     const detach = attachMobileViewport();
     viewport.height = 600;
     dispatchViewportResize(viewport);
 
-    expect(document.documentElement.style.getPropertyValue('--app-height')).toBe('844px');
+    expect(document.documentElement.style.getPropertyValue('--app-height')).toBe('600px');
     expect(document.documentElement.hasAttribute('data-mobile-keyboard-open')).toBe(true);
     detach();
   });
 
-  it('keeps the Safari layout height stable while the keyboard opens', () => {
+  it('uses the visible Safari height while the keyboard opens', () => {
     mockDisplayMode(false);
     const detach = attachMobileViewport();
     viewport.height = 600;
     dispatchViewportResize(viewport);
 
-    expect(document.documentElement.style.getPropertyValue('--app-height')).toBe('810px');
+    expect(document.documentElement.style.getPropertyValue('--app-height')).toBe('600px');
+    expect(document.documentElement.hasAttribute('data-mobile-keyboard-open')).toBe(true);
+    detach();
+  });
+
+  it('keeps the keyboard open while iOS pans the visual viewport', () => {
+    mockDisplayMode(true);
+    const detach = attachMobileViewport();
+    viewport.height = 600;
+    viewport.offsetTop = 220;
+    dispatchViewportResize(viewport);
+
+    expect(document.documentElement.style.getPropertyValue('--app-height')).toBe('600px');
+    expect(document.documentElement.style.getPropertyValue('--app-top')).toBe('220px');
+    expect(document.documentElement.hasAttribute('data-mobile-keyboard-open')).toBe(true);
+    detach();
+  });
+
+  it('detects keyboards that resize both layout and visual viewports', () => {
+    mockDisplayMode(true);
+    const detach = attachMobileViewport();
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 });
+    viewport.height = 600;
+    dispatchViewportResize(viewport);
+
+    expect(document.documentElement.style.getPropertyValue('--app-height')).toBe('600px');
     expect(document.documentElement.hasAttribute('data-mobile-keyboard-open')).toBe(true);
     detach();
   });

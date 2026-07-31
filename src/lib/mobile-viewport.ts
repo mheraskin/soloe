@@ -12,8 +12,13 @@ export function attachMobileViewport(root: HTMLElement = document.documentElemen
   let keyboardOpen = false;
 
   const update = () => {
+    const visibleHeight = Math.round(viewport?.height ?? window.innerHeight);
     const keyboardInset = viewport
-      ? Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop))
+      ? Math.max(
+          0,
+          Math.round(window.innerHeight - viewport.height),
+          stableHeight - visibleHeight
+        )
       : 0;
     const nextKeyboardOpen = keyboardInset >= KEYBOARD_THRESHOLD_PX;
     const keyboardClosed = keyboardOpen && !nextKeyboardOpen;
@@ -24,7 +29,11 @@ export function attachMobileViewport(root: HTMLElement = document.documentElemen
     }
     keyboardOpen = nextKeyboardOpen;
 
-    root.style.setProperty('--app-height', `${stableHeight}px`);
+    const appHeight = nextKeyboardOpen && viewport
+      ? Math.round(viewport.height)
+      : stableHeight;
+    root.style.setProperty('--app-height', `${appHeight}px`);
+    root.style.setProperty('--app-top', `${Math.round(viewport?.offsetTop ?? 0)}px`);
     root.style.setProperty('--keyboard-inset', `${keyboardInset}px`);
     root.toggleAttribute('data-mobile-keyboard-open', keyboardOpen);
     window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
@@ -46,6 +55,7 @@ export function attachMobileViewport(root: HTMLElement = document.documentElemen
     viewport?.removeEventListener('scroll', update);
     standaloneQuery.removeEventListener('change', update);
     root.style.removeProperty('--app-height');
+    root.style.removeProperty('--app-top');
     root.style.removeProperty('--keyboard-inset');
     root.removeAttribute('data-mobile-keyboard-open');
   };

@@ -250,6 +250,15 @@
     --mobile-workspace-dock-height: calc(4.75rem + env(safe-area-inset-bottom));
   }
 
+  .app-shell {
+    position: fixed;
+    top: var(--app-top, 0px);
+    right: 0;
+    left: 0;
+    width: 100%;
+    overflow: hidden;
+  }
+
   .mobile-window-control {
     display: none !important;
   }
@@ -573,6 +582,15 @@
 
   html[data-mobile-keyboard-open] .mobile-workspace-dock {
     display: none;
+  }
+
+  html[data-mobile-keyboard-open] .mobile-workspace-page {
+    padding-bottom: 0;
+  }
+
+  html[data-mobile-keyboard-open] .mobile-notes-surface textarea {
+    min-height: 0;
+    overscroll-behavior: contain;
   }
 
   @media (prefers-reduced-motion: reduce) {
