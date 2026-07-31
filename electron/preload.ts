@@ -94,6 +94,7 @@ import type {
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
+import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
 import type {
   TerminalExitEvent,
   TerminalId,
@@ -300,7 +301,8 @@ const soloe: SoloeApi = {
   },
   diagnostics: {
     list: () => ipcRenderer.invoke(IpcChannels.diagnostics.list),
-    crashLogs: () => ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs)
+    crashLogs: (request?: DiagnosticLogsRequest) =>
+      ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs, request)
   },
   window: {
     minimize: () => ipcRenderer.invoke(IpcChannels.window.minimize),

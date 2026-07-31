@@ -61,7 +61,11 @@ import type {
   FileSearchRequest,
   FileSearchResult
 } from './files.js';
-import type { CrashLogSummary, DiagnosticItem } from './diagnostics.js';
+import type {
+  CrashLogSummary,
+  DiagnosticItem,
+  DiagnosticLogsRequest
+} from './diagnostics.js';
 import type {
   CoverageMapSnapshot,
   FeatureChangeEvent,
@@ -494,7 +498,7 @@ export interface FilesApi {
 
 export interface DiagnosticsApi {
   list(): Promise<IpcResult<DiagnosticItem[]>>;
-  crashLogs(): Promise<IpcResult<CrashLogSummary[]>>;
+  crashLogs(request?: DiagnosticLogsRequest): Promise<IpcResult<CrashLogSummary[]>>;
 }
 
 export interface WindowApi {

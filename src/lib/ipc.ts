@@ -58,6 +58,7 @@ import type {
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
+import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
 import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
@@ -329,7 +330,8 @@ export const backend = {
   },
   diagnostics: {
     list: async () => unwrap(await c.diagnostics.list()),
-    crashLogs: async () => unwrap(await c.diagnostics.crashLogs())
+    crashLogs: async (request?: DiagnosticLogsRequest) =>
+      unwrap(await c.diagnostics.crashLogs(request ? toIpcPayload(request) : undefined))
   },
   window: {
     minimize: async () => unwrap(await c.window.minimize()),

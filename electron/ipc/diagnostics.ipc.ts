@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
+import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
 import type { DiagnosticsService } from '../diagnostics/DiagnosticsService.js';
 import { ipcInvoke } from './result.js';
 
@@ -19,8 +20,8 @@ export class DiagnosticsIpc {
     ipcMain.handle(IpcChannels.diagnostics.list, () =>
       ipcInvoke(() => this.opts.service.list())
     );
-    ipcMain.handle(IpcChannels.diagnostics.crashLogs, () =>
-      ipcInvoke(() => this.opts.service.crashLogs())
+    ipcMain.handle(IpcChannels.diagnostics.crashLogs, (_event, request?: DiagnosticLogsRequest) =>
+      ipcInvoke(() => this.opts.service.crashLogs(request))
     );
   }
 
