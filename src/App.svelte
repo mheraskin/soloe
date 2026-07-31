@@ -578,7 +578,15 @@
   // keystroke so the ring doesn't linger while typing.
   async function toggleTerminalFocus(): Promise<void> {
     const active = document.activeElement as HTMLElement | null;
-    const inRail = Boolean(active?.closest('aside[aria-label="Session rail"]'));
+    const browserPopoverActive = Boolean(active?.closest('[data-browser-pane-popover]'));
+    const paneEl =
+      active?.closest<HTMLElement>('[data-pane-slot]')
+      ?? (browserPopoverActive
+        ? document
+            .querySelector<HTMLElement>('.mobile-browser-surface')
+            ?.closest<HTMLElement>('[data-pane-slot]')
+        : null);
+    const inRail = Boolean(paneEl);
     const openTabs = rightRail.openTabs;
 
     if (!rightRail.open) {
@@ -596,7 +604,6 @@
     // nearest pane wrapper (each has a data-pane-slot attribute) so we
     // honour the user's actual focus, not just whatever the last Ctrl+;
     // set in the store. Fall back to the store if the DOM lookup fails.
-    const paneEl = active?.closest<HTMLElement>('[data-pane-slot]');
     const domSlot = paneEl?.dataset.paneSlot;
     const currentSlot: 0 | 1 | null =
       domSlot === '0' ? 0 : domSlot === '1' ? 1 : rightRail.focusedPaneSlot;

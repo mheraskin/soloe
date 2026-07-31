@@ -35,6 +35,7 @@
   import BrowserDeviceMenu from './BrowserDeviceMenu.svelte';
   import { ipc } from '../../lib/ipc';
   import { BrowserDevToolsViewController } from '../../lib/browser-devtools-bounds';
+  import { normalizeBrowserUrl } from '../../lib/browser-navigation';
 
   interface FailureSuggestion {
     httpsUrl: string;
@@ -388,6 +389,13 @@
           window.dispatchEvent(synthesized);
           return;
         }
+        if (e.channel === 'soloe:webview-pointerdown') {
+          deviceMenuOpen = false;
+          autofillOpen = false;
+          fillPrompt = null;
+          savePrompt = null;
+          return;
+        }
         if (e.channel === 'soloe:webview-password-focus') {
           const payload = e.args?.[0] as
             | { origin?: string; rect?: FieldRect | null }
@@ -459,55 +467,10 @@
     return fn;
   }
 
-  // Localhost-ish hosts get http://; everything else defaults to https://.
-  // Catches localhost, loopback, private network ranges, and bare ports
-  // (":3000") which can only mean a local dev server. The host may carry a
-  // port (e.g. "localhost:3000") — strip it before matching so port-bearing
-  // hosts aren't accidentally treated as public.
-  function looksLocal(host: string): boolean {
-    if (!host) return false;
-    if (host.startsWith(':')) return true;
-    // IPv6 in brackets: [::1] or [::1]:8080
-    if (host.startsWith('[')) {
-      const closing = host.indexOf(']');
-      if (closing < 0) return false;
-      return host.slice(1, closing).toLowerCase() === '::1';
-    }
-    const lower = host.toLowerCase();
-    const hostname = lower.split(':')[0] ?? '';
-    if (!hostname) return false;
-    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
-    if (/^127\./.test(hostname)) return true;
-    if (/^10\./.test(hostname)) return true;
-    if (/^192\.168\./.test(hostname)) return true;
-    if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
-    return false;
-  }
-
-  function normalizeUrl(input: string): string {
-    const trimmed = input.trim();
-    if (!trimmed) return 'about:blank';
-    // Already has a scheme (http:, https:, file:, about:, data:, …) — leave it.
-    if (/^[a-z][a-z0-9+\-.]*:/i.test(trimmed)) return trimmed;
-    // No dot, no colon, no slash → not a URL, treat as a search query.
-    // Without this, "foo" would be navigated to as "https://foo" which
-    // produces a "site can't be reached" error instead of useful behavior.
-    if (!/[.:\/]/.test(trimmed) && !looksLocal(trimmed)) {
-      return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-    }
-    const hostPart = trimmed.split(/[\/?#]/, 1)[0] ?? '';
-    // Bare port "/3000" or ":3000" → assume localhost on that port.
-    if (trimmed.startsWith(':')) {
-      return `http://localhost${trimmed}`;
-    }
-    const scheme = looksLocal(hostPart) ? 'http' : 'https';
-    return `${scheme}://${trimmed}`;
-  }
-
   function commitNavigation(rawUrl: string): void {
     const tab = browserStore.activeTab;
     if (!tab) return;
-    const target = normalizeUrl(rawUrl);
+    const target = normalizeBrowserUrl(rawUrl);
     browserStore.navigate(tab.id, target);
     urlInput = target;
     lastSyncedUrl = target;
@@ -900,6 +863,14 @@
       fillPrompt = null;
       savePrompt = null;
     };
+    const onBrowserOverlayPointerDown = (event: PointerEvent) => {
+      if (!fillPrompt && !savePrompt) return;
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (fillPromptEl?.contains(target) || savePromptEl?.contains(target)) return;
+      fillPrompt = null;
+      savePrompt = null;
+    };
     // Whenever the host layout shifts the popover's anchor goes stale —
     // capture-phase scroll covers nested containers (responsive-mode
     // wrapper, devtools resize), resize covers window changes, and the
@@ -911,6 +882,7 @@
     window.addEventListener('soloe:rail-resize-end', onLayoutShift);
     window.addEventListener('soloe:focus-pane', onFocusPane);
     window.addEventListener('keydown', onAutofillEscape);
+    window.addEventListener('pointerdown', onBrowserOverlayPointerDown, true);
     window.addEventListener('scroll', onLayoutShift, true);
     window.addEventListener('resize', onLayoutShift);
 
@@ -921,6 +893,7 @@
       window.removeEventListener('soloe:rail-resize-end', onLayoutShift);
       window.removeEventListener('soloe:focus-pane', onFocusPane);
       window.removeEventListener('keydown', onAutofillEscape);
+      window.removeEventListener('pointerdown', onBrowserOverlayPointerDown, true);
       window.removeEventListener('scroll', onLayoutShift, true);
       window.removeEventListener('resize', onLayoutShift);
       browserStore.releaseResidents();
@@ -1030,6 +1003,7 @@
     anchor: { left: number; top: number } | null;
   }
   let fillPrompt = $state<FillPrompt | null>(null);
+  let fillPromptEl = $state<HTMLDivElement | null>(null);
   let suppressFillPromptOrigin = '';
   let suppressFillPromptUntil = 0;
 
@@ -1080,6 +1054,7 @@
     password: string;
   }
   let savePrompt = $state<SavePrompt | null>(null);
+  let savePromptEl = $state<HTMLDivElement | null>(null);
   let savePromptBusy = $state(false);
 
   async function handlePasswordFocus(
@@ -1580,7 +1555,14 @@
           </Button>
         {/snippet}
       </Popover.Trigger>
-      <Popover.Content align="end" class="w-auto p-0">
+      <Popover.Content
+        align="end"
+        class="w-auto p-0"
+        trapFocus={false}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        data-browser-pane-popover="device"
+      >
         <BrowserDeviceMenu
           {device}
           onSelect={setDevice}
@@ -1605,10 +1587,18 @@
           </Button>
         {/snippet}
       </Popover.Trigger>
-      <Popover.Content align="end" class="w-auto p-0">
+      <Popover.Content
+        align="end"
+        class="w-auto p-0"
+        trapFocus={false}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        data-browser-pane-popover="autofill"
+      >
         <BrowserAutofillPopover
           currentUrl={activeUrl}
           onFill={runAutofill}
+          onNavigate={(url) => commitNavigation(url)}
           onClose={() => (autofillOpen = false)}
         />
       </Popover.Content>
@@ -1762,6 +1752,7 @@
       {#if fillPrompt}
         {@const fillAnchor = fillPrompt.anchor}
         <div
+          bind:this={fillPromptEl}
           class={fillAnchor
             ? 'fixed z-30 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'
             : 'absolute top-2 right-2 z-20 flex w-72 flex-col gap-1 rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg'}
@@ -1802,6 +1793,7 @@
 
       {#if savePrompt}
         <div
+          bind:this={savePromptEl}
           class="mobile-browser-prompt absolute top-2 right-2 z-20 flex w-72 flex-col gap-2 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-lg"
           role="dialog"
           aria-label="Save password"
