@@ -319,6 +319,85 @@ describe("SoloeDomain", () => {
     }
   });
 
+  it("opens only session-owned backend paths and reports available WSL hosts", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-system-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const pathService = {
+      openSessionPath: vi.fn(async () => true as const),
+    };
+    const wslHostDetector = {
+      detect: vi.fn(async () => [
+        {
+          distro: "Ubuntu",
+          homeUnc: "\\\\wsl.localhost\\Ubuntu\\home\\user",
+          homeLinux: "/home/user",
+          available: true,
+        },
+        {
+          distro: "Unavailable",
+          homeUnc: null,
+          homeLinux: null,
+          available: false,
+          reason: "offline",
+        },
+      ]),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      pathService,
+      wslHostDetector,
+    });
+
+    try {
+      await domain.init();
+      await expect(
+        domain.invoke({
+          namespace: "system",
+          method: "openPath",
+          args: ["session-1"],
+        }),
+      ).resolves.toBe(true);
+      expect(pathService.openSessionPath).toHaveBeenCalledWith("session-1");
+      await expect(
+        domain.invoke({
+          namespace: "system",
+          method: "listWslDistros",
+          args: [],
+        }),
+      ).resolves.toEqual(
+        process.env.WSL_DISTRO_NAME?.trim()
+          ? [process.env.WSL_DISTRO_NAME.trim()]
+          : ["Ubuntu"],
+      );
+
+      for (const args of [[], ["/arbitrary/path"], ["bad\0id"], ["session-1", "extra"]]) {
+        await expect(
+          domain.invoke({
+            namespace: "system",
+            method: "openPath",
+            args,
+          }),
+        ).rejects.toMatchObject({
+          code:
+            args.length === 1
+              ? "invalid_system_path_request"
+              : "invalid_rpc_arguments",
+        });
+      }
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("serves bounded redacted diagnostics without exposing host paths", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-diagnostics-"));
     const crashDirectory = path.join(directory, "crashes");

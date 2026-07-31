@@ -86,6 +86,8 @@ import {
 import { hostPlatform, platformInfo } from "../../../shared/platform.js";
 import {
   FileService,
+  BackendPathError,
+  BackendPathService,
   DiagnosticsService,
   FeatureArtifactObservation,
   FeatureService,
@@ -99,6 +101,7 @@ import {
   WorktreeFileIndex,
   VaultStore,
   VaultStoreError,
+  WslHostDetector,
   type FileIndexScope,
 } from "@soloe/domain";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
@@ -156,6 +159,8 @@ export interface SoloeDomainOptions {
     | "uninstallCodex"
   >;
   enableAgentBridge?: boolean;
+  pathService?: Pick<BackendPathService, "openSessionPath">;
+  wslHostDetector?: Pick<WslHostDetector, "detect">;
 }
 
 export interface SoloeDomain {
@@ -181,6 +186,8 @@ export class SoloeDomain extends EventEmitter {
   private readonly files: FileService;
   private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
+  private readonly pathService: Pick<BackendPathService, "openSessionPath">;
+  private readonly wslHostDetector: Pick<WslHostDetector, "detect">;
   private integrationInstaller: NonNullable<
     SoloeDomainOptions["integrationInstaller"]
   >;
@@ -241,6 +248,12 @@ export class SoloeDomain extends EventEmitter {
     });
     this.integrationInstaller =
       options.integrationInstaller ?? new HookInstaller();
+    this.pathService =
+      options.pathService ??
+      new BackendPathService({
+        getSession: (sessionId) => this.sessions.get(sessionId),
+      });
+    this.wslHostDetector = options.wslHostDetector ?? new WslHostDetector();
     this.diagnostics = new DiagnosticsService({
       settings: this.settings,
       projects: this.projects,
@@ -504,10 +517,31 @@ export class SoloeDomain extends EventEmitter {
       requireArgumentCount("system.platform", args, 0);
       return platformInfo();
     }
+    if (method === "openPath") {
+      requireArgumentCount("system.openPath", args, 1);
+      try {
+        return await this.pathService.openSessionPath(
+          validateSystemSessionId(args[0]),
+        );
+      } catch (error) {
+        if (error instanceof RpcError) throw error;
+        if (error instanceof BackendPathError) {
+          throw new RpcError(error.code, error.message);
+        }
+        throw new RpcError(
+          "path_open_failed",
+          "The backend could not open the selected session directory",
+        );
+      }
+    }
     if (method === "listWslDistros") {
       requireArgumentCount("system.listWslDistros", args, 0);
       const distro = process.env.WSL_DISTRO_NAME?.trim();
-      return distro ? [distro] : [];
+      if (distro) return [distro];
+      const hosts = await this.wslHostDetector.detect();
+      return hosts
+        .filter((host) => host.available)
+        .map((host) => host.distro);
     }
     if (method === "usage") {
       if (args.length > 1) {
@@ -1658,6 +1692,22 @@ function portFromBridgeUrl(value: string): number | null {
 
 function describeIntegrationHost(host: AgentIntegrationHostKey): string {
   return host.kind === "wsl" ? `wsl:${host.distro}` : host.kind;
+}
+
+function validateSystemSessionId(value: unknown): SessionId {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > 256 ||
+    value.includes("\0") ||
+    /[\\/]/u.test(value)
+  ) {
+    throw new RpcError(
+      "invalid_system_path_request",
+      "system.openPath sessionId must be a bounded string",
+    );
+  }
+  return value;
 }
 
 function validateSystemUsageRequest(value: unknown): SystemUsageRequest {

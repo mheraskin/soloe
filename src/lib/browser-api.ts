@@ -1,6 +1,7 @@
 import type {
   IpcResult,
   SoloeApi,
+  SystemApi,
   TerminalApi,
 } from "@shared/types/ipc.js";
 import type {
@@ -23,6 +24,11 @@ export interface BrowserApiOptions {
   token?: string;
   clientId?: string;
   transport?: Extract<SoloeTransportKind, "browser" | "remote-electron">;
+  saveTextClient?: (request: {
+    defaultPath?: string;
+    content: string;
+  }) => void | Promise<void>;
+  openExternalClient?: (url: string) => void | Promise<void>;
 }
 
 type Listener = (payload: never) => void;
@@ -281,6 +287,34 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
       subscribe("location", listener),
     onReconnect: (listener) => subscribe("reconnect", listener),
   };
+  const clientResult = async (
+    operation: () => void | Promise<void>,
+  ): Promise<IpcResult<true>> => {
+    try {
+      await operation();
+      return { ok: true, value: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
+  const system: SystemApi = {
+    platform: () => rpc("system", "platform", []),
+    openPath: (sessionId) => rpc("system", "openPath", [sessionId]),
+    saveText: (request) =>
+      clientResult(() =>
+        (options.saveTextClient ?? downloadText)(request),
+      ),
+    openExternal: (externalUrl) =>
+      clientResult(() =>
+        (options.openExternalClient ?? openSafeExternal)(externalUrl),
+      ),
+    listWslDistros: () => rpc("system", "listWslDistros", []),
+    usage: (request) =>
+      rpc("system", "usage", request === undefined ? [] : [request]),
+  };
 
   return {
     transport: {
@@ -291,7 +325,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     sessions: namespace("sessions", NAMESPACE_METHODS.sessions),
     terminal,
     observer: namespace("observer", NAMESPACE_METHODS.observer),
-    system: namespace("system", NAMESPACE_METHODS.system),
+    system,
     settings: namespace("settings", NAMESPACE_METHODS.settings),
     projects: namespace("projects", NAMESPACE_METHODS.projects),
     notes: namespace("notes", NAMESPACE_METHODS.notes),
@@ -317,4 +351,51 @@ export function installBrowserApi(): void {
   if (!window.soloe) {
     window.soloe = createBrowserApi();
   }
+}
+
+function downloadText(request: {
+  defaultPath?: string;
+  content: string;
+}): void {
+  if (typeof request.content !== "string") {
+    throw new Error("Text download content must be a string");
+  }
+  const name = safeDownloadName(request.defaultPath);
+  const objectUrl = URL.createObjectURL(
+    new Blob([request.content], { type: "text/plain;charset=utf-8" }),
+  );
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = name;
+    anchor.rel = "noopener";
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function safeDownloadName(value: string | undefined): string {
+  const candidate = value?.split(/[\\/]/u).pop()?.trim() ?? "";
+  const sanitized = candidate
+    .replace(/[\u0000-\u001f\u007f]/gu, "")
+    .slice(0, 255);
+  return sanitized || "soloe-export.txt";
+}
+
+function openSafeExternal(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("External link must be an absolute URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("External link must use http or https");
+  }
+  const opened = window.open(url.href, "_blank", "noopener,noreferrer");
+  if (!opened) {
+    throw new Error("The browser blocked the external link");
+  }
+  opened.opener = null;
 }

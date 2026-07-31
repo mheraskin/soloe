@@ -655,6 +655,9 @@ describe('Soloe Server lifecycle', () => {
       installCodex: vi.fn(),
       uninstallCodex: vi.fn()
     };
+    const pathService = {
+      openSessionPath: vi.fn(async () => true as const)
+    };
 
     try {
       await runtime.listen();
@@ -663,7 +666,8 @@ describe('Soloe Server lifecycle', () => {
         dataDirectory: directory,
         runtime: domainRuntime,
         integrationInstaller,
-        enableAgentBridge: true
+        enableAgentBridge: true,
+        pathService
       });
       await domain.init();
       server = new SoloeServer({
@@ -767,6 +771,10 @@ describe('Soloe Server lifecycle', () => {
           launch: { type: 'terminal', shell: 'auto' }
         }
       ]);
+      await expect(
+        rpc(baseUrl, 'system', 'openPath', [session.id])
+      ).resolves.toBe(true);
+      expect(pathService.openSessionPath).toHaveBeenCalledWith(session.id);
       const started = await rpc<{
         terminalId: string;
         spec: { env: Record<string, string> };

@@ -95,6 +95,7 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "git.pull",
   "git.fetch",
   "system.platform",
+  "system.openPath",
   "system.listWslDistros",
   "system.usage",
   "overview.get",
@@ -129,6 +130,11 @@ export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
   "browser.closeDevTools",
 ]);
 
+export const CLIENT_NATIVE_METHODS = new Set<string>([
+  "system.saveText",
+  "system.openExternal",
+]);
+
 export function supportsRpc(
   transport: SoloeTransportKind,
   namespace: string,
@@ -136,6 +142,7 @@ export function supportsRpc(
 ): boolean {
   if (transport === "local-electron") return true;
   const key = `${namespace}.${method}`;
+  if (CLIENT_NATIVE_METHODS.has(key)) return true;
   if (SERVER_RPC_METHODS.has(key)) return true;
   return transport === "remote-electron" && REMOTE_ELECTRON_NATIVE_METHODS.has(key);
 }

@@ -180,6 +180,59 @@ describe("browser API", () => {
     });
   });
 
+  it("opens backend session paths through RPC and keeps browser exports client-native", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const saveTextClient = vi.fn();
+    const openExternalClient = vi.fn();
+    const api = createBrowserApi({
+      clientId: "system-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+      saveTextClient,
+      openExternalClient,
+    });
+
+    await api.system.openPath("session-1");
+    await api.system.saveText({
+      defaultPath: "session-1.log",
+      content: "terminal transcript",
+    });
+    await api.system.openExternal("https://example.test/docs");
+
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "system",
+      method: "openPath",
+      args: ["session-1"],
+      clientId: "system-browser",
+    });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(saveTextClient).toHaveBeenCalledWith({
+      defaultPath: "session-1.log",
+      content: "terminal transcript",
+    });
+    expect(openExternalClient).toHaveBeenCalledWith("https://example.test/docs");
+  });
+
+  it("rejects unsafe browser external-link protocols", async () => {
+    const open = vi.spyOn(window, "open");
+    const api = createBrowserApi({
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    await expect(api.system.openExternal("javascript:alert(1)")).resolves.toEqual({
+      ok: false,
+      error: "External link must use http or https",
+    });
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
   it("requests bounded diagnostics from the application server", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -474,6 +527,9 @@ describe("browser API", () => {
     expect(api.transport?.supports("features", "scan")).toBe(true);
     expect(api.transport?.supports("features", "subscribe")).toBe(true);
     expect(api.transport?.supports("system", "usage")).toBe(true);
+    expect(api.transport?.supports("system", "openPath")).toBe(true);
+    expect(api.transport?.supports("system", "saveText")).toBe(true);
+    expect(api.transport?.supports("system", "openExternal")).toBe(true);
     expect(api.transport?.supports("diagnostics", "list")).toBe(true);
     expect(api.transport?.supports("diagnostics", "crashLogs")).toBe(true);
     expect(api.transport?.supports("vault", "list")).toBe(true);
