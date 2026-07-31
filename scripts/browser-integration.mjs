@@ -1009,10 +1009,16 @@ async function runBrowserWorkflow(input) {
   );
   assert(search.some((entry) => entry.path === 'integration.txt'), 'File search missed saved file');
 
-  const changes = await unwrap(
-    api.git.workingChanges({ ...scope, force: true }),
-    'git.workingChanges'
-  );
+  let changes;
+  const gitDeadline = performance.now() + 5_000;
+  do {
+    changes = await unwrap(
+      api.git.workingChanges({ ...scope, force: true }),
+      'git.workingChanges'
+    );
+    if (changes.changes.some((change) => change.path === 'src/app.ts')) break;
+    await sleep(100);
+  } while (performance.now() < gitDeadline);
   assert(changes.changes.some((change) => change.path === 'src/app.ts'), 'Diff missed app change');
   await unwrap(
     api.git.fileDiff({ ...scope, path: 'src/app.ts', contextLines: 3 }),
