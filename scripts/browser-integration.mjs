@@ -40,6 +40,7 @@ async function main() {
     createFixtureRepository(normalRepo, 40, 2),
     createFixtureRepository(largeRepo, config.largeFiles, config.largeChanges)
   ]);
+  const overviewAgent = await createFakeOverviewAgent(scratchRoot);
 
   runtime = await startService(
     ['--filter', '@soloe/runtime', 'start'],
@@ -60,6 +61,7 @@ async function main() {
   };
   server = await startService(['--filter', '@soloe/server', 'start'], serverEnv, 'server');
   const baseUrl = `http://127.0.0.1:${serverPort}`;
+  await configureOverviewAgent(baseUrl, overviewAgent);
 
   const normalProject = await rpc(baseUrl, 'projects', 'create', [{
     name: 'Browser integration',
@@ -227,6 +229,10 @@ async function runExistingServerSmoke() {
   assert(config.webUrl, '--web-url is required with --server-url');
   assert(config.serverToken, '--server-token is required with --server-url');
   assert(config.smokeCwd, '--smoke-cwd is required with --server-url');
+  assert(
+    Boolean(config.serviceDataDir) === Boolean(config.wslDistro),
+    '--service-data-dir and --wsl-distro must be provided together'
+  );
   await fs.access(path.join(root, 'out', 'web', 'index.html')).catch(() => {
     throw new Error('Browser bundle is missing; run pnpm --filter @soloe/web build first');
   });
@@ -237,6 +243,9 @@ async function runExistingServerSmoke() {
     `soloe-browser-integration-${process.pid}-${Date.now()}`
   );
   const readyMarker = `soloe-fixture-ready-${process.pid}`;
+  const overviewAgentSource = Buffer.from(fakeOverviewAgentSource(), 'utf8').toString('base64');
+  const overviewAgent = path.posix.join(fixtureRoot, 'fake-codex');
+  const overviewAgentModule = path.posix.join(fixtureRoot, 'fake-overview-agent.mjs');
   const bootstrapSession = await rpc(baseUrl, 'sessions', 'create', [{
     name: 'WSL bootstrap',
     cwd: config.smokeCwd,
@@ -263,6 +272,9 @@ async function runExistingServerSmoke() {
     "git commit -m 'test: create browser fixture' >/dev/null",
     "printf 'export const value = 2;\\n' > src/app.ts",
     "printf 'browser integration\\n' > untracked.txt",
+    `printf '%s' '${overviewAgentSource}' | base64 -d > '${overviewAgentModule}'`,
+    `printf '#!/usr/bin/env sh\\nexec node \"${overviewAgentModule}\" \"$@\"\\n' > '${overviewAgent}'`,
+    `chmod +x '${overviewAgent}'`,
     `printf '${readyMarker}\\n'`
   ].join(' && ');
   await rpc(baseUrl, 'terminal', 'input', [
@@ -276,6 +288,7 @@ async function runExistingServerSmoke() {
     ]);
     return replay.data.includes(readyMarker);
   }, 20_000, 'WSL fixture repository');
+  await configureOverviewAgent(baseUrl, overviewAgent);
 
   const project = await rpc(baseUrl, 'projects', 'create', [{
     name: 'WSL browser integration',
@@ -334,11 +347,20 @@ async function runExistingServerSmoke() {
   await second.cdp.evaluate(`(() => {
     window.__soloeNotesEvents = [];
     window.soloe.notes.onChange((event) => window.__soloeNotesEvents.push(event));
+    window.__soloeReconnects = 0;
+    window.soloe.terminal.onReconnect(() => { window.__soloeReconnects += 1; });
     return true;
   })()`);
   await remote.cdp.evaluate(`(() => {
     window.__soloeNotesEvents = [];
     window.soloe.notes.onChange((event) => window.__soloeNotesEvents.push(event));
+    window.__soloeReconnects = 0;
+    window.soloe.terminal.onReconnect(() => { window.__soloeReconnects += 1; });
+    return true;
+  })()`);
+  await first.cdp.evaluate(`(() => {
+    window.__soloeReconnects = 0;
+    window.soloe.terminal.onReconnect(() => { window.__soloeReconnects += 1; });
     return true;
   })()`);
   await first.cdp.evaluate(`(async () => {
@@ -360,6 +382,15 @@ async function runExistingServerSmoke() {
       `window.__soloeNotesEvents.some((event) => event.projectId === ${JSON.stringify(project.id)})`
     )
   ), 10_000, 'WSL remote Electron notes event');
+
+  const serverRestart = config.serviceDataDir
+    ? await restartWslServer({
+        baseUrl,
+        serviceDataDir: config.serviceDataDir,
+        wslDistro: config.wslDistro,
+        clients: [first, second, remote]
+      })
+    : { exercised: false };
 
   const runningBeforeClose = await rpc(baseUrl, 'terminal', 'listRunning');
   assert(
@@ -407,9 +438,66 @@ async function runExistingServerSmoke() {
       remoteElectronNotesChangeObserved: true,
       terminalSurvivedRemoteElectronClose: true,
       terminalSurvivedBrowserClose: true,
-      replayRecoveredByReplacementClient: true
-    }
+      replayRecoveredByReplacementClient: true,
+      reconnectObservedByAllClients: serverRestart.exercised
+    },
+    serverRestart
   }, null, 2)}\n`);
+}
+
+async function restartWslServer({
+  baseUrl,
+  serviceDataDir,
+  wslDistro,
+  clients
+}) {
+  const runtimeBefore = await readServiceRecord(serviceDataDir, 'runtime');
+  const serverBefore = await readServiceRecord(serviceDataDir, 'server');
+  assert(runtimeBefore?.pid, 'WSL Runtime service record is missing');
+  assert(serverBefore?.pid, 'WSL Server service record is missing');
+  await execFileAsync(
+    'wsl.exe',
+    ['--distribution', wslDistro, '--exec', 'kill', '-TERM', String(serverBefore.pid)],
+    { windowsHide: true }
+  );
+  let serverAfter;
+  await waitFor(async () => {
+    serverAfter = await readServiceRecord(serviceDataDir, 'server');
+    if (!serverAfter?.pid || serverAfter.pid === serverBefore.pid) return false;
+    try {
+      await rpc(baseUrl, 'sessions', 'list');
+      return true;
+    } catch {
+      return false;
+    }
+  }, 30_000, 'WSL Application Server replacement');
+  const runtimeAfter = await readServiceRecord(serviceDataDir, 'runtime');
+  assert(
+    runtimeAfter?.pid === runtimeBefore.pid,
+    `WSL Runtime changed across Server restart (${runtimeBefore.pid} -> ${runtimeAfter?.pid})`
+  );
+  await waitFor(async () => {
+    const reconnects = await Promise.all(
+      clients.map((client) => client.cdp.evaluate('window.__soloeReconnects'))
+    );
+    return reconnects.every((count) => count >= 1);
+  }, 20_000, 'WSL clients to reconnect after Server replacement');
+  return {
+    exercised: true,
+    previousServerPid: serverBefore.pid,
+    replacementServerPid: serverAfter.pid,
+    runtimePid: runtimeAfter.pid,
+    runtimePreserved: true,
+    allClientsReconnected: true
+  };
+}
+
+async function readServiceRecord(dataDirectory, service) {
+  try {
+    return JSON.parse(await fs.readFile(path.join(dataDirectory, `${service}.json`), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 async function createFixtureRepository(directory, fileCount, changedCount) {
@@ -454,6 +542,47 @@ async function createFixtureRepository(directory, fileCount, changedCount) {
   }
   await fs.writeFile(path.join(directory, 'src', 'app.ts'), 'export const value = 2;\n');
   await fs.writeFile(path.join(directory, 'untracked.txt'), 'browser integration\n');
+}
+
+async function createFakeOverviewAgent(directory) {
+  const modulePath = path.join(directory, 'fake-overview-agent.mjs');
+  await fs.writeFile(modulePath, fakeOverviewAgentSource());
+  if (process.platform === 'win32') {
+    const executable = path.join(directory, 'fake-codex.cmd');
+    await fs.writeFile(executable, `@node "${modulePath}" %*\r\n`);
+    return executable;
+  }
+  const executable = path.join(directory, 'fake-codex');
+  await fs.writeFile(executable, `#!/usr/bin/env sh\nexec node "${modulePath}" "$@"\n`);
+  await fs.chmod(executable, 0o755);
+  return executable;
+}
+
+function fakeOverviewAgentSource() {
+  return `let prompt = '';
+for await (const chunk of process.stdin) prompt += chunk;
+if (prompt.includes('SOLOE_E2E_CANCEL')) {
+  process.stdout.write('cancel-ready');
+  setInterval(() => {}, 60_000);
+} else if (prompt.includes('# Conversation')) {
+  process.stdout.write('stream-one ');
+  setTimeout(() => {
+    process.stdout.write('stream-two');
+    process.exit(0);
+  }, 50);
+} else {
+  process.stdout.write('deterministic browser integration overview');
+}
+`;
+}
+
+async function configureOverviewAgent(baseUrl, executable) {
+  await rpc(baseUrl, 'settings', 'update', [{
+    binaries: { codex: executable },
+    models: {
+      worktreeOverview: { provider: 'codex', id: 'gpt-5.4-mini' }
+    }
+  }]);
 }
 
 async function git(cwd, args) {
@@ -802,6 +931,8 @@ function parseArgs(args) {
     webUrl: values.get('web-url'),
     serverToken: values.get('server-token'),
     smokeCwd: values.get('smoke-cwd'),
+    serviceDataDir: values.get('service-data-dir'),
+    wslDistro: values.get('wsl-distro'),
     runMode: values.get('run-mode') ?? nativeRunMode
   };
 }
@@ -1106,11 +1237,80 @@ async function runBrowserWorkflow(input) {
 
   const usage = await unwrap(api.system.usage({ detail: 'summary' }), 'system.usage');
   assert(usage.scope === 'backend', 'Browser usage did not report backend scope');
-  await unwrap(
-    api.overview.get({ worktreeCwd: input.normalCwd, runMode: input.runMode, sessions: [] }),
-    'overview.get'
+  const overviewRequest = {
+    worktreeCwd: input.normalCwd,
+    runMode: input.runMode,
+    sessions: []
+  };
+  await unwrap(api.overview.get(overviewRequest), 'overview.get');
+  const regeneratedOverview = await unwrap(
+    api.overview.regenerate(overviewRequest),
+    'overview.regenerate'
   );
-  await unwrap(api.overview.askCancel('browser-integration-missing'), 'overview.askCancel');
+  assert(
+    regeneratedOverview.text === 'deterministic browser integration overview',
+    `Overview regeneration returned unexpected text: ${regeneratedOverview.text}`
+  );
+  const overviewChunks = [];
+  const unsubscribeOverview = api.overview.onChunk((chunk) => overviewChunks.push(chunk));
+  const completedOverview = await unwrap(
+    api.overview.askStart({
+      ...overviewRequest,
+      message: 'SOLOE_E2E_COMPLETE',
+      history: []
+    }),
+    'overview.askStart complete'
+  );
+  await waitUntil(
+    () => overviewChunks.some(
+      (chunk) => chunk.requestId === completedOverview.requestId && chunk.type === 'done'
+    ),
+    10_000,
+    'completed Overview stream'
+  );
+  const completedText = overviewChunks
+    .filter((chunk) => (
+      chunk.requestId === completedOverview.requestId && chunk.type === 'delta'
+    ))
+    .map((chunk) => chunk.text ?? '')
+    .join('');
+  assert(completedText === 'stream-one stream-two', 'Overview stream lost ordered chunks');
+  const cancelledOverview = await unwrap(
+    api.overview.askStart({
+      ...overviewRequest,
+      message: 'SOLOE_E2E_CANCEL',
+      history: []
+    }),
+    'overview.askStart cancel'
+  );
+  await waitUntil(
+    () => overviewChunks.some((chunk) => (
+      chunk.requestId === cancelledOverview.requestId
+      && chunk.type === 'delta'
+      && chunk.text?.includes('cancel-ready')
+    )),
+    10_000,
+    'cancellable Overview stream'
+  );
+  await unwrap(api.overview.askCancel(cancelledOverview.requestId), 'overview.askCancel');
+  const cancelledChunkCount = overviewChunks.filter(
+    (chunk) => chunk.requestId === cancelledOverview.requestId
+  ).length;
+  await sleep(250);
+  assert(
+    overviewChunks.filter(
+      (chunk) => chunk.requestId === cancelledOverview.requestId
+    ).length === cancelledChunkCount,
+    'Overview cancellation allowed the active stream to emit more chunks'
+  );
+  assert(
+    !overviewChunks.some((chunk) => (
+      chunk.requestId === cancelledOverview.requestId
+      && (chunk.type === 'done' || chunk.type === 'error')
+    )),
+    'Overview cancellation exposed a terminal stream event'
+  );
+  unsubscribeOverview();
   await unwrap(api.diagnostics.list(), 'diagnostics.list');
   await unwrap(api.diagnostics.crashLogs({ tailBytes: 4_096 }), 'diagnostics.crashLogs');
 
@@ -1261,7 +1461,11 @@ async function runBrowserWorkflow(input) {
       notesImages: true,
       featureLab: true,
       processUsage: true,
-      overview: true,
+      overview: {
+        regenerated: true,
+        streamed: true,
+        cancelled: true
+      },
       diagnostics: true,
       vault: true,
       agentIntegration: true

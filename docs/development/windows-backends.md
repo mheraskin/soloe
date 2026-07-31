@@ -145,7 +145,9 @@ pnpm --filter @soloe/desktop-electron build
 
 The Application Server can be restarted independently while the Environment
 Runtime remains running. Reconnected clients request terminal replay from the
-last observed output sequence.
+last observed output sequence. In WSL placement, the supervisor automatically
+replaces an unexpectedly exited Server with bounded backoff; it does not
+restart the Runtime or its terminals.
 
 ## Stop versus Quit Soloe
 
@@ -196,6 +198,23 @@ the production clients:
 
 ```powershell
 pnpm test:browser-integration
+```
+
+To exercise the same production PWA and remote Electron clients against an
+already-running isolated WSL tray backend, provide the backend service-record
+directory as well. The profile terminates only the recorded Server PID, waits
+for the supervisor replacement, and verifies that all clients reconnect while
+the Runtime PID and terminal replay remain unchanged:
+
+```powershell
+node scripts/browser-integration.mjs `
+  --server-url=http://127.0.0.1:4317 `
+  --web-url=http://127.0.0.1:5173 `
+  --server-token=<isolated-token> `
+  --smoke-cwd=/tmp `
+  --run-mode=linux `
+  --service-data-dir=<isolated-data-directory> `
+  --wsl-distro=Ubuntu
 ```
 
 Then smoke-test both Backend Placements. Do not substitute the WSL run for the
