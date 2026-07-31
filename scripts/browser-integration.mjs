@@ -265,10 +265,10 @@ async function runExistingServerSmoke() {
     "printf 'browser integration\\n' > untracked.txt",
     `printf '${readyMarker}\\n'`
   ].join(' && ');
-  await rpc(baseUrl, 'terminal', 'input', [{
-    terminalId: bootstrapTerminal.terminalId,
-    data: `${fixtureCommand}\n`
-  }]);
+  await rpc(baseUrl, 'terminal', 'input', [
+    bootstrapTerminal.terminalId,
+    `${fixtureCommand}\n`
+  ]);
   await waitFor(async () => {
     const replay = await rpc(baseUrl, 'terminal', 'replay', [
       bootstrapTerminal.terminalId,
