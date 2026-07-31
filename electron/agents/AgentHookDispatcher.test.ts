@@ -27,6 +27,35 @@ describe('AgentHookDispatcher', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
+  it('reports the current directory carried by agent hooks', async () => {
+    const onLocation = vi.fn();
+    const locationDispatcher = new AgentHookDispatcher({
+      observer,
+      sessionStore,
+      onLocation
+    });
+
+    await locationDispatcher.dispatch({
+      provider: 'codex',
+      soloeSessionId: 'sess-1',
+      payload: {
+        hook_event_name: 'PreToolUse',
+        cwd: '/repo/packages/app'
+      }
+    });
+    await locationDispatcher.dispatch({
+      provider: 'codex',
+      soloeSessionId: 'sess-1',
+      payload: {
+        hook_event_name: 'PostToolUse',
+        cwd: '/repo/packages/app'
+      }
+    });
+
+    expect(onLocation).toHaveBeenCalledWith('sess-1', '/repo/packages/app');
+    expect(onLocation).toHaveBeenCalledTimes(1);
+  });
+
   describe('claude hook events → observed state', () => {
     it.each([
       ['SessionStart', 'starting'],

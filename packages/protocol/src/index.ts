@@ -20,6 +20,8 @@ export interface RuntimeTerminalState {
   pid: number;
   status: "running";
   startedAt: string;
+  /** Current Terminal directory, distinct from the Worktree in `spec.cwd`. */
+  cwd?: string;
   spec: RuntimeSpawnSpec;
   cols: number;
   rows: number;
@@ -37,6 +39,12 @@ export interface RuntimeExitEvent {
   sessionId: string;
   exitCode: number | null;
   signal: number | null;
+}
+
+export interface RuntimeLocationEvent {
+  terminalId: string;
+  sessionId: string;
+  cwd: string;
 }
 
 export interface RuntimeReplaySnapshot {

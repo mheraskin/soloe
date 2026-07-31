@@ -9,6 +9,7 @@ import type {
 } from './RuntimeProcess.js';
 import { ProcessTreeUsageSampler } from "./ProcessTreeUsageSampler.js";
 import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
+import { TerminalLocationParser } from '../../../shared/terminal-location.js';
 
 export interface RuntimeHostOptions {
   endpoint: string;
@@ -19,6 +20,7 @@ export interface RuntimeHostOptions {
 interface RunningTerminal {
   process: RuntimeProcess;
   state: RuntimeTerminalState;
+  locationParser: TerminalLocationParser;
 }
 
 interface RuntimeRequest {
@@ -160,14 +162,29 @@ export class RuntimeHost {
       pid: process.pid,
       status: 'running',
       startedAt: new Date().toISOString(),
+      cwd: input.spec.cwd,
       spec: input.spec,
       cols: input.cols,
       rows: input.rows
     };
-    this.terminals.set(terminalId, { process, state });
+    const terminal: RunningTerminal = {
+      process,
+      state,
+      locationParser: new TerminalLocationParser(globalThis.process.platform === 'win32')
+    };
+    this.terminals.set(terminalId, terminal);
     this.terminalBySession.set(input.sessionId, terminalId);
     this.outputSequence.set(terminalId, 0);
     process.on('data', (data: string) => {
+      for (const cwd of terminal.locationParser.push(data)) {
+        if (cwd === state.cwd) continue;
+        state.cwd = cwd;
+        this.broadcast('location', {
+          terminalId,
+          sessionId: input.sessionId,
+          cwd
+        });
+      }
       const seq = (this.outputSequence.get(terminalId) ?? 0) + 1;
       this.outputSequence.set(terminalId, seq);
       const event = {
