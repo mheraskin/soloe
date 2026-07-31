@@ -103,6 +103,16 @@ async function main() {
       largeChangeCount: config.largeChanges
     })})`
   );
+  await first.cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true
+  });
+  const mobileWorkspace = await first.cdp.evaluate(
+    `(${runMobileWorkspaceWorkflow.toString()})()`
+  );
+  await first.cdp.send('Emulation.clearDeviceMetricsOverride');
 
   const second = await launchBrowser(`${baseUrl}/?token=${encodeURIComponent(token)}`, 'two');
   browsers.add(second);
@@ -212,6 +222,7 @@ async function main() {
       largeChanges: config.largeChanges
     },
     workflow,
+    mobileWorkspace,
     remoteElectron: remoteWorkflow,
     multiClient: {
       notesChangeObserved: true,
@@ -962,6 +973,108 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function runMobileWorkspaceWorkflow() {
+  const assert = (condition, message) => {
+    if (!condition) throw new Error(message);
+  };
+  const visible = (element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && rect.width > 0 && rect.height > 0;
+  };
+  const waitUntil = async (check, timeoutMs, label) => {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`Timed out waiting for ${label}`);
+  };
+  const page = () => document.querySelector('.mobile-workspace')?.getAttribute('data-page');
+
+  await waitUntil(
+    () => page() === 'terminal',
+    5_000,
+    'mobile terminal workspace'
+  );
+  assert(!document.querySelector('.app-titlebar'), 'Mobile rendered the shared application title bar');
+  assert(!document.querySelector('button[aria-label="Inspector"]'), 'Inspector still exists on mobile');
+  assert(visible(document.querySelector('.mobile-workspace-dock')), 'Mobile workspace dock is hidden');
+
+  const files = document.querySelector('.mobile-pane-destination[aria-label="Files"]');
+  assert(files, 'Mobile Files destination is missing');
+  files.click();
+  await waitUntil(
+    () => page() === 'pane'
+      && document.querySelectorAll('[data-pane-slot]').length === 1
+      && visible(document.querySelector('.mobile-files-surface')),
+    10_000,
+    'mobile Files page'
+  );
+
+  const notes = document.querySelector('.mobile-pane-destination[aria-label="Notes"]');
+  assert(notes, 'Mobile Notes destination is missing');
+  notes.click();
+  await waitUntil(
+    () => page() === 'pane'
+      && document.querySelectorAll('[data-pane-slot]').length === 1
+      && visible(document.querySelector('.mobile-notes-surface')),
+    10_000,
+    'mobile Notes replacement'
+  );
+  assert(
+    files.getAttribute('aria-pressed') === 'false'
+      && notes.getAttribute('aria-pressed') === 'true',
+    'Mobile allowed more than one pane to remain active'
+  );
+
+  document.querySelector('.mobile-page-indicator button[aria-label="Terminal"]')?.click();
+  await waitUntil(() => page() === 'terminal', 5_000, 'mobile terminal page');
+  const workspace = document.querySelector('.mobile-workspace');
+  assert(workspace, 'Mobile workspace root is missing');
+  const swipe = (fromX, toX, pointerId) => {
+    workspace.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      pointerType: 'touch',
+      pointerId,
+      isPrimary: true,
+      clientX: fromX,
+      clientY: 300
+    }));
+    workspace.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      pointerType: 'touch',
+      pointerId,
+      isPrimary: true,
+      clientX: toX,
+      clientY: 302
+    }));
+  };
+  swipe(120, 310, 1);
+  await waitUntil(() => page() === 'navigation', 5_000, 'swipe to session list');
+  swipe(310, 90, 2);
+  await waitUntil(() => page() === 'terminal', 5_000, 'swipe back to terminal');
+
+  if ('serviceWorker' in navigator) {
+    await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Service worker did not become ready')), 5_000)
+      )
+    ]);
+  }
+
+  return {
+    sharedTitlebarHidden: true,
+    inspectorRemoved: true,
+    singlePaneReplacement: true,
+    swipeNavigation: true,
+    serviceWorkerReady: 'serviceWorker' in navigator
+  };
+}
+
 async function runBrowserWorkflow(input) {
   const api = window.soloe;
   const assert = (condition, message) => {
@@ -1098,15 +1211,6 @@ async function runBrowserWorkflow(input) {
   const sessions = await unwrap(api.sessions.list(), 'sessions.list');
   assert(sessions.some((session) => session.id === input.sessionId), 'fixture session was not loaded');
   await selectSession(input.sessionId, 'Browser fixture');
-
-  const inspectorButton = document.querySelector('button[aria-label="Inspector"]');
-  assert(inspectorButton, 'Inspector rail button is missing');
-  inspectorButton.click();
-  await waitUntil(
-    () => visible(document.querySelector('[data-pane-slot]')) && document.body.textContent?.includes('Inspector'),
-    5_000,
-    'Inspector pane'
-  );
 
   const normalPerformance = {
     files: await measurePane('Files'),
@@ -1459,7 +1563,6 @@ async function runBrowserWorkflow(input) {
     transport: api.transport.kind,
     embeddedBrowserPaneHidden: true,
     panes: {
-      inspector: true,
       files: true,
       diff: true,
       feature: true,
@@ -1563,7 +1666,6 @@ async function runRemoteElectronWorkflow(input) {
   );
 
   const paneSelectors = {
-    Inspector: '[data-pane-slot]',
     Files: '.mobile-files-surface',
     'Working diff': '.mobile-diff-surface',
     'Feature Lab': '.mobile-feature-surface',
@@ -1627,7 +1729,6 @@ async function runRemoteElectronWorkflow(input) {
     transport: api.transport.kind,
     nativeOverrides: ['window', 'browser'],
     panes: {
-      inspector: true,
       files: true,
       diff: true,
       feature: true,

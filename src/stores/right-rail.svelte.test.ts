@@ -39,4 +39,28 @@ describe('RightRailStore logical continuity', () => {
 
     expect(restored.openTabs).toEqual(['diff', 'files']);
   });
+
+  it('exposes and mounts only the most recent pane in the mobile layout', () => {
+    const store = new RightRailStore();
+    store.setActiveCwd('/worktrees/alpha');
+    store.openTab('diff');
+    store.openTab('files');
+
+    store.setPaneLimit(1);
+    expect(store.openTabs).toEqual(['files']);
+
+    store.openTab('notes');
+    expect(store.openTabs).toEqual(['notes']);
+  });
+
+  it('does not invent a pane when fullscreen is requested with no pane open', () => {
+    const store = new RightRailStore();
+    store.setActiveCwd('/worktrees/alpha');
+
+    store.toggleFullscreen();
+
+    expect(store.openTabs).toEqual([]);
+    expect(store.fullscreen).toBe(false);
+    expect(store.fullscreenTab).toBeNull();
+  });
 });

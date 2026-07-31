@@ -19,6 +19,11 @@
   );
   const terminalResidency = new TerminalResidency(4);
 
+  interface Props {
+    onOpenNavigation?: () => void;
+  }
+
+  let { onOpenNavigation }: Props = $props();
   let selected = $derived(sessions.selected);
   let split = $derived(sessions.activeSplit);
   let containerEl: HTMLDivElement | undefined = $state();
@@ -119,7 +124,7 @@
 </script>
 
 <section class="terminal-area flex min-w-[220px] flex-1 flex-col bg-background">
-  <SessionToolbar />
+  <SessionToolbar {onOpenNavigation} />
   <div class="relative min-h-0 flex-1 overflow-hidden" bind:this={containerEl}>
     {#each residentPanes as pane (pane.terminalId)}
       {@const role = split

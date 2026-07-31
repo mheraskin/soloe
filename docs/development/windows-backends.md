@@ -230,8 +230,8 @@ native Windows run; path, process, and filesystem behavior differ.
    **Start (WSL/Windows)** and **Stop (WSL/Windows)**.
 2. Open the authenticated PWA and remote Electron. Confirm Electron reports the
    remote transport, not local IPC.
-3. Create and reopen a project/session. Exercise Inspector, Files, Working
-   Diff, Feature Lab, Notes, and Process Usage in both clients.
+3. Create and reopen a project/session. Exercise Files, Working Diff, Feature
+   Lab, Notes, and Process Usage in both clients.
 4. In Files, create/edit/save/read/search a text file, refresh the tree, and
    verify binary/truncated states. For WSL placement, confirm the file exists
    inside Ubuntu rather than in a translated Windows checkout.
