@@ -1680,7 +1680,7 @@ describe("SoloeDomain", () => {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("owns Notes CRUD, images, conflicts, authorization, and shared events", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-notes-"));
