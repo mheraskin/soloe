@@ -49,3 +49,9 @@ export interface VaultSecret {
   username: string;
   password: string;
 }
+
+export interface VaultChangeEvent {
+  cwd: string;
+  entries: VaultEntry[];
+  changedAt: string;
+}

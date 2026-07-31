@@ -48,6 +48,7 @@ import type {
   FeatureSetIssueStatusRequest
 } from '@shared/types/features.js';
 import type {
+  VaultChangeEvent,
   VaultDeleteRequest,
   VaultGetSecretRequest,
   VaultListRequest,
@@ -371,7 +372,9 @@ const soloe: SoloeApi = {
     update: (request: VaultUpdateRequest) => ipcRenderer.invoke(IpcChannels.vault.update, request),
     delete: (request: VaultDeleteRequest) => ipcRenderer.invoke(IpcChannels.vault.delete, request),
     getSecret: (request: VaultGetSecretRequest) =>
-      ipcRenderer.invoke(IpcChannels.vault.getSecret, request)
+      ipcRenderer.invoke(IpcChannels.vault.getSecret, request),
+    onChange: (cb: (event: VaultChangeEvent) => void) =>
+      subscribe<VaultChangeEvent>(IpcChannels.vault.change, cb)
   },
   browser: {
     enableDeviceEmulation: (request: EnableDeviceEmulationRequest) =>

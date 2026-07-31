@@ -29,6 +29,7 @@ export * from "./overview/SummaryCacheStore.js";
 export * from "./overview/WorktreeEvidence.js";
 export * from "./overview/WorktreeFactsCollector.js";
 export * from "./overview/WorktreeOverviewService.js";
+export * from "./vault/VaultStore.js";
 export * from "./features/FeatureService.js";
 export * from "./features/FeatureArtifactObservation.js";
 export * from "./runtime/wsl-paths.js";

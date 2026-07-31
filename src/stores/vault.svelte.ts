@@ -34,6 +34,37 @@ export class VaultStore {
   private activeProjectCwd = $state<string | null>(null);
   private projectCwds = $state<string[]>([]);
   private byCwd = $state<Record<CwdKey, CwdCache>>({});
+  private detachers: Array<() => void> = [];
+
+  attachListeners(): void {
+    this.detach();
+    this.detachers.push(
+      backend.vault.onChange((event) => {
+        const current = this.byCwd[event.cwd];
+        if (!current?.loaded && !this.projectCwds.includes(event.cwd)) return;
+        this.byCwd = {
+          ...this.byCwd,
+          [event.cwd]: {
+            entries: event.entries,
+            loaded: true,
+            loading: false,
+            error: null
+          }
+        };
+      })
+    );
+    this.detachers.push(
+      backend.connection.onReconnect(() => {
+        for (const [cwd, cache] of Object.entries(this.byCwd)) {
+          if (cache.loaded) void this.refreshCwd(cwd);
+        }
+      })
+    );
+  }
+
+  detach(): void {
+    for (const detach of this.detachers.splice(0)) detach();
+  }
 
   setActiveCwd(cwd: string | null | undefined): void {
     this.setActiveContext({ cwd });

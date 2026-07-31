@@ -116,6 +116,7 @@ import type {
 } from './terminal.js';
 import type { HostPlatformInfo, SystemUsageRequest, SystemUsageSnapshot } from './system.js';
 import type {
+  VaultChangeEvent,
   VaultDeleteRequest,
   VaultEntry,
   VaultGetSecretRequest,
@@ -298,7 +299,8 @@ export const IpcChannels = {
     save: 'vault:save',
     update: 'vault:update',
     delete: 'vault:delete',
-    getSecret: 'vault:get-secret'
+    getSecret: 'vault:get-secret',
+    change: 'vault:change'
   },
   browser: {
     enableDeviceEmulation: 'browser:enable-device-emulation',
@@ -620,6 +622,7 @@ export interface VaultApi {
   update(request: VaultUpdateRequest): Promise<IpcResult<VaultEntry>>;
   delete(request: VaultDeleteRequest): Promise<IpcResult<true>>;
   getSecret(request: VaultGetSecretRequest): Promise<IpcResult<VaultSecret>>;
+  onChange(cb: (event: VaultChangeEvent) => void): () => void;
 }
 
 export interface BrowserApi {

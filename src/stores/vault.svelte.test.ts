@@ -5,11 +5,15 @@ const vaultApi = vi.hoisted(() => ({
   save: vi.fn(),
   update: vi.fn(),
   delete: vi.fn(),
-  getSecret: vi.fn()
+  getSecret: vi.fn(),
+  onChange: vi.fn()
+}));
+const connectionApi = vi.hoisted(() => ({
+  onReconnect: vi.fn()
 }));
 
 vi.mock('../lib/ipc', () => ({
-  backend: { vault: vaultApi }
+  backend: { vault: vaultApi, connection: connectionApi }
 }));
 
 import { VaultStore } from './vault.svelte';
@@ -18,6 +22,8 @@ import type { VaultEntry } from '@shared/types/vault.js';
 describe('VaultStore project scopes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vaultApi.onChange.mockReturnValue(vi.fn());
+    connectionApi.onReconnect.mockReturnValue(vi.fn());
     vaultApi.list.mockImplementation(async ({ cwd }: { cwd: string }) => [
       entry(`${cwd}-credential`, `user@${cwd}`)
     ]);
@@ -78,6 +84,35 @@ describe('VaultStore project scopes', () => {
         password: 'secret'
       }
     });
+  });
+
+  it('applies secret-free metadata events and refreshes loaded scopes after reconnect', async () => {
+    const store = new VaultStore();
+    store.setActiveContext({ cwd: '/repo', projectCwd: '/repo' });
+    await store.ensureLoaded();
+    store.attachListeners();
+    const onChange = vaultApi.onChange.mock.calls[0]?.[0] as
+      | ((event: {
+          cwd: string;
+          entries: VaultEntry[];
+          changedAt: string;
+        }) => void)
+      | undefined;
+    const onReconnect = connectionApi.onReconnect.mock.calls[0]?.[0] as
+      | (() => void)
+      | undefined;
+
+    onChange?.({
+      cwd: '/repo',
+      entries: [entry('remote', 'remote-user')],
+      changedAt: '2026-07-31T12:00:00.000Z'
+    });
+    expect(store.entries).toEqual([entry('remote', 'remote-user')]);
+
+    vaultApi.list.mockClear();
+    onReconnect?.();
+    await vi.waitFor(() => expect(vaultApi.list).toHaveBeenCalledWith({ cwd: '/repo' }));
+    store.detach();
   });
 });
 

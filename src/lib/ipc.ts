@@ -90,6 +90,7 @@ import type {
 import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
 import type {
+  VaultChangeEvent,
   VaultDeleteRequest,
   VaultGetSecretRequest,
   VaultListRequest,
@@ -408,7 +409,8 @@ export const backend = {
     delete: async (request: VaultDeleteRequest) =>
       unwrap(await c.vault.delete(toIpcPayload(request))),
     getSecret: async (request: VaultGetSecretRequest) =>
-      unwrap(await c.vault.getSecret(toIpcPayload(request)))
+      unwrap(await c.vault.getSecret(toIpcPayload(request))),
+    onChange: (cb: (event: VaultChangeEvent) => void) => c.vault.onChange(cb)
   }
 };
 

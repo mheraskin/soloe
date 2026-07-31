@@ -433,7 +433,10 @@ async function setupServices(): Promise<AppServices> {
   });
 
   const vault = new VaultStore(vaultDir);
-  const vaultIpc = new VaultIpc({ store: vault });
+  const vaultIpc = new VaultIpc({
+    store: vault,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
   const browserIpc = new BrowserIpc();
 
   sessionsIpc.register();

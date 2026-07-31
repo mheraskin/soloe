@@ -107,6 +107,7 @@
     notes.attachListeners();
     git.attachListeners();
     workingDiff.attachListeners();
+    vaultStore.attachListeners();
     const detachToast = ipc.notify.onToast((t) => {
       const opts = t.description ? { description: t.description } : undefined;
       if (t.severity === 'error') toast.error(t.message, opts);
@@ -133,6 +134,7 @@
       notes.detach();
       workingDiff.detach();
       git.detach();
+      vaultStore.detach();
     };
   });
 
