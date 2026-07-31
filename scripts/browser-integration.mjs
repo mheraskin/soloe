@@ -15,6 +15,7 @@ const electronVersion = require('electron/package.json').version;
 const root = path.resolve(import.meta.dirname, '..');
 const config = parseArgs(process.argv.slice(2));
 const token = `browser-integration-${process.pid}`;
+const nativeRunMode = process.platform === 'win32' ? 'windows' : 'linux';
 const children = new Set();
 const browsers = new Set();
 let scratchRoot;
@@ -29,7 +30,9 @@ async function main() {
   const dataDirectory = path.join(scratchRoot, 'data');
   const normalRepo = path.join(scratchRoot, 'normal-repo');
   const largeRepo = path.join(scratchRoot, 'large-repo');
-  const runtimeEndpoint = path.join(dataDirectory, 'runtime.sock');
+  const runtimeEndpoint = process.platform === 'win32'
+    ? `\\\\.\\pipe\\soloe-browser-integration-${process.pid}`
+    : path.join(dataDirectory, 'runtime.sock');
   await Promise.all([
     createFixtureRepository(normalRepo, 40, 2),
     createFixtureRepository(largeRepo, config.largeFiles, config.largeChanges)
@@ -58,25 +61,25 @@ async function main() {
   const normalProject = await rpc(baseUrl, 'projects', 'create', [{
     name: 'Browser integration',
     path: normalRepo,
-    defaultRunMode: 'linux'
+    defaultRunMode: nativeRunMode
   }]);
   const normalSession = await rpc(baseUrl, 'sessions', 'create', [{
     name: 'Browser fixture',
     projectId: normalProject.id,
     cwd: normalRepo,
-    runMode: 'linux',
+    runMode: nativeRunMode,
     launch: { type: 'terminal', shell: 'auto' }
   }]);
   const largeProject = await rpc(baseUrl, 'projects', 'create', [{
     name: 'Large browser integration',
     path: largeRepo,
-    defaultRunMode: 'linux'
+    defaultRunMode: nativeRunMode
   }]);
   const largeSession = await rpc(baseUrl, 'sessions', 'create', [{
     name: 'Large fixture',
     projectId: largeProject.id,
     cwd: largeRepo,
-    runMode: 'linux',
+    runMode: nativeRunMode,
     launch: { type: 'terminal', shell: 'auto' }
   }]);
 
@@ -90,6 +93,7 @@ async function main() {
       largeProjectId: largeProject.id,
       largeSessionId: largeSession.id,
       largeCwd: largeRepo,
+      runMode: nativeRunMode,
       largeFileCount: config.largeFiles,
       largeChangeCount: config.largeChanges
     })})`
@@ -103,7 +107,8 @@ async function main() {
     `(${runRemoteElectronWorkflow.toString()})(${JSON.stringify({
       projectId: normalProject.id,
       sessionId: normalSession.id,
-      normalCwd: normalRepo
+      normalCwd: normalRepo,
+      runMode: nativeRunMode
     })})`
   );
   await second.cdp.evaluate(`(() => {
@@ -246,6 +251,7 @@ async function createFixtureRepository(directory, fileCount, changedCount) {
   await git(directory, ['init', '-b', 'main']);
   await git(directory, ['config', 'user.name', 'Soloe Integration']);
   await git(directory, ['config', 'user.email', 'integration@soloe.test']);
+  await git(directory, ['config', 'core.autocrlf', 'false']);
   await git(directory, ['add', '.']);
   await git(directory, ['commit', '-m', 'test: create browser fixture']);
   for (let index = 0; index < changedCount; index += 1) {
@@ -765,7 +771,7 @@ async function runBrowserWorkflow(input) {
   notesButton.click();
   assert(document.querySelector('.rail-process'), 'Process Usage widget is missing');
 
-  const scope = { cwd: input.normalCwd, runMode: 'linux' };
+  const scope = { cwd: input.normalCwd, runMode: input.runMode };
   const tree = await unwrap(api.files.listTree({ ...scope, force: true }), 'files.listTree');
   assert(tree.paths.includes('src/app.ts'), 'Files tree omitted src/app.ts');
   const original = await unwrap(
@@ -879,7 +885,7 @@ async function runBrowserWorkflow(input) {
   const usage = await unwrap(api.system.usage({ detail: 'summary' }), 'system.usage');
   assert(usage.scope === 'backend', 'Browser usage did not report backend scope');
   await unwrap(
-    api.overview.get({ worktreeCwd: input.normalCwd, runMode: 'linux', sessions: [] }),
+    api.overview.get({ worktreeCwd: input.normalCwd, runMode: input.runMode, sessions: [] }),
     'overview.get'
   );
   await unwrap(api.overview.askCancel('browser-integration-missing'), 'overview.askCancel');
@@ -939,7 +945,9 @@ async function runBrowserWorkflow(input) {
   await unwrap(
     api.terminal.input({
       terminalId: started.terminalId,
-      data: `printf '${marker}\\\\n'\\n`
+      data: input.runMode === 'windows'
+        ? `Write-Output '${marker}'\\r\\n`
+        : `printf '${marker}\\\\n'\\n`
     }),
     'terminal.input'
   );
@@ -994,7 +1002,7 @@ async function runBrowserWorkflow(input) {
     diff: await measurePane('Working diff', 30_000, 300),
     feature: await measurePane('Feature Lab', 30_000, 300)
   };
-  const largeScope = { cwd: input.largeCwd, runMode: 'linux' };
+  const largeScope = { cwd: input.largeCwd, runMode: input.runMode };
   const largeTree = await unwrap(
     api.files.listTree({ ...largeScope, force: true }),
     'large files.listTree'
@@ -1135,7 +1143,7 @@ async function runRemoteElectronWorkflow(input) {
     button.click();
   }
 
-  const scope = { cwd: input.normalCwd, runMode: 'linux' };
+  const scope = { cwd: input.normalCwd, runMode: input.runMode };
   const sessions = await unwrap(api.sessions.list(), 'remote sessions.list');
   assert(
     sessions.some((session) => session.id === input.sessionId),
@@ -1152,7 +1160,7 @@ async function runRemoteElectronWorkflow(input) {
   const usage = await unwrap(api.system.usage({ detail: 'summary' }), 'remote system.usage');
   assert(usage.scope === 'backend', 'Remote Electron usage did not report backend scope');
   await unwrap(
-    api.overview.get({ worktreeCwd: input.normalCwd, runMode: 'linux', sessions: [] }),
+    api.overview.get({ worktreeCwd: input.normalCwd, runMode: input.runMode, sessions: [] }),
     'remote overview.get'
   );
   await unwrap(api.diagnostics.list(), 'remote diagnostics.list');
