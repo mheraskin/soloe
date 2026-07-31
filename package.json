@@ -53,6 +53,7 @@
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-builder install-app-deps",
     "test": "vitest run",
+    "test:browser-integration": "pnpm --filter @soloe/web build && pnpm --filter @soloe/desktop-electron build && node scripts/browser-integration.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {
