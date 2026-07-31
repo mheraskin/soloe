@@ -112,8 +112,21 @@ describe('SessionStore — update/delete', () => {
     const created = await store.create(standardDraft());
     const renamed = await store.update(created.id, { name: 'Renamed' });
     expect(renamed.name).toBe('Renamed');
+    expect(renamed.autoNamed).toBe(false);
     await expect(store.update(created.id, { name: '' })).rejects.toThrow(/name is required/);
     expect((await store.get(created.id))?.name).toBe('Renamed');
+  });
+
+  it('keeps automatic rename provenance when the auto-renamer supplies it explicitly', async () => {
+    const store = new SessionStore(storePath);
+    const created = await store.create(standardDraft());
+
+    const renamed = await store.update(created.id, {
+      name: 'generated-title',
+      autoNamed: true
+    });
+
+    expect(renamed.autoNamed).toBe(true);
   });
 
   it('deletes a session and treats a repeat delete as an idempotent no-op', async () => {

@@ -107,9 +107,14 @@ export class SessionStore {
     await this.ensureLoaded();
     const existing = this.cache!.get(id);
     if (!existing) throw new Error(`Session not found: ${id}`);
+    const isManualRename =
+      patch.name !== undefined
+      && patch.name !== existing.name
+      && patch.autoNamed === undefined;
     const merged = {
       ...existing,
       ...patch,
+      ...(isManualRename ? { autoNamed: false } : {}),
       id: existing.id,
       createdAt: existing.createdAt
     } as Session;
