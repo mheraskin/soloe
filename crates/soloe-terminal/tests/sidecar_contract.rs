@@ -90,7 +90,7 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
     #[cfg(windows)]
     let (args, input) = (
         vec!["-NoLogo", "-NoProfile", "-NoExit"],
-        b"[Console]::Write(([char]30).ToString() + 'sidecar-contract-ok' + ([char]31).ToString()); exit 0\r\n"
+        b"[Console]::Write((-join [char[]](115,105,100,101,99,97,114,45,99,111,110,116,114,97,99,116,45,111,107))); exit 0\r\n"
             .as_slice(),
     );
     #[cfg(windows)]
@@ -202,10 +202,12 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
     }
 
     assert!(saw_input_response);
+    #[cfg(windows)]
+    let marker = b"sidecar-contract-ok".as_slice();
+    #[cfg(not(windows))]
+    let marker = b"\x1esidecar-contract-ok\x1f".as_slice();
     assert!(
-        output
-            .windows(b"\x1esidecar-contract-ok\x1f".len())
-            .any(|window| window == b"\x1esidecar-contract-ok\x1f"),
+        output.windows(marker.len()).any(|window| window == marker),
         "marker missing from PTY output: {}",
         String::from_utf8_lossy(&output)
     );
