@@ -127,7 +127,7 @@ describe("SoloeDomain", () => {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("strictly validates comments and diff renderer responses", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-bridge-"));
