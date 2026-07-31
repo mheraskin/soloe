@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import type { ModelSelection, SettingsBinaries } from '@shared/types/settings.js';
@@ -337,6 +337,13 @@ export class BackgroundAgentExecution {
       const inner = buildWslAgentLine({}, argv.executable, argv.args);
       return this.spawnImpl('bash', ['-lc', inner], processOptions(request.scope.cwd));
     }
+    if (process.platform === 'win32' && /\.(?:bat|cmd)$/iu.test(argv.executable)) {
+      return this.spawnImpl(
+        process.env['ComSpec'] ?? 'cmd.exe',
+        ['/d', '/s', '/c', argv.executable, ...argv.args],
+        processOptions(request.scope.cwd)
+      );
+    }
     return this.spawnImpl(argv.executable, argv.args, processOptions(request.scope.cwd));
   }
 
@@ -532,6 +539,17 @@ function hostHome(): string {
 }
 
 function kill(child: ChildProcess): void {
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      return;
+    } catch {
+      // Fall through to the direct child when taskkill is unavailable.
+    }
+  }
   try { child.kill('SIGKILL'); } catch { /* best effort */ }
 }
 
