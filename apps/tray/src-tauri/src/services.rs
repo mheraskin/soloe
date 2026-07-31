@@ -1042,6 +1042,7 @@ fn wsl_supervisor_script(
     lease_path: &str,
     owner_id: &str,
 ) -> String {
+    let runtime_socket = format!("runtime-{owner_id}.sock");
     format!(
         "cd -- {} && test -f package.json && test -f scripts/wsl-backend-supervisor.mjs && \
          command -v node >/dev/null && command -v pnpm >/dev/null && \
@@ -1049,12 +1050,13 @@ fn wsl_supervisor_script(
          export SOLOE_DATA_DIR={} && \
          export SOLOE_OWNER_ID={} && \
          export SOLOE_TRAY_LEASE={} && \
-         export SOLOE_RUNTIME_ENDPOINT=\"$HOME/.local/state/soloe/runtime.sock\" && \
+         export SOLOE_RUNTIME_ENDPOINT=\"$HOME/.local/state/soloe\"/{} && \
          exec node scripts/wsl-backend-supervisor.mjs",
         shell_quote(repository_root),
         shell_quote(data_directory),
         shell_quote(owner_id),
         shell_quote(lease_path),
+        shell_quote(&runtime_socket),
     )
 }
 
@@ -1415,9 +1417,9 @@ mod tests {
             script
                 .contains("SOLOE_TRAY_LEASE='/mnt/c/Users/Me/AppData/Local/Soloe/tray-lease.json'")
         );
-        assert!(
-            script.contains("SOLOE_RUNTIME_ENDPOINT=\"$HOME/.local/state/soloe/runtime.sock\"")
-        );
+        assert!(script.contains(
+            "SOLOE_RUNTIME_ENDPOINT=\"$HOME/.local/state/soloe\"/'runtime-tray-owner.sock'"
+        ));
         assert!(script.ends_with("exec node scripts/wsl-backend-supervisor.mjs"));
     }
 
