@@ -21,6 +21,18 @@ const bootstrapSkeleton = mount(AppSkeleton, {
 
 const { installBrowserApi } = await import('./lib/browser-api');
 installBrowserApi();
+if (
+  'serviceWorker' in navigator
+  && (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+) {
+  window.addEventListener(
+    'load',
+    () => {
+      void navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    },
+    { once: true }
+  );
+}
 const [
   { default: App },
   { initCommentsBridge },

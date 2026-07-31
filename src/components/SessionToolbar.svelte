@@ -6,7 +6,8 @@
     Search,
     FileText,
     MoreHorizontal,
-    Code2
+    Code2,
+    PanelLeftOpen
   } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
@@ -21,6 +22,11 @@
   import GitBranchWidget from './GitBranchWidget.svelte';
   import KindIcon from './KindIcon.svelte';
 
+  interface Props {
+    onOpenNavigation?: () => void;
+  }
+
+  let { onOpenNavigation }: Props = $props();
   let selected = $derived(sessions.selected);
   let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
   let observed = $derived(selected ? sessions.observationFor(selected.id) : null);
@@ -64,6 +70,17 @@
 </script>
 
 <div class="session-toolbar soloe-pane-header justify-between">
+  {#if onOpenNavigation}
+    <Button
+      variant="ghost"
+      class="mobile-workspace-menu-button shrink-0"
+      onclick={onOpenNavigation}
+      aria-label="Open session list"
+      title="Open session list"
+    >
+      <PanelLeftOpen />
+    </Button>
+  {/if}
   {#if selected}
     <div class="flex min-w-0 flex-1 items-center gap-1.5">
       <StatusDot {status} />

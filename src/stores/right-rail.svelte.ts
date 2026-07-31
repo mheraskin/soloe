@@ -1,13 +1,12 @@
-export type RailTabId = 'inspector' | 'notes' | 'diff' | 'files' | 'feature' | 'browser';
+export type RailTabId = 'notes' | 'diff' | 'files' | 'feature' | 'browser';
 
 // Maximum number of rail panes that can be open simultaneously. Two panes
 // stack side-by-side in the rail; opening a third drops the oldest.
 const MAX_OPEN_TABS = 2;
 
 interface RailState {
-  // Ordered list of currently open panes. Index 0 is the older click
-  // (position 1, leftmost in the rail). Last entry is the most recent
-  // click (position 2, closest to the icon column on the right).
+  // Ordered list of currently open panes. Desktop exposes at most two;
+  // mobile exposes only the most recent one.
   // Empty list means the rail is closed (only the icon column is visible).
   openTabs: RailTabId[];
   fullscreen: boolean;
@@ -29,7 +28,6 @@ const DIFF_SCROLL_KEY = 'soloe.diffScroll.v1';
 const FILES_SCROLL_KEY = 'soloe.filesScroll.v1';
 
 const ALL_TABS: ReadonlySet<RailTabId> = new Set([
-  'inspector',
   'notes',
   'diff',
   'files',
@@ -86,6 +84,7 @@ function migrateLegacy(raw: unknown): RailState | null {
 export class RightRailStore {
   private activeCwd = $state<string | null>(null);
   private stateByCwd = $state<Record<string, RailState>>({});
+  private paneLimit = $state<1 | 2>(2);
 
   // Transient: which pane slot (0 or 1) is currently highlighted by the
   // Ctrl+; cycle. Set when the cycle lands on a pane, cleared on the next
@@ -183,6 +182,10 @@ export class RightRailStore {
     return this.stateByCwd[this.currentKey()] ?? DEFAULT_STATE;
   }
 
+  private visibleTabs(state = this.current()): RailTabId[] {
+    return state.openTabs.slice(-this.paneLimit);
+  }
+
   private patch(next: Partial<RailState>): void {
     const key = this.currentKey();
     const prev = this.stateByCwd[key] ?? DEFAULT_STATE;
@@ -200,13 +203,27 @@ export class RightRailStore {
   }
 
   // Convenience for consumers that only care whether the rail is showing
-  // any pane at all. Equivalent to openTabs.length > 0.
+  // any pane at all.
   get open(): boolean {
-    return this.current().openTabs.length > 0;
+    return this.visibleTabs().length > 0;
   }
 
   get openTabs(): readonly RailTabId[] {
-    return this.current().openTabs;
+    return this.visibleTabs();
+  }
+
+  setPaneLimit(limit: 1 | 2): void {
+    if (limit === this.paneLimit) return;
+    this.paneLimit = limit;
+    const state = this.current();
+    const visible = this.visibleTabs(state);
+    if (
+      state.fullscreen &&
+      state.fullscreenTab !== null &&
+      !visible.includes(state.fullscreenTab)
+    ) {
+      this.patch({ fullscreenTab: visible[visible.length - 1] ?? null });
+    }
   }
 
   // The "primary" tab — the most-recently opened pane. Components that
@@ -214,8 +231,8 @@ export class RightRailStore {
   // at whatever was last clicked, which matches the v1 behaviour when
   // only one pane could ever be open.
   get activeTab(): RailTabId {
-    const tabs = this.current().openTabs;
-    return tabs[tabs.length - 1] ?? 'inspector';
+    const tabs = this.visibleTabs();
+    return tabs[tabs.length - 1] ?? 'diff';
   }
 
   get fullscreen(): boolean {
@@ -224,14 +241,13 @@ export class RightRailStore {
   set fullscreen(value: boolean) {
     const state = this.current();
     if (value) {
-      // Entering fullscreen requires at least one pane. If none are open,
-      // promote inspector so the user has something to look at.
-      if (state.openTabs.length === 0) {
-        this.patch({ openTabs: ['inspector'], fullscreen: true, fullscreenTab: 'inspector' });
-        return;
-      }
+      const tabs = this.visibleTabs(state);
+      if (tabs.length === 0) return;
       // Fullscreen targets the latest pane by default.
-      const target = state.fullscreenTab ?? state.openTabs[state.openTabs.length - 1];
+      const target =
+        state.fullscreenTab && tabs.includes(state.fullscreenTab)
+          ? state.fullscreenTab
+          : tabs[tabs.length - 1];
       this.patch({ fullscreen: true, fullscreenTab: target });
     } else {
       this.patch({ fullscreen: false, fullscreenTab: null });
@@ -241,7 +257,11 @@ export class RightRailStore {
   // The pane that is currently fullscreened, or null when not in fullscreen.
   get fullscreenTab(): RailTabId | null {
     const state = this.current();
-    return state.fullscreen ? state.fullscreenTab : null;
+    if (!state.fullscreen) return null;
+    const tabs = this.visibleTabs(state);
+    return state.fullscreenTab && tabs.includes(state.fullscreenTab)
+      ? state.fullscreenTab
+      : (tabs[tabs.length - 1] ?? null);
   }
 
   openTab(tab: RailTabId): void {
@@ -251,12 +271,12 @@ export class RightRailStore {
       // Already open — promote to "most recent" so the next fullscreen
       // toggle targets it. Position rearranges if the user clicked an
       // older pane to bring it forward.
-      const next = [...state.openTabs.filter((t) => t !== tab), tab];
+      const next = [...state.openTabs.filter((t) => t !== tab), tab].slice(-this.paneLimit);
       this.patch({ openTabs: next });
       return;
     }
     let next = [...state.openTabs, tab];
-    if (next.length > MAX_OPEN_TABS) next = next.slice(-MAX_OPEN_TABS);
+    if (next.length > this.paneLimit) next = next.slice(-this.paneLimit);
     this.patch({ openTabs: next });
   }
 
@@ -272,12 +292,13 @@ export class RightRailStore {
     }
     const idx = state.openTabs.indexOf(tab);
     if (idx !== -1) {
-      const next = state.openTabs.filter((t) => t !== tab);
+      const next =
+        this.paneLimit === 1 ? [] : state.openTabs.filter((t) => t !== tab);
       this.patch({ openTabs: next });
       return;
     }
     let next = [...state.openTabs, tab];
-    if (next.length > MAX_OPEN_TABS) next = next.slice(-MAX_OPEN_TABS);
+    if (next.length > this.paneLimit) next = next.slice(-this.paneLimit);
     this.patch({ openTabs: next });
   }
 
@@ -287,17 +308,13 @@ export class RightRailStore {
 
   toggleFullscreen(): void {
     const state = this.current();
-    if (state.openTabs.length === 0) {
-      // No pane open — open inspector and fullscreen it so the keystroke
-      // produces a visible result instead of toggling invisibly.
-      this.patch({ openTabs: ['inspector'], fullscreen: true, fullscreenTab: 'inspector' });
-      return;
-    }
+    const tabs = this.visibleTabs(state);
+    if (tabs.length === 0) return;
     if (state.fullscreen) {
       this.patch({ fullscreen: false, fullscreenTab: null });
       return;
     }
-    const target = state.openTabs[state.openTabs.length - 1];
+    const target = tabs[tabs.length - 1];
     this.patch({ fullscreen: true, fullscreenTab: target });
   }
 
@@ -318,8 +335,7 @@ export class RightRailStore {
   // Pick which pane to fullscreen when the user has two open and wants to
   // promote one explicitly (e.g., via a per-pane fullscreen toggle).
   setFullscreenTab(tab: RailTabId): void {
-    const state = this.current();
-    if (!state.openTabs.includes(tab)) return;
+    if (!this.visibleTabs().includes(tab)) return;
     this.patch({ fullscreen: true, fullscreenTab: tab });
   }
 

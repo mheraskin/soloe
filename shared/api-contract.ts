@@ -145,7 +145,6 @@ export const SOLOE_API_METHODS = {
 } as const;
 
 export const PWA_PANE_REQUIREMENTS = {
-  inspector: ["observer.list", "observer.listEvents"],
   diff: [
     "git.workingTreeSnapshot",
     "git.workingChanges",

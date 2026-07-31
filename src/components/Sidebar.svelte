@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Search, FolderOpen, X, PanelLeftClose } from '@lucide/svelte';
+  import { ArrowRight, Search, FolderOpen, X, PanelLeftClose, Settings } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
+  import { settings } from '../stores/settings.svelte';
   import {
     sidebar,
     SIDEBAR_MIN_WIDTH,
@@ -34,6 +35,13 @@
   const EDGE_SCROLL_MAX_SPEED = 18;
   const EDGE_SCROLL_MIN_SPEED = 4;
 
+  interface Props {
+    mobileWorkspace?: boolean;
+    onRequestTerminal?: () => void;
+    onSessionActivate?: () => void;
+  }
+
+  let { mobileWorkspace = false, onRequestTerminal, onSessionActivate }: Props = $props();
   let query = $state('');
   let resizing = $state(false);
   let asideEl: HTMLElement | null = $state(null);
@@ -229,6 +237,19 @@
     resizing = false;
     window.removeEventListener('pointermove', resize);
   }
+
+  function notifyOnSessionActivation(node: HTMLElement) {
+    const onClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-session-id]')) {
+        onSessionActivate?.();
+      }
+    };
+    node.addEventListener('click', onClick);
+    return {
+      destroy: () => node.removeEventListener('click', onClick)
+    };
+  }
 </script>
 
 <aside
@@ -236,6 +257,7 @@
   class="app-sidebar relative flex flex-shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar"
   class:select-none={resizing}
   style={`width: ${width}px`}
+  use:notifyOnSessionActivation
   ondragover={onAsideDragOver}
   ondragleave={onSidebarDragLeave}
 >
@@ -282,16 +304,37 @@
         title="New session"
         ariaLabel="New session"
       />
-      <button
-        type="button"
-        class="flex h-6 shrink-0 items-center gap-1 rounded-md border border-transparent px-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        aria-label="Hide sidebar"
-        title="Hide sidebar"
-        onclick={() => sidebar.hide()}
-      >
-        <PanelLeftClose class="size-3.5" />
-        <KbdHint keys={Keymap.toggleSidebar.keys} class="shrink-0" />
-      </button>
+      {#if mobileWorkspace}
+        <Button
+          variant="ghost"
+          class="mobile-workspace-menu-button size-6 shrink-0"
+          onclick={() => settings.openDialog()}
+          aria-label="Settings"
+          title="Settings"
+        >
+          <Settings class="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          class="mobile-workspace-menu-button size-6 shrink-0"
+          onclick={onRequestTerminal}
+          aria-label="Return to terminal"
+          title="Return to terminal"
+        >
+          <ArrowRight class="size-3.5" />
+        </Button>
+      {:else}
+        <button
+          type="button"
+          class="flex h-6 shrink-0 items-center gap-1 rounded-md border border-transparent px-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Hide sidebar"
+          title="Hide sidebar"
+          onclick={() => sidebar.hide()}
+        >
+          <PanelLeftClose class="size-3.5" />
+          <KbdHint keys={Keymap.toggleSidebar.keys} class="shrink-0" />
+        </button>
+      {/if}
     </div>
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>

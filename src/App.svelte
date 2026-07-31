@@ -75,6 +75,9 @@
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
   import RightRail from './components/RightRail.svelte';
+  import MobileWorkspaceNav, {
+    type MobileWorkspacePage
+  } from './components/MobileWorkspaceNav.svelte';
   import LazyOverlay from './components/LazyOverlay.svelte';
   import AgentLaunchPopover from './components/AgentLaunchPopover.svelte';
   import SessionContextMenu from './components/SessionContextMenu.svelte';
@@ -98,9 +101,25 @@
   let suppressCollapsedDropdownSelect = false;
   let initialLoadState = $state<'loading' | 'ready' | 'error'>('loading');
   let initialLoadError = $state<string | null>(null);
+  let isMobile = $state(false);
+  let mobilePage = $state<MobileWorkspacePage>('terminal');
+  let swipeStart: { pointerId: number; x: number; y: number } | null = null;
 
   onMount(() => {
     const detachMobileViewport = attachMobileViewport();
+    const mobileQuery = window.matchMedia('(max-width: 767px)');
+    const syncMobileLayout = () => {
+      isMobile = mobileQuery.matches;
+      rightRail.setPaneLimit(isMobile ? 1 : 2);
+      if (isMobile) rightRail.fullscreen = false;
+      else mobilePage = 'terminal';
+    };
+    const openFocusedPane = () => {
+      if (mobileQuery.matches && rightRail.open) navigateMobile('pane');
+    };
+    syncMobileLayout();
+    mobileQuery.addEventListener('change', syncMobileLayout);
+    window.addEventListener('soloe:focus-pane', openFocusedPane);
     sessions.attachListeners();
     settings.attachListeners();
     projects.attachListeners();
@@ -122,6 +141,8 @@
     window.addEventListener('beforeunload', flushRendererPersistence);
     return () => {
       detachMobileViewport();
+      mobileQuery.removeEventListener('change', syncMobileLayout);
+      window.removeEventListener('soloe:focus-pane', openFocusedPane);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('keydown', onClearPaneRing, true);
       window.removeEventListener('beforeunload', flushRendererPersistence);
@@ -137,6 +158,52 @@
       vaultStore.detach();
     };
   });
+
+  function navigateMobile(page: MobileWorkspacePage): void {
+    if (page === 'pane' && !rightRail.open) return;
+    mobilePage = page;
+  }
+
+  // Pane headers can close themselves through the shared store. If the last
+  // mobile pane disappears while its page is visible, return to the terminal
+  // instead of leaving the user on a blank workspace page.
+  $effect(() => {
+    if (isMobile && mobilePage === 'pane' && !rightRail.open) {
+      mobilePage = 'terminal';
+    }
+  });
+
+  function onMobilePointerDown(event: PointerEvent): void {
+    if (event.pointerType !== 'touch' || !event.isPrimary) return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest('input, textarea, select, [contenteditable="true"], [data-mobile-swipe-lock]')
+    ) {
+      return;
+    }
+    const edgeGuard = 24;
+    if (event.clientX <= edgeGuard || event.clientX >= window.innerWidth - edgeGuard) return;
+    swipeStart = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  }
+
+  function finishMobileSwipe(event: PointerEvent): void {
+    const start = swipeStart;
+    swipeStart = null;
+    if (!start || start.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (Math.abs(deltaX) < 56 || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) return;
+    if (deltaX > 0) {
+      navigateMobile(mobilePage === 'pane' ? 'terminal' : 'navigation');
+      return;
+    }
+    if (mobilePage === 'navigation') {
+      navigateMobile('terminal');
+    } else if (mobilePage === 'terminal' && rightRail.open) {
+      navigateMobile('pane');
+    }
+  }
 
   function flushRendererPersistence(): void {
     browserStore.flushPersistence();
@@ -185,7 +252,7 @@
 
   // Rail fullscreen takes over the main area: terminal hides, the rail
   // expands to fill the remaining space (sidebar stays put). Applies to
-  // whichever tab is active (diff, notes, inspector).
+  // whichever tab is active.
   let railFullscreen = $derived(rightRail.open && rightRail.fullscreen);
 
   // Subtle "you are here" reminder shown in the title bar when the sidebar
@@ -1019,9 +1086,7 @@
     }
     if (Keymap.toggleRailFullscreen.match(e)) {
       consume(e);
-      // Toggle fullscreen on whichever tab is currently active. If the rail
-      // is closed, the store opens it before flipping the flag so the user
-      // sees the result instead of toggling invisibly.
+      // Toggle fullscreen on whichever tab is currently active.
       rightRail.toggleFullscreen();
       return;
     }
@@ -1084,7 +1149,7 @@
 {:else if initialLoadState === 'error'}
   <div class="flex h-full flex-col overflow-hidden bg-background text-foreground">
     <header
-      class="flex h-7 shrink-0 items-center border-b border-border bg-card select-none"
+      class="app-error-titlebar flex h-7 shrink-0 items-center border-b border-border bg-card select-none"
       style="-webkit-app-region: drag"
     >
       <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
@@ -1110,6 +1175,7 @@
   </div>
 {:else}
 <div class="app-shell flex flex-col overflow-hidden">
+  {#if !isMobile}
   <header
     use:closeMenusFromTitleBar
     class="app-titlebar flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
@@ -1417,22 +1483,48 @@
       {/if}
     </div>
   </header>
-  <div class="app-main relative flex min-h-0 flex-1">
-    {#if !sidebar.hidden}
-      <button
-        type="button"
-        class="mobile-sidebar-backdrop"
-        onclick={() => sidebar.hide()}
-        aria-label="Close navigation"
-      ></button>
-      <Sidebar />
-    {/if}
-    <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
-    <div class={railFullscreen ? 'hidden' : 'contents'}>
-      <TerminalArea />
+  {/if}
+  {#if isMobile}
+    <main
+      class="mobile-workspace min-h-0 flex-1"
+      data-page={mobilePage}
+      aria-label="Mobile workspace"
+      onpointerdown={onMobilePointerDown}
+      onpointerup={finishMobileSwipe}
+      onpointercancel={() => (swipeStart = null)}
+    >
+      <div class="mobile-workspace-track">
+        <section class="mobile-workspace-page mobile-workspace-navigation" aria-label="Session list">
+          <Sidebar
+            mobileWorkspace
+            onRequestTerminal={() => navigateMobile('terminal')}
+            onSessionActivate={() => navigateMobile('terminal')}
+          />
+        </section>
+        <section class="mobile-workspace-page mobile-workspace-terminal" aria-label="Terminal">
+          <TerminalArea onOpenNavigation={() => navigateMobile('navigation')} />
+        </section>
+        <section class="mobile-workspace-page mobile-workspace-pane" aria-label="Open pane">
+          <RightRail
+            mobileWorkspace
+            onOpenNavigation={() => navigateMobile('navigation')}
+          />
+        </section>
+      </div>
+      <MobileWorkspaceNav page={mobilePage} onNavigate={navigateMobile} />
+    </main>
+  {:else}
+    <div class="app-main relative flex min-h-0 flex-1">
+      {#if !sidebar.hidden}
+        <Sidebar />
+      {/if}
+      <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
+      <div class={railFullscreen ? 'hidden' : 'contents'}>
+        <TerminalArea />
+      </div>
+      <RightRail fullscreen={railFullscreen} />
     </div>
-    <RightRail fullscreen={railFullscreen} />
-  </div>
+  {/if}
   {#if modal.open}
     <LazyOverlay label="session editor" load={loadNewSessionModal} />
   {/if}

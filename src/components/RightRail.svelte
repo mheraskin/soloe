@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
-    Activity,
     NotebookPen,
     GitCompare,
     ArrowLeftRight,
     FolderTree,
     Microscope,
-    Globe
+    Globe,
+    PanelLeftOpen
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
@@ -19,11 +19,10 @@
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import { clampSplitRatio, splitPaneWidths, type RailSize } from '../lib/rail-widths';
   import { kbdHints } from '../stores/kbd-hints.svelte';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import { Kbd } from '$lib/components/ui/kbd';
   import ProcessUsageWidget from './ProcessUsageWidget.svelte';
-  import RailInspectorTab from './rail/RailInspectorTab.svelte';
   import RailNotesTab from './rail/RailNotesTab.svelte';
   import LazyRailContent from './rail/LazyRailContent.svelte';
 
@@ -41,7 +40,6 @@
 
   const browserPaneAvailable = supportsBackendOperation('browser', 'openDevTools');
   const tabs: Tab[] = [
-    { id: 'inspector', label: 'Inspector', icon: Activity },
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
     { id: 'files', label: 'Files', icon: FolderTree, shortcut: Keymap.toggleFilesRail.keys },
     { id: 'feature', label: 'Feature Lab', icon: Microscope, shortcut: Keymap.toggleFeatureRail.keys },
@@ -94,9 +92,11 @@
     // True when the active rail pane fills the entire main area (terminal
     // hidden). Suppresses the outer resize handle and the splitter.
     fullscreen?: boolean;
+    mobileWorkspace?: boolean;
+    onOpenNavigation?: () => void;
   }
 
-  let { fullscreen = false }: Props = $props();
+  let { fullscreen = false, mobileWorkspace = false, onOpenNavigation }: Props = $props();
 
   let size = $state<RailSize>(computeDefaultSize());
   let resizing: 'outer' | 'splitter' | null = $state(null);
@@ -138,7 +138,6 @@
   let filesMountedHere = $derived(tabVisible('files'));
   let featureMountedHere = $derived(tabVisible('feature'));
   let browserMountedHere = $derived(browserPaneAvailable && tabVisible('browser'));
-  let inspectorMountedHere = $derived(tabVisible('inspector'));
   let notesMountedHere = $derived(tabVisible('notes'));
 
   let activeCwd = $derived.by<string | null>(() => {
@@ -364,6 +363,17 @@
   style={railOpen && !fullscreen ? `width: ${asideWidth}px` : undefined}
   aria-label="Session rail"
 >
+  {#if mobileWorkspace && onOpenNavigation}
+    <Button
+      variant="ghost"
+      class="mobile-pane-menu-button"
+      onclick={onOpenNavigation}
+      aria-label="Open session list"
+      title="Open session list"
+    >
+      <PanelLeftOpen />
+    </Button>
+  {/if}
   {#if diffMountedHere}
     <div class={paneClasses('diff')} style={paneStyle('diff')} data-pane-slot={slotOf('diff')}>
       <LazyRailContent label="working diff" load={loadDiffTab} />
@@ -385,20 +395,6 @@
   {#if browserMountedHere}
     <div class={paneClasses('browser')} style={paneStyle('browser')} data-pane-slot={slotOf('browser')}>
       <LazyRailContent label="browser" load={loadBrowserTab} />
-    </div>
-  {/if}
-
-  {#if inspectorMountedHere}
-    <div class={paneClasses('inspector')} style={paneStyle('inspector')} data-pane-slot={slotOf('inspector')}>
-      <header class="soloe-pane-header">
-        <Activity class="size-3.5 text-muted-foreground" />
-        <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
-          Inspector
-        </span>
-      </header>
-      <ScrollArea class="min-h-0 flex-1">
-        <RailInspectorTab />
-      </ScrollArea>
     </div>
   {/if}
 

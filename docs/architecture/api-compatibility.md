@@ -58,7 +58,7 @@ renderer code does not own those operations.
 
 All shared rail panes work in the PWA:
 
-- Inspector and Worktree Overview;
+- Worktree Overview;
 - Working Diff, including range review and Git mutations;
 - Files and File Palette, including read, edit, save, refresh, and search;
 - Feature Lab;
