@@ -14,6 +14,7 @@ export default defineConfig({
   plugins: [soloeBrowserHost(), tailwindcss(), svelte()],
   server: {
     host: "127.0.0.1",
+    allowedHosts: ["laptoplores.tail1ab873.ts.net"],
     port: webPort,
     strictPort: true,
     ...(backendUrl
