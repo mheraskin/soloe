@@ -1285,6 +1285,7 @@ describe("SoloeDomain", () => {
     git(worktree, ["init", "-b", "main"]);
     git(worktree, ["config", "user.email", "soloe@example.test"]);
     git(worktree, ["config", "user.name", "Soloe Test"]);
+    git(worktree, ["config", "core.autocrlf", "false"]);
     await writeFile(path.join(worktree, "app.txt"), "one\n");
     git(worktree, ["add", "app.txt"]);
     git(worktree, ["commit", "-m", "initial"]);
