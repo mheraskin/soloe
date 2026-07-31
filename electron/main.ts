@@ -62,6 +62,10 @@ import { FeaturesIpc } from './ipc/features.ipc.js';
 import { VaultStore } from './vault/VaultStore.js';
 import { VaultIpc } from './ipc/vault.ipc.js';
 import { BrowserIpc } from './ipc/browser.ipc.js';
+import {
+  isBrowserDevToolsToggleInput,
+  isBrowserRestoreTabInput
+} from './browser-shortcuts.js';
 import { ModelCatalogService } from './agents/ModelCatalogService.js';
 
 interface AppServices {
@@ -745,10 +749,24 @@ function zoomDirectionFromInput(input: Electron.Input): 'in' | 'out' | 'reset' |
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() !== 'webview') return;
   contents.on('before-input-event', (event, input) => {
+    const host = contents.hostWebContents;
+    if (isBrowserRestoreTabInput(input)) {
+      event.preventDefault();
+      if (host && !host.isDestroyed()) {
+        host.send('soloe:webview-restore-tab');
+      }
+      return;
+    }
+    if (isBrowserDevToolsToggleInput(input)) {
+      event.preventDefault();
+      if (host && !host.isDestroyed()) {
+        host.send('soloe:webview-toggle-devtools');
+      }
+      return;
+    }
     const direction = zoomDirectionFromInput(input);
     if (!direction) return;
     event.preventDefault();
-    const host = contents.hostWebContents;
     if (host && !host.isDestroyed()) {
       host.send('soloe:webview-zoom-key', { direction });
     }

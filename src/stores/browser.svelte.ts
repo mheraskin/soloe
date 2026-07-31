@@ -44,6 +44,11 @@ interface BrowserCwdState {
   activeTabId: string | null;
 }
 
+interface ClosedBrowserTab {
+  tab: BrowserTab;
+  index: number;
+}
+
 const NO_WORKTREE_KEY = '__none__';
 const STORAGE_INDEX_KEY = 'soloe.browser.v3.index';
 const STORAGE_SCOPE_PREFIX = 'soloe.browser.v3.scope:';
@@ -53,6 +58,7 @@ const DEFAULT_URL = 'about:blank';
 const MAX_HISTORY = 100;
 const MAX_PERSISTED_SCOPES = 64;
 const MAX_PERSISTED_TABS = 24;
+const MAX_CLOSED_TABS = 25;
 const MAX_URL_CHARS = 8_192;
 const MAX_TITLE_CHARS = 512;
 const MAX_SCOPE_STORAGE_CHARS = 256 * 1024;
@@ -153,6 +159,7 @@ export class BrowserStore {
   // intent, while these maps describe what is hot in this app process only.
   private recencyByScope = new Map<string, Map<string, number>>();
   private deferredByScope = new Map<string, Set<string>>();
+  private closedTabsByScope = new Map<string, ClosedBrowserTab[]>();
   private recencyCounter = 0;
   private persistedScopeRecency: string[] = [];
   private pendingPersistenceKeys = new Set<string>();
@@ -325,6 +332,7 @@ export class BrowserStore {
     this.pendingPersistenceKeys.delete(key);
     this.recencyByScope.delete(key);
     this.deferredByScope.delete(key);
+    this.closedTabsByScope.delete(key);
   }
 
   get tabs(): BrowserTab[] {
@@ -343,6 +351,10 @@ export class BrowserStore {
     const state = this.current();
     if (!state.activeTabId) return null;
     return state.tabs.find((t) => t.id === state.activeTabId) ?? null;
+  }
+
+  get canRestoreClosedTab(): boolean {
+    return (this.closedTabsByScope.get(this.currentKey())?.length ?? 0) > 0;
   }
 
   activeUrl(): string {
@@ -375,6 +387,42 @@ export class BrowserStore {
     return tab;
   }
 
+  duplicateTab(id: string): BrowserTab | null {
+    const state = this.current();
+    const idx = state.tabs.findIndex((tab) => tab.id === id);
+    if (idx < 0) return null;
+    const source = state.tabs[idx]!;
+    const { pausedAt: _pausedAt, ...resumed } = source;
+    const tab: BrowserTab = {
+      ...resumed,
+      id: newId(),
+      history: [...source.history],
+      ...(source.device ? { device: { ...source.device } } : {})
+    };
+    const tabs = state.tabs.slice();
+    tabs.splice(idx + 1, 0, tab);
+    if (state.activeTabId) this.touch(state.activeTabId);
+    this.write({ tabs, activeTabId: tab.id });
+    this.touch(tab.id);
+    return tab;
+  }
+
+  reorderTab(id: string, targetId: string, position: 'before' | 'after'): void {
+    if (id === targetId) return;
+    const state = this.current();
+    const fromIndex = state.tabs.findIndex((tab) => tab.id === id);
+    const targetIndex = state.tabs.findIndex((tab) => tab.id === targetId);
+    if (fromIndex < 0 || targetIndex < 0) return;
+    let insertionIndex = targetIndex + (position === 'after' ? 1 : 0);
+    const tabs = state.tabs.slice();
+    const [tab] = tabs.splice(fromIndex, 1);
+    if (!tab) return;
+    if (fromIndex < insertionIndex) insertionIndex -= 1;
+    tabs.splice(insertionIndex, 0, tab);
+    if (tabs.every((candidate, index) => candidate.id === state.tabs[index]?.id)) return;
+    this.write({ ...state, tabs });
+  }
+
   selectTab(id: string): void {
     const state = this.current();
     const idx = state.tabs.findIndex((tab) => tab.id === id);
@@ -393,6 +441,18 @@ export class BrowserStore {
     const state = this.current();
     const idx = state.tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
+    const closed = state.tabs[idx]!;
+    const stack = this.closedTabsByScope.get(this.currentKey()) ?? [];
+    stack.push({
+      tab: {
+        ...closed,
+        history: [...closed.history],
+        ...(closed.device ? { device: { ...closed.device } } : {})
+      },
+      index: idx
+    });
+    if (stack.length > MAX_CLOSED_TABS) stack.splice(0, stack.length - MAX_CLOSED_TABS);
+    this.closedTabsByScope.set(this.currentKey(), stack);
     const tabs = state.tabs.filter((t) => t.id !== id);
     let activeTabId = state.activeTabId;
     if (activeTabId === id) {
@@ -408,6 +468,27 @@ export class BrowserStore {
     this.recencyForCurrent().delete(id);
     this.deferredForCurrent().delete(id);
     if (activeTabId) this.touch(activeTabId);
+  }
+
+  restoreClosedTab(): BrowserTab | null {
+    const stack = this.closedTabsByScope.get(this.currentKey());
+    const closed = stack?.pop();
+    if (!closed) return null;
+    if (stack?.length === 0) this.closedTabsByScope.delete(this.currentKey());
+    const state = this.current();
+    const { pausedAt: _pausedAt, ...resumed } = closed.tab;
+    const tab: BrowserTab = {
+      ...resumed,
+      id: newId(),
+      history: [...closed.tab.history],
+      ...(closed.tab.device ? { device: { ...closed.tab.device } } : {})
+    };
+    const tabs = state.tabs.slice();
+    tabs.splice(Math.min(closed.index, tabs.length), 0, tab);
+    if (state.activeTabId) this.touch(state.activeTabId);
+    this.write({ tabs, activeTabId: tab.id });
+    this.touch(tab.id);
+    return tab;
   }
 
   // Records a fresh navigation (typed URL, link click, etc.). Truncates any
