@@ -184,13 +184,13 @@ impl BackendSupervisor {
             BackendPlacement::Wsl => "WSL",
         };
         match self.reconciled_lifecycle(&backend) {
-            LifecycleState::Starting => format!("Starting ({host})…"),
-            LifecycleState::Stopping => format!("Stopping ({host})…"),
+            LifecycleState::Starting => format!("Starting services ({host})…"),
+            LifecycleState::Stopping => format!("Stopping all services ({host})…"),
             LifecycleState::Running | LifecycleState::Degraded(_) => {
-                format!("Stop ({host})")
+                format!("Stop all services ({host})")
             }
             LifecycleState::Stopped | LifecycleState::Failed(_) => {
-                format!("Start ({host})")
+                format!("Start services ({host})")
             }
         }
     }
@@ -203,10 +203,10 @@ impl BackendSupervisor {
         };
         match self.reconciled_lifecycle(&backend) {
             LifecycleState::Running | LifecycleState::Degraded(_) | LifecycleState::Stopping => {
-                format!("Stopping ({host})…")
+                format!("Stopping all services ({host})…")
             }
             LifecycleState::Starting | LifecycleState::Stopped | LifecycleState::Failed(_) => {
-                format!("Starting ({host})…")
+                format!("Starting services ({host})…")
             }
         }
     }
@@ -341,7 +341,7 @@ impl BackendSupervisor {
         }
     }
 
-    pub fn requires_quit_confirmation(&self) -> bool {
+    pub fn requires_stop_confirmation(&self) -> bool {
         let backend = self.backend_for_existing_services();
         if !self.is_running_on("runtime", &backend) {
             return false;
@@ -1373,8 +1373,11 @@ mod tests {
                 wsl_repository_root: "/home/me/soloe".to_string(),
             }
         );
-        assert_eq!(supervisor.backend_action_label(), "Start (WSL)");
-        assert_eq!(supervisor.backend_transition_label(), "Starting (WSL)…");
+        assert_eq!(supervisor.backend_action_label(), "Start services (WSL)");
+        assert_eq!(
+            supervisor.backend_transition_label(),
+            "Starting services (WSL)…"
+        );
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -1505,11 +1508,20 @@ mod tests {
         let _ = fs::create_dir_all(&directory);
         let processes = Arc::new(FakeProcessOperations::with_running([2001, 2002, 2003]));
         let supervisor = test_supervisor(directory.clone(), processes.clone());
-        assert_eq!(supervisor.backend_action_label(), "Start (Windows)");
-        assert_eq!(supervisor.backend_transition_label(), "Starting (Windows)…");
+        assert_eq!(
+            supervisor.backend_action_label(),
+            "Start services (Windows)"
+        );
+        assert_eq!(
+            supervisor.backend_transition_label(),
+            "Starting services (Windows)…"
+        );
         assert!(supervisor.backend_action_enabled());
         supervisor.set_lifecycle(LifecycleState::Starting);
-        assert_eq!(supervisor.backend_action_label(), "Starting (Windows)…");
+        assert_eq!(
+            supervisor.backend_action_label(),
+            "Starting services (Windows)…"
+        );
         assert!(!supervisor.backend_action_enabled());
         supervisor.set_lifecycle(LifecycleState::Stopped);
         fs::write(
@@ -1517,8 +1529,14 @@ mod tests {
             r#"{"service":"runtime","pid":2001,"ownerId":"test-owner"}"#,
         )
         .unwrap();
-        assert_eq!(supervisor.backend_action_label(), "Stop (Windows)");
-        assert_eq!(supervisor.backend_transition_label(), "Stopping (Windows)…");
+        assert_eq!(
+            supervisor.backend_action_label(),
+            "Stop all services (Windows)"
+        );
+        assert_eq!(
+            supervisor.backend_transition_label(),
+            "Stopping all services (Windows)…"
+        );
         assert!(supervisor.backend_action_enabled());
 
         fs::write(
@@ -1526,16 +1544,25 @@ mod tests {
             r#"{"service":"server","pid":2002,"ownerId":"test-owner"}"#,
         )
         .unwrap();
-        assert_eq!(supervisor.backend_action_label(), "Stop (Windows)");
+        assert_eq!(
+            supervisor.backend_action_label(),
+            "Stop all services (Windows)"
+        );
 
         fs::write(
             directory.join("web.json"),
             r#"{"service":"web","pid":2003,"ownerId":"test-owner"}"#,
         )
         .unwrap();
-        assert_eq!(supervisor.backend_action_label(), "Stop (Windows)");
+        assert_eq!(
+            supervisor.backend_action_label(),
+            "Stop all services (Windows)"
+        );
         supervisor.set_lifecycle(LifecycleState::Stopping);
-        assert_eq!(supervisor.backend_action_label(), "Stopping (Windows)…");
+        assert_eq!(
+            supervisor.backend_action_label(),
+            "Stopping all services (Windows)…"
+        );
         assert!(!supervisor.backend_action_enabled());
         let _ = fs::remove_dir_all(directory);
     }

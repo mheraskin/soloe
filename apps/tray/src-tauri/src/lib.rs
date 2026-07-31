@@ -43,22 +43,22 @@ impl LaunchTarget {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum QuitIntent {
+enum ConfirmationIntent {
     Confirm,
     Begin,
     Ignore,
 }
 
 #[derive(Default)]
-struct QuitState {
+struct ConfirmationState {
     confirmation_deadline: Option<Instant>,
-    quitting: bool,
+    in_progress: bool,
 }
 
-impl QuitState {
-    fn request(&mut self, requires_confirmation: bool, now: Instant) -> QuitIntent {
-        if self.quitting {
-            return QuitIntent::Ignore;
+impl ConfirmationState {
+    fn request(&mut self, requires_confirmation: bool, now: Instant) -> ConfirmationIntent {
+        if self.in_progress {
+            return ConfirmationIntent::Ignore;
         }
         if requires_confirmation
             && !self
@@ -66,11 +66,23 @@ impl QuitState {
                 .is_some_and(|deadline| deadline > now)
         {
             self.confirmation_deadline = Some(now + Duration::from_secs(10));
-            return QuitIntent::Confirm;
+            return ConfirmationIntent::Confirm;
         }
-        self.quitting = true;
+        self.in_progress = true;
         self.confirmation_deadline = None;
-        QuitIntent::Begin
+        ConfirmationIntent::Begin
+    }
+
+    fn finish(&mut self) {
+        self.in_progress = false;
+        self.confirmation_deadline = None;
+    }
+
+    fn awaiting_confirmation(&self, now: Instant) -> bool {
+        !self.in_progress
+            && self
+                .confirmation_deadline
+                .is_some_and(|deadline| deadline > now)
     }
 }
 
@@ -83,7 +95,7 @@ pub fn run() {
             let initial_action = supervisor
                 .lock()
                 .map(|service| service.backend_transition_label())
-                .unwrap_or_else(|_| "Starting…".to_string());
+                .unwrap_or_else(|_| "Starting services…".to_string());
             let backend_action =
                 MenuItem::with_id(app, "toggle_backend", initial_action, false, None::<&str>)?;
             let open_browser =
@@ -117,7 +129,9 @@ pub fn run() {
             let menu_open_browser = open_browser.clone();
             let menu_open_electron = open_electron.clone();
             let menu_quit = quit.clone();
-            let quit_state = Arc::new(Mutex::new(QuitState::default()));
+            let backend_action_state = Arc::new(Mutex::new(ConfirmationState::default()));
+            let menu_backend_action_state = Arc::clone(&backend_action_state);
+            let quit_state = Arc::new(Mutex::new(ConfirmationState::default()));
             let menu_quit_state = Arc::clone(&quit_state);
             let launch_state = Arc::new(Mutex::new(None::<LaunchTarget>));
             let menu_launch_state = Arc::clone(&launch_state);
@@ -156,15 +170,41 @@ pub fn run() {
                     let open_browser = menu_open_browser.clone();
                     let open_electron = menu_open_electron.clone();
                     let quit = menu_quit.clone();
+                    let backend_action_state = Arc::clone(&menu_backend_action_state);
                     let quit_state = Arc::clone(&menu_quit_state);
                     let launch_state = Arc::clone(&menu_launch_state);
                     let app = app.clone();
                     thread::spawn(move || {
                         if id == "toggle_backend" {
+                            let requires_confirmation = supervisor
+                                .lock()
+                                .map_err(|_| "backend supervisor lock poisoned".to_string())
+                                .map(|service| service.requires_stop_confirmation());
+                            let intent = requires_confirmation.and_then(|required| {
+                                backend_action_state
+                                    .lock()
+                                    .map_err(|_| "service action state lock poisoned".to_string())
+                                    .map(|mut state| state.request(required, Instant::now()))
+                            });
+                            let intent = match intent {
+                                Ok(intent) => intent,
+                                Err(error) => {
+                                    eprintln!("[tray] {error}");
+                                    return;
+                                }
+                            };
+                            if intent == ConfirmationIntent::Confirm {
+                                let _ = backend_action
+                                    .set_text("Confirm stop all services — end active agents");
+                                return;
+                            }
+                            if intent == ConfirmationIntent::Ignore {
+                                return;
+                            }
                             let transition = supervisor
                                 .lock()
                                 .map(|service| service.backend_transition_label())
-                                .unwrap_or_else(|_| "Starting…".to_string());
+                                .unwrap_or_else(|_| "Updating services…".to_string());
                             let _ = backend_action.set_text(transition);
                             let _ = backend_action.set_enabled(false);
                         }
@@ -189,7 +229,7 @@ pub fn run() {
                                 let requires_confirmation = supervisor
                                     .lock()
                                     .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                    .map(|service| service.requires_quit_confirmation());
+                                    .map(|service| service.requires_stop_confirmation());
                                 let intent = requires_confirmation.and_then(|required| {
                                     quit_state
                                         .lock()
@@ -203,13 +243,13 @@ pub fn run() {
                                         return;
                                     }
                                 };
-                                if intent == QuitIntent::Confirm {
+                                if intent == ConfirmationIntent::Confirm {
                                     let _ = quit.set_text(
                                         "Confirm quit — stop active agents and all services",
                                     );
                                     return;
                                 }
-                                if intent == QuitIntent::Ignore {
+                                if intent == ConfirmationIntent::Ignore {
                                     return;
                                 }
                                 let _ = quit.set_text("Quitting…");
@@ -217,7 +257,7 @@ pub fn run() {
                                 let transition = supervisor
                                     .lock()
                                     .map(|service| service.backend_transition_label())
-                                    .unwrap_or_else(|_| "Stopping…".to_string());
+                                    .unwrap_or_else(|_| "Stopping all services…".to_string());
                                 let _ = backend_action.set_text(transition);
                                 let _ = backend_action.set_enabled(false);
                                 let result = supervisor
@@ -235,6 +275,11 @@ pub fn run() {
                         };
                         if let Err(error) = result {
                             eprintln!("[tray] {error}");
+                        }
+                        if id == "toggle_backend" {
+                            if let Ok(mut state) = backend_action_state.lock() {
+                                state.finish();
+                            }
                         }
                         if let (Some(target), Some(started_at)) =
                             (launch_target, launch_started_at.flatten())
@@ -262,7 +307,13 @@ pub fn run() {
                         }
                         let _ = quit.set_text("Quit Soloe");
                         if let Ok(service) = supervisor.lock() {
-                            let _ = backend_action.set_text(service.backend_action_label());
+                            let awaiting_confirmation = backend_action_state
+                                .lock()
+                                .map(|state| state.awaiting_confirmation(Instant::now()))
+                                .unwrap_or(false);
+                            if !awaiting_confirmation {
+                                let _ = backend_action.set_text(service.backend_action_label());
+                            }
                             let _ = backend_action.set_enabled(service.backend_action_enabled());
                         }
                     });
@@ -286,6 +337,7 @@ pub fn run() {
 
             let polling_supervisor = Arc::clone(&supervisor);
             let polling_backend_action = backend_action.clone();
+            let polling_backend_action_state = Arc::clone(&backend_action_state);
             let polling_browser = open_browser.clone();
             let polling_launch_state = Arc::clone(&launch_state);
             thread::spawn(move || {
@@ -294,7 +346,13 @@ pub fn run() {
                     let Ok(service) = polling_supervisor.lock() else {
                         break;
                     };
-                    let _ = polling_backend_action.set_text(service.backend_action_label());
+                    let awaiting_confirmation = polling_backend_action_state
+                        .lock()
+                        .map(|state| state.awaiting_confirmation(Instant::now()))
+                        .unwrap_or(false);
+                    if !awaiting_confirmation {
+                        let _ = polling_backend_action.set_text(service.backend_action_label());
+                    }
                     let _ = polling_backend_action.set_enabled(service.backend_action_enabled());
                     let launching = polling_launch_state
                         .lock()
@@ -315,42 +373,63 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{LaunchTarget, QuitIntent, QuitState};
+    use super::{ConfirmationIntent, ConfirmationState, LaunchTarget};
     use std::time::{Duration, Instant};
 
     #[test]
     fn quit_requires_confirmation_then_enters_quitting_once() {
         let now = Instant::now();
-        let mut state = QuitState::default();
+        let mut state = ConfirmationState::default();
 
-        assert_eq!(state.request(true, now), QuitIntent::Confirm);
+        assert_eq!(state.request(true, now), ConfirmationIntent::Confirm);
         assert_eq!(
             state.request(true, now + Duration::from_secs(1)),
-            QuitIntent::Begin
+            ConfirmationIntent::Begin
         );
         assert_eq!(
             state.request(true, now + Duration::from_secs(2)),
-            QuitIntent::Ignore
+            ConfirmationIntent::Ignore
         );
     }
 
     #[test]
     fn expired_quit_confirmation_must_be_requested_again() {
         let now = Instant::now();
-        let mut state = QuitState::default();
+        let mut state = ConfirmationState::default();
 
-        assert_eq!(state.request(true, now), QuitIntent::Confirm);
+        assert_eq!(state.request(true, now), ConfirmationIntent::Confirm);
         assert_eq!(
             state.request(true, now + Duration::from_secs(11)),
-            QuitIntent::Confirm
+            ConfirmationIntent::Confirm
         );
     }
 
     #[test]
     fn quit_without_active_agents_begins_immediately() {
-        let mut state = QuitState::default();
+        let mut state = ConfirmationState::default();
 
-        assert_eq!(state.request(false, Instant::now()), QuitIntent::Begin);
+        assert_eq!(
+            state.request(false, Instant::now()),
+            ConfirmationIntent::Begin
+        );
+    }
+
+    #[test]
+    fn service_confirmation_can_be_reused_after_an_action_finishes() {
+        let now = Instant::now();
+        let mut state = ConfirmationState::default();
+
+        assert_eq!(state.request(true, now), ConfirmationIntent::Confirm);
+        assert!(state.awaiting_confirmation(now + Duration::from_secs(1)));
+        assert_eq!(
+            state.request(true, now + Duration::from_secs(1)),
+            ConfirmationIntent::Begin
+        );
+        state.finish();
+        assert_eq!(
+            state.request(true, now + Duration::from_secs(2)),
+            ConfirmationIntent::Confirm
+        );
     }
 
     #[test]
