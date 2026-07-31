@@ -868,7 +868,7 @@
   <ContextMenu.Root onOpenChange={onMenuOpenChange}>
     <ContextMenu.Trigger>
       {#snippet child({ props })}
-        <div {...props} class="h-full w-full" bind:this={host}></div>
+        <div {...props} class="h-full w-full min-w-0 overflow-hidden" bind:this={host}></div>
       {/snippet}
     </ContextMenu.Trigger>
     <ContextMenu.Content class="w-44">
@@ -951,7 +951,12 @@
   @media (max-width: 767px) {
     .terminal-pane-shell {
       display: grid;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(0, 1fr) auto;
+      overflow: hidden;
       padding: 0.25rem;
     }
 

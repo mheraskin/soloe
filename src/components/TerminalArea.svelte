@@ -21,9 +21,10 @@
 
   interface Props {
     onOpenNavigation?: () => void;
+    active?: boolean;
   }
 
-  let { onOpenNavigation }: Props = $props();
+  let { onOpenNavigation, active = true }: Props = $props();
   let selected = $derived(sessions.selected);
   let split = $derived(sessions.activeSplit);
   let containerEl: HTMLDivElement | undefined = $state();
@@ -136,8 +137,8 @@
         : pane.sessionId === selected?.id
           ? 'full'
           : 'hidden'}
-      {@const visible = role !== 'hidden'}
-      {@const focused = split ? pane.sessionId === split.focusedId : role === 'full'}
+      {@const visible = active && role !== 'hidden'}
+      {@const focused = active && (split ? pane.sessionId === split.focusedId : role === 'full')}
       {@const ratio = split?.ratio ?? 0.5}
       <!--
         LRU-resident hidden panes are pushed out of the viewport rather than faded out.
