@@ -106,7 +106,7 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
         }
     }));
     let started = sidecar.response(2);
-    assert_eq!(started["ok"], true);
+    assert_eq!(started["ok"], true, "start response: {started}");
     assert_eq!(started["value"]["terminalId"], "terminal-contract");
     assert!(started["value"]["pid"].as_u64().is_some_and(|pid| pid > 0));
 
