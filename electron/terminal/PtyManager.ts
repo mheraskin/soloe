@@ -288,7 +288,7 @@ export class PtyManager extends EventEmitter {
     void this.opts.store
       .get(sessionId)
       .then(async (session) => {
-        if (session?.hasUserInput !== false) return;
+        if (!session || session.hasUserInput === true) return;
         await this.opts.store.update(sessionId, { hasUserInput: true });
       })
       .catch((err) => {
