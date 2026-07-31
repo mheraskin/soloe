@@ -10,6 +10,7 @@ export interface NoteContent {
   filename: string;
   content: string;
   updatedAt: number;
+  revision: string;
 }
 
 export interface NotesChangeEvent {

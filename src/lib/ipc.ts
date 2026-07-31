@@ -58,6 +58,7 @@ import type {
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
+import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
 import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
@@ -89,6 +90,7 @@ import type {
 import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
 import type {
+  VaultChangeEvent,
   VaultDeleteRequest,
   VaultGetSecretRequest,
   VaultListRequest,
@@ -134,6 +136,10 @@ const terminalOutputRouter = new TerminalOutputRouter(
 );
 
 export const backend = {
+  connection: {
+    onReconnect: (listener: () => void) =>
+      terminalReconnect ? terminalReconnect(listener) : () => {}
+  },
   sessions: {
     list: async () => unwrap(await c.sessions.list()),
     listArchived: async () => unwrap(await c.sessions.listArchived()),
@@ -145,7 +151,8 @@ export const backend = {
     reorder: async (orderedIds: SessionId[]) =>
       unwrap(await c.sessions.reorder([...orderedIds])),
     previewCommand: async (id: SessionId) => unwrap(await c.sessions.previewCommand(id)),
-    onChange: (cb: (session: Session) => void) => c.sessions.onChange(cb)
+    onChange: (cb: (session: Session) => void) => c.sessions.onChange(cb),
+    onDelete: (cb: (sessionId: SessionId) => void) => c.sessions.onDelete(cb)
   },
   terminal: {
     start: async (opts: TerminalStartOptions) => unwrap(await c.terminal.start(toIpcPayload(opts))),
@@ -235,8 +242,13 @@ export const backend = {
     list: async (projectId: ProjectId) => unwrap(await c.notes.list(projectId)),
     read: async (projectId: ProjectId, filename: string) =>
       unwrap(await c.notes.read(projectId, filename)),
-    write: async (projectId: ProjectId, filename: string, content: string) =>
-      unwrap(await c.notes.write(projectId, filename, content)),
+    write: async (
+      projectId: ProjectId,
+      filename: string,
+      content: string,
+      expectedRevision?: string | null
+    ) =>
+      unwrap(await c.notes.write(projectId, filename, content, expectedRevision)),
     rename: async (projectId: ProjectId, oldName: string, newName: string) =>
       unwrap(await c.notes.rename(projectId, oldName, newName)),
     delete: async (projectId: ProjectId, filename: string) =>
@@ -320,7 +332,8 @@ export const backend = {
   },
   diagnostics: {
     list: async () => unwrap(await c.diagnostics.list()),
-    crashLogs: async () => unwrap(await c.diagnostics.crashLogs())
+    crashLogs: async (request?: DiagnosticLogsRequest) =>
+      unwrap(await c.diagnostics.crashLogs(request ? toIpcPayload(request) : undefined))
   },
   window: {
     minimize: async () => unwrap(await c.window.minimize()),
@@ -397,7 +410,8 @@ export const backend = {
     delete: async (request: VaultDeleteRequest) =>
       unwrap(await c.vault.delete(toIpcPayload(request))),
     getSecret: async (request: VaultGetSecretRequest) =>
-      unwrap(await c.vault.getSecret(toIpcPayload(request)))
+      unwrap(await c.vault.getSecret(toIpcPayload(request))),
+    onChange: (cb: (event: VaultChangeEvent) => void) => c.vault.onChange(cb)
   }
 };
 
@@ -413,4 +427,9 @@ export const ipc = backend;
 
 export function hasBackendTransport(): boolean {
   return typeof window !== 'undefined' && Boolean(window.soloe);
+}
+
+export function supportsBackendOperation(namespace: string, method: string): boolean {
+  const transport = c?.transport;
+  return transport ? transport.supports(namespace, method) : true;
 }

@@ -36,6 +36,7 @@
   let activeRequestId: string | null = null;
   let activeOnChunk: ((text: string) => void) | null = null;
   let activeStreamResolve: ((result: { ok: boolean; error?: string }) => void) | null = null;
+  let earlyChunks: AskFollowUpChunk[] = [];
 
   // Agent sessions currently open in this worktree, paired with the
   // user-visible tab name. The overview is scoped to these — closed/
@@ -49,9 +50,21 @@
   );
 
   const detachChunk = ipc.overview.onChunk(handleChunk);
+  const detachReconnect = ipc.connection.onReconnect(() => {
+    earlyChunks = [];
+    if (activeRequestId) {
+      activeStreamResolve?.({
+        ok: false,
+        error: 'Overview stream interrupted by reconnect; ask the question again'
+      });
+      resetStream();
+    }
+    if (cwd) void loadOverview(cwd);
+  });
 
   onDestroy(() => {
     detachChunk();
+    detachReconnect();
     if (activeRequestId) {
       void ipc.overview.askCancel(activeRequestId).catch(() => {});
     }
@@ -144,7 +157,12 @@
   }
 
   function handleChunk(chunk: AskFollowUpChunk) {
-    if (!activeRequestId || chunk.requestId !== activeRequestId) return;
+    if (!activeRequestId) {
+      earlyChunks.push(chunk);
+      if (earlyChunks.length > 128) earlyChunks.shift();
+      return;
+    }
+    if (chunk.requestId !== activeRequestId) return;
     if (chunk.type === 'delta' && chunk.text) {
       activeOnChunk?.(chunk.text);
     } else if (chunk.type === 'done') {
@@ -183,6 +201,11 @@
       activeOnChunk = onChunk;
       return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
         activeStreamResolve = resolve;
+        const buffered = earlyChunks;
+        earlyChunks = [];
+        for (const chunk of buffered) {
+          if (chunk.requestId === requestId) handleChunk(chunk);
+        }
       });
     } catch (err) {
       resetStream();

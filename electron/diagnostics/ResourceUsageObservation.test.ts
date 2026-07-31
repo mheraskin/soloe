@@ -103,11 +103,15 @@ function createHarness(overrides: {
     sampledAt: '2026-07-14T00:00:00.000Z'
   };
   const collectAppUsage = vi.fn(async () => ({
+    scope: 'client' as const,
+    availability: 'available' as const,
+    backendPlacement: null,
     cpuPercent: 4.2,
     memoryBytes: 128 * 1024 * 1024,
     processCount: 4,
     electronProcessCount: 3,
     childProcessCount: 1,
+    components: [],
     sampledAt: '2026-07-14T00:00:00.000Z'
   }));
   const getRunningWslDistros = vi.fn(async () => ['Ubuntu', 'Ubuntu']);

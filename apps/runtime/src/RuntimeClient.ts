@@ -5,6 +5,7 @@ import type {
   RuntimeTerminalStart,
   RuntimeTerminalState
 } from './RuntimeProcess.js';
+import type { RuntimeUsageSnapshot } from "@soloe/protocol";
 import type { TerminalReplaySnapshot } from './TerminalReplayBuffer.js';
 
 interface RuntimeResponse {
@@ -49,6 +50,10 @@ export class RuntimeClient extends EventEmitter {
 
   listRunning(): Promise<RuntimeTerminalState[]> {
     return this.request('listRunning');
+  }
+
+  usage(): Promise<RuntimeUsageSnapshot> {
+    return this.request("usage");
   }
 
   replay(terminalId: string, afterSeq = 0): Promise<TerminalReplaySnapshot | null> {

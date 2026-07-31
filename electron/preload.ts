@@ -48,6 +48,7 @@ import type {
   FeatureSetIssueStatusRequest
 } from '@shared/types/features.js';
 import type {
+  VaultChangeEvent,
   VaultDeleteRequest,
   VaultGetSecretRequest,
   VaultListRequest,
@@ -94,6 +95,7 @@ import type {
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
+import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
 import type {
   TerminalExitEvent,
   TerminalId,
@@ -131,7 +133,9 @@ const soloe: SoloeApi = {
     previewCommand: (id: SessionId) =>
       ipcRenderer.invoke(IpcChannels.sessions.previewCommand, id),
     onChange: (cb: (session: Session) => void) =>
-      subscribe<Session>(IpcChannels.sessions.changed, cb)
+      subscribe<Session>(IpcChannels.sessions.changed, cb),
+    onDelete: (cb: (sessionId: SessionId) => void) =>
+      subscribe<SessionId>(IpcChannels.sessions.deleted, cb)
   },
   terminal: {
     start: (opts: TerminalStartOptions) => ipcRenderer.invoke(IpcChannels.terminal.start, opts),
@@ -212,8 +216,19 @@ const soloe: SoloeApi = {
     list: (projectId: ProjectId) => ipcRenderer.invoke(IpcChannels.notes.list, projectId),
     read: (projectId: ProjectId, filename: string) =>
       ipcRenderer.invoke(IpcChannels.notes.read, projectId, filename),
-    write: (projectId: ProjectId, filename: string, content: string) =>
-      ipcRenderer.invoke(IpcChannels.notes.write, projectId, filename, content),
+    write: (
+      projectId: ProjectId,
+      filename: string,
+      content: string,
+      expectedRevision?: string | null
+    ) =>
+      ipcRenderer.invoke(
+        IpcChannels.notes.write,
+        projectId,
+        filename,
+        content,
+        expectedRevision
+      ),
     rename: (projectId: ProjectId, oldName: string, newName: string) =>
       ipcRenderer.invoke(IpcChannels.notes.rename, projectId, oldName, newName),
     delete: (projectId: ProjectId, filename: string) =>
@@ -289,7 +304,8 @@ const soloe: SoloeApi = {
   },
   diagnostics: {
     list: () => ipcRenderer.invoke(IpcChannels.diagnostics.list),
-    crashLogs: () => ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs)
+    crashLogs: (request?: DiagnosticLogsRequest) =>
+      ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs, request)
   },
   window: {
     minimize: () => ipcRenderer.invoke(IpcChannels.window.minimize),
@@ -358,7 +374,9 @@ const soloe: SoloeApi = {
     update: (request: VaultUpdateRequest) => ipcRenderer.invoke(IpcChannels.vault.update, request),
     delete: (request: VaultDeleteRequest) => ipcRenderer.invoke(IpcChannels.vault.delete, request),
     getSecret: (request: VaultGetSecretRequest) =>
-      ipcRenderer.invoke(IpcChannels.vault.getSecret, request)
+      ipcRenderer.invoke(IpcChannels.vault.getSecret, request),
+    onChange: (cb: (event: VaultChangeEvent) => void) =>
+      subscribe<VaultChangeEvent>(IpcChannels.vault.change, cb)
   },
   browser: {
     enableDeviceEmulation: (request: EnableDeviceEmulationRequest) =>

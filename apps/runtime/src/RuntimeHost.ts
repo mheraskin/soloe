@@ -7,11 +7,13 @@ import type {
   RuntimeTerminalStart,
   RuntimeTerminalState
 } from './RuntimeProcess.js';
+import { ProcessTreeUsageSampler } from "./ProcessTreeUsageSampler.js";
 import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
 
 export interface RuntimeHostOptions {
   endpoint: string;
   processFactory: RuntimeProcessFactory;
+  usageSampler?: Pick<ProcessTreeUsageSampler, "sample">;
 }
 
 interface RunningTerminal {
@@ -32,8 +34,11 @@ export class RuntimeHost {
   private readonly terminalBySession = new Map<string, string>();
   private readonly outputSequence = new Map<string, number>();
   private readonly replayBuffer = new TerminalReplayBuffer();
+  private readonly usageSampler: Pick<ProcessTreeUsageSampler, "sample">;
 
-  constructor(private readonly options: RuntimeHostOptions) {}
+  constructor(private readonly options: RuntimeHostOptions) {
+    this.usageSampler = options.usageSampler ?? new ProcessTreeUsageSampler();
+  }
 
   async listen(): Promise<void> {
     if (this.server) return;
@@ -100,6 +105,8 @@ export class RuntimeHost {
         return this.start(params as RuntimeTerminalStart);
       case 'listRunning':
         return [...this.terminals.values()].map(({ state }) => state);
+      case "usage":
+        return this.usageSampler.sample();
       case 'replay': {
         const input = params as { terminalId: string; afterSeq?: number };
         return this.replayBuffer.snapshot(input.terminalId, input.afterSeq);

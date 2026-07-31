@@ -2,7 +2,7 @@ import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
 import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
 import { ipc } from '../lib/ipc';
 
-class SettingsStore {
+export class SettingsStore {
   current = $state<Settings>(structuredClone(DEFAULT_SETTINGS));
   loaded = $state(false);
   dialogOpen = $state(false);
@@ -13,10 +13,13 @@ class SettingsStore {
 
   private detachers: Array<() => void> = [];
   private targetTabNonce = 0;
+  private changeVersion = 0;
+  private reconnectRecovery: Promise<void> | null = null;
 
   async load(): Promise<void> {
+    const changeVersion = this.changeVersion;
     const s = await ipc.settings.get();
-    this.current = s;
+    if (this.changeVersion === changeVersion) this.current = s;
     this.loaded = true;
   }
 
@@ -24,7 +27,18 @@ class SettingsStore {
     this.detach();
     this.detachers.push(
       ipc.settings.onChange((s) => {
+        this.changeVersion += 1;
         this.current = s;
+      })
+    );
+    this.detachers.push(
+      ipc.connection.onReconnect(() => {
+        if (this.reconnectRecovery) return;
+        this.reconnectRecovery = this.load()
+          .catch(() => undefined)
+          .finally(() => {
+            this.reconnectRecovery = null;
+          });
       })
     );
   }

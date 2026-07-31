@@ -10,6 +10,14 @@ export interface DiagnosticItem {
 
 export interface CrashLogSummary {
   fileName: string;
-  path: string;
+  service: 'tray' | 'server' | 'runtime' | 'web' | 'supervisor' | 'crash';
+  severity: DiagnosticSeverity;
   createdAt: string;
+  sizeBytes: number;
+  tail: string;
+  truncated: boolean;
+}
+
+export interface DiagnosticLogsRequest {
+  tailBytes?: number;
 }

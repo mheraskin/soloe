@@ -16,7 +16,11 @@ const token =
 const runtimeEndpoint =
   process.env.SOLOE_RUNTIME_ENDPOINT ?? resolveRuntimeEndpoint({ dataDirectory });
 const domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
-const domain = new SoloeDomain({ dataDirectory, runtime: domainRuntime });
+const domain = new SoloeDomain({
+  dataDirectory,
+  runtime: domainRuntime,
+  enableAgentBridge: true,
+});
 await domain.init();
 const server = new SoloeServer({
   runtimeEndpoint,
@@ -25,8 +29,13 @@ const server = new SoloeServer({
   token,
   webRoot: process.env.SOLOE_WEB_ROOT ?? "",
   rpcHandler: (call) => domain.invoke(call),
+  clientDisconnected: (clientId) => domain.releaseClient(clientId),
+  clientReconnected: (clientId) => domain.recoverClient(clientId),
 });
 domain.on("event", (event, payload) => server.publish(event, payload));
+domain.on("targeted-event", (clientId, event, payload) =>
+  server.publishToClient(clientId, event, payload),
+);
 const address = await server.listen();
 await writeServiceInfo(dataDirectory, {
   service: "server",

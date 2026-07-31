@@ -61,7 +61,11 @@ import type {
   FileSearchRequest,
   FileSearchResult
 } from './files.js';
-import type { CrashLogSummary, DiagnosticItem } from './diagnostics.js';
+import type {
+  CrashLogSummary,
+  DiagnosticItem,
+  DiagnosticLogsRequest
+} from './diagnostics.js';
 import type {
   CoverageMapSnapshot,
   FeatureChangeEvent,
@@ -112,6 +116,7 @@ import type {
 } from './terminal.js';
 import type { HostPlatformInfo, SystemUsageRequest, SystemUsageSnapshot } from './system.js';
 import type {
+  VaultChangeEvent,
   VaultDeleteRequest,
   VaultEntry,
   VaultGetSecretRequest,
@@ -139,7 +144,8 @@ export const IpcChannels = {
     delete: 'sessions:delete',
     reorder: 'sessions:reorder',
     previewCommand: 'sessions:preview-command',
-    changed: 'sessions:changed'
+    changed: 'sessions:changed',
+    deleted: 'sessions:deleted'
   },
   terminal: {
     start: 'terminal:start',
@@ -294,7 +300,8 @@ export const IpcChannels = {
     save: 'vault:save',
     update: 'vault:update',
     delete: 'vault:delete',
-    getSecret: 'vault:get-secret'
+    getSecret: 'vault:get-secret',
+    change: 'vault:change'
   },
   browser: {
     enableDeviceEmulation: 'browser:enable-device-emulation',
@@ -342,6 +349,7 @@ export interface SessionsApi {
   previewCommand(id: SessionId): Promise<IpcResult<SpawnSpec>>;
 
   onChange(listener: (session: Session) => void): () => void;
+  onDelete(listener: (sessionId: SessionId) => void): () => void;
 }
 
 export interface TerminalInputPayload {
@@ -427,7 +435,8 @@ export interface NotesApi {
   write(
     projectId: ProjectId,
     filename: string,
-    content: string
+    content: string,
+    expectedRevision?: string | null
   ): Promise<IpcResult<NoteContent>>;
   rename(
     projectId: ProjectId,
@@ -493,7 +502,7 @@ export interface FilesApi {
 
 export interface DiagnosticsApi {
   list(): Promise<IpcResult<DiagnosticItem[]>>;
-  crashLogs(): Promise<IpcResult<CrashLogSummary[]>>;
+  crashLogs(request?: DiagnosticLogsRequest): Promise<IpcResult<CrashLogSummary[]>>;
 }
 
 export interface WindowApi {
@@ -615,6 +624,7 @@ export interface VaultApi {
   update(request: VaultUpdateRequest): Promise<IpcResult<VaultEntry>>;
   delete(request: VaultDeleteRequest): Promise<IpcResult<true>>;
   getSecret(request: VaultGetSecretRequest): Promise<IpcResult<VaultSecret>>;
+  onChange(cb: (event: VaultChangeEvent) => void): () => void;
 }
 
 export interface BrowserApi {

@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
+  VaultChangeEvent,
   VaultDeleteRequest,
   VaultGetSecretRequest,
   VaultListRequest,
@@ -12,14 +13,21 @@ import { ipcInvoke } from './result.js';
 
 interface VaultIpcOptions {
   store: VaultStore;
+  getWindows: () => Array<{
+    isDestroyed(): boolean;
+    webContents: { send(channel: string, payload: unknown): void };
+  }>;
 }
 
 export class VaultIpc {
   private registered = false;
+  private detachListener: (() => void) | null = null;
   private readonly store: VaultStore;
+  private readonly getWindows: VaultIpcOptions['getWindows'];
 
   constructor(options: VaultIpcOptions) {
     this.store = options.store;
+    this.getWindows = options.getWindows;
   }
 
   register(): void {
@@ -44,6 +52,13 @@ export class VaultIpc {
     ipcMain.handle(IpcChannels.vault.getSecret, (_event, request: VaultGetSecretRequest) =>
       ipcInvoke(() => this.store.getSecret(request.cwd, request.id))
     );
+    this.detachListener = this.store.onChange((event: VaultChangeEvent) => {
+      for (const win of this.getWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IpcChannels.vault.change, event);
+        }
+      }
+    });
   }
 
   dispose(): void {
@@ -53,6 +68,8 @@ export class VaultIpc {
     ipcMain.removeHandler(IpcChannels.vault.update);
     ipcMain.removeHandler(IpcChannels.vault.delete);
     ipcMain.removeHandler(IpcChannels.vault.getSecret);
+    this.detachListener?.();
+    this.detachListener = null;
     this.registered = false;
   }
 }

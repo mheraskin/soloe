@@ -17,6 +17,9 @@ export interface FileSearchResult {
 
 export interface FileOpenRequest {
   absolutePath: string;
+  cwd: string;
+  runMode: RunMode;
+  wslDistro?: string;
 }
 
 export interface FilePasteRequest {
@@ -66,7 +69,12 @@ export interface FileReadResult {
   relativePath: string;
   content: string;
   binary: boolean;
+  truncated: boolean;
+  oversized: boolean;
+  unavailable: boolean;
+  unavailableReason?: string;
   size: number;
+  maxBytes?: number;
 }
 
 export interface FileWriteRequest {

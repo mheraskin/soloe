@@ -4,9 +4,19 @@
 import { flushSync } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const { reconnectListeners } = vi.hoisted(() => ({
+  reconnectListeners: new Set<() => void>()
+}));
+
 vi.mock('../lib/ipc', () => ({
   hasBackendTransport: () => true,
   ipc: {
+    connection: {
+      onReconnect: vi.fn((listener: () => void) => {
+        reconnectListeners.add(listener);
+        return () => reconnectListeners.delete(listener);
+      })
+    },
     features: {
       scan: vi.fn(async (request: { cwd: string; slug?: string }) => ({
         cwd: request.cwd,
@@ -83,6 +93,22 @@ describe('featuresStore', () => {
 
     await featuresStore.unsubscribe(scope);
     expect(ipc.features.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('reacquires active subscriptions and refreshes after reconnect', async () => {
+    const cwd = `/repo-${crypto.randomUUID()}`;
+    const scope = createFeatureScope(cwd, { runMode: 'windows' });
+    await featuresStore.subscribe(scope);
+    vi.mocked(ipc.features.subscribe).mockClear();
+    vi.mocked(ipc.features.scan).mockClear();
+
+    for (const listener of reconnectListeners) listener();
+
+    await vi.waitFor(() => {
+      expect(ipc.features.subscribe).toHaveBeenCalledOnce();
+      expect(ipc.features.scan).toHaveBeenCalledOnce();
+    });
+    await featuresStore.unsubscribe(scope);
   });
 
   it('owns equal-path subscriptions independently across WSL distributions', async () => {

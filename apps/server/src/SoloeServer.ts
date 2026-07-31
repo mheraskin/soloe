@@ -6,6 +6,9 @@ import { WebSocket, WebSocketServer } from "ws";
 
 import { RuntimeClient } from "@soloe/runtime";
 
+const MAX_JSON_REQUEST_BYTES = 32 * 1024 * 1024;
+const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
+
 export interface SoloeServerOptions {
   runtimeEndpoint: string;
   host?: string;
@@ -13,12 +16,16 @@ export interface SoloeServerOptions {
   token: string;
   webRoot?: string;
   rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
+  clientDisconnected?: (clientId: string) => void;
+  clientReconnected?: (clientId: string) => void;
+  clientDisconnectGraceMs?: number;
 }
 
 export interface BrowserRpcCall {
   namespace: string;
   method: string;
   args: unknown[];
+  clientId?: string;
 }
 
 export class SoloeServer {
@@ -29,6 +36,9 @@ export class SoloeServer {
     token: string;
     webRoot: string;
     rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
+    clientDisconnected?: (clientId: string) => void;
+    clientReconnected?: (clientId: string) => void;
+    clientDisconnectGraceMs: number;
   };
   private runtimeClient: RuntimeClient | undefined;
   private server: Server | undefined;
@@ -37,6 +47,10 @@ export class SoloeServer {
     event: string;
     listener: (payload: unknown) => void;
   }> = [];
+  private readonly clientSocketCounts = new Map<string, number>();
+  private readonly socketClientIds = new WeakMap<WebSocket, string>();
+  private readonly clientDisconnectTimers = new Map<string, NodeJS.Timeout>();
+  private closing = false;
 
   constructor(options: SoloeServerOptions) {
     this.options = {
@@ -46,6 +60,13 @@ export class SoloeServer {
       token: options.token,
       webRoot: options.webRoot ?? "",
       ...(options.rpcHandler ? { rpcHandler: options.rpcHandler } : {}),
+      ...(options.clientDisconnected
+        ? { clientDisconnected: options.clientDisconnected }
+        : {}),
+      ...(options.clientReconnected
+        ? { clientReconnected: options.clientReconnected }
+        : {}),
+      clientDisconnectGraceMs: options.clientDisconnectGraceMs ?? 5_000,
     };
   }
 
@@ -53,6 +74,7 @@ export class SoloeServer {
     if (this.server) {
       throw new Error("Soloe server is already listening");
     }
+    this.closing = false;
 
     const runtimeClient = await RuntimeClient.connect(this.options.runtimeEndpoint);
     const webSocketServer = new WebSocketServer({ noServer: true });
@@ -77,12 +99,16 @@ export class SoloeServer {
         }
         await this.handleRequest(runtimeClient, request, response);
       } catch (error) {
-        response.writeHead(500, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            error: error instanceof Error ? error.message : "internal_server_error",
-          }),
-        );
+        const failure = httpFailure(error);
+        this.json(response, failure.status, {
+          error: {
+            code: failure.code,
+            message: failure.message,
+            ...(failure.remediation
+              ? { remediation: failure.remediation }
+              : {}),
+          },
+        });
       }
     });
     server.on("upgrade", (request, socket, head) => {
@@ -103,6 +129,29 @@ export class SoloeServer {
       webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
         webSocketServer.emit("connection", webSocket, request);
       });
+    });
+    webSocketServer.on("connection", (webSocket, request) => {
+      const url = new URL(request.url ?? "/", "http://localhost");
+      const rawClientId = url.searchParams.get("clientId");
+      const clientId = validClientId(rawClientId);
+      if (rawClientId !== null && !clientId) {
+        webSocket.close(1008, "invalid client identity");
+        return;
+      }
+      if (!clientId) return;
+      const timer = this.clientDisconnectTimers.get(clientId);
+      const reconnected = Boolean(timer);
+      if (timer) {
+        clearTimeout(timer);
+        this.clientDisconnectTimers.delete(clientId);
+      }
+      this.socketClientIds.set(webSocket, clientId);
+      this.clientSocketCounts.set(
+        clientId,
+        (this.clientSocketCounts.get(clientId) ?? 0) + 1,
+      );
+      webSocket.once("close", () => this.releaseClientSocket(clientId));
+      if (reconnected) this.options.clientReconnected?.(clientId);
     });
     const runtimeListeners = ["output", "exit"].map((event) => {
       const listener = (payload: unknown) => this.publish(event, payload);
@@ -147,6 +196,10 @@ export class SoloeServer {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    for (const timer of this.clientDisconnectTimers.values()) clearTimeout(timer);
+    this.clientDisconnectTimers.clear();
+    this.clientSocketCounts.clear();
     const server = this.server;
     this.server = undefined;
     const webSocketServer = this.webSocketServer;
@@ -192,6 +245,19 @@ export class SoloeServer {
     }
   }
 
+  publishToClient(clientId: string, event: string, payload: unknown): void {
+    if (!this.webSocketServer) return;
+    const message = JSON.stringify({ event, payload });
+    for (const client of this.webSocketServer.clients) {
+      if (
+        client.readyState === WebSocket.OPEN &&
+        this.socketClientIds.get(client) === clientId
+      ) {
+        client.send(message);
+      }
+    }
+  }
+
   private async handleRequest(
     runtimeClient: RuntimeClient,
     request: IncomingMessage,
@@ -215,17 +281,56 @@ export class SoloeServer {
       url.pathname === "/api/rpc" &&
       this.options.rpcHandler
     ) {
-      const call = await this.readJson<BrowserRpcCall>(request);
+      const call = validateRpcCall(await this.readJson<unknown>(request));
+      const requestBytes = Buffer.byteLength(JSON.stringify(call));
+      const startedAt = performance.now();
+      this.logRpc({
+        event: "rpc_start",
+        namespace: call.namespace,
+        method: call.method,
+        requestBytes,
+      });
       try {
-        this.json(response, 200, {
+        const result = {
           ok: true,
           value: await this.options.rpcHandler(call),
+        } as const;
+        const responseBytes = Buffer.byteLength(JSON.stringify(result));
+        if (responseBytes > MAX_RPC_RESPONSE_BYTES) {
+          throw new RpcTransportError(
+            "response_too_large",
+            `RPC response exceeds the ${MAX_RPC_RESPONSE_BYTES}-byte limit`,
+            413,
+            "Narrow the request or use a bounded result",
+          );
+        }
+        this.json(response, 200, result);
+        this.logRpc({
+          event: "rpc_end",
+          namespace: call.namespace,
+          method: call.method,
+          outcome: "ok",
+          durationMs: elapsedMilliseconds(startedAt),
+          requestBytes,
+          responseBytes,
         });
       } catch (error) {
         const failure = rpcFailure(error);
-        this.json(response, 200, {
+        const result = {
           ok: false,
           ...failure,
+        } as const;
+        const responseBytes = Buffer.byteLength(JSON.stringify(result));
+        this.json(response, 200, result);
+        this.logRpc({
+          event: "rpc_end",
+          namespace: call.namespace,
+          method: call.method,
+          outcome: "error",
+          durationMs: elapsedMilliseconds(startedAt),
+          requestBytes,
+          responseBytes,
+          code: failure.code,
         });
       }
       return;
@@ -276,10 +381,29 @@ export class SoloeServer {
 
   private async readJson<T>(request: IncomingMessage): Promise<T> {
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     for await (const chunk of request) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > MAX_JSON_REQUEST_BYTES) {
+        throw new RpcTransportError(
+          "request_too_large",
+          `JSON request exceeds the ${MAX_JSON_REQUEST_BYTES}-byte limit`,
+          413,
+          "Send a smaller request",
+        );
+      }
+      chunks.push(buffer);
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+    } catch {
+      throw new RpcTransportError(
+        "invalid_json",
+        "Request body is not valid JSON",
+        400,
+      );
+    }
   }
 
   private json(response: ServerResponse, status: number, value: unknown): void {
@@ -314,6 +438,44 @@ export class SoloeServer {
     const expected = Buffer.from(this.options.token);
     const received = Buffer.from(candidate);
     return expected.length === received.length && timingSafeEqual(expected, received);
+  }
+
+  private logRpc(entry: {
+    event: "rpc_start" | "rpc_end";
+    namespace: string;
+    method: string;
+    requestBytes: number;
+    outcome?: "ok" | "error";
+    durationMs?: number;
+    responseBytes?: number;
+    code?: string;
+  }): void {
+    process.stdout.write(
+      `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        service: "application-server",
+        severity: entry.outcome === "error" ? "error" : "info",
+        ...entry,
+      })}\n`,
+    );
+  }
+
+  private releaseClientSocket(clientId: string): void {
+    const remaining = (this.clientSocketCounts.get(clientId) ?? 1) - 1;
+    if (remaining > 0) {
+      this.clientSocketCounts.set(clientId, remaining);
+      return;
+    }
+    this.clientSocketCounts.delete(clientId);
+    if (this.closing || !this.options.clientDisconnected) return;
+    const timer = setTimeout(() => {
+      this.clientDisconnectTimers.delete(clientId);
+      if (!this.clientSocketCounts.has(clientId)) {
+        this.options.clientDisconnected?.(clientId);
+      }
+    }, this.options.clientDisconnectGraceMs);
+    timer.unref();
+    this.clientDisconnectTimers.set(clientId, timer);
   }
 
   private async serveWebClient(url: URL, response: ServerResponse): Promise<void> {
@@ -371,6 +533,82 @@ export class SoloeServer {
   }
 }
 
+class RpcTransportError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+    readonly remediation?: string,
+  ) {
+    super(message);
+    this.name = "RpcTransportError";
+  }
+}
+
+function validateRpcCall(value: unknown): BrowserRpcCall {
+  if (!value || typeof value !== "object") {
+    throw malformedRpc();
+  }
+  const call = value as Partial<BrowserRpcCall>;
+  if (
+    typeof call.namespace !== "string" ||
+    !/^[a-z][a-zA-Z0-9]{0,63}$/u.test(call.namespace) ||
+    typeof call.method !== "string" ||
+    !/^[a-z][a-zA-Z0-9]{0,63}$/u.test(call.method) ||
+    !Array.isArray(call.args)
+  ) {
+    throw malformedRpc();
+  }
+  if (call.clientId !== undefined && !validClientId(call.clientId)) {
+    throw malformedRpc();
+  }
+  return {
+    namespace: call.namespace,
+    method: call.method,
+    args: call.args,
+    ...(typeof call.clientId === "string" ? { clientId: call.clientId } : {}),
+  };
+}
+
+function validClientId(value: unknown): string | null {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/u.test(value)
+    ? value
+    : null;
+}
+
+function malformedRpc(): RpcTransportError {
+  return new RpcTransportError(
+    "malformed_rpc_body",
+    "RPC body must contain a valid namespace, method, and args array",
+    400,
+  );
+}
+
+function httpFailure(error: unknown): {
+  status: number;
+  code: string;
+  message: string;
+  remediation?: string;
+} {
+  if (error instanceof RpcTransportError) {
+    return {
+      status: error.status,
+      code: error.code,
+      message: error.message,
+      ...(error.remediation ? { remediation: error.remediation } : {}),
+    };
+  }
+  return {
+    status: 500,
+    code: "internal_server_error",
+    message: "The application server could not complete the request",
+  };
+}
+
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.round((performance.now() - startedAt) * 100) / 100;
+}
+
 function rpcFailure(error: unknown): {
   error: string;
   code: string;
@@ -408,6 +646,6 @@ function contentType(file: string): string {
     case ".woff2":
       return "font/woff2";
     default:
-      return "application/octet-stream";
+  return "application/octet-stream";
   }
 }

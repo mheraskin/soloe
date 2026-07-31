@@ -1,11 +1,20 @@
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   RuntimeProcess,
-  RuntimeProcessFactory
+  RuntimeProcessFactory,
+  RuntimeSpawnSpec
 } from '@soloe/runtime';
 import {
   resolveRuntimeEndpoint,
@@ -236,6 +245,121 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
+  it('delivers targeted events only to the owning browser client', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-targeted-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = testServer(runtimeEndpoint);
+    let owner: WebSocket | undefined;
+    let other: WebSocket | undefined;
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      owner = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=overview-owner',
+          baseUrl
+        ).toString()
+      );
+      other = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=other-client',
+          baseUrl
+        ).toString()
+      );
+      await Promise.all([opened(owner), opened(other)]);
+      const ownerMessage = nextMessage(owner);
+      const otherMessages: unknown[] = [];
+      other.addEventListener('message', (event) => {
+        otherMessages.push(JSON.parse(String(event.data)));
+      });
+
+      server.publishToClient('overview-owner', 'overview.chunk', {
+        requestId: 'request-1',
+        type: 'delta',
+        text: 'private answer'
+      });
+
+      await expect(ownerMessage).resolves.toEqual({
+        event: 'overview.chunk',
+        payload: {
+          requestId: 'request-1',
+          type: 'delta',
+          text: 'private answer'
+        }
+      });
+      await delay(25);
+      expect(otherMessages).toEqual([]);
+    } finally {
+      owner?.close();
+      other?.close();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps client-owned observation leases through brief WebSocket reconnects', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-clients-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const clientDisconnected = vi.fn();
+    const clientReconnected = vi.fn();
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      clientDisconnected,
+      clientReconnected,
+      clientDisconnectGraceMs: 75
+    });
+    let first: WebSocket | undefined;
+    let replacement: WebSocket | undefined;
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const eventUrl = new URL(
+        '/api/runtime/events?token=test-token&clientId=reconnecting-client',
+        baseUrl
+      ).toString();
+      first = new WebSocket(eventUrl);
+      await opened(first);
+      const firstClosed = closed(first);
+      first.close();
+      await firstClosed;
+
+      replacement = new WebSocket(eventUrl);
+      await opened(replacement);
+      await delay(100);
+      expect(clientDisconnected).not.toHaveBeenCalled();
+      expect(clientReconnected).toHaveBeenCalledOnce();
+      expect(clientReconnected).toHaveBeenCalledWith('reconnecting-client');
+
+      const replacementClosed = closed(replacement);
+      replacement.close();
+      await replacementClosed;
+      await vi.waitFor(() => {
+        expect(clientDisconnected).toHaveBeenCalledOnce();
+        expect(clientDisconnected).toHaveBeenCalledWith('reconnecting-client');
+      });
+    } finally {
+      first?.close();
+      replacement?.close();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects browser control without the local service token', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-auth-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
@@ -344,6 +468,7 @@ describe('Soloe Server lifecycle', () => {
       processFactory: { spawn: () => new PersistentProcess() }
     });
     const invoke = vi.fn(async () => ({ platform: 'linux' }));
+    const writeLog = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const server = new SoloeServer({
       runtimeEndpoint,
       host: '127.0.0.1',
@@ -368,6 +493,125 @@ describe('Soloe Server lifecycle', () => {
         method: 'platform',
         args: []
       });
+      await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: {
+          namespace: 'vault',
+          method: 'save',
+          args: [{
+            cwd: '/repo',
+            draft: {
+              origin: 'https://example.test',
+              username: 'ada',
+              password: 'must-never-appear-in-logs'
+            }
+          }]
+        }
+      });
+      const logs = writeLog.mock.calls.map(([entry]) => String(entry)).join('');
+      expect(logs).toContain('"event":"rpc_start"');
+      expect(logs).toContain('"event":"rpc_end"');
+      expect(logs).toContain('"namespace":"system"');
+      expect(logs).toContain('"method":"platform"');
+      expect(logs).toContain('"durationMs":');
+      expect(logs).toContain('"requestBytes":');
+      expect(logs).toContain('"responseBytes":');
+      expect(logs).not.toContain('test-token');
+      expect(logs).not.toContain('must-never-appear-in-logs');
+    } finally {
+      writeLog.mockRestore();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed and oversized RPC bodies with structured errors', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-rpc-validation-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      rpcHandler: async (call) =>
+        call.method === 'oversizedResponse'
+          ? 'x'.repeat(32 * 1024 * 1024)
+          : true
+    });
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const malformed = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: { namespace: 'files', method: 'readFile', args: 'not-an-array' }
+      });
+      expect(malformed.status).toBe(400);
+      expect(await malformed.json()).toEqual({
+        error: {
+          code: 'malformed_rpc_body',
+          message: 'RPC body must contain a valid namespace, method, and args array'
+        }
+      });
+
+      const malformedClient = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: {
+          namespace: 'files',
+          method: 'readFile',
+          args: [],
+          clientId: '../other-client'
+        }
+      });
+      expect(malformedClient.status).toBe(400);
+      expect(await malformedClient.json()).toEqual({
+        error: {
+          code: 'malformed_rpc_body',
+          message: 'RPC body must contain a valid namespace, method, and args array'
+        }
+      });
+
+      const oversized = await fetch(new URL('/api/rpc', baseUrl), {
+        method: 'POST',
+        headers: {
+          ...authorizationHeaders(),
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          namespace: 'files',
+          method: 'writeFile',
+          args: ['x'.repeat(32 * 1024 * 1024)]
+        })
+      });
+      expect(oversized.status).toBe(413);
+      expect(await oversized.json()).toEqual({
+        error: {
+          code: 'request_too_large',
+          message: 'JSON request exceeds the 33554432-byte limit',
+          remediation: 'Send a smaller request'
+        }
+      });
+
+      const oversizedResponse = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: {
+          namespace: 'system',
+          method: 'oversizedResponse',
+          args: []
+        }
+      });
+      expect(oversizedResponse.status).toBe(200);
+      expect(await oversizedResponse.json()).toEqual({
+        ok: false,
+        error: 'RPC response exceeds the 33554432-byte limit',
+        code: 'response_too_large',
+        remediation: 'Narrow the request or use a bounded result'
+      });
     } finally {
       await server.close();
       await runtime.shutdown();
@@ -379,18 +623,62 @@ describe('Soloe Server lifecycle', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-browser-contract-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
+    let spawnedSpec: RuntimeSpawnSpec | undefined;
     const runtime = new RuntimeHost({
       endpoint: runtimeEndpoint,
-      processFactory: { spawn: () => process }
+      processFactory: {
+        spawn: (options) => {
+          spawnedSpec = options.spec;
+          return process;
+        }
+      }
     });
     let domainRuntime: RuntimeClient | undefined;
     let domain: SoloeDomain | undefined;
     let server: SoloeServer | undefined;
+    let firstClient: WebSocket | undefined;
+    let secondClient: WebSocket | undefined;
+    let claudeInstalled = false;
+    const integrationStatus = () => ({
+      hosts: [
+        {
+          host: { kind: 'linux' as const, label: 'Backend', available: true },
+          claude: {
+            installed: claudeInstalled,
+            current: claudeInstalled,
+            ...(claudeInstalled ? { version: 14 } : {})
+          },
+          codex: { installed: false, current: false }
+        }
+      ]
+    });
+    const integrationInstaller = {
+      status: vi.fn(async () => integrationStatus()),
+      installClaude: vi.fn(async () => {
+        claudeInstalled = true;
+      }),
+      uninstallClaude: vi.fn(async () => {
+        claudeInstalled = false;
+      }),
+      installCodex: vi.fn(),
+      uninstallCodex: vi.fn()
+    };
+    const pathService = {
+      openSessionPath: vi.fn(async () => true as const)
+    };
+    const fileEditorLauncher = vi.fn(async () => {});
 
     try {
       await runtime.listen();
       domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
-      domain = new SoloeDomain({ dataDirectory: directory, runtime: domainRuntime });
+      domain = new SoloeDomain({
+        dataDirectory: directory,
+        runtime: domainRuntime,
+        integrationInstaller,
+        enableAgentBridge: true,
+        pathService,
+        fileEditorLauncher
+      });
       await domain.init();
       server = new SoloeServer({
         runtimeEndpoint,
@@ -414,6 +702,76 @@ describe('Soloe Server lifecycle', () => {
         expect.objectContaining({ id: project.id })
       ]);
 
+      firstClient = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=vault-client-one',
+          baseUrl
+        ).toString()
+      );
+      secondClient = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=vault-client-two',
+          baseUrl
+        ).toString()
+      );
+      await Promise.all([opened(firstClient), opened(secondClient)]);
+      const firstVaultChange = nextMessage(firstClient);
+      const secondVaultChange = nextMessage(secondClient);
+      const vaultEntry = await rpc<{ id: string }>(baseUrl, 'vault', 'save', [{
+        cwd: directory,
+        draft: {
+          origin: 'https://example.test/login',
+          username: 'browser-user',
+          password: 'browser-vault-secret'
+        }
+      }]);
+      for (const change of await Promise.all([firstVaultChange, secondVaultChange])) {
+        expect(change).toEqual({
+          event: 'vault.change',
+          payload: expect.objectContaining({
+            cwd: directory,
+            entries: [
+              expect.objectContaining({
+                id: vaultEntry.id,
+                username: 'browser-user'
+              })
+            ]
+          })
+        });
+        expect(JSON.stringify(change)).not.toContain('browser-vault-secret');
+      }
+      await expect(rpc(baseUrl, 'vault', 'list', [{ cwd: directory }])).resolves.toEqual([
+        expect.objectContaining({ id: vaultEntry.id, username: 'browser-user' })
+      ]);
+      await expect(
+        rpc(baseUrl, 'vault', 'getSecret', [{ cwd: directory, id: vaultEntry.id }])
+      ).resolves.toEqual({
+        username: 'browser-user',
+        password: 'browser-vault-secret'
+      });
+
+      const firstIntegrationChange = nextMessage(firstClient);
+      const secondIntegrationChange = nextMessage(secondClient);
+      const installedStatus = await rpc(
+        baseUrl,
+        'agentIntegration',
+        'installClaude',
+        [{ host: { kind: 'linux' } }]
+      );
+      expect(installedStatus).toEqual(integrationStatus());
+      for (
+        const change of await Promise.all([
+          firstIntegrationChange,
+          secondIntegrationChange
+        ])
+      ) {
+        expect(change).toEqual({
+          event: 'agentIntegration.change',
+          payload: integrationStatus()
+        });
+        expect(JSON.stringify(change)).not.toMatch(/homeDir|homeLinux/u);
+      }
+
       const session = await rpc<{ id: string }>(baseUrl, 'sessions', 'create', [
         {
           name: 'Browser session',
@@ -423,9 +781,144 @@ describe('Soloe Server lifecycle', () => {
           launch: { type: 'terminal', shell: 'auto' }
         }
       ]);
-      const started = await rpc<{ terminalId: string }>(baseUrl, 'terminal', 'start', [
+      await expect(
+        rpc(baseUrl, 'system', 'openPath', [session.id])
+      ).resolves.toBe(true);
+      expect(pathService.openSessionPath).toHaveBeenCalledWith(session.id);
+      const firstSessionCreated = nextEvent(firstClient, 'sessions.change');
+      const secondSessionCreated = nextEvent(secondClient, 'sessions.change');
+      const disposableSession = await rpc<{ id: string }>(
+        baseUrl,
+        'sessions',
+        'create',
+        [{
+          name: 'Disposable browser session',
+          projectId: project.id,
+          cwd: directory,
+          runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+          launch: { type: 'terminal', shell: 'auto' }
+        }]
+      );
+      for (
+        const created of await Promise.all([
+          firstSessionCreated,
+          secondSessionCreated
+        ])
+      ) {
+        expect(created).toEqual({
+          event: 'sessions.change',
+          payload: expect.objectContaining({ id: disposableSession.id })
+        });
+      }
+      const firstSessionDelete = nextEvent(firstClient, 'sessions.delete');
+      const secondSessionDelete = nextEvent(secondClient, 'sessions.delete');
+      await expect(
+        rpc(baseUrl, 'sessions', 'delete', [disposableSession.id])
+      ).resolves.toBe(true);
+      for (
+        const deleted of await Promise.all([
+          firstSessionDelete,
+          secondSessionDelete
+        ])
+      ) {
+        expect(deleted).toEqual({
+          event: 'sessions.delete',
+          payload: disposableSession.id
+        });
+      }
+      const started = await rpc<{
+        terminalId: string;
+        spec: { env: Record<string, string> };
+      }>(baseUrl, 'terminal', 'start', [
         { sessionId: session.id, cols: 100, rows: 30 }
       ]);
+      const bridgeConfig = JSON.parse(
+        await readFile(path.join(directory, 'bridge.json'), 'utf8')
+      ) as { port: number; token: string };
+      expect(spawnedSpec?.env).toMatchObject({
+        SOLOE_SESSION_ID: session.id,
+        SOLOE_BRIDGE_URL: `http://127.0.0.1:${bridgeConfig.port}`,
+        SOLOE_BRIDGE_TOKEN: bridgeConfig.token
+      });
+      expect(started.spec.env).toMatchObject({
+        SOLOE_SESSION_ID: session.id,
+        SOLOE_BRIDGE_URL: `http://127.0.0.1:${bridgeConfig.port}`
+      });
+      expect(started.spec.env).not.toHaveProperty('SOLOE_BRIDGE_TOKEN');
+      if (globalThis.process.platform !== 'win32') {
+        expect((await stat(path.join(directory, 'bridge.json'))).mode & 0o777).toBe(0o600);
+      }
+      const firstCommentRequest = nextMessage(firstClient);
+      const secondCommentRequest = nextMessage(secondClient);
+      const commentCall = fetch(
+        `http://127.0.0.1:${bridgeConfig.port}/mcp`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${bridgeConfig.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            tool: 'comment_resolve',
+            arguments: { id: 'browser-comment' }
+          })
+        }
+      ).then(async (response) => {
+        expect(response.status).toBe(200);
+        return response.json();
+      });
+      const commentRequests = await Promise.all([
+        firstCommentRequest,
+        secondCommentRequest
+      ]) as Array<{
+        event: string;
+        payload: { requestId: string };
+      }>;
+      expect(commentRequests[0]).toEqual({
+        event: 'comments.rpcRequest',
+        payload: expect.objectContaining({
+          requestId: expect.any(String),
+          op: 'resolve',
+          args: { id: 'browser-comment' }
+        })
+      });
+      expect(commentRequests[1]).toEqual(commentRequests[0]);
+      const commentRequestId = commentRequests[0]!.payload.requestId;
+      await rpc(baseUrl, 'comments', 'sendRpcResponse', [{
+        requestId: commentRequestId,
+        result: { ok: false, error: 'comment not present in first client' }
+      }]);
+      await rpc(baseUrl, 'comments', 'sendRpcResponse', [{
+        requestId: commentRequestId,
+        result: { ok: true }
+      }]);
+      await expect(commentCall).resolves.toEqual({ ok: true });
+
+      const hookResponse = await fetch(
+        `http://127.0.0.1:${bridgeConfig.port}/hook/codex`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${bridgeConfig.token}`,
+            'content-type': 'application/json',
+            'x-soloe-session-id': session.id
+          },
+          body: JSON.stringify({
+            hook_event_name: 'SessionStart',
+            session_id: 'codex-thread-1'
+          })
+        }
+      );
+      expect(hookResponse.status).toBe(200);
+      await expect(rpc(baseUrl, 'sessions', 'get', [session.id])).resolves.toEqual(
+        expect.objectContaining({
+          currentAgentRuntime: expect.objectContaining({
+            provider: 'codex',
+            providerThreadId: 'codex-thread-1',
+            status: 'active'
+          })
+        })
+      );
       process.emit('data', 'browser contract output');
 
       expect(await rpc(baseUrl, 'terminal', 'replay', [started.terminalId, 0])).toEqual(
@@ -438,20 +931,66 @@ describe('Soloe Server lifecycle', () => {
       expect(await rpc(baseUrl, 'observer', 'list')).toEqual([
         expect.objectContaining({
           id: session.id,
-          state: 'idle'
+          state: 'starting',
+          provider: 'codex',
+          providerThreadId: 'codex-thread-1'
         })
+      ]);
+
+      await expect(rpc(baseUrl, 'files', 'writeFile', [{
+        cwd: directory,
+        relativePath: 'browser-file.txt',
+        content: 'server-backed file\n',
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+      }])).resolves.toBe(true);
+      await expect(rpc(baseUrl, 'files', 'listTree', [{
+        cwd: directory,
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+        force: true
+      }])).resolves.toEqual(expect.objectContaining({
+        cwd: directory,
+        paths: expect.arrayContaining(['browser-file.txt'])
+      }));
+      await expect(rpc(baseUrl, 'files', 'readFile', [{
+        cwd: directory,
+        relativePath: 'browser-file.txt',
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+      }])).resolves.toEqual(expect.objectContaining({
+        content: 'server-backed file\n',
+        binary: false,
+        truncated: false,
+        unavailable: false
+      }));
+      await expect(rpc(baseUrl, 'files', 'openInEditor', [{
+        cwd: directory,
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+        absolutePath: path.join(directory, 'browser-file.txt')
+      }])).resolves.toBe(true);
+      expect(fileEditorLauncher).toHaveBeenCalledWith(
+        expect.any(String),
+        await realpath(path.join(directory, 'browser-file.txt'))
+      );
+      await expect(rpc(baseUrl, 'files', 'search', [{
+        cwd: directory,
+        query: 'browser-file',
+        limit: 10,
+        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+      }])).resolves.toEqual([
+        expect.objectContaining({ path: 'browser-file.txt' })
       ]);
 
       const unsupported = await request(baseUrl, '/api/rpc', {
         method: 'POST',
-        body: { namespace: 'git', method: 'status', args: [] }
+        body: { namespace: 'browser', method: 'openDevTools', args: [] }
       });
       expect(await unsupported.json()).toEqual({
         ok: false,
-        error: 'RPC git.status is not supported by the application server',
+        error: 'RPC browser.openDevTools is not supported by the application server',
         code: 'rpc_not_supported'
       });
     } finally {
+      firstClient?.close();
+      secondClient?.close();
       await server?.close();
       await domain?.dispose();
       domainRuntime?.disconnect();
@@ -531,6 +1070,16 @@ async function opened(socket: WebSocket): Promise<void> {
   });
 }
 
+async function closed(socket: WebSocket): Promise<void> {
+  await new Promise<void>((resolve) => {
+    socket.addEventListener('close', () => resolve(), { once: true });
+  });
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
 async function nextMessage(socket: WebSocket): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('WebSocket message timed out')), 500);
@@ -542,5 +1091,22 @@ async function nextMessage(socket: WebSocket): Promise<unknown> {
       },
       { once: true }
     );
+  });
+}
+
+async function nextEvent(socket: WebSocket, eventName: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.removeEventListener('message', onMessage);
+      reject(new Error(`WebSocket event ${eventName} timed out`));
+    }, 500);
+    const onMessage = (event: MessageEvent) => {
+      const message = JSON.parse(String(event.data)) as { event?: unknown };
+      if (message.event !== eventName) return;
+      clearTimeout(timeout);
+      socket.removeEventListener('message', onMessage);
+      resolve(message);
+    };
+    socket.addEventListener('message', onMessage);
   });
 }

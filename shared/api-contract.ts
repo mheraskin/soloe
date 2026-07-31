@@ -1,5 +1,179 @@
 export type SoloeTransportKind = "local-electron" | "remote-electron" | "browser";
 
+export const SOLOE_API_METHODS = {
+  sessions: [
+    "list",
+    "listArchived",
+    "get",
+    "create",
+    "update",
+    "delete",
+    "reorder",
+    "previewCommand",
+    "onChange",
+    "onDelete",
+  ],
+  terminal: [
+    "start",
+    "stop",
+    "restart",
+    "input",
+    "resize",
+    "listRunning",
+    "replay",
+    "setOutputDemand",
+    "onOutput",
+    "onExit",
+    "onStatus",
+    "onLocation",
+  ],
+  observer: [
+    "list",
+    "listEvents",
+    "createWorkerSession",
+    "sendWorkerPrompt",
+    "getWorkerStatus",
+    "stopWorkerSession",
+    "onSnapshot",
+    "onEvent",
+  ],
+  system: [
+    "platform",
+    "openPath",
+    "saveText",
+    "openExternal",
+    "listWslDistros",
+    "usage",
+  ],
+  settings: ["get", "update", "onChange"],
+  projects: [
+    "list",
+    "get",
+    "create",
+    "open",
+    "update",
+    "delete",
+    "touch",
+    "reorder",
+    "refreshFavicons",
+    "readFavicon",
+    "detectFromPath",
+    "suggestPaths",
+    "onChange",
+  ],
+  notes: [
+    "list",
+    "read",
+    "write",
+    "rename",
+    "delete",
+    "saveImage",
+    "readImage",
+    "cleanupImages",
+    "onChange",
+  ],
+  git: [
+    "status",
+    "aheadBehind",
+    "shortstat",
+    "dirty",
+    "worktrees",
+    "branches",
+    "recentCommits",
+    "refHistory",
+    "commitsBetween",
+    "rangeChanges",
+    "resolveRefs",
+    "checkout",
+    "createWorktree",
+    "workingChanges",
+    "workingTreeSnapshot",
+    "setObservationDemand",
+    "fileDiff",
+    "reviewDiffs",
+    "fileBlame",
+    "fileLines",
+    "stageFiles",
+    "unstageFiles",
+    "discardFiles",
+    "commit",
+    "push",
+    "pull",
+    "fetch",
+    "onChange",
+  ],
+  files: [
+    "search",
+    "openInEditor",
+    "pasteIntoTerminal",
+    "pasteImagesIntoTerminal",
+    "listTree",
+    "readFile",
+    "writeFile",
+  ],
+  diagnostics: ["list", "crashLogs"],
+  window: ["minimize", "toggleMaximize", "zoomIn", "zoomOut", "close"],
+  agentIntegration: [
+    "status",
+    "installClaude",
+    "uninstallClaude",
+    "installCodex",
+    "uninstallCodex",
+    "onChange",
+  ],
+  notify: ["onToast", "onActivateSession"],
+  overview: ["get", "regenerate", "askStart", "askCancel", "onChunk"],
+  comments: ["onRpcRequest", "sendRpcResponse"],
+  diff: ["onRpcRequest", "sendRpcResponse"],
+  features: [
+    "scan",
+    "setBranchStatus",
+    "setIssueStatus",
+    "subscribe",
+    "unsubscribe",
+    "onChange",
+  ],
+  vault: ["list", "save", "update", "delete", "getSecret", "onChange"],
+  browser: [
+    "enableDeviceEmulation",
+    "disableDeviceEmulation",
+    "setUserAgent",
+    "openDevTools",
+    "setDevToolsLayout",
+    "closeDevTools",
+  ],
+} as const;
+
+export const PWA_PANE_REQUIREMENTS = {
+  inspector: ["observer.list", "observer.listEvents"],
+  diff: [
+    "git.workingTreeSnapshot",
+    "git.workingChanges",
+    "git.fileDiff",
+    "git.stageFiles",
+    "git.unstageFiles",
+  ],
+  files: [
+    "files.search",
+    "files.listTree",
+    "files.readFile",
+    "files.writeFile",
+    "files.openInEditor",
+  ],
+  feature: [
+    "features.scan",
+    "features.setBranchStatus",
+    "features.setIssueStatus",
+  ],
+  notes: [
+    "notes.list",
+    "notes.read",
+    "notes.write",
+    "notes.rename",
+    "notes.delete",
+  ],
+} as const;
+
 export const UI_STARTUP_RPCS = [
   "system.platform",
   "settings.get",
@@ -48,9 +222,75 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "projects.readFavicon",
   "projects.detectFromPath",
   "projects.suggestPaths",
+  "files.search",
+  "files.openInEditor",
+  "files.pasteIntoTerminal",
+  "files.pasteImagesIntoTerminal",
+  "files.listTree",
+  "files.readFile",
+  "files.writeFile",
+  "notes.list",
+  "notes.read",
+  "notes.write",
+  "notes.rename",
+  "notes.delete",
+  "notes.saveImage",
+  "notes.readImage",
+  "notes.cleanupImages",
+  "features.scan",
+  "features.setBranchStatus",
+  "features.setIssueStatus",
+  "features.subscribe",
+  "features.unsubscribe",
+  "git.status",
+  "git.aheadBehind",
+  "git.shortstat",
+  "git.dirty",
+  "git.worktrees",
+  "git.branches",
+  "git.recentCommits",
+  "git.refHistory",
+  "git.commitsBetween",
+  "git.rangeChanges",
+  "git.resolveRefs",
+  "git.checkout",
+  "git.createWorktree",
+  "git.workingChanges",
+  "git.workingTreeSnapshot",
+  "git.setObservationDemand",
+  "git.fileDiff",
+  "git.reviewDiffs",
+  "git.fileBlame",
+  "git.fileLines",
+  "git.stageFiles",
+  "git.unstageFiles",
+  "git.discardFiles",
+  "git.commit",
+  "git.push",
+  "git.pull",
+  "git.fetch",
   "system.platform",
+  "system.openPath",
   "system.listWslDistros",
+  "system.usage",
+  "overview.get",
+  "overview.regenerate",
+  "overview.askStart",
+  "overview.askCancel",
+  "diagnostics.list",
+  "diagnostics.crashLogs",
+  "vault.list",
+  "vault.save",
+  "vault.update",
+  "vault.delete",
+  "vault.getSecret",
   "agentIntegration.status",
+  "agentIntegration.installClaude",
+  "agentIntegration.uninstallClaude",
+  "agentIntegration.installCodex",
+  "agentIntegration.uninstallCodex",
+  "comments.sendRpcResponse",
+  "diff.sendRpcResponse",
 ]);
 
 export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
@@ -67,13 +307,73 @@ export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
   "browser.closeDevTools",
 ]);
 
+export const CLIENT_NATIVE_METHODS = new Set<string>([
+  "system.saveText",
+  "system.openExternal",
+]);
+
+export const SERVER_EVENT_METHODS = new Set<string>([
+  "sessions.onChange",
+  "sessions.onDelete",
+  "terminal.onOutput",
+  "terminal.onExit",
+  "terminal.onStatus",
+  "terminal.onLocation",
+  "observer.onSnapshot",
+  "observer.onEvent",
+  "settings.onChange",
+  "projects.onChange",
+  "notes.onChange",
+  "git.onChange",
+  "agentIntegration.onChange",
+  "overview.onChunk",
+  "comments.onRpcRequest",
+  "diff.onRpcRequest",
+  "features.onChange",
+  "vault.onChange",
+]);
+
+export const RUNTIME_OWNED_METHODS = new Set<string>([
+  ...SOLOE_API_METHODS.terminal.map((method) => `terminal.${method}`),
+  ...SOLOE_API_METHODS.observer.map((method) => `observer.${method}`),
+]);
+
+export type SoloeOperationOwner =
+  | "application-server"
+  | "runtime"
+  | "client-native"
+  | "local-electron"
+  | "electron-native"
+  | "unsupported";
+
+export function operationOwner(
+  transport: SoloeTransportKind,
+  namespace: string,
+  method: string,
+): SoloeOperationOwner {
+  const key = `${namespace}.${method}`;
+  if (transport === "local-electron") {
+    return REMOTE_ELECTRON_NATIVE_METHODS.has(key)
+      ? "electron-native"
+      : "local-electron";
+  }
+  if (CLIENT_NATIVE_METHODS.has(key)) return "client-native";
+  if (SERVER_RPC_METHODS.has(key) || SERVER_EVENT_METHODS.has(key)) {
+    return RUNTIME_OWNED_METHODS.has(key) ? "runtime" : "application-server";
+  }
+  if (
+    transport === "remote-electron" &&
+    REMOTE_ELECTRON_NATIVE_METHODS.has(key)
+  ) {
+    return "electron-native";
+  }
+  return "unsupported";
+}
+
 export function supportsRpc(
   transport: SoloeTransportKind,
   namespace: string,
   method: string,
 ): boolean {
-  if (transport === "local-electron") return true;
-  const key = `${namespace}.${method}`;
-  if (SERVER_RPC_METHODS.has(key)) return true;
-  return transport === "remote-electron" && REMOTE_ELECTRON_NATIVE_METHODS.has(key);
+  return operationOwner(transport, namespace, method) !== "unsupported";
 }

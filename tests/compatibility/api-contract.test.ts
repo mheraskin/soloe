@@ -31,4 +31,65 @@ describe("Soloe API transport contract", () => {
       method.startsWith("window.") || method.startsWith("browser.")
     )).toBe(true);
   });
+
+  it("keeps Files data and terminal paste operations on the application server", () => {
+    for (const method of [
+      "files.search",
+      "files.pasteIntoTerminal",
+      "files.pasteImagesIntoTerminal",
+      "files.listTree",
+      "files.readFile",
+      "files.writeFile",
+      "files.openInEditor",
+    ]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
+
+  it("keeps process usage on the application server for shared clients", () => {
+    expect(supportsRpc("browser", "system", "usage")).toBe(true);
+    expect(supportsRpc("remote-electron", "system", "usage")).toBe(true);
+    expect(REMOTE_ELECTRON_NATIVE_METHODS.has("system.usage")).toBe(false);
+  });
+
+  it("keeps bounded diagnostics on the application server for shared clients", () => {
+    for (const method of ["diagnostics.list", "diagnostics.crashLogs"]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
+
+  it("keeps Vault metadata and explicit secret reads on the application server", () => {
+    for (const method of [
+      "vault.list",
+      "vault.save",
+      "vault.update",
+      "vault.delete",
+      "vault.getSecret",
+    ]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
+
+  it("keeps Overview generation and streams on the application server", () => {
+    for (const method of [
+      "overview.get",
+      "overview.regenerate",
+      "overview.askStart",
+      "overview.askCancel",
+    ]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
 });

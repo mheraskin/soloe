@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GitWorktree } from '@shared/types/git.js';
 import { worktreeScope } from '@shared/worktree-identity.js';
 
-const { worktrees, changeListeners, setObservationDemand } = vi.hoisted(() => ({
+const { worktrees, changeListeners, reconnectListeners, setObservationDemand } = vi.hoisted(() => ({
   worktrees: vi.fn(async (_request: {
     repoPath: string;
     force?: boolean;
@@ -22,7 +22,8 @@ const { worktrees, changeListeners, setObservationDemand } = vi.hoisted(() => ({
     repoPath: string;
     runMode: 'windows' | 'wsl';
     wslDistro?: string;
-  }) => void>()
+  }) => void>(),
+  reconnectListeners: new Set<() => void>()
 }));
 
 const status = vi.fn(async ({ cwd }: { cwd: string }) => ({
@@ -60,6 +61,12 @@ const workingTreeSnapshot = vi.fn(async ({
 }));
 vi.mock('../lib/ipc', () => ({
   ipc: {
+    connection: {
+      onReconnect: vi.fn((listener: () => void) => {
+        reconnectListeners.add(listener);
+        return () => reconnectListeners.delete(listener);
+      })
+    },
     git: {
       status: (...args: unknown[]) => status(...(args as [{ cwd: string }])),
       shortstat: (...args: unknown[]) => shortstat(...(args as [{ repoPath: string }])),
@@ -100,6 +107,7 @@ describe('GitStore polling', () => {
     worktrees.mockClear();
     setObservationDemand.mockClear();
     changeListeners.clear();
+    reconnectListeners.clear();
   });
 
   afterEach(() => {
@@ -178,6 +186,29 @@ describe('GitStore polling', () => {
 
     expect(workingTreeSnapshot).toHaveBeenCalledTimes(1);
     expect(workingTreeSnapshot.mock.calls[0]?.[0].wslDistro).toBe('Ubuntu');
+  });
+
+  it('reacquires observation demand and refreshes active worktrees after reconnect', async () => {
+    const cwd = freshCwd();
+    git.attachListeners();
+    git.setWorktreePolling([
+      { cwd, cadence: 'foreground', runMode: 'wsl', wslDistro: 'Ubuntu' }
+    ]);
+    await settle();
+    setObservationDemand.mockClear();
+    workingTreeSnapshot.mockClear();
+
+    for (const listener of reconnectListeners) listener();
+    await settle();
+
+    expect(setObservationDemand).toHaveBeenCalledOnce();
+    expect(setObservationDemand).toHaveBeenCalledWith({
+      cwd,
+      active: true,
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu'
+    });
+    expect(workingTreeSnapshot).toHaveBeenCalledOnce();
   });
 
   it('does not stampede idle worktrees when polling resumes', async () => {

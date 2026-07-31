@@ -31,10 +31,16 @@ export class BridgePersistence {
   }
 
   async save(config: BridgeConfig): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    const directory = path.dirname(this.filePath);
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    await fs.chmod(directory, 0o700).catch(() => {});
     const tmp = `${this.filePath}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
-    await fs.writeFile(tmp, JSON.stringify(config, null, 2) + '\n', 'utf8');
+    await fs.writeFile(tmp, JSON.stringify(config, null, 2) + '\n', {
+      encoding: 'utf8',
+      mode: 0o600
+    });
     await fs.rename(tmp, this.filePath);
+    await fs.chmod(this.filePath, 0o600).catch(() => {});
   }
 
   async loadOrCreate(): Promise<BridgeConfig> {

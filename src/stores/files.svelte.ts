@@ -33,6 +33,9 @@ export interface OpenFile {
   baseline: string;
   binary: boolean;
   truncated: boolean;
+  oversized: boolean;
+  unavailable: boolean;
+  unavailableReason: string | null;
   size: number;
   loading: boolean;
   saving: boolean;
@@ -149,6 +152,9 @@ export class FilesStore {
       baseline: '',
       binary: false,
       truncated: false,
+      oversized: false,
+      unavailable: false,
+      unavailableReason: null,
       size: 0,
       loading: true,
       saving: false,
@@ -165,14 +171,16 @@ export class FilesStore {
       // response so we don't overwrite the newer pending state.
       const stillCurrent = this.openFilesByCwd[key]?.relativePath === relativePath;
       if (!stillCurrent) return false;
-      const truncated = value.size > 0 && value.content.length === 0 && !value.binary;
       this.patchOpen(key, {
         cwd: scope.cwd,
         relativePath: value.relativePath,
         content: value.content,
         baseline: value.content,
         binary: value.binary,
-        truncated,
+        truncated: value.truncated,
+        oversized: value.oversized,
+        unavailable: value.unavailable,
+        unavailableReason: value.unavailableReason ?? null,
         size: value.size,
         loading: false,
         saving: false,
@@ -213,7 +221,7 @@ export class FilesStore {
   async save(scope: FilesScope): Promise<void> {
     const key = worktreeScopeKey(scope);
     const open = this.openFilesByCwd[key];
-    if (!open || open.binary || open.saving) return;
+    if (!open || open.binary || open.truncated || open.unavailable || open.saving) return;
     if (open.content === open.baseline) return;
     this.patchOpen(key, { ...open, saving: true, error: null });
     try {

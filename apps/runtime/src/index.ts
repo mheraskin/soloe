@@ -6,6 +6,12 @@ export {
   type RuntimeEndpointOptions,
 } from "./RuntimeEndpoint.js";
 export { RuntimeHost, type RuntimeHostOptions } from "./RuntimeHost.js";
+export {
+  ProcessTreeUsageSampler,
+  parseProcessUsageRows,
+  type ProcessTreeUsageSamplerOptions,
+  type ProcessUsageRow,
+} from "./ProcessTreeUsageSampler.js";
 export type {
   RuntimeProcess,
   RuntimeProcessFactory,

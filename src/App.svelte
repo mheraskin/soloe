@@ -40,7 +40,7 @@
   import { browserStore } from './stores/browser.svelte';
   import { vaultStore } from './stores/vault.svelte';
   import { reportError } from './stores/toast.svelte';
-  import { ipc } from './lib/ipc';
+  import { ipc, supportsBackendOperation } from './lib/ipc';
   import { confirmDeleteSession } from './lib/session-delete-confirmation';
   import { agentIntegrationSetup } from './stores/agent-integration-setup.svelte';
   import { modal } from './stores/modal.svelte';
@@ -107,6 +107,7 @@
     notes.attachListeners();
     git.attachListeners();
     workingDiff.attachListeners();
+    vaultStore.attachListeners();
     const detachToast = ipc.notify.onToast((t) => {
       const opts = t.description ? { description: t.description } : undefined;
       if (t.severity === 'error') toast.error(t.message, opts);
@@ -133,6 +134,7 @@
       notes.detach();
       workingDiff.detach();
       git.detach();
+      vaultStore.detach();
     };
   });
 
@@ -1005,7 +1007,9 @@
     }
     if (Keymap.toggleBrowserRail.match(e)) {
       consume(e);
-      void toggleRailTabAndFocus('browser');
+      if (supportsBackendOperation('browser', 'openDevTools')) {
+        void toggleRailTabAndFocus('browser');
+      }
       return;
     }
     if (Keymap.toggleSidebar.match(e)) {

@@ -13,6 +13,7 @@
     FolderTree,
     Microscope,
     Globe,
+    KeyRound,
     NotebookPen,
     ServerCog
   } from '@lucide/svelte';
@@ -42,6 +43,7 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { cn } from '$lib/utils';
   import AgentIntegrationForm from './AgentIntegrationForm.svelte';
+  import VaultManagementForm from './VaultManagementForm.svelte';
   import KindIcon from '../KindIcon.svelte';
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
@@ -93,6 +95,7 @@
   const tabs: TabEntry[] = [
     { kind: 'tab', value: 'backend', label: 'Backend', icon: ServerCog },
     { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
+    { kind: 'tab', value: 'vault', label: 'Vault', icon: KeyRound },
     { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
     { kind: 'tab', value: 'models', label: 'Models', icon: Cpu },
     { kind: 'tab', value: 'quicklaunch', label: 'Quick Launch', icon: Rocket },
@@ -424,6 +427,10 @@
 
     <Tabs.Content value="integration" class={contentClass}>
       <AgentIntegrationForm />
+    </Tabs.Content>
+
+    <Tabs.Content value="vault" class={contentClass}>
+      <VaultManagementForm />
     </Tabs.Content>
 
     <Tabs.Content value="appearance" class={contentClass}>

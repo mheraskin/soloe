@@ -37,7 +37,12 @@
   async function openInEditor() {
     if (!selected) return;
     try {
-      await ipc.files.openInEditor({ absolutePath: selected.cwd });
+      await ipc.files.openInEditor({
+        absolutePath: selected.cwd,
+        cwd: selected.cwd,
+        runMode: selected.runMode,
+        ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      });
       toasts.push('Opened cwd in editor', 'info');
     } catch (e) {
       reportError(e);
