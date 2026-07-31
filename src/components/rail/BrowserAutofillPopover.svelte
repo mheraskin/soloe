@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import {
     ChevronDown,
+    ExternalLink,
     Eye,
     EyeOff,
     FolderGit2,
@@ -29,12 +30,13 @@
   interface Props {
     currentUrl: string;
     onFill: (username: string, password: string) => Promise<{ filledUser: boolean }>;
+    onNavigate: (url: string) => void;
     onClose: () => void;
   }
 
   type SectionId = 'site' | 'project' | 'other' | 'save';
 
-  let { currentUrl, onFill, onClose }: Props = $props();
+  let { currentUrl, onFill, onNavigate, onClose }: Props = $props();
   let currentOrigin = $derived(vaultNormalizeOrigin(currentUrl));
   let activeSection = $state<SectionId>('site');
   let projectQuery = $state('');
@@ -123,6 +125,11 @@
     }
   }
 
+  function navigateToOrigin(origin: string): void {
+    onNavigate(origin);
+    onClose();
+  }
+
   function sectionLabel(section: SectionId): string {
     if (section === 'site') return 'This site';
     if (section === 'project') return 'Project';
@@ -181,7 +188,19 @@
           <summary class="flex cursor-pointer list-none items-center gap-2 px-2 py-2 text-[11px] hover:bg-muted/40">
             <ChevronDown class="size-3 shrink-0 transition-transform group-open:rotate-180" />
             <Globe2 class="size-3 shrink-0 text-muted-foreground" />
-            <span class="min-w-0 flex-1 truncate font-medium">{group.label}</span>
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 cursor-pointer items-center gap-1 truncate text-left font-medium underline decoration-transparent underline-offset-2 transition-colors hover:text-foreground hover:decoration-current focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              title={`Open ${group.origin}`}
+              onclick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                navigateToOrigin(group.origin);
+              }}
+            >
+              <span class="min-w-0 truncate">{group.label}</span>
+              <ExternalLink class="size-2.5 shrink-0" />
+            </button>
             <span class="shrink-0 text-[10px] text-muted-foreground">{group.entries.length}</span>
           </summary>
           <div class="flex flex-col gap-1 border-t border-border/60 p-1.5">
@@ -195,8 +214,8 @@
   {/if}
 {/snippet}
 
-<div class="mobile-autofill flex h-[min(34rem,calc(100vh-4rem))] w-[min(40rem,calc(100vw-2rem))] min-h-0 overflow-hidden">
-  <nav class="mobile-autofill-nav flex w-28 shrink-0 flex-col border-r border-border bg-muted/20 p-1.5" aria-label="Credential sections">
+<div class="mobile-autofill flex h-[min(26rem,calc(100vh-3rem))] w-[min(22rem,calc(100vw-1rem))] min-h-0 overflow-hidden">
+  <nav class="mobile-autofill-nav flex w-24 shrink-0 flex-col border-r border-border bg-muted/20 p-1" aria-label="Credential sections">
     <div class="flex items-center gap-1.5 px-1.5 py-2">
       <KeyRound class="size-3.5 text-muted-foreground" />
       <span class="text-[11px] font-medium">Autofill</span>
@@ -230,12 +249,24 @@
   </nav>
 
   <section class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-    <header class="flex min-h-12 shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+    <header class="flex min-h-10 shrink-0 items-center gap-2 border-b border-border px-2.5 py-1.5">
       <div class="min-w-0 flex-1">
         <div class="text-xs font-medium">{sectionLabel(activeSection)}</div>
         <div class="truncate text-[10px] text-muted-foreground">
           {#if activeSection === 'site'}
-            {currentOrigin ? originLabel(currentOrigin) : 'No site selected'}
+            {#if currentOrigin}
+              <button
+                type="button"
+                class="inline-flex max-w-full cursor-pointer items-center gap-1 truncate underline decoration-transparent underline-offset-2 transition-colors hover:text-foreground hover:decoration-current focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                title={`Open ${currentOrigin}`}
+                onclick={() => navigateToOrigin(currentOrigin)}
+              >
+                <span class="truncate">{originLabel(currentOrigin)}</span>
+                <ExternalLink class="size-2.5 shrink-0" />
+              </button>
+            {:else}
+              No site selected
+            {/if}
           {:else if activeSection === 'project'}
             Credentials shared across known worktrees
           {:else if activeSection === 'other'}
@@ -358,13 +389,23 @@
               />
             </div>
           {:else}
-            <button
-              type="button"
-              class="text-left text-[10px] text-muted-foreground hover:text-foreground"
-              onclick={() => (useCustomOrigin = true)}
-            >
-              Site: <span class="font-mono">{originLabel(currentOrigin)}</span> · change
-            </button>
+            <div class="flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+              <span>Site:</span>
+              <button
+                type="button"
+                class="min-w-0 cursor-pointer truncate font-mono underline decoration-transparent underline-offset-2 transition-colors hover:text-foreground hover:decoration-current focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                title={`Open ${currentOrigin}`}
+                onclick={() => navigateToOrigin(currentOrigin)}
+              >
+                {originLabel(currentOrigin)}
+              </button>
+              <span>·</span>
+              <button
+                type="button"
+                class="cursor-pointer hover:text-foreground"
+                onclick={() => (useCustomOrigin = true)}
+              >change</button>
+            </div>
           {/if}
 
           <div class="flex flex-col gap-1">

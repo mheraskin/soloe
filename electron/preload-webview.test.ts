@@ -51,4 +51,12 @@ describe('webview preload credential focus telemetry', () => {
       expect.anything()
     );
   });
+
+  it('reports guest-page pointer presses so host popovers can dismiss', () => {
+    document.body.innerHTML = '<button type="button">Continue</button>';
+
+    document.querySelector('button')!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+    expect(sendToHost).toHaveBeenCalledWith('soloe:webview-pointerdown');
+  });
 });

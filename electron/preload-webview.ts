@@ -71,6 +71,17 @@ window.addEventListener(
   true
 );
 
+// Pointer events inside a <webview> do not bubble into the host renderer.
+// Mirror the interaction boundary so browser-scoped popovers can dismiss on
+// the same click that the guest page receives.
+document.addEventListener(
+  'pointerdown',
+  () => {
+    ipcRenderer.sendToHost('soloe:webview-pointerdown');
+  },
+  true
+);
+
 // Credential field telemetry: tell the host when a username/password input
 // gains focus so it can pop up a fill prompt, and forward the
 // username/password pair on submit so it can prompt to save. The host owns
