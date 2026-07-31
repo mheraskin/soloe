@@ -14,6 +14,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FeatureArtifactObservation, HookInstaller } from "@soloe/domain";
 import { hostPlatform } from "../../../shared/platform.js";
+import { SERVER_RPC_METHODS } from "../../../shared/api-contract.js";
 import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
@@ -77,6 +78,51 @@ describe("SoloeDomain", () => {
         [],
         integrationStatus,
       ]);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("has a real handler for every advertised application-server RPC", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-contract-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      integrationInstaller: {
+        status: vi.fn(async () => ({ hosts: [] })),
+        installClaude: vi.fn(),
+        uninstallClaude: vi.fn(),
+        installCodex: vi.fn(),
+        uninstallCodex: vi.fn(),
+      },
+      pathService: { openSessionPath: vi.fn(async () => true as const) },
+      fileEditorLauncher: vi.fn(async () => {}),
+    });
+
+    try {
+      await domain.init();
+      for (const key of SERVER_RPC_METHODS) {
+        const [namespace, method] = key.split(".");
+        try {
+          await domain.invoke({
+            namespace: namespace!,
+            method: method!,
+            args: [],
+            clientId: "contract-client",
+          });
+        } catch (error) {
+          expect(error, key).not.toMatchObject({ code: "rpc_not_supported" });
+        }
+      }
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

@@ -10,7 +10,11 @@ import type {
   TerminalOutputEvent,
   TerminalStatusEvent,
 } from "@shared/types/terminal.js";
-import { supportsRpc, type SoloeTransportKind } from "@shared/api-contract.js";
+import {
+  SOLOE_API_METHODS,
+  supportsRpc,
+  type SoloeTransportKind,
+} from "@shared/api-contract.js";
 
 interface SocketLike {
   addEventListener(event: string, listener: (event: Event) => void): void;
@@ -32,135 +36,6 @@ export interface BrowserApiOptions {
 }
 
 type Listener = (payload: never) => void;
-
-const NAMESPACE_METHODS = {
-  sessions: [
-    "list",
-    "listArchived",
-    "get",
-    "create",
-    "update",
-    "delete",
-    "reorder",
-    "previewCommand",
-    "onChange",
-  ],
-  observer: [
-    "list",
-    "listEvents",
-    "createWorkerSession",
-    "sendWorkerPrompt",
-    "getWorkerStatus",
-    "stopWorkerSession",
-    "onSnapshot",
-    "onEvent",
-  ],
-  system: [
-    "platform",
-    "openPath",
-    "saveText",
-    "openExternal",
-    "listWslDistros",
-    "usage",
-  ],
-  settings: ["get", "update", "onChange"],
-  projects: [
-    "list",
-    "get",
-    "create",
-    "open",
-    "update",
-    "delete",
-    "touch",
-    "reorder",
-    "refreshFavicons",
-    "readFavicon",
-    "detectFromPath",
-    "suggestPaths",
-    "onChange",
-  ],
-  notes: [
-    "list",
-    "read",
-    "write",
-    "rename",
-    "delete",
-    "saveImage",
-    "readImage",
-    "cleanupImages",
-    "onChange",
-  ],
-  git: [
-    "status",
-    "aheadBehind",
-    "shortstat",
-    "dirty",
-    "worktrees",
-    "branches",
-    "recentCommits",
-    "refHistory",
-    "commitsBetween",
-    "rangeChanges",
-    "resolveRefs",
-    "checkout",
-    "createWorktree",
-    "workingChanges",
-    "workingTreeSnapshot",
-    "setObservationDemand",
-    "fileDiff",
-    "reviewDiffs",
-    "fileBlame",
-    "fileLines",
-    "stageFiles",
-    "unstageFiles",
-    "discardFiles",
-    "commit",
-    "push",
-    "pull",
-    "fetch",
-    "onChange",
-  ],
-  files: [
-    "search",
-    "openInEditor",
-    "pasteIntoTerminal",
-    "pasteImagesIntoTerminal",
-    "listTree",
-    "readFile",
-    "writeFile",
-  ],
-  diagnostics: ["list", "crashLogs"],
-  window: ["minimize", "toggleMaximize", "zoomIn", "zoomOut", "close"],
-  agentIntegration: [
-    "status",
-    "installClaude",
-    "uninstallClaude",
-    "installCodex",
-    "uninstallCodex",
-    "onChange",
-  ],
-  notify: ["onToast", "onActivateSession"],
-  overview: ["get", "regenerate", "askStart", "askCancel", "onChunk"],
-  comments: ["onRpcRequest", "sendRpcResponse"],
-  diff: ["onRpcRequest", "sendRpcResponse"],
-  features: [
-    "scan",
-    "setBranchStatus",
-    "setIssueStatus",
-    "subscribe",
-    "unsubscribe",
-    "onChange",
-  ],
-  vault: ["list", "save", "update", "delete", "getSecret", "onChange"],
-  browser: [
-    "enableDeviceEmulation",
-    "disableDeviceEmulation",
-    "setUserAgent",
-    "openDevTools",
-    "setDevToolsLayout",
-    "closeDevTools",
-  ],
-} as const;
 
 export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -248,6 +123,9 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     Object.fromEntries(
       methods.map((method) => {
         if (method.startsWith("on")) {
+          if (!supportsRpc(transport, name, method)) {
+            return [method, () => () => {}];
+          }
           const eventName = `${name}.${method.slice(2, 3).toLowerCase()}${method.slice(3)}`;
           return [method, (listener: Listener) => subscribe(eventName, listener)];
         }
@@ -322,28 +200,28 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
       supports: (namespace: string, method: string) =>
         supportsRpc(transport, namespace, method),
     },
-    sessions: namespace("sessions", NAMESPACE_METHODS.sessions),
+    sessions: namespace("sessions", SOLOE_API_METHODS.sessions),
     terminal,
-    observer: namespace("observer", NAMESPACE_METHODS.observer),
+    observer: namespace("observer", SOLOE_API_METHODS.observer),
     system,
-    settings: namespace("settings", NAMESPACE_METHODS.settings),
-    projects: namespace("projects", NAMESPACE_METHODS.projects),
-    notes: namespace("notes", NAMESPACE_METHODS.notes),
-    git: namespace("git", NAMESPACE_METHODS.git),
-    files: namespace("files", NAMESPACE_METHODS.files),
-    diagnostics: namespace("diagnostics", NAMESPACE_METHODS.diagnostics),
-    window: namespace("window", NAMESPACE_METHODS.window),
+    settings: namespace("settings", SOLOE_API_METHODS.settings),
+    projects: namespace("projects", SOLOE_API_METHODS.projects),
+    notes: namespace("notes", SOLOE_API_METHODS.notes),
+    git: namespace("git", SOLOE_API_METHODS.git),
+    files: namespace("files", SOLOE_API_METHODS.files),
+    diagnostics: namespace("diagnostics", SOLOE_API_METHODS.diagnostics),
+    window: namespace("window", SOLOE_API_METHODS.window),
     agentIntegration: namespace(
       "agentIntegration",
-      NAMESPACE_METHODS.agentIntegration,
+      SOLOE_API_METHODS.agentIntegration,
     ),
-    notify: namespace("notify", NAMESPACE_METHODS.notify),
-    overview: namespace("overview", NAMESPACE_METHODS.overview),
-    comments: namespace("comments", NAMESPACE_METHODS.comments),
-    diff: namespace("diff", NAMESPACE_METHODS.diff),
-    features: namespace("features", NAMESPACE_METHODS.features),
-    vault: namespace("vault", NAMESPACE_METHODS.vault),
-    browser: namespace("browser", NAMESPACE_METHODS.browser),
+    notify: namespace("notify", SOLOE_API_METHODS.notify),
+    overview: namespace("overview", SOLOE_API_METHODS.overview),
+    comments: namespace("comments", SOLOE_API_METHODS.comments),
+    diff: namespace("diff", SOLOE_API_METHODS.diff),
+    features: namespace("features", SOLOE_API_METHODS.features),
+    vault: namespace("vault", SOLOE_API_METHODS.vault),
+    browser: namespace("browser", SOLOE_API_METHODS.browser),
   } as SoloeApi;
 }
 

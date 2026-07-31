@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { UI_STARTUP_RPCS } from "@shared/api-contract.js";
+import {
+  SOLOE_API_METHODS,
+  UI_STARTUP_RPCS,
+} from "@shared/api-contract.js";
 import { createBrowserApi } from "./browser-api.js";
 
 describe("browser API", () => {
@@ -576,6 +579,15 @@ describe("browser API", () => {
     }
     expect(Object.hasOwn(api.sessions, "list")).toBe(true);
     expect(Object.hasOwn(api.observer, "onSnapshot")).toBe(true);
+    for (const [namespace, methods] of Object.entries(SOLOE_API_METHODS)) {
+      const facade = api[namespace as keyof typeof api] as object;
+      for (const method of methods) {
+        expect(
+          Object.hasOwn(facade, method),
+          `${namespace}.${method} must be materialized`,
+        ).toBe(true);
+      }
+    }
   });
 });
 
