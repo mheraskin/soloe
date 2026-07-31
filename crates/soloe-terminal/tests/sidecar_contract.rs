@@ -72,6 +72,19 @@ impl Sidecar {
 
 #[test]
 fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
+    #[cfg(windows)]
+    let (shell, args, input) = (
+        "powershell.exe",
+        vec!["-NoLogo", "-NoProfile", "-NoExit"],
+        b"[Console]::Write(([char]30).ToString() + 'sidecar-contract-ok' + ([char]31).ToString()); exit 0\r\n"
+            .as_slice(),
+    );
+    #[cfg(not(windows))]
+    let (shell, args, input) = (
+        "/bin/bash",
+        vec!["--noprofile", "--norc"],
+        b"printf '\\036%s\\037\\n' 'sidecar-contract-ok'; exit 0\n".as_slice(),
+    );
     let mut sidecar = Sidecar::start();
     sidecar.send(json!({ "id": 1, "method": "ping" }));
     let ping = sidecar.response(1);
@@ -84,8 +97,8 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
         "params": {
             "terminalId": "terminal-contract",
             "sessionId": "session-contract",
-            "file": "/bin/bash",
-            "args": ["--noprofile", "--norc"],
+            "file": shell,
+            "args": args,
             "cwd": env!("CARGO_MANIFEST_DIR"),
             "env": { "TERM": "xterm-256color", "LANG": "C.UTF-8" },
             "cols": 80,
@@ -97,7 +110,6 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
     assert_eq!(started["value"]["terminalId"], "terminal-contract");
     assert!(started["value"]["pid"].as_u64().is_some_and(|pid| pid > 0));
 
-    let input = b"printf '\\036%s\\037\\n' 'sidecar-contract-ok'; exit 0\n";
     sidecar.send(json!({
         "id": 3,
         "method": "input",
