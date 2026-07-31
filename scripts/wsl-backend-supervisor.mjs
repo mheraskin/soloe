@@ -18,6 +18,7 @@ const stopTimeoutMs = Number(process.env.SOLOE_STOP_TIMEOUT_MS ?? "5000");
 const children = new Map();
 let stopping = false;
 let shutdownTask;
+let serverRestartAttempts = 0;
 
 writeRecord("supervisor", {
   service: "supervisor",
@@ -41,9 +42,13 @@ try {
       requestShutdown("tray ownership lease expired");
       break;
     }
-    if ([...children.values()].every((child) => child.exitCode !== null)) {
-      requestShutdown("managed services exited");
+    if (childExited(children.get("runtime"))) {
+      requestShutdown("runtime exited");
       break;
+    }
+    if (childExited(children.get("server"))) {
+      await restartServer();
+      continue;
     }
     await delay(500);
   }
@@ -85,14 +90,43 @@ async function waitForRecord(service) {
     const record = readRecord(service);
     if (record?.ownerId === ownerId && processIsAlive(record.pid)) return;
     const child = children.get(service);
-    if (child?.exitCode !== null) {
-      throw new Error(`${service} exited with code ${child.exitCode}`);
+    if (childExited(child)) {
+      throw new Error(
+        `${service} exited with ${child?.signalCode ?? `code ${child?.exitCode ?? "unknown"}`}`,
+      );
     }
     await delay(100);
   }
   throw new Error(
     `${service} did not become ready; inspect ${path.join(dataDirectory, `${service}.log`)}`,
   );
+}
+
+async function restartServer() {
+  serverRestartAttempts += 1;
+  const backoffMs = Math.min(5_000, serverRestartAttempts * 500);
+  const previous = children.get("server");
+  appendSupervisorLog(
+    `[wsl-supervisor] server process ${previous?.pid ?? "unknown"} exited; `
+      + `restart attempt ${serverRestartAttempts} in ${backoffMs}ms\n`,
+  );
+  removeOwnRecord("server");
+  await delay(backoffMs);
+  if (stopping || !leaseIsCurrent()) return;
+  await startService("@soloe/server", "server");
+  try {
+    await waitForRecord("server");
+    appendSupervisorLog(
+      `[wsl-supervisor] server restarted as process ${children.get("server")?.pid ?? "unknown"}\n`,
+    );
+    serverRestartAttempts = 0;
+  } catch (error) {
+    appendSupervisorLog(
+      `[wsl-supervisor] server restart failed: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+  }
 }
 
 async function shutdown(reason) {
@@ -109,7 +143,7 @@ function requestShutdown(reason) {
 
 async function stopChild(service) {
   const child = children.get(service);
-  if (!child || child.exitCode !== null) {
+  if (childExited(child)) {
     removeOwnRecord(service);
     return;
   }
@@ -145,7 +179,7 @@ function groupIsAlive(pid) {
 }
 
 function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return Promise.resolve(true);
+  if (childExited(child)) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timeout = setTimeout(() => resolve(false), timeoutMs);
     child.once("exit", () => {
@@ -153,6 +187,10 @@ function waitForExit(child, timeoutMs) {
       resolve(true);
     });
   });
+}
+
+function childExited(child) {
+  return !child || child.exitCode !== null || child.signalCode !== null;
 }
 
 function leaseIsCurrent() {

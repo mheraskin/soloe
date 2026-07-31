@@ -99,6 +99,12 @@ the Server, refresh shared state, and replay terminal output by sequence. An
 explicit terminal stop, **Stop Backend**, or **Quit Soloe** is required to end
 runtime-owned agents.
 
+For WSL placement, the tray-owned supervisor treats an unexpected Server exit
+as a replaceable-service failure. It restarts only the Application Server with
+bounded backoff while preserving the existing Runtime process and socket. A
+Runtime exit, expired tray lease, **Stop Backend**, or **Quit Soloe** still
+tears down the complete backend in ownership order.
+
 ## Security and diagnostics boundary
 
 Both RPC and event connections require the per-install token and bind to the
