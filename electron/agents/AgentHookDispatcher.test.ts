@@ -612,6 +612,31 @@ describe('AgentHookDispatcher', () => {
       });
     });
 
+    it('captures a Codex thread switch before the resumed session submits a prompt', async () => {
+      const created = await sessionStore.create({
+        name: 'Codex',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+      });
+
+      await dispatcher.captureCodexThread(created.id, 'codex-resumed-in-tui');
+
+      const updated = await sessionStore.get(created.id);
+      expect(updated?.providerThreadId).toBe('codex-resumed-in-tui');
+      expect(updated?.launch).toMatchObject({
+        type: 'agent',
+        provider: 'codex',
+        codexSessionId: 'codex-resumed-in-tui'
+      });
+      expect(updated?.currentAgentRuntime).toMatchObject({
+        provider: 'codex',
+        status: 'active',
+        providerThreadId: 'codex-resumed-in-tui'
+      });
+    });
+
     it('marks a shell-launched agent idle when the command exits without closing the terminal', async () => {
       const created = await sessionStore.create({
         name: 'shell',

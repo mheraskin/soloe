@@ -20,6 +20,10 @@ import { AgentObserverStore } from './agents/AgentObserverStore.js';
 import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
 import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
 import { AgentHookDispatcher } from './agents/AgentHookDispatcher.js';
+import {
+  CodexShellSnapshotWatcher,
+  codexShellSnapshotDirectory
+} from './agents/CodexShellSnapshotWatcher.js';
 import { AutoRenameService } from './agents/AutoRenameService.js';
 import { BackgroundAgentExecution } from './agents/BackgroundAgentExecution.js';
 import { CommentsBridge } from './comments/CommentsBridge.js';
@@ -69,6 +73,7 @@ interface AppServices {
   observerStore: AgentObserverStore;
   runtime: AgentRuntimeManager;
   backgroundAgentExecution: BackgroundAgentExecution;
+  codexShellSnapshotWatcher: CodexShellSnapshotWatcher;
   mcp: SoloeMcpServer;
   commentsBridge: CommentsBridge;
   diffBridge: DiffBridge;
@@ -271,6 +276,15 @@ async function setupServices(): Promise<AppServices> {
     onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[hook-dispatcher] ${message}`, detail)
   });
+  const codexShellSnapshotWatcher = new CodexShellSnapshotWatcher({
+    directory: codexShellSnapshotDirectory(),
+    onThread: (thread) => hookDispatcher.captureCodexThread(
+      thread.soloeSessionId,
+      thread.providerThreadId
+    ),
+    log: (message, detail) => console.warn(`[codex-resume] ${message}`, detail)
+  });
+  await codexShellSnapshotWatcher.start();
   const commentsBridge = new CommentsBridge({
     getWindows: () => BrowserWindow.getAllWindows()
   });
@@ -466,6 +480,7 @@ async function setupServices(): Promise<AppServices> {
     observerStore,
     runtime,
     backgroundAgentExecution,
+    codexShellSnapshotWatcher,
     mcp,
     commentsBridge,
     diffBridge,
@@ -669,6 +684,7 @@ async function cleanup(): Promise<void> {
     await services.pty.dispose();
     await services.runtime.dispose();
     await services.backgroundAgentExecution.dispose();
+    services.codexShellSnapshotWatcher.dispose();
     // Terminal and worker shutdown can produce the final semantic observer
     // commit. Keep durability attached until those producers have settled,
     // then flush exactly the latest projection before releasing the Module.
