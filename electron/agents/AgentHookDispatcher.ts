@@ -237,7 +237,7 @@ export class AgentHookDispatcher {
     provider: HookProvider,
     hookEvent: string | undefined
   ): Promise<void> {
-    const sessionId = stringField(payload, 'session_id');
+    const sessionId = providerSessionId(payload, provider);
     try {
       const existing = await this.opts.sessionStore.get(soloeSessionId);
       if (!existing) return;
@@ -381,15 +381,27 @@ function decodeArgvPayload(payload: Record<string, unknown>): string[] | null {
   }
 }
 
+function providerSessionId(
+  payload: Record<string, unknown>,
+  provider: HookProvider
+): string | undefined {
+  const reported = stringField(payload, 'session_id') ?? stringField(payload, 'sessionId');
+  if (reported) return reported;
+  const capturedArgs = decodeArgvPayload(payload);
+  return capturedArgs ? parseAgentLaunchArgs(provider, capturedArgs).providerSessionId : undefined;
+}
+
 function parseAgentLaunchArgs(
   provider: HookProvider,
   args: string[]
 ): {
+  providerSessionId?: string;
   model?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
   extraArgs: string[];
 } {
   const extraArgs: string[] = [];
+  let providerSessionId: string | undefined;
   let model: string | undefined;
   let reasoningEffort: 'low' | 'medium' | 'high' | undefined;
   for (let i = 0; i < args.length; i += 1) {
@@ -397,14 +409,23 @@ function parseAgentLaunchArgs(
     const next = args[i + 1];
 
     if (provider === 'codex' && i === 0 && arg === 'resume') {
-      if (next && !next.startsWith('-')) i += 1;
+      if (next && !next.startsWith('-')) {
+        providerSessionId = next;
+        i += 1;
+      }
       continue;
     }
     if (provider === 'claude_code' && (arg === '--resume' || arg === '-r')) {
-      if (next) i += 1;
+      if (next) {
+        providerSessionId = next;
+        i += 1;
+      }
       continue;
     }
-    if (provider === 'claude_code' && arg.startsWith('--resume=')) continue;
+    if (provider === 'claude_code' && arg.startsWith('--resume=')) {
+      providerSessionId = arg.slice('--resume='.length);
+      continue;
+    }
     if (provider === 'claude_code' && arg === '--continue') continue;
 
     if (arg === '--model' || arg === '-m') {
@@ -438,6 +459,7 @@ function parseAgentLaunchArgs(
     extraArgs.push(arg);
   }
   return {
+    ...(providerSessionId ? { providerSessionId } : {}),
     ...(model ? { model } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     extraArgs

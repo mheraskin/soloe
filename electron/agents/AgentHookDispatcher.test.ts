@@ -569,6 +569,49 @@ describe('AgentHookDispatcher', () => {
       });
     });
 
+    it('captures a resumed Codex thread id from a shell launch', async () => {
+      const created = await sessionStore.create({
+        name: 'shell',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        launch: { type: 'terminal', shell: 'bash' }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'SessionStart',
+          source: 'shell_launch',
+          argv_b64: argvB64('resume', 'codex-resumed-thread')
+        }
+      });
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'SessionEnd',
+          source: 'shell_launch',
+          argv_b64: argvB64('resume', 'codex-resumed-thread'),
+          exit_code: 0
+        }
+      });
+
+      const updated = await sessionStore.get(created.id);
+      expect(updated?.providerThreadId).toBe('codex-resumed-thread');
+      expect(updated?.launch).toMatchObject({
+        type: 'agent',
+        provider: 'codex',
+        codexSessionId: 'codex-resumed-thread'
+      });
+      expect(updated?.currentAgentRuntime).toMatchObject({
+        provider: 'codex',
+        status: 'exited',
+        providerThreadId: 'codex-resumed-thread'
+      });
+    });
+
     it('marks a shell-launched agent idle when the command exits without closing the terminal', async () => {
       const created = await sessionStore.create({
         name: 'shell',
