@@ -53,14 +53,20 @@ describe("Soloe API compatibility matrix", () => {
     }
   });
 
-  it("keeps remote Electron native ownership limited to window and Browser pane operations", () => {
+  it("keeps host-bound remote Electron operations native", () => {
     for (const key of apiKeys) {
       const [namespace, method] = key.split(".");
       const owner = operationOwner("remote-electron", namespace!, method!);
       if (owner === "electron-native") {
-        expect(["window", "browser"]).toContain(namespace);
+        expect(["window", "browser", "vault"]).toContain(namespace);
       }
     }
+    expect(operationOwner("remote-electron", "vault", "getSecret")).toBe(
+      "electron-native",
+    );
+    expect(operationOwner("browser", "vault", "getSecret")).toBe(
+      "application-server",
+    );
     expect(operationOwner("browser", "browser", "openDevTools")).toBe(
       "unsupported",
     );

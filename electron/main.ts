@@ -108,6 +108,7 @@ let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
 let remoteWindowIpc: WindowIpc | null = null;
 let remoteBrowserIpc: BrowserIpc | null = null;
+let remoteVaultIpc: VaultIpc | null = null;
 
 const remoteServerUrl = process.env.SOLOE_CLIENT_SERVER_URL?.trim() || null;
 
@@ -696,6 +697,8 @@ async function cleanup(): Promise<void> {
   remoteWindowIpc = null;
   remoteBrowserIpc?.dispose();
   remoteBrowserIpc = null;
+  remoteVaultIpc?.dispose();
+  remoteVaultIpc = null;
 }
 
 function ensureSingleInstance(): boolean {
@@ -753,8 +756,13 @@ if (ensureSingleInstance()) {
     if (remoteServerUrl) {
       remoteWindowIpc = new WindowIpc();
       remoteBrowserIpc = new BrowserIpc();
+      remoteVaultIpc = new VaultIpc({
+        store: new VaultStore(path.join(app.getPath('userData'), 'vault')),
+        getWindows: () => BrowserWindow.getAllWindows()
+      });
       remoteWindowIpc.register();
       remoteBrowserIpc.register();
+      remoteVaultIpc.register();
       console.info(`[desktop] using Application Server at ${new URL(remoteServerUrl).origin}`);
     } else {
       services = await setupServices();

@@ -26,9 +26,11 @@ describe("Soloe API transport contract", () => {
     }
   });
 
-  it("limits remote Electron native overrides to window and embedded-browser controls", () => {
+  it("limits remote Electron native overrides to host-bound capabilities", () => {
     expect([...REMOTE_ELECTRON_NATIVE_METHODS].every((method) =>
-      method.startsWith("window.") || method.startsWith("browser.")
+      method.startsWith("window.") ||
+      method.startsWith("browser.") ||
+      method.startsWith("vault.")
     )).toBe(true);
   });
 
@@ -64,7 +66,7 @@ describe("Soloe API transport contract", () => {
     }
   });
 
-  it("keeps Vault metadata and explicit secret reads on the application server", () => {
+  it("keeps Vault server-backed in browsers and host-local in remote Electron", () => {
     for (const method of [
       "vault.list",
       "vault.save",
@@ -75,7 +77,7 @@ describe("Soloe API transport contract", () => {
       const [namespace, name] = method.split(".");
       expect(supportsRpc("browser", namespace!, name!)).toBe(true);
       expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
-      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(true);
     }
   });
 

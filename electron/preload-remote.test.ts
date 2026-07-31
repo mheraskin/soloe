@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 describe('remote Electron preload', () => {
-  it('keeps every backend namespace server-backed and overrides only native Electron APIs', async () => {
+  it('keeps host-encrypted vault operations local to Electron', async () => {
     process.env.SOLOE_CLIENT_SERVER_URL = 'http://127.0.0.1:43891';
     process.env.SOLOE_SERVER_TOKEN = 'remote-test-token';
 
@@ -68,11 +68,12 @@ describe('remote Electron preload', () => {
 
     const exposed = mocks.exposeInMainWorld.mock.calls[0]?.[1] as SoloeApi;
     for (const namespace of Object.keys(SOLOE_API_METHODS)) {
-      if (namespace === 'window' || namespace === 'browser') continue;
+      if (namespace === 'window' || namespace === 'browser' || namespace === 'vault') continue;
       expect(exposed[namespace as keyof SoloeApi], namespace).toBe(originalNamespaces[namespace]);
     }
     expect(exposed.window).not.toBe(originalNamespaces.window);
     expect(exposed.browser).not.toBe(originalNamespaces.browser);
+    expect(exposed.vault).not.toBe(originalNamespaces.vault);
 
     await exposed.window.minimize();
     await exposed.window.toggleMaximize();
@@ -100,6 +101,7 @@ describe('remote Electron preload', () => {
       visible: true
     });
     await exposed.browser.closeDevTools({ webContentsId: 1 });
+    await exposed.vault.getSecret({ cwd: 'C:\\repo', id: '0123456789abcdef' });
 
     expect(mocks.invoke.mock.calls.map(([channel]) => channel)).toEqual([
       IpcChannels.window.minimize,
@@ -112,11 +114,13 @@ describe('remote Electron preload', () => {
       IpcChannels.browser.setUserAgent,
       IpcChannels.browser.openDevTools,
       IpcChannels.browser.setDevToolsLayout,
-      IpcChannels.browser.closeDevTools
+      IpcChannels.browser.closeDevTools,
+      IpcChannels.vault.getSecret
     ]);
     expect(REMOTE_ELECTRON_NATIVE_METHODS).toEqual(new Set([
       ...SOLOE_API_METHODS.window.map((method) => `window.${method}`),
-      ...SOLOE_API_METHODS.browser.map((method) => `browser.${method}`)
+      ...SOLOE_API_METHODS.browser.map((method) => `browser.${method}`),
+      ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`)
     ]));
   });
 });
