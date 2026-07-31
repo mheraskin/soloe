@@ -63,20 +63,20 @@ describe('agentNotifications', () => {
     expect(agentNotifications.toasts[0]?.sessionName).toBe('Codex');
   });
 
-  it('still notifies the active session when it needs approval', () => {
-    agentNotifications.observeSnapshot(snapshot('working'), session, session.id);
-    agentNotifications.observeSnapshot(snapshot('waiting_for_approval'), session, session.id);
+  it('still notifies the active session when the app is not focused', () => {
+    agentNotifications.observeSnapshot(snapshot('working'), session, session.id, false);
+    agentNotifications.observeSnapshot(snapshot('waiting_for_approval'), session, session.id, false);
 
     expect(agentNotifications.markerFor(session.id)?.state).toBe('waiting_for_approval');
     expect(agentNotifications.toasts).toHaveLength(1);
   });
 
-  it('notifies the active session when it completes', () => {
-    agentNotifications.observeSnapshot(snapshot('working'), session, session.id);
-    agentNotifications.observeSnapshot(snapshot('completed'), session, session.id);
+  it('suppresses notifications and blinking for the focused active session', () => {
+    agentNotifications.observeSnapshot(snapshot('working'), session, session.id, true);
+    agentNotifications.observeSnapshot(snapshot('completed'), session, session.id, true);
 
-    expect(agentNotifications.markerFor(session.id)?.state).toBe('completed');
-    expect(agentNotifications.toasts).toHaveLength(1);
+    expect(agentNotifications.markerFor(session.id)).toBeNull();
+    expect(agentNotifications.toasts).toHaveLength(0);
   });
 
   it('does not dismiss a toast when the matching snapshot follows its observer event', () => {

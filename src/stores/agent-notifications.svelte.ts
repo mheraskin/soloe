@@ -6,6 +6,7 @@ import type {
   SessionLaunchKind
 } from '@shared/types/sessions.js';
 import { launchKind } from '@shared/types/sessions.js';
+import { showAgentSystemNotification } from '../lib/agent-system-notifications';
 
 export type NotifyState = Extract<
   AgentObservedState,
@@ -97,7 +98,8 @@ class AgentNotificationsStore {
   observeSnapshot(
     snapshot: ObservedAgentSnapshot,
     session: Session | null,
-    activeSessionId: SessionId | null
+    activeSessionId: SessionId | null,
+    isAppFocused = false
   ): void {
     const rowSessionId = rowSessionIdFor(snapshot);
     const reason = reasonFor(snapshot, this.lastEvents.get(snapshot.id) ?? null);
@@ -124,7 +126,8 @@ class AgentNotificationsStore {
       state: snapshot.state,
       reason,
       session,
-      activeSessionId
+      activeSessionId,
+      isAppFocused
     });
   }
 
@@ -132,7 +135,8 @@ class AgentNotificationsStore {
     event: ObserverEvent,
     session: Session | null,
     activeSessionId: SessionId | null,
-    rowSessionId: SessionId | null
+    rowSessionId: SessionId | null,
+    isAppFocused = false
   ): void {
     this.rememberEvent(event);
     this.pendingSnapshots.set(event.subjectId, event.state);
@@ -150,7 +154,8 @@ class AgentNotificationsStore {
       state: event.state,
       reason: event.summary,
       session,
-      activeSessionId
+      activeSessionId,
+      isAppFocused
     });
   }
 
@@ -200,6 +205,7 @@ class AgentNotificationsStore {
     reason: string;
     session: Session | null;
     activeSessionId: SessionId | null;
+    isAppFocused: boolean;
   }): void {
     const previous = this.lastStates.get(opts.subjectId);
     this.lastStates.set(opts.subjectId, opts.state);
@@ -225,6 +231,15 @@ class AgentNotificationsStore {
         state: opts.state
       });
       this.clearSubject(opts.rowSessionId, opts.subjectId);
+      return;
+    }
+
+    if (opts.rowSessionId === opts.activeSessionId && opts.isAppFocused) {
+      this.log('suppress notification: active session is focused', {
+        rowSessionId: opts.rowSessionId,
+        state: opts.state
+      });
+      this.acknowledge(opts.rowSessionId);
       return;
     }
 
@@ -298,6 +313,9 @@ class AgentNotificationsStore {
     this.log('show toast', toast);
     this.dismissToast(toast.sessionId);
     this.toasts = [...this.toasts, toast];
+    void showAgentSystemNotification(toast).catch((error) => {
+      this.log('failed to show system notification', error);
+    });
     if (toast.state !== 'completed') return;
     const timer = setTimeout(() => {
       this.dismissToast(toast.sessionId);

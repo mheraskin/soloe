@@ -15,7 +15,8 @@
     Globe,
     KeyRound,
     NotebookPen,
-    ServerCog
+    ServerCog,
+    Bell
   } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import { platform } from '../../stores/platform.svelte';
@@ -45,6 +46,10 @@
   import AgentIntegrationForm from './AgentIntegrationForm.svelte';
   import VaultManagementForm from './VaultManagementForm.svelte';
   import KindIcon from '../KindIcon.svelte';
+  import {
+    agentNotificationPermission,
+    requestAgentNotificationPermission
+  } from '../../lib/agent-system-notifications';
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
@@ -97,6 +102,7 @@
     { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
     { kind: 'tab', value: 'vault', label: 'Vault', icon: KeyRound },
     { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
+    { kind: 'tab', value: 'notifications', label: 'Notifications', icon: Bell },
     { kind: 'tab', value: 'models', label: 'Models', icon: Cpu },
     { kind: 'tab', value: 'quicklaunch', label: 'Quick Launch', icon: Rocket },
     { kind: 'tab', value: 'terminal', label: 'Terminal', icon: TerminalSquare },
@@ -113,6 +119,9 @@
   let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   let lastAppliedTabNonce = -1;
   let draftPreset: QuickLaunchPreset | null = $state(null);
+  let notificationPermission = $state<NotificationPermission | 'unsupported'>(
+    agentNotificationPermission()
+  );
 
   onMount(() => {
     const media = window.matchMedia('(max-width: 767px)');
@@ -187,6 +196,10 @@
     try {
       await settings.update({ backend: { placement: value } });
     } catch (e) { reportError(e); }
+  }
+
+  async function enableNotifications(): Promise<void> {
+    notificationPermission = await requestAgentNotificationPermission();
   }
 
   async function setBackendWslDistro(value: string) {
@@ -448,6 +461,36 @@
             {/each}
           </Select.Content>
         </Select.Root>
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="notifications" class={contentClass}>
+      <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
+        <div class="flex items-start gap-2.5">
+          <Bell class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium text-foreground">Agent status notifications</div>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Get a system notification when an agent finishes or needs attention while its
+              session is not currently visible and focused.
+            </p>
+          </div>
+        </div>
+        {#if notificationPermission === 'granted'}
+          <p class="m-0 text-xs font-medium text-success">Notifications are enabled</p>
+        {:else if notificationPermission === 'denied'}
+          <p class="m-0 text-xs text-destructive">
+            Notifications are blocked. Allow them in your browser or system settings.
+          </p>
+        {:else if notificationPermission === 'unsupported'}
+          <p class="m-0 text-xs text-muted-foreground">
+            System notifications are not available in this environment.
+          </p>
+        {:else}
+          <Button class="self-start" size="sm" onclick={enableNotifications}>
+            Enable notifications
+          </Button>
+        {/if}
       </div>
     </Tabs.Content>
 
