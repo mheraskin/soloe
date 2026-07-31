@@ -1327,6 +1327,11 @@ async function runRemoteElectronWorkflow(input) {
   }
   assert(sessionRow, 'Remote Electron did not render the server-owned session');
   if (sessionRow.getAttribute('data-row-selected') !== 'true') sessionRow.click();
+  await waitUntil(
+    () => sessionRow.getAttribute('data-row-selected') === 'true',
+    5_000,
+    'remote Electron session selection'
+  );
 
   const paneSelectors = {
     Inspector: '[data-pane-slot]',
