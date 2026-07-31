@@ -331,13 +331,21 @@ impl BackendSupervisor {
     pub fn shutdown_all(&self) -> Result<(), String> {
         let client_result = self.stop_clients();
         let backend_result = self.stop();
-        match (client_result, backend_result) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(client), Ok(())) => Err(format!("client cleanup incomplete: {client}")),
-            (Ok(()), Err(backend)) => Err(backend),
-            (Err(client), Err(backend)) => {
-                Err(format!("client cleanup incomplete: {client}; {backend}"))
-            }
+        let ownership_result = self.native_owner.terminate_all();
+        let mut failures = Vec::new();
+        if let Err(client) = client_result {
+            failures.push(format!("client cleanup incomplete: {client}"));
+        }
+        if let Err(backend) = backend_result {
+            failures.push(backend);
+        }
+        if let Err(ownership) = ownership_result {
+            failures.push(format!("owned process cleanup incomplete: {ownership}"));
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
         }
     }
 
