@@ -54,14 +54,13 @@
 
   let fontSize = $derived(settings.current.terminal.fontSize);
   let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
-  let terminalFontSize = $derived(compactViewport ? Math.max(14, fontSize) : fontSize);
+  let terminalFontSize = $derived(fontSize);
 
   let host: HTMLDivElement | undefined = $state();
   let findInput: HTMLInputElement | null = $state(null);
   let findOpen = $state(false);
   let findQuery = $state('');
   let ready = $state(false);
-  let mobileCommand = $state('');
   let loadingLabel = $derived(
     sessions.runtime[sessionId]?.status === 'starting' ? 'Starting' : 'Restoring terminal'
   );
@@ -109,16 +108,6 @@
 
   function shouldAutofocusTerminal(): boolean {
     return !compactViewport || !window.matchMedia('(pointer: coarse)').matches;
-  }
-
-  async function sendMobileCommand(event: SubmitEvent): Promise<void> {
-    event.preventDefault();
-    const command = mobileCommand;
-    mobileCommand = '';
-    const data = command ? `${command.replaceAll('\n', '\r')}\r` : '\r';
-    await ipc.terminal.input(terminalId, data).catch(() => {
-      // Silent — the terminal probably exited while the input was open.
-    });
   }
 
   function clearReadyTimers(): void {
@@ -814,7 +803,13 @@
         currentTerm.scrollToBottom();
         return;
       }
-      scheduleFit(detail?.keyboardClosed === true);
+      if (detail?.keyboardClosed) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => scheduleFit(true));
+        });
+        return;
+      }
+      scheduleFit();
     };
     ro.observe(currentHost);
     window.addEventListener('soloe:rail-layout', onRailLayout);
@@ -903,28 +898,6 @@
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
-  <form class="mobile-terminal-input" onsubmit={sendMobileCommand}>
-    <label class="sr-only" for={`mobile-terminal-input-${terminalId}`}>
-      Terminal command
-    </label>
-    <input
-      id={`mobile-terminal-input-${terminalId}`}
-      bind:value={mobileCommand}
-      class="mobile-terminal-input-field"
-      type="text"
-      inputmode="text"
-      enterkeyhint="send"
-      autocomplete="off"
-      autocapitalize="none"
-      autocorrect="off"
-      spellcheck={false}
-      placeholder="Type a command…"
-      aria-label="Terminal command"
-    />
-    <button type="submit" aria-label="Send command" title="Send command">
-      <Send class="size-4" />
-    </button>
-  </form>
 </div>
 
 {#if chipText || askOpen}
@@ -965,21 +938,14 @@
     background: #0f0f10 !important;
   }
 
-  .mobile-terminal-input {
-    display: none;
-  }
-
   @media (max-width: 767px) {
     .terminal-pane-shell {
-      --mobile-terminal-input-height: calc(
-        3.8125rem + max(0px, calc(env(safe-area-inset-bottom) - 0.5rem))
-      );
       display: grid;
       width: 100%;
       max-width: 100%;
       min-width: 0;
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(0, 1fr) var(--mobile-terminal-input-height);
+      grid-template-rows: minmax(0, 1fr);
       overflow: hidden;
       padding: 0.25rem;
     }
@@ -1000,63 +966,6 @@
     .terminal-find :global([data-slot='button']) {
       min-width: 2.75rem;
       min-height: 2.75rem;
-    }
-
-    .mobile-terminal-input {
-      z-index: 25;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem max(0.25rem, env(safe-area-inset-right))
-        max(0.5rem, env(safe-area-inset-bottom)) max(0.25rem, env(safe-area-inset-left));
-      border-top: 1px solid color-mix(in oklab, white 12%, transparent);
-      background: #151518;
-    }
-
-    :global(html[data-mobile-keyboard-open]) .mobile-terminal-input {
-      position: fixed;
-      right: 0;
-      bottom: var(--keyboard-inset, 0px);
-      left: 0;
-      z-index: 80;
-      padding-bottom: 0.5rem;
-    }
-
-    .mobile-terminal-input-field {
-      min-width: 0;
-      height: 2.75rem;
-      flex: 1;
-      border: 1px solid color-mix(in oklab, white 16%, transparent);
-      border-radius: 0.65rem;
-      background: #0f0f10;
-      padding: 0 0.875rem;
-      color: #f5f5f5;
-      font-family: 'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;
-      font-size: 16px;
-      outline: none;
-    }
-
-    .mobile-terminal-input-field::placeholder {
-      color: #85858d;
-    }
-
-    .mobile-terminal-input-field:focus-visible {
-      border-color: var(--ring);
-      box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent);
-    }
-
-    .mobile-terminal-input button {
-      display: inline-flex;
-      width: 2.75rem;
-      height: 2.75rem;
-      flex: none;
-      align-items: center;
-      justify-content: center;
-      border: 0;
-      border-radius: 0.65rem;
-      background: var(--primary);
-      color: var(--primary-foreground);
-      touch-action: manipulation;
     }
 
     :global(.xterm) {
