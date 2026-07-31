@@ -155,12 +155,12 @@ impl TerminalManager {
             .name(format!("soloe-pty-wait-{}", request.terminal_id))
             .spawn(move || {
                 let status = child.wait();
-                let _ = reader_thread.join();
-                let _ = batch_thread.join();
                 if let Ok(mut terminals) = supervisor_inner.terminals.lock() {
                     terminals.remove(&terminal_id);
                     supervisor_inner.terminals_changed.notify_all();
                 }
+                let _ = reader_thread.join();
+                let _ = batch_thread.join();
                 let (exit_code, signal_name) = match status {
                     Ok(status) => (status.exit_code(), status.signal().map(str::to_owned)),
                     Err(_) => (1, None),
