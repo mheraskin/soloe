@@ -93,7 +93,7 @@
     | { kind: 'divider'; label: string };
 
   const tabs: TabEntry[] = [
-    { kind: 'tab', value: 'backend', label: 'Backend', icon: ServerCog },
+    { kind: 'tab', value: 'backend', label: 'Services', icon: ServerCog },
     { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
     { kind: 'tab', value: 'vault', label: 'Vault', icon: KeyRound },
     { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
@@ -369,29 +369,29 @@
   <ScrollArea class="settings-content min-h-0 flex-1">
     <Tabs.Content value="backend" class={contentClass}>
       <div class="flex flex-col gap-1.5">
-        <Label class="text-xs text-muted-foreground">Backend placement</Label>
+        <Label class="text-xs text-muted-foreground">Run terminals and agents in</Label>
         <Select.Root
           type="single"
           value={settings.current.backend.placement}
           onValueChange={(v) => setBackendPlacement(v as BackendPlacement)}
         >
           <Select.Trigger class="w-full">
-            {settings.current.backend.placement === 'wsl' ? 'WSL' : 'Windows'}
+            {settings.current.backend.placement === 'wsl' ? 'WSL (Linux)' : 'Windows'}
           </Select.Trigger>
           <Select.Content>
             <Select.Item value="windows" label="Windows">Windows</Select.Item>
-            <Select.Item value="wsl" label="WSL">WSL</Select.Item>
+            <Select.Item value="wsl" label="WSL (Linux)">WSL (Linux)</Select.Item>
           </Select.Content>
         </Select.Root>
         <span class="text-[11px] text-muted-foreground">
-          The Application Server, Environment Runtime, terminal PTYs, and agents move together.
-          The tray and Electron client always remain on Windows.
+          Choose the environment that runs terminals, agents, and project commands. The tray and
+          Electron app stay on Windows.
         </span>
       </div>
       {#if settings.current.backend.placement === 'wsl'}
         <div class="flex flex-col gap-1.5">
           <Label class="text-xs text-muted-foreground" for="pref-backend-wsl-distro">
-            WSL distribution
+            Linux distribution (WSL)
           </Label>
           <Input
             id="pref-backend-wsl-distro"
@@ -404,7 +404,7 @@
         </div>
         <div class="flex flex-col gap-1.5">
           <Label class="text-xs text-muted-foreground" for="pref-backend-wsl-root">
-            Repository path inside WSL
+            Soloe folder in WSL
           </Label>
           <Input
             id="pref-backend-wsl-root"
@@ -420,8 +420,8 @@
         </div>
       {/if}
       <div class="rounded-md border border-border bg-muted/30 p-3 text-[11px] text-muted-foreground">
-        Placement changes apply the next time you stop and start the backend from the tray.
-        Restarting a client does not stop running agents.
+        Changes take effect after you stop and start all services from the tray. Stopping services
+        ends running terminals and agents.
       </div>
     </Tabs.Content>
 
