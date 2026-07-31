@@ -123,6 +123,10 @@ import { AgentObserverStore } from "../../../electron/agents/AgentObserverStore.
 import { AgentRuntimeManager } from "../../../electron/agents/AgentRuntimeManager.js";
 import { AgentHookDispatcher } from "../../../electron/agents/AgentHookDispatcher.js";
 import {
+  CodexShellSnapshotWatcher,
+  codexShellSnapshotDirectory,
+} from "../../../electron/agents/CodexShellSnapshotWatcher.js";
+import {
   SoloeMcpServer,
   type SoloeMcpServerInfo,
 } from "../../../electron/agents/SoloeMcpServer.js";
@@ -228,6 +232,7 @@ export class SoloeDomain extends EventEmitter {
   private workerRuntime!: AgentRuntimeManager;
   private agentBridge: SoloeMcpServer | null = null;
   private agentBridgeInfo: SoloeMcpServerInfo | null = null;
+  private codexShellSnapshotWatcher: CodexShellSnapshotWatcher | null = null;
   private readonly commandBuilder = new SessionCommandBuilder(
     new ShellDetector(),
     new NativeCommandBuilder(),
@@ -389,6 +394,8 @@ export class SoloeDomain extends EventEmitter {
     this.git.dispose();
     this.files.dispose();
     this.rendererBridge.dispose();
+    this.codexShellSnapshotWatcher?.dispose();
+    this.codexShellSnapshotWatcher = null;
     await this.agentBridge?.stop();
     this.agentBridge = null;
     this.agentBridgeInfo = null;
@@ -409,6 +416,15 @@ export class SoloeDomain extends EventEmitter {
         this.emit("event", "sessions.change", session);
       },
     });
+    this.codexShellSnapshotWatcher = new CodexShellSnapshotWatcher({
+      directory: codexShellSnapshotDirectory(),
+      onThread: (thread) => dispatcher.captureCodexThread(
+        thread.soloeSessionId,
+        thread.providerThreadId,
+      ),
+      log: (message, detail) => console.warn(`[codex-resume] ${message}`, detail),
+    });
+    await this.codexShellSnapshotWatcher.start();
     const start = async (port: number): Promise<{
       bridge: SoloeMcpServer;
       info: SoloeMcpServerInfo;

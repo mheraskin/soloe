@@ -43,6 +43,18 @@ export class AgentHookDispatcher {
     await this.dispatchCodex(event.soloeSessionId, event.payload);
   }
 
+  async captureCodexThread(
+    soloeSessionId: SessionId,
+    providerThreadId: string
+  ): Promise<void> {
+    await this.syncCurrentAgentRuntime(
+      soloeSessionId,
+      { session_id: providerThreadId, source: 'shell_snapshot' },
+      'codex',
+      undefined
+    );
+  }
+
   async dispatchClaude(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
     const hookEvent = hookEventName(payload);
     if (hookEvent === 'SessionStart') {
