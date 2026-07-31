@@ -396,6 +396,46 @@ describe('PtyManager', () => {
     });
   });
 
+  it('marks a Codex session resumable when submitted input reaches the PTY', async () => {
+    const codexSession: Session = {
+      ...session,
+      id: 'codex-input',
+      name: 'Codex',
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        codexSessionId: 'codex-empty-123'
+      },
+      hasUserInput: false
+    };
+    const update = vi.fn(async () => ({ ...codexSession, hasUserInput: true }));
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => codexSession),
+        touch: vi.fn(async () => {}),
+        update
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: codexSession.id });
+    manager.write(started.terminalId, '\r');
+
+    await vi.waitFor(() => {
+      expect(update).toHaveBeenCalledWith(codexSession.id, { hasUserInput: true });
+    });
+  });
+
   it('marks an agent as waiting for approval from terminal output', async () => {
     const codexSession: Session = {
       ...session,

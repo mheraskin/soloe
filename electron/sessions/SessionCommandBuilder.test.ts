@@ -241,6 +241,25 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     );
   });
 
+  it('starts a fresh Codex runtime when the captured thread has no user input', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' },
+      currentAgentRuntime: {
+        provider: 'codex',
+        status: 'active',
+        providerThreadId: 'codex-empty-123'
+      },
+      providerThreadId: 'codex-empty-123',
+      hasUserInput: false
+    };
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).not.toContain('resume');
+    expect(script).not.toContain('codex-empty-123');
+  });
+
   it('falls back to provider resume-last commands for attached runtimes without a captured id', () => {
     const claude: Session = {
       ...baseFields('attached-claude'),
@@ -417,6 +436,25 @@ describe('SessionCommandBuilder — codex kind', () => {
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('resume');
     expect(script).toContain('cdx-123');
+  });
+
+  it('does not resume a known-empty captured Codex session', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: {
+        type: 'agent',
+        provider: 'codex',
+        resumeMode: 'new',
+        codexSessionId: 'codex-empty-123'
+      },
+      providerThreadId: 'codex-empty-123',
+      hasUserInput: false
+    };
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).not.toContain('resume');
+    expect(script).not.toContain('codex-empty-123');
   });
 
   it('rewrites the bridge host to host.wsl.internal for wsl codex sessions', () => {

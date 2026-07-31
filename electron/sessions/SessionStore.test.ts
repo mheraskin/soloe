@@ -185,6 +185,18 @@ describe('SessionStore — disk round-trip', () => {
     expect((await reloaded.get(created.id))?.launch).toEqual(created.launch);
   });
 
+  it('tracks new Codex sessions as empty until the first submitted command', async () => {
+    const store = new SessionStore(storePath);
+    const created = await store.create({
+      name: 'Codex',
+      cwd: '/x',
+      runMode: 'windows',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    });
+
+    expect(created.hasUserInput).toBe(false);
+  });
+
   it('preserves known-empty Claude sessions from older persisted storage', async () => {
     await fs.writeFile(
       storePath,

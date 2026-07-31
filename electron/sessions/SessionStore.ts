@@ -394,9 +394,12 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
 }
 
 function initialHasUserInput(draft: SessionDraft): boolean | undefined {
-  if (draft.launch.type !== 'agent' || draft.launch.provider !== 'claude_code') return undefined;
+  if (draft.launch.type !== 'agent') return undefined;
   if (draft.launch.resumeMode !== 'new') return undefined;
-  if (draft.launch.claudeSessionId || draft.providerThreadId) return undefined;
+  const providerSessionId = draft.launch.provider === 'claude_code'
+    ? draft.launch.claudeSessionId
+    : draft.launch.codexSessionId;
+  if (providerSessionId || draft.providerThreadId) return undefined;
   return false;
 }
 
