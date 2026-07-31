@@ -269,7 +269,13 @@ async function git(cwd, args) {
 }
 
 async function startService(args, extraEnv, label) {
-  const child = spawn('pnpm', args, {
+  const command = process.platform === 'win32'
+    ? {
+        file: process.env.ComSpec || 'cmd.exe',
+        args: ['/d', '/s', '/c', 'pnpm.cmd', ...args]
+      }
+    : { file: 'pnpm', args };
+  const child = spawn(command.file, command.args, {
     cwd: root,
     env: { ...process.env, ...extraEnv },
     detached: process.platform !== 'win32',
@@ -306,13 +312,19 @@ function waitForReady(child, logs, label) {
       cleanup();
       reject(new Error(`${label} exited before ready with code ${code}`));
     };
+    const onError = (error) => {
+      cleanup();
+      reject(new Error(`${label} failed to launch: ${error.message}`));
+    };
     const cleanup = () => {
       clearTimeout(timeout);
       child.stdout?.off('data', onData);
       child.off('exit', onExit);
+      child.off('error', onError);
     };
     child.stdout?.on('data', onData);
     child.once('exit', onExit);
+    child.once('error', onError);
   });
 }
 
