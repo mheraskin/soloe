@@ -79,6 +79,20 @@ describe('session display state', () => {
     ).toBe('waiting_for_input');
   });
 
+  it.each(['working', 'running_tool'] as const)(
+    'keeps %s visible for attached agents without a renderer runtime row',
+    (state) => {
+      expect(
+        displayedAgentState({
+          observed: { state },
+          status: 'stopped',
+          hasRuntime: false,
+          hasNotificationMarker: false
+        })
+      ).toBe(state);
+    }
+  );
+
   it('uses an idle summary when a transient state is displayed as idle', () => {
     expect(displayedAgentSummary({ state: 'completed' }, 'idle', 'done')).toBe('idle');
   });

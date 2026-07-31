@@ -758,6 +758,17 @@ describe('Soloe Server lifecycle', () => {
         runtime: domainRuntime,
         integrationInstaller,
         enableAgentBridge: true,
+        codexConfigReader: {
+          read: vi.fn(async () => ({
+            approvalPolicy: 'on-request',
+            approvalsReviewer: 'auto_review',
+            sandboxMode: 'workspace-write',
+            config: {},
+            layers: [],
+            origins: {}
+          })),
+          clear: vi.fn()
+        },
         autoRename: { maybeRename },
         pathService,
         fileEditorLauncher
@@ -1037,6 +1048,52 @@ describe('Soloe Server lifecycle', () => {
           state: 'working',
           provider: 'codex',
           providerThreadId: 'codex-thread-1'
+        })
+      ]);
+
+      const permissionHookResponse = await fetch(
+        `http://127.0.0.1:${bridgeConfig.port}/hook/codex`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${bridgeConfig.token}`,
+            'content-type': 'application/json',
+            'x-soloe-session-id': session.id
+          },
+          body: JSON.stringify({
+            hook_event_name: 'PermissionRequest',
+            command: 'docker compose up'
+          })
+        }
+      );
+      expect(permissionHookResponse.status).toBe(200);
+      expect(await rpc(baseUrl, 'observer', 'list')).toEqual([
+        expect.objectContaining({
+          id: session.id,
+          state: 'running_tool'
+        })
+      ]);
+      expect(
+        await rpc<Array<{ state: string }>>(
+          baseUrl,
+          'observer',
+          'listEvents',
+          [{ subjectId: session.id }]
+        )
+      ).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ state: 'waiting_for_approval' })
+        ])
+      );
+
+      await expect(
+        rpc(baseUrl, 'terminal', 'input', [started.terminalId, '\x03'])
+      ).resolves.toBe(true);
+      expect(process.writes).toContain('\x03');
+      expect(await rpc(baseUrl, 'observer', 'list')).toEqual([
+        expect.objectContaining({
+          id: session.id,
+          state: 'idle'
         })
       ]);
 

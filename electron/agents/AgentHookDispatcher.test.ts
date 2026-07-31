@@ -315,6 +315,39 @@ describe('AgentHookDispatcher', () => {
       );
     });
 
+    it('clears a stale approval state when Codex now auto-approves permissions', async () => {
+      const created = await sessionStore.create({
+        name: 'Codex',
+        cwd: '/tmp',
+        runMode: 'linux',
+        launch: {
+          type: 'agent',
+          provider: 'codex',
+          resumeMode: 'new',
+          extraArgs: ['--dangerously-bypass-approvals-and-sandbox']
+        }
+      });
+      observer.setTuiObservedState(
+        created.id,
+        'waiting_for_approval',
+        'waiting for approval'
+      );
+
+      await dispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'PermissionRequest',
+          command: 'docker compose up'
+        }
+      });
+
+      expect(observer.getSnapshot(created.id)?.state).toBe('running_tool');
+      expect(observer.listEvents(created.id).at(-1)).toMatchObject({
+        state: 'running_tool'
+      });
+    });
+
     it('uses the effective session config resolver for Codex permission hooks', async () => {
       const created = await sessionStore.create({
         name: 'Codex',

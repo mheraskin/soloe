@@ -89,10 +89,11 @@
             <span class="flex min-w-0 items-center gap-1 overflow-hidden text-[10px] leading-3.5 text-muted-foreground">
               <span class="flex shrink-0 items-center gap-1 font-medium text-foreground/80">
                 <KindIcon kind={toast.sessionKind} size={11} />
-                {agentProviderLabel(toast.sessionKind)}
               </span>
               {#each breadcrumb as crumb, index (index)}
-                <span class="shrink-0 text-muted-foreground/50" aria-hidden="true">›</span>
+                {#if index > 0}
+                  <span class="shrink-0 text-muted-foreground/50" aria-hidden="true">›</span>
+                {/if}
                 <span
                   class={index === breadcrumb.length - 1
                     ? 'min-w-0 truncate font-medium text-foreground/80'

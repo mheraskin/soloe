@@ -1494,7 +1494,7 @@
                     <span class="min-w-0 truncate">{s.name}</span>
                     {#if s.working}
                       <span
-                        class="collapsed-session-runner pointer-events-none absolute right-1.5 -bottom-px left-1.5 h-px"
+                        class="collapsed-session-runner pointer-events-none absolute right-1.5 bottom-0 left-1.5 h-px"
                         aria-hidden="true"
                       ></span>
                     {/if}

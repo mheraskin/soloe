@@ -13,6 +13,7 @@
     "@soloe/domain": "workspace:*",
     "@soloe/protocol": "workspace:*",
     "@soloe/runtime": "workspace:*",
+    "node-pty": "^1.0.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {

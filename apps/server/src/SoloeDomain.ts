@@ -27,6 +27,8 @@ import type {
   SessionId,
   SessionUpdate,
 } from "../../../shared/types/sessions.js";
+import { effectiveAgentProvider } from "../../../shared/types/sessions.js";
+import { sessionAutoApprovesPermissions } from "../../../shared/agent-permissions.js";
 import type { SettingsUpdate } from "../../../shared/types/settings.js";
 import type { SystemUsageRequest } from "../../../shared/types/system.js";
 import type { DiagnosticLogsRequest } from "../../../shared/types/diagnostics.js";
@@ -135,6 +137,11 @@ import {
 import { BackgroundAgentExecution } from "../../../electron/agents/BackgroundAgentExecution.js";
 import { AutoRenameService } from "../../../electron/agents/AutoRenameService.js";
 import { ModelCatalogService } from "../../../electron/agents/ModelCatalogService.js";
+import {
+  CodexConfigReader,
+  codexApprovalsAreAutomatic,
+} from "../../../electron/agents/CodexConfigReader.js";
+import { NodePtyProcessFactory } from "../../../electron/terminal/NodePtyProcessFactory.js";
 import { BridgePersistence } from "../../../electron/integrations/BridgePersistence.js";
 import { ProcessTreeUsageSampler } from "@soloe/runtime";
 import { BackendUsageObservation } from "./BackendUsageObservation.js";
@@ -166,6 +173,7 @@ export interface SoloeDomainOptions {
     "getOverview" | "regenerate" | "streamFollowUp"
   >;
   modelCatalog?: Pick<ModelCatalogService, "getCatalog">;
+  codexConfigReader?: Pick<CodexConfigReader, "read" | "clear">;
   autoRename?: Pick<AutoRenameService, "maybeRename">;
   integrationInstaller?: Pick<
     HookInstaller,
@@ -232,6 +240,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly backgroundAgentExecution: BackgroundAgentExecution;
   private readonly modelCatalog: Pick<ModelCatalogService, "getCatalog">;
   private readonly autoRename: Pick<AutoRenameService, "maybeRename">;
+  private readonly codexConfigReader: Pick<CodexConfigReader, "read" | "clear">;
   private readonly overview: Pick<
     WorktreeOverviewService,
     "getOverview" | "regenerate" | "streamFollowUp"
@@ -260,6 +269,11 @@ export class SoloeDomain extends EventEmitter {
     );
     this.modelCatalog = options.modelCatalog ?? new ModelCatalogService({
       getSettings: () => this.settings.get(),
+    });
+    this.codexConfigReader = options.codexConfigReader ?? new CodexConfigReader({
+      commandBuilder: this.commandBuilder,
+      processFactory: new NodePtyProcessFactory(),
+      log: (message, detail) => console.warn(`[codex-config] ${message}`, detail),
     });
     this.projects = new ProjectStore(path.join(options.dataDirectory, "projects.json"), {
       platform: hostPlatform(),
@@ -425,6 +439,7 @@ export class SoloeDomain extends EventEmitter {
     this.agentBridgeInfo = null;
     await this.workerRuntime.dispose();
     await this.backgroundAgentExecution.dispose();
+    this.codexConfigReader.clear();
     await this.observerStore.dispose();
   }
 
@@ -437,6 +452,8 @@ export class SoloeDomain extends EventEmitter {
       observer: this.observer,
       sessionStore: this.sessions,
       autoRename: this.autoRename,
+      autoApprovesPermissions: (session) =>
+        this.sessionAutoApprovesPermissions(session),
       onSessionChange: (session) => {
         this.emit("event", "sessions.change", session);
       },
@@ -1621,9 +1638,26 @@ export class SoloeDomain extends EventEmitter {
           ...(args[1] as { cols?: number; rows?: number } | undefined),
         });
       }
-      case "input":
-        await this.options.runtime.write(args[0] as string, args[1] as string);
+      case "input": {
+        const terminalId = args[0] as string;
+        const data = args[1] as string;
+        const interruptedSessionId = await this.interruptedAgentSessionId(
+          terminalId,
+          data,
+        );
+        await this.options.runtime.write(terminalId, data);
+        if (interruptedSessionId) {
+          const snapshot = this.observer.getSnapshot(interruptedSessionId);
+          if (snapshot && snapshot.state !== "idle" && snapshot.state !== "exited") {
+            this.observer.setTuiObservedState(
+              interruptedSessionId,
+              "idle",
+              "interrupted",
+            );
+          }
+        }
         return true;
+      }
       case "resize":
         await this.options.runtime.resize(
           args[0] as string,
@@ -1702,6 +1736,30 @@ export class SoloeDomain extends EventEmitter {
       pid: terminal.pid,
       spec: publicSpec,
     };
+  }
+
+  private async interruptedAgentSessionId(
+    terminalId: string,
+    data: string,
+  ): Promise<SessionId | null> {
+    if (!data.includes("\x03")) return null;
+    const terminal = (await this.options.runtime.listRunning()).find(
+      (running) => running.terminalId === terminalId,
+    );
+    if (!terminal) return null;
+    const session = await this.sessions.get(terminal.sessionId);
+    return session && effectiveAgentProvider(session) ? session.id : null;
+  }
+
+  private async sessionAutoApprovesPermissions(session: Session): Promise<boolean> {
+    if (sessionAutoApprovesPermissions(session)) return true;
+    if (effectiveAgentProvider(session) !== "codex") return false;
+    const config = await this.codexConfigReader.read(
+      session,
+      (await this.settings.get()).binaries,
+      true,
+    );
+    return codexApprovalsAreAutomatic(config);
   }
 
   private async requireSession(sessionId: SessionId) {

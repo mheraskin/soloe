@@ -27,6 +27,7 @@ export interface AgentHookDispatcherOptions {
 interface HookMapping {
   state?: AgentObservedState;
   summary: string;
+  resolvesApproval?: boolean;
 }
 
 export class AgentHookDispatcher {
@@ -177,9 +178,13 @@ export class AgentHookDispatcher {
     if (!autoApproves) {
       return mapping;
     }
+    // Codex runs PermissionRequest hooks before routing the request to its
+    // configured reviewer. An auto-review hook event therefore describes an
+    // automatic review in progress, not a prompt that Soloe should show.
     return {
       state: 'running_tool',
-      summary: autoApprovedToolSummary(payload)
+      summary: autoApprovedToolSummary(payload),
+      resolvesApproval: true
     };
   }
 
@@ -223,7 +228,7 @@ export class AgentHookDispatcher {
   ): void {
     if (mapping.state) {
       const current = this.opts.observer.getSnapshot(soloeSessionId);
-      if (shouldPreserveApproval(current?.state, mapping.state)) {
+      if (!mapping.resolvesApproval && shouldPreserveApproval(current?.state, mapping.state)) {
         this.opts.observer.appendEvent({
           subjectId: soloeSessionId,
           subjectKind: current?.subjectKind ?? 'session',

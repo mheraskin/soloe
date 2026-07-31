@@ -10,7 +10,7 @@ export interface DisplayedAgentStateInput {
 
 export function displayedAgentState(input: DisplayedAgentStateInput): AgentObservedState | null {
   if (!input.observed) return null;
-  if (!input.hasRuntime && !isActionableState(input.observed.state)) return null;
+  if (!input.hasRuntime && !isVisibleWithoutRuntime(input.observed.state)) return null;
 
   if (input.observed.state === 'starting') {
     return input.status === 'running' ? 'idle' : null;
@@ -23,8 +23,11 @@ export function displayedAgentState(input: DisplayedAgentStateInput): AgentObser
   return input.observed.state;
 }
 
-function isActionableState(state: AgentObservedState): boolean {
-  return state === 'waiting_for_input' || state === 'waiting_for_approval';
+function isVisibleWithoutRuntime(state: AgentObservedState): boolean {
+  return state === 'working'
+    || state === 'running_tool'
+    || state === 'waiting_for_input'
+    || state === 'waiting_for_approval';
 }
 
 export function displayedAgentSummary(
