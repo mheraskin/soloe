@@ -81,7 +81,11 @@ export class SessionCommandBuilder {
     }
 
     const threadId = runtime.providerThreadId ?? s.providerThreadId;
-    const args = threadId ? ['resume', threadId] : ['resume'];
+    const args = isKnownEmptyCodexSession(s)
+      ? []
+      : threadId
+        ? ['resume', threadId]
+        : ['resume'];
     if (s.launch.type === 'agent' && s.launch.provider === 'codex') {
       appendAgentLaunchArgs(args, s.launch, 'codex');
     }
@@ -167,7 +171,7 @@ export class SessionCommandBuilder {
     const args: string[] = [];
     switch (launch.resumeMode) {
       case 'new':
-        if (launch.codexSessionId ?? s.providerThreadId) {
+        if (!isKnownEmptyCodexSession(s) && (launch.codexSessionId ?? s.providerThreadId)) {
           args.push('resume', launch.codexSessionId ?? s.providerThreadId!);
         }
         break;
@@ -218,6 +222,10 @@ function appendExtraArgs(args: string[], extraArgs: string[] | undefined): void 
 }
 
 function isKnownEmptyClaudeSession(session: Session): boolean {
+  return session.hasUserInput === false;
+}
+
+function isKnownEmptyCodexSession(session: Session): boolean {
   return session.hasUserInput === false;
 }
 

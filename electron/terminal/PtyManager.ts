@@ -88,7 +88,7 @@ export class PtyManager extends EventEmitter {
   private readonly sessionToTerminal = new Map<SessionId, TerminalId>();
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly agentSpawnQueues = new Map<string, Promise<void>>();
-  private readonly pendingClaudeInputPersistence = new Set<SessionId>();
+  private readonly pendingAgentInputPersistence = new Set<SessionId>();
   private readonly replayBuffer: TerminalReplayBuffer;
   private readonly processFactory: PtyProcessFactory;
   private disposed = false;
@@ -273,8 +273,8 @@ export class PtyManager extends EventEmitter {
 
   private handleAgentInputState(instance: TerminalInstance, data: string): void {
     if (!instance.agentProvider) return;
-    if (instance.agentProvider === 'claude_code' && /[\r\n]/.test(data)) {
-      this.markClaudeSessionResumable(instance.sessionId);
+    if (/[\r\n]/.test(data)) {
+      this.markAgentSessionResumable(instance.sessionId);
     }
     if (!data.includes('\x03')) return;
     const snapshot = this.opts.observer?.getSnapshot(instance.sessionId);
@@ -282,9 +282,9 @@ export class PtyManager extends EventEmitter {
     this.opts.observer?.setTuiObservedState(instance.sessionId, 'idle', 'idle');
   }
 
-  private markClaudeSessionResumable(sessionId: SessionId): void {
-    if (this.pendingClaudeInputPersistence.has(sessionId)) return;
-    this.pendingClaudeInputPersistence.add(sessionId);
+  private markAgentSessionResumable(sessionId: SessionId): void {
+    if (this.pendingAgentInputPersistence.has(sessionId)) return;
+    this.pendingAgentInputPersistence.add(sessionId);
     void this.opts.store
       .get(sessionId)
       .then(async (session) => {
@@ -292,10 +292,10 @@ export class PtyManager extends EventEmitter {
         await this.opts.store.update(sessionId, { hasUserInput: true });
       })
       .catch((err) => {
-        console.warn(`[terminal] failed to persist Claude input for ${sessionId}`, err);
+        console.warn(`[terminal] failed to persist agent input for ${sessionId}`, err);
       })
       .finally(() => {
-        this.pendingClaudeInputPersistence.delete(sessionId);
+        this.pendingAgentInputPersistence.delete(sessionId);
       });
   }
 
