@@ -38,8 +38,9 @@ protocol in `packages/protocol`.
 Disconnect is not stop. Closing Electron, closing a browser, rebuilding either
 client, or replacing the Application Server only removes a connection. Output
 continues into the bounded replay tail and is recovered by sequence when a
-client reconnects. Stopping or exiting the tray is different: the tray is the
-top-level owner and intentionally shuts down the runtime and its PTYs.
+client reconnects. Stopping the agent runtime or exiting the tray is different:
+the tray is the top-level owner and intentionally shuts down the runtime and
+its PTYs.
 
 ## Server and clients
 
@@ -96,14 +97,17 @@ disconnect cleanup removes only that client's demand.
 The Runtime is unaffected by browser, Electron, or Server replacement. A
 server-only restart reconnects to the existing Runtime; clients reconnect to
 the Server, refresh shared state, and replay terminal output by sequence. An
-explicit terminal stop, **Stop Backend**, or **Quit Soloe** is required to end
-runtime-owned agents.
+explicit terminal stop, **Stop agent runtime**, or **Quit Soloe** is required
+to end runtime-owned agents. **Stop Soloe server** leaves the Runtime and its
+agents running so the replaceable Server can be rebuilt or restarted safely.
 
 For WSL placement, the tray-owned supervisor treats an unexpected Server exit
 as a replaceable-service failure. It restarts only the Application Server with
 bounded backoff while preserving the existing Runtime process and socket. A
-Runtime exit, expired tray lease, **Stop Backend**, or **Quit Soloe** still
-tears down the complete backend in ownership order.
+Runtime exit, expired tray lease, **Stop agent runtime**, or **Quit Soloe**
+still tears down the complete backend in ownership order. A tray control record
+lets the WSL supervisor distinguish an intentional server stop from a crash,
+so it preserves the Runtime without immediately restarting the Server.
 
 ## Security and diagnostics boundary
 
@@ -139,12 +143,12 @@ streaming or pagination.
 ## Tray semantics
 
 The Tauri tray is windowless and therefore remains small while Electron is
-opened only on demand. Its menu has one dynamic backend action:
-`Start (WSL/Windows)` or `Stop (WSL/Windows)`. During a transition the same
-disabled action reads `Starting (WSL/Windows)…` or `Stopping (WSL/Windows)…`.
+opened only on demand. Its menu has separate dynamic actions for the Soloe
+Server and agent Runtime. Each changes between Start and Stop for the selected
+Windows/WSL placement, and both are disabled while either transition runs.
 Backend Placement remains visible and configurable in Settings. The menu also
 opens the authenticated browser URL, opens Electron, exposes logs, and quits
-Soloe; there is no redundant backend-status row.
+Soloe; there are no redundant status rows.
 
 Every tray launch creates a unique owner identity. Service records include that
 identity, and the tray refuses to kill a process based only on a stale PID.
