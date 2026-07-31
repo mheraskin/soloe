@@ -45,15 +45,20 @@ impl Sidecar {
         self.input.flush().expect("flush request");
     }
 
-    fn receive(&self) -> Value {
-        self.messages
+    fn receive(&self, expected: &str) -> Value {
+        let message = self
+            .messages
             .recv_timeout(Duration::from_secs(10))
-            .expect("sidecar response or event")
+            .unwrap_or_else(|error| panic!("timed out waiting for {expected}: {error}"));
+        if std::env::var_os("SOLOE_TEST_TRACE").is_some() {
+            eprintln!("sidecar message: {message}");
+        }
+        message
     }
 
     fn response(&self, id: u64) -> Value {
         loop {
-            let message = self.receive();
+            let message = self.receive(&format!("response {id}"));
             if message.get("id").and_then(Value::as_u64) == Some(id) {
                 return message;
             }
@@ -142,7 +147,7 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
     let mut saw_input_response = false;
     let mut saw_exit = false;
     while !saw_exit {
-        let message = sidecar.receive();
+        let message = sidecar.receive("terminal input response, output, or exit");
         if message.get("id").and_then(Value::as_u64) == Some(3) {
             assert_eq!(message["ok"], true);
             saw_input_response = true;
