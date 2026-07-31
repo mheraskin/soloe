@@ -104,6 +104,13 @@ identity, relative paths, payload size, and destructive Git inputs. Files and
 Notes reject traversal and symlink escape. Vault list/change payloads never
 contain secrets; `getSecret` is the only explicit secret read.
 
+Remote Electron development may load the renderer from a different loopback
+origin than the Application Server. The Server answers `POST /api/rpc`
+preflight requests only for `http://localhost`, `http://127.0.0.1`, or
+`http://[::1]` origins and only for the `Authorization` and `Content-Type`
+headers. Non-loopback origins are rejected, and successful RPC calls still
+require the install token.
+
 RPC diagnostics record namespace, method, outcome, structured error code,
 duration, and safe request/response sizes. Logs do not record authorization
 tokens, cookies, terminal input, file/note content, provider credentials, or
