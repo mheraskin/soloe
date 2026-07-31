@@ -99,9 +99,9 @@ Set-Location D:\projects\soloe-win-2
 pnpm configure:backend -- --placement windows
 ```
 
-The setting is stored at `%LOCALAPPDATA%\Soloe\settings.json`. A placement
-change applies after choosing **Stop (WSL/Windows)**, then using the same action
-when it changes to **Start (WSL/Windows)**.
+The setting is stored at `%LOCALAPPDATA%\Soloe\settings.json`. To change
+placement, choose **Stop agent runtime** first. Then start the Runtime and Soloe
+Server in the newly selected placement.
 
 ## Everyday startup
 
@@ -155,7 +155,9 @@ localhost fallback.
 
 Right-click the Soloe tray icon and choose:
 
-- the single **Start (WSL/Windows)** or **Stop (WSL/Windows)** action;
+- **Start/Stop Soloe server (WSL/Windows)** for the replaceable Application
+  Server and Windows Web Host;
+- **Start/Stop agent runtime (WSL/Windows)** for the agent lifetime boundary;
 - **Open in browser** for the Windows PWA;
 - **Open Electron client** for the disposable Windows desktop client;
 - **Open Soloe logs** for diagnostics.
@@ -183,20 +185,20 @@ last observed output sequence. In WSL placement, the supervisor automatically
 replaces an unexpectedly exited Server with bounded backoff; it does not
 restart the Runtime or its terminals.
 
-## Stop versus Quit Soloe
+## Service controls versus Quit Soloe
 
-The tray has one dynamic lifecycle action, not separate start, stop, and status
-rows. **Stop (WSL/Windows)** keeps the tray running but stops:
+The tray exposes separate dynamic lifecycle actions for the replaceable server
+and the long-lived agent runtime. **Stop Soloe server (WSL/Windows)** stops the
+Windows Web Host and Application Server but preserves the Environment Runtime,
+its PTYs, and its agents. The matching start action reconnects a fresh Server
+to that Runtime and starts the Web Host again.
 
-1. the Windows Web Host;
-2. the Application Server;
-3. the Environment Runtime;
-4. all runtime-owned PTYs and agents.
-
-After shutdown, that same item becomes **Start (WSL/Windows)** and starts the
-placement currently selected in Settings. While transitioning it remains
-disabled and displays **Starting (WSL/Windows)…** or
-**Stopping (WSL/Windows)…**.
+**Stop agent runtime (WSL/Windows)** first stops the Web Host and Server, then
+stops the Runtime and all runtime-owned PTYs and agents. It requires a second
+confirmation when the runtime may own active agents. Its matching start action
+starts only the Runtime; use **Start Soloe server** when the Server should be
+brought back. Both actions are disabled while either lifecycle transition is
+in progress.
 
 **Quit Soloe** is a complete shutdown. It stops tray-launched Electron
 processes, the Web Host, the Application Server, and the Environment Runtime
@@ -254,8 +256,8 @@ node scripts/browser-integration.mjs `
 Then smoke-test both Backend Placements. Do not substitute the WSL run for the
 native Windows run; path, process, and filesystem behavior differ.
 
-1. Run `pnpm dev` and confirm the tray action changes between
-   **Start (WSL/Windows)** and **Stop (WSL/Windows)**.
+1. Run `pnpm dev` and confirm the tray exposes independent dynamic actions for
+   the Soloe Server and agent Runtime.
 2. Open the authenticated PWA and remote Electron. Confirm Electron reports the
    remote transport, not local IPC.
 3. Create and reopen a project/session. Exercise Files, Working Diff, Feature
@@ -280,11 +282,13 @@ native Windows run; path, process, and filesystem behavior differ.
 11. Start a terminal, produce a recognizable marker, close/rebuild PWA and
     Electron, and confirm replay. Closing remote Electron must not stop it.
 12. Keep two clients open, edit a Note, and confirm both observe the event.
-13. Restart only the Application Server. Confirm both clients reconnect,
-    shared state refreshes, and the terminal marker remains replayable.
+13. Choose **Stop Soloe server**, rebuild if desired, then choose **Start Soloe
+    server**. Confirm both clients reconnect, shared state refreshes, and the
+    terminal marker remains replayable.
 14. In Electron, confirm the embedded Browser pane still mounts its native
     `<webview>`. Confirm the pane is absent—not inert—in the PWA.
-15. Choose **Stop (WSL/Windows)** and confirm the Runtime and terminal stop.
+15. Choose **Stop agent runtime (WSL/Windows)**, confirm the warning, and verify
+    the Runtime and terminal stop while the tray remains running.
 16. Restart, choose **Quit Soloe**, and confirm every managed process stops.
 17. Restart, kill the tray process, and confirm no managed Windows/WSL process
     remains after the ownership timeout.
@@ -307,6 +311,7 @@ runtime.log
 server.log
 web.log
 supervisor.log
+supervisor-control.json
 ```
 
 Useful checks:

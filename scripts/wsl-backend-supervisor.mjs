@@ -34,8 +34,10 @@ process.once("SIGHUP", () => requestShutdown("SIGHUP"));
 try {
   await startService("@soloe/runtime", "runtime");
   await waitForRecord("runtime");
-  await startService("@soloe/server", "server");
-  await waitForRecord("server");
+  if (serverIsDesired()) {
+    await startService("@soloe/server", "server");
+    await waitForRecord("server");
+  }
 
   while (!stopping) {
     if (!leaseIsCurrent()) {
@@ -46,7 +48,13 @@ try {
       requestShutdown("runtime exited");
       break;
     }
-    if (childExited(children.get("server"))) {
+    if (!serverIsDesired() && !childExited(children.get("server"))) {
+      appendSupervisorLog("[wsl-supervisor] stopping server on tray request\n");
+      await stopChild("server");
+      serverRestartAttempts = 0;
+      continue;
+    }
+    if (serverIsDesired() && childExited(children.get("server"))) {
       await restartServer();
       continue;
     }
@@ -62,6 +70,7 @@ try {
   process.exitCode = 1;
 } finally {
   removeOwnRecord("supervisor");
+  removeOwnRecord("supervisor-control");
 }
 
 async function startService(workspace, service) {
@@ -112,7 +121,7 @@ async function restartServer() {
   );
   removeOwnRecord("server");
   await delay(backoffMs);
-  if (stopping || !leaseIsCurrent()) return;
+  if (stopping || !leaseIsCurrent() || !serverIsDesired()) return;
   await startService("@soloe/server", "server");
   try {
     await waitForRecord("server");
@@ -200,6 +209,11 @@ function leaseIsCurrent() {
   } catch {
     return false;
   }
+}
+
+function serverIsDesired() {
+  const control = readRecord("supervisor-control");
+  return control?.ownerId !== ownerId || control.serverRunning !== false;
 }
 
 function processIsAlive(pid) {

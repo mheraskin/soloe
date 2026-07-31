@@ -92,12 +92,28 @@ pub fn run() {
             let (discovered, instance_guard) =
                 BackendSupervisor::discover().map_err(std::io::Error::other)?;
             let supervisor = Arc::new(Mutex::new(discovered));
-            let initial_action = supervisor
+            let initial_server_action = supervisor
                 .lock()
-                .map(|service| service.backend_transition_label())
-                .unwrap_or_else(|_| "Starting services…".to_string());
-            let backend_action =
-                MenuItem::with_id(app, "toggle_backend", initial_action, false, None::<&str>)?;
+                .map(|service| service.server_transition_label())
+                .unwrap_or_else(|_| "Starting Soloe server…".to_string());
+            let server_action = MenuItem::with_id(
+                app,
+                "toggle_server",
+                initial_server_action,
+                false,
+                None::<&str>,
+            )?;
+            let initial_runtime_action = supervisor
+                .lock()
+                .map(|service| service.runtime_transition_label())
+                .unwrap_or_else(|_| "Starting agent runtime…".to_string());
+            let runtime_action = MenuItem::with_id(
+                app,
+                "toggle_runtime",
+                initial_runtime_action,
+                false,
+                None::<&str>,
+            )?;
             let open_browser =
                 MenuItem::with_id(app, "open_browser", "Open in browser", false, None::<&str>)?;
             let open_electron = MenuItem::with_id(
@@ -114,7 +130,8 @@ pub fn run() {
             let menu = Menu::with_items(
                 app,
                 &[
-                    &backend_action,
+                    &server_action,
+                    &runtime_action,
                     &separator,
                     &open_browser,
                     &open_electron,
@@ -125,12 +142,13 @@ pub fn run() {
             )?;
 
             let menu_supervisor = Arc::clone(&supervisor);
-            let menu_backend_action = backend_action.clone();
+            let menu_server_action = server_action.clone();
+            let menu_runtime_action = runtime_action.clone();
             let menu_open_browser = open_browser.clone();
             let menu_open_electron = open_electron.clone();
             let menu_quit = quit.clone();
-            let backend_action_state = Arc::new(Mutex::new(ConfirmationState::default()));
-            let menu_backend_action_state = Arc::clone(&backend_action_state);
+            let runtime_action_state = Arc::new(Mutex::new(ConfirmationState::default()));
+            let menu_runtime_action_state = Arc::clone(&runtime_action_state);
             let quit_state = Arc::new(Mutex::new(ConfirmationState::default()));
             let menu_quit_state = Arc::clone(&quit_state);
             let launch_state = Arc::new(Mutex::new(None::<LaunchTarget>));
@@ -166,24 +184,25 @@ pub fn run() {
                         return;
                     }
                     let supervisor = Arc::clone(&menu_supervisor);
-                    let backend_action = menu_backend_action.clone();
+                    let server_action = menu_server_action.clone();
+                    let runtime_action = menu_runtime_action.clone();
                     let open_browser = menu_open_browser.clone();
                     let open_electron = menu_open_electron.clone();
                     let quit = menu_quit.clone();
-                    let backend_action_state = Arc::clone(&menu_backend_action_state);
+                    let runtime_action_state = Arc::clone(&menu_runtime_action_state);
                     let quit_state = Arc::clone(&menu_quit_state);
                     let launch_state = Arc::clone(&menu_launch_state);
                     let app = app.clone();
                     thread::spawn(move || {
-                        if id == "toggle_backend" {
+                        if id == "toggle_runtime" {
                             let requires_confirmation = supervisor
                                 .lock()
                                 .map_err(|_| "backend supervisor lock poisoned".to_string())
                                 .map(|service| service.requires_stop_confirmation());
                             let intent = requires_confirmation.and_then(|required| {
-                                backend_action_state
+                                runtime_action_state
                                     .lock()
-                                    .map_err(|_| "service action state lock poisoned".to_string())
+                                    .map_err(|_| "runtime action state lock poisoned".to_string())
                                     .map(|mut state| state.request(required, Instant::now()))
                             });
                             let intent = match intent {
@@ -194,25 +213,40 @@ pub fn run() {
                                 }
                             };
                             if intent == ConfirmationIntent::Confirm {
-                                let _ = backend_action
-                                    .set_text("Confirm stop all services — end active agents");
+                                let _ = runtime_action
+                                    .set_text("Confirm stop agent runtime — end active agents");
                                 return;
                             }
                             if intent == ConfirmationIntent::Ignore {
                                 return;
                             }
+                        }
+                        if id == "toggle_server" || id == "toggle_runtime" {
                             let transition = supervisor
                                 .lock()
-                                .map(|service| service.backend_transition_label())
+                                .map(|service| match id.as_str() {
+                                    "toggle_server" => service.server_transition_label(),
+                                    _ => service.runtime_transition_label(),
+                                })
                                 .unwrap_or_else(|_| "Updating services…".to_string());
-                            let _ = backend_action.set_text(transition);
-                            let _ = backend_action.set_enabled(false);
+                            let action = if id == "toggle_server" {
+                                &server_action
+                            } else {
+                                &runtime_action
+                            };
+                            let _ = action.set_text(transition);
+                            let _ = server_action.set_enabled(false);
+                            let _ = runtime_action.set_enabled(false);
                         }
                         let result = match id.as_str() {
-                            "toggle_backend" => supervisor
+                            "toggle_server" => supervisor
                                 .lock()
                                 .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.toggle_backend()),
+                                .and_then(|service| service.toggle_server()),
+                            "toggle_runtime" => supervisor
+                                .lock()
+                                .map_err(|_| "backend supervisor lock poisoned".to_string())
+                                .and_then(|service| service.toggle_runtime()),
                             "open_browser" => supervisor
                                 .lock()
                                 .map_err(|_| "backend supervisor lock poisoned".to_string())
@@ -254,12 +288,10 @@ pub fn run() {
                                 }
                                 let _ = quit.set_text("Quitting…");
                                 let _ = quit.set_enabled(false);
-                                let transition = supervisor
-                                    .lock()
-                                    .map(|service| service.backend_transition_label())
-                                    .unwrap_or_else(|_| "Stopping all services…".to_string());
-                                let _ = backend_action.set_text(transition);
-                                let _ = backend_action.set_enabled(false);
+                                let _ = server_action.set_text("Stopping Soloe server…");
+                                let _ = runtime_action.set_text("Stopping agent runtime…");
+                                let _ = server_action.set_enabled(false);
+                                let _ = runtime_action.set_enabled(false);
                                 let result = supervisor
                                     .lock()
                                     .map_err(|_| "backend supervisor lock poisoned".to_string())
@@ -276,10 +308,10 @@ pub fn run() {
                         if let Err(error) = result {
                             eprintln!("[tray] {error}");
                         }
-                        if id == "toggle_backend" {
-                            if let Ok(mut state) = backend_action_state.lock() {
-                                state.finish();
-                            }
+                        if id == "toggle_runtime"
+                            && let Ok(mut state) = runtime_action_state.lock()
+                        {
+                            state.finish();
                         }
                         if let (Some(target), Some(started_at)) =
                             (launch_target, launch_started_at.flatten())
@@ -307,14 +339,16 @@ pub fn run() {
                         }
                         let _ = quit.set_text("Quit Soloe");
                         if let Ok(service) = supervisor.lock() {
-                            let awaiting_confirmation = backend_action_state
+                            let awaiting_confirmation = runtime_action_state
                                 .lock()
                                 .map(|state| state.awaiting_confirmation(Instant::now()))
                                 .unwrap_or(false);
+                            let _ = server_action.set_text(service.server_action_label());
+                            let _ = server_action.set_enabled(service.server_action_enabled());
                             if !awaiting_confirmation {
-                                let _ = backend_action.set_text(service.backend_action_label());
+                                let _ = runtime_action.set_text(service.runtime_action_label());
                             }
-                            let _ = backend_action.set_enabled(service.backend_action_enabled());
+                            let _ = runtime_action.set_enabled(service.runtime_action_enabled());
                         }
                     });
                 });
@@ -324,20 +358,24 @@ pub fn run() {
             tray.build(app)?;
 
             let startup_supervisor = Arc::clone(&supervisor);
-            let startup_backend_action = backend_action.clone();
+            let startup_server_action = server_action.clone();
+            let startup_runtime_action = runtime_action.clone();
             thread::spawn(move || {
                 if let Ok(service) = startup_supervisor.lock() {
                     if let Err(error) = service.start() {
                         eprintln!("[tray] failed to start backend: {error}");
                     }
-                    let _ = startup_backend_action.set_text(service.backend_action_label());
-                    let _ = startup_backend_action.set_enabled(service.backend_action_enabled());
+                    let _ = startup_server_action.set_text(service.server_action_label());
+                    let _ = startup_server_action.set_enabled(service.server_action_enabled());
+                    let _ = startup_runtime_action.set_text(service.runtime_action_label());
+                    let _ = startup_runtime_action.set_enabled(service.runtime_action_enabled());
                 }
             });
 
             let polling_supervisor = Arc::clone(&supervisor);
-            let polling_backend_action = backend_action.clone();
-            let polling_backend_action_state = Arc::clone(&backend_action_state);
+            let polling_server_action = server_action.clone();
+            let polling_runtime_action = runtime_action.clone();
+            let polling_runtime_action_state = Arc::clone(&runtime_action_state);
             let polling_browser = open_browser.clone();
             let polling_launch_state = Arc::clone(&launch_state);
             thread::spawn(move || {
@@ -346,14 +384,16 @@ pub fn run() {
                     let Ok(service) = polling_supervisor.lock() else {
                         break;
                     };
-                    let awaiting_confirmation = polling_backend_action_state
+                    let awaiting_confirmation = polling_runtime_action_state
                         .lock()
                         .map(|state| state.awaiting_confirmation(Instant::now()))
                         .unwrap_or(false);
+                    let _ = polling_server_action.set_text(service.server_action_label());
+                    let _ = polling_server_action.set_enabled(service.server_action_enabled());
                     if !awaiting_confirmation {
-                        let _ = polling_backend_action.set_text(service.backend_action_label());
+                        let _ = polling_runtime_action.set_text(service.runtime_action_label());
                     }
-                    let _ = polling_backend_action.set_enabled(service.backend_action_enabled());
+                    let _ = polling_runtime_action.set_enabled(service.runtime_action_enabled());
                     let launching = polling_launch_state
                         .lock()
                         .map(|state| state.is_some())

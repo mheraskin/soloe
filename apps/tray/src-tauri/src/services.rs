@@ -85,6 +85,13 @@ struct ActiveBackend {
     tray_pid: u32,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WslSupervisorControl<'a> {
+    owner_id: &'a str,
+    server_running: bool,
+}
+
 impl ActiveBackend {
     fn from_settings(settings: BackendSettings, owner_id: &str) -> Self {
         Self {
@@ -100,6 +107,13 @@ impl ActiveBackend {
         self.placement == other.placement
             && self.wsl_distro == other.wsl_distro
             && self.wsl_repository_root == other.wsl_repository_root
+    }
+
+    fn host_label(&self) -> &'static str {
+        match self.placement {
+            BackendPlacement::Windows => "Windows",
+            BackendPlacement::Wsl => "WSL",
+        }
     }
 }
 
@@ -177,41 +191,65 @@ impl BackendSupervisor {
         }
     }
 
-    pub fn backend_action_label(&self) -> String {
+    pub fn server_action_label(&self) -> String {
         let backend = self.backend_for_existing_services();
-        let host = match backend.placement {
-            BackendPlacement::Windows => "Windows",
-            BackendPlacement::Wsl => "WSL",
-        };
-        match self.reconciled_lifecycle(&backend) {
-            LifecycleState::Starting => format!("Starting services ({host})…"),
-            LifecycleState::Stopping => format!("Stopping all services ({host})…"),
-            LifecycleState::Running | LifecycleState::Degraded(_) => {
-                format!("Stop all services ({host})")
-            }
-            LifecycleState::Stopped | LifecycleState::Failed(_) => {
-                format!("Start services ({host})")
-            }
+        let host = backend.host_label();
+        let running = self.is_running_on("server", &backend)
+            || self.is_running_on("web", &self.windows_client_target());
+        match (self.reconciled_lifecycle(&backend), running) {
+            (LifecycleState::Starting, false) => format!("Starting Soloe server ({host})…"),
+            (LifecycleState::Stopping, true) => format!("Stopping Soloe server ({host})…"),
+            (_, true) => format!("Stop Soloe server ({host})"),
+            (_, false) => format!("Start Soloe server ({host})"),
         }
     }
 
-    pub fn backend_transition_label(&self) -> String {
+    pub fn server_transition_label(&self) -> String {
         let backend = self.backend_for_existing_services();
-        let host = match backend.placement {
-            BackendPlacement::Windows => "Windows",
-            BackendPlacement::Wsl => "WSL",
-        };
-        match self.reconciled_lifecycle(&backend) {
-            LifecycleState::Running | LifecycleState::Degraded(_) | LifecycleState::Stopping => {
-                format!("Stopping all services ({host})…")
-            }
-            LifecycleState::Starting | LifecycleState::Stopped | LifecycleState::Failed(_) => {
-                format!("Starting services ({host})…")
-            }
+        let host = backend.host_label();
+        if self.is_running_on("server", &backend)
+            || self.is_running_on("web", &self.windows_client_target())
+        {
+            format!("Stopping Soloe server ({host})…")
+        } else {
+            format!("Starting Soloe server ({host})…")
         }
     }
 
-    pub fn backend_action_enabled(&self) -> bool {
+    pub fn server_action_enabled(&self) -> bool {
+        let backend = self.backend_for_existing_services();
+        let transitioning = matches!(
+            self.reconciled_lifecycle(&backend),
+            LifecycleState::Starting | LifecycleState::Stopping
+        );
+        let server_running = self.is_running_on("server", &backend)
+            || self.is_running_on("web", &self.windows_client_target());
+        !transitioning && (server_running || self.is_running_on("runtime", &backend))
+    }
+
+    pub fn runtime_action_label(&self) -> String {
+        let backend = self.backend_for_existing_services();
+        let host = backend.host_label();
+        let running = self.is_running_on("runtime", &backend);
+        match (self.reconciled_lifecycle(&backend), running) {
+            (LifecycleState::Starting, false) => format!("Starting agent runtime ({host})…"),
+            (LifecycleState::Stopping, true) => format!("Stopping agent runtime ({host})…"),
+            (_, true) => format!("Stop agent runtime ({host})"),
+            (_, false) => format!("Start agent runtime ({host})"),
+        }
+    }
+
+    pub fn runtime_transition_label(&self) -> String {
+        let backend = self.backend_for_existing_services();
+        let host = backend.host_label();
+        if self.is_running_on("runtime", &backend) {
+            format!("Stopping agent runtime ({host})…")
+        } else {
+            format!("Starting agent runtime ({host})…")
+        }
+    }
+
+    pub fn runtime_action_enabled(&self) -> bool {
         let backend = self.backend_for_existing_services();
         !matches!(
             self.reconciled_lifecycle(&backend),
@@ -219,14 +257,31 @@ impl BackendSupervisor {
         )
     }
 
-    pub fn toggle_backend(&self) -> Result<(), String> {
+    pub fn toggle_server(&self) -> Result<(), String> {
         let backend = self.backend_for_existing_services();
-        match self.reconciled_lifecycle(&backend) {
-            LifecycleState::Running | LifecycleState::Degraded(_) => self.stop(),
-            LifecycleState::Starting | LifecycleState::Stopping => {
-                Err("backend transition already in progress".to_string())
-            }
-            LifecycleState::Stopped | LifecycleState::Failed(_) => self.start(),
+        if !self.server_action_enabled() {
+            return Err(
+                "service transition already in progress or agent runtime is stopped".to_string(),
+            );
+        }
+        if self.is_running_on("server", &backend)
+            || self.is_running_on("web", &self.windows_client_target())
+        {
+            self.stop_server()
+        } else {
+            self.start_server()
+        }
+    }
+
+    pub fn toggle_runtime(&self) -> Result<(), String> {
+        let backend = self.backend_for_existing_services();
+        if !self.runtime_action_enabled() {
+            return Err("service transition already in progress".to_string());
+        }
+        if self.is_running_on("runtime", &backend) {
+            self.stop()
+        } else {
+            self.start_runtime()
         }
     }
 
@@ -241,6 +296,88 @@ impl BackendSupervisor {
     }
 
     fn start_inner(&self) -> Result<(), String> {
+        let backend = self.prepare_backend()?;
+
+        if backend.placement == BackendPlacement::Wsl {
+            self.write_wsl_control(true)?;
+            self.start_lease()?;
+            if !self.is_running_on("supervisor", &backend) {
+                self.spawn_wsl_supervisor(&backend)?;
+            }
+            self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
+            self.wait_until("server", true, START_TIMEOUT, &backend)?;
+        } else {
+            if !self.is_running_on("runtime", &backend) {
+                self.spawn_workspace("@soloe/runtime", "runtime", &backend)?;
+                self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
+            }
+            if !self.is_running_on("server", &backend) {
+                self.spawn_workspace("@soloe/server", "server", &backend)?;
+                self.wait_until("server", true, START_TIMEOUT, &backend)?;
+            }
+        }
+        self.start_web_host(&backend)?;
+        Ok(())
+    }
+
+    pub fn start_runtime(&self) -> Result<(), String> {
+        self.set_lifecycle(LifecycleState::Starting);
+        let result = self.start_runtime_inner();
+        match &result {
+            Ok(()) => self.set_lifecycle(LifecycleState::Degraded("runtime only".to_string())),
+            Err(error) => self.set_lifecycle(LifecycleState::Failed(error.clone())),
+        }
+        result
+    }
+
+    fn start_runtime_inner(&self) -> Result<(), String> {
+        let backend = self.prepare_backend()?;
+        if self.is_running_on("runtime", &backend) {
+            return Ok(());
+        }
+        if backend.placement == BackendPlacement::Wsl {
+            self.write_wsl_control(false)?;
+            self.start_lease()?;
+            if !self.is_running_on("supervisor", &backend) {
+                self.spawn_wsl_supervisor(&backend)?;
+            }
+        } else {
+            self.spawn_workspace("@soloe/runtime", "runtime", &backend)?;
+        }
+        self.wait_until("runtime", true, START_TIMEOUT, &backend)
+    }
+
+    pub fn start_server(&self) -> Result<(), String> {
+        self.set_lifecycle(LifecycleState::Starting);
+        let result = self.start_server_inner();
+        match &result {
+            Ok(()) => self.set_lifecycle(LifecycleState::Running),
+            Err(error) => self.set_lifecycle(LifecycleState::Failed(error.clone())),
+        }
+        result
+    }
+
+    fn start_server_inner(&self) -> Result<(), String> {
+        let backend = self.prepare_backend()?;
+        if !self.is_running_on("runtime", &backend) {
+            return Err("start the agent runtime before starting the Soloe server".to_string());
+        }
+        if backend.placement == BackendPlacement::Wsl {
+            if !self.is_running_on("supervisor", &backend) {
+                return Err(
+                    "WSL runtime supervisor is not running; restart the agent runtime".to_string(),
+                );
+            }
+            self.write_wsl_control(true)?;
+            self.wait_until("server", true, START_TIMEOUT, &backend)?;
+        } else if !self.is_running_on("server", &backend) {
+            self.spawn_workspace("@soloe/server", "server", &backend)?;
+            self.wait_until("server", true, START_TIMEOUT, &backend)?;
+        }
+        self.start_web_host(&backend)
+    }
+
+    fn prepare_backend(&self) -> Result<ActiveBackend, String> {
         fs::create_dir_all(&self.data_directory)
             .map_err(|error| format!("failed to create Soloe data directory: {error}"))?;
         let configured = ActiveBackend::from_settings(self.configured_backend()?, &self.owner_id);
@@ -264,26 +401,7 @@ impl BackendSupervisor {
         self.validate_backend(&backend)?;
         self.preflight(&backend)?;
         self.write_active_backend(&backend)?;
-
-        if backend.placement == BackendPlacement::Wsl {
-            self.start_lease()?;
-            if !self.is_running_on("runtime", &backend) || !self.is_running_on("server", &backend) {
-                self.spawn_wsl_supervisor(&backend)?;
-            }
-            self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
-            self.wait_until("server", true, START_TIMEOUT, &backend)?;
-        } else {
-            if !self.is_running_on("runtime", &backend) {
-                self.spawn_workspace("@soloe/runtime", "runtime", &backend)?;
-                self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
-            }
-            if !self.is_running_on("server", &backend) {
-                self.spawn_workspace("@soloe/server", "server", &backend)?;
-                self.wait_until("server", true, START_TIMEOUT, &backend)?;
-            }
-        }
-        self.start_web_host(&backend)?;
-        Ok(())
+        Ok(backend)
     }
 
     pub fn stop(&self) -> Result<(), String> {
@@ -323,6 +441,43 @@ impl BackendSupervisor {
         } else {
             Err(format!(
                 "backend cleanup incomplete; {}",
+                failures.join("; ")
+            ))
+        }
+    }
+
+    pub fn stop_server(&self) -> Result<(), String> {
+        self.set_lifecycle(LifecycleState::Stopping);
+        let result = self.stop_server_inner();
+        match &result {
+            Ok(()) => self.set_lifecycle(LifecycleState::Degraded("runtime only".to_string())),
+            Err(error) => self.set_lifecycle(LifecycleState::Degraded(error.clone())),
+        }
+        result
+    }
+
+    fn stop_server_inner(&self) -> Result<(), String> {
+        let backend = self.backend_for_existing_services();
+        let mut failures = Vec::new();
+        if let Err(error) = self.stop_web_host(&backend) {
+            failures.push(format!("web: {error}"));
+        }
+        if backend.placement == BackendPlacement::Wsl && self.is_running_on("supervisor", &backend)
+        {
+            if let Err(error) = self.write_wsl_control(false) {
+                failures.push(format!("server control: {error}"));
+            } else if let Err(error) = self.wait_until("server", false, WSL_STOP_TIMEOUT, &backend)
+            {
+                failures.push(format!("server: {error}"));
+            }
+        } else if let Err(error) = self.stop_service("server", &backend) {
+            failures.push(format!("server: {error}"));
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "server cleanup incomplete; {}",
                 failures.join("; ")
             ))
         }
@@ -774,6 +929,7 @@ impl BackendSupervisor {
         }
         if !self.is_running_on("server", backend) && !self.is_running_on("runtime", backend) {
             self.remove_stale_info("supervisor");
+            self.remove_stale_info("supervisor-control");
             self.remove_active_backend();
         } else {
             failures.push("WSL supervisor left managed processes running".to_string());
@@ -1013,6 +1169,16 @@ impl BackendSupervisor {
 
     fn active_backend_path(&self) -> PathBuf {
         self.data_directory.join("active-backend.json")
+    }
+
+    fn write_wsl_control(&self, server_running: bool) -> Result<(), String> {
+        let payload = serde_json::to_vec_pretty(&WslSupervisorControl {
+            owner_id: &self.owner_id,
+            server_running,
+        })
+        .map_err(|error| format!("failed to serialize WSL supervisor control: {error}"))?;
+        fs::write(self.data_directory.join("supervisor-control.json"), payload)
+            .map_err(|error| format!("failed to update WSL supervisor control: {error}"))
     }
 
     fn read_active_backend(&self) -> Option<ActiveBackend> {
@@ -1381,10 +1547,10 @@ mod tests {
                 wsl_repository_root: "/home/me/soloe".to_string(),
             }
         );
-        assert_eq!(supervisor.backend_action_label(), "Start services (WSL)");
+        assert_eq!(supervisor.server_action_label(), "Start Soloe server (WSL)");
         assert_eq!(
-            supervisor.backend_transition_label(),
-            "Starting services (WSL)…"
+            supervisor.runtime_action_label(),
+            "Start agent runtime (WSL)"
         );
         let _ = fs::remove_dir_all(directory);
     }
@@ -1510,27 +1676,93 @@ mod tests {
     }
 
     #[test]
-    fn backend_action_reflects_managed_service_state() {
+    fn stopping_server_preserves_the_agent_runtime() {
+        let directory = env::temp_dir().join(format!(
+            "soloe-tray-server-only-stop-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&directory);
+        fs::write(
+            directory.join("runtime.json"),
+            r#"{"service":"runtime","pid":3001,"ownerId":"test-owner"}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("server.json"),
+            r#"{"service":"server","pid":3002,"ownerId":"test-owner"}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("web.json"),
+            r#"{"service":"web","pid":3003,"ownerId":"test-owner"}"#,
+        )
+        .unwrap();
+        let processes = Arc::new(FakeProcessOperations::with_running([3001, 3002, 3003]));
+        let supervisor = test_supervisor(directory.clone(), processes.clone());
+
+        expect_ok(supervisor.stop_server());
+
+        assert_eq!(
+            processes.calls.lock().unwrap().as_slice(),
+            &[(3003, false), (3002, false)]
+        );
+        assert!(processes.running.lock().unwrap().contains(&3001));
+        assert!(!processes.running.lock().unwrap().contains(&3002));
+        assert!(!processes.running.lock().unwrap().contains(&3003));
+        assert!(directory.join("runtime.json").exists());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn wsl_control_records_server_intent_for_the_current_owner() {
+        let directory = env::temp_dir().join(format!(
+            "soloe-tray-wsl-control-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&directory);
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
+
+        expect_ok(supervisor.write_wsl_control(false));
+
+        let control: serde_json::Value =
+            serde_json::from_slice(&fs::read(directory.join("supervisor-control.json")).unwrap())
+                .unwrap();
+        assert_eq!(control["ownerId"], "test-owner");
+        assert_eq!(control["serverRunning"], false);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn service_actions_reflect_independent_server_and_runtime_state() {
         let directory =
             env::temp_dir().join(format!("soloe-tray-status-test-{}", std::process::id()));
         let _ = fs::create_dir_all(&directory);
         let processes = Arc::new(FakeProcessOperations::with_running([2001, 2002, 2003]));
         let supervisor = test_supervisor(directory.clone(), processes.clone());
         assert_eq!(
-            supervisor.backend_action_label(),
-            "Start services (Windows)"
+            supervisor.server_action_label(),
+            "Start Soloe server (Windows)"
         );
         assert_eq!(
-            supervisor.backend_transition_label(),
-            "Starting services (Windows)…"
+            supervisor.runtime_action_label(),
+            "Start agent runtime (Windows)"
         );
-        assert!(supervisor.backend_action_enabled());
+        assert!(!supervisor.server_action_enabled());
+        assert!(supervisor.runtime_action_enabled());
         supervisor.set_lifecycle(LifecycleState::Starting);
         assert_eq!(
-            supervisor.backend_action_label(),
-            "Starting services (Windows)…"
+            supervisor.server_action_label(),
+            "Starting Soloe server (Windows)…"
         );
-        assert!(!supervisor.backend_action_enabled());
+        assert_eq!(
+            supervisor.runtime_action_label(),
+            "Starting agent runtime (Windows)…"
+        );
+        assert!(!supervisor.server_action_enabled());
+        assert!(!supervisor.runtime_action_enabled());
         supervisor.set_lifecycle(LifecycleState::Stopped);
         fs::write(
             directory.join("runtime.json"),
@@ -1538,14 +1770,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            supervisor.backend_action_label(),
-            "Stop all services (Windows)"
+            supervisor.server_action_label(),
+            "Start Soloe server (Windows)"
         );
         assert_eq!(
-            supervisor.backend_transition_label(),
-            "Stopping all services (Windows)…"
+            supervisor.runtime_action_label(),
+            "Stop agent runtime (Windows)"
         );
-        assert!(supervisor.backend_action_enabled());
+        assert!(supervisor.server_action_enabled());
+        assert!(supervisor.runtime_action_enabled());
 
         fs::write(
             directory.join("server.json"),
@@ -1553,8 +1786,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            supervisor.backend_action_label(),
-            "Stop all services (Windows)"
+            supervisor.server_action_label(),
+            "Stop Soloe server (Windows)"
         );
 
         fs::write(
@@ -1563,15 +1796,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            supervisor.backend_action_label(),
-            "Stop all services (Windows)"
+            supervisor.server_action_label(),
+            "Stop Soloe server (Windows)"
         );
         supervisor.set_lifecycle(LifecycleState::Stopping);
         assert_eq!(
-            supervisor.backend_action_label(),
-            "Stopping all services (Windows)…"
+            supervisor.server_action_label(),
+            "Stopping Soloe server (Windows)…"
         );
-        assert!(!supervisor.backend_action_enabled());
+        assert_eq!(
+            supervisor.runtime_action_label(),
+            "Stopping agent runtime (Windows)…"
+        );
+        assert!(!supervisor.server_action_enabled());
+        assert!(!supervisor.runtime_action_enabled());
         let _ = fs::remove_dir_all(directory);
     }
 
