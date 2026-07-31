@@ -208,7 +208,7 @@ _Avoid_: Renderer backend, IPC implementation
 - A visible Files **Rail Surface Residency** acquires **Files Payload Residency**; final release retains at most two clean recent scopes while unsaved or saving buffers remain protected independently of evictable trees
 - Switching the file addressed by **Files Payload Residency** cannot replace an unsaved buffer without an explicit discard decision
 - A **Browser DevTools View** observes layout on demand; unchanged geometry performs no frame work or cross-process publication
-- **Browser Session State** persists only changed Worktree scopes after a short coalescing window, with bounded scope, tab, history, title, and URL payloads
+- **Browser Session State** is host-owned in bounded `browser-sessions.json` storage and persists only changed Worktree scopes after a short coalescing window; renderer localStorage is a migration and fallback mirror, never the authoritative record
 - A summary **Resource Usage Observation** never launches a WSL process; demanded WSL detail is serialized and briefly shared across observers
 - A Feature Snapshot is materialized from exactly one **Feature Artifact Index** revision
 - One active **Feature Artifact Observation** exists per subscribed **Worktree Identity**, regardless of renderer count

@@ -392,6 +392,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.browser.setDevToolsLayout, request),
     closeDevTools: (request: CloseDevToolsRequest) =>
       ipcRenderer.invoke(IpcChannels.browser.closeDevTools, request)
+  },
+  browserSessions: {
+    get: () => ipcRenderer.invoke(IpcChannels.browserSessions.get),
+    update: (request) => ipcRenderer.invoke(IpcChannels.browserSessions.update, request)
   }
 };
 

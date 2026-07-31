@@ -4,6 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserStore } from './browser.svelte';
 import { worktreeScope, worktreeScopeKey } from '@shared/worktree-identity.js';
+import type { BrowserSessionPersistence } from './browser.svelte';
+import type { BrowserSessionSnapshot } from '@shared/types/browser-sessions';
 
 describe('BrowserStore residency', () => {
   beforeEach(() => {
@@ -253,6 +255,87 @@ describe('BrowserStore residency', () => {
       title: 'Next page',
       history: ['https://initial.test', 'https://next.test']
     });
+  });
+
+  it('migrates localStorage into durable storage and restores without localStorage', async () => {
+    const scope = worktreeScope('/durable', { runMode: 'wsl', wslDistro: 'Ubuntu' });
+    const scopeKey = worktreeScopeKey(scope);
+    localStorage.setItem('soloe.browser.v3.index', JSON.stringify([scopeKey]));
+    localStorage.setItem(`soloe.browser.v3.scope:${scopeKey}`, JSON.stringify({
+      tabs: [{
+        id: 'durable-tab',
+        title: 'Local app',
+        history: ['http://localhost:4317'],
+        historyIndex: 0
+      }],
+      activeTabId: 'durable-tab'
+    }));
+    let durableSnapshot: BrowserSessionSnapshot = { version: 1, scopeRecency: [], scopes: {} };
+    const persistence: BrowserSessionPersistence = {
+      load: async () => structuredClone(durableSnapshot),
+      update: async ({ scopeKey: key, state }) => {
+        durableSnapshot = {
+          version: 1,
+          scopeRecency: [...durableSnapshot.scopeRecency.filter((item) => item !== key), key],
+          scopes: { ...durableSnapshot.scopes, [key]: structuredClone(state) }
+        };
+      }
+    };
+    const first = new BrowserStore(persistence);
+    await first.load();
+    first.setActiveScope(scope);
+    expect(first.activeUrl()).toBe('http://localhost:4317');
+    expect(durableSnapshot.scopes).toHaveProperty(scopeKey);
+
+    localStorage.clear();
+    const restarted = new BrowserStore(persistence);
+    await restarted.load();
+    restarted.setActiveScope(scope);
+    expect(restarted.activeUrl()).toBe('http://localhost:4317');
+  });
+
+  it('does not evict durable Worktree scopes when their localStorage mirrors are absent', async () => {
+    const firstScope = worktreeScope('/first');
+    const secondScope = worktreeScope('/second');
+    const firstKey = worktreeScopeKey(firstScope);
+    const secondKey = worktreeScopeKey(secondScope);
+    const durableSnapshot: BrowserSessionSnapshot = {
+      version: 1,
+      scopeRecency: [firstKey, secondKey],
+      scopes: {
+        [firstKey]: {
+          tabs: [{
+            id: 'first-tab',
+            title: 'First',
+            history: ['https://first.test'],
+            historyIndex: 0
+          }],
+          activeTabId: 'first-tab'
+        },
+        [secondKey]: {
+          tabs: [{
+            id: 'second-tab',
+            title: 'Second',
+            history: ['https://second.test'],
+            historyIndex: 0
+          }],
+          activeTabId: 'second-tab'
+        }
+      }
+    };
+    const persistence: BrowserSessionPersistence = {
+      load: async () => structuredClone(durableSnapshot),
+      update: async () => undefined
+    };
+    const store = new BrowserStore(persistence);
+    await store.load();
+
+    store.setActiveScope(firstScope);
+    store.navigate('first-tab', 'https://first.test/changed');
+    await store.flushPersistence();
+    store.setActiveScope(secondScope);
+
+    expect(store.activeUrl()).toBe('https://second.test');
   });
 
   it('keeps page and responsive canvas zoom independent for every tab', () => {

@@ -62,6 +62,8 @@ import { FeaturesIpc } from './ipc/features.ipc.js';
 import { VaultStore } from './vault/VaultStore.js';
 import { VaultIpc } from './ipc/vault.ipc.js';
 import { BrowserIpc } from './ipc/browser.ipc.js';
+import { BrowserSessionStore } from './browser/BrowserSessionStore.js';
+import { BrowserSessionsIpc } from './ipc/browser-sessions.ipc.js';
 import {
   isBrowserDevToolsToggleInput,
   isBrowserRestoreTabInput
@@ -106,6 +108,7 @@ interface AppServices {
   vault: VaultStore;
   vaultIpc: VaultIpc;
   browserIpc: BrowserIpc;
+  browserSessionsIpc: BrowserSessionsIpc;
 }
 
 let services: AppServices | null = null;
@@ -210,6 +213,7 @@ async function setupServices(): Promise<AppServices> {
   const observerFile = path.join(userDataPath, 'observer.json');
   const settingsFile = path.join(userDataPath, 'settings.json');
   const projectsFile = path.join(userDataPath, 'projects.json');
+  const browserSessionsFile = path.join(userDataPath, 'browser-sessions.json');
   const notesDir = path.join(userDataPath, 'notes');
   const crashDir = path.join(userDataPath, 'crashes');
   const overviewCacheFile = path.join(userDataPath, 'overview-cache.json');
@@ -462,6 +466,9 @@ async function setupServices(): Promise<AppServices> {
     getWindows: () => BrowserWindow.getAllWindows()
   });
   const browserIpc = new BrowserIpc();
+  const browserSessions = new BrowserSessionStore(browserSessionsFile);
+  await browserSessions.init();
+  const browserSessionsIpc = new BrowserSessionsIpc(browserSessions);
 
   sessionsIpc.register();
   terminalIpc.register();
@@ -479,6 +486,7 @@ async function setupServices(): Promise<AppServices> {
   featuresIpc.register();
   vaultIpc.register();
   browserIpc.register();
+  browserSessionsIpc.register();
 
   return {
     store,
@@ -517,7 +525,8 @@ async function setupServices(): Promise<AppServices> {
     featuresIpc,
     vault,
     vaultIpc,
-    browserIpc
+    browserIpc,
+    browserSessionsIpc
   };
 }
 
@@ -634,13 +643,14 @@ async function createWindow(): Promise<BrowserWindow> {
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
     const isF12 = input.key === 'F12';
-    const isToggleCombo =
-      (input.key === 'I' || input.key === 'i') &&
-      input.shift &&
-      (process.platform === 'darwin' ? input.meta && input.alt : input.control);
-    if (isF12 || isToggleCombo) {
+    if (isF12) {
       event.preventDefault();
       win.webContents.toggleDevTools();
+      return;
+    }
+    if (isBrowserDevToolsToggleInput(input)) {
+      event.preventDefault();
+      void toggleFocusedDevTools(win);
       return;
     }
     const isCloseWindowCombo =
@@ -668,6 +678,26 @@ async function createWindow(): Promise<BrowserWindow> {
   return win;
 }
 
+async function toggleFocusedDevTools(win: BrowserWindow): Promise<void> {
+  let browserSurfaceFocused = false;
+  try {
+    browserSurfaceFocused = Boolean(await win.webContents.executeJavaScript(`
+      (() => {
+        const active = document.activeElement;
+        return active instanceof Element && Boolean(active.closest('[data-browser-surface]'));
+      })()
+    `));
+  } catch {
+    // If renderer focus cannot be inspected, preserve the application-level shortcut.
+  }
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  if (browserSurfaceFocused) {
+    win.webContents.send('soloe:webview-toggle-devtools');
+    return;
+  }
+  win.webContents.toggleDevTools();
+}
+
 async function cleanup(): Promise<void> {
   if (cleanedUp) return;
   cleanedUp = true;
@@ -689,6 +719,7 @@ async function cleanup(): Promise<void> {
     services.featureArtifacts.dispose();
     services.vaultIpc.dispose();
     services.browserIpc.dispose();
+    services.browserSessionsIpc.dispose();
     services.releaseFileIndexGitChanges();
     services.git.dispose();
     await services.pty.dispose();

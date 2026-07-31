@@ -216,7 +216,7 @@
   }
 
   function flushRendererPersistence(): void {
-    browserStore.flushPersistence();
+    void browserStore.flushPersistence();
     notes.flushDraftPersistence();
   }
 
@@ -234,7 +234,13 @@
     initialLoadState = 'loading';
     initialLoadError = null;
     try {
-      await Promise.all([platform.load(), settings.load(), projects.load(), sessions.load()]);
+      await Promise.all([
+        platform.load(),
+        settings.load(),
+        projects.load(),
+        sessions.load(),
+        browserStore.load()
+      ]);
       initialLoadState = 'ready';
       void promptForAgentIntegrationSetup().catch(reportError);
     } catch (err) {
@@ -1015,6 +1021,11 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if (Keymap.browserDevTools.match(e) && isBrowserKeyTarget(e)) {
+      consume(e);
+      window.dispatchEvent(new CustomEvent('soloe:browser-toggle-devtools'));
+      return;
+    }
     if (Keymap.commandPalette.match(e)) {
       consume(e);
       commandPalette.toggle();

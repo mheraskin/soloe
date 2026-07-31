@@ -15,6 +15,7 @@
     Smartphone,
     Tablet,
     Monitor,
+    CircleAlert,
     PowerOff,
     Power
   } from '@lucide/svelte';
@@ -36,12 +37,11 @@
   import { ipc } from '../../lib/ipc';
   import { BrowserDevToolsViewController } from '../../lib/browser-devtools-bounds';
   import { normalizeBrowserUrl } from '../../lib/browser-navigation';
-
-  interface FailureSuggestion {
-    httpsUrl: string;
-    httpUrl: string;
-    reason: string;
-  }
+  import {
+    browserFailureFromFailedLoad,
+    browserFailureFromHttpResponse,
+    type BrowserLoadFailure
+  } from '../../lib/browser-load-failure';
 
   let activeTab = $derived(browserStore.activeTab);
   let activeId = $derived(browserStore.activeTabId);
@@ -66,13 +66,13 @@
   let domReadyById = $state<Record<string, boolean>>({});
   let isLoadingById = $state<Record<string, boolean>>({});
   let lastLoadedById = $state<Record<string, string>>({});
-  let failureById = $state<Record<string, FailureSuggestion | null>>({});
+  let failureById = $state<Record<string, BrowserLoadFailure | null>>({});
   let lastAppliedDeviceKeyById = $state<Record<string, string | null>>({});
   let lastAppliedUaById = $state<Record<string, string | null>>({});
   let activeWebview = $derived(activeId ? webviewsById[activeId] ?? null : null);
   let activeDomReady = $derived(activeId ? !!domReadyById[activeId] : false);
   let isLoading = $derived(activeId ? !!isLoadingById[activeId] : false);
-  let failureSuggestion = $derived(activeId ? failureById[activeId] ?? null : null);
+  let activeFailure = $derived(activeId ? failureById[activeId] ?? null : null);
   let activePageZoom = $derived(activeTab?.pageZoom ?? 1);
   let activeCanvasZoom = $derived(activeTab?.canvasZoom ?? 1);
   // While a device is active Ctrl+/-/0 drives the canvas; otherwise the
@@ -308,7 +308,6 @@
         if (!isCurrentAttachment()) return;
         const url = (e as Event & { url?: string }).url;
         if (!url) return;
-        failureById = { ...failureById, [tabId]: null };
         // Cross-page navigations invalidate the fill prompt (it referenced
         // the previous page's password field). Only the active tab owns the
         // visible prompt, so don't clear it for background-tab navigations.
@@ -328,6 +327,7 @@
       const onLoadStart = () => {
         if (!isCurrentAttachment()) return;
         isLoadingById = { ...isLoadingById, [tabId]: true };
+        failureById = { ...failureById, [tabId]: null };
       };
       const onLoadStop = () => {
         if (!isCurrentAttachment()) return;
@@ -335,26 +335,26 @@
       };
       const onFail = (e: Event) => {
         if (!isCurrentAttachment()) return;
-        const event = e as Event & {
-          errorCode?: number;
-          errorDescription?: string;
-          validatedURL?: string;
-          isMainFrame?: boolean;
-        };
-        // -3 is ABORTED (user navigated away); ignore. Also ignore subframe
-        // errors so an ad iframe failing doesn't pop a misleading suggestion.
-        if (event.errorCode === -3) return;
-        if (event.isMainFrame === false) return;
-        const url = event.validatedURL ?? '';
-        if (!url.startsWith('https://')) return;
-        failureById = {
-          ...failureById,
-          [tabId]: {
-            httpsUrl: url,
-            httpUrl: 'http://' + url.slice('https://'.length),
-            reason: event.errorDescription || 'Failed to load over HTTPS'
-          }
-        };
+        const failure = browserFailureFromFailedLoad(e as Event & {
+          errorCode: number;
+          errorDescription: string;
+          validatedURL: string;
+          isMainFrame: boolean;
+        });
+        if (!failure) return;
+        isLoadingById = { ...isLoadingById, [tabId]: false };
+        failureById = { ...failureById, [tabId]: failure };
+      };
+      const onFrameNavigate = (e: Event) => {
+        if (!isCurrentAttachment()) return;
+        const failure = browserFailureFromHttpResponse(e as Event & {
+          url: string;
+          httpResponseCode: number;
+          httpStatusText: string;
+          isMainFrame: boolean;
+        });
+        if (!failure) return;
+        failureById = { ...failureById, [tabId]: failure };
       };
       // ipc-message fires when the webview preload calls
       // ipcRenderer.sendToHost(). We only act on messages from the active
@@ -432,6 +432,7 @@
       wv.addEventListener('did-start-loading', onLoadStart);
       wv.addEventListener('did-stop-loading', onLoadStop);
       wv.addEventListener('did-fail-load', onFail);
+      wv.addEventListener('did-frame-navigate', onFrameNavigate);
       wv.addEventListener('ipc-message', onIpcMessage);
 
       return () => {
@@ -442,6 +443,7 @@
         wv.removeEventListener('did-start-loading', onLoadStart);
         wv.removeEventListener('did-stop-loading', onLoadStop);
         wv.removeEventListener('did-fail-load', onFail);
+        wv.removeEventListener('did-frame-navigate', onFrameNavigate);
         wv.removeEventListener('ipc-message', onIpcMessage);
         // A replacement attachment for the same logical tab may already own
         // these records. Old cleanup must not erase the new generation.
@@ -489,13 +491,19 @@
   }
 
   function tryHttpFallback() {
-    const suggestion = failureSuggestion;
-    if (!suggestion || !activeId) return;
+    const failure = activeFailure;
+    if (!failure?.httpFallbackUrl || !activeId) return;
     failureById = { ...failureById, [activeId]: null };
-    commitNavigation(suggestion.httpUrl);
+    commitNavigation(failure.httpFallbackUrl);
   }
 
-  function dismissFallback() {
+  function retryFailedPage() {
+    if (!activeId) return;
+    failureById = { ...failureById, [activeId]: null };
+    reload();
+  }
+
+  function dismissFailure() {
     if (!activeId) return;
     failureById = { ...failureById, [activeId]: null };
   }
@@ -1707,25 +1715,29 @@
     </Button>
   </form>
 
-  {#if failureSuggestion}
+  {#if activeFailure?.kind === 'http'}
     <div
-      class="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+      class="flex items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
+      role="status"
+      aria-live="polite"
     >
-      <span class="min-w-0 flex-1 truncate">
-        {failureSuggestion.reason}.
+      <CircleAlert class="size-3.5 shrink-0" />
+      <span class="min-w-0 flex-1 truncate" title={`${activeFailure.title} — ${activeFailure.url}`}>
+        <span class="font-medium">{activeFailure.title}</span>
+        <span class="text-muted-foreground"> — {activeFailure.url}</span>
       </span>
       <button
         type="button"
-        class="rounded border border-amber-500/40 px-1.5 py-0.5 font-medium hover:bg-amber-500/15"
-        onclick={tryHttpFallback}
+        class="cursor-pointer rounded border border-destructive/40 px-1.5 py-0.5 font-medium transition-colors hover:bg-destructive/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        onclick={retryFailedPage}
       >
-        Try HTTP
+        Retry
       </button>
       <button
         type="button"
-        class="opacity-60 hover:opacity-100"
+        class="cursor-pointer rounded opacity-60 transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         aria-label="Dismiss"
-        onclick={dismissFallback}
+        onclick={dismissFailure}
       >
         <X class="size-3" />
       </button>
@@ -1821,6 +1833,48 @@
           </div>
         {/if}
       {/each}
+
+      {#if activeFailure?.kind === 'network'}
+        <section
+          class="absolute inset-0 z-10 flex items-center justify-center overflow-auto bg-background px-5 py-8 text-foreground"
+          role="alert"
+          aria-live="assertive"
+          aria-atomic="true"
+        >
+          <div class="flex w-full max-w-xl flex-col items-start">
+            <CircleAlert class="mb-5 size-10 text-muted-foreground" aria-hidden="true" />
+            <h2 class="text-lg font-semibold tracking-tight">{activeFailure.title}</h2>
+            <p class="mt-2 max-w-prose text-sm leading-6 text-muted-foreground">
+              {activeFailure.description}
+            </p>
+            <div class="mt-4 w-full rounded-md border border-border bg-muted/30 px-3 py-2">
+              <div class="truncate font-mono text-xs" title={activeFailure.url}>
+                {activeFailure.url}
+              </div>
+              <div class="mt-1 font-mono text-[10px] text-muted-foreground">
+                {activeFailure.code} ({activeFailure.errorCode})
+              </div>
+            </div>
+            <div class="mt-5 flex flex-wrap gap-2">
+              <Button type="button" size="sm" class="cursor-pointer" onclick={retryFailedPage}>
+                <RotateCw class="size-3.5" />
+                Retry
+              </Button>
+              {#if activeFailure.httpFallbackUrl}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="cursor-pointer"
+                  onclick={tryHttpFallback}
+                >
+                  Try HTTP
+                </Button>
+              {/if}
+            </div>
+          </div>
+        </section>
+      {/if}
 
       {#if fillPrompt}
         {@const fillAnchor = fillPrompt.anchor}

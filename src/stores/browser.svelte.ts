@@ -3,45 +3,22 @@ import {
   worktreeScopeKey,
   type WorktreeScope
 } from '@shared/worktree-identity.js';
+import type {
+  BrowserSessionScopeState,
+  BrowserSessionSnapshot,
+  BrowserSessionTab,
+  BrowserSessionUpdateRequest,
+  BrowserTabDevice as SharedBrowserTabDevice
+} from '@shared/types/browser-sessions.js';
+import { ipc } from '../lib/ipc';
 
-export interface BrowserTabDevice {
-  // Preset id from BROWSER_DEVICE_PRESETS, or 'custom' for ad-hoc sizes.
-  presetId: string;
-  // Logical (CSS-pixel) viewport, before rotation. `rotated` swaps these at
-  // apply time so the user can flip between portrait and landscape without
-  // editing the numbers themselves.
-  width: number;
-  height: number;
-  dpr: number;
-  mobile: boolean;
-  ua: string;
-  rotated: boolean;
-}
+export type BrowserTabDevice = SharedBrowserTabDevice;
+export type BrowserTab = BrowserSessionTab;
+type BrowserCwdState = BrowserSessionScopeState;
 
-export interface BrowserTab {
-  id: string;
-  title: string;
-  // Navigation stack — `history[historyIndex]` is the current URL. We keep
-  // this in the store (not just relying on the webview's internal Chromium
-  // history) so back/forward survive a full unmount of the browser tab.
-  history: string[];
-  historyIndex: number;
-  // Per-tab device emulation. Undefined = native (no emulation).
-  device?: BrowserTabDevice;
-  // Chromium shares native zoom between same-origin webContents. Persisting
-  // the intended factors on the logical tab lets the renderer re-apply the
-  // selected tab's value whenever focus changes.
-  pageZoom?: number;
-  canvasZoom?: number;
-  // When set, the tab's <webview> is unmounted to release memory. Wallclock
-  // ms of when the user paused it; an auto-resume timer reads this against
-  // the configured threshold to decide when to remount.
-  pausedAt?: number;
-}
-
-interface BrowserCwdState {
-  tabs: BrowserTab[];
-  activeTabId: string | null;
+export interface BrowserSessionPersistence {
+  load(): Promise<BrowserSessionSnapshot>;
+  update(request: BrowserSessionUpdateRequest): Promise<unknown>;
 }
 
 interface ClosedBrowserTab {
@@ -152,6 +129,7 @@ function currentUrl(tab: BrowserTab): string {
 }
 
 export class BrowserStore {
+  loaded = $state(false);
   private activeScope = $state<WorktreeScope | null>(null);
   private stateByScope = $state<Record<string, BrowserCwdState>>({});
   private legacyByCwd = $state<Record<string, BrowserCwdState>>({});
@@ -165,8 +143,10 @@ export class BrowserStore {
   private pendingPersistenceKeys = new Set<string>();
   private persistenceHandle: ReturnType<typeof setTimeout> | null = null;
   private removeWholeStateAfterFlush = false;
+  private loadPromise: Promise<void> | null = null;
 
-  constructor() {
+  constructor(private readonly persistence: BrowserSessionPersistence | null = null) {
+    this.loaded = persistence === null;
     if (typeof localStorage === 'undefined') return;
     try {
       const rawIndex = localStorage.getItem(STORAGE_INDEX_KEY);
@@ -223,6 +203,41 @@ export class BrowserStore {
     }
   }
 
+  async load(): Promise<void> {
+    if (this.loaded) return;
+    if (!this.persistence) {
+      this.loaded = true;
+      return;
+    }
+    if (this.loadPromise) return this.loadPromise;
+    this.loadPromise = this.loadFromDurableStorage();
+    try {
+      await this.loadPromise;
+    } finally {
+      this.loadPromise = null;
+    }
+  }
+
+  private async loadFromDurableStorage(): Promise<void> {
+    const snapshot = await this.persistence!.load();
+    const durableScopes: Record<string, BrowserCwdState> = {};
+    for (const [key, state] of Object.entries(snapshot.scopes).slice(-MAX_PERSISTED_SCOPES)) {
+      durableScopes[key] = sanitize(state);
+    }
+    const localScopes = this.stateByScope;
+    const migratedKeys = Object.keys(localScopes).filter((key) => !durableScopes[key]);
+    this.stateByScope = { ...localScopes, ...durableScopes };
+    this.persistedScopeRecency = [
+      ...snapshot.scopeRecency.filter((key) => key in durableScopes),
+      ...this.persistedScopeRecency.filter((key) => !durableScopes[key])
+    ].slice(-MAX_PERSISTED_SCOPES);
+    for (const key of migratedKeys) this.pendingPersistenceKeys.add(key);
+    this.loaded = true;
+    if (this.pendingPersistenceKeys.size > 0 || this.removeWholeStateAfterFlush) {
+      await this.flushPersistence();
+    }
+  }
+
   setActiveScope(scope: WorktreeScope | null | undefined): void {
     const next = scope?.cwd.trim() ? worktreeScope(scope.cwd, scope) : null;
     const previousKey = this.currentKey();
@@ -250,39 +265,67 @@ export class BrowserStore {
     this.schedulePersistence();
   }
 
-  flushPersistence(): void {
+  flushPersistence(): Promise<void> {
     if (this.persistenceHandle) {
       clearTimeout(this.persistenceHandle);
       this.persistenceHandle = null;
     }
-    if (typeof localStorage === 'undefined') return;
-    if (this.pendingPersistenceKeys.size === 0 && !this.removeWholeStateAfterFlush) return;
-    const pending = [...this.pendingPersistenceKeys];
-    try {
-      const payloads = this.preparePersistencePayloads(pending);
-      if (this.removeWholeStateAfterFlush) {
-        // The bounded v3 payload is held in memory. Free the legacy whole-world
-        // allocation before writing so migration itself cannot double quota use.
-        localStorage.removeItem(WHOLE_STATE_STORAGE_KEY);
-      }
-      for (const [key, payload] of payloads) {
-        localStorage.setItem(scopeStorageKey(key), payload);
-      }
-      localStorage.setItem(STORAGE_INDEX_KEY, JSON.stringify(this.persistedScopeRecency));
-      this.pendingPersistenceKeys.clear();
-      if (this.removeWholeStateAfterFlush) {
-        this.removeWholeStateAfterFlush = false;
-      }
-    } catch {
-      // Quota — ignore.
+    if (this.pendingPersistenceKeys.size === 0 && !this.removeWholeStateAfterFlush) {
+      return Promise.resolve();
     }
+    const pending = [...this.pendingPersistenceKeys];
+    const durablePayloads = new Map<string, string>();
+    for (const key of pending) {
+      const state = this.stateByScope[key];
+      if (state) durablePayloads.set(key, serializePersistedState(state));
+    }
+    this.pendingPersistenceKeys.clear();
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const { payloads: localPayloads, scopeRecency: localScopeRecency } =
+          this.prepareLocalStoragePayloads(durablePayloads);
+        if (this.removeWholeStateAfterFlush) {
+          // The bounded v3 payload is held in memory. Free the legacy whole-world
+          // allocation before writing so migration itself cannot double quota use.
+          localStorage.removeItem(WHOLE_STATE_STORAGE_KEY);
+        }
+        for (const [key, payload] of localPayloads) {
+          localStorage.setItem(scopeStorageKey(key), payload);
+        }
+        localStorage.setItem(STORAGE_INDEX_KEY, JSON.stringify(localScopeRecency));
+        if (this.removeWholeStateAfterFlush) this.removeWholeStateAfterFlush = false;
+      } catch {
+        // localStorage remains a migration/fallback copy; host persistence is authoritative.
+      }
+    }
+
+    if (!this.persistence || !this.loaded || durablePayloads.size === 0) {
+      return Promise.resolve();
+    }
+    const writes = [...durablePayloads].map(([scopeKey, payload]) =>
+      this.persistence!.update({
+        scopeKey,
+        state: JSON.parse(payload) as BrowserCwdState
+      })
+    );
+    return Promise.all(writes).then(
+      () => undefined,
+      () => {
+        for (const key of durablePayloads.keys()) {
+          if (this.stateByScope[key]) this.pendingPersistenceKeys.add(key);
+        }
+      }
+    );
   }
 
   private schedulePersistence(): void {
-    if (typeof localStorage === 'undefined' || this.persistenceHandle) return;
+    if (this.persistenceHandle) return;
+    if (this.persistence && !this.loaded) return;
+    if (typeof localStorage === 'undefined' && !this.persistence) return;
     this.persistenceHandle = setTimeout(() => {
       this.persistenceHandle = null;
-      this.flushPersistence();
+      void this.flushPersistence();
     }, PERSIST_DELAY_MS);
   }
 
@@ -293,29 +336,27 @@ export class BrowserStore {
     ];
   }
 
-  private preparePersistencePayloads(pending: readonly string[]): Map<string, string> {
+  private prepareLocalStoragePayloads(
+    pendingPayloads: ReadonlyMap<string, string>
+  ): { payloads: Map<string, string>; scopeRecency: string[] } {
     this.prunePersistedScopeCount();
-    const pendingPayloads = new Map<string, string>();
-    for (const key of pending) {
-      const state = this.stateByScope[key];
-      if (state) pendingPayloads.set(key, serializePersistedState(state));
-    }
+    const payloads = new Map(pendingPayloads);
 
     const retainedNewestFirst: string[] = [];
     let retainedChars = 0;
     for (let index = this.persistedScopeRecency.length - 1; index >= 0; index -= 1) {
       const key = this.persistedScopeRecency[index]!;
-      const payload = pendingPayloads.get(key) ?? localStorage.getItem(scopeStorageKey(key));
-      if (!payload || retainedChars + payload.length > MAX_TOTAL_STORAGE_CHARS) {
-        this.dropPersistedScope(key);
-        pendingPayloads.delete(key);
+      const payload = payloads.get(key) ?? localStorage.getItem(scopeStorageKey(key));
+      if (!payload) continue;
+      if (retainedChars + payload.length > MAX_TOTAL_STORAGE_CHARS) {
+        localStorage.removeItem(scopeStorageKey(key));
+        payloads.delete(key);
         continue;
       }
       retainedNewestFirst.push(key);
       retainedChars += payload.length;
     }
-    this.persistedScopeRecency = retainedNewestFirst.reverse();
-    return pendingPayloads;
+    return { payloads, scopeRecency: retainedNewestFirst.reverse() };
   }
 
   private prunePersistedScopeCount(): void {
@@ -725,7 +766,10 @@ export class BrowserStore {
   }
 }
 
-export const browserStore = new BrowserStore();
+export const browserStore = new BrowserStore({
+  load: () => ipc.browserSessions.get(),
+  update: (request) => ipc.browserSessions.update(request)
+});
 export { DEFAULT_URL as BROWSER_DEFAULT_URL };
 
 function scopeStorageKey(scopeKey: string): string {
