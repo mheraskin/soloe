@@ -35,3 +35,4 @@ export * from "./vault/VaultStore.js";
 export * from "./features/FeatureService.js";
 export * from "./features/FeatureArtifactObservation.js";
 export * from "./runtime/wsl-paths.js";
+export * from "./system/BackendPathService.js";
