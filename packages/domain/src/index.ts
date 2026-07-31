@@ -7,6 +7,27 @@ export * from "./git/GitService.js";
 export * from "./git/ReviewDiffMaterializer.js";
 export * from "./git/UntrackedFileCounter.js";
 export * from "./notes/NotesStore.js";
+export {
+  NativeGitEvidenceAdapter,
+  WslGitEvidenceAdapter,
+  WORKING_DIFF_PREVIEW_BYTES,
+  parseWslEvidenceFrames,
+  type GitCommandResult as OverviewGitCommandResult,
+  type GitCommandRunner as OverviewGitCommandRunner,
+  type GitEvidenceAdapter,
+  type GitPatchCapture,
+  type GitPatchRunner,
+  type NativeGitEvidenceAdapterOptions,
+  type RawGitEvidence,
+  type WslFrameParseResult,
+  type WslGitEvidenceAdapterOptions,
+} from "./overview/GitEvidenceAdapter.js";
+export * from "./overview/OverviewPromptBuilder.js";
+export * from "./overview/SessionTranscriptReader.js";
+export * from "./overview/SummaryCacheStore.js";
+export * from "./overview/WorktreeEvidence.js";
+export * from "./overview/WorktreeFactsCollector.js";
+export * from "./overview/WorktreeOverviewService.js";
 export * from "./features/FeatureService.js";
 export * from "./features/FeatureArtifactObservation.js";
 export * from "./runtime/wsl-paths.js";
