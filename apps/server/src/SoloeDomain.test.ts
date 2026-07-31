@@ -1,4 +1,12 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -194,6 +202,123 @@ describe("SoloeDomain", () => {
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("owns encrypted Vault CRUD and publishes secret-free metadata changes", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-vault-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "soloe-domain-vault-outside-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+    const published: Array<{ event: string; payload: unknown }> = [];
+    domain.on("event", (event, payload) => published.push({ event, payload }));
+
+    try {
+      await domain.init();
+      await domain.invoke({
+        namespace: "projects",
+        method: "create",
+        args: [{ name: "Vault project", path: directory }],
+      });
+
+      const saved = (await domain.invoke({
+        namespace: "vault",
+        method: "save",
+        args: [{
+          cwd: directory,
+          draft: {
+            origin: "https://example.test/sign-in",
+            username: "ada",
+            password: "vault-secret",
+            label: "primary",
+          },
+        }],
+      })) as { id: string };
+
+      const listed = await domain.invoke({
+        namespace: "vault",
+        method: "list",
+        args: [{ cwd: directory }],
+      });
+      expect(listed).toEqual([
+        expect.objectContaining({
+          id: saved.id,
+          origin: "https://example.test",
+          username: "ada",
+          label: "primary",
+        }),
+      ]);
+      expect(JSON.stringify(listed)).not.toContain("vault-secret");
+
+      await expect(
+        domain.invoke({
+          namespace: "vault",
+          method: "getSecret",
+          args: [{ cwd: directory, id: saved.id }],
+        }),
+      ).resolves.toEqual({ username: "ada", password: "vault-secret" });
+
+      await expect(
+        domain.invoke({
+          namespace: "vault",
+          method: "update",
+          args: [{
+            cwd: directory,
+            id: saved.id,
+            patch: { username: "grace", password: "replacement-secret" },
+          }],
+        }),
+      ).resolves.toMatchObject({ username: "grace" });
+      await expect(
+        domain.invoke({
+          namespace: "vault",
+          method: "delete",
+          args: [{ cwd: directory, id: saved.id }],
+        }),
+      ).resolves.toBe(true);
+
+      expect(published.filter(({ event }) => event === "vault.change")).toHaveLength(3);
+      expect(JSON.stringify(published)).not.toMatch(
+        /vault-secret|replacement-secret/u,
+      );
+      const vaultFile = (await readdir(path.join(directory, "vault"))).find(
+        (entry) => entry.endsWith(".json"),
+      );
+      expect(vaultFile).toBeTruthy();
+      expect(
+        await readFile(path.join(directory, "vault", vaultFile!), "utf8"),
+      ).not.toMatch(/vault-secret|replacement-secret/u);
+
+      await expect(
+        domain.invoke({
+          namespace: "vault",
+          method: "list",
+          args: [{ cwd: outside }],
+        }),
+      ).rejects.toMatchObject({ code: "vault_scope_not_authorized" });
+      for (const request of [
+        { cwd: "../relative" },
+        { cwd: directory, arbitraryPath: "/etc/passwd" },
+      ]) {
+        await expect(
+          domain.invoke({
+            namespace: "vault",
+            method: "list",
+            args: [request],
+          }),
+        ).rejects.toMatchObject({ code: "invalid_vault_request" });
+      }
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
     }
   });
 

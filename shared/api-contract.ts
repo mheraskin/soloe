@@ -103,6 +103,11 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "overview.askCancel",
   "diagnostics.list",
   "diagnostics.crashLogs",
+  "vault.list",
+  "vault.save",
+  "vault.update",
+  "vault.delete",
+  "vault.getSecret",
   "agentIntegration.status",
 ]);
 

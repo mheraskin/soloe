@@ -484,6 +484,21 @@ describe('Soloe Server lifecycle', () => {
         method: 'platform',
         args: []
       });
+      await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: {
+          namespace: 'vault',
+          method: 'save',
+          args: [{
+            cwd: '/repo',
+            draft: {
+              origin: 'https://example.test',
+              username: 'ada',
+              password: 'must-never-appear-in-logs'
+            }
+          }]
+        }
+      });
       const logs = writeLog.mock.calls.map(([entry]) => String(entry)).join('');
       expect(logs).toContain('"event":"rpc_start"');
       expect(logs).toContain('"event":"rpc_end"');
@@ -493,6 +508,7 @@ describe('Soloe Server lifecycle', () => {
       expect(logs).toContain('"requestBytes":');
       expect(logs).toContain('"responseBytes":');
       expect(logs).not.toContain('test-token');
+      expect(logs).not.toContain('must-never-appear-in-logs');
     } finally {
       writeLog.mockRestore();
       await server.close();
@@ -605,6 +621,8 @@ describe('Soloe Server lifecycle', () => {
     let domainRuntime: RuntimeClient | undefined;
     let domain: SoloeDomain | undefined;
     let server: SoloeServer | undefined;
+    let firstClient: WebSocket | undefined;
+    let secondClient: WebSocket | undefined;
 
     try {
       await runtime.listen();
@@ -632,6 +650,54 @@ describe('Soloe Server lifecycle', () => {
       expect(await rpc(baseUrl, 'projects', 'list')).toEqual([
         expect.objectContaining({ id: project.id })
       ]);
+
+      firstClient = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=vault-client-one',
+          baseUrl
+        ).toString()
+      );
+      secondClient = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=vault-client-two',
+          baseUrl
+        ).toString()
+      );
+      await Promise.all([opened(firstClient), opened(secondClient)]);
+      const firstVaultChange = nextMessage(firstClient);
+      const secondVaultChange = nextMessage(secondClient);
+      const vaultEntry = await rpc<{ id: string }>(baseUrl, 'vault', 'save', [{
+        cwd: directory,
+        draft: {
+          origin: 'https://example.test/login',
+          username: 'browser-user',
+          password: 'browser-vault-secret'
+        }
+      }]);
+      for (const change of await Promise.all([firstVaultChange, secondVaultChange])) {
+        expect(change).toEqual({
+          event: 'vault.change',
+          payload: expect.objectContaining({
+            cwd: directory,
+            entries: [
+              expect.objectContaining({
+                id: vaultEntry.id,
+                username: 'browser-user'
+              })
+            ]
+          })
+        });
+        expect(JSON.stringify(change)).not.toContain('browser-vault-secret');
+      }
+      await expect(rpc(baseUrl, 'vault', 'list', [{ cwd: directory }])).resolves.toEqual([
+        expect.objectContaining({ id: vaultEntry.id, username: 'browser-user' })
+      ]);
+      await expect(
+        rpc(baseUrl, 'vault', 'getSecret', [{ cwd: directory, id: vaultEntry.id }])
+      ).resolves.toEqual({
+        username: 'browser-user',
+        password: 'browser-vault-secret'
+      });
 
       const session = await rpc<{ id: string }>(baseUrl, 'sessions', 'create', [
         {
@@ -704,6 +770,8 @@ describe('Soloe Server lifecycle', () => {
         code: 'rpc_not_supported'
       });
     } finally {
+      firstClient?.close();
+      secondClient?.close();
       await server?.close();
       await domain?.dispose();
       domainRuntime?.disconnect();

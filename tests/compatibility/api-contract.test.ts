@@ -64,6 +64,21 @@ describe("Soloe API transport contract", () => {
     }
   });
 
+  it("keeps Vault metadata and explicit secret reads on the application server", () => {
+    for (const method of [
+      "vault.list",
+      "vault.save",
+      "vault.update",
+      "vault.delete",
+      "vault.getSecret",
+    ]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
+
   it("keeps Overview generation and streams on the application server", () => {
     for (const method of [
       "overview.get",

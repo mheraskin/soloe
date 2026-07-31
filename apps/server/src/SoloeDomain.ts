@@ -22,6 +22,13 @@ import type { SettingsUpdate } from "../../../shared/types/settings.js";
 import type { SystemUsageRequest } from "../../../shared/types/system.js";
 import type { DiagnosticLogsRequest } from "../../../shared/types/diagnostics.js";
 import type {
+  VaultDeleteRequest,
+  VaultGetSecretRequest,
+  VaultListRequest,
+  VaultSaveRequest,
+  VaultUpdateRequest,
+} from "../../../shared/types/vault.js";
+import type {
   AskFollowUpChunk,
   AskFollowUpRequest,
   GetOverviewRequest,
@@ -85,6 +92,8 @@ import {
   WorktreeFactsCollector,
   WorktreeOverviewService,
   WorktreeFileIndex,
+  VaultStore,
+  VaultStoreError,
   type FileIndexScope,
 } from "@soloe/domain";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
@@ -153,6 +162,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
   private readonly notes: NotesStore;
+  private readonly vault: VaultStore;
   private readonly featureArtifacts: FeatureArtifactObservation;
   private readonly features: FeatureService;
   private readonly featureSubscriptionReleases = new Map<
@@ -212,6 +222,7 @@ export class SoloeDomain extends EventEmitter {
       logDirectory: options.dataDirectory,
     });
     this.notes = new NotesStore(path.join(options.dataDirectory, "notes"));
+    this.vault = new VaultStore(path.join(options.dataDirectory, "vault"));
     this.featureArtifacts =
       options.featureArtifacts ?? new FeatureArtifactObservation();
     this.features = new FeatureService(this.featureArtifacts);
@@ -254,6 +265,9 @@ export class SoloeDomain extends EventEmitter {
     });
     this.notes.onChange((event) => {
       this.emit("event", "notes.change", event);
+    });
+    this.vault.onChange((event) => {
+      this.emit("event", "vault.change", event);
     });
     this.featureArtifacts.onChange((event) => {
       this.emit("event", "features.change", event);
@@ -341,6 +355,9 @@ export class SoloeDomain extends EventEmitter {
     }
     if (call.namespace === "notes") {
       return this.notesCall(call.method, call.args);
+    }
+    if (call.namespace === "vault") {
+      return this.vaultCall(call.method, call.args);
     }
     if (call.namespace === "features") {
       try {
@@ -435,6 +452,46 @@ export class SoloeDomain extends EventEmitter {
       }
     }
     throw unsupportedRpc("diagnostics", method);
+  }
+
+  private async vaultCall(method: string, args: unknown[]): Promise<unknown> {
+    if (!VAULT_RPC_METHODS.has(method)) throw unsupportedRpc("vault", method);
+    requireArgumentCount(`vault.${method}`, args, 1);
+    const request = validateVaultRequest(method, args[0]);
+    if (!(await this.isAuthorizedVaultScope(request.cwd))) {
+      throw new RpcError(
+        "vault_scope_not_authorized",
+        "Vault access is limited to an authorized Project or Worktree",
+      );
+    }
+    try {
+      if (method === "list") {
+        return this.vault.list(request.cwd);
+      }
+      if (method === "save") {
+        const save = request as VaultSaveRequest;
+        return this.vault.save(save.cwd, save.draft);
+      }
+      if (method === "update") {
+        const update = request as VaultUpdateRequest;
+        return this.vault.update(update.cwd, update.id, update.patch);
+      }
+      if (method === "delete") {
+        const target = request as VaultDeleteRequest;
+        await this.vault.delete(target.cwd, target.id);
+        return true;
+      }
+      if (method === "getSecret") {
+        const target = request as VaultGetSecretRequest;
+        return this.vault.getSecret(target.cwd, target.id);
+      }
+    } catch (error) {
+      if (error instanceof VaultStoreError) {
+        throw new RpcError(error.code, error.message);
+      }
+      throw error;
+    }
+    throw unsupportedRpc("vault", method);
   }
 
   private async overviewCall(
@@ -1113,6 +1170,17 @@ export class SoloeDomain extends EventEmitter {
     );
   }
 
+  private async isAuthorizedVaultScope(cwd: string): Promise<boolean> {
+    const [projects, sessions] = await Promise.all([
+      this.projects.list(),
+      this.sessions.list(),
+    ]);
+    return (
+      projects.some((project) => sameLogicalPath(project.path, cwd)) ||
+      sessions.some((session) => sameLogicalPath(session.cwd, cwd))
+    );
+  }
+
   private async observerCall(method: string, args: unknown[]): Promise<unknown> {
     switch (method) {
       case "list":
@@ -1425,6 +1493,163 @@ function validateDiagnosticLogsRequest(
     );
   }
   return request as DiagnosticLogsRequest;
+}
+
+const VAULT_RPC_METHODS = new Set([
+  "list",
+  "save",
+  "update",
+  "delete",
+  "getSecret",
+]);
+
+function validateVaultRequest(
+  method: string,
+  value: unknown,
+):
+  | VaultListRequest
+  | VaultSaveRequest
+  | VaultUpdateRequest
+  | VaultDeleteRequest
+  | VaultGetSecretRequest {
+  const request = requireVaultObject(
+    value,
+    "Vault request",
+    method === "list"
+      ? ["cwd"]
+      : method === "save"
+        ? ["cwd", "draft"]
+        : method === "update"
+          ? ["cwd", "id", "patch"]
+          : ["cwd", "id"],
+  );
+  const cwd = requireVaultString(request.cwd, "cwd", 16_384);
+  if (!path.posix.isAbsolute(cwd) && !path.win32.isAbsolute(cwd)) {
+    throw invalidVaultRequest("cwd must be an absolute path");
+  }
+  if (method === "list") return { cwd };
+  if (method === "save") {
+    const draft = requireVaultObject(
+      request.draft,
+      "Vault draft",
+      ["origin", "username", "password", "label"],
+      ["label"],
+    );
+    return {
+      cwd,
+      draft: {
+        origin: requireVaultString(draft.origin, "origin", 4_096),
+        username: requireVaultString(draft.username, "username", 1_024),
+        password: requireVaultString(draft.password, "password", 65_536),
+        ...(draft.label === undefined
+          ? {}
+          : {
+              label: requireVaultString(
+                draft.label,
+                "label",
+                2_048,
+                true,
+              ),
+            }),
+      },
+    };
+  }
+  const id = requireVaultString(request.id, "id", 16);
+  if (!/^[0-9a-f]{16}$/u.test(id)) {
+    throw invalidVaultRequest("Vault entry id is invalid");
+  }
+  if (method === "update") {
+    const patch = requireVaultObject(
+      request.patch,
+      "Vault patch",
+      ["username", "password", "label"],
+      ["username", "password", "label"],
+    );
+    if (Object.keys(patch).length === 0) {
+      throw invalidVaultRequest("Vault patch must contain a change");
+    }
+    return {
+      cwd,
+      id,
+      patch: {
+        ...(patch.username === undefined
+          ? {}
+          : {
+              username: requireVaultString(
+                patch.username,
+                "username",
+                1_024,
+              ),
+            }),
+        ...(patch.password === undefined
+          ? {}
+          : {
+              password: requireVaultString(
+                patch.password,
+                "password",
+                65_536,
+              ),
+            }),
+        ...(patch.label === undefined
+          ? {}
+          : {
+              label: requireVaultString(
+                patch.label,
+                "label",
+                2_048,
+                true,
+              ),
+            }),
+      },
+    };
+  }
+  return { cwd, id };
+}
+
+function requireVaultObject(
+  value: unknown,
+  name: string,
+  allowedKeys: string[],
+  optionalKeys: string[] = [],
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalidVaultRequest(`${name} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(allowedKeys);
+  const optional = new Set(optionalKeys);
+  if (Object.keys(record).some((key) => !allowed.has(key))) {
+    throw invalidVaultRequest(`${name} contains an unknown field`);
+  }
+  if (
+    allowedKeys.some(
+      (key) => !optional.has(key) && record[key] === undefined,
+    )
+  ) {
+    throw invalidVaultRequest(`${name} is missing a required field`);
+  }
+  return record;
+}
+
+function requireVaultString(
+  value: unknown,
+  name: string,
+  maximum: number,
+  allowEmpty = false,
+): string {
+  if (
+    typeof value !== "string" ||
+    (!allowEmpty && !value.trim()) ||
+    value.length > maximum ||
+    value.includes("\0")
+  ) {
+    throw invalidVaultRequest(`${name} must be a bounded string`);
+  }
+  return value;
+}
+
+function invalidVaultRequest(message: string): RpcError {
+  return new RpcError("invalid_vault_request", message);
 }
 
 function validateOverviewRequest(

@@ -214,6 +214,61 @@ describe("browser API", () => {
     ]);
   });
 
+  it("routes Vault CRUD and metadata events through the application server", async () => {
+    const socket = new FakeSocket();
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: true }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "vault-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => socket,
+    });
+    const change = vi.fn();
+    api.vault.onChange(change);
+    const draft = {
+      origin: "https://example.test",
+      username: "ada",
+      password: "secret",
+    };
+
+    await api.vault.save({ cwd: "/repo", draft });
+    await api.vault.getSecret({ cwd: "/repo", id: "0123456789abcdef" });
+    socket.message({
+      event: "vault.change",
+      payload: {
+        cwd: "/repo",
+        entries: [],
+        changedAt: "2026-07-31T12:00:00.000Z",
+      },
+    });
+
+    expect(change).toHaveBeenCalledWith({
+      cwd: "/repo",
+      entries: [],
+      changedAt: "2026-07-31T12:00:00.000Z",
+    });
+    expect(
+      fetchImpl.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      {
+        namespace: "vault",
+        method: "save",
+        args: [{ cwd: "/repo", draft }],
+        clientId: "vault-browser",
+      },
+      {
+        namespace: "vault",
+        method: "getSecret",
+        args: [{ cwd: "/repo", id: "0123456789abcdef" }],
+        clientId: "vault-browser",
+      },
+    ]);
+  });
+
   it("routes Overview streams through RPC and WebSocket events", async () => {
     const socket = new FakeSocket();
     const fetchImpl = vi.fn(
@@ -384,6 +439,8 @@ describe("browser API", () => {
     expect(api.transport?.supports("system", "usage")).toBe(true);
     expect(api.transport?.supports("diagnostics", "list")).toBe(true);
     expect(api.transport?.supports("diagnostics", "crashLogs")).toBe(true);
+    expect(api.transport?.supports("vault", "list")).toBe(true);
+    expect(api.transport?.supports("vault", "getSecret")).toBe(true);
     expect(api.transport?.supports("overview", "regenerate")).toBe(true);
     expect(api.transport?.supports("overview", "askStart")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();

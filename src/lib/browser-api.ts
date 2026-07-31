@@ -145,7 +145,7 @@ const NAMESPACE_METHODS = {
     "unsubscribe",
     "onChange",
   ],
-  vault: ["list", "save", "update", "delete", "getSecret"],
+  vault: ["list", "save", "update", "delete", "getSecret", "onChange"],
   browser: [
     "enableDeviceEmulation",
     "disableDeviceEmulation",
