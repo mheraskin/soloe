@@ -54,4 +54,18 @@ describe("Soloe API transport contract", () => {
     expect(supportsRpc("remote-electron", "system", "usage")).toBe(true);
     expect(REMOTE_ELECTRON_NATIVE_METHODS.has("system.usage")).toBe(false);
   });
+
+  it("keeps Overview generation and streams on the application server", () => {
+    for (const method of [
+      "overview.get",
+      "overview.regenerate",
+      "overview.askStart",
+      "overview.askCancel",
+    ]) {
+      const [namespace, name] = method.split(".");
+      expect(supportsRpc("browser", namespace!, name!)).toBe(true);
+      expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);
+      expect(REMOTE_ELECTRON_NATIVE_METHODS.has(method)).toBe(false);
+    }
+  });
 });

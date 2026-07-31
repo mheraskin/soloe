@@ -17,6 +17,7 @@ export interface SoloeServerOptions {
   webRoot?: string;
   rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
   clientDisconnected?: (clientId: string) => void;
+  clientReconnected?: (clientId: string) => void;
   clientDisconnectGraceMs?: number;
 }
 
@@ -36,6 +37,7 @@ export class SoloeServer {
     webRoot: string;
     rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
     clientDisconnected?: (clientId: string) => void;
+    clientReconnected?: (clientId: string) => void;
     clientDisconnectGraceMs: number;
   };
   private runtimeClient: RuntimeClient | undefined;
@@ -46,6 +48,7 @@ export class SoloeServer {
     listener: (payload: unknown) => void;
   }> = [];
   private readonly clientSocketCounts = new Map<string, number>();
+  private readonly socketClientIds = new WeakMap<WebSocket, string>();
   private readonly clientDisconnectTimers = new Map<string, NodeJS.Timeout>();
   private closing = false;
 
@@ -59,6 +62,9 @@ export class SoloeServer {
       ...(options.rpcHandler ? { rpcHandler: options.rpcHandler } : {}),
       ...(options.clientDisconnected
         ? { clientDisconnected: options.clientDisconnected }
+        : {}),
+      ...(options.clientReconnected
+        ? { clientReconnected: options.clientReconnected }
         : {}),
       clientDisconnectGraceMs: options.clientDisconnectGraceMs ?? 5_000,
     };
@@ -134,15 +140,18 @@ export class SoloeServer {
       }
       if (!clientId) return;
       const timer = this.clientDisconnectTimers.get(clientId);
+      const reconnected = Boolean(timer);
       if (timer) {
         clearTimeout(timer);
         this.clientDisconnectTimers.delete(clientId);
       }
+      this.socketClientIds.set(webSocket, clientId);
       this.clientSocketCounts.set(
         clientId,
         (this.clientSocketCounts.get(clientId) ?? 0) + 1,
       );
       webSocket.once("close", () => this.releaseClientSocket(clientId));
+      if (reconnected) this.options.clientReconnected?.(clientId);
     });
     const runtimeListeners = ["output", "exit"].map((event) => {
       const listener = (payload: unknown) => this.publish(event, payload);
@@ -231,6 +240,19 @@ export class SoloeServer {
     const message = JSON.stringify({ event, payload });
     for (const client of this.webSocketServer.clients) {
       if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    }
+  }
+
+  publishToClient(clientId: string, event: string, payload: unknown): void {
+    if (!this.webSocketServer) return;
+    const message = JSON.stringify({ event, payload });
+    for (const client of this.webSocketServer.clients) {
+      if (
+        client.readyState === WebSocket.OPEN &&
+        this.socketClientIds.get(client) === clientId
+      ) {
         client.send(message);
       }
     }

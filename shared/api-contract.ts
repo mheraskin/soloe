@@ -97,6 +97,10 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "system.platform",
   "system.listWslDistros",
   "system.usage",
+  "overview.get",
+  "overview.regenerate",
+  "overview.askStart",
+  "overview.askCancel",
   "agentIntegration.status",
 ]);
 

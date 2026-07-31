@@ -236,6 +236,64 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
+  it('delivers targeted events only to the owning browser client', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-targeted-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = testServer(runtimeEndpoint);
+    let owner: WebSocket | undefined;
+    let other: WebSocket | undefined;
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      owner = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=overview-owner',
+          baseUrl
+        ).toString()
+      );
+      other = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&clientId=other-client',
+          baseUrl
+        ).toString()
+      );
+      await Promise.all([opened(owner), opened(other)]);
+      const ownerMessage = nextMessage(owner);
+      const otherMessages: unknown[] = [];
+      other.addEventListener('message', (event) => {
+        otherMessages.push(JSON.parse(String(event.data)));
+      });
+
+      server.publishToClient('overview-owner', 'overview.chunk', {
+        requestId: 'request-1',
+        type: 'delta',
+        text: 'private answer'
+      });
+
+      await expect(ownerMessage).resolves.toEqual({
+        event: 'overview.chunk',
+        payload: {
+          requestId: 'request-1',
+          type: 'delta',
+          text: 'private answer'
+        }
+      });
+      await delay(25);
+      expect(otherMessages).toEqual([]);
+    } finally {
+      owner?.close();
+      other?.close();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('keeps client-owned observation leases through brief WebSocket reconnects', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-clients-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
@@ -244,12 +302,14 @@ describe('Soloe Server lifecycle', () => {
       processFactory: { spawn: () => new PersistentProcess() }
     });
     const clientDisconnected = vi.fn();
+    const clientReconnected = vi.fn();
     const server = new SoloeServer({
       runtimeEndpoint,
       host: '127.0.0.1',
       port: 0,
       token: 'test-token',
       clientDisconnected,
+      clientReconnected,
       clientDisconnectGraceMs: 75
     });
     let first: WebSocket | undefined;
@@ -272,6 +332,8 @@ describe('Soloe Server lifecycle', () => {
       await opened(replacement);
       await delay(100);
       expect(clientDisconnected).not.toHaveBeenCalled();
+      expect(clientReconnected).toHaveBeenCalledOnce();
+      expect(clientReconnected).toHaveBeenCalledWith('reconnecting-client');
 
       const replacementClosed = closed(replacement);
       replacement.close();

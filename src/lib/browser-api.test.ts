@@ -180,6 +180,60 @@ describe("browser API", () => {
     });
   });
 
+  it("routes Overview streams through RPC and WebSocket events", async () => {
+    const socket = new FakeSocket();
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({ ok: true, value: { requestId: "overview-1" } }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    );
+    const api = createBrowserApi({
+      clientId: "overview-browser",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => socket,
+    });
+    const chunk = vi.fn();
+    api.overview.onChunk(chunk);
+    const request = {
+      worktreeCwd: "/repo",
+      runMode: "linux" as const,
+      sessions: [],
+      message: "What changed?",
+      history: [],
+    };
+
+    await api.overview.askStart(request);
+    socket.message({
+      event: "overview.chunk",
+      payload: { requestId: "overview-1", type: "delta", text: "answer" },
+    });
+    await api.overview.askCancel("overview-1");
+
+    expect(chunk).toHaveBeenCalledWith({
+      requestId: "overview-1",
+      type: "delta",
+      text: "answer",
+    });
+    expect(
+      fetchImpl.mock.calls.map((call) => JSON.parse(String(call[1]?.body))),
+    ).toEqual([
+      {
+        namespace: "overview",
+        method: "askStart",
+        args: [request],
+        clientId: "overview-browser",
+      },
+      {
+        namespace: "overview",
+        method: "askCancel",
+        args: ["overview-1"],
+        clientId: "overview-browser",
+      },
+    ]);
+  });
+
   it("supports an absolute server URL and bearer token for the Electron shell", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -294,6 +348,8 @@ describe("browser API", () => {
     expect(api.transport?.supports("features", "scan")).toBe(true);
     expect(api.transport?.supports("features", "subscribe")).toBe(true);
     expect(api.transport?.supports("system", "usage")).toBe(true);
+    expect(api.transport?.supports("overview", "regenerate")).toBe(true);
+    expect(api.transport?.supports("overview", "askStart")).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

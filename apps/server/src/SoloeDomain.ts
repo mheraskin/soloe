@@ -1,5 +1,6 @@
 import path from "node:path";
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import type {
   RuntimeReplaySnapshot,
   RuntimeTerminalStart,
@@ -19,6 +20,11 @@ import type {
 } from "../../../shared/types/sessions.js";
 import type { SettingsUpdate } from "../../../shared/types/settings.js";
 import type { SystemUsageRequest } from "../../../shared/types/system.js";
+import type {
+  AskFollowUpChunk,
+  AskFollowUpRequest,
+  GetOverviewRequest,
+} from "../../../shared/types/overview.js";
 import type {
   ProjectDraft,
   ProjectId,
@@ -72,6 +78,10 @@ import {
   FeatureService,
   GitService,
   NotesStore,
+  SessionTranscriptReader,
+  SummaryCacheStore,
+  WorktreeFactsCollector,
+  WorktreeOverviewService,
   WorktreeFileIndex,
   type FileIndexScope,
 } from "@soloe/domain";
@@ -85,6 +95,7 @@ import { ProjectStore } from "../../../electron/projects/ProjectStore.js";
 import { AgentObserverManager } from "../../../electron/agents/AgentObserverManager.js";
 import { AgentObserverStore } from "../../../electron/agents/AgentObserverStore.js";
 import { AgentRuntimeManager } from "../../../electron/agents/AgentRuntimeManager.js";
+import { BackgroundAgentExecution } from "../../../electron/agents/BackgroundAgentExecution.js";
 import { ProcessTreeUsageSampler } from "@soloe/runtime";
 import { BackendUsageObservation } from "./BackendUsageObservation.js";
 
@@ -110,6 +121,10 @@ export interface SoloeDomainOptions {
   runtime: RuntimeControl;
   featureArtifacts?: FeatureArtifactObservation;
   usageObservation?: Pick<BackendUsageObservation, "observe" | "reset">;
+  overviewService?: Pick<
+    WorktreeOverviewService,
+    "getOverview" | "regenerate" | "streamFollowUp"
+  >;
 }
 
 export interface SoloeDomain {
@@ -117,6 +132,15 @@ export interface SoloeDomain {
     event: "event",
     listener: (name: string, payload: unknown) => void,
   ): this;
+  on(
+    event: "targeted-event",
+    listener: (clientId: string, name: string, payload: unknown) => void,
+  ): this;
+}
+
+interface ActiveOverviewStream {
+  clientId: string;
+  controller: AbortController;
 }
 
 export class SoloeDomain extends EventEmitter {
@@ -138,6 +162,12 @@ export class SoloeDomain extends EventEmitter {
   >();
   private readonly observerStore: AgentObserverStore;
   private readonly usage: Pick<BackendUsageObservation, "observe" | "reset">;
+  private readonly backgroundAgentExecution: BackgroundAgentExecution;
+  private readonly overview: Pick<
+    WorktreeOverviewService,
+    "getOverview" | "regenerate" | "streamFollowUp"
+  >;
+  private readonly overviewStreams = new Map<string, ActiveOverviewStream>();
   private observer!: AgentObserverManager;
   private workerRuntime!: AgentRuntimeManager;
   private readonly commandBuilder = new SessionCommandBuilder(
@@ -175,6 +205,30 @@ export class SoloeDomain extends EventEmitter {
     this.featureArtifacts =
       options.featureArtifacts ?? new FeatureArtifactObservation();
     this.features = new FeatureService(this.featureArtifacts);
+    this.backgroundAgentExecution = new BackgroundAgentExecution();
+    const backendPlacement = detectBackendPlacement();
+    this.overview = options.overviewService ?? new WorktreeOverviewService({
+      reader: new SessionTranscriptReader({
+        useWslHostBridge: process.platform === "win32",
+      }),
+      facts: new WorktreeFactsCollector({
+        getGitBinary: async () => (await this.settings.get()).binaries.git,
+        useWslHostBridge: process.platform === "win32",
+      }),
+      cache: new SummaryCacheStore(
+        path.join(options.dataDirectory, "overview-cache.json"),
+      ),
+      getSettings: () => this.settings.get(),
+      execution: this.backgroundAgentExecution,
+      ...(backendPlacement === "wsl"
+        ? {
+            resolveExecutionScope: (scope) => ({
+              cwd: scope.cwd,
+              runMode: "linux" as const,
+            }),
+          }
+        : {}),
+    });
     const serverUsage = new ProcessTreeUsageSampler();
     this.usage =
       options.usageObservation ??
@@ -183,7 +237,7 @@ export class SoloeDomain extends EventEmitter {
         ...(options.runtime.usage
           ? { collectRuntimeUsage: () => options.runtime.usage!() }
           : {}),
-        backendPlacement: detectBackendPlacement(),
+        backendPlacement,
       });
     this.git.onChange((event) => {
       this.emit("event", "git.change", event);
@@ -231,6 +285,10 @@ export class SoloeDomain extends EventEmitter {
 
   async dispose(): Promise<void> {
     this.usage.reset();
+    for (const stream of this.overviewStreams.values()) {
+      stream.controller.abort("application server stopping");
+    }
+    this.overviewStreams.clear();
     for (
       const clientId of new Set([
         ...this.gitObservationReleases.keys(),
@@ -243,6 +301,7 @@ export class SoloeDomain extends EventEmitter {
     this.git.dispose();
     this.files.dispose();
     await this.workerRuntime.dispose();
+    await this.backgroundAgentExecution.dispose();
     await this.observerStore.dispose();
   }
 
@@ -283,6 +342,13 @@ export class SoloeDomain extends EventEmitter {
           message,
         );
       }
+    }
+    if (call.namespace === "overview") {
+      return this.overviewCall(
+        call.method,
+        call.args,
+        call.clientId,
+      );
     }
     if (call.namespace === "observer") {
       return this.observerCall(call.method, call.args);
@@ -327,6 +393,144 @@ export class SoloeDomain extends EventEmitter {
     throw unsupportedRpc("system", method);
   }
 
+  private async overviewCall(
+    method: string,
+    args: unknown[],
+    clientId?: string,
+  ): Promise<unknown> {
+    if (method === "get" || method === "regenerate") {
+      requireArgumentCount(`overview.${method}`, args, 1);
+      const request = validateOverviewRequest(args[0], false);
+      await this.authorizeOverviewRequest(request);
+      return method === "get"
+        ? this.overview.getOverview(request)
+        : this.overview.regenerate(request);
+    }
+    if (method === "askStart") {
+      requireArgumentCount("overview.askStart", args, 1);
+      if (!clientId) {
+        throw new RpcError(
+          "client_identity_required",
+          "Overview streaming requires a client identity",
+        );
+      }
+      const request = validateOverviewRequest(args[0], true);
+      await this.authorizeOverviewRequest(request);
+      const requestId = randomUUID();
+      const controller = new AbortController();
+      this.overviewStreams.set(requestId, { clientId, controller });
+      void this.runOverviewStream(requestId, clientId, request, controller);
+      return { requestId };
+    }
+    if (method === "askCancel") {
+      requireArgumentCount("overview.askCancel", args, 1);
+      if (!clientId) {
+        throw new RpcError(
+          "client_identity_required",
+          "Overview cancellation requires a client identity",
+        );
+      }
+      const requestId = requireRpcString(
+        args[0],
+        "requestId",
+        128,
+        "invalid_overview_request",
+      );
+      const stream = this.overviewStreams.get(requestId);
+      if (stream?.clientId === clientId) {
+        stream.controller.abort("request cancelled");
+        this.overviewStreams.delete(requestId);
+      }
+      return true;
+    }
+    throw unsupportedRpc("overview", method);
+  }
+
+  private async authorizeOverviewRequest(
+    request: GetOverviewRequest,
+  ): Promise<void> {
+    const authorized = await this.isAuthorizedWorktree({
+      cwd: request.worktreeCwd,
+      runMode: request.runMode ?? hostPlatform(),
+      wslDistro: request.wslDistro,
+    });
+    if (!authorized) {
+      throw new RpcError(
+        "worktree_not_authorized",
+        "Overview access is limited to registered projects and Sessions",
+      );
+    }
+    if (
+      request.runMode === "wsl" &&
+      process.env.WSL_DISTRO_NAME &&
+      request.wslDistro?.toLowerCase() !==
+        process.env.WSL_DISTRO_NAME.toLowerCase()
+    ) {
+      throw new RpcError(
+        "invalid_wsl_distribution",
+        "The requested WSL distribution does not match the application server",
+      );
+    }
+  }
+
+  private async runOverviewStream(
+    requestId: string,
+    clientId: string,
+    request: AskFollowUpRequest,
+    controller: AbortController,
+  ): Promise<void> {
+    try {
+      for await (
+        const chunk of this.overview.streamFollowUp(
+          request,
+          controller.signal,
+        )
+      ) {
+        if (controller.signal.aborted) return;
+        this.emitOverviewChunk(clientId, { requestId, ...chunk });
+        if (chunk.type === "done" || chunk.type === "error") return;
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      this.emitOverviewChunk(clientId, {
+        requestId,
+        type: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      const active = this.overviewStreams.get(requestId);
+      if (active?.controller === controller) {
+        this.overviewStreams.delete(requestId);
+      }
+    }
+  }
+
+  private cancelOverviewStreams(
+    clientId: string,
+    reason: string,
+    notify = false,
+  ): void {
+    for (const [requestId, stream] of this.overviewStreams) {
+      if (stream.clientId !== clientId) continue;
+      if (notify) {
+        this.emitOverviewChunk(clientId, {
+          requestId,
+          type: "error",
+          error: reason,
+        });
+      }
+      stream.controller.abort(reason);
+      this.overviewStreams.delete(requestId);
+    }
+  }
+
+  private emitOverviewChunk(
+    clientId: string,
+    chunk: AskFollowUpChunk,
+  ): void {
+    this.emit("targeted-event", clientId, "overview.chunk", chunk);
+  }
+
   releaseClient(clientId: string): void {
     const gitReleases = this.gitObservationReleases.get(clientId);
     if (gitReleases) {
@@ -338,6 +542,15 @@ export class SoloeDomain extends EventEmitter {
       this.featureSubscriptionReleases.delete(clientId);
       for (const release of featureReleases.values()) release();
     }
+    this.cancelOverviewStreams(clientId, "client disconnected");
+  }
+
+  recoverClient(clientId: string): void {
+    this.cancelOverviewStreams(
+      clientId,
+      "Overview stream interrupted by reconnect; ask the question again",
+      true,
+    );
   }
 
   private async gitCall(
@@ -1134,6 +1347,221 @@ function validateSystemUsageRequest(value: unknown): SystemUsageRequest {
     );
   }
   return request as SystemUsageRequest;
+}
+
+function validateOverviewRequest(
+  value: unknown,
+  followUp: false,
+): GetOverviewRequest;
+function validateOverviewRequest(
+  value: unknown,
+  followUp: true,
+): AskFollowUpRequest;
+function validateOverviewRequest(
+  value: unknown,
+  followUp: boolean,
+): GetOverviewRequest | AskFollowUpRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RpcError(
+      "invalid_overview_request",
+      "Overview request must be an object",
+    );
+  }
+  const request = value as Record<string, unknown>;
+  const allowed = new Set([
+    "worktreeCwd",
+    "runMode",
+    "wslDistro",
+    "baseBranch",
+    "sessions",
+    ...(followUp ? ["message", "history"] : []),
+  ]);
+  if (Object.keys(request).some((key) => !allowed.has(key))) {
+    throw new RpcError(
+      "invalid_overview_request",
+      "Overview request contains an unknown field",
+    );
+  }
+  const worktreeCwd = requireRpcString(
+    request.worktreeCwd,
+    "worktreeCwd",
+    4_096,
+    "invalid_overview_request",
+  );
+  if (!path.posix.isAbsolute(worktreeCwd) && !path.win32.isAbsolute(worktreeCwd)) {
+    throw new RpcError(
+      "invalid_overview_request",
+      "worktreeCwd must be an absolute path",
+    );
+  }
+  const runMode = request.runMode;
+  if (
+    runMode !== undefined &&
+    runMode !== "windows" &&
+    runMode !== "linux" &&
+    runMode !== "wsl"
+  ) {
+    throw new RpcError(
+      "invalid_overview_request",
+      "runMode must be windows, linux, or wsl",
+    );
+  }
+  const wslDistro =
+    request.wslDistro === undefined
+      ? undefined
+      : requireRpcString(
+          request.wslDistro,
+          "wslDistro",
+          128,
+          "invalid_overview_request",
+        );
+  if (runMode === "wsl" && !wslDistro) {
+    throw new RpcError(
+      "invalid_wsl_distribution",
+      "wslDistro is required for a WSL Overview",
+    );
+  }
+  if (runMode !== "wsl" && wslDistro !== undefined) {
+    throw new RpcError(
+      "invalid_overview_request",
+      "wslDistro is only valid when runMode is wsl",
+    );
+  }
+  const baseBranch =
+    request.baseBranch === undefined
+      ? undefined
+      : requireRpcString(
+          request.baseBranch,
+          "baseBranch",
+          4_096,
+          "invalid_overview_request",
+        );
+  if (baseBranch && (baseBranch.startsWith("-") || /[\0\r\n]/u.test(baseBranch))) {
+    throw new RpcError(
+      "invalid_overview_request",
+      "baseBranch is not a safe Git revision",
+    );
+  }
+  let sessions: GetOverviewRequest["sessions"];
+  if (request.sessions !== undefined) {
+    if (!Array.isArray(request.sessions) || request.sessions.length > 64) {
+      throw new RpcError(
+        "invalid_overview_request",
+        "sessions must contain at most 64 entries",
+      );
+    }
+    sessions = request.sessions.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new RpcError(
+          "invalid_overview_request",
+          "each Overview session must be an object",
+        );
+      }
+      const session = entry as Record<string, unknown>;
+      if (
+        Object.keys(session).some(
+          (key) => key !== "transcriptPath" && key !== "name",
+        )
+      ) {
+        throw new RpcError(
+          "invalid_overview_request",
+          "Overview session contains an unknown field",
+        );
+      }
+      const transcriptPath = requireRpcString(
+        session.transcriptPath,
+        "transcriptPath",
+        4_096,
+        "invalid_overview_request",
+      );
+      if (
+        !path.posix.isAbsolute(transcriptPath) &&
+        !path.win32.isAbsolute(transcriptPath)
+      ) {
+        throw new RpcError(
+          "invalid_overview_request",
+          "transcriptPath must be absolute",
+        );
+      }
+      return {
+        transcriptPath,
+        name: requireRpcString(
+          session.name,
+          "session name",
+          256,
+          "invalid_overview_request",
+        ),
+      };
+    });
+  }
+  const common: GetOverviewRequest = {
+    worktreeCwd,
+    ...(runMode ? { runMode } : {}),
+    ...(wslDistro ? { wslDistro } : {}),
+    ...(baseBranch ? { baseBranch } : {}),
+    ...(sessions ? { sessions } : {}),
+  };
+  if (!followUp) return common;
+
+  const message = requireRpcString(
+    request.message,
+    "message",
+    32_768,
+    "invalid_overview_request",
+  );
+  if (!Array.isArray(request.history) || request.history.length > 50) {
+    throw new RpcError(
+      "invalid_overview_request",
+      "history must contain at most 50 messages",
+    );
+  }
+  const history = request.history.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new RpcError(
+        "invalid_overview_request",
+        "each history entry must be an object",
+      );
+    }
+    const messageEntry = entry as Record<string, unknown>;
+    if (
+      Object.keys(messageEntry).some(
+        (key) => key !== "role" && key !== "content",
+      ) ||
+      (messageEntry.role !== "user" && messageEntry.role !== "assistant")
+    ) {
+      throw new RpcError(
+        "invalid_overview_request",
+        "history roles must be user or assistant",
+      );
+    }
+    return {
+      role: messageEntry.role as "user" | "assistant",
+      content: requireRpcString(
+        messageEntry.content,
+        "history content",
+        32_768,
+        "invalid_overview_request",
+      ),
+    };
+  });
+  return { ...common, message, history };
+}
+
+function requireRpcString(
+  value: unknown,
+  name: string,
+  maximum: number,
+  code: string,
+): string {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > maximum ||
+    value.includes("\0")
+  ) {
+    throw new RpcError(code, `${name} must be a non-empty bounded string`);
+  }
+  return value;
 }
 
 function requireArgumentCount(

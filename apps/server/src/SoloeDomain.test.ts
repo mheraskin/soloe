@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FeatureArtifactObservation } from "@soloe/domain";
 import { hostPlatform } from "../../../shared/platform.js";
+import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 describe("SoloeDomain", () => {
@@ -116,6 +117,200 @@ describe("SoloeDomain", () => {
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("serves authorized Overview reads and client-scoped stream chunks", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-overview-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const overview = overviewFixture(directory);
+    const overviewService = {
+      getOverview: vi.fn(async () => overview),
+      regenerate: vi.fn(async () => ({ ...overview, status: "fresh" as const })),
+      streamFollowUp: vi.fn(async function* () {
+        yield { type: "delta" as const, text: "answer" };
+        yield { type: "done" as const };
+      }),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      overviewService,
+    });
+    const targeted: Array<{
+      clientId: string;
+      event: string;
+      payload: unknown;
+    }> = [];
+    domain.on("targeted-event", (clientId, event, payload) => {
+      targeted.push({ clientId, event, payload });
+    });
+
+    try {
+      await domain.init();
+      await domain.invoke({
+        namespace: "projects",
+        method: "create",
+        args: [{ name: "Overview project", path: directory }],
+      });
+      const request = {
+        worktreeCwd: directory,
+        runMode: hostPlatform(),
+        sessions: [],
+      };
+
+      await expect(
+        domain.invoke({
+          namespace: "overview",
+          method: "get",
+          args: [request],
+        }),
+      ).resolves.toMatchObject({ status: "cached" });
+      const started = (await domain.invoke({
+        namespace: "overview",
+        method: "askStart",
+        args: [{ ...request, message: "What changed?", history: [] }],
+        clientId: "overview-client",
+      })) as { requestId: string };
+
+      await vi.waitFor(() => expect(targeted).toHaveLength(2));
+      expect(targeted).toEqual([
+        {
+          clientId: "overview-client",
+          event: "overview.chunk",
+          payload: {
+            requestId: started.requestId,
+            type: "delta",
+            text: "answer",
+          },
+        },
+        {
+          clientId: "overview-client",
+          event: "overview.chunk",
+          payload: { requestId: started.requestId, type: "done" },
+        },
+      ]);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("cancels an interrupted Overview stream and rejects unsafe requests", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-overview-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "soloe-domain-outside-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    let aborted = false;
+    const overviewService = {
+      getOverview: vi.fn(async () => overviewFixture(directory)),
+      regenerate: vi.fn(async () => overviewFixture(directory)),
+      streamFollowUp: vi.fn(async function* (
+        _request: unknown,
+        signal?: AbortSignal,
+      ) {
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener("abort", () => {
+            aborted = true;
+            resolve();
+          }, { once: true });
+        });
+      }),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      overviewService,
+    });
+    const targeted = vi.fn();
+    domain.on("targeted-event", targeted);
+
+    try {
+      await domain.init();
+      await domain.invoke({
+        namespace: "projects",
+        method: "create",
+        args: [{ name: "Overview project", path: directory }],
+      });
+      const request = {
+        worktreeCwd: directory,
+        runMode: hostPlatform(),
+        sessions: [],
+        message: "Continue",
+        history: [],
+      };
+      const started = (await domain.invoke({
+        namespace: "overview",
+        method: "askStart",
+        args: [request],
+        clientId: "stream-owner",
+      })) as { requestId: string };
+
+      await domain.invoke({
+        namespace: "overview",
+        method: "askCancel",
+        args: [started.requestId],
+        clientId: "different-client",
+      });
+      expect(aborted).toBe(false);
+
+      domain.recoverClient("stream-owner");
+      await vi.waitFor(() => expect(aborted).toBe(true));
+      expect(targeted).toHaveBeenCalledWith(
+        "stream-owner",
+        "overview.chunk",
+        expect.objectContaining({
+          requestId: started.requestId,
+          type: "error",
+        }),
+      );
+
+      await expect(
+        domain.invoke({
+          namespace: "overview",
+          method: "get",
+          args: [{ worktreeCwd: outside, runMode: hostPlatform() }],
+        }),
+      ).rejects.toMatchObject({ code: "worktree_not_authorized" });
+      await expect(
+        domain.invoke({
+          namespace: "overview",
+          method: "get",
+          args: [{
+            worktreeCwd: directory,
+            runMode: hostPlatform(),
+            sessions: [{
+              transcriptPath: "../secret.jsonl",
+              name: "Traversal",
+            }],
+          }],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_overview_request" });
+      await expect(
+        domain.invoke({
+          namespace: "overview",
+          method: "askStart",
+          args: [{ ...request, message: "x".repeat(32_769) }],
+          clientId: "stream-owner",
+        }),
+      ).rejects.toMatchObject({ code: "invalid_overview_request" });
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
     }
   });
 
@@ -1174,6 +1369,42 @@ describe("SoloeDomain", () => {
     }
   });
 });
+
+function overviewFixture(worktreeCwd: string): WorktreeOverview {
+  return {
+    worktreeCwd,
+    status: "cached",
+    text: "Cached overview",
+    generatedAt: "2026-07-31T12:00:00.000Z",
+    generatedBy: { provider: "codex", model: "gpt-5.4-mini" },
+    watermark: null,
+    sources: {
+      sessionCount: 0,
+      totalTurns: 0,
+      providers: [],
+      approxInputTokens: 0,
+    },
+    facts: {
+      cwd: worktreeCwd,
+      branch: "main",
+      head: "a".repeat(40),
+      baseBranch: "main",
+      baseOid: "a".repeat(40),
+      commitsAhead: 0,
+      commitsBehind: 0,
+      commitsAheadShas: [],
+      pushedAhead: true,
+      mergedIntoBase: true,
+      dirtyFiles: [],
+      dirtyHash: "clean",
+      evidenceFingerprint: "evidence",
+      completeness: "complete",
+      diagnostics: [],
+      workingDiff: "",
+      recentCommits: [],
+    },
+  };
+}
 
 const NOTE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
