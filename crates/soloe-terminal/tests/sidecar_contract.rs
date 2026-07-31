@@ -133,8 +133,36 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
     assert_eq!(started["value"]["terminalId"], "terminal-contract");
     assert!(started["value"]["pid"].as_u64().is_some_and(|pid| pid > 0));
 
+    #[cfg(windows)]
+    {
+        let cursor_query = sidecar.receive("PowerShell cursor-position query");
+        assert_eq!(cursor_query["event"], "output");
+        assert_eq!(
+            BASE64
+                .decode(
+                    cursor_query["payload"]["dataBase64"]
+                        .as_str()
+                        .expect("cursor query base64")
+                )
+                .expect("decode cursor query"),
+            b"\x1b[6n"
+        );
+        sidecar.send(json!({
+            "id": 3,
+            "method": "input",
+            "params": {
+                "terminalId": "terminal-contract",
+                "dataBase64": BASE64.encode(b"\x1b[1;1R")
+            }
+        }));
+        assert_eq!(sidecar.response(3)["ok"], true);
+    }
+    #[cfg(windows)]
+    let input_request_id = 4;
+    #[cfg(not(windows))]
+    let input_request_id = 3;
     sidecar.send(json!({
-        "id": 3,
+        "id": input_request_id,
         "method": "input",
         "params": {
             "terminalId": "terminal-contract",
@@ -148,7 +176,7 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
     let mut saw_exit = false;
     while !saw_exit {
         let message = sidecar.receive("terminal input response, output, or exit");
-        if message.get("id").and_then(Value::as_u64) == Some(3) {
+        if message.get("id").and_then(Value::as_u64) == Some(input_request_id) {
             assert_eq!(message["ok"], true);
             saw_input_response = true;
             continue;
