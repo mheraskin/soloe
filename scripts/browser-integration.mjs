@@ -1047,6 +1047,18 @@ async function runMobileWorkspaceWorkflow(input) {
     'mobile terminal to fit its viewport'
   );
 
+  const activeIndicatorIsCentered = () => {
+    const indicator = document.querySelector('.mobile-page-indicator');
+    const activeDot = indicator?.querySelector('button.active span');
+    if (!indicator || !activeDot) return false;
+    const indicatorRect = indicator.getBoundingClientRect();
+    const activeDotRect = activeDot.getBoundingClientRect();
+    return Math.abs(
+      (activeDotRect.left + activeDotRect.width / 2)
+        - (indicatorRect.left + indicatorRect.width / 2)
+    ) <= 1;
+  };
+
   const files = document.querySelector('.mobile-pane-destination[aria-label="Files"]');
   assert(files, 'Mobile Files destination is missing');
   files.click();
@@ -1057,6 +1069,42 @@ async function runMobileWorkspaceWorkflow(input) {
       && visible(document.querySelector('.mobile-files-surface')),
     10_000,
     'mobile Files page'
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const terminalSurface = document.querySelector('.mobile-workspace-terminal');
+  const paneSurface = document.querySelector('.mobile-workspace-pane');
+  const terminalRenderer = document.querySelector(
+    '.terminal-surface[data-terminal-pane-role="full"] .xterm'
+  );
+  assert(terminalSurface && paneSurface && terminalRenderer, 'Mobile workspace surfaces are missing');
+  const terminalSurfaceRect = terminalSurface.getBoundingClientRect();
+  const paneSurfaceRect = paneSurface.getBoundingClientRect();
+  const terminalRendererRect = terminalRenderer.getBoundingClientRect();
+  assert(
+    Math.abs(terminalSurfaceRect.left - paneSurfaceRect.left) <= 1
+      && Math.abs(terminalSurfaceRect.right - paneSurfaceRect.right) <= 1
+      && terminalRendererRect.width > 0
+      && terminalRendererRect.right > 0,
+    'Mobile pane replaced the terminal with a side workspace instead of overlaying it'
+  );
+
+  files.click();
+  await waitUntil(
+    () => mode() === 'terminal' && files.getAttribute('aria-pressed') === 'false',
+    5_000,
+    'selected mobile Files pane to toggle back to terminal'
+  );
+  await waitUntil(
+    terminalFitsViewport,
+    5_000,
+    'mobile terminal to remain rendered after closing a pane'
+  );
+
+  files.click();
+  await waitUntil(
+    () => mode() === 'pane' && files.getAttribute('aria-pressed') === 'true',
+    5_000,
+    'mobile Files pane to reopen'
   );
 
   const notes = document.querySelector('.mobile-pane-destination[aria-label="Notes"]');
@@ -1109,11 +1157,21 @@ async function runMobileWorkspaceWorkflow(input) {
   };
   swipe(120, 310, 1);
   await waitUntil(() => page() === 'navigation', 5_000, 'swipe to session list');
+  await waitUntil(
+    activeIndicatorIsCentered,
+    1_000,
+    'active Sessions dot to settle in the center'
+  );
   swipe(310, 90, 2);
   await waitUntil(
     () => page() === 'workspace' && mode() === 'terminal',
     5_000,
     'swipe back to workspace'
+  );
+  await waitUntil(
+    activeIndicatorIsCentered,
+    1_000,
+    'active Workspace dot to settle in the center'
   );
 
   if ('serviceWorker' in navigator) {
@@ -1129,6 +1187,9 @@ async function runMobileWorkspaceWorkflow(input) {
     sharedTitlebarHidden: true,
     inspectorRemoved: true,
     singlePaneReplacement: true,
+    paneOverlay: true,
+    selectedPaneToggle: true,
+    centeredActiveIndicator: true,
     twoPageNavigation: true,
     swipeNavigation: true,
     serviceWorkerReady: 'serviceWorker' in navigator

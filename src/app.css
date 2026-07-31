@@ -311,22 +311,26 @@
     inset: 0;
     min-width: 0;
     overflow: hidden;
-    pointer-events: none;
-    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .mobile-workspace-terminal {
-    transform: translate3d(-100%, 0, 0);
+    z-index: 1;
+    pointer-events: auto;
   }
 
   .mobile-workspace-pane {
-    transform: translate3d(100%, 0, 0);
+    z-index: 2;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease-in, visibility 0s linear 180ms;
   }
 
-  .mobile-workspace-surface.active {
-    z-index: 1;
-    transform: translate3d(0, 0, 0);
+  .mobile-workspace-pane.active {
+    visibility: visible;
+    opacity: 1;
     pointer-events: auto;
+    transition: opacity 180ms ease-out;
   }
 
   .mobile-workspace-navigation .app-sidebar {
@@ -509,21 +513,25 @@
   }
 
   .mobile-page-indicator {
-    display: flex;
+    position: relative;
+    display: block;
+    width: 5rem;
     height: 1.25rem;
-    align-items: center;
-    justify-content: center;
-    gap: 0.125rem;
   }
 
   .mobile-page-indicator button {
-    display: inline-flex;
-    width: 2.25rem;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    display: flex;
+    width: 2.75rem;
     height: 1.25rem;
     align-items: center;
     justify-content: center;
     border: 0;
     background: transparent;
+    transform: translateX(-50%);
+    transition: transform 180ms ease-out;
   }
 
   .mobile-page-indicator span {
@@ -544,6 +552,21 @@
     background: var(--primary);
   }
 
+  .mobile-page-indicator button.active {
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .mobile-page-indicator[data-page='navigation']
+    button[data-indicator-page='workspace'] {
+    transform: translateX(calc(-50% + 1.5rem));
+  }
+
+  .mobile-page-indicator[data-page='workspace']
+    button[data-indicator-page='navigation'] {
+    transform: translateX(calc(-50% - 1.5rem));
+  }
+
   .mobile-page-indicator button:disabled {
     opacity: 0.45;
   }
@@ -560,6 +583,7 @@
     .mobile-workspace-track,
     .mobile-workspace-surface,
     .mobile-pane-destination,
+    .mobile-page-indicator button,
     .mobile-page-indicator span {
       transition: none;
     }
