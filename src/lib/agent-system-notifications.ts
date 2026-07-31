@@ -13,7 +13,7 @@ const stateLabels = {
   waiting_for_input: 'Input needed',
   waiting_for_approval: 'Approval needed',
   usage_limited: 'Usage limit reached',
-  completed: 'Completed',
+  completed: 'Tab finished working',
   failed: 'Failed'
 } satisfies Record<NotifyState, string>;
 
@@ -37,9 +37,7 @@ export function agentSystemNotificationContent(
   ].filter(Boolean).join(' · ');
   return {
     title: agentNotificationStateLabel(toast.state),
-    body: toast.reason === agentNotificationStateLabel(toast.state).toLowerCase()
-      ? context
-      : `${context}\n${toast.reason}`,
+    body: context,
     tag: `soloe-agent-${toast.sessionId}`
   };
 }
