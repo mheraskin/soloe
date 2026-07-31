@@ -89,8 +89,12 @@ fn supervises_a_pty_and_flushes_ordered_output_before_exit() {
             .as_slice(),
     );
     #[cfg(windows)]
-    let terminal_env =
-        json!({ "TERM": "xterm-256color", "LANG": "C.UTF-8", "SystemRoot": system_root });
+    let terminal_env = {
+        let mut env = std::env::vars().collect::<std::collections::BTreeMap<_, _>>();
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
+        env.insert("LANG".to_string(), "C.UTF-8".to_string());
+        env
+    };
     #[cfg(not(windows))]
     let (shell, args, input) = (
         "/bin/bash",
