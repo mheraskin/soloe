@@ -3,7 +3,6 @@
     AlertCircle,
     Check,
     GitBranch,
-    GitCommitHorizontal,
     Loader2,
     Search,
     Tag
@@ -23,11 +22,11 @@
   import { ipc } from '../lib/ipc';
   import { git } from '../stores/git.svelte';
   import { reportError } from '../stores/toast.svelte';
-  import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Popover from '$lib/components/ui/popover';
+  import GitIdentityLabel from './GitIdentityLabel.svelte';
 
   let { cwd, runMode, wslDistro }: {
     cwd: string;
@@ -226,16 +225,11 @@
             class={`min-w-0 gap-1.5 ${status?.dirty ? 'text-foreground' : ''}`}
             {title}
           >
-            {#if status?.detached}
-              <GitCommitHorizontal />
-            {:else}
-              <GitBranch />
-            {/if}
-            <span class="max-w-[110px] truncate font-medium">{worktreeName}</span>
-            <span class="text-muted-foreground/50">/</span>
-            <span class={`max-w-[130px] truncate ${status?.detached ? 'font-mono' : ''}`}>
-              {label}
-            </span>
+            <GitIdentityLabel
+              branch={label}
+              worktree={worktreeName}
+              detached={status?.detached}
+            />
             {#if badge}
               <span class={`text-[10px] ${status?.dirty ? 'text-amber-500' : 'text-muted-foreground'}`}>
                 {badge}
@@ -260,14 +254,13 @@
         class="mobile-branch-popover flex h-[min(34rem,calc(100vh-4rem))] w-[min(46rem,calc(100vw-2rem))] min-h-0 flex-col overflow-hidden p-0"
       >
         <div class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-          <GitBranch class="size-4 text-muted-foreground" />
-          <div class="min-w-0 flex-1">
-            <div class="truncate text-xs font-medium">{worktreeName}</div>
-            <div class="truncate font-mono text-[10px] text-muted-foreground">
-              {historyStatus?.repoPath ?? status?.repoPath ?? cwd}
-            </div>
-          </div>
-          <Badge variant="outline" class="shrink-0 font-mono text-[10px]">{label}</Badge>
+          <GitIdentityLabel
+            branch={label}
+            worktree={worktreeName}
+            path={historyStatus?.repoPath ?? status?.repoPath ?? cwd}
+            detached={status?.detached}
+            variant="detail"
+          />
         </div>
 
         <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-border p-2">

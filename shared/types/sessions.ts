@@ -125,6 +125,8 @@ export type SessionStatus = 'stopped' | 'starting' | 'running' | 'exited' | 'err
 export interface SessionRuntimeState {
   sessionId: SessionId;
   runtimeMode?: SessionRuntimeMode;
+  /** Current Terminal directory; the Session's `cwd` remains its Worktree. */
+  cwd?: string;
   observedState?: AgentObservedState;
   status: SessionStatus;
   terminalId: string | null;

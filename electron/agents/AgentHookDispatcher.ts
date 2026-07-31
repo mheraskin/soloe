@@ -19,6 +19,7 @@ export interface AgentHookDispatcherOptions {
   sessionStore: SessionStore;
   autoRename?: AutoRenameService;
   onSessionChange?: (session: Session) => void;
+  onLocation?: (sessionId: SessionId, cwd: string) => void | Promise<void>;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -32,15 +33,37 @@ export class AgentHookDispatcher {
   // SessionStart so we cover both fresh sessions and `/resume` restarts —
   // matches the user spec of "first message in session and on /resume".
   private readonly pendingAutoRename = new Set<SessionId>();
+  private readonly reportedCwds = new Map<SessionId, string>();
 
   constructor(private readonly opts: AgentHookDispatcherOptions) {}
 
   async dispatch(event: HookEvent): Promise<void> {
-    if (event.provider === 'claude_code') {
-      await this.dispatchClaude(event.soloeSessionId, event.payload);
-      return;
+    const hookEvent = hookEventName(event.payload);
+    await this.reportLocation(event.soloeSessionId, event.payload);
+    try {
+      if (event.provider === 'claude_code') {
+        await this.dispatchClaude(event.soloeSessionId, event.payload);
+        return;
+      }
+      await this.dispatchCodex(event.soloeSessionId, event.payload);
+    } finally {
+      if (hookEvent === 'SessionEnd') this.reportedCwds.delete(event.soloeSessionId);
     }
-    await this.dispatchCodex(event.soloeSessionId, event.payload);
+  }
+
+  private async reportLocation(
+    sessionId: SessionId,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    const cwd = stringField(payload, 'cwd')?.trim();
+    if (!cwd || cwd === this.reportedCwds.get(sessionId)) return;
+    this.reportedCwds.set(sessionId, cwd);
+    try {
+      await this.opts.onLocation?.(sessionId, cwd);
+    } catch (error) {
+      this.reportedCwds.delete(sessionId);
+      this.opts.log?.('terminal location dispatch failed', error);
+    }
   }
 
   async captureCodexThread(

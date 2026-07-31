@@ -252,7 +252,7 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
-  it('streams live runtime output to browser clients over WebSocket', async () => {
+  it('streams live runtime output and location to browser clients over WebSocket', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-events-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
@@ -284,16 +284,26 @@ describe('Soloe Server lifecycle', () => {
         new URL('/api/runtime/events?token=test-token', baseUrl).toString()
       );
       await opened(socket);
-      const message = nextMessage(socket);
-      process.emit('data', 'live output');
+      const message = nextEvent(socket, 'output');
+      const location = nextEvent(socket, 'location');
+      const data = '\x1b]7;file:///home/me/project/packages/app\x07';
+      process.emit('data', data);
 
       expect(await message).toEqual({
         event: 'output',
         payload: {
           terminalId: terminal.terminalId,
           sessionId: 'live-browser-session',
-          data: 'live output',
+          data,
           seq: 1
+        }
+      });
+      expect(await location).toEqual({
+        event: 'location',
+        payload: {
+          terminalId: terminal.terminalId,
+          sessionId: 'live-browser-session',
+          cwd: '/home/me/project/packages/app'
         }
       });
 

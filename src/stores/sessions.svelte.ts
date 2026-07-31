@@ -276,9 +276,9 @@ export class SessionsStore {
   lastSelectedByWorktree = $state<Record<string, SessionId>>(
     readLastSelectedMap(LAST_SELECTED_BY_WORKTREE_KEY)
   );
+  terminalCwds = $state<Record<SessionId, string>>({});
 
   private detachers: Array<() => void> = [];
-  private locationVersions = new Map<SessionId, number>();
   private startVersions = new Map<SessionId, number>();
   private sessionEventVersion = 0;
   private sessionMutations = new Map<
@@ -305,6 +305,12 @@ export class SessionsStore {
 
   terminalIdFor(id: SessionId): string | null {
     return this.runtime[id]?.terminalId ?? null;
+  }
+
+  currentCwdFor(id: SessionId): string | null {
+    return this.terminalCwds[id]
+      ?? this.sessions.find((session) => session.id === id)?.cwd
+      ?? null;
   }
 
   observationFor(id: string): ObservedAgentSnapshot | null {
@@ -369,6 +375,16 @@ export class SessionsStore {
       this.runtime = this.runtimeEventVersion === runtimeVersion
         ? next
         : { ...next, ...this.runtime };
+      const fetchedTerminalCwds = Object.fromEntries(
+        running.flatMap((terminal) => terminal.cwd
+          ? [[terminal.sessionId, terminal.cwd] as const]
+          : [])
+      );
+      const runningSessionIds = new Set(running.map((terminal) => terminal.sessionId));
+      const liveTerminalCwds = Object.fromEntries(
+        Object.entries(this.terminalCwds).filter(([id]) => runningSessionIds.has(id))
+      );
+      this.terminalCwds = { ...fetchedTerminalCwds, ...liveTerminalCwds };
       const fetchedObserved = Object.fromEntries(observed.map((s) => [s.id, s]));
       this.observed = this.observerSnapshotVersion === snapshotVersion
         ? fetchedObserved
@@ -578,6 +594,7 @@ export class SessionsStore {
           merged.startedAt = new Date().toISOString();
         }
         this.runtime = { ...this.runtime, [e.sessionId]: merged };
+        if (e.status === 'starting') this.clearTerminalCwd(e.sessionId);
       })
     );
     this.detachers.push(
@@ -596,6 +613,7 @@ export class SessionsStore {
             signal: e.signal
           }
         };
+        this.clearTerminalCwd(e.sessionId);
       })
     );
     this.detachers.push(
@@ -733,26 +751,18 @@ export class SessionsStore {
     this.detachers = [];
   }
 
-  private async applyTerminalLocation(id: SessionId, cwd: string): Promise<void> {
+  private applyTerminalLocation(id: SessionId, cwd: string): void {
     const current = this.sessions.find((s) => s.id === id);
-    if (!current || sameWorktreePath(current.cwd, cwd, current.runMode)) return;
-    const version = (this.locationVersions.get(id) ?? 0) + 1;
-    this.locationVersions.set(id, version);
-    this.sessions = this.sessions.map((s) =>
-      s.id === id ? { ...s, cwd, lastBranch: undefined } : s
-    );
+    const next = cwd.trim();
+    if (!current || !next || this.terminalCwds[id] === next) return;
+    this.terminalCwds = { ...this.terminalCwds, [id]: next };
+  }
 
-    const status = await ipc.git.status({
-      cwd,
-      force: true,
-      ...(current.runMode ? { runMode: current.runMode } : {}),
-      ...(current.wslDistro ? { wslDistro: current.wslDistro } : {})
-    }).catch(() => null);
-    if (this.locationVersions.get(id) !== version) return;
-    const patch: SessionUpdate = { cwd, lastBranch: status?.branch ?? undefined };
-    const updated = await ipc.sessions.update(id, patch).catch(() => null);
-    if (!updated || this.locationVersions.get(id) !== version) return;
-    this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
+  private clearTerminalCwd(id: SessionId): void {
+    if (!(id in this.terminalCwds)) return;
+    const next = { ...this.terminalCwds };
+    delete next[id];
+    this.terminalCwds = next;
   }
 
   async create(draft: SessionDraft): Promise<Session> {
@@ -803,6 +813,7 @@ export class SessionsStore {
     const next = { ...this.runtime };
     delete next[id];
     this.runtime = next;
+    this.clearTerminalCwd(id);
     this.forgetLastSelectedId(id);
     if (this.selectedId === id) {
       if (nextSelectedId) this.select(nextSelectedId);
@@ -1088,6 +1099,7 @@ export class SessionsStore {
     // used when adding a companion to the split so the current pane keeps focus.
     if (opts.focus !== false) this.select(id);
     const previous = this.runtime[id];
+    this.clearTerminalCwd(id);
     const startVersion = (this.startVersions.get(id) ?? 0) + 1;
     this.startVersions.set(id, startVersion);
     this.runtime = {
@@ -1142,6 +1154,7 @@ export class SessionsStore {
   }
 
   async restart(id: SessionId): Promise<void> {
+    this.clearTerminalCwd(id);
     await ipc.terminal.restart(id);
   }
 

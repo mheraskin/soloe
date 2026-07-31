@@ -415,6 +415,17 @@ export class SoloeDomain extends EventEmitter {
       onSessionChange: (session) => {
         this.emit("event", "sessions.change", session);
       },
+      onLocation: async (sessionId, cwd) => {
+        const terminal = (await this.options.runtime.listRunning()).find(
+          (candidate) => candidate.sessionId === sessionId,
+        );
+        if (!terminal) return;
+        this.emit("event", "location", {
+          terminalId: terminal.terminalId,
+          sessionId,
+          cwd,
+        });
+      },
     });
     this.codexShellSnapshotWatcher = new CodexShellSnapshotWatcher({
       directory: codexShellSnapshotDirectory(),
@@ -1591,6 +1602,7 @@ export class SoloeDomain extends EventEmitter {
           status: "running",
           terminalId: terminal.terminalId,
           startedAt: terminal.startedAt,
+          cwd: terminal.cwd,
         }));
       case "replay":
         return this.options.runtime.replay(args[0] as string, args[1] as number | undefined);

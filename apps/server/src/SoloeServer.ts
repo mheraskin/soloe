@@ -168,7 +168,7 @@ export class SoloeServer {
       webSocket.once("close", () => this.releaseClientSocket(clientId));
       if (reconnected) this.options.clientReconnected?.(clientId);
     });
-    const runtimeListeners = ["output", "exit"].map((event) => {
+    const runtimeListeners = ["output", "exit", "location"].map((event) => {
       const listener = (payload: unknown) => this.publish(event, payload);
       runtimeClient.on(event, listener);
       return { event, listener };

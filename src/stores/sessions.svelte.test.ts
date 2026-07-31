@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from '@shared/types/sessions.js';
 import type {
   TerminalExitEvent,
+  TerminalLocationEvent,
   TerminalStartResult,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
@@ -15,6 +16,7 @@ const {
   terminalStart,
   terminalStatusListeners,
   terminalExitListeners,
+  terminalLocationListeners,
   inventoryOff,
   onWorktrees,
   projectGet,
@@ -49,6 +51,7 @@ const {
     terminalStart: vi.fn(),
     terminalStatusListeners: [] as Array<(event: TerminalStatusEvent) => void>,
     terminalExitListeners: [] as Array<(event: TerminalExitEvent) => void>,
+    terminalLocationListeners: [] as Array<(event: TerminalLocationEvent) => void>,
     inventoryOff: detachInventory,
     onWorktrees: vi.fn(() => detachInventory),
     projectGet: vi.fn(() => null as { path: string } | null),
@@ -89,7 +92,10 @@ vi.mock('../lib/ipc', () => ({
         terminalExitListeners.push(callback);
         return off;
       }),
-      onLocation: listener,
+      onLocation: vi.fn((callback: (event: TerminalLocationEvent) => void) => {
+        terminalLocationListeners.push(callback);
+        return off;
+      }),
       listRunning: terminalListRunning
     },
     observer: {
@@ -158,6 +164,7 @@ describe('SessionsStore', () => {
     terminalStart.mockReset();
     terminalStatusListeners.length = 0;
     terminalExitListeners.length = 0;
+    terminalLocationListeners.length = 0;
     off.mockClear();
     inventoryOff.mockClear();
     onWorktrees.mockClear();
@@ -335,6 +342,41 @@ describe('SessionsStore', () => {
       exitCode: 1
     });
     store.detach();
+  });
+
+  it('tracks the live Terminal cwd without changing its Worktree identity', () => {
+    const store = new SessionsStore();
+    store.sessions = [session({ cwd: '/repo/worktree' })];
+    store.attachListeners();
+
+    terminalLocationListeners[0]?.({
+      terminalId: 'terminal-1',
+      sessionId: 'session',
+      cwd: '/repo/worktree/packages/app'
+    });
+
+    expect(store.currentCwdFor('session')).toBe('/repo/worktree/packages/app');
+    expect(store.sessions[0]?.cwd).toBe('/repo/worktree');
+    store.detach();
+  });
+
+  it('restores the current Terminal cwd from the runtime snapshot', async () => {
+    sessionList.mockResolvedValueOnce([session({ cwd: '/repo/worktree' })]);
+    terminalListRunning.mockResolvedValueOnce([{
+      sessionId: 'session',
+      terminalId: 'terminal-1',
+      runtimeMode: 'tui',
+      status: 'running',
+      startedAt: '2026-07-31T12:00:00.000Z',
+      cwd: '/repo/worktree/packages/app'
+    }]);
+    const store = new SessionsStore();
+
+    await store.load();
+
+    expect(store.currentCwdFor('session')).toBe('/repo/worktree/packages/app');
+    expect(store.sessions[0]?.cwd).toBe('/repo/worktree');
+    sessionList.mockClear();
   });
 });
 

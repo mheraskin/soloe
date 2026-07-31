@@ -30,6 +30,7 @@
   let selected = $derived(sessions.selected);
   let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
   let observed = $derived(selected ? sessions.observationFor(selected.id) : null);
+  let currentCwd = $derived(selected ? sessions.currentCwdFor(selected.id) : null);
   let displayKind = $derived(selected ? displaySessionKind(selected, observed) : 'terminal');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
@@ -97,12 +98,12 @@
                 {...props}
                 class="block min-w-0 max-w-[min(32vw,30rem)] flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-[10px] text-muted-foreground [direction:rtl]"
               >
-                <bdi dir="ltr">{selected.cwd}</bdi>
+                <bdi dir="ltr">{currentCwd ?? selected.cwd}</bdi>
               </span>
             {/snippet}
           </Tooltip.Trigger>
           <Tooltip.Content class="max-w-[min(90vw,40rem)] break-all font-mono text-[11px]">
-            {selected.cwd}
+            {currentCwd ?? selected.cwd}
           </Tooltip.Content>
         </Tooltip.Root>
       </Tooltip.Provider>

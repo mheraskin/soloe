@@ -217,6 +217,52 @@ describe('Environment Runtime lifecycle', () => {
     }
   });
 
+  it('publishes and retains the current Terminal cwd from shell integration output', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const process = new FakeRuntimeProcess();
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => process }
+    });
+
+    try {
+      await host.listen();
+      const client = await RuntimeClient.connect(endpoint);
+      const started = await client.start({
+        sessionId: 'session-1',
+        spec: {
+          file: 'test-shell',
+          args: [],
+          cwd: directory,
+          env: {}
+        },
+        cols: 100,
+        rows: 30
+      });
+      const location = new Promise((resolve) => client.once('location', resolve));
+
+      process.emit('data', '\x1b');
+      process.emit('data', ']7;file:///home/me/project/packages/app\x07');
+
+      await expect(location).resolves.toEqual({
+        terminalId: started.terminalId,
+        sessionId: 'session-1',
+        cwd: '/home/me/project/packages/app'
+      });
+      await expect(client.listRunning()).resolves.toEqual([
+        expect.objectContaining({
+          terminalId: started.terminalId,
+          cwd: '/home/me/project/packages/app'
+        })
+      ]);
+      client.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('delivers Terminal input through the stable runtime connection', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);
