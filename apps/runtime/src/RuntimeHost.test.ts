@@ -40,6 +40,57 @@ class FakeRuntimeProcess extends EventEmitter implements RuntimeProcess {
 }
 
 describe('Environment Runtime lifecycle', () => {
+  it('exposes runtime and PTY usage through the control protocol', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => new FakeRuntimeProcess() },
+      usageSampler: {
+        sample: async () => ({
+          availability: 'available',
+          cpuPercent: 2.5,
+          memoryBytes: 4096,
+          processCount: 2,
+          components: [
+            {
+              kind: 'runtime',
+              availability: 'available',
+              cpuPercent: 1,
+              memoryBytes: 2048,
+              processCount: 1
+            },
+            {
+              kind: 'agent-pty',
+              availability: 'available',
+              cpuPercent: 1.5,
+              memoryBytes: 2048,
+              processCount: 1
+            }
+          ],
+          sampledAt: '2026-07-31T12:00:00.000Z'
+        })
+      }
+    });
+
+    try {
+      await host.listen();
+      const client = await RuntimeClient.connect(endpoint);
+      await expect(client.usage()).resolves.toMatchObject({
+        availability: 'available',
+        processCount: 2,
+        components: [
+          { kind: 'runtime' },
+          { kind: 'agent-pty' }
+        ]
+      });
+      client.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a running Session alive while control clients disconnect and reconnect', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);

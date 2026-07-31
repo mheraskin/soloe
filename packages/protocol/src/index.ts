@@ -48,3 +48,27 @@ export interface RuntimeReplaySnapshot {
   truncated: boolean;
   byteLength: number;
 }
+
+export type RuntimeUsageAvailability =
+  | "available"
+  | "degraded"
+  | "unavailable";
+
+export interface RuntimeProcessUsageComponent {
+  kind: "runtime" | "agent-pty";
+  availability: RuntimeUsageAvailability;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  processCount: number | null;
+  message?: string;
+}
+
+export interface RuntimeUsageSnapshot {
+  availability: RuntimeUsageAvailability;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  processCount: number | null;
+  components: RuntimeProcessUsageComponent[];
+  sampledAt: string;
+  message?: string;
+}
