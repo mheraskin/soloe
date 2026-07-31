@@ -1,5 +1,4 @@
-import { spawn } from 'node:child_process';
-import { execFile } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { promises as fs } from 'node:fs';
@@ -471,6 +470,13 @@ async function waitForExit(child, timeoutMs) {
 }
 
 function signalChild(child, signal) {
+  if (process.platform === 'win32' && child.pid) {
+    spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    return;
+  }
   if (process.platform !== 'win32' && child.pid) {
     try {
       process.kill(-child.pid, signal);
