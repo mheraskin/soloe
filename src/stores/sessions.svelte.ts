@@ -20,6 +20,7 @@ import { git, type WorktreeInventory } from './git.svelte';
 import { settings } from './settings.svelte';
 import { randomName } from '../lib/random-name';
 import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelte';
+import { AGENT_NOTIFICATION_ACTIVATE_EVENT } from '../lib/agent-system-notifications';
 import { rightRail } from './right-rail.svelte';
 import { sendBracketedPaste } from '../lib/terminal-paste';
 import { sameWorktreePath, worktreePathKey } from '../lib/worktree-path';
@@ -609,7 +610,12 @@ export class SessionsStore {
         const session = rowSessionId
           ? this.sessions.find((s) => s.id === rowSessionId) ?? null
           : null;
-        agentNotifications.observeSnapshot(snapshot, session, this.selectedId);
+        agentNotifications.observeSnapshot(
+          snapshot,
+          session,
+          this.selectedId,
+          document.visibilityState === 'visible' && document.hasFocus()
+        );
         this.observed = { ...this.observed, [snapshot.id]: snapshot };
       })
     );
@@ -620,7 +626,13 @@ export class SessionsStore {
         const session = rowSessionId
           ? this.sessions.find((s) => s.id === rowSessionId) ?? null
           : null;
-        agentNotifications.observeEvent(event, session, this.selectedId, rowSessionId);
+        agentNotifications.observeEvent(
+          event,
+          session,
+          this.selectedId,
+          rowSessionId,
+          document.visibilityState === 'visible' && document.hasFocus()
+        );
         const current = this.observerEvents[event.subjectId] ?? [];
         this.observerEvents = {
           ...this.observerEvents,
@@ -658,9 +670,45 @@ export class SessionsStore {
       if (document.visibilityState !== 'hidden') {
         void this.reconcileKnownWorktreeInventories();
       }
+      if (
+        this.selectedId
+        && document.visibilityState === 'visible'
+        && document.hasFocus()
+      ) {
+        agentNotifications.acknowledge(this.selectedId);
+      }
+    };
+    const onWindowFocus = () => {
+      if (this.selectedId && document.visibilityState === 'visible') {
+        agentNotifications.acknowledge(this.selectedId);
+      }
     };
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onWindowFocus);
+    const activateNotifiedSession = (sessionId: unknown) => {
+      if (typeof sessionId !== 'string') return;
+      if (this.sessions.some((session) => session.id === sessionId)) this.select(sessionId);
+    };
+    const onNotificationActivate = (event: Event) => {
+      activateNotifiedSession((event as CustomEvent<{ sessionId?: unknown }>).detail?.sessionId);
+    };
+    const onServiceWorkerMessage = (event: MessageEvent) => {
+      if (event.data?.type === AGENT_NOTIFICATION_ACTIVATE_EVENT) {
+        activateNotifiedSession(event.data.sessionId);
+      }
+    };
+    window.addEventListener(AGENT_NOTIFICATION_ACTIVATE_EVENT, onNotificationActivate);
+    navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage);
     this.detachers.push(() => document.removeEventListener('visibilitychange', onVisibility));
+    this.detachers.push(() => window.removeEventListener('focus', onWindowFocus));
+    this.detachers.push(() => {
+      window.removeEventListener(AGENT_NOTIFICATION_ACTIVATE_EVENT, onNotificationActivate);
+    });
+    this.detachers.push(() => {
+      navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage);
+    });
+    const requestedSessionId = new URLSearchParams(window.location.search).get('session');
+    activateNotifiedSession(requestedSessionId);
     onVisibility();
   }
 

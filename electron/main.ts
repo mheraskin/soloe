@@ -240,8 +240,6 @@ async function setupServices(): Promise<AppServices> {
     focusApp: () => app.focus({ steal: true }),
     log: (message, detail) => console.warn(`[notifier] ${message}`, detail)
   });
-  notifier.attachAgentObserver(observer, store);
-
   const commandBuilder = new SessionCommandBuilder(
     new ShellDetector(),
     new NativeCommandBuilder(),

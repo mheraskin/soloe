@@ -40,3 +40,20 @@ self.addEventListener('fetch', (event) => {
       .catch(async () => (await caches.match(request)) ?? Response.error())
   );
 });
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const sessionId = event.notification.data?.sessionId;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+      const client = clients[0];
+      if (client) {
+        client.postMessage({ type: 'soloe:notification-activate', sessionId });
+        await client.focus();
+        return;
+      }
+      const target = sessionId ? `/?session=${encodeURIComponent(sessionId)}` : '/';
+      await self.clients.openWindow(target);
+    })
+  );
+});
