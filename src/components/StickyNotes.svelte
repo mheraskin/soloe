@@ -386,7 +386,7 @@
               <button
                 {...props}
                 type="button"
-                class="notes-sticky-title flex min-w-0 max-w-[60%] flex-[0_1_auto] cursor-grab items-center gap-1 overflow-hidden rounded px-1 py-0.5 text-left text-[11px] font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring active:cursor-grabbing"
+                class="notes-sticky-title flex min-w-0 max-w-[60%] flex-[0_1_auto] cursor-pointer items-center gap-1 overflow-hidden rounded px-1 py-0.5 text-left text-[11px] font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring active:cursor-grabbing"
                 title={editorTitle}
                 aria-label={`Select note: ${editorTitle}`}
               >
@@ -420,8 +420,20 @@
             {/if}
           </DropdownMenu.Content>
         </DropdownMenu.Root>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          class="notes-sticky-control shrink-0 cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          onclick={() => void selectDraft()}
+          disabled={!activeProjectId}
+          aria-label="New note"
+          title="New note"
+        >
+          <Plus class="size-3" />
+        </Button>
+        <div class="min-w-2 flex-1" aria-hidden="true"></div>
         <div
-          class={`notes-sticky-header-status flex min-w-0 max-w-[25%] shrink items-center gap-1 text-[10px] ${
+          class={`notes-sticky-header-status flex min-w-0 max-w-[25%] shrink items-center justify-end gap-1 text-right text-[10px] ${
             notes.status === 'error'
               ? 'text-destructive'
               : notes.status === 'saved'
@@ -441,18 +453,6 @@
           {/if}
           <span class="notes-sticky-status-label min-w-0 truncate">{statusLabel}</span>
         </div>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          class="notes-sticky-control shrink-0 cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
-          onclick={() => void selectDraft()}
-          disabled={!activeProjectId}
-          aria-label="New note"
-          title="New note"
-        >
-          <Plus class="size-3" />
-        </Button>
-        <div class="min-w-2 flex-1" aria-hidden="true"></div>
         <Button
           variant="ghost"
           size="icon-xs"
