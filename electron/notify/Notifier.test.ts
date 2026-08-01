@@ -110,6 +110,23 @@ describe('Notifier', () => {
     expect(shown).toEqual([]);
   });
 
+  it('uses effective approval metadata when config is not in launch arguments', async () => {
+    const session = await sessions.create({
+      name: 'Codex',
+      cwd: '/workspace',
+      runMode: 'windows',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    });
+    observer.registerTuiSession(session);
+    notifier.attachAgentObserver(observer, sessions);
+    observer.setAutoApprovesPermissions(session.id, true);
+
+    observer.setTuiObservedState(session.id, 'waiting_for_approval', 'approval: docker compose up');
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(shown).toEqual([]);
+  });
+
   it('dedupes repeated native notifications for the same state', async () => {
     const session = await sessions.create({
       name: 'Claude',

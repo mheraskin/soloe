@@ -7,7 +7,7 @@ import type {
   SendWorkerPromptRequest,
   WorkerStatusResult
 } from '@shared/types/agents.js';
-import type { AgentObservedState } from '@shared/types/sessions.js';
+import type { AgentObservedState, SessionId } from '@shared/types/sessions.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 
 export interface WorkerSdkEvent {
@@ -33,6 +33,7 @@ export interface WorkerSdkAdapter {
 export interface AgentRuntimeManagerOptions {
   observer: AgentObserverManager;
   sdkLoader?: (provider: AgentProvider) => Promise<WorkerSdkAdapter>;
+  autoApprovesPermissions?: (originSessionId: SessionId) => Promise<boolean> | boolean;
 }
 
 interface WorkerRecord {
@@ -78,12 +79,17 @@ export class AgentRuntimeManager {
     const abort = new AbortController();
     record.abort = abort;
 
+    const autoApprovesPermissions = await Promise.resolve(
+      this.opts.autoApprovesPermissions?.(record.originSessionId) ?? false
+    ).catch(() => false);
+
     const promptSummary = summarizePrompt(request.prompt);
     this.patchWorker(record.workerId, {
       state: 'working',
       promptSummary,
       resultSummary: undefined,
       error: undefined,
+      autoApprovesPermissions,
       confidence: 0.6
     }, 'prompt received');
 

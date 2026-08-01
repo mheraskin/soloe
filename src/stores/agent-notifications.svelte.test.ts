@@ -93,6 +93,38 @@ describe('agentNotifications', () => {
     expect(agentNotifications.toasts).toHaveLength(0);
   });
 
+  it('uses effective approval metadata when launch arguments omit the mode', () => {
+    agentNotifications.observeEvent(
+      {
+        ...event('waiting_for_approval', 'approval: file write'),
+        autoApprovesPermissions: true
+      },
+      session,
+      null,
+      session.id
+    );
+
+    expect(agentNotifications.markerFor(session.id)).toBeNull();
+    expect(agentNotifications.toasts).toHaveLength(0);
+  });
+
+  it('suppresses an automatic child approval on the parent session row', () => {
+    const workerEvent: ObserverEvent = {
+      id: 'event-worker-approval',
+      subjectId: 'worker-1',
+      subjectKind: 'worker',
+      timestamp: '2026-05-04T00:00:00.000Z',
+      state: 'waiting_for_approval',
+      summary: 'approval: file write',
+      autoApprovesPermissions: true
+    };
+
+    agentNotifications.observeEvent(workerEvent, session, null, session.id);
+
+    expect(agentNotifications.markerFor(session.id)).toBeNull();
+    expect(agentNotifications.toasts).toHaveLength(0);
+  });
+
   it('does not restore an approval marker for an auto-approved Codex snapshot', () => {
     agentNotifications.primeSnapshot(
       snapshot('waiting_for_approval'),

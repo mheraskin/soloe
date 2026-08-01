@@ -343,7 +343,7 @@ describe('AgentHookDispatcher', () => {
       });
 
       expect(observer.getSnapshot(created.id)?.state).toBe('running_tool');
-      expect(observer.listEvents(created.id).at(-1)).toMatchObject({
+      expect(observer.listEvents(created.id)[0]).toMatchObject({
         state: 'running_tool'
       });
     });

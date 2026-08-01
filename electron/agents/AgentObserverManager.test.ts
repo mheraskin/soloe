@@ -84,6 +84,22 @@ describe('AgentObserverManager', () => {
     expect(observer.childWorkers(session.id).map((s) => s.id)).toEqual(['worker-1']);
   });
 
+  it('carries effective approval metadata from snapshots into later events', () => {
+    const observer = new AgentObserverManager();
+    observer.registerTuiSession(session);
+
+    observer.setAutoApprovesPermissions(session.id, true);
+    const event = observer.appendEvent({
+      subjectId: session.id,
+      subjectKind: 'session',
+      state: 'waiting_for_approval',
+      summary: 'approval required'
+    });
+
+    expect(observer.getSnapshot(session.id)?.autoApprovesPermissions).toBe(true);
+    expect(event.autoApprovesPermissions).toBe(true);
+  });
+
   it('publishes one semantic commit for a mutation that emits event and snapshot', () => {
     const observer = new AgentObserverManager();
     const commits = vi.fn();

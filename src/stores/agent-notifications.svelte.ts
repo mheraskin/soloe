@@ -94,8 +94,11 @@ class AgentNotificationsStore {
     if (!rowSessionId || !session || !isNotifyState(snapshot.state)) return;
     if (
       snapshot.state === 'waiting_for_approval'
-      && sessionAutoApprovesPermissions(session)
-    ) return;
+      && approvalsAreAutomatic(session, snapshot.autoApprovesPermissions)
+    ) {
+      this.clearSubject(rowSessionId, snapshot.id);
+      return;
+    }
     if (rowSessionId === activeSessionId) return;
     this.setMarker(rowSessionId, snapshot.id, snapshot.state, reasonFor(snapshot, null));
   }
@@ -131,6 +134,7 @@ class AgentNotificationsStore {
       state: snapshot.state,
       reason,
       session,
+      autoApprovesPermissions: snapshot.autoApprovesPermissions,
       activeSessionId,
       isAppFocused
     });
@@ -159,6 +163,7 @@ class AgentNotificationsStore {
       state: event.state,
       reason: event.summary,
       session,
+      autoApprovesPermissions: event.autoApprovesPermissions,
       activeSessionId,
       isAppFocused
     });
@@ -209,6 +214,7 @@ class AgentNotificationsStore {
     state: AgentObservedState;
     reason: string;
     session: Session | null;
+    autoApprovesPermissions?: boolean;
     activeSessionId: SessionId | null;
     isAppFocused: boolean;
   }): void {
@@ -231,8 +237,7 @@ class AgentNotificationsStore {
 
     if (
       opts.state === 'waiting_for_approval'
-      && opts.session
-      && sessionAutoApprovesPermissions(opts.session)
+      && approvalsAreAutomatic(opts.session, opts.autoApprovesPermissions)
     ) {
       this.log('suppress notification: session auto-approves permissions', {
         rowSessionId: opts.rowSessionId,
@@ -344,6 +349,14 @@ class AgentNotificationsStore {
   private log(message: string, detail?: unknown): void {
     console.info(`[agent-notifications:renderer] ${message}`, detail ?? '');
   }
+}
+
+function approvalsAreAutomatic(
+  session: Session | null,
+  autoApprovesPermissions?: boolean
+): boolean {
+  return autoApprovesPermissions === true
+    || (session ? sessionAutoApprovesPermissions(session) : false);
 }
 
 export const agentNotifications = new AgentNotificationsStore();

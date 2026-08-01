@@ -393,7 +393,13 @@ export class SoloeDomain extends EventEmitter {
       initialSnapshots: persistedObserver.snapshots,
       initialEvents: persistedObserver.events,
     });
-    this.workerRuntime = new AgentRuntimeManager({ observer: this.observer });
+    this.workerRuntime = new AgentRuntimeManager({
+      observer: this.observer,
+      autoApprovesPermissions: async (sessionId) => {
+        const session = await this.sessions.get(sessionId);
+        return session ? this.sessionAutoApprovesPermissions(session) : false;
+      },
+    });
     this.observerStore.attach(this.observer);
     this.observer.on("snapshot", (snapshot) => {
       this.emit("event", "observer.snapshot", snapshot);

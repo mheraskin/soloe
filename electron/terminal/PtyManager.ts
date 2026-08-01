@@ -174,6 +174,7 @@ export class PtyManager extends EventEmitter {
       binaries,
       true
     );
+    this.opts.observer?.setAutoApprovesPermissions(sessionId, autoApprovesPermissions);
     const release = agentProvider ? await this.acquireAgentSpawnSlot(agentProvider) : noop;
     let proc: PtyProcess;
     try {
@@ -246,6 +247,7 @@ export class PtyManager extends EventEmitter {
           terminal.spec.description
           ?? [terminal.spec.file, ...terminal.spec.args].join(' ')
       };
+      const autoApprovesPermissions = await this.sessionAutoApprovesPermissions(session, binaries);
       const instance: TerminalInstance = {
         terminalId: terminal.terminalId,
         sessionId: terminal.sessionId,
@@ -262,11 +264,15 @@ export class PtyManager extends EventEmitter {
         usageLimitBuffer: '',
         usageLimitDetected: false,
         agentProvider: effectiveAgentProvider(session) ?? legacyAgentProvider(session),
-        autoApprovesPermissions: await this.sessionAutoApprovesPermissions(session, binaries)
+        autoApprovesPermissions
       };
       this.terminals.set(terminal.terminalId, instance);
       this.sessionToTerminal.set(terminal.sessionId, terminal.terminalId);
       this.opts.observer?.registerTuiSession(session);
+      this.opts.observer?.setAutoApprovesPermissions(
+        terminal.sessionId,
+        autoApprovesPermissions
+      );
       this.attachProcess(instance);
     }
   }

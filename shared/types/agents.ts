@@ -16,6 +16,8 @@ export interface ObserverEvent {
   state: AgentObservedState;
   summary: string;
   detail?: string;
+  // Effective approval behavior resolved for the observed session or worker.
+  autoApprovesPermissions?: boolean;
 }
 
 export interface ObservedAgentSnapshot {
@@ -23,6 +25,8 @@ export interface ObservedAgentSnapshot {
   runtimeMode: SessionRuntimeMode;
   subjectKind: ObserverSubjectKind;
   provider: AgentProvider | 'terminal';
+  // Effective approval behavior resolved for the observed session or worker.
+  autoApprovesPermissions?: boolean;
   state: AgentObservedState;
   sessionId?: SessionId;
   originSessionId?: SessionId;

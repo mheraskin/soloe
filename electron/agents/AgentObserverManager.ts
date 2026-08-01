@@ -110,7 +110,8 @@ export class AgentObserverManager extends EventEmitter {
     sessionId: SessionId,
     state: AgentObservedState,
     summary: string,
-    detail?: string
+    detail?: string,
+    autoApprovesPermissions?: boolean
   ): ObservedAgentSnapshot {
     const existing = this.snapshots.get(sessionId);
     const snapshot: ObservedAgentSnapshot = {
@@ -122,7 +123,8 @@ export class AgentObserverManager extends EventEmitter {
         sessionId
       }),
       state,
-      lastEventAt: new Date().toISOString()
+      lastEventAt: new Date().toISOString(),
+      ...(autoApprovesPermissions === undefined ? {} : { autoApprovesPermissions })
     };
     if (state !== 'usage_limited') delete snapshot.usageLimit;
     this.snapshots.set(sessionId, snapshot);
@@ -243,7 +245,8 @@ export class AgentObserverManager extends EventEmitter {
       subjectKind: 'worker',
       state: snapshot.state,
       summary: event.summary,
-      detail: event.detail
+      detail: event.detail,
+      autoApprovesPermissions: snapshot.autoApprovesPermissions
     });
     this.emit('commit');
     return snapshot;
@@ -255,6 +258,7 @@ export class AgentObserverManager extends EventEmitter {
     state: AgentObservedState;
     summary: string;
     detail?: string;
+    autoApprovesPermissions?: boolean;
   }): ObserverEvent {
     const event = this.appendEventInternal(input);
     this.emit('commit');
@@ -267,7 +271,10 @@ export class AgentObserverManager extends EventEmitter {
     state: AgentObservedState;
     summary: string;
     detail?: string;
+    autoApprovesPermissions?: boolean;
   }): ObserverEvent {
+    const autoApprovesPermissions = input.autoApprovesPermissions
+      ?? this.snapshots.get(input.subjectId)?.autoApprovesPermissions;
     const event: ObserverEvent = {
       id: `evt-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`,
       subjectId: input.subjectId,
@@ -275,7 +282,8 @@ export class AgentObserverManager extends EventEmitter {
       timestamp: new Date().toISOString(),
       state: input.state,
       summary: input.summary,
-      detail: input.detail
+      detail: input.detail,
+      ...(autoApprovesPermissions === undefined ? {} : { autoApprovesPermissions })
     };
     const list = this.eventsBySubject.get(input.subjectId) ?? [];
     list.push(event);
@@ -285,6 +293,24 @@ export class AgentObserverManager extends EventEmitter {
     this.eventsBySubject.set(input.subjectId, list);
     this.emit('event', event);
     return event;
+  }
+
+  setAutoApprovesPermissions(
+    subjectId: string,
+    autoApprovesPermissions: boolean
+  ): ObservedAgentSnapshot | null {
+    const existing = this.snapshots.get(subjectId);
+    if (!existing || existing.autoApprovesPermissions === autoApprovesPermissions) {
+      return existing ?? null;
+    }
+    const snapshot: ObservedAgentSnapshot = {
+      ...existing,
+      autoApprovesPermissions
+    };
+    this.snapshots.set(subjectId, snapshot);
+    this.emit('snapshot', snapshot);
+    this.emit('commit');
+    return snapshot;
   }
 
   listSnapshots(): ObservedAgentSnapshot[] {

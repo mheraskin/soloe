@@ -243,7 +243,16 @@ async function setupServices(): Promise<AppServices> {
   });
   observerStore.attach(observer);
   for (const session of await store.list()) observer.registerTuiSession(session);
-  const runtime = new AgentRuntimeManager({ observer });
+  let manager: PtyManager | undefined;
+  const runtime = new AgentRuntimeManager({
+    observer,
+    autoApprovesPermissions: async (sessionId) => {
+      const session = await store.get(sessionId);
+      return session && manager
+        ? manager.sessionAutoApprovesPermissions(session)
+        : false;
+    }
+  });
   const notifier = new Notifier({
     getWindows: () => BrowserWindow.getAllWindows(),
     nativeFactory: (notification) => new Notification(notification),
@@ -281,7 +290,6 @@ async function setupServices(): Promise<AppServices> {
     onSessionChange: (session) => sessionsIpc.broadcastChange(session),
     log: (message, detail) => console.warn(`[auto-rename] ${message}`, detail)
   });
-  let manager: PtyManager | undefined;
   const hookDispatcher = new AgentHookDispatcher({
     observer,
     sessionStore: store,

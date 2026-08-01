@@ -175,6 +175,9 @@ export class AgentHookDispatcher {
       ? await (this.opts.autoApprovesPermissions?.(session)
         ?? sessionAutoApprovesPermissions(session))
       : false;
+    if (session) {
+      this.opts.observer.setAutoApprovesPermissions(soloeSessionId, autoApproves);
+    }
     if (!autoApproves) {
       return mapping;
     }

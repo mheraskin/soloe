@@ -97,7 +97,11 @@ export class Notifier {
           if (!session) return;
           if (
             state === 'waiting_for_approval'
-            && sessionAutoApprovesPermissions(session)
+            && (
+              event.autoApprovesPermissions === true
+              || snapshot?.autoApprovesPermissions === true
+              || sessionAutoApprovesPermissions(session)
+            )
           ) return;
           this.native(
             nativeAgentNotification(session, state),
