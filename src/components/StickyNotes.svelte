@@ -7,6 +7,7 @@
     ChevronDown,
     Loader2,
     NotebookPen,
+    Plus,
     Save,
     Send,
     X
@@ -27,11 +28,12 @@
     height: number;
   };
 
-  type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
+  type ResizeHandle = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw';
 
   type Interaction = {
     kind: 'drag' | 'resize';
-    corner?: ResizeCorner;
+    handle?: ResizeHandle;
+    active: boolean;
     pointerId: number;
     startX: number;
     startY: number;
@@ -40,6 +42,7 @@
   };
 
   const LAYOUT_KEY = 'soloe.notes.sticky-layout.v2';
+  const DRAG_THRESHOLD = 4;
   const VISIBLE_EDGE = 24;
 
   function defaultLayout(): StickyLayout {
@@ -94,6 +97,7 @@
   let interaction = $state<Interaction | null>(null);
   let saveDialog = $state<{ name: string } | null>(null);
   let saveInput: HTMLInputElement | null = $state(null);
+  let suppressNextClick = false;
 
   let activeProjectId = $derived(notes.activeProjectId);
   let activeTerminalId = $derived.by<string | null>(() => {
@@ -152,6 +156,11 @@
       if (!current || current.pointerId !== event.pointerId) return;
       const dx = event.clientX - current.startX;
       const dy = event.clientY - current.startY;
+      if (current.kind === 'drag' && !current.active) {
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        interaction = { ...current, active: true };
+        event.preventDefault();
+      }
       if (current.kind === 'drag') {
         layout = keepVisible({
           ...layout,
@@ -159,19 +168,19 @@
           top: current.origin.top + dy
         });
       } else {
-        const corner = current.corner ?? 'se';
+        const handle = current.handle ?? 'se';
+        const resizesWidth = handle.includes('e') || handle.includes('w');
+        const resizesHeight = handle.includes('n') || handle.includes('s');
         const nextLayout: StickyLayout = {
           ...layout,
-          left: corner.includes('w') ? current.origin.left + dx : current.origin.left,
-          top: corner.includes('n') ? current.origin.top + dy : current.origin.top,
-          width: Math.max(
-            0,
-            corner.includes('w') ? current.origin.width - dx : current.origin.width + dx
-          ),
-          height: Math.max(
-            0,
-            corner.includes('n') ? current.origin.height - dy : current.origin.height + dy
-          )
+          left: handle.includes('w') ? current.origin.left + dx : current.origin.left,
+          top: handle.includes('n') ? current.origin.top + dy : current.origin.top,
+          width: resizesWidth
+            ? Math.max(0, handle.includes('w') ? current.origin.width - dx : current.origin.width + dx)
+            : current.origin.width,
+          height: resizesHeight
+            ? Math.max(0, handle.includes('n') ? current.origin.height - dy : current.origin.height + dy)
+            : current.origin.height
         };
         layout = keepVisible(nextLayout);
       }
@@ -180,6 +189,13 @@
       const current = interaction;
       if (!current || current.pointerId !== event.pointerId) return;
       interaction = null;
+      if (current.kind === 'drag' && current.active) {
+        suppressNextClick = true;
+        event.preventDefault();
+        window.setTimeout(() => {
+          suppressNextClick = false;
+        }, 0);
+      }
       try {
         if (current.target.hasPointerCapture(current.pointerId)) {
           current.target.releasePointerCapture(current.pointerId);
@@ -193,34 +209,43 @@
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerEnd);
     window.addEventListener('pointercancel', onPointerEnd);
+    const onClickCapture = (event: MouseEvent) => {
+      if (!suppressNextClick) return;
+      suppressNextClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener('click', onClickCapture, true);
     return () => {
       window.removeEventListener('resize', onViewportResize);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerEnd);
       window.removeEventListener('pointercancel', onPointerEnd);
+      window.removeEventListener('click', onClickCapture, true);
     };
   });
 
   function beginInteraction(
     event: PointerEvent,
     kind: Interaction['kind'],
-    corner?: ResizeCorner
+    handle?: ResizeHandle
   ): void {
     if (event.button !== 0) return;
-    if (
-      kind === 'drag' &&
-      event.target instanceof Element &&
-      event.target.closest('button')
-    ) {
-      return;
+    const button =
+      kind === 'drag' && event.target instanceof Element
+        ? event.target.closest('button')
+        : null;
+    const active = button === null;
+    if (active) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-    event.preventDefault();
-    event.stopPropagation();
-    const target = event.currentTarget as HTMLElement;
+    const target = (button ?? event.currentTarget) as HTMLElement;
     target.setPointerCapture(event.pointerId);
     interaction = {
       kind,
-      corner,
+      handle,
+      active,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
@@ -350,7 +375,9 @@
         role="toolbar"
         aria-label="Sticky note window"
         tabindex="-1"
-        class="flex min-h-0 min-w-0 shrink-0 cursor-grab touch-none select-none items-center gap-1 border-b border-border/70 px-1.5 py-1 active:cursor-grabbing"
+        class={`flex min-h-0 min-w-0 shrink-0 touch-none select-none items-center gap-1 border-b border-border/70 px-1.5 py-1 ${
+          interaction?.kind === 'drag' && interaction.active ? 'cursor-grabbing' : 'cursor-grab'
+        }`}
         onpointerdown={(event) => beginInteraction(event, 'drag')}
       >
         <DropdownMenu.Root>
@@ -359,7 +386,7 @@
               <button
                 {...props}
                 type="button"
-                class="notes-sticky-title flex min-w-0 flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded px-1 py-0.5 text-left text-[11px] font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+                class="notes-sticky-title flex min-w-0 max-w-[60%] flex-[0_1_auto] cursor-grab items-center gap-1 overflow-hidden rounded px-1 py-0.5 text-left text-[11px] font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring active:cursor-grabbing"
                 title={editorTitle}
                 aria-label={`Select note: ${editorTitle}`}
               >
@@ -393,21 +420,8 @@
             {/if}
           </DropdownMenu.Content>
         </DropdownMenu.Root>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          class="relative z-20 shrink-0 text-muted-foreground hover:text-foreground"
-          onclick={() => notes.setStickyOpen(false)}
-          aria-label="Close sticky note"
-          title="Close sticky note"
-        >
-          <X class="size-3" />
-        </Button>
-      </header>
-
-      <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 p-1.5">
         <div
-          class={`notes-sticky-status flex min-w-0 items-center gap-1 text-[10px] ${
+          class={`notes-sticky-header-status flex min-w-0 max-w-[25%] shrink items-center gap-1 text-[10px] ${
             notes.status === 'error'
               ? 'text-destructive'
               : notes.status === 'saved'
@@ -427,7 +441,31 @@
           {/if}
           <span class="notes-sticky-status-label min-w-0 truncate">{statusLabel}</span>
         </div>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          class="notes-sticky-control shrink-0 cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          onclick={() => void selectDraft()}
+          disabled={!activeProjectId}
+          aria-label="New note"
+          title="New note"
+        >
+          <Plus class="size-3" />
+        </Button>
+        <div class="min-w-2 flex-1" aria-hidden="true"></div>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          class="notes-sticky-control relative z-20 shrink-0 cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          onclick={() => notes.setStickyOpen(false)}
+          aria-label="Close sticky note"
+          title="Close sticky note"
+        >
+          <X class="size-3" />
+        </Button>
+      </header>
 
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 p-1.5">
         <textarea
           value={editorValue}
           placeholder={notes.isDraft ? 'Write a note…' : ''}
@@ -444,8 +482,9 @@
             <Button
               variant="outline"
               size="xs"
-              class="notes-sticky-action min-w-0 flex-1 gap-1 overflow-hidden px-1.5"
+              class="notes-sticky-action min-w-0 flex-1 cursor-grab gap-1 overflow-hidden px-1.5 active:cursor-grabbing"
               onclick={openSaveDialog}
+              onpointerdown={(event) => beginInteraction(event, 'drag')}
               disabled={!hasContent}
               aria-label="Save note"
               title="Save note"
@@ -457,8 +496,9 @@
           <Button
             variant="default"
             size="xs"
-            class="notes-sticky-action min-w-0 flex-1 gap-1 overflow-hidden px-1.5"
+            class="notes-sticky-action min-w-0 flex-1 cursor-grab gap-1 overflow-hidden px-1.5 active:cursor-grabbing"
             onclick={() => void sendCurrent(true)}
+            onpointerdown={(event) => beginInteraction(event, 'drag')}
             disabled={!canSend}
             aria-label="Send note"
             title="Send note"
@@ -469,8 +509,9 @@
           <Button
             variant="outline"
             size="xs"
-            class="notes-sticky-action min-w-0 flex-1 gap-1 overflow-hidden px-1.5"
+            class="notes-sticky-action min-w-0 flex-1 cursor-grab gap-1 overflow-hidden px-1.5 active:cursor-grabbing"
             onclick={() => void sendCurrent(false)}
+            onpointerdown={(event) => beginInteraction(event, 'drag')}
             disabled={!canSend}
             aria-label="Add as context"
             title="Add as context"
@@ -482,6 +523,30 @@
       </div>
     </div>
 
+    <button
+      type="button"
+      class="absolute top-[-2px] left-4 right-4 z-10 h-2 touch-none cursor-n-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from top edge"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 'n')}
+    ></button>
+    <button
+      type="button"
+      class="absolute top-4 right-[-2px] bottom-4 z-10 w-2 touch-none cursor-e-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from right edge"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 'e')}
+    ></button>
+    <button
+      type="button"
+      class="absolute right-4 bottom-[-2px] left-4 z-10 h-2 touch-none cursor-s-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from bottom edge"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 's')}
+    ></button>
+    <button
+      type="button"
+      class="absolute top-4 bottom-4 left-[-2px] z-10 w-2 touch-none cursor-w-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from left edge"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 'w')}
+    ></button>
     <button
       type="button"
       class="absolute top-[-2px] left-[-2px] z-10 size-4 touch-none cursor-nwse-resize opacity-0 focus-visible:opacity-100"
