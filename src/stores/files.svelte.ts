@@ -1,4 +1,5 @@
 import type { RunMode } from '@shared/types/sessions.js';
+import type { FileReadResult } from '@shared/types/files.js';
 import {
   worktreeScope,
   worktreeScopeKey,
@@ -42,6 +43,25 @@ export interface OpenFile {
   error: string | null;
 }
 
+export interface SourceFile {
+  cwd: string;
+  relativePath: string;
+  content: string;
+  binary: boolean;
+  truncated: boolean;
+  oversized: boolean;
+  unavailable: boolean;
+  unavailableReason: string | null;
+  size: number;
+}
+
+export interface SourceRevealRequest {
+  relativePath: string;
+  line: number;
+  column: number;
+  nonce: number;
+}
+
 const EMPTY_TREE: TreeEntry = {
   paths: [],
   truncated: false,
@@ -64,6 +84,9 @@ export class FilesStore {
   private openFilesByCwd = $state<Record<string, OpenFile>>({});
   private residencyByScope = new Map<string, number>();
   private recentReleasedScopes = new Map<string, true>();
+  private sourceCache = new Map<string, SourceFile>();
+  private sourceRevealByScope = $state<Record<string, SourceRevealRequest | null>>({});
+  private sourceRevealNonce = 0;
 
   acquirePayloadResidency(scope: FilesScope): () => void {
     const key = worktreeScopeKey(scope);
@@ -86,6 +109,59 @@ export class FilesStore {
 
   openFileFor(scope: FilesScope): OpenFile | null {
     return this.openFilesByCwd[worktreeScopeKey(scope)] ?? null;
+  }
+
+  revealFor(scope: FilesScope): SourceRevealRequest | null {
+    return this.sourceRevealByScope[worktreeScopeKey(scope)] ?? null;
+  }
+
+  requestReveal(scope: FilesScope, relativePath: string, line: number, column: number): SourceRevealRequest {
+    const key = worktreeScopeKey(scope);
+    const request = {
+      relativePath,
+      line: Math.max(1, Math.floor(line)),
+      column: Math.max(1, Math.floor(column)),
+      nonce: ++this.sourceRevealNonce
+    };
+    this.sourceRevealByScope = { ...this.sourceRevealByScope, [key]: request };
+    return request;
+  }
+
+  clearReveal(scope: FilesScope, nonce?: number): void {
+    const key = worktreeScopeKey(scope);
+    const current = this.sourceRevealByScope[key];
+    if (!current || (nonce !== undefined && current.nonce !== nonce)) return;
+    const next = { ...this.sourceRevealByScope };
+    delete next[key];
+    this.sourceRevealByScope = next;
+  }
+
+  async loadSourceFile(scope: FilesScope, relativePath: string): Promise<SourceFile> {
+    const current = this.openFilesByCwd[worktreeScopeKey(scope)];
+    if (current && current.relativePath === relativePath && !current.loading) {
+      return sourceFileFromOpen(current);
+    }
+    const cacheKey = this.sourceCacheKey(scope, relativePath);
+    const cached = this.sourceCache.get(cacheKey);
+    if (cached) {
+      this.sourceCache.delete(cacheKey);
+      this.sourceCache.set(cacheKey, cached);
+      return cached;
+    }
+    const value = await ipc.files.readFile({
+      cwd: scope.cwd,
+      relativePath,
+      runMode: scope.runMode,
+      ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+    });
+    const source = sourceFileFromRead(scope.cwd, value);
+    this.sourceCache.set(cacheKey, source);
+    while (this.sourceCache.size > 8) {
+      const oldest = this.sourceCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.sourceCache.delete(oldest);
+    }
+    return source;
   }
 
   dirtyFor(scope: FilesScope): boolean {
@@ -186,6 +262,17 @@ export class FilesStore {
         saving: false,
         error: null
       });
+      this.cacheSource(scope, {
+        cwd: scope.cwd,
+        relativePath: value.relativePath,
+        content: value.content,
+        binary: value.binary,
+        truncated: value.truncated,
+        oversized: value.oversized,
+        unavailable: value.unavailable,
+        unavailableReason: value.unavailableReason ?? null,
+        size: value.size
+      });
       return true;
     } catch (err) {
       const stillCurrent = this.openFilesByCwd[key]?.relativePath === relativePath;
@@ -207,6 +294,7 @@ export class FilesStore {
     if (!current) return;
     if (current.content === content) return;
     this.patchOpen(key, { ...current, content });
+    this.cacheSource(scope, sourceFileFromOpen({ ...current, content }));
   }
 
   closeFile(scope: FilesScope): void {
@@ -246,6 +334,7 @@ export class FilesStore {
         baseline: open.content,
         error: null
       });
+      this.cacheSource(scope, sourceFileFromOpen({ ...current, baseline: open.content }));
     } catch (err) {
       const stillCurrent = this.openFilesByCwd[key]?.relativePath === open.relativePath;
       if (!stillCurrent) return;
@@ -267,6 +356,21 @@ export class FilesStore {
   private patchOpen(key: string, entry: OpenFile): void {
     this.openFilesByCwd = { ...this.openFilesByCwd, [key]: entry };
     this.reconcileReleasedPayload(key);
+  }
+
+  private sourceCacheKey(scope: FilesScope, relativePath: string): string {
+    return `${worktreeScopeKey(scope)}::${relativePath}`;
+  }
+
+  private cacheSource(scope: FilesScope, source: SourceFile): void {
+    const key = this.sourceCacheKey(scope, source.relativePath);
+    this.sourceCache.delete(key);
+    this.sourceCache.set(key, source);
+    while (this.sourceCache.size > 8) {
+      const oldest = this.sourceCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.sourceCache.delete(oldest);
+    }
   }
 
   private reconcileReleasedPayload(key: string): void {
@@ -309,6 +413,34 @@ export class FilesStore {
 }
 
 export const filesStore = new FilesStore();
+
+function sourceFileFromRead(cwd: string, value: FileReadResult): SourceFile {
+  return {
+    cwd,
+    relativePath: value.relativePath,
+    content: value.content,
+    binary: value.binary,
+    truncated: value.truncated,
+    oversized: value.oversized,
+    unavailable: value.unavailable,
+    unavailableReason: value.unavailableReason ?? null,
+    size: value.size
+  };
+}
+
+function sourceFileFromOpen(value: OpenFile): SourceFile {
+  return {
+    cwd: value.cwd,
+    relativePath: value.relativePath,
+    content: value.content,
+    binary: value.binary,
+    truncated: value.truncated,
+    oversized: value.oversized,
+    unavailable: value.unavailable,
+    unavailableReason: value.unavailableReason,
+    size: value.size
+  };
+}
 
 // Translate a relative path returned by listTree into a string the FileTree
 // component will recognize as a directory marker. Pierre Trees infers
