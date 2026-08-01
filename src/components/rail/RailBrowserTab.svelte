@@ -276,16 +276,18 @@
 
   $effect(() => {
     const scopeKey = browserStore.activeWorktreeKey;
-    elementSourceInspector.setActiveScope(scopeKey);
+    untrack(() => elementSourceInspector.setActiveScope(scopeKey));
     const surface = browserSurfaceEl;
     if (!surface) return;
     const updateBounds = () => {
       const rect = surface.getBoundingClientRect();
-      elementSourceInspector.setPanelBounds({
-        left: rect.left,
-        top: rect.top,
-        right: rect.right,
-        bottom: rect.bottom
+      untrack(() => {
+        elementSourceInspector.setPanelBounds({
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom
+        });
       });
     };
     updateBounds();
