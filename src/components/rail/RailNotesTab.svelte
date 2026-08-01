@@ -11,6 +11,9 @@
     TextSelect,
     Send,
     Eraser,
+    Maximize2,
+    Minimize2,
+    StickyNote,
     Image as ImageIcon
   } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
@@ -435,6 +438,17 @@
     return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
   }
 
+  function toggleStickyMode(): void {
+    const open = !notes.stickyOpen;
+    notes.setStickyOpen(open);
+    if (!open) return;
+
+    // The sticky surface is rendered at the app root. Remove only the notes
+    // pane from the rail so any other open pane remains available underneath.
+    if (rightRail.fullscreen) rightRail.fullscreen = false;
+    if (rightRail.openTabs.includes('notes')) rightRail.toggleTab('notes');
+  }
+
   onMount(() => {
     const onRefocus = () => {
       if (rightRail.activeTab !== 'notes') return;
@@ -463,17 +477,45 @@
         {activeProject?.name ?? 'No project selected'}
       </span>
     </div>
-    <Button
-      variant="outline"
-      size="xs"
-      onclick={() => void onNewDraft()}
-      disabled={!activeProjectId}
-      aria-label="New note"
-      title="New note"
-    >
-      <Plus class="size-3" />
-      <span>New</span>
-    </Button>
+    <div class="flex shrink-0 items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        onclick={() => rightRail.toggleFullscreen()}
+        aria-label={rightRail.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        title={rightRail.fullscreen ? 'Exit fullscreen (Ctrl+Shift+M)' : 'Fullscreen (Ctrl+Shift+M)'}
+        aria-pressed={rightRail.fullscreen}
+      >
+        {#if rightRail.fullscreen}
+          <Minimize2 class="size-3" />
+        {:else}
+          <Maximize2 class="size-3" />
+        {/if}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        class={notes.stickyOpen ? 'text-primary' : ''}
+        onclick={toggleStickyMode}
+        disabled={!activeProjectId}
+        aria-label={notes.stickyOpen ? 'Close sticky note' : 'Open sticky note'}
+        title={notes.stickyOpen ? 'Close sticky note' : 'Open sticky note'}
+        aria-pressed={notes.stickyOpen}
+      >
+        <StickyNote class="size-3" />
+      </Button>
+      <Button
+        variant="outline"
+        size="xs"
+        onclick={() => void onNewDraft()}
+        disabled={!activeProjectId}
+        aria-label="New note"
+        title="New note"
+      >
+        <Plus class="size-3" />
+        <span>New</span>
+      </Button>
+    </div>
   </header>
 
   {#if !activeProjectId}

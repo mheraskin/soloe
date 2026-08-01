@@ -69,6 +69,16 @@ beforeEach(() => {
 });
 
 describe('NotesStore durability', () => {
+  it('tracks sticky presentation mode independently from note selection', () => {
+    const store = createStore();
+
+    expect(store.stickyOpen).toBe(false);
+    store.setStickyOpen(true);
+    expect(store.stickyOpen).toBe(true);
+    store.toggleSticky();
+    expect(store.stickyOpen).toBe(false);
+  });
+
   it('isolates equal WSL paths by distribution', () => {
     const ubuntu = notesWorktreeStorageKey('project', {
       cwd: '/home/me/repo',

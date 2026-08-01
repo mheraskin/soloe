@@ -107,6 +107,11 @@ type DraftLocation =
   | { kind: 'worktree'; projectId: ProjectId; storageKey: string };
 
 export class NotesStore {
+  // The sticky surface is a presentation mode for the notes pane. It lives
+  // here rather than in the rail so the floating card can remain mounted when
+  // the normal pane is closed.
+  stickyOpen = $state(false);
+
   listsByProject = $state<Record<ProjectId, NoteSummary[]>>({});
   loadedProjects = $state<Record<ProjectId, boolean>>({});
 
@@ -200,6 +205,14 @@ export class NotesStore {
     this.draftsByProject = loaded.byProject;
     this.draftsByWorktree = loaded.byWorktree;
     this.savedRecoveryByNote = loaded.bySaved;
+  }
+
+  setStickyOpen(open: boolean): void {
+    this.stickyOpen = open;
+  }
+
+  toggleSticky(): void {
+    this.stickyOpen = !this.stickyOpen;
   }
 
   attachListeners(): void {

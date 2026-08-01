@@ -77,6 +77,7 @@
   import Sidebar from './components/Sidebar.svelte';
   import TerminalArea from './components/TerminalArea.svelte';
   import RightRail from './components/RightRail.svelte';
+  import StickyNotes from './components/StickyNotes.svelte';
   import MobileWorkspaceNav, {
     type MobileWorkspaceMode,
     type MobileWorkspacePage
@@ -1612,6 +1613,7 @@
       <RightRail fullscreen={railFullscreen} />
     </div>
   {/if}
+  <StickyNotes />
   {#if modal.open}
     <LazyOverlay label="session editor" load={loadNewSessionModal} />
   {/if}
