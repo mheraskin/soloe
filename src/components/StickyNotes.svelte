@@ -5,7 +5,6 @@
     ArrowLeftToLine,
     Check,
     ChevronDown,
-    GripVertical,
     Loader2,
     NotebookPen,
     Save,
@@ -28,8 +27,11 @@
     height: number;
   };
 
+  type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
+
   type Interaction = {
     kind: 'drag' | 'resize';
+    corner?: ResizeCorner;
     pointerId: number;
     startX: number;
     startY: number;
@@ -37,7 +39,7 @@
     target: HTMLElement;
   };
 
-  const LAYOUT_KEY = 'soloe.notes.sticky-layout.v1';
+  const LAYOUT_KEY = 'soloe.notes.sticky-layout.v2';
   const VISIBLE_EDGE = 24;
 
   function defaultLayout(): StickyLayout {
@@ -45,8 +47,8 @@
     return {
       left: Math.max(16, viewportWidth - 360),
       top: 44,
-      width: 320,
-      height: 112
+      width: 360,
+      height: 240
     };
   }
 
@@ -157,11 +159,21 @@
           top: current.origin.top + dy
         });
       } else {
-        layout = {
+        const corner = current.corner ?? 'se';
+        const nextLayout: StickyLayout = {
           ...layout,
-          width: Math.max(0, current.origin.width + dx),
-          height: Math.max(0, current.origin.height + dy)
+          left: corner.includes('w') ? current.origin.left + dx : current.origin.left,
+          top: corner.includes('n') ? current.origin.top + dy : current.origin.top,
+          width: Math.max(
+            0,
+            corner.includes('w') ? current.origin.width - dx : current.origin.width + dx
+          ),
+          height: Math.max(
+            0,
+            corner.includes('n') ? current.origin.height - dy : current.origin.height + dy
+          )
         };
+        layout = keepVisible(nextLayout);
       }
     };
     const onPointerEnd = (event: PointerEvent) => {
@@ -189,20 +201,54 @@
     };
   });
 
-  function beginInteraction(event: PointerEvent, kind: Interaction['kind']): void {
+  function beginInteraction(
+    event: PointerEvent,
+    kind: Interaction['kind'],
+    corner?: ResizeCorner
+  ): void {
     if (event.button !== 0) return;
+    if (
+      kind === 'drag' &&
+      event.target instanceof Element &&
+      event.target.closest('button')
+    ) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
     interaction = {
       kind,
+      corner,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       origin: { ...layout },
       target
     };
+  }
+
+  function onEditorInput(event: Event): void {
+    const target = event.currentTarget as HTMLTextAreaElement;
+    if (notes.isDraft) {
+      notes.updateDraftContent(target.value);
+    } else {
+      notes.updateSavedContent(target.value);
+    }
+  }
+
+  function onEditorKeydown(event: KeyboardEvent): void {
+    const commandKey = event.metaKey || event.ctrlKey;
+    if (!commandKey || event.altKey) return;
+
+    if (event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      openSaveDialog();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      void sendCurrent(!event.shiftKey);
+    }
   }
 
   async function selectDraft(): Promise<void> {
@@ -300,16 +346,13 @@
     <div
       class="notes-sticky-body flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card/95 text-card-foreground shadow-xl backdrop-blur-sm"
     >
-      <header class="flex min-h-0 min-w-0 shrink-0 items-center gap-1 border-b border-border/70 px-1.5 py-1">
-        <button
-          type="button"
-          class="flex size-5 shrink-0 touch-none cursor-grab items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring active:cursor-grabbing"
-          aria-label="Move sticky note"
-          title="Move sticky note"
-          onpointerdown={(event) => beginInteraction(event, 'drag')}
-        >
-          <GripVertical class="size-3" />
-        </button>
+      <header
+        role="toolbar"
+        aria-label="Sticky note window"
+        tabindex="-1"
+        class="flex min-h-0 min-w-0 shrink-0 cursor-grab touch-none select-none items-center gap-1 border-b border-border/70 px-1.5 py-1 active:cursor-grabbing"
+        onpointerdown={(event) => beginInteraction(event, 'drag')}
+      >
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
             {#snippet child({ props })}
@@ -325,7 +368,11 @@
               </button>
             {/snippet}
           </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="start" side="bottom" class="max-h-64 w-64 overflow-y-auto">
+          <DropdownMenu.Content
+            align="start"
+            side="bottom"
+            class="z-[120] max-h-64 w-64 overflow-y-auto"
+          >
             <DropdownMenu.Label>Choose note</DropdownMenu.Label>
             <DropdownMenu.Item disabled={!activeProjectId} onSelect={() => void selectDraft()}>
               <NotebookPen class="size-3.5" />
@@ -349,7 +396,7 @@
         <Button
           variant="ghost"
           size="icon-xs"
-          class="shrink-0 text-muted-foreground hover:text-foreground"
+          class="relative z-20 shrink-0 text-muted-foreground hover:text-foreground"
           onclick={() => notes.setStickyOpen(false)}
           aria-label="Close sticky note"
           title="Close sticky note"
@@ -358,7 +405,7 @@
         </Button>
       </header>
 
-      <div class="flex min-h-0 min-w-0 flex-1 flex-col justify-between gap-1.5 p-1.5">
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5 p-1.5">
         <div
           class={`notes-sticky-status flex min-w-0 items-center gap-1 text-[10px] ${
             notes.status === 'error'
@@ -381,7 +428,18 @@
           <span class="notes-sticky-status-label min-w-0 truncate">{statusLabel}</span>
         </div>
 
-        <div class="notes-sticky-actions flex min-w-0 gap-1">
+        <textarea
+          value={editorValue}
+          placeholder={notes.isDraft ? 'Write a note…' : ''}
+          disabled={!activeProjectId}
+          spellcheck="false"
+          aria-label="Sticky note editor"
+          class="notes-sticky-editor min-h-0 min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 font-mono text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-60"
+          oninput={onEditorInput}
+          onkeydown={onEditorKeydown}
+        ></textarea>
+
+        <div class="notes-sticky-actions flex min-h-0 min-w-0 shrink-0 gap-1">
           {#if notes.isDraft}
             <Button
               variant="outline"
@@ -426,10 +484,27 @@
 
     <button
       type="button"
-      class="absolute right-[-5px] bottom-[-5px] z-10 size-3 touch-none cursor-nwse-resize rounded-sm border border-border bg-muted/90 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-      aria-label="Resize sticky note"
-      title="Resize sticky note"
-      onpointerdown={(event) => beginInteraction(event, 'resize')}
+      class="absolute top-[-2px] left-[-2px] z-10 size-4 touch-none cursor-nwse-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from top left"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 'nw')}
+    ></button>
+    <button
+      type="button"
+      class="absolute top-[-2px] right-[-2px] z-10 size-4 touch-none cursor-nesw-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from top right"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 'ne')}
+    ></button>
+    <button
+      type="button"
+      class="absolute bottom-[-2px] left-[-2px] z-10 size-4 touch-none cursor-nesw-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from bottom left"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 'sw')}
+    ></button>
+    <button
+      type="button"
+      class="absolute right-[-2px] bottom-[-2px] z-10 size-4 touch-none cursor-nwse-resize opacity-0 focus-visible:opacity-100"
+      aria-label="Resize sticky note from bottom right"
+      onpointerdown={(event) => beginInteraction(event, 'resize', 'se')}
     ></button>
   </div>
 {/if}
@@ -471,6 +546,10 @@
     max-width: none;
     max-height: none;
     user-select: none;
+  }
+
+  .notes-sticky-editor {
+    user-select: text;
   }
 
   @container (max-width: 220px) {
