@@ -118,35 +118,28 @@ export class ElementSourceInspectorStore {
   }
 
   setPanelBounds(bounds: InspectorBounds | null): void {
-    if (sameBounds(this.panelBounds, bounds)) return;
     this.panelBounds = bounds;
     if (!bounds) return;
     if (this.transient) {
-      const position = placeInspectorViewer(
-        this.transient.targetRect,
-        bounds,
-        this.transient.position.width,
-        this.transient.position.height
-      );
-      if (!samePosition(this.transient.position, position)) {
-        this.transient = { ...this.transient, position };
-      }
-    }
-    if (this.pinned.length > 0) {
-      let changed = false;
-      const pinned = this.pinned.map((viewer) => {
-        const position = placeInspectorViewer(
-          viewer.targetRect,
+      this.transient = {
+        ...this.transient,
+        position: placeInspectorViewer(
+          this.transient.targetRect,
           bounds,
-          viewer.position.width,
-          viewer.position.height
-        );
-        if (samePosition(viewer.position, position)) return viewer;
-        changed = true;
-        return { ...viewer, position };
-      });
-      if (changed) this.pinned = pinned;
+          this.transient.position.width,
+          this.transient.position.height
+        )
+      };
     }
+    this.pinned = this.pinned.map((viewer) => ({
+      ...viewer,
+      position: placeInspectorViewer(
+        viewer.targetRect,
+        bounds,
+        viewer.position.width,
+        viewer.position.height
+      )
+    }));
   }
 
   receive(scopeKey: string, tabId: string, payload: ElementSourcePayload, targetRect: HostRect | null): void {
@@ -423,22 +416,6 @@ function sameFrame(a: ElementSourceFrame, b: ElementSourceFrame): boolean {
   return a.filePath === b.filePath
     && a.lineNumber === b.lineNumber
     && a.columnNumber === b.columnNumber;
-}
-
-function sameBounds(a: InspectorBounds | null, b: InspectorBounds | null): boolean {
-  if (a === b) return true;
-  return a !== null && b !== null
-    && a.left === b.left
-    && a.top === b.top
-    && a.right === b.right
-    && a.bottom === b.bottom;
-}
-
-function samePosition(a: InspectorPosition, b: InspectorPosition): boolean {
-  return a.left === b.left
-    && a.top === b.top
-    && a.width === b.width
-    && a.height === b.height;
 }
 
 function sameViewerTarget(

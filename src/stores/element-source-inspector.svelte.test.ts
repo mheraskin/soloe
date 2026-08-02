@@ -125,17 +125,4 @@ describe('Element Source Inspector state', () => {
     expect(elementSourceInspector.pinned).toEqual([]);
     expect(elementSourceInspector.isModeActive('scope-1', 'tab-1')).toBe(false);
   });
-
-  it('does not publish reactive updates when panel bounds are unchanged', () => {
-    const bounds = { left: 10, top: 20, right: 810, bottom: 620 };
-    elementSourceInspector.setPanelBounds(bounds);
-
-    const firstBounds = elementSourceInspector.panelBounds;
-    const firstPinned = elementSourceInspector.pinned;
-
-    elementSourceInspector.setPanelBounds({ ...bounds });
-
-    expect(elementSourceInspector.panelBounds).toBe(firstBounds);
-    expect(elementSourceInspector.pinned).toBe(firstPinned);
-  });
 });
