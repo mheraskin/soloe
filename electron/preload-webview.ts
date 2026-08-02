@@ -222,6 +222,7 @@ function inspectorCreateOverlay(): void {
 function inspectorDisplayPath(filePath: string | null): string {
   if (!filePath) return 'Source unavailable';
   const normalized = filePath.replaceAll('\\', '/');
+  if (normalized.startsWith('/workspace/')) return normalized.slice('/workspace/'.length);
   const srcIndex = normalized.indexOf('/src/');
   return srcIndex >= 0 ? normalized.slice(srcIndex + 1) : normalized.replace(/^\.\//, '');
 }

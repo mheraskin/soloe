@@ -56,4 +56,36 @@ describe('main-world Svelte element source resolver', () => {
       }
     });
   });
+
+  it('expands package-relative metadata from the inspected Vite app root', () => {
+    Reflect.deleteProperty(globalThis, Symbol.for('soloe.element-source.vite-root'));
+    const layout = document.createElement('main');
+    Object.defineProperty(layout, '__svelte_meta', {
+      value: {
+        loc: {
+          file: 'src/routes/+layout.svelte',
+          line: 18,
+          column: 2
+        }
+      }
+    });
+    document.body.appendChild(layout);
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      value: vi.fn(() => layout)
+    });
+    const resourceLookup = vi.fn(() => [{
+      name: 'http://ember-oak.localhost:8936/dashboard/@fs/workspace/frontend/dashboard/.svelte-kit/generated/client/app.js'
+    }]);
+    Object.defineProperty(performance, 'getEntriesByType', {
+      configurable: true,
+      value: resourceLookup
+    });
+
+    expect(resolveSvelteElementInfoInMainWorld(20, 30)?.info.source?.filePath)
+      .toBe('/workspace/frontend/dashboard/src/routes/+layout.svelte');
+    expect(resolveSvelteElementInfoInMainWorld(20, 30)?.info.source?.filePath)
+      .toBe('/workspace/frontend/dashboard/src/routes/+layout.svelte');
+    expect(resourceLookup).toHaveBeenCalledTimes(1);
+  });
 });
