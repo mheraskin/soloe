@@ -149,6 +149,7 @@ pub struct BackendSupervisor {
     backend_children: Mutex<Vec<Child>>,
     client_children: Mutex<Vec<Child>>,
     lifecycle: Mutex<LifecycleState>,
+    transition: Mutex<()>,
 }
 
 impl BackendSupervisor {
@@ -167,6 +168,7 @@ impl BackendSupervisor {
                 backend_children: Mutex::new(Vec::new()),
                 client_children: Mutex::new(Vec::new()),
                 lifecycle: Mutex::new(LifecycleState::Stopped),
+                transition: Mutex::new(()),
             },
             instance,
         ))
@@ -188,17 +190,39 @@ impl BackendSupervisor {
             backend_children: Mutex::new(Vec::new()),
             client_children: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(LifecycleState::Stopped),
+            transition: Mutex::new(()),
+        }
+    }
+
+    fn try_lock_transition(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        match self.transition.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                Err("service transition already in progress".to_string())
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                Err("service transition lock poisoned".to_string())
+            }
         }
     }
 
     pub fn server_action_label(&self) -> String {
         let backend = self.backend_for_existing_services();
         let host = backend.host_label();
+        let lifecycle = self.reconciled_lifecycle(&backend);
+        if matches!(
+            &lifecycle,
+            LifecycleState::Starting | LifecycleState::Stopping
+        ) {
+            return match lifecycle {
+                LifecycleState::Starting => format!("Starting Soloe server ({host})…"),
+                LifecycleState::Stopping => format!("Stopping Soloe server ({host})…"),
+                _ => unreachable!(),
+            };
+        }
         let running = self.is_running_on("server", &backend)
             || self.is_running_on("web", &self.windows_client_target());
-        match (self.reconciled_lifecycle(&backend), running) {
-            (LifecycleState::Starting, false) => format!("Starting Soloe server ({host})…"),
-            (LifecycleState::Stopping, true) => format!("Stopping Soloe server ({host})…"),
+        match (lifecycle, running) {
             (_, true) => format!("Stop Soloe server ({host})"),
             (_, false) => format!("Start Soloe server ({host})"),
         }
@@ -218,22 +242,34 @@ impl BackendSupervisor {
 
     pub fn server_action_enabled(&self) -> bool {
         let backend = self.backend_for_existing_services();
-        let transitioning = matches!(
-            self.reconciled_lifecycle(&backend),
+        let lifecycle = self.reconciled_lifecycle(&backend);
+        if matches!(
+            &lifecycle,
             LifecycleState::Starting | LifecycleState::Stopping
-        );
+        ) {
+            return false;
+        }
         let server_running = self.is_running_on("server", &backend)
             || self.is_running_on("web", &self.windows_client_target());
-        !transitioning && (server_running || self.is_running_on("runtime", &backend))
+        server_running || self.is_running_on("runtime", &backend)
     }
 
     pub fn runtime_action_label(&self) -> String {
         let backend = self.backend_for_existing_services();
         let host = backend.host_label();
+        let lifecycle = self.reconciled_lifecycle(&backend);
+        if matches!(
+            &lifecycle,
+            LifecycleState::Starting | LifecycleState::Stopping
+        ) {
+            return match lifecycle {
+                LifecycleState::Starting => format!("Starting agent runtime ({host})…"),
+                LifecycleState::Stopping => format!("Stopping agent runtime ({host})…"),
+                _ => unreachable!(),
+            };
+        }
         let running = self.is_running_on("runtime", &backend);
-        match (self.reconciled_lifecycle(&backend), running) {
-            (LifecycleState::Starting, false) => format!("Starting agent runtime ({host})…"),
-            (LifecycleState::Stopping, true) => format!("Stopping agent runtime ({host})…"),
+        match (lifecycle, running) {
             (_, true) => format!("Stop agent runtime ({host})"),
             (_, false) => format!("Start agent runtime ({host})"),
         }
@@ -252,14 +288,24 @@ impl BackendSupervisor {
     pub fn runtime_action_enabled(&self) -> bool {
         let backend = self.backend_for_existing_services();
         !matches!(
-            self.reconciled_lifecycle(&backend),
+            &self.reconciled_lifecycle(&backend),
             LifecycleState::Starting | LifecycleState::Stopping
         )
     }
 
     pub fn toggle_server(&self) -> Result<(), String> {
+        let _transition = self.try_lock_transition()?;
+        self.toggle_server_unlocked()
+    }
+
+    fn toggle_server_unlocked(&self) -> Result<(), String> {
         let backend = self.backend_for_existing_services();
-        if !self.server_action_enabled() {
+        let transitioning = self
+            .lifecycle
+            .lock()
+            .map(|state| matches!(*state, LifecycleState::Starting | LifecycleState::Stopping))
+            .unwrap_or(true);
+        if transitioning {
             return Err(
                 "service transition already in progress or agent runtime is stopped".to_string(),
             );
@@ -267,25 +313,40 @@ impl BackendSupervisor {
         if self.is_running_on("server", &backend)
             || self.is_running_on("web", &self.windows_client_target())
         {
-            self.stop_server()
+            self.stop_server_unlocked()
         } else {
-            self.start_server()
+            self.start_server_unlocked()
         }
     }
 
     pub fn toggle_runtime(&self) -> Result<(), String> {
+        let _transition = self.try_lock_transition()?;
+        self.toggle_runtime_unlocked()
+    }
+
+    fn toggle_runtime_unlocked(&self) -> Result<(), String> {
         let backend = self.backend_for_existing_services();
-        if !self.runtime_action_enabled() {
+        let transitioning = self
+            .lifecycle
+            .lock()
+            .map(|state| matches!(*state, LifecycleState::Starting | LifecycleState::Stopping))
+            .unwrap_or(true);
+        if transitioning {
             return Err("service transition already in progress".to_string());
         }
         if self.is_running_on("runtime", &backend) {
-            self.stop()
+            self.stop_unlocked()
         } else {
-            self.start_runtime()
+            self.start_runtime_unlocked()
         }
     }
 
     pub fn start(&self) -> Result<(), String> {
+        let _transition = self.try_lock_transition()?;
+        self.start_unlocked()
+    }
+
+    fn start_unlocked(&self) -> Result<(), String> {
         self.set_lifecycle(LifecycleState::Starting);
         let result = self.start_inner();
         match &result {
@@ -320,7 +381,13 @@ impl BackendSupervisor {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn start_runtime(&self) -> Result<(), String> {
+        let _transition = self.try_lock_transition()?;
+        self.start_runtime_unlocked()
+    }
+
+    fn start_runtime_unlocked(&self) -> Result<(), String> {
         self.set_lifecycle(LifecycleState::Starting);
         let result = self.start_runtime_inner();
         match &result {
@@ -347,7 +414,13 @@ impl BackendSupervisor {
         self.wait_until("runtime", true, START_TIMEOUT, &backend)
     }
 
+    #[allow(dead_code)]
     pub fn start_server(&self) -> Result<(), String> {
+        let _transition = self.try_lock_transition()?;
+        self.start_server_unlocked()
+    }
+
+    fn start_server_unlocked(&self) -> Result<(), String> {
         self.set_lifecycle(LifecycleState::Starting);
         let result = self.start_server_inner();
         match &result {
@@ -404,7 +477,13 @@ impl BackendSupervisor {
         Ok(backend)
     }
 
+    #[allow(dead_code)]
     pub fn stop(&self) -> Result<(), String> {
+        let _transition = self.try_lock_transition()?;
+        self.stop_unlocked()
+    }
+
+    fn stop_unlocked(&self) -> Result<(), String> {
         self.set_lifecycle(LifecycleState::Stopping);
         let result = self.stop_inner();
         match &result {
@@ -446,7 +525,13 @@ impl BackendSupervisor {
         }
     }
 
+    #[allow(dead_code)]
     pub fn stop_server(&self) -> Result<(), String> {
+        let _transition = self.try_lock_transition()?;
+        self.stop_server_unlocked()
+    }
+
+    fn stop_server_unlocked(&self) -> Result<(), String> {
         self.set_lifecycle(LifecycleState::Stopping);
         let result = self.stop_server_inner();
         match &result {
@@ -484,8 +569,12 @@ impl BackendSupervisor {
     }
 
     pub fn shutdown_all(&self) -> Result<(), String> {
+        let _transition = self
+            .transition
+            .lock()
+            .map_err(|_| "service transition lock poisoned".to_string())?;
         let client_result = self.stop_clients();
-        let backend_result = self.stop();
+        let backend_result = self.stop_unlocked();
         let ownership_result = self.native_owner.terminate_all();
         let mut failures = Vec::new();
         if let Err(client) = client_result {
@@ -993,7 +1082,26 @@ impl BackendSupervisor {
             }
             (false, false, false) => LifecycleState::Stopped,
         };
-        self.set_lifecycle(reconciled.clone());
+        if let Ok(mut current_state) = self.lifecycle.lock() {
+            if *current_state != current {
+                return current_state.clone();
+            }
+            if *current_state != reconciled {
+                match &reconciled {
+                    LifecycleState::Starting => eprintln!("[tray] backend starting"),
+                    LifecycleState::Running => eprintln!("[tray] backend running"),
+                    LifecycleState::Stopping => eprintln!("[tray] backend stopping"),
+                    LifecycleState::Stopped => eprintln!("[tray] backend stopped"),
+                    LifecycleState::Degraded(detail) => {
+                        eprintln!("[tray] backend degraded: {detail}")
+                    }
+                    LifecycleState::Failed(detail) => {
+                        eprintln!("[tray] backend failed: {detail}")
+                    }
+                }
+                *current_state = reconciled.clone();
+            }
+        }
         reconciled
     }
 
@@ -1492,6 +1600,19 @@ mod tests {
         processes: Arc<dyn ProcessOperations>,
     ) -> BackendSupervisor {
         BackendSupervisor::new(PathBuf::from("/repo"), directory, processes)
+    }
+
+    #[test]
+    fn lifecycle_transition_rejects_a_second_action_without_reversing() {
+        let supervisor = test_supervisor(
+            PathBuf::from("/unused"),
+            Arc::new(FakeProcessOperations::default()),
+        );
+        let _transition = supervisor.transition.lock().unwrap();
+
+        let error = supervisor.toggle_server().unwrap_err();
+
+        assert_eq!(error, "service transition already in progress");
     }
 
     #[test]

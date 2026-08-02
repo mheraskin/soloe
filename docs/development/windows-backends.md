@@ -153,7 +153,7 @@ a `Secure`, `HttpOnly`, `SameSite=Strict` session cookie and is redirected to
 the clean root URL. The existing tray-token launch remains available as a
 localhost fallback.
 
-Right-click the Soloe tray icon and choose:
+Left- or right-click the Soloe tray icon and choose:
 
 - **Start/Stop Soloe server (WSL/Windows)** for the replaceable Application
   Server and Windows Web Host;

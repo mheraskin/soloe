@@ -86,16 +86,101 @@ impl ConfirmationState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MenuService {
+    Server,
+    Runtime,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MenuServicePhase {
+    #[default]
+    Unknown,
+    Startable,
+    Stoppable,
+    Starting,
+    Stopping,
+    Updating,
+}
+
+impl MenuServicePhase {
+    fn from_label(label: &str) -> Self {
+        if label.starts_with("Starting ") {
+            Self::Starting
+        } else if label.starts_with("Stopping ") {
+            Self::Stopping
+        } else if label.starts_with("Start ") {
+            Self::Startable
+        } else if label.starts_with("Stop ") {
+            Self::Stoppable
+        } else {
+            Self::Unknown
+        }
+    }
+
+    fn is_busy(self) -> bool {
+        matches!(self, Self::Starting | Self::Stopping | Self::Updating)
+    }
+
+    fn transition(self, service: MenuService) -> Option<(Self, String)> {
+        let label = match (self, service) {
+            (Self::Startable, MenuService::Server) => "Starting Soloe server…",
+            (Self::Stoppable, MenuService::Server) => "Stopping Soloe server…",
+            (Self::Startable, MenuService::Runtime) => "Starting agent runtime…",
+            (Self::Stoppable, MenuService::Runtime) => "Stopping agent runtime…",
+            (Self::Unknown, MenuService::Server) => "Updating Soloe server…",
+            (Self::Unknown, MenuService::Runtime) => "Updating agent runtime…",
+            _ => return None,
+        };
+        let phase = match self {
+            Self::Startable => Self::Starting,
+            Self::Stoppable => Self::Stopping,
+            Self::Unknown => Self::Updating,
+            Self::Starting | Self::Stopping | Self::Updating => return None,
+        };
+        Some((phase, label.to_string()))
+    }
+}
+
+#[derive(Debug, Default)]
+struct MenuActionState {
+    server: MenuServicePhase,
+    runtime: MenuServicePhase,
+}
+
+impl MenuActionState {
+    fn phase(&self, service: MenuService) -> MenuServicePhase {
+        match service {
+            MenuService::Server => self.server,
+            MenuService::Runtime => self.runtime,
+        }
+    }
+
+    fn set_phase(&mut self, service: MenuService, phase: MenuServicePhase) {
+        match service {
+            MenuService::Server => self.server = phase,
+            MenuService::Runtime => self.runtime = phase,
+        }
+    }
+
+    fn begin(&mut self, service: MenuService) -> Option<String> {
+        let (phase, label) = self.phase(service).transition(service)?;
+        self.set_phase(service, phase);
+        Some(label)
+    }
+
+    fn update_from_label(&mut self, service: MenuService, label: &str) {
+        self.set_phase(service, MenuServicePhase::from_label(label));
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let (discovered, instance_guard) =
                 BackendSupervisor::discover().map_err(std::io::Error::other)?;
-            let supervisor = Arc::new(Mutex::new(discovered));
-            let initial_server_action = supervisor
-                .lock()
-                .map(|service| service.server_transition_label())
-                .unwrap_or_else(|_| "Starting Soloe server…".to_string());
+            let supervisor = Arc::new(discovered);
+            let initial_server_action = supervisor.server_transition_label();
             let server_action = MenuItem::with_id(
                 app,
                 "toggle_server",
@@ -103,10 +188,7 @@ pub fn run() {
                 false,
                 None::<&str>,
             )?;
-            let initial_runtime_action = supervisor
-                .lock()
-                .map(|service| service.runtime_transition_label())
-                .unwrap_or_else(|_| "Starting agent runtime…".to_string());
+            let initial_runtime_action = supervisor.runtime_transition_label();
             let runtime_action = MenuItem::with_id(
                 app,
                 "toggle_runtime",
@@ -120,7 +202,7 @@ pub fn run() {
                 app,
                 "open_electron",
                 "Open Electron client",
-                true,
+                false,
                 None::<&str>,
             )?;
             let open_logs =
@@ -147,6 +229,11 @@ pub fn run() {
             let menu_open_browser = open_browser.clone();
             let menu_open_electron = open_electron.clone();
             let menu_quit = quit.clone();
+            let menu_action_state = Arc::new(Mutex::new(MenuActionState {
+                server: MenuServicePhase::Starting,
+                runtime: MenuServicePhase::Starting,
+            }));
+            let menu_lifecycle_state = Arc::clone(&menu_action_state);
             let runtime_action_state = Arc::new(Mutex::new(ConfirmationState::default()));
             let menu_runtime_action_state = Arc::clone(&runtime_action_state);
             let quit_state = Arc::new(Mutex::new(ConfirmationState::default()));
@@ -156,7 +243,7 @@ pub fn run() {
             let mut tray = TrayIconBuilder::with_id(TRAY_ID)
                 .tooltip(DEFAULT_TOOLTIP)
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| {
                     let id = event.id().as_ref().to_string();
                     let launch_target = LaunchTarget::from_menu_id(&id);
@@ -192,13 +279,16 @@ pub fn run() {
                     let runtime_action_state = Arc::clone(&menu_runtime_action_state);
                     let quit_state = Arc::clone(&menu_quit_state);
                     let launch_state = Arc::clone(&menu_launch_state);
+                    let lifecycle_state = Arc::clone(&menu_lifecycle_state);
                     let app = app.clone();
                     thread::spawn(move || {
+                        let lifecycle_action = match id.as_str() {
+                            "toggle_server" => Some(MenuService::Server),
+                            "toggle_runtime" => Some(MenuService::Runtime),
+                            _ => None,
+                        };
                         if id == "toggle_runtime" {
-                            let requires_confirmation = supervisor
-                                .lock()
-                                .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .map(|service| service.requires_stop_confirmation());
+                            let requires_confirmation = Ok(supervisor.requires_stop_confirmation());
                             let intent = requires_confirmation.and_then(|required| {
                                 runtime_action_state
                                     .lock()
@@ -221,49 +311,39 @@ pub fn run() {
                                 return;
                             }
                         }
-                        if id == "toggle_server" || id == "toggle_runtime" {
-                            let transition = supervisor
+                        let transition = lifecycle_action.and_then(|service| {
+                            lifecycle_state
                                 .lock()
-                                .map(|service| match id.as_str() {
-                                    "toggle_server" => service.server_transition_label(),
-                                    _ => service.runtime_transition_label(),
-                                })
-                                .unwrap_or_else(|_| "Updating services…".to_string());
+                                .ok()
+                                .and_then(|mut state| state.begin(service))
+                        });
+                        if lifecycle_action.is_some() {
+                            let Some(transition) = transition else {
+                                return;
+                            };
                             let action = if id == "toggle_server" {
                                 &server_action
                             } else {
                                 &runtime_action
                             };
-                            let _ = action.set_text(transition);
+                            let _ = action.set_text(&transition);
                             let _ = server_action.set_enabled(false);
                             let _ = runtime_action.set_enabled(false);
+                            let _ = open_browser.set_enabled(false);
+                            let _ = open_electron.set_enabled(false);
+                            if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                                let _ = tray.set_tooltip(Some(transition.as_str()));
+                            }
                         }
                         let result = match id.as_str() {
-                            "toggle_server" => supervisor
-                                .lock()
-                                .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.toggle_server()),
-                            "toggle_runtime" => supervisor
-                                .lock()
-                                .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.toggle_runtime()),
-                            "open_browser" => supervisor
-                                .lock()
-                                .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.open_browser()),
-                            "open_electron" => supervisor
-                                .lock()
-                                .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.open_electron()),
-                            "open_logs" => supervisor
-                                .lock()
-                                .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                .and_then(|service| service.open_logs()),
+                            "toggle_server" => supervisor.toggle_server(),
+                            "toggle_runtime" => supervisor.toggle_runtime(),
+                            "open_browser" => supervisor.open_browser(),
+                            "open_electron" => supervisor.open_electron(),
+                            "open_logs" => supervisor.open_logs(),
                             "quit" => {
-                                let requires_confirmation = supervisor
-                                    .lock()
-                                    .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                    .map(|service| service.requires_stop_confirmation());
+                                let requires_confirmation =
+                                    Ok(supervisor.requires_stop_confirmation());
                                 let intent = requires_confirmation.and_then(|required| {
                                     quit_state
                                         .lock()
@@ -292,10 +372,7 @@ pub fn run() {
                                 let _ = runtime_action.set_text("Stopping agent runtime…");
                                 let _ = server_action.set_enabled(false);
                                 let _ = runtime_action.set_enabled(false);
-                                let result = supervisor
-                                    .lock()
-                                    .map_err(|_| "backend supervisor lock poisoned".to_string())
-                                    .and_then(|service| service.shutdown_all());
+                                let result = supervisor.shutdown_all();
                                 if let Err(error) = &result {
                                     eprintln!("[tray] {error}");
                                 }
@@ -313,6 +390,26 @@ pub fn run() {
                         {
                             state.finish();
                         }
+                        if lifecycle_action.is_some() {
+                            let server_label = supervisor.server_action_label();
+                            let server_enabled = supervisor.server_action_enabled();
+                            let runtime_label = supervisor.runtime_action_label();
+                            let runtime_enabled = supervisor.runtime_action_enabled();
+                            if let Ok(mut state) = lifecycle_state.lock() {
+                                state.update_from_label(MenuService::Server, &server_label);
+                                state.update_from_label(MenuService::Runtime, &runtime_label);
+                                let _ = server_action.set_text(server_label);
+                                let _ = server_action.set_enabled(server_enabled);
+                                let _ = runtime_action.set_text(runtime_label);
+                                let _ = runtime_action.set_enabled(runtime_enabled);
+                                let browser_ready = supervisor.browser_address().is_some();
+                                let _ = open_browser.set_enabled(browser_ready);
+                                let _ = open_electron.set_enabled(browser_ready);
+                                if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                                    let _ = tray.set_tooltip(Some(DEFAULT_TOOLTIP));
+                                }
+                            }
+                        }
                         if let (Some(target), Some(started_at)) =
                             (launch_target, launch_started_at.flatten())
                         {
@@ -327,10 +424,15 @@ pub fn run() {
                             }
                             let _ = open_browser.set_text("Open in browser");
                             let _ = open_electron.set_text("Open Electron client");
-                            let browser_ready = supervisor
+                            let lifecycle_busy = lifecycle_state
                                 .lock()
-                                .map(|service| service.browser_address().is_some())
-                                .unwrap_or(false);
+                                .map(|state| {
+                                    state.phase(MenuService::Server).is_busy()
+                                        || state.phase(MenuService::Runtime).is_busy()
+                                })
+                                .unwrap_or(true);
+                            let browser_ready =
+                                !lifecycle_busy && supervisor.browser_address().is_some();
                             let _ = open_browser.set_enabled(browser_ready);
                             let _ = open_electron.set_enabled(true);
                             if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -338,18 +440,6 @@ pub fn run() {
                             }
                         }
                         let _ = quit.set_text("Quit Soloe");
-                        if let Ok(service) = supervisor.lock() {
-                            let awaiting_confirmation = runtime_action_state
-                                .lock()
-                                .map(|state| state.awaiting_confirmation(Instant::now()))
-                                .unwrap_or(false);
-                            let _ = server_action.set_text(service.server_action_label());
-                            let _ = server_action.set_enabled(service.server_action_enabled());
-                            if !awaiting_confirmation {
-                                let _ = runtime_action.set_text(service.runtime_action_label());
-                            }
-                            let _ = runtime_action.set_enabled(service.runtime_action_enabled());
-                        }
                     });
                 });
             if let Some(icon) = app.default_window_icon() {
@@ -360,15 +450,27 @@ pub fn run() {
             let startup_supervisor = Arc::clone(&supervisor);
             let startup_server_action = server_action.clone();
             let startup_runtime_action = runtime_action.clone();
+            let startup_open_browser = open_browser.clone();
+            let startup_open_electron = open_electron.clone();
+            let startup_lifecycle_state = Arc::clone(&menu_action_state);
             thread::spawn(move || {
-                if let Ok(service) = startup_supervisor.lock() {
-                    if let Err(error) = service.start() {
-                        eprintln!("[tray] failed to start backend: {error}");
-                    }
-                    let _ = startup_server_action.set_text(service.server_action_label());
-                    let _ = startup_server_action.set_enabled(service.server_action_enabled());
-                    let _ = startup_runtime_action.set_text(service.runtime_action_label());
-                    let _ = startup_runtime_action.set_enabled(service.runtime_action_enabled());
+                if let Err(error) = startup_supervisor.start() {
+                    eprintln!("[tray] failed to start backend: {error}");
+                }
+                let server_label = startup_supervisor.server_action_label();
+                let runtime_label = startup_supervisor.runtime_action_label();
+                let server_enabled = startup_supervisor.server_action_enabled();
+                let runtime_enabled = startup_supervisor.runtime_action_enabled();
+                let browser_ready = startup_supervisor.browser_address().is_some();
+                if let Ok(mut state) = startup_lifecycle_state.lock() {
+                    state.update_from_label(MenuService::Server, &server_label);
+                    state.update_from_label(MenuService::Runtime, &runtime_label);
+                    let _ = startup_server_action.set_text(server_label);
+                    let _ = startup_server_action.set_enabled(server_enabled);
+                    let _ = startup_runtime_action.set_text(runtime_label);
+                    let _ = startup_runtime_action.set_enabled(runtime_enabled);
+                    let _ = startup_open_browser.set_enabled(browser_ready);
+                    let _ = startup_open_electron.set_enabled(browser_ready);
                 }
             });
 
@@ -376,30 +478,55 @@ pub fn run() {
             let polling_server_action = server_action.clone();
             let polling_runtime_action = runtime_action.clone();
             let polling_runtime_action_state = Arc::clone(&runtime_action_state);
+            let polling_lifecycle_state = Arc::clone(&menu_action_state);
             let polling_browser = open_browser.clone();
+            let polling_electron = open_electron.clone();
             let polling_launch_state = Arc::clone(&launch_state);
             thread::spawn(move || {
                 loop {
                     thread::sleep(Duration::from_secs(1));
-                    let Ok(service) = polling_supervisor.lock() else {
-                        break;
-                    };
                     let awaiting_confirmation = polling_runtime_action_state
                         .lock()
                         .map(|state| state.awaiting_confirmation(Instant::now()))
                         .unwrap_or(false);
-                    let _ = polling_server_action.set_text(service.server_action_label());
-                    let _ = polling_server_action.set_enabled(service.server_action_enabled());
-                    if !awaiting_confirmation {
-                        let _ = polling_runtime_action.set_text(service.runtime_action_label());
+                    let server_busy = polling_lifecycle_state
+                        .lock()
+                        .map(|state| state.phase(MenuService::Server).is_busy())
+                        .unwrap_or(true);
+                    let runtime_busy = polling_lifecycle_state
+                        .lock()
+                        .map(|state| state.phase(MenuService::Runtime).is_busy())
+                        .unwrap_or(true);
+                    if !server_busy {
+                        let server_label = polling_supervisor.server_action_label();
+                        let server_enabled = polling_supervisor.server_action_enabled();
+                        if let Ok(mut state) = polling_lifecycle_state.lock()
+                            && !state.phase(MenuService::Server).is_busy()
+                        {
+                            state.update_from_label(MenuService::Server, &server_label);
+                            let _ = polling_server_action.set_text(server_label);
+                            let _ = polling_server_action.set_enabled(server_enabled);
+                        }
                     }
-                    let _ = polling_runtime_action.set_enabled(service.runtime_action_enabled());
+                    if !runtime_busy && !awaiting_confirmation {
+                        let runtime_label = polling_supervisor.runtime_action_label();
+                        let runtime_enabled = polling_supervisor.runtime_action_enabled();
+                        if let Ok(mut state) = polling_lifecycle_state.lock()
+                            && !state.phase(MenuService::Runtime).is_busy()
+                        {
+                            state.update_from_label(MenuService::Runtime, &runtime_label);
+                            let _ = polling_runtime_action.set_text(runtime_label);
+                            let _ = polling_runtime_action.set_enabled(runtime_enabled);
+                        }
+                    }
                     let launching = polling_launch_state
                         .lock()
                         .map(|state| state.is_some())
                         .unwrap_or(true);
                     if !launching {
-                        let _ = polling_browser.set_enabled(service.browser_address().is_some());
+                        let browser_ready = polling_supervisor.browser_address().is_some();
+                        let _ = polling_browser.set_enabled(browser_ready);
+                        let _ = polling_electron.set_enabled(browser_ready);
                     }
                 }
             });
@@ -413,7 +540,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfirmationIntent, ConfirmationState, LaunchTarget};
+    use super::{
+        ConfirmationIntent, ConfirmationState, LaunchTarget, MenuActionState, MenuService,
+        MenuServicePhase,
+    };
     use std::time::{Duration, Instant};
 
     #[test]
@@ -490,6 +620,31 @@ mod tests {
         );
         assert!(
             LaunchTarget::Electron.minimum_feedback() > LaunchTarget::Browser.minimum_feedback()
+        );
+    }
+
+    #[test]
+    fn repeated_lifecycle_clicks_are_ignored_until_the_first_finishes() {
+        let mut state = MenuActionState {
+            server: MenuServicePhase::Stoppable,
+            runtime: MenuServicePhase::Stoppable,
+        };
+
+        assert_eq!(
+            state.begin(MenuService::Server),
+            Some("Stopping Soloe server…".to_string())
+        );
+        assert_eq!(state.phase(MenuService::Server), MenuServicePhase::Stopping);
+        assert_eq!(state.begin(MenuService::Server), None);
+
+        state.update_from_label(MenuService::Server, "Start Soloe server (WSL)");
+        assert_eq!(
+            state.phase(MenuService::Server),
+            MenuServicePhase::Startable
+        );
+        assert_eq!(
+            state.begin(MenuService::Server),
+            Some("Starting Soloe server…".to_string())
         );
     }
 }
