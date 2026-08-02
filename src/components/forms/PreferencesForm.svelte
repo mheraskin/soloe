@@ -17,7 +17,8 @@
     NotebookPen,
     ServerCog,
     Bell,
-    Keyboard
+    Keyboard,
+    ScanLine
   } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import { platform } from '../../stores/platform.svelte';
@@ -36,7 +37,12 @@
   import { modelCatalogFor } from '@shared/model-catalog.js';
   import type { AgentRuntimeProvider, RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
   import { runModeLabel } from '@shared/platform.js';
-  import { Keymap } from '../../lib/keymap';
+  import {
+    Keymap,
+    shortcutConflicts,
+    shortcutKeysFromEvent
+  } from '../../lib/keymap';
+  import { shortcutLabel } from '../../lib/element-source-inspector';
   import { reportError } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -127,6 +133,8 @@
   let notificationPermission = $state<NotificationPermission | 'unsupported'>(
     agentNotificationPermission()
   );
+  let recordingInspectorShortcut = $state(false);
+  let inspectorShortcutError = $state<string | null>(null);
 
   onMount(() => {
     const media = window.matchMedia('(max-width: 767px)');
@@ -307,6 +315,48 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setElementSourceInspectorEnabled(value: boolean) {
+    try {
+      await settings.update({ browser: { elementSourceInspectorEnabled: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  function startInspectorShortcutRecording(): void {
+    recordingInspectorShortcut = true;
+    inspectorShortcutError = null;
+  }
+
+  function cancelInspectorShortcutRecording(): void {
+    recordingInspectorShortcut = false;
+    inspectorShortcutError = null;
+  }
+
+  function recordInspectorShortcut(event: KeyboardEvent): void {
+    if (!recordingInspectorShortcut) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      cancelInspectorShortcutRecording();
+      return;
+    }
+    const keys = shortcutKeysFromEvent(event);
+    if (!keys || (!keys.includes('Ctrl') && !keys.includes('Alt'))) {
+      inspectorShortcutError = 'Use at least Ctrl/Cmd or Alt with the key.';
+      return;
+    }
+    const conflict = shortcutConflicts(keys);
+    if (conflict.length > 0) {
+      inspectorShortcutError = `Already used by ${conflict[0]!.description}.`;
+      return;
+    }
+    void settings.update({ shortcuts: { elementSourceInspector: keys } })
+      .then(() => {
+        recordingInspectorShortcut = false;
+        inspectorShortcutError = null;
+      })
+      .catch((error) => reportError(error));
+  }
+
   async function setNotesDraftsPerWorktree(value: boolean) {
     try {
       await settings.update({ notes: { draftsPerWorktree: value } });
@@ -485,7 +535,7 @@
       </div>
     </Tabs.Content>
 
-    <Tabs.Content value="shortcuts" class={contentClass}>
+  <Tabs.Content value="shortcuts" class={contentClass}>
       <div class="flex flex-col gap-1">
         <h2 class="m-0 text-sm font-medium">Keyboard shortcuts</h2>
         <p class="m-0 text-[11px] leading-4 text-muted-foreground">
@@ -526,6 +576,52 @@
         </p>
       </div>
 
+      <div class="flex flex-col gap-3 rounded-md border border-primary/30 bg-primary/5 p-3">
+        <div class="flex items-start gap-2.5">
+          <ScanLine class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div class="min-w-0 flex-1">
+            <Label class="text-sm font-medium">Element Source Inspector</Label>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Toggle inspection mode in the Browser pane and inspect source locations from the
+              rendered page.
+            </p>
+          </div>
+          {#if recordingInspectorShortcut}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              class="shrink-0 border-primary text-primary"
+              onkeydown={recordInspectorShortcut}
+              onblur={cancelInspectorShortcutRecording}
+              onclick={() => undefined}
+              aria-label="Press a new Element Source Inspector shortcut"
+            >
+              Press keys…
+            </Button>
+          {:else}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              class="shrink-0 font-mono text-[11px]"
+              onclick={startInspectorShortcutRecording}
+              aria-label="Change Element Source Inspector shortcut"
+            >
+              {shortcutLabel(settings.current.shortcuts.elementSourceInspector)}
+            </Button>
+          {/if}
+        </div>
+        {#if recordingInspectorShortcut}
+          <p class="m-0 text-[11px] text-primary" aria-live="polite">
+            Press the new shortcut, or Escape to cancel.
+          </p>
+        {/if}
+        {#if inspectorShortcutError}
+          <p class="m-0 text-[11px] text-destructive" role="alert">{inspectorShortcutError}</p>
+        {/if}
+      </div>
+
       <div class="flex flex-col gap-2">
         <h3 class="m-0 text-xs font-medium text-muted-foreground">Current bindings</h3>
         <div class="overflow-hidden rounded-md border border-border">
@@ -549,7 +645,7 @@
               {/each}
             </span>
           </div>
-          {#each builtInShortcuts as shortcut, i (shortcut.id)}
+          {#each builtInShortcuts.filter((shortcut) => shortcut.id !== Keymap.elementSourceInspector.id) as shortcut, i (shortcut.id)}
             <div
               class={`flex items-center justify-between gap-3 px-3 py-2.5 ${
                 i < builtInShortcuts.length - 1 ? 'border-b border-border' : ''
@@ -565,6 +661,19 @@
               </span>
             </div>
           {/each}
+          <div class="flex items-center justify-between gap-3 px-3 py-2.5">
+            <span class="text-xs">Toggle Element Source Inspector</span>
+            <span
+              class="flex shrink-0 items-center gap-1"
+              aria-label={shortcutLabel(settings.current.shortcuts.elementSourceInspector)}
+            >
+              {#each settings.current.shortcuts.elementSourceInspector as key (key)}
+                <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  {shortcutKeyLabel(key)}
+                </kbd>
+              {/each}
+            </span>
+          </div>
         </div>
       </div>
     </Tabs.Content>
@@ -1039,6 +1148,25 @@
     </Tabs.Content>
 
     <Tabs.Content value="browser" class={contentClass}>
+      <div class="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/5 p-3">
+        <div class="flex min-w-0 items-start gap-2.5">
+          <ScanLine class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div class="min-w-0">
+            <Label for="pref-element-source-inspector" class="text-sm font-medium">
+              Element Source Inspector
+            </Label>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Show the inspector control beside DevTools and enable source metadata in browser
+              pages.
+            </p>
+          </div>
+        </div>
+        <Switch
+          id="pref-element-source-inspector"
+          checked={settings.current.browser.elementSourceInspectorEnabled}
+          onCheckedChange={setElementSourceInspectorEnabled}
+        />
+      </div>
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground" for="pref-browser-resident-tabs">
           Maximum live browser tabs

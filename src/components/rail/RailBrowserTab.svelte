@@ -17,9 +17,12 @@
     Monitor,
     CircleAlert,
     PowerOff,
-    Power
+    Power,
+    ScanLine
   } from '@lucide/svelte';
   import { browserStore, type BrowserTabDevice } from '../../stores/browser.svelte';
+  import { sessions } from '../../stores/sessions.svelte';
+  import { elementSourceInspector } from '../../stores/element-source-inspector.svelte';
   import { findPreset } from '../../lib/browser-devices';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
@@ -42,6 +45,12 @@
     browserFailureFromHttpResponse,
     type BrowserLoadFailure
   } from '../../lib/browser-load-failure';
+  import {
+    mapGuestRectToHost,
+    shortcutLabel,
+    type ElementSourcePayload,
+    type ElementSourceRect
+  } from '../../lib/element-source-inspector';
 
   let activeTab = $derived(browserStore.activeTab);
   let activeId = $derived(browserStore.activeTabId);
@@ -79,6 +88,14 @@
   // webview's page zoom. The indicator and reset button follow the same rule.
   let activeZoomFactor = $derived(device ? activeCanvasZoom : activePageZoom);
   let zoomPercent = $derived(Math.round(activeZoomFactor * 100));
+  let browserSurfaceEl = $state<HTMLDivElement | null>(null);
+  let inspectorSettingEnabled = $derived(settings.current.browser.elementSourceInspectorEnabled);
+  let inspectorViewAvailable = $derived(
+    !!activeTab && activeDomReady && activeUrl !== '' && activeUrl !== 'about:blank'
+  );
+  let inspectorModeActive = $derived(
+    activeId ? elementSourceInspector.isModeActive(browserStore.activeWorktreeKey, activeId) : false
+  );
 
   function setTabRecordValue<T>(
     getRecord: () => Record<string, T>,
@@ -98,6 +115,100 @@
     if (!(tabId in current)) return current;
     const { [tabId]: _removed, ...rest } = current;
     return rest;
+  }
+
+  function inspectorContext(tabId: string, pageUrl = activeUrl) {
+    const session = sessions.selected;
+    if (!session) return null;
+    return {
+      tabId,
+      scopeKey: browserStore.activeWorktreeKey,
+      cwd: session.cwd,
+      runMode: session.runMode,
+      ...(session.wslDistro ? { wslDistro: session.wslDistro } : {}),
+      projectRoot: session.cwd,
+      pageUrl
+    };
+  }
+
+  function sendInspectorMode(tabId: string, enabled: boolean): void {
+    const webview = webviewsById[tabId];
+    if (!webview || !domReadyById[tabId]) return;
+    try {
+      webview.send('soloe:webview-element-source-mode', { enabled });
+    } catch {
+      // The guest can disappear between the ready check and send during a
+      // reload. The next dom-ready event resynchronizes the mode.
+    }
+  }
+
+  function setInspectorMode(tabId: string, enabled: boolean): void {
+    if (!inspectorSettingEnabled && enabled) return;
+    const scopeKey = browserStore.activeWorktreeKey;
+    const context = inspectorContext(tabId);
+    if (context) elementSourceInspector.registerContext(context);
+    elementSourceInspector.setMode(scopeKey, tabId, enabled);
+    sendInspectorMode(tabId, enabled);
+  }
+
+  function toggleInspectorMode(): void {
+    const tabId = activeId;
+    if (!tabId || !inspectorSettingEnabled || !inspectorViewAvailable) return;
+    setInspectorMode(
+      tabId,
+      !elementSourceInspector.isModeActive(browserStore.activeWorktreeKey, tabId)
+    );
+  }
+
+  function sanitizeInspectorPayload(raw: unknown): ElementSourcePayload | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const value = raw as Record<string, unknown>;
+    const kind = value['kind'];
+    if (kind !== 'hover' && kind !== 'select' && kind !== 'leave') return null;
+    const frame = (candidate: unknown) => {
+      if (!candidate || typeof candidate !== 'object') return null;
+      const source = candidate as Record<string, unknown>;
+      if (typeof source['filePath'] !== 'string') return null;
+      return {
+        filePath: source['filePath'].slice(0, 4096),
+        lineNumber: typeof source['lineNumber'] === 'number' ? source['lineNumber'] : null,
+        columnNumber: typeof source['columnNumber'] === 'number' ? source['columnNumber'] : null,
+        componentName: typeof source['componentName'] === 'string'
+          ? source['componentName'].slice(0, 160)
+          : null
+      };
+    };
+    const rectValue = value['rect'];
+    let rect: ElementSourceRect | null = null;
+    if (rectValue && typeof rectValue === 'object') {
+      const rawRect = rectValue as Record<string, unknown>;
+      const numeric = ['x', 'y', 'width', 'height', 'viewportWidth', 'viewportHeight'];
+      if (numeric.every((key) => typeof rawRect[key] === 'number' && Number.isFinite(rawRect[key]))) {
+        rect = {
+          x: rawRect['x'] as number,
+          y: rawRect['y'] as number,
+          width: rawRect['width'] as number,
+          height: rawRect['height'] as number,
+          viewportWidth: rawRect['viewportWidth'] as number,
+          viewportHeight: rawRect['viewportHeight'] as number
+        };
+      }
+    }
+    const stack = Array.isArray(value['stack'])
+      ? value['stack'].map(frame).filter((entry): entry is NonNullable<ReturnType<typeof frame>> => entry !== null).slice(0, 16)
+      : [];
+    return {
+      kind,
+      ...(typeof value['tagName'] === 'string' ? { tagName: value['tagName'].slice(0, 80) } : {}),
+      componentName: typeof value['componentName'] === 'string'
+        ? value['componentName'].slice(0, 160)
+        : null,
+      source: frame(value['source']),
+      stack,
+      rect,
+      label: typeof value['label'] === 'string' ? value['label'].slice(0, 320) : null,
+      pageUrl: typeof value['pageUrl'] === 'string' ? value['pageUrl'].slice(0, 8192) : activeUrl
+    };
   }
 
   // Chrome's standard zoom factor list. Both page and canvas zoom step
@@ -162,6 +273,47 @@
 
   // Make sure we have at least one tab so the URL bar has something to drive.
   browserStore.ensureSomeTab();
+
+  $effect(() => {
+    const scopeKey = browserStore.activeWorktreeKey;
+    untrack(() => elementSourceInspector.setActiveScope(scopeKey));
+    const surface = browserSurfaceEl;
+    if (!surface) return;
+    const updateBounds = () => {
+      const rect = surface.getBoundingClientRect();
+      untrack(() => {
+        elementSourceInspector.setPanelBounds({
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom
+        });
+      });
+    };
+    updateBounds();
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(surface);
+    window.addEventListener('resize', updateBounds);
+    window.addEventListener('scroll', updateBounds, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateBounds);
+      window.removeEventListener('scroll', updateBounds, true);
+    };
+  });
+
+  $effect(() => {
+    const scopeKey = browserStore.activeWorktreeKey;
+    const enabled = inspectorSettingEnabled;
+    for (const tab of browserStore.tabs) {
+      const context = inspectorContext(tab.id, tab.id === activeId ? activeUrl : undefined);
+      if (context) elementSourceInspector.registerContext(context);
+      if (!enabled && elementSourceInspector.isModeActive(scopeKey, tab.id)) {
+        elementSourceInspector.setMode(scopeKey, tab.id, false);
+        sendInspectorMode(tab.id, false);
+      }
+    }
+  });
 
   function getActiveInitialUrl(): string {
     const t = browserStore.activeTab;
@@ -291,6 +443,13 @@
       const onDomReady = () => {
         if (!isCurrentAttachment()) return;
         domReadyById = { ...domReadyById, [tabId]: true };
+        const context = inspectorContext(tabId);
+        if (context) elementSourceInspector.registerContext(context);
+        sendInspectorMode(
+          tabId,
+          inspectorSettingEnabled
+            && elementSourceInspector.isModeActive(worktreeKey, tabId)
+        );
         // Re-apply any previously-set page zoom: a resumed tab has a fresh
         // webContents whose zoom level resets to 0 (= 100%), so without this
         // the indicator and the actual page would silently disagree.
@@ -316,6 +475,12 @@
         }
         if (url === lastLoadedById[tabId]) return;
         lastLoadedById = { ...lastLoadedById, [tabId]: url };
+        if (elementSourceInspector.isModeActive(worktreeKey, tabId)) {
+          elementSourceInspector.receive(worktreeKey, tabId, {
+            kind: 'leave',
+            pageUrl: url
+          }, null);
+        }
         browserStore.navigate(tabId, url);
       };
       const onTitle = (e: Event) => {
@@ -364,6 +529,34 @@
         if (!isCurrentAttachment()) return;
         if (tabId !== browserStore.activeTabId) return;
         const e = event as Event & { channel?: string; args?: unknown[] };
+        if (e.channel === 'soloe:webview-element-source-exit') {
+          setInspectorMode(tabId, false);
+          return;
+        }
+        if (e.channel === 'soloe:webview-element-source') {
+          if (!inspectorSettingEnabled || !elementSourceInspector.isModeActive(worktreeKey, tabId)) return;
+          const payload = sanitizeInspectorPayload(e.args?.[0]);
+          if (!payload) {
+            console.warn('[element-source] ignored malformed webview metadata', { tabId });
+            return;
+          }
+          const context = inspectorContext(tabId, payload.pageUrl ?? activeUrl);
+          if (!context) return;
+          elementSourceInspector.registerContext(context);
+          const guestRect = payload.rect;
+          let targetRect = null;
+          if (guestRect) {
+            const viewRect = wv.getBoundingClientRect();
+            targetRect = mapGuestRectToHost(guestRect, {
+              left: viewRect.left,
+              top: viewRect.top,
+              width: viewRect.width,
+              height: viewRect.height
+            });
+          }
+          elementSourceInspector.receive(worktreeKey, tabId, payload, targetRect);
+          return;
+        }
         if (e.channel === 'soloe:webview-shortcut') {
           const payload = e.args?.[0] as
             | {
@@ -448,6 +641,7 @@
         // A replacement attachment for the same logical tab may already own
         // these records. Old cleanup must not erase the new generation.
         if (attachmentGenerationByTabId.get(tabId) !== generation) return;
+        elementSourceInspector.removeContext(worktreeKey, tabId);
         attachmentGenerationByTabId.delete(tabId);
         webviewsById = deleteTabRecordValue(() => webviewsById, tabId);
         domReadyById = deleteTabRecordValue(() => domReadyById, tabId);
@@ -862,6 +1056,7 @@
       applyPageZoom(tabId, next);
     };
     const onToggleDevTools = () => toggleDevTools();
+    const onToggleInspector = () => toggleInspectorMode();
     const onRestoreTab = () => restoreClosedTab();
     const onResizeStart = () => suspendDevToolsView();
     const onResizeEnd = () => resumeDevToolsView();
@@ -892,6 +1087,7 @@
     const onLayoutShift = () => refreshFillAnchor();
     window.addEventListener('soloe:browser-zoom', onZoom);
     window.addEventListener('soloe:browser-toggle-devtools', onToggleDevTools);
+    window.addEventListener('soloe:browser-toggle-element-source-inspector', onToggleInspector);
     window.addEventListener('soloe:browser-restore-tab', onRestoreTab);
     window.addEventListener('soloe:rail-resize-start', onResizeStart);
     window.addEventListener('soloe:rail-resize-end', onResizeEnd);
@@ -905,6 +1101,7 @@
     return () => {
       window.removeEventListener('soloe:browser-zoom', onZoom);
       window.removeEventListener('soloe:browser-toggle-devtools', onToggleDevTools);
+      window.removeEventListener('soloe:browser-toggle-element-source-inspector', onToggleInspector);
       window.removeEventListener('soloe:browser-restore-tab', onRestoreTab);
       window.removeEventListener('soloe:rail-resize-start', onResizeStart);
       window.removeEventListener('soloe:rail-resize-end', onResizeEnd);
@@ -1405,7 +1602,11 @@
   }
 </script>
 
-<div data-browser-surface class="mobile-browser-surface flex h-full min-w-0 flex-col bg-background">
+<div
+  bind:this={browserSurfaceEl}
+  data-browser-surface
+  class="mobile-browser-surface flex h-full min-w-0 flex-col bg-background"
+>
   <div class="mobile-browser-tabs flex h-8 min-h-8 items-center gap-0.5 overflow-x-auto border-b border-border bg-sidebar px-1">
     {#each browserStore.tabs as tab (tab.id)}
       {@const isActive = tab.id === activeId}
@@ -1688,6 +1889,21 @@
         />
       </Popover.Content>
     </Popover.Root>
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      class={`size-7 ${inspectorModeActive ? 'bg-primary/15 text-primary' : ''}`}
+      aria-label="Element Source Inspector"
+      title={inspectorSettingEnabled
+        ? `Element Source Inspector (${shortcutLabel(settings.current.shortcuts.elementSourceInspector)})`
+        : 'Element Source Inspector disabled in settings'}
+      aria-pressed={inspectorModeActive}
+      disabled={!inspectorSettingEnabled || !inspectorViewAvailable}
+      onclick={toggleInspectorMode}
+    >
+      <ScanLine class="size-3.5" />
+    </Button>
     <Button
       type="button"
       variant="ghost"

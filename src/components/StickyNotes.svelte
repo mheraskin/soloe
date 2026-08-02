@@ -20,6 +20,7 @@
   import { Input } from '$lib/components/ui/input';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import ElementSourceStickyViewer from './ElementSourceStickyViewer.svelte';
 
   type StickyLayout = {
     left: number;
@@ -573,6 +574,8 @@
     ></button>
   </div>
 {/if}
+
+<ElementSourceStickyViewer />
 
 <Dialog.Root open={saveDialog !== null} onOpenChange={(open) => (saveDialog = open ? saveDialog : null)}>
   <Dialog.Content class="sm:max-w-sm">

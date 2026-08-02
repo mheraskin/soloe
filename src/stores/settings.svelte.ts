@@ -97,11 +97,20 @@ export class SettingsStore {
 }
 
 function withSettingsDefaults(settings: Settings): Settings {
+  const browser = settings.browser ?? {};
+  const shortcuts = settings.shortcuts ?? {};
   return {
     ...settings,
+    browser: {
+      ...DEFAULT_SETTINGS.browser,
+      ...browser
+    },
     shortcuts: {
       ...DEFAULT_SETTINGS.shortcuts,
-      ...settings.shortcuts
+      ...shortcuts,
+      elementSourceInspector: shortcuts.elementSourceInspector?.length
+        ? shortcuts.elementSourceInspector
+        : [...DEFAULT_SETTINGS.shortcuts.elementSourceInspector]
     }
   };
 }
