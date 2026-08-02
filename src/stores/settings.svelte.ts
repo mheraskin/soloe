@@ -16,16 +16,15 @@ export class SettingsStore {
   private targetTabNonce = 0;
   private changeVersion = 0;
   private reconnectRecovery: Promise<void> | null = null;
+  private modelCatalogLoaded = false;
+  private modelCatalogRequest: Promise<void> | null = null;
 
   async load(): Promise<void> {
     const changeVersion = this.changeVersion;
-    const [s, availableModels] = await Promise.all([
-      ipc.settings.get(),
-      ipc.settings.modelCatalog().catch(() => [] as ModelCatalogEntry[])
-    ]);
+    const s = await ipc.settings.get();
     if (this.changeVersion === changeVersion) this.current = withSettingsDefaults(s);
-    this.availableModels = availableModels;
     this.loaded = true;
+    this.modelCatalogLoaded = false;
   }
 
   attachListeners(): void {
@@ -34,6 +33,7 @@ export class SettingsStore {
       ipc.settings.onChange((s) => {
         this.changeVersion += 1;
         this.current = withSettingsDefaults(s);
+        this.modelCatalogLoaded = false;
       })
     );
     this.detachers.push(
@@ -56,15 +56,30 @@ export class SettingsStore {
   async update(patch: SettingsUpdate): Promise<void> {
     const next = await ipc.settings.update(patch);
     this.current = withSettingsDefaults(next);
-    if (patch.binaries) await this.refreshModelCatalog();
+    if (patch.binaries) {
+      this.modelCatalogLoaded = false;
+      void this.ensureModelCatalog();
+    }
   }
 
-  async refreshModelCatalog(): Promise<void> {
-    this.availableModels = await ipc.settings.modelCatalog().catch(() => this.availableModels);
+  ensureModelCatalog(): Promise<void> {
+    if (this.modelCatalogLoaded) return Promise.resolve();
+    if (this.modelCatalogRequest) return this.modelCatalogRequest;
+
+    const request = ipc.settings.modelCatalog()
+      .then((availableModels) => {
+        this.availableModels = availableModels;
+        this.modelCatalogLoaded = true;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.modelCatalogRequest === request) this.modelCatalogRequest = null;
+      });
+    this.modelCatalogRequest = request;
+    return request;
   }
 
   openDialog(tab?: string): void {
-    void this.refreshModelCatalog();
     if (tab) {
       this.targetTabNonce += 1;
       this.targetTab = { tab, nonce: this.targetTabNonce };

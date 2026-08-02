@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '@shared/types/projects.js';
-import { DEFAULT_SETTINGS, type Settings } from '@shared/types/settings.js';
+import {
+  DEFAULT_SETTINGS,
+  type ModelCatalogEntry,
+  type Settings
+} from '@shared/types/settings.js';
 
 const mocks = vi.hoisted(() => ({
   projectList: vi.fn(),
   settingsGet: vi.fn(),
-  settingsModelCatalog: vi.fn(async () => []),
+  settingsUpdate: vi.fn(),
+  settingsModelCatalog: vi.fn(async (): Promise<ModelCatalogEntry[]> => []),
   projectChanges: {
     emit: (_projects: Project[]): void => {}
   },
@@ -28,6 +33,7 @@ vi.mock('../lib/ipc', () => ({
     },
     settings: {
       get: mocks.settingsGet,
+      update: mocks.settingsUpdate,
       modelCatalog: mocks.settingsModelCatalog,
       onChange: vi.fn((callback: (settings: Settings) => void) => {
         mocks.settingsChanges.emit = callback;
@@ -48,6 +54,56 @@ import { SettingsStore } from './settings.svelte';
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('SettingsStore loading', () => {
+  it('does not start model catalog discovery until it is requested', async () => {
+    const catalog = deferred<ModelCatalogEntry[]>();
+    const discoveredModels: ModelCatalogEntry[] = [
+      { provider: 'codex', id: 'gpt-test', label: 'GPT Test' }
+    ];
+    mocks.settingsGet.mockResolvedValueOnce(settings('light'));
+    mocks.settingsModelCatalog.mockReturnValueOnce(catalog.promise);
+    const store = new SettingsStore();
+
+    await store.load();
+
+    expect(store.loaded).toBe(true);
+    expect(store.current.appearance.theme).toBe('light');
+    expect(store.availableModels).toEqual([]);
+    expect(mocks.settingsModelCatalog).not.toHaveBeenCalled();
+
+    store.openDialog('appearance');
+    expect(store.dialogOpen).toBe(true);
+    expect(mocks.settingsModelCatalog).not.toHaveBeenCalled();
+
+    void store.ensureModelCatalog();
+    void store.ensureModelCatalog();
+
+    expect(mocks.settingsModelCatalog).toHaveBeenCalledTimes(1);
+
+    catalog.resolve(discoveredModels);
+    await vi.waitFor(() => expect(store.availableModels).toEqual(discoveredModels));
+  });
+
+  it('does not wait for discovery after a binary setting changes', async () => {
+    const catalog = deferred<ModelCatalogEntry[]>();
+    mocks.settingsUpdate.mockResolvedValueOnce(settings('dark'));
+    mocks.settingsModelCatalog.mockReturnValueOnce(catalog.promise);
+    const store = new SettingsStore();
+
+    const updating = store.update({ binaries: { codex: '/opt/codex' } });
+    const finishedPromptly = await Promise.race([
+      updating.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 50))
+    ]);
+
+    expect(finishedPromptly).toBe(true);
+    expect(store.current.appearance.theme).toBe('dark');
+    expect(mocks.settingsModelCatalog).toHaveBeenCalledTimes(1);
+
+    catalog.resolve([]);
+  });
 });
 
 describe('shared store reconnect recovery', () => {

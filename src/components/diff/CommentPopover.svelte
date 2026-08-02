@@ -25,6 +25,7 @@
   import { randomName } from '../../lib/random-name';
   import { sendComment } from '../../lib/diff-comment-sender';
   import { reportError, toasts } from '../../stores/toast.svelte';
+  import { settings } from '../../stores/settings.svelte';
   import MentionPicker, { buildMentionItems, type MentionItem } from './MentionPicker.svelte';
   import AgentBadge from './AgentBadge.svelte';
 
@@ -53,6 +54,10 @@
     mentionCtx ? buildMentionItems(comment.scope, mentionCtx.query) : []
   );
   let pickerOpen = $derived(mentionCtx !== null && pickerItems.length > 0);
+
+  $effect(() => {
+    if (mentionCtx) void settings.ensureModelCatalog();
+  });
 
   // Reset highlight when the visible item set changes.
   $effect(() => {

@@ -157,6 +157,12 @@
     activeTab = t.tab;
   });
 
+  $effect(() => {
+    if (activeTab === 'models' || activeTab === 'quicklaunch') {
+      void settings.ensureModelCatalog();
+    }
+  });
+
   const triggerClass = cn(
     'settings-tab-trigger group/tab flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium',
     'text-muted-foreground transition-colors outline-none',

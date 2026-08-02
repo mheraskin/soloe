@@ -370,7 +370,12 @@
         value={modelKey(selectedModel)}
         onValueChange={(v) => void setSelectedModel(v)}
       >
-        <Select.Trigger class="h-7 w-auto min-w-[150px] gap-1.5 px-2 py-0 text-xs" aria-label="Overview model">
+        <Select.Trigger
+          class="h-7 w-auto min-w-[150px] gap-1.5 px-2 py-0 text-xs"
+          aria-label="Overview model"
+          onfocus={() => void settings.ensureModelCatalog()}
+          onpointerdown={() => void settings.ensureModelCatalog()}
+        >
           <span class="flex items-center gap-1.5 truncate">
             {#if selectedModel}
               <KindIcon kind={providerKind(selectedModel.provider)} size={12} />
