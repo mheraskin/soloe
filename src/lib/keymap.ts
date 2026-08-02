@@ -1,5 +1,3 @@
-import { ELEMENT_SOURCE_INSPECTOR_SHORTCUT, shortcutSignature } from './element-source-inspector';
-
 export interface KeymapBinding {
   id: string;
   description: string;
@@ -59,12 +57,6 @@ export const Keymap = {
       (e.ctrlKey && !e.metaKey && e.shiftKey && !e.altKey && key(e) === 'i')
       || (e.metaKey && !e.ctrlKey && !e.shiftKey && e.altKey && key(e) === 'i')
       || (e.metaKey && !e.ctrlKey && e.shiftKey && !e.altKey && key(e) === 'c')
-  },
-  elementSourceInspector: {
-    id: 'browser.element-source-inspector',
-    description: 'Toggle Element Source Inspector',
-    keys: [...ELEMENT_SOURCE_INSPECTOR_SHORTCUT],
-    match: (e: KeyboardEvent) => matchesShortcut(e, ELEMENT_SOURCE_INSPECTOR_SHORTCUT)
   },
   openProject: {
     id: 'project.open',
@@ -182,58 +174,6 @@ export const Keymap = {
       isCtrlOrCmd(e) && e.shiftKey && !e.altKey && e.code === 'Slash'
   }
 } as const satisfies Record<string, KeymapBinding>;
-
-export function matchesShortcut(e: KeyboardEvent, keys: readonly string[]): boolean {
-  const normalized = keys.map((value) => value.trim().toLowerCase()).filter(Boolean);
-  const hasCtrl = normalized.includes('ctrl') || normalized.includes('cmd');
-  const hasAlt = normalized.includes('alt') || normalized.includes('option');
-  const hasShift = normalized.includes('shift');
-  const keyToken = normalized.find(
-    (value) => !['ctrl', 'cmd', 'alt', 'option', 'shift', 'meta'].includes(value)
-  );
-  if (!keyToken) return false;
-  if (hasCtrl !== isCtrlOrCmd(e)) return false;
-  if (hasAlt !== e.altKey || hasShift !== e.shiftKey) return false;
-  if (normalized.includes('meta') !== e.metaKey && normalized.includes('meta')) return false;
-  if (!hasCtrl && (e.ctrlKey || e.metaKey)) return false;
-  return key(e) === keyToken || physicalKey(e) === keyToken;
-}
-
-export function shortcutKeysFromEvent(e: KeyboardEvent): string[] | null {
-  if (e.key === 'Control' || e.key === 'Meta' || e.key === 'Alt' || e.key === 'Shift') return null;
-  const keyToken = physicalKey(e) || key(e);
-  if (!keyToken) return null;
-  const keys: string[] = [];
-  if (isCtrlOrCmd(e)) keys.push('Ctrl');
-  if (e.altKey) keys.push('Alt');
-  if (e.shiftKey) keys.push('Shift');
-  keys.push(keyToken.length === 1 ? keyToken.toUpperCase() : keyToken);
-  return keys;
-}
-
-export function shortcutConflicts(
-  keys: readonly string[],
-  exceptId = Keymap.elementSourceInspector.id
-): KeymapBinding[] {
-  const signature = shortcutSignature(keys);
-  return Object.values(Keymap).filter(
-    (binding) => binding.id !== exceptId && shortcutSignature(binding.keys) === signature
-  );
-}
-
-function physicalKey(e: KeyboardEvent): string {
-  const codeMap: Record<string, string> = {
-    Slash: '/',
-    Semicolon: ';',
-    Comma: ',',
-    Period: '.',
-    Minus: '-',
-    Equal: '=',
-    BracketLeft: '[',
-    BracketRight: ']'
-  };
-  return codeMap[e.code] ?? '';
-}
 
 export function tabIndexFromEvent(e: KeyboardEvent): number | null {
   if (!isPlainCtrlOrCmd(e)) return null;

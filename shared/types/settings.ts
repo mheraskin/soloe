@@ -24,8 +24,6 @@ export interface SettingsBrowser {
   // Minutes to wait before automatically resuming a paused browser tab.
   // 0 disables auto-resume entirely (the user has to resume manually).
   pauseAutoResumeMinutes: number;
-  // Show the browser toolbar control and guest-page listeners for source inspection.
-  elementSourceInspectorEnabled: boolean;
 }
 
 export type BackendPlacement = 'windows' | 'wsl';
@@ -134,8 +132,6 @@ export interface SettingsShortcuts {
   // Cmd/Ctrl+Shift+1..9 follows the visible order of either the current
   // project's worktrees or all projects in the sidebar.
   shiftNumberNavigation: ShiftNumberNavigationTarget;
-  // Toggles the browser's Element Source Inspector when the browser rail is active.
-  elementSourceInspector: string[];
 }
 
 export interface Settings {
@@ -181,11 +177,7 @@ export const DEFAULT_SETTINGS: Settings = {
   appearance: { theme: 'dark' },
   terminal: { fontSize: 13, confirmDeleteTabs: true },
   diff: { fontSize: 13 },
-  browser: {
-    maxResidentTabs: 2,
-    pauseAutoResumeMinutes: 5,
-    elementSourceInspectorEnabled: true
-  },
+  browser: { maxResidentTabs: 2, pauseAutoResumeMinutes: 5 },
   defaults: {
     runMode: 'wsl',
     wslDistro: 'Ubuntu',
@@ -199,10 +191,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quickLaunchDefaultsSeeded: true,
   integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false },
   notes: { draftsPerWorktree: false },
-  shortcuts: {
-    shiftNumberNavigation: 'worktree',
-    elementSourceInspector: ['Ctrl', 'Alt', 'Shift', 'S']
-  }
+  shortcuts: { shiftNumberNavigation: 'worktree' }
 };
 
 export function defaultSettingsForRunMode(runMode: Exclude<RunMode, 'wsl'> | 'wsl'): Settings {

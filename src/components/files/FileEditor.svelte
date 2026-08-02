@@ -1,21 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    EditorState,
-    type Extension,
-    Compartment,
-    StateEffect,
-    StateField
-  } from '@codemirror/state';
-  import {
-    Decoration,
-    EditorView,
-    keymap,
-    lineNumbers,
-    highlightActiveLine,
-    highlightActiveLineGutter,
-    type DecorationSet
-  } from '@codemirror/view';
+  import { EditorState, type Extension, Compartment } from '@codemirror/state';
+  import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
   import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
   import { LanguageDescription } from '@codemirror/language';
@@ -28,64 +14,14 @@
     readOnly?: boolean;
     onChange?: (next: string) => void;
     onSave?: () => void;
-    reveal?: SourceReveal | null;
-    onReady?: (controller: FileEditorController) => void;
   }
 
-  export interface SourceReveal {
-    line: number;
-    column?: number;
-    focus?: boolean;
-    scrollTop?: number | null;
-    nonce?: number;
-  }
-
-  export interface FileEditorController {
-    revealSource: (location: SourceReveal) => void;
-    getScrollTop: () => number;
-    focus: () => void;
-  }
-
-  let {
-    value,
-    relativePath,
-    readOnly = false,
-    onChange,
-    onSave,
-    reveal = null,
-    onReady
-  }: Props = $props();
+  let { value, relativePath, readOnly = false, onChange, onSave }: Props = $props();
 
   let host: HTMLDivElement | null = $state(null);
   let view: EditorView | null = null;
   const langCompartment = new Compartment();
   const readOnlyCompartment = new Compartment();
-  const sourceHighlightEffect = StateEffect.define<number | null>();
-  const sourceHighlightField = StateField.define<DecorationSet>({
-    create: () => Decoration.none,
-    update(decorations, transaction) {
-      let next = decorations.map(transaction.changes);
-      for (const effect of transaction.effects) {
-        if (!effect.is(sourceHighlightEffect)) continue;
-        if (effect.value === null) {
-          next = Decoration.none;
-          continue;
-        }
-        const line = transaction.state.doc.line(
-          Math.min(Math.max(1, effect.value), transaction.state.doc.lines)
-        );
-        next = Decoration.set([Decoration.line({ attributes: { class: 'soloe-source-line' } }).range(line.from)]);
-      }
-      return next;
-    },
-    provide: (field) => EditorView.decorations.from(field)
-  });
-  const sourceHighlightTheme = EditorView.baseTheme({
-    '.cm-line.soloe-source-line': {
-      backgroundColor: 'color-mix(in srgb, var(--solo-source-highlight, #22c55e) 14%, transparent)',
-      boxShadow: 'inset 2px 0 0 var(--solo-source-highlight, #22c55e)'
-    }
-  });
 
   // Loaded language matches are cached per filename — language-data does the
   // dynamic import; we don't want to re-trigger it for each keystroke.
@@ -137,8 +73,6 @@
       saveKey,
       EditorView.lineWrapping,
       soloeCodeMirrorTheme(),
-      sourceHighlightField,
-      sourceHighlightTheme,
       readOnlyCompartment.of(EditorState.readOnly.of(readOnly)),
       langCompartment.of([]),
       EditorView.updateListener.of((u) => {
@@ -155,43 +89,12 @@
       state: EditorState.create({ doc: value, extensions: buildExtensions() }),
       parent: host
     });
-    onReady?.({ revealSource, getScrollTop, focus: () => view?.focus() });
     void hydrateLanguage(relativePath);
     return () => {
       view?.destroy();
       view = null;
     };
   });
-
-  function revealSource(location: SourceReveal): void {
-    if (!view) return;
-    const line = Math.min(Math.max(1, Math.floor(location.line)), view.state.doc.lines);
-    const lineInfo = view.state.doc.line(line);
-    const column = Math.min(
-      Math.max(1, Math.floor(location.column ?? 1)),
-      Math.max(1, lineInfo.length + 1)
-    );
-    const position = lineInfo.from + column - 1;
-    view.dispatch({
-      selection: { anchor: position },
-      effects: [
-        sourceHighlightEffect.of(line),
-        ...(location.scrollTop === undefined || location.scrollTop === null
-          ? [EditorView.scrollIntoView(position, { y: 'center' })]
-          : [])
-      ]
-    });
-    if (location.scrollTop !== undefined && location.scrollTop !== null) {
-      requestAnimationFrame(() => {
-        if (view) view.scrollDOM.scrollTop = Math.max(0, location.scrollTop!);
-      });
-    }
-    if (location.focus) view.focus();
-  }
-
-  function getScrollTop(): number {
-    return view?.scrollDOM.scrollTop ?? 0;
-  }
 
   async function hydrateLanguage(path: string): Promise<void> {
     const ext = (await languageFor(path)) ?? [];
@@ -219,13 +122,6 @@
   $effect(() => {
     if (!view) return;
     view.dispatch({ effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(readOnly)) });
-  });
-
-  $effect(() => {
-    const request = reveal;
-    if (!view || !request) return;
-    const frame = requestAnimationFrame(() => revealSource(request));
-    return () => cancelAnimationFrame(frame);
   });
 </script>
 

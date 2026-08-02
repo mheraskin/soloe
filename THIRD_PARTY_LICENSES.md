@@ -56,19 +56,6 @@ Full MIT license text ships with each package at
 
 ---
 
-## element-source
-
-Development-only DOM-to-source metadata resolver used by the Element Source
-Inspector. No other complete inspector product is bundled.
-
-- Project: https://github.com/aidenybai/element-source
-- License: MIT
-- Copyright: the element-source contributors
-
-The full MIT license text ships with `node_modules/element-source/LICENSE`.
-
----
-
 The Apache 2.0 license requires preserving the NOTICE text above whenever
 Soloe is redistributed. Other dependencies of Soloe carry their own license
 terms; this file only enumerates components that require notice-preservation

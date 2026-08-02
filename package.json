@@ -58,6 +58,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@soloe/domain": "workspace:*",
+    "@soloe/protocol": "workspace:*",
+    "@soloe/runtime": "workspace:*",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-html": "^6.4.11",
     "@codemirror/language": "^6.12.3",
@@ -69,9 +72,6 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@lezer/highlight": "^1.2.3",
     "@pierre/trees": "^1.0.0-beta.3",
-    "@soloe/domain": "workspace:*",
-    "@soloe/protocol": "workspace:*",
-    "@soloe/runtime": "workspace:*",
     "@tauri-apps/api": "^2.11.1",
     "@xterm/addon-canvas": "^0.7.0",
     "@xterm/addon-clipboard": "^0.2.0",
@@ -82,7 +82,6 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "codemirror": "^6.0.2",
-    "element-source": "^0.0.5",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.3",
     "node-pty": "^1.0.0",

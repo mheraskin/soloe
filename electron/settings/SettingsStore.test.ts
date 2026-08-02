@@ -31,12 +31,6 @@ describe('SettingsStore — defaults', () => {
     expect(exists).toBe(false);
   });
 
-  it('enables the Element Source Inspector and its verified shortcut by default', async () => {
-    const settings = await new SettingsStore(path.join(tmpDir, 'default.json')).get();
-    expect(settings.browser.elementSourceInspectorEnabled).toBe(true);
-    expect(settings.shortcuts.elementSourceInspector).toEqual(['Ctrl', 'Alt', 'Shift', 'S']);
-  });
-
   it('selects native Linux defaults for the Linux build', async () => {
     const store = new SettingsStore(path.join(tmpDir, 'linux.json'), 'linux');
     const s = await store.get();
@@ -56,18 +50,6 @@ describe('SettingsStore — defaults', () => {
 });
 
 describe('SettingsStore — update', () => {
-  it('persists the inspector setting and customized shortcut', async () => {
-    const store = new SettingsStore(storePath);
-    await store.update({
-      browser: { elementSourceInspectorEnabled: false },
-      shortcuts: { elementSourceInspector: ['Ctrl', 'Alt', 'Shift', 'X'] }
-    });
-    const reloaded = new SettingsStore(storePath);
-    await expect(reloaded.get()).resolves.toMatchObject({
-      browser: { elementSourceInspectorEnabled: false },
-      shortcuts: { elementSourceInspector: ['Ctrl', 'Alt', 'Shift', 'X'] }
-    });
-  });
   it('persists the backend placement independently from session run mode', async () => {
     const store = new SettingsStore(storePath);
     const updated = await store.update({

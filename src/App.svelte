@@ -38,7 +38,6 @@
   import { sessionContextMenus } from './stores/session-context-menus.svelte';
   import { sidebar } from './stores/sidebar.svelte';
   import { browserStore } from './stores/browser.svelte';
-  import { elementSourceInspector } from './stores/element-source-inspector.svelte';
   import { vaultStore } from './stores/vault.svelte';
   import { reportError } from './stores/toast.svelte';
   import { ipc, supportsBackendOperation } from './lib/ipc';
@@ -51,7 +50,6 @@
   import { confirmStore } from './stores/confirm.svelte';
   import {
     Keymap,
-    matchesShortcut,
     shouldIgnoreInTextInput,
     shiftNumberIndexFromEvent,
     tabIndexFromEvent
@@ -529,7 +527,6 @@
       : [];
     rightRail.setActiveCwd(cwd);
     browserStore.setActiveScope(selected ? worktreeScope(selected.cwd, selected) : null);
-    elementSourceInspector.setActiveScope(selected ? browserStore.activeWorktreeKey : null);
     vaultStore.setActiveContext({
       cwd,
       projectCwd: project?.path ?? cwd,
@@ -1025,15 +1022,6 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (
-      isBrowserTabActive()
-      && settings.current.browser.elementSourceInspectorEnabled
-      && matchesShortcut(e, settings.current.shortcuts.elementSourceInspector)
-    ) {
-      consume(e);
-      window.dispatchEvent(new CustomEvent('soloe:browser-toggle-element-source-inspector'));
-      return;
-    }
     if (Keymap.browserDevTools.match(e) && isBrowserKeyTarget(e)) {
       consume(e);
       window.dispatchEvent(new CustomEvent('soloe:browser-toggle-devtools'));

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  Keymap,
-  matchesShortcut,
-  shortcutConflicts,
-  shortcutKeysFromEvent
-} from './keymap';
+import { Keymap } from './keymap';
 
 function keydown(overrides: KeyboardEventInit): KeyboardEvent {
   return {
@@ -38,32 +33,5 @@ describe('browser developer tools keymap', () => {
         keydown({ key: 'i', ctrlKey: true, shiftKey: true, altKey: true })
       )
     ).toBe(false);
-  });
-});
-
-describe('Element Source Inspector shortcut', () => {
-  it('uses the verified default without a registry conflict', () => {
-    expect(shortcutConflicts(Keymap.elementSourceInspector.keys)).toEqual([]);
-  });
-
-  it('matches the complete default modifier chord', () => {
-    expect(matchesShortcut(
-      keydown({ key: 'S', ctrlKey: true, altKey: true, shiftKey: true }),
-      Keymap.elementSourceInspector.keys
-    )).toBe(true);
-    expect(matchesShortcut(
-      keydown({ key: 'S', ctrlKey: true, altKey: true, shiftKey: true, metaKey: true }),
-      Keymap.elementSourceInspector.keys
-    )).toBe(true);
-    expect(matchesShortcut(
-      keydown({ key: 'S', ctrlKey: true, altKey: true, shiftKey: false }),
-      Keymap.elementSourceInspector.keys
-    )).toBe(false);
-  });
-
-  it('serializes a recorded chord in display order', () => {
-    expect(shortcutKeysFromEvent(
-      keydown({ key: 'S', ctrlKey: true, altKey: true, shiftKey: true })
-    )).toEqual(['Ctrl', 'Alt', 'Shift', 'S']);
   });
 });

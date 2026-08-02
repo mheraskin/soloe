@@ -243,11 +243,7 @@ function parseSettings(
     },
     browser: {
       maxResidentTabs: pickMaxResidentTabs(browser['maxResidentTabs']),
-      pauseAutoResumeMinutes: pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes']),
-      elementSourceInspectorEnabled: pickBoolean(
-        browser['elementSourceInspectorEnabled'],
-        DEFAULT_SETTINGS.browser.elementSourceInspectorEnabled
-      )
+      pauseAutoResumeMinutes: pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes'])
     },
     defaults: {
       runMode: pickEnum(
@@ -290,22 +286,8 @@ function parseShortcuts(raw: unknown): Settings['shortcuts'] {
       raw['shiftNumberNavigation'],
       VALID_SHIFT_NUMBER_NAVIGATION_TARGETS,
       DEFAULT_SETTINGS.shortcuts.shiftNumberNavigation
-    ) as Settings['shortcuts']['shiftNumberNavigation'],
-    elementSourceInspector: parseShortcutKeys(
-      raw['elementSourceInspector'],
-      DEFAULT_SETTINGS.shortcuts.elementSourceInspector
-    )
+    ) as Settings['shortcuts']['shiftNumberNavigation']
   };
-}
-
-function parseShortcutKeys(value: unknown, fallback: string[]): string[] {
-  if (!Array.isArray(value)) return [...fallback];
-  const keys = value
-    .filter((key): key is string => typeof key === 'string')
-    .map((key) => key.trim())
-    .filter(Boolean)
-    .slice(0, 6);
-  return keys.length > 0 ? keys : [...fallback];
 }
 
 function parseIntegrations(raw: unknown): Settings['integrations'] {
@@ -444,9 +426,6 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
     || s.browser.pauseAutoResumeMinutes > 1440) {
     throw new Error('Invalid browser.pauseAutoResumeMinutes');
   }
-  if (typeof s.browser.elementSourceInspectorEnabled !== 'boolean') {
-    throw new Error('Invalid browser.elementSourceInspectorEnabled');
-  }
   if (!VALID_RUN_MODES.has(s.defaults.runMode)) throw new Error(`Invalid runMode: ${s.defaults.runMode}`);
   if (!supportedRunModes(platform).includes(s.defaults.runMode)) {
     throw new Error(`Run mode ${s.defaults.runMode} is not available on ${platform}`);
@@ -494,12 +473,6 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   if (!isObject(s.shortcuts as unknown)) throw new Error('shortcuts must be an object');
   if (!VALID_SHIFT_NUMBER_NAVIGATION_TARGETS.has(s.shortcuts.shiftNumberNavigation)) {
     throw new Error(`Invalid shortcuts.shiftNumberNavigation: ${s.shortcuts.shiftNumberNavigation}`);
-  }
-  if (!Array.isArray(s.shortcuts.elementSourceInspector)
-    || s.shortcuts.elementSourceInspector.length === 0
-    || s.shortcuts.elementSourceInspector.length > 6
-    || s.shortcuts.elementSourceInspector.some((key) => typeof key !== 'string' || !key.trim())) {
-    throw new Error('Invalid shortcuts.elementSourceInspector');
   }
 }
 

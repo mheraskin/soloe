@@ -106,7 +106,6 @@
   let tree = $derived(activeFilesScope ? filesStore.treeFor(activeFilesScope) : null);
   let openFile = $derived(activeFilesScope ? filesStore.openFileFor(activeFilesScope) : null);
   let dirty = $derived(activeFilesScope ? filesStore.dirtyFor(activeFilesScope) : false);
-  let revealRequest = $derived(activeFilesScope ? filesStore.revealFor(activeFilesScope) : null);
 
   // Residency owns heavyweight tree/editor payload only while this surface is
   // visible. The store keeps a tiny warm LRU after release and protects dirty
@@ -511,14 +510,6 @@
                 rootEl={editorWrapperEl}
                 onChange={onChange}
                 onSave={onSave}
-                reveal={revealRequest && revealRequest.relativePath === openFile.relativePath
-                  ? {
-                      line: revealRequest.line,
-                      column: revealRequest.column,
-                      focus: true,
-                      nonce: revealRequest.nonce
-                    }
-                  : null}
               />
             {:catch}
               <div class="flex flex-1 flex-col items-center justify-center gap-2 px-3 text-center text-xs text-muted-foreground">
