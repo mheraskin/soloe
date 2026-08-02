@@ -36,6 +36,14 @@ export function filterGitHistory(
     .map((item) => item.commit);
 }
 
+export function scopeGitHistory(
+  commits: GitHistoryCommit[],
+  hashes: ReadonlySet<string> | null
+): GitHistoryCommit[] {
+  if (!hashes) return commits;
+  return commits.filter((commit) => hashes.has(commit.hash));
+}
+
 export function buildGitHistoryGraph(commits: GitHistoryCommit[]): GitHistoryGraphRow[] {
   let lanes: string[] = [];
   const rows: GitHistoryGraphRow[] = [];

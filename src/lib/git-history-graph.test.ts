@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGitHistoryGraph, filterGitHistory } from './git-history-graph';
+import { buildGitHistoryGraph, filterGitHistory, scopeGitHistory } from './git-history-graph';
 
 const root = {
   hash: 'a'.repeat(40),
@@ -61,5 +61,13 @@ describe('Git history graph', () => {
     expect(filterGitHistory([head, feature, root], 'ada', 'commits')).toEqual([
       root
     ]);
+  });
+
+  it('scopes history to commits in a selected branch range', () => {
+    expect(scopeGitHistory([head, feature, root], new Set([feature.hash, root.hash]))).toEqual([
+      feature,
+      root
+    ]);
+    expect(scopeGitHistory([head, feature, root], null)).toEqual([head, feature, root]);
   });
 });
