@@ -86,7 +86,8 @@ describe('remote Electron preload', () => {
         width: 390,
         height: 844,
         deviceScaleFactor: 3,
-        mobile: true
+        mobile: true,
+        scale: 1
       }
     });
     await exposed.browser.disableDeviceEmulation({ webContentsId: 1 });

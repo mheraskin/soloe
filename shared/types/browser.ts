@@ -3,6 +3,7 @@ export interface DeviceEmulation {
   height: number;
   deviceScaleFactor: number;
   mobile: boolean;
+  scale: number;
   userAgent?: string;
 }
 

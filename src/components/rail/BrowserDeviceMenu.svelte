@@ -73,7 +73,9 @@
   }
 </script>
 
-<div class="mobile-device-menu flex max-h-[480px] w-[300px] flex-col">
+<div
+  class="mobile-device-menu flex h-[480px] max-h-[calc(100dvh-1rem)] w-[300px] flex-col overflow-hidden"
+>
   <div class="flex items-center gap-2 border-b border-border px-3 py-2">
     <Smartphone class="size-4 text-muted-foreground" />
     <span class="text-xs font-medium">Responsive viewer</span>
@@ -92,8 +94,8 @@
     {/if}
   </div>
 
-  <ScrollArea class="min-h-0 flex-1">
-    <div class="flex flex-col gap-3 p-2">
+  <div class="flex min-h-0 flex-1 flex-col">
+    <div class="flex shrink-0 flex-col gap-3 p-2 pb-0">
       <button
         type="button"
         class={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] hover:bg-accent ${
@@ -111,6 +113,11 @@
         <div class="px-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
           Devices
         </div>
+      </div>
+    </div>
+
+    <ScrollArea class="min-h-0 flex-1">
+      <div class="flex flex-col gap-0.5 px-2 pb-2">
         {#each BROWSER_DEVICE_PRESETS as preset (preset.id)}
           {@const Icon = iconFor(preset.kind)}
           {@const isActive = device?.presetId === preset.id}
@@ -129,7 +136,9 @@
           </button>
         {/each}
       </div>
+    </ScrollArea>
 
+    <div class="flex shrink-0 flex-col gap-3 p-2 pt-0">
       <Separator />
 
       <form class="flex flex-col gap-2 px-1" onsubmit={applyCustom}>
@@ -175,5 +184,5 @@
         <Button type="submit" variant="default" size="xs" class="h-7">Apply custom</Button>
       </form>
     </div>
-  </ScrollArea>
+  </div>
 </div>

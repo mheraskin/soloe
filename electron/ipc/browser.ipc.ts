@@ -57,7 +57,7 @@ export class BrowserIpc {
             },
             viewPosition: { x: 0, y: 0 },
             deviceScaleFactor: request.emulation.deviceScaleFactor,
-            scale: 1
+            scale: request.emulation.scale
           });
           return true as const;
         })

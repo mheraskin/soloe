@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EnableDeviceEmulationRequest } from '@shared/types/browser.js';
 
 const electronMocks = vi.hoisted(() => {
   class FakeEmitter {
@@ -50,6 +51,7 @@ const electronMocks = vi.hoisted(() => {
       id,
       isDestroyed: vi.fn(() => false),
       setDevToolsWebContents: vi.fn(),
+      enableDeviceEmulation: vi.fn(),
       openDevTools: vi.fn(() => { devToolsOpen = true; }),
       closeDevTools: vi.fn(() => { devToolsOpen = false; }),
       isDevToolsOpened: vi.fn(() => devToolsOpen)
@@ -192,6 +194,35 @@ describe('BrowserIpc DevTools ownership', () => {
   });
 });
 
+describe('BrowserIpc device emulation', () => {
+  it('passes the requested canvas scale to native emulation', async () => {
+    const target = electronMocks.createTarget(1);
+    const ipc = new BrowserIpc();
+    ipc.register();
+
+    await invokeEnable({
+      webContentsId: 1,
+      emulation: {
+        width: 393,
+        height: 852,
+        deviceScaleFactor: 3,
+        mobile: true,
+        scale: 0.9
+      }
+    });
+
+    expect(target.enableDeviceEmulation).toHaveBeenCalledWith({
+      screenPosition: 'mobile',
+      screenSize: { width: 393, height: 852 },
+      viewSize: { width: 393, height: 852 },
+      viewPosition: { x: 0, y: 0 },
+      deviceScaleFactor: 3,
+      scale: 0.9
+    });
+    ipc.dispose();
+  });
+});
+
 async function invokeOpen(
   webContentsId: number,
   bounds = { x: 0, y: 0, width: 800, height: 300 }
@@ -212,6 +243,13 @@ async function invokeLayout(request: {
 }): Promise<void> {
   const handler = electronMocks.handlers.get(IpcChannels.browser.setDevToolsLayout);
   if (!handler) throw new Error('setDevToolsLayout handler not registered');
+  const result = await handler({ sender: electronMocks.rendererSender() }, request);
+  expect(result).toEqual({ ok: true, value: true });
+}
+
+async function invokeEnable(request: EnableDeviceEmulationRequest): Promise<void> {
+  const handler = electronMocks.handlers.get(IpcChannels.browser.enableDeviceEmulation);
+  if (!handler) throw new Error('enableDeviceEmulation handler not registered');
   const result = await handler({ sender: electronMocks.rendererSender() }, request);
   expect(result).toEqual({ ok: true, value: true });
 }

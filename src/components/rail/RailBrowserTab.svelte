@@ -857,15 +857,16 @@
   let autofillOpen = $state(false);
   let deviceMenuOpen = $state(false);
 
-  function deviceKey(d: BrowserTabDevice | undefined): string | null {
+  function deviceKey(d: BrowserTabDevice | undefined, canvasZoom = 1): string | null {
     if (!d) return null;
     const w = d.rotated ? d.height : d.width;
     const h = d.rotated ? d.width : d.height;
-    return `${d.presetId}:${w}x${h}@${d.dpr}:${d.mobile ? 'm' : 'd'}:${d.ua}`;
+    return `${d.presetId}:${w}x${h}@${d.dpr}:${d.mobile ? 'm' : 'd'}:${d.ua}:${canvasZoom}`;
   }
 
   // Apply the per-tab device emulation. Called from the dom-ready handler
-  // for that tab and from an effect that watches the active tab's device.
+  // for that tab and from an effect that watches the active tab's device and
+  // canvas zoom.
   // Inactive tabs keep their emulation applied as long as their webContents
   // is alive — that way switching back doesn't trigger a UA-induced reload.
   async function applyEmulationFor(tabId: string): Promise<void> {
@@ -903,7 +904,8 @@
       }
       return;
     }
-    const key = deviceKey(tabDevice);
+    const canvasZoom = tab.canvasZoom ?? 1;
+    const key = deviceKey(tabDevice, canvasZoom);
     if (key === (lastAppliedDeviceKeyById[tabId] ?? null)) return;
     lastAppliedDeviceKeyById = { ...lastAppliedDeviceKeyById, [tabId]: key };
     const w = tabDevice.rotated ? tabDevice.height : tabDevice.width;
@@ -916,6 +918,7 @@
           height: h,
           deviceScaleFactor: tabDevice.dpr,
           mobile: tabDevice.mobile,
+          scale: canvasZoom,
           ...(tabDevice.ua ? { userAgent: tabDevice.ua } : {})
         }
       });
@@ -931,15 +934,16 @@
     }
   }
 
-  // Re-apply emulation when the active tab's device changes. Switching tabs
-  // doesn't trigger this (each tab's emulation was set at its own dom-ready);
-  // only mutating the active tab's device does.
+  // Re-apply emulation when the active tab's device or canvas zoom changes.
+  // Switching tabs doesn't trigger this (each tab's emulation was set at its
+  // own dom-ready); only mutating the active tab's emulation does.
   $effect(() => {
     const tab = activeTab;
     if (!tab) return;
     void tab.device;
     void deviceWidth;
     void deviceHeight;
+    void activeCanvasZoom;
     void applyEmulationFor(tab.id);
   });
 
@@ -2000,13 +2004,9 @@
         {@const tabCanvasZoom = tab.canvasZoom ?? 1}
         {#if tabDevice}
           <!--
-            Responsive mode: an overflow-auto wrapper hosts a scaler whose
-            laid-out size equals the scaled device size, with the actual
-            device frame inside drawn at its native pixel size and
-            transform: scale()-d. Doing the scale this way (rather than
-            shrinking the frame directly) keeps the page rendering as if it
-            has its full emulated viewport — so the user is "zooming the
-            canvas" while the page itself stays at native resolution.
+            Responsive mode uses Chromium's native emulation scale so the
+            guest is laid out at the requested device viewport without a CSS
+            transform resampling the embedded webview.
           -->
           <div
             class="absolute inset-0 flex items-start justify-center overflow-auto bg-muted/40 p-4"
@@ -2017,8 +2017,7 @@
               style={`width: ${tabW * tabCanvasZoom}px; height: ${tabH * tabCanvasZoom}px;`}
             >
               <div
-                class="overflow-hidden rounded border border-border bg-background shadow-lg"
-                style={`width: ${tabW}px; height: ${tabH}px; transform: scale(${tabCanvasZoom}); transform-origin: top left;`}
+                class="h-full w-full overflow-hidden rounded border border-border bg-background shadow-lg"
               >
                 <!-- svelte-ignore element_invalid_self_closing_tag -->
                 <webview
