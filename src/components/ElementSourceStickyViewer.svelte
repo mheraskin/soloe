@@ -5,7 +5,9 @@
     ChevronLeft,
     ChevronUp,
     ChevronDown,
+    CornerDownRight,
     ExternalLink,
+    GripVertical,
     Loader2,
     Pin,
     PinOff,
@@ -13,7 +15,6 @@
     X
   } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
-  import * as Select from '$lib/components/ui/select';
   import {
     createFilesScope,
     filesStore
@@ -56,6 +57,7 @@
   const revealCache = new Map<string, { key: string; value: SourceReveal }>();
   const loadKeys = new Map<string, string>();
   const sourcePreviewCache = new Map<string, { content: string; loadedPath: string }>();
+  let openHierarchyViewerId = $state<string | null>(null);
   let viewers = $derived([
     ...elementSourceInspector.pinned,
     ...(elementSourceInspector.transient ? [elementSourceInspector.transient] : [])
@@ -158,10 +160,11 @@
     event: PointerEvent,
     viewerId: string,
     kind: Interaction['kind'],
-    handle?: ResizeHandle
+    handle?: ResizeHandle,
+    allowButtonDrag = false
   ): void {
     if (event.button !== 0) return;
-    const control = kind === 'drag' && event.target instanceof Element
+    const control = !allowButtonDrag && kind === 'drag' && event.target instanceof Element
       ? event.target.closest('button, [role="option"], [data-slot="select-content"]')
       : null;
     if (control) {
@@ -397,7 +400,9 @@
     const viewer = findViewer(viewerId);
     if (!viewer) return;
     const frame = sourceHierarchy(viewer)[hierarchyIndex];
-    if (frame) openStackFrame(viewerId, frame);
+    if (!frame) return;
+    openHierarchyViewerId = null;
+    openStackFrame(viewerId, frame);
   }
 
   function moveInHierarchy(viewerId: string, direction: 'out' | 'in'): void {
@@ -409,7 +414,10 @@
     const nextIndex = direction === 'out' ? currentIndex - 1 : currentIndex + 1;
     if (nextIndex < 0 || nextIndex >= hierarchy.length) return;
     const frame = hierarchy[nextIndex];
-    if (frame) openStackFrame(viewerId, frame);
+    if (frame) {
+      openHierarchyViewerId = null;
+      openStackFrame(viewerId, frame);
+    }
   }
 
   function componentLabel(viewer: ElementSourceViewer, frame: SourceHistoryEntry['frame']): string {
@@ -417,7 +425,11 @@
   }
 
   function componentHeaderLabel(viewer: ElementSourceViewer, frame: SourceHistoryEntry['frame']): string {
-    return `[${componentLabel(viewer, frame)}]`;
+    return `<${componentLabel(viewer, frame)}>`;
+  }
+
+  function componentTagLabel(frame: ElementSourceViewer['stack'][number]): string {
+    return `<${frameName(frame)}>`;
   }
 
   function sourcePreviewKey(viewer: ElementSourceViewer, filePath: string): string {
@@ -466,6 +478,34 @@
   function handleViewerLeave(viewerId: string): void {
     elementSourceInspector.leaveViewer(viewerId);
   }
+
+  function handleHeaderPointerDown(event: PointerEvent, viewerId: string): void {
+    event.stopPropagation();
+    elementSourceInspector.beginViewerInteraction(viewerId);
+    elementSourceInspector.focusViewer(viewerId);
+  }
+
+  function handleViewerBodyPointerDown(event: PointerEvent, viewerId: string): void {
+    elementSourceInspector.focusViewer(viewerId);
+    if (openHierarchyViewerId !== viewerId) return;
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('[data-component-hierarchy]')) {
+      openHierarchyViewerId = null;
+    }
+  }
+
+  function toggleHierarchy(viewerId: string): void {
+    elementSourceInspector.beginViewerInteraction(viewerId);
+    elementSourceInspector.focusViewer(viewerId);
+    openHierarchyViewerId = openHierarchyViewerId === viewerId ? null : viewerId;
+  }
+
+  function handleHierarchyTriggerKeydown(event: KeyboardEvent, viewerId: string): void {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (openHierarchyViewerId === viewerId) openHierarchyViewerId = null;
+  }
 </script>
 
 {#each viewers as viewer (viewer.id)}
@@ -487,16 +527,30 @@
     onpointerleave={() => handleViewerLeave(viewer.id)}
     onpointerdown={() => elementSourceInspector.focusViewer(viewer.id)}
   >
-    <div class="element-source-sticky-body flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-primary/30 bg-card/95 text-card-foreground shadow-2xl backdrop-blur-sm">
+    <div
+      class="element-source-sticky-body flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-primary/30 bg-card/95 text-card-foreground shadow-2xl backdrop-blur-sm"
+      role="region"
+      aria-label="Component source preview"
+      onpointerdown={(event) => handleViewerBodyPointerDown(event, viewer.id)}
+    >
       <header
         role="toolbar"
         aria-label="Component source viewer"
         tabindex="-1"
-        class={`flex min-h-0 min-w-0 shrink-0 touch-none select-none items-center gap-1 border-b border-border/70 px-1.5 py-1 ${
-          interaction?.kind === 'drag' && interaction.active ? 'cursor-grabbing' : 'cursor-grab'
-        }`}
-        onpointerdown={(event) => beginInteraction(event, viewer.id, 'drag')}
+        class="relative flex min-h-0 min-w-0 shrink-0 select-none items-center gap-1 border-b border-border/70 px-1.5 py-1"
+        onpointerdown={(event) => handleHeaderPointerDown(event, viewer.id)}
       >
+        <button
+          type="button"
+          class={`flex size-5 shrink-0 touch-none items-center justify-center rounded border-0 bg-transparent p-0 text-muted-foreground/70 hover:bg-muted hover:text-foreground ${
+            interaction?.kind === 'drag' && interaction.active ? 'cursor-grabbing' : 'cursor-grab'
+          }`}
+          aria-label="Move component inspector"
+          title="Drag to move"
+          onpointerdown={(event) => beginInteraction(event, viewer.id, 'drag', undefined, true)}
+        >
+          <GripVertical class="pointer-events-none size-3" />
+        </button>
         <Button
           variant="ghost"
           size="icon-xs"
@@ -511,30 +565,48 @@
         <div class="flex min-w-0 flex-1 items-center gap-0.5">
           <ScanLine class="mx-0.5 size-3 shrink-0 text-primary" />
           {#if hierarchy.length > 0}
-            <Select.Root
-              type="single"
-              value={String(Math.max(0, hierarchyIndex))}
-              onValueChange={(value) => value !== undefined && selectHierarchyFrame(viewer.id, Number(value))}
+            <button
+              type="button"
+              class="flex h-6 min-w-0 max-w-[12rem] flex-1 items-center justify-between gap-1 rounded border border-transparent bg-transparent px-1.5 text-left text-[11px] font-medium hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+              aria-haspopup="listbox"
+              aria-expanded={openHierarchyViewerId === viewer.id}
+              aria-label="Choose component source location"
+              onclick={(event) => {
+                event.stopPropagation();
+                toggleHierarchy(viewer.id);
+              }}
+              onkeydown={(event) => handleHierarchyTriggerKeydown(event, viewer.id)}
             >
-              <Select.Trigger
-                size="sm"
-                class="h-6 min-w-0 max-w-[12rem] flex-1 justify-start border-transparent bg-transparent px-1.5 text-[11px] font-medium shadow-none hover:bg-muted/70"
-                aria-label="Choose component source location"
-              >
-                <span class="min-w-0 truncate">{componentHeaderLabel(viewer, frame)}</span>
-              </Select.Trigger>
-              <Select.Content
-                align="start"
-                portalProps={{ disabled: true }}
-                class="z-[120] max-h-72 min-w-48"
+              <span class="min-w-0 truncate">{componentHeaderLabel(viewer, frame)}</span>
+              <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
+            </button>
+            {#if openHierarchyViewerId === viewer.id}
+              <div
+                data-component-hierarchy
+                class="absolute top-[calc(100%+0.25rem)] left-8 z-[120] max-h-72 min-w-48 max-w-[calc(100%-2rem)] overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+                role="listbox"
+                aria-label="Component source tree"
               >
                 {#each hierarchy as stackFrame, stackIndex (`${stackFrame.filePath}:${stackFrame.lineNumber}:${stackIndex}`)}
-                  <Select.Item value={String(stackIndex)} label={frameName(stackFrame)}>
-                    <span class="truncate">{frameName(stackFrame)}</span>
-                  </Select.Item>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={hierarchyIndex === stackIndex}
+                    class="flex w-full min-w-0 items-center gap-1 rounded px-1.5 py-1 text-left text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+                    style={`padding-left: ${0.375 + Math.min(stackIndex, 6) * 0.75}rem`}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      selectHierarchyFrame(viewer.id, stackIndex);
+                    }}
+                  >
+                    {#if stackIndex > 0}
+                      <CornerDownRight class="size-3 shrink-0 text-muted-foreground/70" />
+                    {/if}
+                    <span class="min-w-0 truncate font-mono">{componentTagLabel(stackFrame)}</span>
+                  </button>
                 {/each}
-              </Select.Content>
-            </Select.Root>
+              </div>
+            {/if}
             <Button
               variant="ghost"
               size="icon-xs"
