@@ -36,7 +36,16 @@
     })
   );
 
-  const allInstalled = $derived(
+  const installedActions = $derived.by(() =>
+    availableHosts.flatMap((entry) => {
+      const out: { host: AgentIntegrationHost; provider: Provider }[] = [];
+      if (entry.claude.installed) out.push({ host: entry.host, provider: 'claude' });
+      if (entry.codex.installed) out.push({ host: entry.host, provider: 'codex' });
+      return out;
+    })
+  );
+
+  const pendingActionsAreInstalled = $derived(
     pendingActions.length > 0 &&
       pendingActions.every((a) =>
         a.provider === 'claude'
@@ -45,7 +54,18 @@
       )
   );
 
-  const bulkLabel = $derived(allInstalled ? 'Update everywhere' : 'Set up everywhere');
+  // When every integration is current, there are no pending actions to drive
+  // the bulk control. Fall back to all installed targets so the same control
+  // can refresh their MCP URLs and hooks in one click.
+  const bulkActions = $derived(pendingActions.length > 0 ? pendingActions : installedActions);
+  const bulkLabel = $derived(
+    pendingActions.length === 0 || pendingActionsAreInstalled
+      ? 'Update everywhere'
+      : 'Set up everywhere'
+  );
+  const bulkBusyLabel = $derived(
+    bulkLabel === 'Update everywhere' ? 'Updating…' : 'Setting up…'
+  );
 
   function sameHost(a: AgentIntegrationHost, b: AgentIntegrationHost): boolean {
     return a.kind === b.kind && (a.kind !== 'wsl' || a.distro === b.distro);
@@ -101,11 +121,11 @@
   }
 
   async function setupEverywhere(): Promise<void> {
-    if (bulkBusy || pendingActions.length === 0) return;
+    if (bulkBusy || bulkActions.length === 0) return;
     bulkBusy = true;
     try {
       let next: AgentIntegrationStatus = status;
-      for (const action of pendingActions) {
+      for (const action of bulkActions) {
         next = await install(action.host, action.provider);
       }
       onChange(next);
@@ -163,7 +183,7 @@
 {/snippet}
 
 <div class="flex flex-col gap-3">
-  {#if pendingActions.length > 0}
+  {#if bulkActions.length > 0}
     <Button
       size="default"
       class="w-full gap-2"
@@ -171,10 +191,10 @@
       onclick={setupEverywhere}
     >
       {#if bulkBusy}
-        <Loader2 class="size-4 animate-spin" />
-        Setting up…
+        <Loader2 data-icon="inline-start" class="animate-spin" />
+        {bulkBusyLabel}
       {:else}
-        <RefreshCw class="size-4" />
+        <RefreshCw data-icon="inline-start" />
         {bulkLabel}
       {/if}
     </Button>
