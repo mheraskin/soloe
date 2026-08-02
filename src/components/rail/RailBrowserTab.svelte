@@ -1894,10 +1894,10 @@
       variant="ghost"
       size="icon"
       class={`size-7 ${inspectorModeActive ? 'bg-primary/15 text-primary' : ''}`}
-      aria-label="Element Source Inspector"
+      aria-label="Inspect components"
       title={inspectorSettingEnabled
-        ? `Element Source Inspector (${shortcutLabel(settings.current.shortcuts.elementSourceInspector)})`
-        : 'Element Source Inspector disabled in settings'}
+        ? `Inspect components (${shortcutLabel(settings.current.shortcuts.elementSourceInspector)})`
+        : 'Component inspection disabled in settings'}
       aria-pressed={inspectorModeActive}
       disabled={!inspectorSettingEnabled || !inspectorViewAvailable}
       onclick={toggleInspectorMode}

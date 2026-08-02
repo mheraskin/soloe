@@ -208,16 +208,15 @@ function inspectorCreateOverlay(): void {
       0 0 0 4px rgba(34, 197, 94, .14); border-radius: 2px; transition: left 80ms ease-out,
       top 80ms ease-out, width 80ms ease-out, height 80ms ease-out; pointer-events: none; }
     .callout { all: initial; position: fixed; box-sizing: border-box; display: flex;
-      flex-direction: column; align-items: flex-start; gap: 5px; max-width: calc(100vw - 20px);
-      padding: 5px 8px; border: 1px solid rgba(148, 163, 184, .45); border-radius: 5px;
+      flex-direction: column; align-items: stretch; gap: 0; max-width: calc(100vw - 20px);
+      overflow: hidden; border: 1px solid rgba(148, 163, 184, .45); border-radius: 5px;
       background: #0f172a; color: #f8fafc; box-shadow: 0 5px 16px rgba(0,0,0,.28);
       pointer-events: none; }
-    .path { all: initial; display: block; color: #f8fafc;
+    .path { all: initial; display: block; box-sizing: border-box; padding: 5px 8px; color: #f8fafc;
       font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal;
       overflow-wrap: anywhere; }
     .hint { all: initial; display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box;
-      padding: 2px 6px; border: 1px solid rgba(148, 163, 184, .45); border-radius: 999px;
-      background: #1e293b; color: #cbd5e1;
+      padding: 4px 8px 5px; border-top: 2px solid #22c55e; background: #1e293b; color: #cbd5e1;
       font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
     .hint strong { all: initial; color: #f8fafc;
       font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -233,7 +232,7 @@ function inspectorCreateOverlay(): void {
   hint.className = 'hint';
   const shift = document.createElement('strong');
   shift.textContent = 'Shift';
-  hint.append(shift, document.createTextNode('+ click to interact'));
+  hint.append(shift, document.createTextNode('-click to interact with the page'));
   inspectorCallout.append(inspectorCalloutPath, hint);
   shadow.append(style, inspectorHighlight, inspectorCallout);
   document.documentElement.appendChild(inspectorRoot);

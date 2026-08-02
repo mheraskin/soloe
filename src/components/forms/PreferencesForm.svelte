@@ -580,7 +580,7 @@
         <div class="flex items-start gap-2.5">
           <ScanLine class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
           <div class="min-w-0 flex-1">
-            <Label class="text-sm font-medium">Element Source Inspector</Label>
+            <Label class="text-sm font-medium">Component inspector</Label>
             <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
               Toggle inspection mode in the Browser pane and inspect source locations from the
               rendered page.
@@ -595,7 +595,7 @@
               onkeydown={recordInspectorShortcut}
               onblur={cancelInspectorShortcutRecording}
               onclick={() => undefined}
-              aria-label="Press a new Element Source Inspector shortcut"
+              aria-label="Press a new component inspector shortcut"
             >
               Press keys…
             </Button>
@@ -606,7 +606,7 @@
               size="sm"
               class="shrink-0 font-mono text-[11px]"
               onclick={startInspectorShortcutRecording}
-              aria-label="Change Element Source Inspector shortcut"
+              aria-label="Change component inspector shortcut"
             >
               {shortcutLabel(settings.current.shortcuts.elementSourceInspector)}
             </Button>
@@ -662,7 +662,7 @@
             </div>
           {/each}
           <div class="flex items-center justify-between gap-3 px-3 py-2.5">
-            <span class="text-xs">Toggle Element Source Inspector</span>
+            <span class="text-xs">Toggle component inspector</span>
             <span
               class="flex shrink-0 items-center gap-1"
               aria-label={shortcutLabel(settings.current.shortcuts.elementSourceInspector)}
@@ -1153,7 +1153,7 @@
           <ScanLine class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
           <div class="min-w-0">
             <Label for="pref-element-source-inspector" class="text-sm font-medium">
-              Element Source Inspector
+              Component inspector
             </Label>
             <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
               Show the inspector control beside DevTools and enable source metadata in browser

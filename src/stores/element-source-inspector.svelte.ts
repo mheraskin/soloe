@@ -291,10 +291,10 @@ export class ElementSourceInspectorStore {
     const frames = source && !stack.some((frame) => sameFrame(frame, source))
       ? [source, ...stack]
       : stack;
-    const sourceIndex = source
-      ? frames.findIndex((frame) => sameFrame(frame, source))
-      : 0;
-    const initialFrame = frames[sourceIndex + 1] ?? source ?? frames[0] ?? null;
+    // The source frame is the element the user selected. Start there so a
+    // component's render helper (for example, `{@render children?.()}`)
+    // never replaces the highlighted element as the first preview.
+    const initialFrame = source ?? frames[0] ?? null;
     const initialHistory: SourceHistoryEntry[] = [{
       frame: initialFrame,
       componentName: initialFrame?.componentName ?? cleanName(payload.componentName),

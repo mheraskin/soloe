@@ -62,7 +62,7 @@ export const Keymap = {
   },
   elementSourceInspector: {
     id: 'browser.element-source-inspector',
-    description: 'Toggle Element Source Inspector',
+    description: 'Toggle component inspector',
     keys: [...ELEMENT_SOURCE_INSPECTOR_SHORTCUT],
     match: (e: KeyboardEvent) => matchesShortcut(e, ELEMENT_SOURCE_INSPECTOR_SHORTCUT)
   },

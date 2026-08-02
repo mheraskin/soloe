@@ -1,4 +1,4 @@
-# Element Source Inspector architecture notes
+# Component inspector architecture notes
 
 ## Existing integration points
 

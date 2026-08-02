@@ -3,9 +3,9 @@
   import {
     AlertCircle,
     ChevronLeft,
-    CornerDownRight,
+    ChevronUp,
+    ChevronDown,
     ExternalLink,
-    Layers3,
     Loader2,
     Pin,
     PinOff,
@@ -13,6 +13,7 @@
     X
   } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Select from '$lib/components/ui/select';
   import {
     createFilesScope,
     filesStore
@@ -54,6 +55,7 @@
   const editorControllers = new Map<string, FileEditorController>();
   const revealCache = new Map<string, { key: string; value: SourceReveal }>();
   const loadKeys = new Map<string, string>();
+  const sourcePreviewCache = new Map<string, { content: string; loadedPath: string }>();
   let viewers = $derived([
     ...elementSourceInspector.pinned,
     ...(elementSourceInspector.transient ? [elementSourceInspector.transient] : [])
@@ -252,6 +254,17 @@
       ...(viewer.wslDistro ? { wslDistro: viewer.wslDistro } : {})
     });
     const requestedPath = frame.filePath;
+    const previewKey = sourcePreviewKey(viewer, requestedPath);
+    const cached = getCachedSourcePreview(previewKey);
+    if (cached) {
+      elementSourceInspector.updateViewer(viewer.id, {
+        status: 'ready',
+        error: null,
+        content: cached.content,
+        loadedPath: cached.loadedPath
+      });
+      return;
+    }
     const lines = (value: string) => value.split('\n').length;
     void filesStore.loadSourceFile(scope, requestedPath).then((source) => {
       const current = findViewer(viewer.id);
@@ -278,6 +291,10 @@
         });
         return;
       }
+      cacheSourcePreview(previewKey, {
+        content: source.content,
+        loadedPath: source.relativePath
+      });
       elementSourceInspector.updateViewer(viewer.id, {
         status: 'ready',
         error: null,
@@ -358,7 +375,61 @@
   }
 
   function sourceHierarchy(viewer: ElementSourceViewer): ElementSourceViewer['stack'] {
-    return viewer.stack.toReversed();
+    return [...viewer.stack].reverse();
+  }
+
+  function currentHierarchyIndex(
+    viewer: ElementSourceViewer,
+    hierarchy: ElementSourceViewer['stack']
+  ): number {
+    const current = currentEntry(viewer)?.frame;
+    if (!current) return -1;
+    return hierarchy.findIndex((candidate) => isCurrentFrame(current, candidate));
+  }
+
+  function selectHierarchyFrame(viewerId: string, hierarchyIndex: number): void {
+    const viewer = findViewer(viewerId);
+    if (!viewer) return;
+    const frame = sourceHierarchy(viewer)[hierarchyIndex];
+    if (frame) openStackFrame(viewerId, frame);
+  }
+
+  function moveInHierarchy(viewerId: string, direction: 'out' | 'in'): void {
+    const viewer = findViewer(viewerId);
+    if (!viewer) return;
+    const hierarchy = sourceHierarchy(viewer);
+    const currentIndex = currentHierarchyIndex(viewer, hierarchy);
+    if (currentIndex < 0) return;
+    const nextIndex = direction === 'out' ? currentIndex - 1 : currentIndex + 1;
+    if (nextIndex < 0 || nextIndex >= hierarchy.length) return;
+    const frame = hierarchy[nextIndex];
+    if (frame) openStackFrame(viewerId, frame);
+  }
+
+  function componentLabel(viewer: ElementSourceViewer, frame: SourceHistoryEntry['frame']): string {
+    return frame ? frameName(frame) : viewer.label;
+  }
+
+  function sourcePreviewKey(viewer: ElementSourceViewer, filePath: string): string {
+    return [viewer.cwd, viewer.runMode, viewer.wslDistro ?? '', filePath].join('\0');
+  }
+
+  function getCachedSourcePreview(key: string): { content: string; loadedPath: string } | null {
+    const cached = sourcePreviewCache.get(key);
+    if (!cached) return null;
+    sourcePreviewCache.delete(key);
+    sourcePreviewCache.set(key, cached);
+    return cached;
+  }
+
+  function cacheSourcePreview(key: string, value: { content: string; loadedPath: string }): void {
+    sourcePreviewCache.delete(key);
+    sourcePreviewCache.set(key, value);
+    while (sourcePreviewCache.size > 12) {
+      const oldest = sourcePreviewCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      sourcePreviewCache.delete(oldest);
+    }
   }
 
   function frameName(frame: ElementSourceViewer['stack'][number]): string {
@@ -395,11 +466,12 @@
   {@const interaction = interactions[viewer.id]}
   {@const sourcePath = currentPath(viewer)}
   {@const hierarchy = sourceHierarchy(viewer)}
+  {@const hierarchyIndex = currentHierarchyIndex(viewer, hierarchy)}
   <div
     class="element-source-sticky fixed"
     role="dialog"
     tabindex="-1"
-    aria-label={`Element Source Inspector: ${viewer.label}`}
+    aria-label={`Component inspector: ${viewer.label}`}
     style={`left: ${viewer.position.left}px; top: ${viewer.position.top}px; width: ${viewer.position.width}px; height: ${viewer.position.height}px; z-index: ${80 + Math.min(120, viewer.zIndex)};`}
     onpointerenter={() => handleViewerEnter(viewer.id)}
     onpointerleave={() => handleViewerLeave(viewer.id)}
@@ -408,7 +480,7 @@
     <div class="element-source-sticky-body flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-primary/30 bg-card/95 text-card-foreground shadow-2xl backdrop-blur-sm">
       <header
         role="toolbar"
-        aria-label="Element Source Inspector source viewer"
+        aria-label="Component source viewer"
         tabindex="-1"
         class={`flex min-h-0 min-w-0 shrink-0 touch-none select-none items-center gap-1 border-b border-border/70 px-1.5 py-1 ${
           interaction?.kind === 'drag' && interaction.active ? 'cursor-grabbing' : 'cursor-grab'
@@ -426,11 +498,57 @@
         >
           <ChevronLeft class="size-3.5" />
         </Button>
-        <div class="flex min-w-0 items-center gap-1 px-1 text-[11px] font-medium" title={viewer.label}>
-          <ScanLine class="size-3 shrink-0 text-primary" />
-          <span class="min-w-0 truncate">{entry?.componentName ?? viewer.label}</span>
+        <div class="flex min-w-0 flex-1 items-center gap-0.5">
+          <ScanLine class="mx-0.5 size-3 shrink-0 text-primary" />
+          {#if hierarchy.length > 0}
+            <Select.Root
+              type="single"
+              value={String(Math.max(0, hierarchyIndex))}
+              onValueChange={(value) => value !== undefined && selectHierarchyFrame(viewer.id, Number(value))}
+            >
+              <Select.Trigger
+                size="sm"
+                class="h-6 min-w-0 max-w-[12rem] flex-1 justify-start border-transparent bg-transparent px-1.5 text-[11px] font-medium shadow-none hover:bg-muted/70"
+                aria-label="Choose component source location"
+              >
+                <span class="min-w-0 truncate">{componentLabel(viewer, frame)}</span>
+              </Select.Trigger>
+              <Select.Content align="start" class="max-h-72 min-w-48">
+                {#each hierarchy as stackFrame, stackIndex (`${stackFrame.filePath}:${stackFrame.lineNumber}:${stackIndex}`)}
+                  <Select.Item value={String(stackIndex)} label={frameName(stackFrame)}>
+                    <span class="truncate">{frameName(stackFrame)}</span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="shrink-0 text-muted-foreground hover:text-foreground"
+              disabled={hierarchyIndex <= 0}
+              onclick={() => moveInHierarchy(viewer.id, 'out')}
+              aria-label="Show parent component"
+              title="Show parent component"
+            >
+              <ChevronUp class="size-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="shrink-0 text-muted-foreground hover:text-foreground"
+              disabled={hierarchyIndex < 0 || hierarchyIndex >= hierarchy.length - 1}
+              onclick={() => moveInHierarchy(viewer.id, 'in')}
+              aria-label="Show nested component"
+              title="Show nested component"
+            >
+              <ChevronDown class="size-3" />
+            </Button>
+          {:else}
+            <span class="min-w-0 truncate px-1 text-[11px] font-medium" title={viewer.label}>
+              {componentLabel(viewer, frame)}
+            </span>
+          {/if}
         </div>
-        <div class="min-w-2 flex-1" aria-hidden="true"></div>
         <Button
           variant="ghost"
           size="icon-xs"
@@ -476,49 +594,7 @@
         {frameLabel(frame)}
       </button>
 
-      <nav class="mx-2 mt-1 shrink-0 rounded-md border border-border/60 bg-muted/25 p-1.5" aria-label="Component render hierarchy">
-        <div class="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-          <Layers3 class="size-3" />
-          Render hierarchy
-          <span class="font-normal normal-case tracking-normal">outer → inner</span>
-        </div>
-        <ol class="max-h-28 space-y-0.5 overflow-y-auto pr-0.5">
-          {#each hierarchy as stackFrame, stackIndex (`${stackFrame.filePath}:${stackFrame.lineNumber}:${stackIndex}`)}
-            <li class="relative" style={`padding-left: ${Math.min(stackIndex, 8) * 10}px`}>
-              <button
-                type="button"
-                class={`group flex w-full min-w-0 items-start gap-1 rounded px-1 py-0.5 text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
-                  isCurrentFrame(frame, stackFrame)
-                    ? 'bg-primary/12 text-foreground ring-1 ring-primary/35'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                }`}
-                aria-current={isCurrentFrame(frame, stackFrame) ? 'location' : undefined}
-                aria-label={`Open ${frameName(stackFrame)} at ${frameLabel(stackFrame)}`}
-                onclick={() => openStackFrame(viewer.id, stackFrame)}
-              >
-                <CornerDownRight class={`mt-0.5 size-3 shrink-0 ${isCurrentFrame(frame, stackFrame) ? 'text-primary' : 'text-muted-foreground/70'}`} />
-                <span class="min-w-0 flex-1">
-                  <span class="block text-[10px] font-medium leading-3.5">{frameName(stackFrame)}</span>
-                  <span class="block whitespace-normal break-all font-mono text-[9px] leading-3 text-muted-foreground">{frameLabel(stackFrame)}</span>
-                </span>
-              </button>
-            </li>
-          {:else}
-            <li class="px-1 py-0.5 text-[10px] text-muted-foreground">No component hierarchy available</li>
-          {/each}
-        </ol>
-        <p class="mt-1 inline-flex w-fit items-center gap-1 rounded-full border border-border bg-background px-1.5 py-0.5 text-[9px] leading-3 text-muted-foreground">
-          <kbd class="font-mono font-bold text-foreground">Shift</kbd>
-          <span>+ click to interact</span>
-        </p>
-      </nav>
-
-      {#if viewer.status === 'loading'}
-        <div class="flex min-h-0 flex-1 items-center justify-center gap-2 text-[11px] text-muted-foreground">
-          <Loader2 class="size-3.5 animate-spin" />
-          Loading source…
-        </div>
-      {:else if viewer.status === 'error'}
+      {#if viewer.status === 'error'}
         <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 text-center text-[11px] text-muted-foreground">
           <AlertCircle class="size-4 text-destructive" />
           <span>{viewer.error ?? 'Source unavailable'}</span>
@@ -527,26 +603,39 @@
           {/if}
         </div>
       {:else if viewer.content !== null}
-        {#await loadFileEditorSurface()}
-          <div class="flex min-h-0 flex-1 items-center justify-center text-[11px] text-muted-foreground">
-            <Loader2 class="size-3.5 animate-spin" />
-            Preparing editor…
-          </div>
-        {:then FileEditorSurface}
-          <FileEditorSurface
-            value={viewer.content}
-            relativePath={viewer.loadedPath ?? frame?.filePath ?? ''}
-            rootEl={null}
-            readOnly={true}
-            reveal={sourceReveal}
-            onReady={(controller) => editorReady(viewer.id, controller)}
-          />
-        {:catch}
-          <div class="flex min-h-0 flex-1 items-center justify-center gap-2 text-[11px] text-destructive">
-            <AlertCircle class="size-3.5" />
-            Editor module could not be loaded.
-          </div>
-        {/await}
+        <div class="relative flex min-h-0 flex-1">
+          {#await loadFileEditorSurface()}
+            <div class="flex min-h-0 flex-1 items-center justify-center text-[11px] text-muted-foreground">
+              <Loader2 class="size-3.5 animate-spin" />
+              Preparing editor…
+            </div>
+          {:then FileEditorSurface}
+            <FileEditorSurface
+              value={viewer.content}
+              relativePath={viewer.loadedPath ?? frame?.filePath ?? ''}
+              rootEl={null}
+              readOnly={true}
+              reveal={sourceReveal}
+              onReady={(controller) => editorReady(viewer.id, controller)}
+            />
+          {:catch}
+            <div class="flex min-h-0 flex-1 items-center justify-center gap-2 text-[11px] text-destructive">
+              <AlertCircle class="size-3.5" />
+              Editor module could not be loaded.
+            </div>
+          {/await}
+          {#if viewer.status === 'loading'}
+            <div class="pointer-events-none absolute top-2 right-2 inline-flex items-center gap-1 rounded border border-border/70 bg-background/90 px-1.5 py-1 text-[9px] text-muted-foreground shadow-sm" role="status" aria-live="polite">
+              <Loader2 class="size-3 animate-spin" />
+              Updating preview…
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <div class="flex min-h-0 flex-1 items-center justify-center gap-2 text-[11px] text-muted-foreground">
+          <Loader2 class="size-3.5 animate-spin" />
+          Preparing preview…
+        </div>
       {/if}
     </div>
 

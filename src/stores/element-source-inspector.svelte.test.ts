@@ -87,7 +87,7 @@ describe('Element Source Inspector state', () => {
     expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Two.svelte');
   });
 
-  it('opens at the nearest render site and can drill into the component source', () => {
+  it('opens at the selected component and can move through its source stack', () => {
     elementSourceInspector.registerContext(context);
     elementSourceInspector.setMode('scope-1', 'tab-1', true);
     elementSourceInspector.receive('scope-1', 'tab-1', {
@@ -100,19 +100,19 @@ describe('Element Source Inspector state', () => {
       ]
     }, null);
     const id = elementSourceInspector.transient!.id;
-    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Parent.svelte');
+    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Child.svelte');
     elementSourceInspector.openStackFrame(id, {
-      filePath: 'src/Child.svelte',
-      lineNumber: 14,
-      columnNumber: 1,
-      componentName: 'Child'
+      filePath: 'src/Parent.svelte',
+      lineNumber: 28,
+      columnNumber: 3,
+      componentName: 'Parent'
     });
     expect(elementSourceInspector.canGoBack(id)).toBe(true);
     expect(elementSourceInspector.transient?.historyIndex).toBe(1);
-    expect(elementSourceInspector.transient?.history[1]?.frame?.filePath).toBe('src/Child.svelte');
+    expect(elementSourceInspector.transient?.history[1]?.frame?.filePath).toBe('src/Parent.svelte');
     elementSourceInspector.goBack(id);
     expect(elementSourceInspector.transient?.historyIndex).toBe(0);
-    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Parent.svelte');
+    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Child.svelte');
   });
 
   it('cleans viewers and mode state when the project scope changes', () => {

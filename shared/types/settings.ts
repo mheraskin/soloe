@@ -134,7 +134,7 @@ export interface SettingsShortcuts {
   // Cmd/Ctrl+Shift+1..9 follows the visible order of either the current
   // project's worktrees or all projects in the sidebar.
   shiftNumberNavigation: ShiftNumberNavigationTarget;
-  // Toggles the browser's Element Source Inspector when the browser rail is active.
+  // Toggles the browser's component inspector when the browser rail is active.
   elementSourceInspector: string[];
 }
 
