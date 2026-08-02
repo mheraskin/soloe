@@ -7,7 +7,6 @@
     ExternalLink,
     Layers3,
     Loader2,
-    MousePointerClick,
     Pin,
     PinOff,
     ScanLine,
@@ -508,10 +507,9 @@
             <li class="px-1 py-0.5 text-[10px] text-muted-foreground">No component hierarchy available</li>
           {/each}
         </ol>
-        <p class="mt-1 flex items-center gap-1 border-t border-border/50 pt-1 text-[9px] leading-3 text-muted-foreground">
-          <MousePointerClick class="size-3 shrink-0" />
-          Hold <kbd class="rounded border border-border bg-background px-1 font-mono text-[8px] text-foreground">Shift</kbd>
-          and click to interact with the page
+        <p class="mt-1 inline-flex w-fit items-center gap-1 rounded-full border border-border bg-background px-1.5 py-0.5 text-[9px] leading-3 text-muted-foreground">
+          <kbd class="font-mono font-bold text-foreground">Shift</kbd>
+          <span>+ click to interact</span>
         </p>
       </nav>
 

@@ -112,6 +112,8 @@ let inspectorEnabled = false;
 let inspectorRoot: HTMLDivElement | null = null;
 let inspectorHighlight: HTMLDivElement | null = null;
 let inspectorCallout: HTMLDivElement | null = null;
+let inspectorCalloutPath: HTMLSpanElement | null = null;
+let inspectorCalloutLabel = 'Inspecting…';
 let inspectorTarget: Element | null = null;
 let inspectorResolvedTarget: Element | null = null;
 let inspectorResolutionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -121,7 +123,6 @@ let inspectorLastFingerprint = '';
 let inspectorLastPayloadFingerprint = '';
 let inspectorElementIdSequence = 0;
 let inspectorElementIds = new WeakMap<Element, number>();
-const inspectorInteractionHint = 'Hold Shift and click to interact with the page';
 
 function inspectorPageUrl(): string {
   try {
@@ -206,16 +207,34 @@ function inspectorCreateOverlay(): void {
       background: rgba(34, 197, 94, .08); box-shadow: 0 0 0 1px rgba(15, 23, 42, .65),
       0 0 0 4px rgba(34, 197, 94, .14); border-radius: 2px; transition: left 80ms ease-out,
       top 80ms ease-out, width 80ms ease-out, height 80ms ease-out; pointer-events: none; }
-    .callout { all: initial; position: fixed; box-sizing: border-box; max-width: calc(100vw - 20px);
+    .callout { all: initial; position: fixed; box-sizing: border-box; display: flex;
+      flex-direction: column; align-items: flex-start; gap: 5px; max-width: calc(100vw - 20px);
       padding: 5px 8px; border: 1px solid rgba(148, 163, 184, .45); border-radius: 5px;
       background: #0f172a; color: #f8fafc; box-shadow: 0 5px 16px rgba(0,0,0,.28);
-      font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
-      overflow-wrap: anywhere; pointer-events: none; }
+      pointer-events: none; }
+    .path { all: initial; display: block; color: #f8fafc;
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal;
+      overflow-wrap: anywhere; }
+    .hint { all: initial; display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box;
+      padding: 2px 6px; border: 1px solid rgba(148, 163, 184, .45); border-radius: 999px;
+      background: #1e293b; color: #cbd5e1;
+      font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    .hint strong { all: initial; color: #f8fafc;
+      font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
   `;
   inspectorHighlight = document.createElement('div');
   inspectorHighlight.className = 'highlight';
   inspectorCallout = document.createElement('div');
   inspectorCallout.className = 'callout';
+  inspectorCalloutPath = document.createElement('span');
+  inspectorCalloutPath.className = 'path';
+  inspectorCalloutPath.textContent = inspectorCalloutLabel;
+  const hint = document.createElement('span');
+  hint.className = 'hint';
+  const shift = document.createElement('strong');
+  shift.textContent = 'Shift';
+  hint.append(shift, document.createTextNode('+ click to interact'));
+  inspectorCallout.append(inspectorCalloutPath, hint);
   shadow.append(style, inspectorHighlight, inspectorCallout);
   document.documentElement.appendChild(inspectorRoot);
 }
@@ -234,8 +253,9 @@ function inspectorDisplayPath(filePath: string | null): string {
   return normalized.replace(/^\.\//, '');
 }
 
-function inspectorCalloutText(label: string): string {
-  return `${label}\n${inspectorInteractionHint}`;
+function inspectorSetCalloutLabel(label: string): void {
+  inspectorCalloutLabel = label;
+  if (inspectorCalloutPath) inspectorCalloutPath.textContent = label;
 }
 
 function inspectorRender(rect: InspectorRect | null, label: string): void {
@@ -252,8 +272,8 @@ function inspectorRender(rect: InspectorRect | null, label: string): void {
   inspectorHighlight.style.top = `${top}px`;
   inspectorHighlight.style.width = `${Math.max(1, rect.width)}px`;
   inspectorHighlight.style.height = `${Math.max(1, rect.height)}px`;
-  inspectorCallout.textContent = label;
-  inspectorCallout.style.display = 'block';
+  inspectorSetCalloutLabel(label);
+  inspectorCallout.style.display = 'flex';
   inspectorCallout.style.left = `${Math.min(
     Math.max(8, left),
     Math.max(8, window.innerWidth - inspectorCallout.offsetWidth - 8)
@@ -336,10 +356,7 @@ async function inspectorResolveTarget(
   const path = metadata.source?.filePath ? inspectorDisplayPath(metadata.source.filePath) : null;
   const name = metadata.componentName || resolvedTarget.tagName.toLowerCase();
   const line = metadata.source?.lineNumber ? `:${metadata.source.lineNumber}` : '';
-  inspectorRender(
-    rect,
-    inspectorCalloutText(path ? `${name} — ${path}${line}` : `${name} — Source unavailable`)
-  );
+  inspectorRender(rect, path ? `${name} — ${path}${line}` : `${name} — Source unavailable`);
   inspectorSend(select ? 'select' : 'hover', info, resolvedTarget);
 }
 
@@ -354,12 +371,12 @@ function inspectorScheduleResolve(
   inspectorCreateOverlay();
   const fingerprint = inspectorFingerprint(target);
   if (!select && fingerprint === inspectorLastFingerprint) {
-    inspectorRender(inspectorRect(inspectorResolvedTarget ?? target), inspectorCallout?.textContent ?? 'Inspecting…');
+    inspectorRender(inspectorRect(inspectorResolvedTarget ?? target), inspectorCalloutLabel);
     return;
   }
   inspectorLastFingerprint = fingerprint;
   if (inspectorResolutionTimer !== null) clearTimeout(inspectorResolutionTimer);
-  inspectorCallout && (inspectorCallout.textContent = inspectorCalloutText('Inspecting…'));
+  inspectorSetCalloutLabel('Inspecting…');
   inspectorResolutionTimer = setTimeout(() => {
     inspectorResolutionTimer = null;
     void inspectorResolveTarget(target, select, clientX, clientY);
@@ -372,7 +389,7 @@ function inspectorRefreshPosition(): void {
   if (!target || !target.isConnected) return;
   const rect = inspectorRect(target);
   if (!rect) return;
-  inspectorRender(rect, inspectorCallout?.textContent ?? 'Inspecting…');
+  inspectorRender(rect, inspectorCalloutLabel);
 }
 
 function inspectorOnPointerMove(event: PointerEvent): void {
@@ -468,6 +485,8 @@ function inspectorDetach(): void {
   inspectorRoot = null;
   inspectorHighlight = null;
   inspectorCallout = null;
+  inspectorCalloutPath = null;
+  inspectorCalloutLabel = 'Inspecting…';
 }
 
 if (typeof ipcRenderer.on === 'function') {
