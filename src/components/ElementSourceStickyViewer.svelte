@@ -161,24 +161,30 @@
     handle?: ResizeHandle
   ): void {
     if (event.button !== 0) return;
-    const button = kind === 'drag' && event.target instanceof Element
-      ? event.target.closest('button')
+    const control = kind === 'drag' && event.target instanceof Element
+      ? event.target.closest('button, [role="option"], [data-slot="select-content"]')
       : null;
-    const active = button === null;
-    if (active) {
-      event.preventDefault();
+    if (control) {
+      // Header controls own their pointer gesture. Capturing it here makes
+      // native/select triggers lose the click and can let a transient viewer
+      // fall back to the guest page's pointer path.
       event.stopPropagation();
+      elementSourceInspector.beginViewerInteraction(viewerId);
+      elementSourceInspector.focusViewer(viewerId);
+      return;
     }
     const viewer = findViewer(viewerId);
     if (!viewer) return;
+    event.preventDefault();
+    event.stopPropagation();
     elementSourceInspector.focusViewer(viewerId);
-    const target = (button ?? event.currentTarget) as HTMLElement;
+    const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
     setInteraction(viewerId, {
       viewerId,
       kind,
       handle,
-      active,
+      active: true,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
@@ -410,6 +416,10 @@
     return frame ? frameName(frame) : viewer.label;
   }
 
+  function componentHeaderLabel(viewer: ElementSourceViewer, frame: SourceHistoryEntry['frame']): string {
+    return `[${componentLabel(viewer, frame)}]`;
+  }
+
   function sourcePreviewKey(viewer: ElementSourceViewer, filePath: string): string {
     return [viewer.cwd, viewer.runMode, viewer.wslDistro ?? '', filePath].join('\0');
   }
@@ -511,9 +521,13 @@
                 class="h-6 min-w-0 max-w-[12rem] flex-1 justify-start border-transparent bg-transparent px-1.5 text-[11px] font-medium shadow-none hover:bg-muted/70"
                 aria-label="Choose component source location"
               >
-                <span class="min-w-0 truncate">{componentLabel(viewer, frame)}</span>
+                <span class="min-w-0 truncate">{componentHeaderLabel(viewer, frame)}</span>
               </Select.Trigger>
-              <Select.Content align="start" class="max-h-72 min-w-48">
+              <Select.Content
+                align="start"
+                portalProps={{ disabled: true }}
+                class="z-[120] max-h-72 min-w-48"
+              >
                 {#each hierarchy as stackFrame, stackIndex (`${stackFrame.filePath}:${stackFrame.lineNumber}:${stackIndex}`)}
                   <Select.Item value={String(stackIndex)} label={frameName(stackFrame)}>
                     <span class="truncate">{frameName(stackFrame)}</span>
@@ -545,7 +559,7 @@
             </Button>
           {:else}
             <span class="min-w-0 truncate px-1 text-[11px] font-medium" title={viewer.label}>
-              {componentLabel(viewer, frame)}
+              {componentHeaderLabel(viewer, frame)}
             </span>
           {/if}
         </div>

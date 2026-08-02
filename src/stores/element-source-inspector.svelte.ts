@@ -160,6 +160,11 @@ export class ElementSourceInspectorStore {
   }
 
   enterViewer(id: string): void {
+    this.beginViewerInteraction(id);
+  }
+
+  beginViewerInteraction(id: string): void {
+    if (!this.findViewer(id)) return;
     this.viewerPointerInside.add(id);
     this.cancelTransientClose();
   }

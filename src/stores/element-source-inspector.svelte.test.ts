@@ -87,6 +87,24 @@ describe('Element Source Inspector state', () => {
     expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Two.svelte');
   });
 
+  it('keeps a transient viewer open when a popup interaction starts after pointer leave', () => {
+    vi.useFakeTimers();
+    elementSourceInspector.registerContext(context);
+    elementSourceInspector.setMode('scope-1', 'tab-1', true);
+    elementSourceInspector.receive('scope-1', 'tab-1', {
+      kind: 'select',
+      source: { filePath: 'src/One.svelte', lineNumber: 1, columnNumber: 1, componentName: 'One' }
+    }, null);
+    const id = elementSourceInspector.transient!.id;
+
+    elementSourceInspector.leaveViewer(id);
+    vi.advanceTimersByTime(100);
+    elementSourceInspector.beginViewerInteraction(id);
+    vi.advanceTimersByTime(1_000);
+
+    expect(elementSourceInspector.transient?.id).toBe(id);
+  });
+
   it('opens at the selected component and can move through its source stack', () => {
     elementSourceInspector.registerContext(context);
     elementSourceInspector.setMode('scope-1', 'tab-1', true);
