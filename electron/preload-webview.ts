@@ -121,6 +121,7 @@ let inspectorLastFingerprint = '';
 let inspectorLastPayloadFingerprint = '';
 let inspectorElementIdSequence = 0;
 let inspectorElementIds = new WeakMap<Element, number>();
+const inspectorInteractionHint = 'Hold Shift and click to interact with the page';
 
 function inspectorPageUrl(): string {
   try {
@@ -205,11 +206,11 @@ function inspectorCreateOverlay(): void {
       background: rgba(34, 197, 94, .08); box-shadow: 0 0 0 1px rgba(15, 23, 42, .65),
       0 0 0 4px rgba(34, 197, 94, .14); border-radius: 2px; transition: left 80ms ease-out,
       top 80ms ease-out, width 80ms ease-out, height 80ms ease-out; pointer-events: none; }
-    .callout { all: initial; position: fixed; box-sizing: border-box; max-width: min(360px, calc(100vw - 20px));
+    .callout { all: initial; position: fixed; box-sizing: border-box; max-width: calc(100vw - 20px);
       padding: 5px 8px; border: 1px solid rgba(148, 163, 184, .45); border-radius: 5px;
       background: #0f172a; color: #f8fafc; box-shadow: 0 5px 16px rgba(0,0,0,.28);
-      font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap;
-      overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+      overflow-wrap: anywhere; pointer-events: none; }
   `;
   inspectorHighlight = document.createElement('div');
   inspectorHighlight.className = 'highlight';
@@ -223,8 +224,18 @@ function inspectorDisplayPath(filePath: string | null): string {
   if (!filePath) return 'Source unavailable';
   const normalized = filePath.replaceAll('\\', '/');
   if (normalized.startsWith('/workspace/')) return normalized.slice('/workspace/'.length);
-  const srcIndex = normalized.indexOf('/src/');
-  return srcIndex >= 0 ? normalized.slice(srcIndex + 1) : normalized.replace(/^\.\//, '');
+  const sourceRoot = Reflect.get(globalThis, Symbol.for('soloe.element-source.vite-root'));
+  if (typeof sourceRoot === 'string') {
+    const normalizedRoot = sourceRoot.replaceAll('\\', '/').replace(/\/+$/, '');
+    if (normalized.startsWith(`${normalizedRoot}/`)) {
+      return normalized.slice(normalizedRoot.length + 1);
+    }
+  }
+  return normalized.replace(/^\.\//, '');
+}
+
+function inspectorCalloutText(label: string): string {
+  return `${label}\n${inspectorInteractionHint}`;
 }
 
 function inspectorRender(rect: InspectorRect | null, label: string): void {
@@ -325,7 +336,10 @@ async function inspectorResolveTarget(
   const path = metadata.source?.filePath ? inspectorDisplayPath(metadata.source.filePath) : null;
   const name = metadata.componentName || resolvedTarget.tagName.toLowerCase();
   const line = metadata.source?.lineNumber ? `:${metadata.source.lineNumber}` : '';
-  inspectorRender(rect, path ? `${name} — ${path}${line}` : `${name} — Source unavailable`);
+  inspectorRender(
+    rect,
+    inspectorCalloutText(path ? `${name} — ${path}${line}` : `${name} — Source unavailable`)
+  );
   inspectorSend(select ? 'select' : 'hover', info, resolvedTarget);
 }
 
@@ -345,7 +359,7 @@ function inspectorScheduleResolve(
   }
   inspectorLastFingerprint = fingerprint;
   if (inspectorResolutionTimer !== null) clearTimeout(inspectorResolutionTimer);
-  inspectorCallout && (inspectorCallout.textContent = 'Inspecting…');
+  inspectorCallout && (inspectorCallout.textContent = inspectorCalloutText('Inspecting…'));
   inspectorResolutionTimer = setTimeout(() => {
     inspectorResolutionTimer = null;
     void inspectorResolveTarget(target, select, clientX, clientY);
@@ -373,13 +387,30 @@ function inspectorOnPointerMove(event: PointerEvent): void {
 }
 
 function inspectorOnPointerDown(event: PointerEvent): void {
-  if (!inspectorEnabled) return;
+  if (!inspectorEnabled || event.shiftKey) return;
   const target = event.target;
   if (!(target instanceof Element) || inspectorRoot?.contains(target)) return;
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
   inspectorScheduleResolve(target, true, event.clientX, event.clientY);
+}
+
+function inspectorOnPointerUp(event: PointerEvent): void {
+  inspectorBlockActivation(event);
+}
+
+function inspectorOnClick(event: MouseEvent): void {
+  inspectorBlockActivation(event);
+}
+
+function inspectorBlockActivation(event: MouseEvent): void {
+  if (!inspectorEnabled || event.shiftKey) return;
+  const target = event.target;
+  if (!(target instanceof Element) || inspectorRoot?.contains(target)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
 }
 
 function inspectorOnPointerLeave(): void {
@@ -399,6 +430,10 @@ function inspectorAttach(): void {
   inspectorCreateOverlay();
   document.addEventListener('pointermove', inspectorOnPointerMove, true);
   document.addEventListener('pointerdown', inspectorOnPointerDown, true);
+  document.addEventListener('pointerup', inspectorOnPointerUp, true);
+  document.addEventListener('click', inspectorOnClick, true);
+  document.addEventListener('auxclick', inspectorOnClick, true);
+  document.addEventListener('dblclick', inspectorOnClick, true);
   document.addEventListener('mouseleave', inspectorOnPointerLeave, true);
   document.addEventListener('keydown', inspectorOnKeyDown, true);
   window.addEventListener('scroll', inspectorRefreshPosition, true);
@@ -413,6 +448,10 @@ function inspectorDetach(): void {
   inspectorResolutionSequence += 1;
   document.removeEventListener('pointermove', inspectorOnPointerMove, true);
   document.removeEventListener('pointerdown', inspectorOnPointerDown, true);
+  document.removeEventListener('pointerup', inspectorOnPointerUp, true);
+  document.removeEventListener('click', inspectorOnClick, true);
+  document.removeEventListener('auxclick', inspectorOnClick, true);
+  document.removeEventListener('dblclick', inspectorOnClick, true);
   document.removeEventListener('mouseleave', inspectorOnPointerLeave, true);
   document.removeEventListener('keydown', inspectorOnKeyDown, true);
   window.removeEventListener('scroll', inspectorRefreshPosition, true);

@@ -291,7 +291,10 @@ export class ElementSourceInspectorStore {
     const frames = source && !stack.some((frame) => sameFrame(frame, source))
       ? [source, ...stack]
       : stack;
-    const initialFrame = source ?? frames[0] ?? null;
+    const sourceIndex = source
+      ? frames.findIndex((frame) => sameFrame(frame, source))
+      : 0;
+    const initialFrame = frames[sourceIndex + 1] ?? source ?? frames[0] ?? null;
     const initialHistory: SourceHistoryEntry[] = [{
       frame: initialFrame,
       componentName: initialFrame?.componentName ?? cleanName(payload.componentName),

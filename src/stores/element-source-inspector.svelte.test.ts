@@ -87,7 +87,7 @@ describe('Element Source Inspector state', () => {
     expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Two.svelte');
   });
 
-  it('navigates the component stack and returns with back history', () => {
+  it('opens at the nearest render site and can drill into the component source', () => {
     elementSourceInspector.registerContext(context);
     elementSourceInspector.setMode('scope-1', 'tab-1', true);
     elementSourceInspector.receive('scope-1', 'tab-1', {
@@ -95,20 +95,24 @@ describe('Element Source Inspector state', () => {
       source: { filePath: 'src/Child.svelte', lineNumber: 14, columnNumber: 1, componentName: 'Child' },
       stack: [
         { filePath: 'src/Child.svelte', lineNumber: 14, columnNumber: 1, componentName: 'Child' },
-        { filePath: 'src/Parent.svelte', lineNumber: 28, columnNumber: 3, componentName: 'Parent' }
+        { filePath: 'src/Parent.svelte', lineNumber: 28, columnNumber: 3, componentName: 'Parent' },
+        { filePath: 'src/routes/+page.svelte', lineNumber: 9, columnNumber: 3, componentName: 'Page' }
       ]
     }, null);
     const id = elementSourceInspector.transient!.id;
+    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Parent.svelte');
     elementSourceInspector.openStackFrame(id, {
-      filePath: 'src/Parent.svelte',
-      lineNumber: 28,
-      columnNumber: 3,
-      componentName: 'Parent'
+      filePath: 'src/Child.svelte',
+      lineNumber: 14,
+      columnNumber: 1,
+      componentName: 'Child'
     });
     expect(elementSourceInspector.canGoBack(id)).toBe(true);
     expect(elementSourceInspector.transient?.historyIndex).toBe(1);
+    expect(elementSourceInspector.transient?.history[1]?.frame?.filePath).toBe('src/Child.svelte');
     elementSourceInspector.goBack(id);
     expect(elementSourceInspector.transient?.historyIndex).toBe(0);
+    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Parent.svelte');
   });
 
   it('cleans viewers and mode state when the project scope changes', () => {

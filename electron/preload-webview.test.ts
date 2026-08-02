@@ -1,15 +1,23 @@
 /**
  * @vitest-environment jsdom
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { sendToHost } = vi.hoisted(() => ({
+const { electronListeners, executeInMainWorld, sendToHost } = vi.hoisted(() => ({
+  electronListeners: new Map<string, (...args: unknown[]) => void>(),
+  executeInMainWorld: vi.fn(() => null),
   sendToHost: vi.fn()
 }));
 
 vi.mock('electron', () => ({
+  contextBridge: {
+    executeInMainWorld
+  },
   ipcRenderer: {
-    sendToHost
+    sendToHost,
+    on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
+      electronListeners.set(channel, listener);
+    })
   }
 }));
 
@@ -19,10 +27,19 @@ function focusInput(input: HTMLInputElement): void {
   input.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
 }
 
+function setInspectorMode(enabled: boolean): void {
+  electronListeners.get('soloe:webview-element-source-mode')?.({}, { enabled });
+}
+
 describe('webview preload credential focus telemetry', () => {
   beforeEach(() => {
+    setInspectorMode(false);
     document.body.innerHTML = '';
     sendToHost.mockClear();
+  });
+
+  afterEach(() => {
+    setInspectorMode(false);
   });
 
   it('reports email focus when the field belongs to a password form', () => {
@@ -58,5 +75,47 @@ describe('webview preload credential focus telemetry', () => {
     document.querySelector('button')!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
 
     expect(sendToHost).toHaveBeenCalledWith('soloe:webview-pointerdown');
+  });
+
+  it('blocks application activation while inspecting but preserves scrolling and Shift-click', () => {
+    document.body.innerHTML = '<button type="button">Open dialog</button>';
+    const button = document.querySelector('button')!;
+    const onPointerUp = vi.fn();
+    const onClick = vi.fn();
+    const onWheel = vi.fn();
+    button.addEventListener('pointerup', onPointerUp);
+    button.addEventListener('click', onClick);
+    button.addEventListener('wheel', onWheel);
+    setInspectorMode(true);
+
+    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    button.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, cancelable: true }));
+    const inspectedClick = new MouseEvent('click', { bubbles: true, cancelable: true });
+    button.dispatchEvent(inspectedClick);
+    button.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true }));
+
+    expect(onPointerUp).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
+    expect(inspectedClick.defaultPrevented).toBe(true);
+    expect(onWheel).toHaveBeenCalledOnce();
+
+    button.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      shiftKey: true
+    }));
+    button.dispatchEvent(new MouseEvent('pointerup', {
+      bubbles: true,
+      cancelable: true,
+      shiftKey: true
+    }));
+    button.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      shiftKey: true
+    }));
+
+    expect(onPointerUp).toHaveBeenCalledOnce();
+    expect(onClick).toHaveBeenCalledOnce();
   });
 });

@@ -2,16 +2,17 @@
   import { onMount } from 'svelte';
   import {
     AlertCircle,
-    ChevronDown,
     ChevronLeft,
+    CornerDownRight,
     ExternalLink,
+    Layers3,
     Loader2,
+    MousePointerClick,
     Pin,
     PinOff,
     ScanLine,
     X
   } from '@lucide/svelte';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Button } from '$lib/components/ui/button';
   import {
     createFilesScope,
@@ -357,6 +358,26 @@
     return `${frame.filePath}${frame.lineNumber ? `:${frame.lineNumber}` : ''}`;
   }
 
+  function sourceHierarchy(viewer: ElementSourceViewer): ElementSourceViewer['stack'] {
+    return viewer.stack.toReversed();
+  }
+
+  function frameName(frame: ElementSourceViewer['stack'][number]): string {
+    if (frame.componentName) return frame.componentName;
+    const filename = frame.filePath.split('/').at(-1) ?? frame.filePath;
+    return filename.replace(/\.[^.]+$/, '') || 'Source frame';
+  }
+
+  function isCurrentFrame(
+    current: SourceHistoryEntry['frame'],
+    candidate: ElementSourceViewer['stack'][number]
+  ): boolean {
+    return !!current
+      && current.filePath === candidate.filePath
+      && current.lineNumber === candidate.lineNumber
+      && current.columnNumber === candidate.columnNumber;
+  }
+
   function handleViewerEnter(viewerId: string): void {
     elementSourceInspector.enterViewer(viewerId);
     elementSourceInspector.focusViewer(viewerId);
@@ -374,6 +395,7 @@
   {@const isTransient = !viewer.pinned}
   {@const interaction = interactions[viewer.id]}
   {@const sourcePath = currentPath(viewer)}
+  {@const hierarchy = sourceHierarchy(viewer)}
   <div
     class="element-source-sticky fixed"
     role="dialog"
@@ -405,37 +427,10 @@
         >
           <ChevronLeft class="size-3.5" />
         </Button>
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            {#snippet child({ props })}
-              <button
-                {...props}
-                type="button"
-                class="flex min-w-0 max-w-[58%] flex-[0_1_auto] items-center gap-1 overflow-hidden rounded px-1 py-0.5 text-left text-[11px] font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
-                title={viewer.label}
-                aria-label={`Source stack for ${viewer.label}`}
-              >
-                <ScanLine class="size-3 shrink-0 text-primary" />
-                <span class="min-w-0 truncate">{entry?.componentName ?? viewer.label}</span>
-                <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
-              </button>
-            {/snippet}
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="start" side="bottom" class="z-[130] max-h-64 w-80 overflow-y-auto">
-            <DropdownMenu.Label>Source stack</DropdownMenu.Label>
-            {#each viewer.stack as stackFrame, stackIndex (`${stackFrame.filePath}:${stackFrame.lineNumber}:${stackIndex}`)}
-              <DropdownMenu.Item onSelect={() => openStackFrame(viewer.id, stackFrame)}>
-                <ScanLine class="size-3.5 shrink-0 text-primary" />
-                <span class="min-w-0 flex-1 truncate">
-                  {stackFrame.componentName ?? 'Source frame'}
-                  <span class="block font-mono text-[10px] text-muted-foreground">{frameLabel(stackFrame)}</span>
-                </span>
-              </DropdownMenu.Item>
-            {:else}
-              <DropdownMenu.Item disabled>No component stack available</DropdownMenu.Item>
-            {/each}
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
+        <div class="flex min-w-0 items-center gap-1 px-1 text-[11px] font-medium" title={viewer.label}>
+          <ScanLine class="size-3 shrink-0 text-primary" />
+          <span class="min-w-0 truncate">{entry?.componentName ?? viewer.label}</span>
+        </div>
         <div class="min-w-2 flex-1" aria-hidden="true"></div>
         <Button
           variant="ghost"
@@ -474,13 +469,51 @@
 
       <button
         type="button"
-        class="mx-2 mt-1 min-w-0 truncate rounded px-1 text-left font-mono text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+        class="mx-2 mt-1 min-w-0 whitespace-normal break-all rounded px-1 text-left font-mono text-[10px] leading-4 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
         title={sourcePath ? `Open ${sourcePath} in main file viewer` : 'Source unavailable'}
         disabled={!frame}
         onclick={() => void openInMain(viewer)}
       >
         {frameLabel(frame)}
       </button>
+
+      <nav class="mx-2 mt-1 shrink-0 rounded-md border border-border/60 bg-muted/25 p-1.5" aria-label="Component render hierarchy">
+        <div class="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <Layers3 class="size-3" />
+          Render hierarchy
+          <span class="font-normal normal-case tracking-normal">outer → inner</span>
+        </div>
+        <ol class="max-h-28 space-y-0.5 overflow-y-auto pr-0.5">
+          {#each hierarchy as stackFrame, stackIndex (`${stackFrame.filePath}:${stackFrame.lineNumber}:${stackIndex}`)}
+            <li class="relative" style={`padding-left: ${Math.min(stackIndex, 8) * 10}px`}>
+              <button
+                type="button"
+                class={`group flex w-full min-w-0 items-start gap-1 rounded px-1 py-0.5 text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
+                  isCurrentFrame(frame, stackFrame)
+                    ? 'bg-primary/12 text-foreground ring-1 ring-primary/35'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+                aria-current={isCurrentFrame(frame, stackFrame) ? 'location' : undefined}
+                aria-label={`Open ${frameName(stackFrame)} at ${frameLabel(stackFrame)}`}
+                onclick={() => openStackFrame(viewer.id, stackFrame)}
+              >
+                <CornerDownRight class={`mt-0.5 size-3 shrink-0 ${isCurrentFrame(frame, stackFrame) ? 'text-primary' : 'text-muted-foreground/70'}`} />
+                <span class="min-w-0 flex-1">
+                  <span class="block text-[10px] font-medium leading-3.5">{frameName(stackFrame)}</span>
+                  <span class="block whitespace-normal break-all font-mono text-[9px] leading-3 text-muted-foreground">{frameLabel(stackFrame)}</span>
+                </span>
+              </button>
+            </li>
+          {:else}
+            <li class="px-1 py-0.5 text-[10px] text-muted-foreground">No component hierarchy available</li>
+          {/each}
+        </ol>
+        <p class="mt-1 flex items-center gap-1 border-t border-border/50 pt-1 text-[9px] leading-3 text-muted-foreground">
+          <MousePointerClick class="size-3 shrink-0" />
+          Hold <kbd class="rounded border border-border bg-background px-1 font-mono text-[8px] text-foreground">Shift</kbd>
+          and click to interact with the page
+        </p>
+      </nav>
 
       {#if viewer.status === 'loading'}
         <div class="flex min-h-0 flex-1 items-center justify-center gap-2 text-[11px] text-muted-foreground">
