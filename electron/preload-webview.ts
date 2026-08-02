@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
-import { ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer } from 'electron';
 import { resolveElementInfo, type ElementInfo } from 'element-source';
+import { resolveSvelteElementInfoInMainWorld } from './element-source-main-world';
 
 // This preload is injected into the browser pane's <webview> guest. It
 // forwards Soloe's app-level keyboard shortcuts back to the host renderer
@@ -273,14 +274,36 @@ function inspectorSend(kind: 'hover' | 'leave' | 'select', info: ElementInfo | n
   });
 }
 
-async function inspectorResolveTarget(target: Element, select: boolean): Promise<void> {
+async function inspectorResolveTarget(
+  target: Element,
+  select: boolean,
+  clientX: number,
+  clientY: number
+): Promise<void> {
   const sequence = ++inspectorResolutionSequence;
   let info: ElementInfo | null = null;
   let resolvedTarget: Element = target;
+  try {
+    const mainWorldResolution = contextBridge.executeInMainWorld({
+      func: resolveSvelteElementInfoInMainWorld,
+      args: [clientX, clientY]
+    });
+    if (mainWorldResolution?.info) {
+      info = mainWorldResolution.info;
+      let ownerDepth = Number(mainWorldResolution.ownerDepth) || 0;
+      while (ownerDepth > 0 && resolvedTarget.parentElement) {
+        resolvedTarget = resolvedTarget.parentElement;
+        ownerDepth -= 1;
+      }
+    }
+  } catch {
+    // Older Electron builds and non-isolated test environments fall back to
+    // the regular resolver below.
+  }
   let current: Element | null = target;
   // Prefer the most-specific element with a useful source frame, while still
   // allowing a nested child to inherit its nearest component metadata.
-  for (let depth = 0; current && depth < 6; depth += 1) {
+  for (let depth = 0; !info && current && depth < 6; depth += 1) {
     try {
       const candidate = await resolveElementInfo(current);
       if (candidate.source || candidate.stack.length > 0 || candidate.componentName) {
@@ -305,7 +328,12 @@ async function inspectorResolveTarget(target: Element, select: boolean): Promise
   inspectorSend(select ? 'select' : 'hover', info, resolvedTarget);
 }
 
-function inspectorScheduleResolve(target: Element, select = false): void {
+function inspectorScheduleResolve(
+  target: Element,
+  select = false,
+  clientX = 0,
+  clientY = 0
+): void {
   if (!inspectorEnabled) return;
   inspectorTarget = target;
   inspectorCreateOverlay();
@@ -319,7 +347,7 @@ function inspectorScheduleResolve(target: Element, select = false): void {
   inspectorCallout && (inspectorCallout.textContent = 'Inspecting…');
   inspectorResolutionTimer = setTimeout(() => {
     inspectorResolutionTimer = null;
-    void inspectorResolveTarget(target, select);
+    void inspectorResolveTarget(target, select, clientX, clientY);
   }, select ? 0 : 70);
 }
 
@@ -339,7 +367,7 @@ function inspectorOnPointerMove(event: PointerEvent): void {
   if (inspectorFrameHandle) return;
   inspectorFrameHandle = requestAnimationFrame(() => {
     inspectorFrameHandle = 0;
-    inspectorScheduleResolve(target);
+    inspectorScheduleResolve(target, false, event.clientX, event.clientY);
   });
 }
 
@@ -350,7 +378,7 @@ function inspectorOnPointerDown(event: PointerEvent): void {
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
-  inspectorScheduleResolve(target, true);
+  inspectorScheduleResolve(target, true, event.clientX, event.clientY);
 }
 
 function inspectorOnPointerLeave(): void {

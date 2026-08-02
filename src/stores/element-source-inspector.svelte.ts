@@ -1,6 +1,5 @@
 import type { RunMode } from '@shared/types/sessions.js';
 import {
-  ELEMENT_SOURCE_INSPECTOR_HOVER_DELAY,
   ELEMENT_SOURCE_INSPECTOR_VIEWER_GRACE,
   formatElementLabel,
   normalizeSourceFrame,
@@ -71,9 +70,7 @@ export class ElementSourceInspectorStore {
   activeScopeKey = $state<string | null>(null);
 
   private contexts = new Map<string, InspectorTabContext>();
-  private hoverTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private closeTimer: ReturnType<typeof setTimeout> | null = null;
-  private hoverFingerprintByTab = new Map<string, string>();
   private sequence = 0;
   private viewerPointerInside = new Set<string>();
 
@@ -92,11 +89,9 @@ export class ElementSourceInspectorStore {
 
   removeContext(scopeKey: string, tabId: string): void {
     const key = this.contextKey(scopeKey, tabId);
-    this.clearTimer(key);
     this.contexts.delete(key);
     delete this.modeByTab[key];
     delete this.hoverByTab[key];
-    this.hoverFingerprintByTab.delete(key);
     this.closeTabViewers(scopeKey, tabId);
   }
 
@@ -108,9 +103,7 @@ export class ElementSourceInspectorStore {
     const key = this.contextKey(scopeKey, tabId);
     this.modeByTab = { ...this.modeByTab, [key]: active };
     if (!active) {
-      this.clearTimer(key);
       this.hoverByTab = { ...this.hoverByTab, [key]: null };
-      this.hoverFingerprintByTab.delete(key);
       if (this.transient?.scopeKey === scopeKey && this.transient.tabId === tabId) {
         this.transient = null;
       }
@@ -154,8 +147,6 @@ export class ElementSourceInspectorStore {
     if (!this.isModeActive(scopeKey, tabId)) return;
     if (payload.kind === 'leave') {
       this.hoverByTab = { ...this.hoverByTab, [key]: null };
-      this.hoverFingerprintByTab.delete(key);
-      this.clearTimer(key);
       this.scheduleTransientClose();
       return;
     }
@@ -163,21 +154,8 @@ export class ElementSourceInspectorStore {
     this.cancelTransientClose();
     const hover: InspectorTabHover = { tabId, payload, targetRect };
     this.hoverByTab = { ...this.hoverByTab, [key]: hover };
-    const fingerprint = this.fingerprint(payload);
-    if (payload.kind === 'hover') {
-      if (this.hoverFingerprintByTab.get(key) === fingerprint) return;
-      this.hoverFingerprintByTab.set(key, fingerprint);
-      this.clearTimer(key);
-      this.hoverTimers.set(key, setTimeout(() => {
-        this.hoverTimers.delete(key);
-        const current = this.hoverByTab[key];
-        if (!current || this.fingerprint(current.payload) !== fingerprint) return;
-        this.openViewer(scopeKey, tabId, current.payload, current.targetRect);
-      }, ELEMENT_SOURCE_INSPECTOR_HOVER_DELAY));
-      return;
-    }
+    if (payload.kind === 'hover') return;
 
-    this.clearTimer(key);
     this.openViewer(scopeKey, tabId, payload, targetRect);
   }
 
@@ -289,14 +267,11 @@ export class ElementSourceInspectorStore {
   }
 
   clearAll(): void {
-    for (const timer of this.hoverTimers.values()) clearTimeout(timer);
-    this.hoverTimers.clear();
     this.cancelTransientClose();
     this.modeByTab = {};
     this.hoverByTab = {};
     this.transient = null;
     this.pinned = [];
-    this.hoverFingerprintByTab.clear();
     this.viewerPointerInside.clear();
   }
 
@@ -382,13 +357,6 @@ export class ElementSourceInspectorStore {
     this.closeTimer = null;
   }
 
-  private clearTimer(key: string): void {
-    const timer = this.hoverTimers.get(key);
-    if (timer === undefined) return;
-    clearTimeout(timer);
-    this.hoverTimers.delete(key);
-  }
-
   private closeTabViewers(scopeKey: string, tabId: string): void {
     if (this.transient?.scopeKey === scopeKey && this.transient.tabId === tabId) {
       this.transient = null;
@@ -407,16 +375,6 @@ export class ElementSourceInspectorStore {
     return `${scopeKey}::${tabId}`;
   }
 
-  private fingerprint(payload: ElementSourcePayload): string {
-    const source = payload.source;
-    return [
-      source?.filePath ?? '',
-      source?.lineNumber ?? '',
-      source?.columnNumber ?? '',
-      payload.tagName ?? '',
-      payload.componentName ?? ''
-    ].join('|');
-  }
 }
 
 function sameFrame(a: ElementSourceFrame, b: ElementSourceFrame): boolean {

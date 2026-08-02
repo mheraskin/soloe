@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('Element Source Inspector state', () => {
-  it('opens only after the stationary hover delay', () => {
+  it('never opens a viewer from hover alone', () => {
     vi.useFakeTimers();
     elementSourceInspector.registerContext(context);
     elementSourceInspector.setMode('scope-1', 'tab-1', true);
@@ -35,10 +35,8 @@ describe('Element Source Inspector state', () => {
     }, null);
 
     expect(elementSourceInspector.transient).toBeNull();
-    vi.advanceTimersByTime(849);
+    vi.advanceTimersByTime(10_000);
     expect(elementSourceInspector.transient).toBeNull();
-    vi.advanceTimersByTime(1);
-    expect(elementSourceInspector.transient?.label).toBe('Button');
   });
 
   it('opens immediately on selection and blocks stale replacement', () => {

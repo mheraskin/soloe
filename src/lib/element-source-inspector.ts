@@ -1,5 +1,4 @@
 export const ELEMENT_SOURCE_INSPECTOR_SHORTCUT = ['Ctrl', 'Alt', 'Shift', 'S'] as const;
-export const ELEMENT_SOURCE_INSPECTOR_HOVER_DELAY = 850;
 export const ELEMENT_SOURCE_INSPECTOR_VIEWER_GRACE = 500;
 
 export interface ElementSourceFrame {
@@ -60,8 +59,13 @@ export function normalizeSourcePath(filePath: string | null | undefined, project
   if (isAbsolutePath(raw)) {
     if (!root) return null;
     const absolute = normalizeAbsoluteRoot(raw);
-    if (absolute !== root && !absolute.startsWith(`${root}/`)) return null;
-    relative = absolute.slice(root.length).replace(/^\/+/, '');
+    if (absolute === root || absolute.startsWith(`${root}/`)) {
+      relative = absolute.slice(root.length).replace(/^\/+/, '');
+    } else if (absolute.startsWith('/workspace/') && !root.startsWith('/workspace/')) {
+      relative = absolute.slice('/workspace/'.length);
+    } else {
+      return null;
+    }
   }
 
   const parts = relative.split('/');

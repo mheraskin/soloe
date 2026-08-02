@@ -17,6 +17,13 @@ describe('element source inspector helpers', () => {
     expect(normalizeSourcePath('/workspace/other.svelte', '/workspace/app')).toBeNull();
   });
 
+  it('maps Docker workspace paths into the selected host project', () => {
+    expect(normalizeSourcePath(
+      '/workspace/frontend/dashboard/src/routes/+page.svelte',
+      '/home/user/projects/order-ahead'
+    )).toBe('frontend/dashboard/src/routes/+page.svelte');
+  });
+
   it('normalizes source locations without inventing missing positions', () => {
     const frame = normalizeSourceFrame({
       filePath: 'src/Button.svelte',
