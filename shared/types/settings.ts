@@ -139,7 +139,7 @@ export interface SettingsShortcuts {
 }
 
 export interface Settings {
-  version: 1;
+  version: 2;
   backend: SettingsBackend;
   appearance: SettingsAppearance;
   terminal: SettingsTerminal;
@@ -172,7 +172,7 @@ export type SettingsUpdate = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 1,
+  version: 2,
   backend: {
     placement: 'windows',
     wslDistro: 'Ubuntu',

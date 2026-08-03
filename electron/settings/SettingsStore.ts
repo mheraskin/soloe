@@ -52,7 +52,7 @@ export class SettingsStore {
   async update(patch: SettingsUpdate): Promise<Settings> {
     await this.ensureLoaded();
     const next: Settings = {
-      version: 1,
+      version: 2,
       backend: { ...this.cache!.backend, ...(patch.backend ?? {}) },
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
       terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
@@ -211,8 +211,12 @@ function parseSettings(
     raw['quickLaunchDefaultsSeeded'],
     hasQuickLaunch && Array.isArray(raw['quickLaunch']) && (raw['quickLaunch'] as unknown[]).length > 0
   );
+  const pauseAutoResumeMinutes = raw['version'] === 1
+    && browser['pauseAutoResumeMinutes'] === 5
+    ? DEFAULT_SETTINGS.browser.pauseAutoResumeMinutes
+    : pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes']);
   const out: Settings = {
-    version: 1,
+    version: 2,
     backend: {
       placement: pickEnum(
         backend['placement'],
@@ -243,7 +247,7 @@ function parseSettings(
     },
     browser: {
       maxResidentTabs: pickMaxResidentTabs(browser['maxResidentTabs']),
-      pauseAutoResumeMinutes: pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes']),
+      pauseAutoResumeMinutes,
       elementSourceInspectorEnabled: pickBoolean(
         browser['elementSourceInspectorEnabled'],
         DEFAULT_SETTINGS.browser.elementSourceInspectorEnabled
@@ -407,7 +411,7 @@ function parseQuickLaunch(raw: unknown, defaultsSeeded: boolean): QuickLaunchPre
 }
 
 function validateSettings(s: Settings, platform: SupportedHostPlatform = 'windows'): void {
-  if (s.version !== 1) throw new Error(`Unsupported settings version: ${s.version}`);
+  if (s.version !== 2) throw new Error(`Unsupported settings version: ${s.version}`);
   if (!VALID_BACKEND_PLACEMENTS.has(s.backend.placement)) {
     throw new Error(`Invalid backend.placement: ${s.backend.placement}`);
   }

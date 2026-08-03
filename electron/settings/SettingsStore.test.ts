@@ -194,6 +194,21 @@ describe('SettingsStore — update', () => {
 });
 
 describe('SettingsStore — migration', () => {
+  it('extends the legacy default paused-tab timeout without overriding later preferences', async () => {
+    const legacy = {
+      ...DEFAULT_SETTINGS,
+      version: 1,
+      browser: { ...DEFAULT_SETTINGS.browser, pauseAutoResumeMinutes: 5 }
+    };
+    await fs.writeFile(storePath, JSON.stringify(legacy), 'utf8');
+    const migrated = await new SettingsStore(storePath).get();
+    expect(migrated.version).toBe(2);
+    expect(migrated.browser.pauseAutoResumeMinutes).toBe(30);
+
+    await new SettingsStore(storePath).update({ browser: { pauseAutoResumeMinutes: 5 } });
+    expect((await new SettingsStore(storePath).get()).browser.pauseAutoResumeMinutes).toBe(5);
+  });
+
   it('fills in defaults.cwd when missing from on-disk settings', async () => {
     const onDisk = {
       version: 1,
