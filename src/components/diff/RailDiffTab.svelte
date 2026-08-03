@@ -239,11 +239,14 @@
   });
 
   let commitScopeText = $derived.by<string>(() => {
-    if (reviewMode.kind !== 'range') return 'Working tree';
+    if (reviewMode.kind !== 'range') return 'Uncommitted changes';
     const n = reviewMode.commits.length;
     const shortBase = reviewMode.base.slice(0, 7);
     const shortHead = reviewMode.head.slice(0, 7);
-    return `${n} commit${n === 1 ? '' : 's'} · ${shortBase}…${shortHead}`;
+    const branch = reviewMode.branchContext ? `${reviewMode.branchContext} · ` : '';
+    const base = reviewMode.comparisonBaseRef ?? shortBase;
+    const worktree = reviewMode.includeWorkingTree ? ' + uncommitted' : '';
+    return `${branch}${n} commit${n === 1 ? '' : 's'} · ${base} → ${shortHead}${worktree}`;
   });
   let chipFilterShort = $derived(
     reviewMode.kind === 'range' && reviewMode.chipFilter ? reviewMode.chipFilter.slice(0, 7) : null

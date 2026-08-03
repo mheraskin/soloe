@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildGitHistoryGraph, filterGitHistory, scopeGitHistory } from './git-history-graph';
+import {
+  branchHistoryHashes,
+  buildGitHistoryGraph,
+  commitRangeHashes,
+  filterGitHistory,
+  reviewRangeRefs,
+  scopeGitHistory
+} from './git-history-graph';
 
 const root = {
   hash: 'a'.repeat(40),
@@ -69,5 +76,38 @@ describe('Git history graph', () => {
       root
     ]);
     expect(scopeGitHistory([head, feature, root], null)).toEqual([head, feature, root]);
+  });
+
+  it('browses commits reachable from a branch without turning the branch into a comparison base', () => {
+    expect(branchHistoryHashes([head, feature, root], 'feature/search')).toEqual(
+      new Set([feature.hash, root.hash])
+    );
+    expect(branchHistoryHashes([head, feature, root], 'missing')).toBeNull();
+  });
+
+  it('fills the commits between two selected endpoints', () => {
+    expect(commitRangeHashes([head, feature, root], head.hash, root.hash)).toEqual(
+      new Set([head.hash, feature.hash, root.hash])
+    );
+    expect(commitRangeHashes([head, feature, root], feature.hash, feature.hash)).toEqual(
+      new Set([feature.hash])
+    );
+  });
+
+  it('compares selected commits with the oldest parent unless a manual base is provided', () => {
+    const selection = new Set([head.hash, feature.hash]);
+
+    expect(reviewRangeRefs([head, feature, root], selection, '')).toEqual({
+      base: `${feature.hash}~1`,
+      head: head.hash,
+      oldest: feature,
+      newest: head
+    });
+    expect(reviewRangeRefs([head, feature, root], selection, 'main')).toEqual({
+      base: 'main',
+      head: head.hash,
+      oldest: feature,
+      newest: head
+    });
   });
 });

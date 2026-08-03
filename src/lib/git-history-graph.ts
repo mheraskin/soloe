@@ -15,6 +15,13 @@ export interface GitHistoryGraphRow {
   edges: GitGraphEdge[];
 }
 
+export interface ReviewRangeRefs {
+  base: string;
+  head: string;
+  oldest: GitHistoryCommit;
+  newest: GitHistoryCommit;
+}
+
 export function filterGitHistory(
   commits: GitHistoryCommit[],
   query: string,
@@ -42,6 +49,63 @@ export function scopeGitHistory(
 ): GitHistoryCommit[] {
   if (!hashes) return commits;
   return commits.filter((commit) => hashes.has(commit.hash));
+}
+
+/** Return the portion of the loaded graph reachable from a local branch tip. */
+export function branchHistoryHashes(
+  commits: GitHistoryCommit[],
+  branchName: string
+): Set<string> | null {
+  const tip = commits.find((commit) =>
+    commit.refs.some((ref) => ref.kind === 'branch' && ref.name === branchName)
+  );
+  if (!tip) return null;
+
+  const byHash = new Map(commits.map((commit) => [commit.hash, commit]));
+  const reachable = new Set<string>();
+  const pending = [tip.hash];
+  while (pending.length > 0) {
+    const hash = pending.pop();
+    if (!hash || reachable.has(hash)) continue;
+    const commit = byHash.get(hash);
+    if (!commit) continue;
+    reachable.add(hash);
+    pending.push(...commit.parents);
+  }
+  return reachable;
+}
+
+/** Fill one visual commit range between two endpoints in newest-first history. */
+export function commitRangeHashes(
+  commits: GitHistoryCommit[],
+  anchor: string | null,
+  focus: string | null
+): Set<string> {
+  if (!anchor || !focus) return new Set();
+  const anchorIndex = commits.findIndex((commit) => commit.hash === anchor);
+  const focusIndex = commits.findIndex((commit) => commit.hash === focus);
+  if (anchorIndex < 0 || focusIndex < 0) return new Set();
+  const start = Math.min(anchorIndex, focusIndex);
+  const end = Math.max(anchorIndex, focusIndex);
+  return new Set(commits.slice(start, end + 1).map((commit) => commit.hash));
+}
+
+/** Resolve the selected range without assigning browsing branches comparison semantics. */
+export function reviewRangeRefs(
+  commits: GitHistoryCommit[],
+  selected: ReadonlySet<string>,
+  comparisonBase: string
+): ReviewRangeRefs | null {
+  const selectedCommits = commits.filter((commit) => selected.has(commit.hash));
+  const newest = selectedCommits[0];
+  const oldest = selectedCommits.at(-1);
+  if (!oldest || !newest) return null;
+  return {
+    base: comparisonBase.trim() || `${oldest.hash}~1`,
+    head: newest.hash,
+    oldest,
+    newest
+  };
 }
 
 export function buildGitHistoryGraph(commits: GitHistoryCommit[]): GitHistoryGraphRow[] {

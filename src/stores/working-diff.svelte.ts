@@ -47,6 +47,8 @@ export type ReviewMode =
       commits: GitCommit[];  // oldest-first, topologically ordered
       includeWorkingTree: boolean;
       chipFilter: string | null; // 40-char SHA when filtering by one commit
+      comparisonBaseRef?: string; // optional user-entered label for the resolved base
+      branchContext?: string; // branch used to browse the selected commits
     };
 
 interface RepoContext {
@@ -427,17 +429,27 @@ export class WorkingDiffStore {
 
     const epoch = this.changesEpochByCwd.get(identity) ?? 0;
     const previous = this.changesByCwd[identity];
-    this.changesByCwd = {
-      ...this.changesByCwd,
-      [identity]: {
-        result: previous?.result ?? null,
-        loading: true,
-        error: null
-      }
-    };
+    const hasObservedSnapshot = observedWorkingTree !== undefined;
+    if (!hasObservedSnapshot) {
+      this.changesByCwd = {
+        ...this.changesByCwd,
+        [identity]: {
+          result: previous?.result ?? null,
+          loading: true,
+          error: null
+        }
+      };
+    }
 
     const fetchWt = !mode || mode.kind !== 'range' || mode.includeWorkingTree;
-    const fetchRange = mode?.kind === 'range';
+    // A range mode is addressed by immutable commit SHAs. A completed Working
+    // Tree Snapshot can therefore reuse the committed section already loaded
+    // for that range instead of launching the same rangeChanges Git command on
+    // every observation.
+    const fetchRange = mode?.kind === 'range' && !hasObservedSnapshot;
+    const retainedRangeChanges = hasObservedSnapshot && mode?.kind === 'range'
+      ? previous?.result?.changes.filter((change) => change.section === 'committed') ?? []
+      : [];
 
     const wtPromise = fetchWt
       ? observedWorkingTree
@@ -469,6 +481,8 @@ export class WorkingDiffStore {
           for (const r of range.changes) {
             merged.push(rangeChangeToWorking(r));
           }
+        } else if (retainedRangeChanges.length > 0) {
+          merged.push(...retainedRangeChanges);
         }
         const result: WorkingChangesResult = {
           repoPath: wt.repoPath ?? previous?.result?.repoPath ?? null,
@@ -476,6 +490,15 @@ export class WorkingDiffStore {
           changes: merged
         };
         if ((this.changesEpochByCwd.get(identity) ?? 0) !== epoch) return result;
+        if (
+          hasObservedSnapshot &&
+          previous?.result &&
+          !previous.loading &&
+          previous.error === null &&
+          this.sameChangesResult(previous.result, result)
+        ) {
+          return previous.result;
+        }
         this.changesByCwd = {
           ...this.changesByCwd,
           [identity]: { result, loading: false, error: null }
@@ -1449,9 +1472,17 @@ export class WorkingDiffStore {
     return result.changes
       .map(
         (c) =>
-          `${c.path}|${c.fromPath ?? ''}|${c.kind}|${c.staged ? 1 : 0}|${c.insertions}|${c.deletions}|${c.binary ? 1 : 0}`
+          `${c.path}|${c.fromPath ?? ''}|${c.kind}|${c.staged ? 1 : 0}|${c.insertions}|${c.deletions}|${c.binary ? 1 : 0}|${c.section ?? ''}|${c.commitsTouching?.join(',') ?? ''}`
       )
       .join('\n');
+  }
+
+  private sameChangesResult(a: WorkingChangesResult, b: WorkingChangesResult): boolean {
+    return (
+      a.repoPath === b.repoPath &&
+      a.isRepo === b.isRepo &&
+      this.changesSignature(a) === this.changesSignature(b)
+    );
   }
 
   detach(): void {
@@ -1467,6 +1498,8 @@ function sameReviewMode(a: ReviewMode, b: ReviewMode): boolean {
   if (a.base !== b.base || a.head !== b.head) return false;
   if (a.includeWorkingTree !== b.includeWorkingTree) return false;
   if (a.chipFilter !== b.chipFilter) return false;
+  if (a.comparisonBaseRef !== b.comparisonBaseRef) return false;
+  if (a.branchContext !== b.branchContext) return false;
   if (a.commits.length !== b.commits.length) return false;
   for (let i = 0; i < a.commits.length; i += 1) {
     if (a.commits[i]?.hash !== b.commits[i]?.hash) return false;

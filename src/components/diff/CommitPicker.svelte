@@ -11,7 +11,6 @@
     X
   } from '@lucide/svelte';
   import { untrack } from 'svelte';
-  import { SvelteSet } from 'svelte/reactivity';
   import type {
     GitBranch as GitBranchInfo,
     GitHistoryCommit,
@@ -19,10 +18,12 @@
   } from '@shared/types/git.js';
   import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
   import {
+    branchHistoryHashes,
     buildGitHistoryGraph,
+    commitRangeHashes,
     filterGitHistory,
-    scopeGitHistory,
-    type GitHistoryFilter
+    reviewRangeRefs,
+    scopeGitHistory
   } from '../../lib/git-history-graph';
   import { ipc } from '../../lib/ipc';
   import { git } from '../../stores/git.svelte';
@@ -33,8 +34,11 @@
   } from '../../stores/working-diff.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { Checkbox } from '$lib/components/ui/checkbox';
   import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import * as Select from '$lib/components/ui/select';
 
   const HISTORY_LIMIT = 500;
   const LANE_WIDTH = 12;
@@ -61,13 +65,8 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let query = $state('');
-  let resultFilter = $state<GitHistoryFilter>('all');
   let selectedBranch = $state<string | null>(null);
-  let branchCommitHashes = $state<Set<string> | null>(null);
-  let branchLoading = $state(false);
-  let branchError = $state<string | null>(null);
   let historyGeneration = 0;
-  let branchGeneration = 0;
 
   let mode = $derived(workingDiff.reviewModeFor(scope));
 
@@ -75,13 +74,19 @@
   // whatever range is already active without becoming reactive to subsequent
   // store changes — the user is editing a draft inside the popover.
   const initialMode = untrack(() => workingDiff.reviewModeFor(scope));
-  const selected = new SvelteSet<string>(
-    initialMode.kind === 'range' ? initialMode.commits.map((c) => c.hash) : []
+  if (initialMode.kind === 'range') selectedBranch = initialMode.branchContext ?? null;
+  let selectionAnchor = $state<string | null>(
+    initialMode.kind === 'range' ? initialMode.commits[0]?.hash ?? null : null
+  );
+  let selectionFocus = $state<string | null>(
+    initialMode.kind === 'range' ? initialMode.commits.at(-1)?.hash ?? null : null
   );
   let includeWt = $state<boolean>(
-    initialMode.kind === 'range' ? initialMode.includeWorkingTree : true
+    initialMode.kind === 'range' ? initialMode.includeWorkingTree : false
   );
-  let fromRef = $state<string>('');
+  let comparisonBase = $state<string>(
+    initialMode.kind === 'range' ? initialMode.comparisonBaseRef ?? '' : ''
+  );
   let applying = $state(false);
   let resolveError = $state<string | null>(null);
 
@@ -114,6 +119,9 @@
         if (generation !== historyGeneration) return;
         history = nextHistory;
         branches = nextBranches;
+        if (selectedBranch === null && initialMode.kind === 'working-tree') {
+          selectedBranch = nextBranches.find((branch) => branch.current)?.name ?? null;
+        }
       })
       .catch((err: unknown) => {
         if (generation !== historyGeneration) return;
@@ -128,157 +136,111 @@
     void loadHistory();
   });
 
-  let scopedHistory = $derived(
-    scopeGitHistory(history, selectedBranch && branchCommitHashes ? branchCommitHashes : null)
+  let branchCommitHashes = $derived(
+    selectedBranch ? branchHistoryHashes(history, selectedBranch) : null
   );
-  let filteredHistory = $derived(filterGitHistory(scopedHistory, query, resultFilter));
+  let scopedHistory = $derived(
+    selectedBranch
+      ? scopeGitHistory(history, branchCommitHashes ?? new Set<string>())
+      : history
+  );
+  let selected = $derived(commitRangeHashes(scopedHistory, selectionAnchor, selectionFocus));
+  let filteredHistory = $derived(filterGitHistory(scopedHistory, query, 'all'));
   let graphRows = $derived(buildGitHistoryGraph(filteredHistory));
   let maxLanes = $derived(
     Math.max(1, ...graphRows.map((row) => Math.max(row.laneCount, row.nextLaneCount)))
   );
   let graphWidth = $derived(maxLanes * LANE_WIDTH + 8);
+  let currentBranch = $derived(branches.find((branch) => branch.current)?.name ?? null);
+  let worktreeStatus = $derived(git.statusFor(scope));
+  let uncommittedCount = $derived(
+    (worktreeStatus?.staged ?? 0) +
+    (worktreeStatus?.unstaged ?? 0) +
+    (worktreeStatus?.untracked ?? 0)
+  );
+  let selectedBranchIsCurrent = $derived(
+    selectedBranch !== null && selectedBranch === currentBranch
+  );
+  let selectionDetails = $derived(reviewRangeRefs(history, selected, comparisonBase));
 
-  function toggle(hash: string): void {
-    if (selected.has(hash)) selected.delete(hash);
-    else selected.add(hash);
+  function toggle(hash: string, checked: boolean): void {
+    if (!checked) {
+      clearSelection();
+      return;
+    }
+    if (!selectionAnchor || !selectionFocus || selectionAnchor !== selectionFocus) {
+      selectionAnchor = hash;
+      selectionFocus = hash;
+      return;
+    }
+    selectionFocus = hash;
   }
 
   function selectAll(): void {
-    for (const commit of filteredHistory) selected.add(commit.hash);
+    const visible = new Set(filteredHistory.map((commit) => commit.hash));
+    const indexes = scopedHistory
+      .map((commit, index) => visible.has(commit.hash) ? index : -1)
+      .filter((index) => index >= 0);
+    if (indexes.length === 0) {
+      clearSelection();
+      return;
+    }
+    const newest = scopedHistory[Math.min(...indexes)];
+    const oldest = scopedHistory[Math.max(...indexes)];
+    selectionAnchor = oldest?.hash ?? null;
+    selectionFocus = newest?.hash ?? null;
   }
 
   function clearSelection(): void {
-    selected.clear();
+    selectionAnchor = null;
+    selectionFocus = null;
   }
 
-  async function chooseBranch(ref: string): Promise<void> {
-    selectedBranch = ref;
-    fromRef = ref;
-    selected.clear();
-    branchCommitHashes = null;
-    branchError = null;
-    resultFilter = 'all';
-
-    const generation = ++branchGeneration;
-    branchLoading = true;
-    try {
-      const ctx = worktreeRuntimeContext(scope);
-      const resolved = await ipc.git.resolveRefs({ cwd, refs: [ref, 'HEAD'], ...ctx });
-      if (generation !== branchGeneration) return;
-      const [base, head] = resolved.resolved;
-      if (!base || !head) throw new Error(`Couldn't resolve "${ref}".`);
-
-      const range = await ipc.git.commitsBetween({ cwd, base, head, ...ctx });
-      if (generation !== branchGeneration) return;
-      branchCommitHashes = new Set(range.commits.map((commit) => commit.hash));
-      if (range.truncated) {
-        reportError('Branch range hit the 500-commit cap; only the first 500 are shown.');
-      }
-    } catch (err) {
-      if (generation !== branchGeneration) return;
-      branchError = err instanceof Error ? err.message : String(err);
-    } finally {
-      if (generation === branchGeneration) branchLoading = false;
-    }
+  function chooseBranch(ref: string): void {
+    selectedBranch = ref === '__all__' ? null : ref;
+    if (selectedBranch !== currentBranch) includeWt = false;
+    clearSelection();
   }
 
-  function updateFromRef(event: Event): void {
-    const value = (event.currentTarget as HTMLInputElement).value;
-    fromRef = value;
-    if (selectedBranch && value.trim() !== selectedBranch) {
-      selectedBranch = null;
-      branchCommitHashes = null;
-      branchError = null;
-      branchLoading = false;
-      ++branchGeneration;
-    }
+  function updateComparisonBase(event: Event): void {
+    comparisonBase = (event.currentTarget as HTMLInputElement).value;
   }
 
-  function clearFromRef(): void {
-    selectedBranch = null;
-    fromRef = '';
-    branchCommitHashes = null;
-    branchError = null;
-    branchLoading = false;
-    ++branchGeneration;
+  function clearComparisonBase(): void {
+    comparisonBase = '';
   }
 
   async function apply(): Promise<void> {
     if (applying) return;
-    if (selected.size === 0 && !fromRef.trim()) {
-      resolveError = 'Pick at least one commit or choose a branch/ref.';
+    if (selected.size === 0) {
+      resolveError = 'Select at least one commit to review.';
       return;
     }
     applying = true;
     resolveError = null;
     try {
       const ctx = worktreeRuntimeContext(scope);
-      let resolvedBase: string | null = null;
-      let resolvedHead: string | null = null;
-
-      const orderedHashes = history
-        .filter((commit) => selected.has(commit.hash))
-        .map((commit) => commit.hash)
-        .reverse();
-      const useSelectedCommits = orderedHashes.length > 0 &&
-        (selectedBranch !== null || !fromRef.trim());
-
-      if (useSelectedCommits) {
-        const earliest = orderedHashes[0];
-        const newest = orderedHashes[orderedHashes.length - 1];
-        if (!earliest || !newest) {
-          resolveError = 'Selection lost.';
-          applying = false;
-          return;
-        }
-        const resolved = await ipc.git.resolveRefs({
-          cwd,
-          refs: [`${earliest}~1`, newest],
-          ...ctx
-        });
-        resolvedBase = resolved.resolved[0] ?? null;
-        resolvedHead = resolved.resolved[1] ?? null;
-        if (!resolvedBase) {
-          resolveError = "Couldn't resolve the parent of the earliest commit.";
-          applying = false;
-          return;
-        }
-      } else if (fromRef.trim()) {
-        const resolved = await ipc.git.resolveRefs({ cwd, refs: [fromRef.trim(), 'HEAD'], ...ctx });
-        const [base, head] = resolved.resolved;
-        if (!base) {
-          resolveError = `Couldn't resolve "${fromRef.trim()}".`;
-          applying = false;
-          return;
-        }
-        resolvedBase = base;
-        resolvedHead = head ?? null;
-      } else if (orderedHashes.length > 0) {
-        const earliest = orderedHashes[0];
-        const newest = orderedHashes[orderedHashes.length - 1];
-        if (!earliest || !newest) {
-          resolveError = 'Selection lost.';
-          applying = false;
-          return;
-        }
-        const resolved = await ipc.git.resolveRefs({
-          cwd,
-          refs: [`${earliest}~1`, newest],
-          ...ctx
-        });
-        resolvedBase = resolved.resolved[0] ?? null;
-        resolvedHead = resolved.resolved[1] ?? null;
-      }
+      const draft = reviewRangeRefs(history, selected, comparisonBase);
+      if (!draft) throw new Error('The selected commits are no longer in the loaded history.');
+      const resolved = await ipc.git.resolveRefs({
+        cwd,
+        refs: [draft.base, draft.head],
+        ...ctx
+      });
+      const resolvedBase = resolved.resolved[0] ?? null;
+      const resolvedHead = resolved.resolved[1] ?? null;
 
       if (!resolvedBase || !resolvedHead) {
-        resolveError = 'Range incomplete.';
+        resolveError = !resolvedBase && !comparisonBase.trim()
+          ? 'The oldest selected commit has no parent. Enter a comparison base to review it.'
+          : `Couldn't resolve ${!resolvedBase ? 'the comparison base' : 'the newest selected commit'}.`;
         applying = false;
         return;
       }
 
-      // Topo-order the full range so committed file attribution uses git's
-      // ordering, not the history search order. This also expands a selected
-      // branch beyond the history rows currently visible in the picker.
+      // Topo-order the resolved range so committed file attribution uses Git's
+      // ordering, not the filtered history order. A manual base may widen the
+      // final range beyond the visual endpoints selected in the picker.
       const { commits: ordered, truncated } = await ipc.git.commitsBetween({
         cwd,
         base: resolvedBase,
@@ -294,7 +256,9 @@
         head: resolvedHead,
         commits: ordered,
         includeWorkingTree: includeWt,
-        chipFilter: null
+        chipFilter: null,
+        comparisonBaseRef: comparisonBase.trim() || undefined,
+        branchContext: selectedBranch ?? undefined
       };
       workingDiff.setReviewMode(scope, next);
       onClose();
@@ -308,13 +272,9 @@
 
   function reset(): void {
     workingDiff.clearReviewMode(scope);
-    selected.clear();
+    clearSelection();
     selectedBranch = null;
-    branchCommitHashes = null;
-    branchError = null;
-    branchLoading = false;
-    ++branchGeneration;
-    fromRef = '';
+    comparisonBase = '';
     resolveError = null;
     onClose();
   }
@@ -345,11 +305,11 @@
   }
 </script>
 
-<div class="flex h-[min(34rem,calc(100vh-4rem))] w-[min(46rem,calc(100vw-2rem))] max-w-[90vw] min-h-0 flex-col overflow-hidden p-3">
+<div class="flex h-[min(38rem,calc(100vh-4rem))] w-[min(46rem,calc(100vw-2rem))] max-w-[90vw] min-h-0 flex-col overflow-hidden p-3">
   <div class="flex shrink-0 items-center justify-between gap-2">
     <div class="flex min-w-0 items-center gap-1.5">
       <GitCommitHorizontal class="size-3.5 text-muted-foreground" />
-      <span class="truncate text-xs font-medium text-foreground">Review range</span>
+      <span class="truncate text-xs font-medium text-foreground">Choose commits to review</span>
     </div>
     <Button
       variant="ghost"
@@ -358,87 +318,103 @@
       aria-label="Close commit picker"
       title="Close"
     >
-      <X class="size-3" />
+      <X />
     </Button>
   </div>
 
-  <label class="mt-2 flex shrink-0 items-center gap-2 text-xs text-foreground">
-    <input
-      type="checkbox"
-      class="size-3"
-      checked={includeWt}
-      onchange={(e) => (includeWt = (e.currentTarget as HTMLInputElement).checked)}
-    />
-    Include working tree
-  </label>
+  <p class="m-0 mt-1 shrink-0 text-[10px] leading-4 text-muted-foreground">
+    Browse a branch, then select one commit or two range endpoints. Browsing never changes the
+    comparison base or target.
+  </p>
 
-  <div class="mt-2 flex shrink-0 flex-col gap-1">
-    <label
-      for="commit-picker-from-ref"
-      class="flex items-center gap-1 text-[10px] text-muted-foreground"
-    >
-      From ref (optional)
-    </label>
-    <div class="flex items-center gap-1">
-      <Input
-        id="commit-picker-from-ref"
-        value={fromRef}
-        oninput={updateFromRef}
-        placeholder="HEAD~5, main, or a SHA"
-        class="h-7 min-w-0 flex-1 text-xs"
-      />
-      {#if selectedBranch}
-        <Button
-          variant="ghost"
-          size="xs"
-          onclick={clearFromRef}
-          aria-label="Clear selected branch"
-          title="Clear selected branch"
-        >
-          <X class="size-3" />
-        </Button>
-      {/if}
-    </div>
-    <span class="text-[10px] text-muted-foreground">
-      {#if selectedBranch}
-        Reviewing current HEAD from <span class="font-mono">{selectedBranch}</span>. Select commits below to narrow the range.
-      {:else}
-        Select a branch ref in the history below, or enter a ref manually.
-      {/if}
-    </span>
-    {#if branches.length > 0}
-      <div class="mt-1 flex flex-col gap-1">
-        <span class="text-[10px] text-muted-foreground">Branches</span>
-        <ScrollArea orientation="horizontal" class="w-full">
-          <div class="flex gap-1 pb-1">
+  <div class="mt-2 grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2">
+    <div class="flex min-w-0 flex-col gap-1">
+      <Label for="commit-picker-branch" class="text-[10px] text-muted-foreground">
+        Browse branch history
+      </Label>
+      <Select.Root
+        type="single"
+        value={selectedBranch ?? '__all__'}
+        onValueChange={chooseBranch}
+        disabled={loading || applying}
+      >
+        <Select.Trigger id="commit-picker-branch" size="sm" class="w-full text-xs">
+          <span class="truncate">{selectedBranch ?? 'All branches'}</span>
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Group>
+            <Select.Label>History filter</Select.Label>
+            <Select.Item value="__all__" label="All branches">All branches</Select.Item>
             {#each branches as branch (branch.name)}
-              <button
-                type="button"
-                class={`inline-flex h-5 max-w-48 shrink-0 items-center gap-1 rounded border px-1.5 text-[9px] ${
-                  selectedBranch === branch.name
-                    ? 'border-primary/50 bg-primary/10 text-foreground'
-                    : 'border-border bg-background text-muted-foreground hover:text-foreground'
-                }`}
-                title={`Review current HEAD from ${branch.name}`}
-                disabled={applying}
-                onclick={() => void chooseBranch(branch.name)}
-              >
-                {#if selectedBranch === branch.name}
-                  <Check class="size-2.5 shrink-0" />
-                {:else}
-                  <GitBranch class="size-2.5 shrink-0" />
-                {/if}
-                <span class="truncate">{branch.name}</span>
-                {#if branch.current}
-                  <span class="text-[8px] text-muted-foreground">current</span>
-                {/if}
-              </button>
+              <Select.Item value={branch.name} label={branch.name}>
+                {branch.name}{branch.current ? ' · current Worktree' : ''}
+              </Select.Item>
             {/each}
-          </div>
-        </ScrollArea>
+          </Select.Group>
+        </Select.Content>
+      </Select.Root>
+      <p class="m-0 text-[10px] leading-4 text-muted-foreground">
+        {#if selectedBranchIsCurrent}
+          Current Worktree; its uncommitted changes can be included below.
+        {:else if selectedBranch}
+          Committed history only. Uncommitted changes belong to {currentBranch ?? 'the checked-out branch'}.
+        {:else}
+          Showing the loaded graph across every local branch.
+        {/if}
+      </p>
+    </div>
+
+    <div class="flex min-w-0 flex-col gap-1">
+      <Label for="commit-picker-comparison-base" class="text-[10px] text-muted-foreground">
+        Comparison base <span class="font-normal">(optional override)</span>
+      </Label>
+      <div class="flex items-center gap-1">
+        <Input
+          id="commit-picker-comparison-base"
+          value={comparisonBase}
+          oninput={updateComparisonBase}
+          placeholder="main, HEAD~5, or a SHA"
+          class="h-7 min-w-0 flex-1 text-xs"
+        />
+        {#if comparisonBase}
+          <Button
+            variant="ghost"
+            size="xs"
+            onclick={clearComparisonBase}
+            aria-label="Use automatic comparison base"
+            title="Use automatic comparison base"
+          >
+            <X />
+          </Button>
+        {/if}
       </div>
-    {/if}
+      <p class="m-0 text-[10px] leading-4 text-muted-foreground">
+        {#if comparisonBase.trim()}
+          Manual base: <span class="font-mono text-foreground">{comparisonBase.trim()}</span>.
+        {:else}
+          Automatic: the parent immediately before the oldest selected commit.
+        {/if}
+      </p>
+    </div>
   </div>
+
+  {#if selectionDetails}
+    <div
+      class="mt-2 flex shrink-0 items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-[10px]"
+      aria-live="polite"
+    >
+      <span class="text-muted-foreground">Review</span>
+      <span class="font-mono text-foreground">
+        {comparisonBase.trim() || `${selectionDetails.oldest.shortHash}^`}
+      </span>
+      <span class="text-muted-foreground">→</span>
+      <span class="font-mono text-foreground">{selectionDetails.newest.shortHash}</span>
+      <span class="text-muted-foreground">
+        · {selected.size} commit{selected.size === 1 ? '' : 's'}
+        {#if selectedBranch} on {selectedBranch}{/if}
+      </span>
+    </div>
+  {/if}
 
   <div class="mt-3 flex shrink-0 flex-col gap-1.5">
     <div class="relative">
@@ -451,42 +427,15 @@
       />
     </div>
     <div class="flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
-      <div class="inline-flex rounded-md border border-border bg-muted/30 p-0.5" aria-label="Result type">
-        {#each [
-          ['all', 'All'],
-          ['branches', 'Branches'],
-          ['commits', 'Commits']
-        ] as option (option[0])}
-          <button
-            type="button"
-            class={`rounded px-2 py-1 transition-colors ${
-              resultFilter === option[0]
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            aria-pressed={resultFilter === option[0]}
-            onclick={() => (resultFilter = option[0] as GitHistoryFilter)}
-          >
-            {option[1]}
-          </button>
-        {/each}
-      </div>
+      <span>Select one commit, then a second endpoint. Another click starts a new range.</span>
       <div class="flex items-center gap-1">
         <span>{selected.size} selected</span>
-        <button
-          type="button"
-          class="rounded px-1 py-0.5 hover:bg-muted hover:text-foreground"
-          onclick={selectAll}
-        >
-          All
-        </button>
-        <button
-          type="button"
-          class="rounded px-1 py-0.5 hover:bg-muted hover:text-foreground"
-          onclick={clearSelection}
-        >
+        <Button variant="ghost" size="xs" onclick={selectAll} disabled={filteredHistory.length === 0}>
+          Select all
+        </Button>
+        <Button variant="ghost" size="xs" onclick={clearSelection} disabled={selected.size === 0}>
           Clear
-        </button>
+        </Button>
       </div>
     </div>
   </div>
@@ -504,24 +453,19 @@
           <div class="break-words">{error}</div>
           <button
             type="button"
-            class="mt-2 underline underline-offset-2"
+            class="mt-2 cursor-pointer underline underline-offset-2"
             onclick={() => void loadHistory()}
           >
             Retry
           </button>
         </div>
       </div>
-    {:else if branchLoading && selectedBranch}
-      <div class="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
-        <Loader2 class="size-3 animate-spin" />
-        Loading commits from {selectedBranch}…
-      </div>
     {:else if graphRows.length === 0}
       <div class="flex items-center gap-2 px-4 py-8 text-center text-xs text-muted-foreground">
         <History class="mx-auto size-3" />
         <span>
-          {#if selectedBranch && branchCommitHashes}
-            No commits between {selectedBranch} and HEAD.
+          {#if selectedBranch && branchCommitHashes === null}
+            The tip of {selectedBranch} is outside the loaded {HISTORY_LIMIT}-commit history.
           {:else}
             No matching branches or commits.
           {/if}
@@ -562,11 +506,9 @@
             </svg>
 
             <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1.5 pr-2 text-left">
-              <input
-                type="checkbox"
-                class="size-3 shrink-0"
+              <Checkbox
                 checked={isSelected}
-                onchange={() => toggle(row.commit.hash)}
+                onCheckedChange={(checked) => toggle(row.commit.hash, checked === true)}
                 aria-label={`Select commit ${row.commit.shortHash}`}
               />
               <span class="w-13 shrink-0 font-mono text-[10px] text-muted-foreground">
@@ -586,24 +528,34 @@
               <div class="flex max-w-[42%] flex-wrap items-center justify-end gap-1 py-1.5 pr-2">
                 {#each row.commit.refs as ref (`${ref.kind}:${ref.name}`)}
                   {@const RefIcon = refIcon(ref)}
-                  <button
-                    type="button"
-                    class={`inline-flex h-5 min-w-0 items-center gap-1 rounded border px-1.5 text-[9px] ${
-                      selectedBranch === ref.name
-                        ? 'border-primary/50 bg-primary/10 text-foreground'
-                        : 'border-border bg-background text-muted-foreground hover:text-foreground'
-                    }`}
-                    title={`Use ${ref.kind} ${ref.name} as the comparison base`}
-                    disabled={applying}
-                    onclick={() => void chooseBranch(ref.name)}
-                  >
-                    {#if selectedBranch === ref.name}
-                      <Check class="size-2.5 shrink-0" />
-                    {:else}
+                  {#if ref.kind === 'branch'}
+                    <button
+                      type="button"
+                      class={`inline-flex h-5 min-w-0 cursor-pointer items-center gap-1 rounded border px-1.5 text-[9px] transition-colors ${
+                        selectedBranch === ref.name
+                          ? 'border-primary/50 bg-primary/10 text-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:text-foreground'
+                      }`}
+                      title={`Browse commits reachable from ${ref.name}`}
+                      disabled={applying}
+                      onclick={() => chooseBranch(ref.name)}
+                    >
+                      {#if selectedBranch === ref.name}
+                        <Check />
+                      {:else}
+                        <RefIcon />
+                      {/if}
+                      <span class="max-w-32 truncate">{ref.name}</span>
+                    </button>
+                  {:else}
+                    <span
+                      class="inline-flex h-5 min-w-0 items-center gap-1 rounded border border-border px-1.5 text-[9px] text-muted-foreground"
+                      title={`${ref.kind} ${ref.name}`}
+                    >
                       <RefIcon class="size-2.5 shrink-0" />
-                    {/if}
-                    <span class="max-w-32 truncate">{ref.name}</span>
-                  </button>
+                      <span class="max-w-32 truncate">{ref.name}</span>
+                    </span>
+                  {/if}
                 {/each}
               </div>
             {/if}
@@ -613,15 +565,32 @@
     {/if}
   </ScrollArea>
 
-  {#if branchError}
-    <div class="mt-1.5 flex shrink-0 items-start gap-1 text-[10px] text-destructive">
-      <AlertCircle class="size-3 shrink-0" />
-      <span class="break-words">{branchError}</span>
+  <div class="mt-2 flex shrink-0 items-start gap-2">
+    <Checkbox
+      id="commit-picker-include-worktree"
+      bind:checked={includeWt}
+      disabled={!selectedBranchIsCurrent}
+    />
+    <div class="min-w-0">
+      <Label for="commit-picker-include-worktree" class="text-xs text-foreground">
+        Also show uncommitted changes
+      </Label>
+      <p class="m-0 text-[10px] leading-4 text-muted-foreground">
+        {#if selectedBranchIsCurrent}
+          Adds {uncommittedCount} staged, unstaged, or untracked
+          {uncommittedCount === 1 ? 'change' : 'changes'} in a separate section.
+        {:else}
+          Select the current branch ({currentBranch ?? 'none'}) to include its Worktree changes.
+        {/if}
+      </p>
     </div>
-  {/if}
+  </div>
 
   {#if resolveError}
-    <div class="mt-1.5 flex shrink-0 items-start gap-1 text-[10px] text-destructive">
+    <div
+      class="mt-1.5 flex shrink-0 items-start gap-1 text-[10px] text-destructive"
+      role="alert"
+    >
       <AlertCircle class="size-3 shrink-0" />
       <span class="break-words">{resolveError}</span>
     </div>
@@ -634,13 +603,13 @@
       onclick={reset}
       disabled={mode.kind !== 'range'}
     >
-      Clear
+      Show uncommitted only
     </Button>
-    <Button size="xs" onclick={() => void apply()} disabled={applying}>
+    <Button size="xs" onclick={() => void apply()} disabled={applying || selected.size === 0}>
       {#if applying}
-        <Loader2 class="mr-1 size-3 animate-spin" />
+        <Loader2 data-icon="inline-start" class="animate-spin" />
       {/if}
-      Apply
+      Review selected commits
     </Button>
   </div>
 </div>

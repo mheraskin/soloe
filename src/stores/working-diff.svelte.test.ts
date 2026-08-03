@@ -267,6 +267,38 @@ describe('WorkingDiffStore review freshness', () => {
     store.detach();
   });
 
+  it('preserves review state identity for an unchanged Git observation', async () => {
+    const scope = createReviewScope('/repo');
+    const observed = changesResult('steady.ts');
+    mocks.workingChanges.mockResolvedValueOnce(observed);
+    const store = new WorkingDiffStore();
+    store.attachListeners();
+    const release = store.acquireReviewDemand(scope);
+    await vi.waitFor(() => expect(store.changesFor(scope).loading).toBe(false));
+
+    const beforeEntry = store.changesFor(scope);
+    const beforeResult = beforeEntry.result;
+    const tick = (mocks.onTick.mock.calls as unknown as Array<[
+      (
+        cwd: string,
+        changes: WorkingChangesResult,
+        cause: { kind: 'poll' },
+        context: Record<string, never>
+      ) => void
+    ]>).at(-1)![0];
+
+    tick('/repo', changesResult('steady.ts'), { kind: 'poll' }, {});
+
+    expect(store.changesFor(scope)).toBe(beforeEntry);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(store.changesFor(scope)).toBe(beforeEntry);
+    expect(store.changesFor(scope).result).toBe(beforeResult);
+
+    release();
+    store.detach();
+  });
+
   it('invalidates cached file content when a filesystem cause keeps the same summary', async () => {
     const observed: WorkingChangesResult = {
       repoPath: '/repo',
@@ -342,16 +374,16 @@ describe('WorkingDiffStore review freshness', () => {
 
     releaseDiff();
     tick('/repo', observed, { kind: 'poll' }, {});
-    await vi.waitFor(() => expect(mocks.rangeChanges).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(store.changesFor(scope).loading).toBe(false));
+    expect(mocks.rangeChanges).toHaveBeenCalledTimes(1);
 
     releaseFiles();
     tick('/repo', observed, { kind: 'poll' }, {});
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(mocks.rangeChanges).toHaveBeenCalledTimes(2);
+    expect(mocks.rangeChanges).toHaveBeenCalledTimes(1);
 
     const releaseAgain = store.acquireReviewDemand(scope);
-    await vi.waitFor(() => expect(mocks.rangeChanges).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(mocks.rangeChanges).toHaveBeenCalledTimes(2));
     releaseAgain();
     store.detach();
   });
