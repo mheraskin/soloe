@@ -176,10 +176,10 @@ export const Keymap = {
   splitTerminal: {
     id: 'terminal.split',
     description: 'Split terminal',
-    keys: ['Ctrl', 'Shift', '/'],
-    // Shift+/ resolves to "?" in `e.key`, so match on the physical key code.
+    keys: ['Ctrl', 'Shift', '\\'],
+    // Keep the physical Slash key entirely terminal-owned for TUI shortcuts.
     match: (e: KeyboardEvent) =>
-      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && e.code === 'Slash'
+      isCtrlOrCmd(e) && e.shiftKey && !e.altKey && e.code === 'Backslash'
   }
 } as const satisfies Record<string, KeymapBinding>;
 

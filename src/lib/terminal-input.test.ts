@@ -34,22 +34,38 @@ describe('terminal input helpers', () => {
     expect(shouldSendShiftEnterSequence(key({ key: 'Enter', shiftKey: true, ctrlKey: true }))).toBe(false);
   });
 
-  it('passes layout-shifted Ctrl+/ through the split-terminal shortcut', () => {
+  it('leaves physical Ctrl+/ exclusively owned by the terminal', () => {
     const ctrlSlash = key({
       code: 'Slash',
       ctrlKey: true,
-      key: '/',
-      shiftKey: true
+      key: '/'
     });
-
-    expect(Keymap.splitTerminal.match(ctrlSlash)).toBe(true);
-    expect(shouldPassCtrlSlashToTerminal(ctrlSlash)).toBe(true);
-    expect(shouldPassCtrlSlashToTerminal(key({
+    const layoutShiftedCtrlSlash = key({
       code: 'Slash',
       ctrlKey: true,
       key: '?',
       shiftKey: true
+    });
+
+    expect(Keymap.splitTerminal.match(ctrlSlash)).toBe(false);
+    expect(shouldPassCtrlSlashToTerminal(ctrlSlash)).toBe(true);
+    expect(Keymap.splitTerminal.match(layoutShiftedCtrlSlash)).toBe(false);
+    expect(shouldPassCtrlSlashToTerminal(layoutShiftedCtrlSlash)).toBe(true);
+    expect(shouldPassCtrlSlashToTerminal(key({
+      code: 'Backslash',
+      ctrlKey: true,
+      key: '|',
+      shiftKey: true
     }))).toBe(false);
+  });
+
+  it('uses Ctrl+Shift+Backslash for splitting the terminal', () => {
+    expect(Keymap.splitTerminal.match(key({
+      code: 'Backslash',
+      ctrlKey: true,
+      key: '|',
+      shiftKey: true
+    }))).toBe(true);
   });
 
   it('uses the CSI-u Shift+Enter sequence Codex-compatible terminals emit', () => {

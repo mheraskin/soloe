@@ -3,7 +3,7 @@ export const AGENT_IMAGE_PASTE_SEQUENCE = '\x16';
 
 type KeyboardLike = Pick<
   KeyboardEvent,
-  'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'
+  'altKey' | 'code' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'
 >;
 
 export function isClipboardPasteShortcut(event: KeyboardLike): boolean {
@@ -31,9 +31,9 @@ export function shouldSendShiftEnterSequence(event: KeyboardLike): boolean {
 }
 
 export function shouldPassCtrlSlashToTerminal(event: KeyboardLike): boolean {
-  // Some keyboard layouts require Shift to produce '/', which otherwise
-  // collides with Soloe's physical Ctrl+Shift+Slash split shortcut.
-  return event.ctrlKey && !event.metaKey && !event.altKey && event.key === '/';
+  // Match the physical key so Ctrl+/ remains terminal-owned on layouts that
+  // require Shift and report the resulting character as either "/" or "?".
+  return event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'Slash';
 }
 
 // Sequences emitted for Alt-modified word edit/navigation. Caller must have
