@@ -8,13 +8,16 @@
     Loader2,
     Search,
     Tag,
+    ChevronsUpDown,
     X
   } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import type {
     GitBranch as GitBranchInfo,
     GitHistoryCommit,
-    GitHistoryRef
+    GitHistoryRef,
+    GitStatus,
+    GitWorktree
   } from '@shared/types/git.js';
   import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
   import {
@@ -25,9 +28,8 @@
     reviewRangeRefs,
     scopeGitHistory
   } from '../../lib/git-history-graph';
+  import { resolveBranchReviewScope } from '../../lib/branch-review-scope';
   import { ipc } from '../../lib/ipc';
-  import { COMMIT_PICKER_BRANCH_MENU_CLASS } from '../../lib/commit-picker-layout';
-  import { git } from '../../stores/git.svelte';
   import {
     workingDiff,
     type ReviewMode,
@@ -39,7 +41,8 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import * as Select from '$lib/components/ui/select';
+  import * as Command from '$lib/components/ui/command';
+  import * as Popover from '$lib/components/ui/popover';
 
   const HISTORY_LIMIT = 500;
   const LANE_WIDTH = 12;
@@ -54,20 +57,28 @@
 
   let {
     scope,
-    onClose
+    onClose,
+    onApplyScope = () => undefined
   }: {
     scope: ReviewScope;
     onClose: () => void;
+    onApplyScope?: (scope: ReviewScope) => void;
   } = $props();
   let cwd = $derived(scope.cwd);
 
   let history = $state<GitHistoryCommit[]>([]);
   let branches = $state<GitBranchInfo[]>([]);
+  let worktrees = $state<GitWorktree[]>([]);
+  let loadedStatus = $state<GitStatus | null>(null);
+  let selectedWorktreeStatus = $state<GitStatus | null>(null);
+  let selectedWorktreeStatusChecked = $state(false);
+  let branchMenuOpen = $state(false);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let query = $state('');
   let selectedBranch = $state<string | null>(null);
   let historyGeneration = 0;
+  let worktreeStatusGeneration = 0;
 
   let mode = $derived(workingDiff.reviewModeFor(scope));
 
@@ -95,46 +106,91 @@
   // history. Keeping refs and parents here lets the picker use the same graph
   // and makes branch refs directly selectable without checking anything out.
   async function loadHistory(): Promise<void> {
-    const status = git.statusFor(scope);
-    const repoPath = status?.repoPath;
-    if (!repoPath) {
-      history = [];
-      branches = [];
-      loading = false;
-      return;
-    }
     const generation = ++historyGeneration;
     loading = true;
     error = null;
-    const ctx = worktreeRuntimeContext(scope);
-    Promise.all([
-      ipc.git.refHistory({
-        repoPath,
-        limit: HISTORY_LIMIT,
-        force: true,
-        ...ctx
-      }),
-      ipc.git.branches({ repoPath, force: true, ...ctx })
-    ])
-      .then(([nextHistory, nextBranches]) => {
-        if (generation !== historyGeneration) return;
-        history = nextHistory;
-        branches = nextBranches;
-        if (selectedBranch === null && initialMode.kind === 'working-tree') {
-          selectedBranch = nextBranches.find((branch) => branch.current)?.name ?? null;
-        }
-      })
-      .catch((err: unknown) => {
-        if (generation !== historyGeneration) return;
-        error = err instanceof Error ? err.message : String(err);
-      })
-      .finally(() => {
-        if (generation === historyGeneration) loading = false;
-      });
+    try {
+      const ctx = worktreeRuntimeContext(scope);
+      const status = await ipc.git.status({ cwd, force: true, ...ctx });
+      if (generation !== historyGeneration) return;
+      loadedStatus = status;
+      const repoPath = status.repoPath;
+      if (!repoPath) {
+        history = [];
+        branches = [];
+        worktrees = [];
+        return;
+      }
+      const [nextHistory, nextBranches, nextWorktrees] = await Promise.all([
+        ipc.git.refHistory({
+          repoPath,
+          limit: HISTORY_LIMIT,
+          force: true,
+          ...ctx
+        }),
+        ipc.git.branches({ repoPath, force: true, ...ctx }),
+        ipc.git.worktrees({ repoPath, force: true, ...ctx })
+      ]);
+      if (generation !== historyGeneration) return;
+      history = nextHistory;
+      branches = nextBranches;
+      worktrees = nextWorktrees;
+      if (selectedBranch === null && initialMode.kind === 'working-tree') {
+        selectedBranch = status.branch;
+      }
+    } catch (err) {
+      if (generation !== historyGeneration) return;
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (generation === historyGeneration) loading = false;
+    }
   }
 
   $effect(() => {
     void loadHistory();
+  });
+
+  let selectedBranchResolution = $derived(
+    selectedBranch
+      ? resolveBranchReviewScope(scope, selectedBranch, worktrees)
+      : { scope, worktree: null }
+  );
+
+  async function loadSelectedWorktreeStatus(): Promise<void> {
+    const branch = selectedBranch;
+    const resolution = selectedBranchResolution;
+    const generation = ++worktreeStatusGeneration;
+    selectedWorktreeStatus = null;
+    selectedWorktreeStatusChecked = false;
+    if (!branch || !resolution.worktree) return;
+    if (resolution.scope.cwd === scope.cwd && loadedStatus?.branch === branch) {
+      selectedWorktreeStatus = loadedStatus;
+      selectedWorktreeStatusChecked = true;
+      return;
+    }
+    try {
+      const status = await ipc.git.status({
+        cwd: resolution.scope.cwd,
+        force: true,
+        ...worktreeRuntimeContext(resolution.scope)
+      });
+      if (generation === worktreeStatusGeneration && selectedBranch === branch) {
+        selectedWorktreeStatus = status;
+        selectedWorktreeStatusChecked = true;
+      }
+    } catch {
+      if (generation === worktreeStatusGeneration) {
+        selectedWorktreeStatus = null;
+        selectedWorktreeStatusChecked = true;
+      }
+    }
+  }
+
+  $effect(() => {
+    void selectedBranch;
+    void worktrees;
+    void loadedStatus;
+    void loadSelectedWorktreeStatus();
   });
 
   let branchCommitHashes = $derived(
@@ -152,15 +208,16 @@
     Math.max(1, ...graphRows.map((row) => Math.max(row.laneCount, row.nextLaneCount)))
   );
   let graphWidth = $derived(maxLanes * LANE_WIDTH + 8);
-  let currentBranch = $derived(branches.find((branch) => branch.current)?.name ?? null);
-  let worktreeStatus = $derived(git.statusFor(scope));
   let uncommittedCount = $derived(
-    (worktreeStatus?.staged ?? 0) +
-    (worktreeStatus?.unstaged ?? 0) +
-    (worktreeStatus?.untracked ?? 0)
+    (selectedWorktreeStatus?.staged ?? 0) +
+    (selectedWorktreeStatus?.unstaged ?? 0) +
+    (selectedWorktreeStatus?.untracked ?? 0)
   );
-  let selectedBranchIsCurrent = $derived(
-    selectedBranch !== null && selectedBranch === currentBranch
+  let selectedBranchHasWorktree = $derived(selectedBranchResolution.worktree !== null);
+  let selectedWorktreeAvailable = $derived(
+    selectedBranchHasWorktree &&
+      selectedWorktreeStatus?.isRepo === true &&
+      selectedWorktreeStatus.branch === selectedBranch
   );
   let selectionDetails = $derived(reviewRangeRefs(history, selected, comparisonBase));
 
@@ -198,8 +255,10 @@
   }
 
   function chooseBranch(ref: string): void {
-    selectedBranch = ref === '__all__' ? null : ref;
-    if (selectedBranch !== currentBranch) includeWt = false;
+    const branch = ref === '__all__' ? null : ref;
+    selectedBranch = branch;
+    includeWt = branch !== null && resolveBranchReviewScope(scope, branch, worktrees).worktree !== null;
+    branchMenuOpen = false;
     clearSelection();
   }
 
@@ -220,24 +279,44 @@
     applying = true;
     resolveError = null;
     try {
-      const ctx = worktreeRuntimeContext(scope);
+      const resolution = selectedBranch
+        ? resolveBranchReviewScope(scope, selectedBranch, worktrees)
+        : { scope, worktree: null };
+      const reviewScope = resolution.scope;
+      let canIncludeWorkingTree = false;
+      if (selectedBranch && resolution.worktree) {
+        const status = await ipc.git.status({
+          cwd: reviewScope.cwd,
+          force: true,
+          ...worktreeRuntimeContext(reviewScope)
+        });
+        if (!status.isRepo || status.branch !== selectedBranch) {
+          throw new Error(
+            `The Worktree for ${selectedBranch} is unavailable at ${resolution.worktree.path}.`
+          );
+        }
+        canIncludeWorkingTree = true;
+      }
+      const reviewCwd = reviewScope.cwd;
+      const ctx = worktreeRuntimeContext(reviewScope);
       if (selected.size === 0 && selectedBranch) {
         const resolved = await ipc.git.resolveRefs({
-          cwd,
+          cwd: reviewCwd,
           refs: [selectedBranch],
           ...ctx
         });
         const tip = resolved.resolved[0] ?? null;
         if (!tip) throw new Error(`Couldn't resolve branch ${selectedBranch}.`);
-        workingDiff.setReviewMode(scope, {
+        workingDiff.setReviewMode(reviewScope, {
           kind: 'range',
           base: tip,
           head: tip,
           commits: [],
-          includeWorkingTree: selectedBranchIsCurrent,
+          includeWorkingTree: canIncludeWorkingTree,
           chipFilter: null,
           branchContext: selectedBranch
         });
+        onApplyScope(reviewScope);
         onClose();
         return;
       }
@@ -245,7 +324,7 @@
       const draft = reviewRangeRefs(history, selected, comparisonBase);
       if (!draft) throw new Error('The selected commits are no longer in the loaded history.');
       const resolved = await ipc.git.resolveRefs({
-        cwd,
+        cwd: reviewCwd,
         refs: [draft.base, draft.head],
         ...ctx
       });
@@ -264,7 +343,7 @@
       // ordering, not the filtered history order. A manual base may widen the
       // final range beyond the visual endpoints selected in the picker.
       const { commits: ordered, truncated } = await ipc.git.commitsBetween({
-        cwd,
+        cwd: reviewCwd,
         base: resolvedBase,
         head: resolvedHead,
         ...ctx
@@ -277,12 +356,13 @@
         base: resolvedBase,
         head: resolvedHead,
         commits: ordered,
-        includeWorkingTree: includeWt,
+        includeWorkingTree: includeWt && canIncludeWorkingTree,
         chipFilter: null,
         comparisonBaseRef: comparisonBase.trim() || undefined,
         branchContext: selectedBranch ?? undefined
       };
-      workingDiff.setReviewMode(scope, next);
+      workingDiff.setReviewMode(reviewScope, next);
+      onApplyScope(reviewScope);
       onClose();
     } catch (err) {
       reportError(err);
@@ -345,7 +425,8 @@
   </div>
 
   <p class="m-0 mt-1 shrink-0 text-[10px] leading-4 text-muted-foreground">
-    Choose a branch to inspect its history. Commit selection is optional and only defines a range.
+    Choose a branch to inspect its history and checked-out Worktree, wherever that folder lives.
+    Commit selection is optional and only defines a range.
   </p>
 
   <div class="mt-2 grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2">
@@ -353,32 +434,71 @@
       <Label for="commit-picker-branch" class="text-[10px] text-muted-foreground">
         Browse branch history
       </Label>
-      <Select.Root
-        type="single"
-        value={selectedBranch ?? '__all__'}
-        onValueChange={chooseBranch}
-        disabled={loading || applying}
-      >
-        <Select.Trigger id="commit-picker-branch" size="sm" class="w-full text-xs">
-          <span class="truncate">{selectedBranch ?? 'All branches'}</span>
-        </Select.Trigger>
-        <Select.Content class={COMMIT_PICKER_BRANCH_MENU_CLASS}>
-          <Select.Group>
-            <Select.Label>History filter</Select.Label>
-            <Select.Item value="__all__" label="All branches">All branches</Select.Item>
-            {#each branches as branch (branch.name)}
-              <Select.Item value={branch.name} label={branch.name}>
-                {branch.name}{branch.current ? ' · current Worktree' : ''}
-              </Select.Item>
-            {/each}
-          </Select.Group>
-        </Select.Content>
-      </Select.Root>
+      <Popover.Root bind:open={branchMenuOpen}>
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              id="commit-picker-branch"
+              variant="outline"
+              size="sm"
+              class="w-full justify-between"
+              disabled={loading || applying}
+              aria-expanded={branchMenuOpen}
+            >
+              <span class="truncate">{selectedBranch ?? 'All branches'}</span>
+              <ChevronsUpDown data-icon="inline-end" />
+            </Button>
+          {/snippet}
+        </Popover.Trigger>
+        <Popover.Content align="start" class="w-[22rem] max-w-[calc(100vw-3rem)] p-0">
+          <Command.Root>
+            <Command.Input placeholder="Find a branch or Worktree path…" />
+            <Command.List class="max-h-64">
+              <Command.Empty>No matching branch.</Command.Empty>
+              <Command.Group heading="Branches">
+                <Command.Item
+                  value="__all__ All branches"
+                  data-checked={selectedBranch === null}
+                  onSelect={() => chooseBranch('__all__')}
+                >
+                  <GitBranch />
+                  <span>All branches</span>
+                </Command.Item>
+                {#each branches as branch (branch.name)}
+                  {@const branchWorktree = worktrees.find(
+                    (worktree) => !worktree.bare && !worktree.detached && worktree.branch === branch.name
+                  )}
+                  <Command.Item
+                    value={`${branch.name} ${branchWorktree?.path ?? ''}`}
+                    data-checked={selectedBranch === branch.name}
+                    onSelect={() => chooseBranch(branch.name)}
+                  >
+                    <GitBranch />
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="truncate">{branch.name}</span>
+                      <span class="truncate text-[10px] text-muted-foreground">
+                        {branchWorktree?.path ?? 'Not checked out in a Worktree'}
+                      </span>
+                    </span>
+                  </Command.Item>
+                {/each}
+              </Command.Group>
+            </Command.List>
+          </Command.Root>
+        </Popover.Content>
+      </Popover.Root>
       <p class="m-0 text-[10px] leading-4 text-muted-foreground">
-        {#if selectedBranchIsCurrent}
-          Current Worktree; its uncommitted changes can be included below.
+        {#if selectedWorktreeAvailable}
+          Checked out at <span class="break-all font-mono text-foreground">{selectedBranchResolution.worktree?.path}</span>.
+          Its {uncommittedCount} uncommitted {uncommittedCount === 1 ? 'change' : 'changes'} will be shown.
+        {:else if selectedBranchHasWorktree && !selectedWorktreeStatusChecked}
+          Checking <span class="break-all font-mono text-foreground">{selectedBranchResolution.worktree?.path}</span>…
+        {:else if selectedBranchHasWorktree}
+          The registered Worktree is unavailable at
+          <span class="break-all font-mono text-foreground">{selectedBranchResolution.worktree?.path}</span>.
         {:else if selectedBranch}
-          Committed history only. Uncommitted changes belong to {currentBranch ?? 'the checked-out branch'}.
+          This branch is not checked out, so it has no Worktree changes to show.
         {:else}
           Showing the loaded graph across every local branch.
         {/if}
@@ -588,12 +708,18 @@
 
   {#if selected.size === 0}
     <div class="mt-2 shrink-0 text-[10px] leading-4 text-muted-foreground">
-      {#if selectedBranchIsCurrent}
-        Branch view shows this Worktree's {uncommittedCount} uncommitted
+      {#if selectedWorktreeAvailable}
+        Branch view shows the Worktree at
+        <span class="break-all font-mono text-foreground">{selectedBranchResolution.worktree?.path}</span>
+        with {uncommittedCount} uncommitted
         {uncommittedCount === 1 ? 'change' : 'changes'}. If it is clean, the viewer is empty.
+      {:else if selectedBranchHasWorktree && !selectedWorktreeStatusChecked}
+        Checking the selected branch's Worktree…
+      {:else if selectedBranchHasWorktree}
+        This branch's registered Worktree folder is unavailable. Its uncommitted changes cannot be read.
       {:else if selectedBranch}
-        This branch is not current in this Worktree, so branch view has no uncommitted changes.
-        Select commits above to review committed changes.
+        This branch is not checked out in any Worktree, so branch view has no uncommitted changes.
+        Select commits above to review its committed changes.
       {:else}
         Choose a branch to view its history or select commits from the full graph.
       {/if}
@@ -603,18 +729,20 @@
       <Checkbox
         id="commit-picker-include-worktree"
         bind:checked={includeWt}
-        disabled={!selectedBranchIsCurrent}
+        disabled={!selectedWorktreeAvailable}
       />
       <div class="min-w-0">
         <Label for="commit-picker-include-worktree" class="text-xs text-foreground">
           Also show uncommitted changes
         </Label>
         <p class="m-0 text-[10px] leading-4 text-muted-foreground">
-          {#if selectedBranchIsCurrent}
+          {#if selectedWorktreeAvailable}
             Adds {uncommittedCount} staged, unstaged, or untracked
-            {uncommittedCount === 1 ? 'change' : 'changes'} in a separate section.
+            {uncommittedCount === 1 ? 'change' : 'changes'} from
+            <span class="break-all font-mono text-foreground">{selectedBranchResolution.worktree?.path}</span>
+            in a separate section.
           {:else}
-            Select the current branch ({currentBranch ?? 'none'}) to include its Worktree changes.
+            Select a branch that is checked out in an available Worktree to include its changes.
           {/if}
         </p>
       </div>
@@ -643,7 +771,11 @@
     <Button
       size="xs"
       onclick={() => void apply()}
-      disabled={applying || (selected.size === 0 && !selectedBranch)}
+      disabled={
+        applying ||
+        (selected.size === 0 && !selectedBranch) ||
+        (selected.size === 0 && selectedBranchHasWorktree && !selectedWorktreeAvailable)
+      }
     >
       {#if applying}
         <Loader2 data-icon="inline-start" class="animate-spin" />

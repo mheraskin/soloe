@@ -108,20 +108,37 @@
 
   let selected = $derived(sessions.selected);
 
-  // The worktree cwd anchors every store key. We register run-mode + WSL distro
-  // so the IPC layer can dispatch to native or WSL git as appropriate.
-  let activeCwd = $derived.by<string | null>(() => {
+  // The selected session supplies the repository/runtime context. A branch
+  // chosen in the review picker may point at another checkout of that same
+  // repository, so the active review scope can temporarily follow that
+  // Worktree without changing the user's selected terminal session.
+  let selectedCwd = $derived.by<string | null>(() => {
     const cwd = selected?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
   });
 
-  let activeReviewScope = $derived.by<ReviewScope | null>(() => {
-    if (!activeCwd || !selected) return null;
-    return createReviewScope(activeCwd, {
+  let selectedReviewScope = $derived.by<ReviewScope | null>(() => {
+    if (!selectedCwd || !selected) return null;
+    return createReviewScope(selectedCwd, {
       runMode: selected.runMode,
       ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
     });
   });
+  let selectedReviewScopeKey = $derived(
+    selectedReviewScope ? worktreeScopeKey(selectedReviewScope) : null
+  );
+  let reviewScopeOverride = $state<{ ownerKey: string; scope: ReviewScope } | null>(null);
+  let activeReviewScope = $derived.by<ReviewScope | null>(() => {
+    if (
+      reviewScopeOverride &&
+      selectedReviewScopeKey &&
+      reviewScopeOverride.ownerKey === selectedReviewScopeKey
+    ) {
+      return reviewScopeOverride.scope;
+    }
+    return selectedReviewScope;
+  });
+  let activeCwd = $derived(activeReviewScope?.cwd ?? null);
 
   $effect(() => {
     const scope = activeReviewScope;
@@ -243,13 +260,16 @@
     const n = reviewMode.commits.length;
     if (n === 0 && reviewMode.branchContext) {
       const worktree = reviewMode.includeWorkingTree ? ' · Worktree changes' : ' · no Worktree changes';
-      return `${reviewMode.branchContext}${worktree}`;
+      const source = activeCwd ? ` · ${activeCwd}` : '';
+      return `${reviewMode.branchContext}${source}${worktree}`;
     }
     const shortBase = reviewMode.base.slice(0, 7);
     const shortHead = reviewMode.head.slice(0, 7);
     const branch = reviewMode.branchContext ? `${reviewMode.branchContext} · ` : '';
     const base = reviewMode.comparisonBaseRef ?? shortBase;
-    const worktree = reviewMode.includeWorkingTree ? ' + uncommitted' : '';
+    const worktree = reviewMode.includeWorkingTree
+      ? ` + uncommitted${activeCwd ? ` from ${activeCwd}` : ''}`
+      : '';
     return `${branch}${n} commit${n === 1 ? '' : 's'} · ${base} → ${shortHead}${worktree}`;
   });
   let chipFilterShort = $derived(
@@ -257,6 +277,15 @@
   );
 
   let pickerOpen = $state(false);
+
+  function applyPickerScope(scope: ReviewScope): void {
+    const ownerKey = selectedReviewScopeKey;
+    if (!ownerKey) return;
+    reviewScopeOverride = worktreeScopeKey(scope) === ownerKey
+      ? null
+      : { ownerKey, scope };
+    pickerOpen = false;
+  }
 
   function clearChipFilter(): void {
     if (!activeReviewScope) return;
@@ -964,7 +993,11 @@
         <Popover.Content align="start" class="w-auto p-0">
           {#if activeCwd}
             {#key worktreeScopeKey(activeReviewScope!)}
-              <CommitPicker scope={activeReviewScope!} onClose={() => (pickerOpen = false)} />
+              <CommitPicker
+                scope={activeReviewScope!}
+                onApplyScope={applyPickerScope}
+                onClose={() => (pickerOpen = false)}
+              />
             {/key}
           {/if}
         </Popover.Content>
