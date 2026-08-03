@@ -26,6 +26,7 @@
     scopeGitHistory
   } from '../../lib/git-history-graph';
   import { ipc } from '../../lib/ipc';
+  import { COMMIT_PICKER_BRANCH_MENU_CLASS } from '../../lib/commit-picker-layout';
   import { git } from '../../stores/git.svelte';
   import {
     workingDiff,
@@ -212,14 +213,35 @@
 
   async function apply(): Promise<void> {
     if (applying) return;
-    if (selected.size === 0) {
-      resolveError = 'Select at least one commit to review.';
+    if (selected.size === 0 && !selectedBranch) {
+      resolveError = 'Choose a branch or select commits to review.';
       return;
     }
     applying = true;
     resolveError = null;
     try {
       const ctx = worktreeRuntimeContext(scope);
+      if (selected.size === 0 && selectedBranch) {
+        const resolved = await ipc.git.resolveRefs({
+          cwd,
+          refs: [selectedBranch],
+          ...ctx
+        });
+        const tip = resolved.resolved[0] ?? null;
+        if (!tip) throw new Error(`Couldn't resolve branch ${selectedBranch}.`);
+        workingDiff.setReviewMode(scope, {
+          kind: 'range',
+          base: tip,
+          head: tip,
+          commits: [],
+          includeWorkingTree: selectedBranchIsCurrent,
+          chipFilter: null,
+          branchContext: selectedBranch
+        });
+        onClose();
+        return;
+      }
+
       const draft = reviewRangeRefs(history, selected, comparisonBase);
       if (!draft) throw new Error('The selected commits are no longer in the loaded history.');
       const resolved = await ipc.git.resolveRefs({
@@ -305,7 +327,7 @@
   }
 </script>
 
-<div class="flex h-[min(38rem,calc(100vh-4rem))] w-[min(46rem,calc(100vw-2rem))] max-w-[90vw] min-h-0 flex-col overflow-hidden p-3">
+<div class="flex h-[min(34rem,calc(100vh-3rem))] w-[min(46rem,calc(100vw-2rem))] max-w-[90vw] min-h-0 flex-col overflow-hidden p-3">
   <div class="flex shrink-0 items-center justify-between gap-2">
     <div class="flex min-w-0 items-center gap-1.5">
       <GitCommitHorizontal class="size-3.5 text-muted-foreground" />
@@ -323,8 +345,7 @@
   </div>
 
   <p class="m-0 mt-1 shrink-0 text-[10px] leading-4 text-muted-foreground">
-    Browse a branch, then select one commit or two range endpoints. Browsing never changes the
-    comparison base or target.
+    Choose a branch to inspect its history. Commit selection is optional and only defines a range.
   </p>
 
   <div class="mt-2 grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2">
@@ -341,7 +362,7 @@
         <Select.Trigger id="commit-picker-branch" size="sm" class="w-full text-xs">
           <span class="truncate">{selectedBranch ?? 'All branches'}</span>
         </Select.Trigger>
-        <Select.Content>
+        <Select.Content class={COMMIT_PICKER_BRANCH_MENU_CLASS}>
           <Select.Group>
             <Select.Label>History filter</Select.Label>
             <Select.Item value="__all__" label="All branches">All branches</Select.Item>
@@ -427,7 +448,7 @@
       />
     </div>
     <div class="flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
-      <span>Select one commit, then a second endpoint. Another click starts a new range.</span>
+      <span>Select commits only to review their changes; otherwise the branch view shows Worktree changes.</span>
       <div class="flex items-center gap-1">
         <span>{selected.size} selected</span>
         <Button variant="ghost" size="xs" onclick={selectAll} disabled={filteredHistory.length === 0}>
@@ -541,9 +562,9 @@
                       onclick={() => chooseBranch(ref.name)}
                     >
                       {#if selectedBranch === ref.name}
-                        <Check />
+                        <Check class="size-2.5 shrink-0" />
                       {:else}
-                        <RefIcon />
+                        <RefIcon class="size-2.5 shrink-0" />
                       {/if}
                       <span class="max-w-32 truncate">{ref.name}</span>
                     </button>
@@ -565,26 +586,40 @@
     {/if}
   </ScrollArea>
 
-  <div class="mt-2 flex shrink-0 items-start gap-2">
-    <Checkbox
-      id="commit-picker-include-worktree"
-      bind:checked={includeWt}
-      disabled={!selectedBranchIsCurrent}
-    />
-    <div class="min-w-0">
-      <Label for="commit-picker-include-worktree" class="text-xs text-foreground">
-        Also show uncommitted changes
-      </Label>
-      <p class="m-0 text-[10px] leading-4 text-muted-foreground">
-        {#if selectedBranchIsCurrent}
-          Adds {uncommittedCount} staged, unstaged, or untracked
-          {uncommittedCount === 1 ? 'change' : 'changes'} in a separate section.
-        {:else}
-          Select the current branch ({currentBranch ?? 'none'}) to include its Worktree changes.
-        {/if}
-      </p>
+  {#if selected.size === 0}
+    <div class="mt-2 shrink-0 text-[10px] leading-4 text-muted-foreground">
+      {#if selectedBranchIsCurrent}
+        Branch view shows this Worktree's {uncommittedCount} uncommitted
+        {uncommittedCount === 1 ? 'change' : 'changes'}. If it is clean, the viewer is empty.
+      {:else if selectedBranch}
+        This branch is not current in this Worktree, so branch view has no uncommitted changes.
+        Select commits above to review committed changes.
+      {:else}
+        Choose a branch to view its history or select commits from the full graph.
+      {/if}
     </div>
-  </div>
+  {:else}
+    <div class="mt-2 flex shrink-0 items-start gap-2">
+      <Checkbox
+        id="commit-picker-include-worktree"
+        bind:checked={includeWt}
+        disabled={!selectedBranchIsCurrent}
+      />
+      <div class="min-w-0">
+        <Label for="commit-picker-include-worktree" class="text-xs text-foreground">
+          Also show uncommitted changes
+        </Label>
+        <p class="m-0 text-[10px] leading-4 text-muted-foreground">
+          {#if selectedBranchIsCurrent}
+            Adds {uncommittedCount} staged, unstaged, or untracked
+            {uncommittedCount === 1 ? 'change' : 'changes'} in a separate section.
+          {:else}
+            Select the current branch ({currentBranch ?? 'none'}) to include its Worktree changes.
+          {/if}
+        </p>
+      </div>
+    </div>
+  {/if}
 
   {#if resolveError}
     <div
@@ -605,11 +640,15 @@
     >
       Show uncommitted only
     </Button>
-    <Button size="xs" onclick={() => void apply()} disabled={applying || selected.size === 0}>
+    <Button
+      size="xs"
+      onclick={() => void apply()}
+      disabled={applying || (selected.size === 0 && !selectedBranch)}
+    >
       {#if applying}
         <Loader2 data-icon="inline-start" class="animate-spin" />
       {/if}
-      Review selected commits
+      {selected.size === 0 ? 'View branch' : 'Review selected commits'}
     </Button>
   </div>
 </div>

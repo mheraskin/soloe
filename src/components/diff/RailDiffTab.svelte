@@ -241,6 +241,10 @@
   let commitScopeText = $derived.by<string>(() => {
     if (reviewMode.kind !== 'range') return 'Uncommitted changes';
     const n = reviewMode.commits.length;
+    if (n === 0 && reviewMode.branchContext) {
+      const worktree = reviewMode.includeWorkingTree ? ' · Worktree changes' : ' · no Worktree changes';
+      return `${reviewMode.branchContext}${worktree}`;
+    }
     const shortBase = reviewMode.base.slice(0, 7);
     const shortHead = reviewMode.head.slice(0, 7);
     const branch = reviewMode.branchContext ? `${reviewMode.branchContext} · ` : '';
@@ -1257,7 +1261,9 @@
           <div class="px-2 py-3 text-xs text-muted-foreground">
             {#if totalChangeCount === 0}
               {#if isRangeMode}
-                No files changed in this range.
+                {reviewMode.kind === 'range' && reviewMode.commits.length === 0
+                  ? 'No uncommitted changes for this branch in the current Worktree.'
+                  : 'No files changed in this range.'}
               {:else}
                 Working tree is clean.
               {/if}
