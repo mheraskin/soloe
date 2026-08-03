@@ -1597,6 +1597,21 @@ describe("SoloeDomain", () => {
           branch: "feature/server-worktree",
         }),
       );
+      await writeFile(path.join(createdWorktree, "linked.txt"), "linked change\n");
+      await expect(
+        domain.invoke({
+          namespace: "git",
+          method: "status",
+          args: [{ cwd: createdWorktree, force: true, ...scope }],
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({
+          repoPath: createdWorktree,
+          branch: "feature/server-worktree",
+          dirty: true,
+          untracked: 1,
+        }),
+      );
       await expect(
         domain.invoke({
           namespace: "git",

@@ -1482,11 +1482,37 @@ export class SoloeDomain extends EventEmitter {
     if (projects.some((project) => sameLogicalPath(project.path, scope.cwd))) {
       return true;
     }
-    return sessions.some(
-      (session) =>
-        sameLogicalPath(session.cwd, scope.cwd) &&
-        sameWorktreePlacement(session, scope),
+    if (
+      sessions.some(
+        (session) =>
+          sameLogicalPath(session.cwd, scope.cwd) &&
+          sameWorktreePlacement(session, scope),
+      )
+    ) {
+      return true;
+    }
+
+    const registeredRoots = [
+      ...projects.map((project) => project.path),
+      ...sessions
+        .filter((session) => sameWorktreePlacement(session, scope))
+        .map((session) => session.cwd),
+    ].filter(
+      (root, index, roots) =>
+        roots.findIndex((candidate) => sameLogicalPath(candidate, root)) === index,
     );
+
+    for (const root of registeredRoots) {
+      try {
+        const linkedWorktrees = await this.git.listWorktrees(root, false, scope);
+        if (linkedWorktrees.some((worktree) => sameLogicalPath(worktree.path, scope.cwd))) {
+          return true;
+        }
+      } catch {
+        // Registered folders may be missing or no longer be Git repositories.
+      }
+    }
+    return false;
   }
 
   private async isAuthorizedVaultScope(cwd: string): Promise<boolean> {
