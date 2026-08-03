@@ -183,7 +183,7 @@ export const DEFAULT_SETTINGS: Settings = {
   diff: { fontSize: 13 },
   browser: {
     maxResidentTabs: 2,
-    pauseAutoResumeMinutes: 5,
+    pauseAutoResumeMinutes: 30,
     elementSourceInspectorEnabled: true
   },
   defaults: {
