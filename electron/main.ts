@@ -405,6 +405,7 @@ async function setupServices(): Promise<AppServices> {
     fileIndex: files,
     store,
     pty: manager,
+    git,
     getBinaries
   });
   const diagnostics = new DiagnosticsService({

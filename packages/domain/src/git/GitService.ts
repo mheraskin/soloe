@@ -76,6 +76,17 @@ interface GitResult {
   stderr: string;
 }
 
+export interface GitRevisionFileInventory {
+  paths: string[];
+  truncated: boolean;
+  isRepo: boolean;
+}
+
+export interface GitRevisionFileRead {
+  content: string | null;
+  size: number;
+}
+
 interface RepoResolutionEntry {
   info: RepoInfo | null;
   expiresAt: number;
@@ -92,6 +103,7 @@ const EMPTY_COUNTS = {
 // Soft ceiling on `git log <base>..<head>` to protect the renderer from a
 // 10k-commit accidental range. The picker warns when truncation hits.
 const COMMITS_BETWEEN_CAP = 500;
+const REVISION_FILE_CAP = 20_000;
 // Repository identity is stable across ordinary edits, staging, commits, and
 // branch changes. Re-discovering it on every 5-second WSL poll costs two
 // `wsl.exe` launches before useful work begins, so retain it for one coarse
@@ -992,6 +1004,47 @@ export class GitService {
     return out;
   }
 
+  async listFilesAtRevision(
+    cwd: string,
+    revision: string,
+    context: GitRepoContext = {}
+  ): Promise<GitRevisionFileInventory> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return { paths: [], truncated: false, isRepo: false };
+    const sha = await this.resolveRevisionCommit(info, revision);
+    if (!sha) throw new Error(`Could not resolve branch or revision ${revision}`);
+    const result = await this.runInRepo(info, ['ls-tree', '-r', '-z', '--name-only', sha]);
+    if (result.code !== 0) throw new Error(`Could not list files at ${revision}`);
+    const paths = result.stdout.split('\0').filter(Boolean);
+    return {
+      paths: paths.slice(0, REVISION_FILE_CAP),
+      truncated: paths.length > REVISION_FILE_CAP,
+      isRepo: true
+    };
+  }
+
+  async readFileAtRevision(
+    cwd: string,
+    revision: string,
+    filePath: string,
+    maxBytes: number,
+    context: GitRepoContext = {}
+  ): Promise<GitRevisionFileRead | null> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return null;
+    const sha = await this.resolveRevisionCommit(info, revision);
+    if (!sha) throw new Error(`Could not resolve branch or revision ${revision}`);
+    const object = `${sha}:${filePath}`;
+    const sizeResult = await this.runInRepo(info, ['cat-file', '-s', object]);
+    if (sizeResult.code !== 0) return null;
+    const size = Number(sizeResult.stdout.trim());
+    if (!Number.isSafeInteger(size) || size < 0) return null;
+    if (size > maxBytes) return { content: null, size };
+    const contentResult = await this.runInRepo(info, ['cat-file', 'blob', object]);
+    if (contentResult.code !== 0) return null;
+    return { content: contentResult.stdout, size };
+  }
+
   onChange(listener: (event: GitChangeEvent) => void): () => void {
     this.listeners.add(listener);
     return () => {
@@ -1024,6 +1077,22 @@ export class GitService {
       // retain the authoritative per-file Git fallback.
       return new Map();
     }
+  }
+
+  private async resolveRevisionCommit(info: RepoInfo, revision: string): Promise<string | null> {
+    const trimmed = revision.trim();
+    if (!trimmed || trimmed.length > 1024 || trimmed.startsWith('-') || /[\0\r\n]/u.test(trimmed)) {
+      return null;
+    }
+    const result = await this.runInRepo(info, [
+      'rev-parse',
+      '--verify',
+      '--end-of-options',
+      `${trimmed}^{commit}`
+    ]);
+    if (result.code !== 0) return null;
+    const sha = result.stdout.trim();
+    return /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
   }
 
   private async resolveRepo(cwd: string, context: GitRepoContext = {}): Promise<RepoInfo | null> {

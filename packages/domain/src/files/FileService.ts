@@ -50,6 +50,19 @@ export interface FileServiceOptions {
   runtime: FilesRuntime;
   getSession(sessionId: string): Promise<Session | null>;
   authorizeScope(scope: FileIndexScope): Promise<boolean>;
+  revisionReader?: {
+    listFiles(scope: FileIndexScope, revision: string): Promise<{
+      paths: string[];
+      truncated: boolean;
+      isRepo: boolean;
+    }>;
+    readFile(
+      scope: FileIndexScope,
+      revision: string,
+      relativePath: string,
+      maxBytes: number,
+    ): Promise<{ content: string | null; size: number } | null>;
+  };
   getEditor?: () => Promise<string | undefined>;
   launchEditor?: (editor: string, absolutePath: string) => Promise<void>;
 }
@@ -111,9 +124,10 @@ export class FileService {
   async listTree(request: FileTreeRequest): Promise<FileTreeResult> {
     const scope = fileIndexScope(request);
     await this.authorize(scope);
-    const inventory = await this.fileIndex.inventory(scope, {
-      force: request.force,
-    });
+    const revision = optionalRevision(request.revision);
+    const inventory = revision
+      ? await this.requireRevisionReader().listFiles(scope, revision)
+      : await this.fileIndex.inventory(scope, { force: request.force });
     return {
       cwd: request.cwd,
       paths: inventory.paths,
@@ -124,8 +138,53 @@ export class FileService {
 
   async readFile(request: FileReadRequest): Promise<FileReadResult> {
     const scope = fileIndexScope(request);
-    const root = await this.resolveRoot(scope);
     const relativePath = requiredRelativePath(request.relativePath);
+    const revision = optionalRevision(request.revision);
+    if (revision) {
+      assertRevisionRelativePath(relativePath);
+      await this.authorize(scope);
+      const snapshot = await this.requireRevisionReader().readFile(
+        scope,
+        revision,
+        relativePath,
+        MAX_READ_BYTES,
+      );
+      if (!snapshot) return unavailableRead(relativePath, "not_found");
+      if (snapshot.content === null) {
+        return {
+          relativePath,
+          content: "",
+          binary: false,
+          truncated: true,
+          oversized: true,
+          unavailable: false,
+          size: snapshot.size,
+          maxBytes: MAX_READ_BYTES,
+        };
+      }
+      const buffer = Buffer.from(snapshot.content, "utf8");
+      if (looksBinary(buffer)) {
+        return {
+          relativePath,
+          content: "",
+          binary: true,
+          truncated: false,
+          oversized: false,
+          unavailable: false,
+          size: snapshot.size,
+        };
+      }
+      return {
+        relativePath,
+        content: snapshot.content,
+        binary: false,
+        truncated: false,
+        oversized: false,
+        unavailable: false,
+        size: snapshot.size,
+      };
+    }
+    const root = await this.resolveRoot(scope);
     let absolute: string;
     try {
       absolute = await this.resolveExisting(root, relativePath);
@@ -330,6 +389,14 @@ export class FileService {
     }
   }
 
+  private requireRevisionReader(): NonNullable<FileServiceOptions["revisionReader"]> {
+    if (this.options.revisionReader) return this.options.revisionReader;
+    throw new DomainError(
+      "revision_unavailable",
+      "Committed branch files are unavailable in this Soloe backend",
+    );
+  }
+
   private async resolveRoot(scope: FileIndexScope): Promise<ResolvedRoot> {
     await this.authorize(scope);
     const hostRoot = worktreeHostPath(scope.cwd, scope.runMode, scope.wslDistro);
@@ -409,6 +476,29 @@ function requiredRelativePath(value: string): string {
     throw new DomainError("invalid_path", "Paths cannot contain NUL bytes");
   }
   return value;
+}
+
+function optionalRevision(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  const revision = value.trim();
+  if (
+    !revision ||
+    revision.length > 1024 ||
+    revision.startsWith("-") ||
+    /[\0\r\n]/u.test(revision)
+  ) {
+    throw new DomainError("invalid_revision", "revision is invalid");
+  }
+  return revision;
+}
+
+function assertRevisionRelativePath(relativePath: string): void {
+  if (path.posix.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath)) {
+    throw new DomainError("absolute_path_forbidden", "Absolute paths are not allowed");
+  }
+  if (relativePath.split(/[\\/]/u).includes("..")) {
+    throw new DomainError("path_traversal", "Path escapes the Worktree root");
+  }
 }
 
 function lexicalCandidate(root: ResolvedRoot, relativePath: string): string {

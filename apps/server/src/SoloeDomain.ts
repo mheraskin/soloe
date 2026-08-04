@@ -281,6 +281,9 @@ export class SoloeDomain extends EventEmitter {
     this.browserSessions = new BrowserSessionStore(
       path.join(options.dataDirectory, "browser-sessions.json"),
     );
+    this.git = new GitService({
+      getGitBinary: async () => (await this.settings.get()).binaries.git,
+    });
     this.files = new FileService({
       fileIndex: new WorktreeFileIndex({
         getBinaries: async () => (await this.settings.get()).binaries,
@@ -289,13 +292,22 @@ export class SoloeDomain extends EventEmitter {
       runtime: options.runtime,
       getSession: (sessionId) => this.sessions.get(sessionId),
       authorizeScope: (scope) => this.isAuthorizedWorktree(scope),
+      revisionReader: {
+        listFiles: (scope, revision) =>
+          this.git.listFilesAtRevision(scope.cwd, revision, scope),
+        readFile: (scope, revision, relativePath, maxBytes) =>
+          this.git.readFileAtRevision(
+            scope.cwd,
+            revision,
+            relativePath,
+            maxBytes,
+            scope,
+          ),
+      },
       getEditor: async () => (await this.settings.get()).binaries.editor,
       ...(options.fileEditorLauncher
         ? { launchEditor: options.fileEditorLauncher }
         : {}),
-    });
-    this.git = new GitService({
-      getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
     this.integrationInstaller =
       options.integrationInstaller ?? new HookInstaller();

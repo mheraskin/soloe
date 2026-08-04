@@ -12,10 +12,24 @@ export interface FilesContext {
   wslDistro?: string;
 }
 
-export type FilesScope = WorktreeScope & { runMode: RunMode };
+export type FilesScope = WorktreeScope & { runMode: RunMode; revision?: string };
 
-export function createFilesScope(cwd: string, context: FilesContext): FilesScope {
-  return worktreeScope(cwd, context) as FilesScope;
+export function createFilesScope(
+  cwd: string,
+  context: FilesContext,
+  revision?: string
+): FilesScope {
+  const scope = worktreeScope(cwd, context) as FilesScope;
+  const normalizedRevision = revision?.trim();
+  return normalizedRevision ? { ...scope, revision: normalizedRevision } : scope;
+}
+
+export function filesScopeKey(scope: FilesScope): string {
+  return `${worktreeScopeKey(scope)}::${scope.revision ?? ''}`;
+}
+
+export function isFilesScopeReadOnly(scope: FilesScope): boolean {
+  return Boolean(scope.revision);
 }
 
 interface TreeEntry {
@@ -89,7 +103,7 @@ export class FilesStore {
   private sourceRevealNonce = 0;
 
   acquirePayloadResidency(scope: FilesScope): () => void {
-    const key = worktreeScopeKey(scope);
+    const key = filesScopeKey(scope);
     this.residencyByScope.set(key, (this.residencyByScope.get(key) ?? 0) + 1);
     this.recentReleasedScopes.delete(key);
     let released = false;
@@ -104,19 +118,19 @@ export class FilesStore {
   }
 
   treeFor(scope: FilesScope): TreeEntry {
-    return this.treeByCwd[worktreeScopeKey(scope)] ?? EMPTY_TREE;
+    return this.treeByCwd[filesScopeKey(scope)] ?? EMPTY_TREE;
   }
 
   openFileFor(scope: FilesScope): OpenFile | null {
-    return this.openFilesByCwd[worktreeScopeKey(scope)] ?? null;
+    return this.openFilesByCwd[filesScopeKey(scope)] ?? null;
   }
 
   revealFor(scope: FilesScope): SourceRevealRequest | null {
-    return this.sourceRevealByScope[worktreeScopeKey(scope)] ?? null;
+    return this.sourceRevealByScope[filesScopeKey(scope)] ?? null;
   }
 
   requestReveal(scope: FilesScope, relativePath: string, line: number, column: number): SourceRevealRequest {
-    const key = worktreeScopeKey(scope);
+    const key = filesScopeKey(scope);
     const request = {
       relativePath,
       line: Math.max(1, Math.floor(line)),
@@ -128,7 +142,7 @@ export class FilesStore {
   }
 
   clearReveal(scope: FilesScope, nonce?: number): void {
-    const key = worktreeScopeKey(scope);
+    const key = filesScopeKey(scope);
     const current = this.sourceRevealByScope[key];
     if (!current || (nonce !== undefined && current.nonce !== nonce)) return;
     const next = { ...this.sourceRevealByScope };
@@ -137,7 +151,7 @@ export class FilesStore {
   }
 
   async loadSourceFile(scope: FilesScope, relativePath: string): Promise<SourceFile> {
-    const current = this.openFilesByCwd[worktreeScopeKey(scope)];
+    const current = this.openFilesByCwd[filesScopeKey(scope)];
     if (current && current.relativePath === relativePath && !current.loading) {
       return sourceFileFromOpen(current);
     }
@@ -152,7 +166,8 @@ export class FilesStore {
       cwd: scope.cwd,
       relativePath,
       runMode: scope.runMode,
-      ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+      ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+      ...(scope.revision ? { revision: scope.revision } : {})
     });
     const source = sourceFileFromRead(scope.cwd, value);
     this.sourceCache.set(cacheKey, source);
@@ -165,12 +180,12 @@ export class FilesStore {
   }
 
   dirtyFor(scope: FilesScope): boolean {
-    const open = this.openFilesByCwd[worktreeScopeKey(scope)];
+    const open = this.openFilesByCwd[filesScopeKey(scope)];
     return open !== undefined && !open.binary && open.content !== open.baseline;
   }
 
   async loadTree(scope: FilesScope, opts: { force?: boolean } = {}): Promise<void> {
-    const key = worktreeScopeKey(scope);
+    const key = filesScopeKey(scope);
     const existing = this.treeByCwd[key];
     if (existing?.loading) return;
     if (!opts.force && existing && !existing.error) return;
@@ -180,6 +195,7 @@ export class FilesStore {
         cwd: scope.cwd,
         runMode: scope.runMode,
         ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+        ...(scope.revision ? { revision: scope.revision } : {}),
         ...(opts.force ? { force: true } : {})
       });
       this.patchTree(key, {
@@ -203,14 +219,17 @@ export class FilesStore {
   async openFileAt(
     scope: FilesScope,
     relativePath: string,
-    opts: { discardDirty?: boolean } = {}
+    opts: { discardDirty?: boolean; force?: boolean } = {}
   ): Promise<boolean> {
-    const key = worktreeScopeKey(scope);
+    const key = filesScopeKey(scope);
     // If the same file is already open and unmodified, no-op. Picking the same
     // row in the tree shouldn't throw away in-progress unsaved edits either.
     const current = this.openFilesByCwd[key];
     if (current && current.relativePath === relativePath) {
-      if ((!current.binary && current.content !== current.baseline) || !current.loading) return true;
+      if (
+        !opts.force &&
+        ((!current.binary && current.content !== current.baseline) || !current.loading)
+      ) return true;
     }
     if (
       current
@@ -241,7 +260,8 @@ export class FilesStore {
         cwd: scope.cwd,
         relativePath,
         runMode: scope.runMode,
-        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+        ...(scope.revision ? { revision: scope.revision } : {})
       });
       // A second openFileAt could land before this one resolves; drop the stale
       // response so we don't overwrite the newer pending state.
@@ -289,7 +309,8 @@ export class FilesStore {
   }
 
   setContent(scope: FilesScope, content: string): void {
-    const key = worktreeScopeKey(scope);
+    if (isFilesScopeReadOnly(scope)) return;
+    const key = filesScopeKey(scope);
     const current = this.openFilesByCwd[key];
     if (!current) return;
     if (current.content === content) return;
@@ -298,7 +319,7 @@ export class FilesStore {
   }
 
   closeFile(scope: FilesScope): void {
-    const key = worktreeScopeKey(scope);
+    const key = filesScopeKey(scope);
     if (!(key in this.openFilesByCwd)) return;
     const next = { ...this.openFilesByCwd };
     delete next[key];
@@ -307,7 +328,8 @@ export class FilesStore {
   }
 
   async save(scope: FilesScope): Promise<void> {
-    const key = worktreeScopeKey(scope);
+    if (isFilesScopeReadOnly(scope)) return;
+    const key = filesScopeKey(scope);
     const open = this.openFilesByCwd[key];
     if (!open || open.binary || open.truncated || open.unavailable || open.saving) return;
     if (open.content === open.baseline) return;
@@ -359,7 +381,7 @@ export class FilesStore {
   }
 
   private sourceCacheKey(scope: FilesScope, relativePath: string): string {
-    return `${worktreeScopeKey(scope)}::${relativePath}`;
+    return `${filesScopeKey(scope)}::${relativePath}`;
   }
 
   private cacheSource(scope: FilesScope, source: SourceFile): void {

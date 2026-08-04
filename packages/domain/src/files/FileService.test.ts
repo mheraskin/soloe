@@ -81,6 +81,54 @@ describe("FileService", () => {
     service.dispose();
   });
 
+  it("reads committed branch trees through the revision reader without touching disk", async () => {
+    const listFiles = vi.fn(async () => ({
+      paths: ["README.md", "src/branch.ts"],
+      truncated: false,
+      isRepo: true,
+    }));
+    const readFile = vi.fn(async () => ({ content: "branch source\n", size: 14 }));
+    const service = createService({
+      revisionReader: { listFiles, readFile },
+    });
+    const scope = { cwd: root, runMode: "linux" as const };
+
+    await expect(
+      service.listTree({ ...scope, revision: "feature/files" }),
+    ).resolves.toEqual({
+      cwd: root,
+      paths: ["README.md", "src/branch.ts"],
+      truncated: false,
+      isRepo: true,
+    });
+    await expect(
+      service.readFile({
+        ...scope,
+        revision: "feature/files",
+        relativePath: "src/branch.ts",
+      }),
+    ).resolves.toEqual({
+      relativePath: "src/branch.ts",
+      content: "branch source\n",
+      binary: false,
+      truncated: false,
+      oversized: false,
+      unavailable: false,
+      size: 14,
+    });
+    expect(listFiles).toHaveBeenCalledWith(scope, "feature/files");
+    expect(readFile).toHaveBeenCalledWith(scope, "feature/files", "src/branch.ts", 5 * 1024 * 1024);
+    await expect(
+      service.readFile({
+        ...scope,
+        revision: "feature/files",
+        relativePath: "../secret.txt",
+      }),
+    ).rejects.toMatchObject({ code: "path_traversal" });
+    expect(readFile).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
   it("rejects traversal, absolute paths, symlink escape, and unauthorized roots", async () => {
     await writeFile(path.join(outside, "secret.txt"), "secret\n");
     await symlink(outside, path.join(root, "escape"));

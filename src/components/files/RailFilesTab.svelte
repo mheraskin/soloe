@@ -4,19 +4,24 @@
     AlertCircle,
     ArrowLeft,
     Check,
+    ChevronsUpDown,
     FolderTree,
+    GitBranch,
     Loader2,
+    Lock,
     Maximize2,
     Minimize2,
     RefreshCw,
     Save
   } from '@lucide/svelte';
   import type { GitStatusEntry } from '@pierre/trees';
-  import type { WorkingChange } from '@shared/types/git.js';
+  import type { GitBranch as GitBranchInfo, WorkingChange } from '@shared/types/git.js';
+  import { worktreeRuntimeContext, worktreeScopeKey } from '@shared/worktree-identity.js';
   import { sessions } from '../../stores/sessions.svelte';
   import {
     createFilesScope,
     filesStore,
+    isFilesScopeReadOnly,
     type FilesScope
   } from '../../stores/files.svelte';
   import {
@@ -25,8 +30,11 @@
     type ReviewScope
   } from '../../stores/working-diff.svelte';
   import { reportError } from '../../stores/toast.svelte';
+  import { ipc } from '../../lib/ipc';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Command from '$lib/components/ui/command';
+  import * as Popover from '$lib/components/ui/popover';
   import FileTreeView from './FileTreeView.svelte';
 
   type FileEditorSurfaceComponent = typeof import('./FileEditorSurface.svelte').default;
@@ -95,18 +103,70 @@
       ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
     });
   });
-  let activeFilesScope = $derived.by<FilesScope | null>(() => {
+  let worktreeFilesScope = $derived.by<FilesScope | null>(() => {
     if (!activeCwd || !selected) return null;
     return createFilesScope(activeCwd, {
       runMode: selected.runMode,
       ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
     });
   });
+  let selectedRevision = $state<string | null>(null);
+  let branches = $state<GitBranchInfo[]>([]);
+  let branchLoading = $state(false);
+  let branchError = $state<string | null>(null);
+  let branchMenuOpen = $state(false);
+  let branchGeneration = 0;
+  let loadedBranchScopeKey = '';
+  let activeFilesScope = $derived.by<FilesScope | null>(() => {
+    if (!worktreeFilesScope) return null;
+    return createFilesScope(
+      worktreeFilesScope.cwd,
+      {
+        runMode: worktreeFilesScope.runMode,
+        ...(worktreeFilesScope.wslDistro
+          ? { wslDistro: worktreeFilesScope.wslDistro }
+          : {})
+      },
+      selectedRevision ?? undefined
+    );
+  });
+  let browsingRevision = $derived(activeFilesScope ? isFilesScopeReadOnly(activeFilesScope) : false);
+  let currentBranch = $derived(branches.find((branch) => branch.current)?.name ?? null);
 
   let tree = $derived(activeFilesScope ? filesStore.treeFor(activeFilesScope) : null);
   let openFile = $derived(activeFilesScope ? filesStore.openFileFor(activeFilesScope) : null);
   let dirty = $derived(activeFilesScope ? filesStore.dirtyFor(activeFilesScope) : false);
   let revealRequest = $derived(activeFilesScope ? filesStore.revealFor(activeFilesScope) : null);
+
+  async function loadBranches(scope: FilesScope): Promise<void> {
+    const generation = ++branchGeneration;
+    branchLoading = true;
+    branchError = null;
+    try {
+      const ctx = worktreeRuntimeContext(scope);
+      const next = await ipc.git.branches({ repoPath: scope.cwd, force: true, ...ctx });
+      if (generation !== branchGeneration) return;
+      branches = next;
+    } catch (error) {
+      if (generation !== branchGeneration) return;
+      branches = [];
+      branchError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (generation === branchGeneration) branchLoading = false;
+    }
+  }
+
+  $effect(() => {
+    const scope = worktreeFilesScope;
+    const scopeKey = scope ? worktreeScopeKey(scope) : '';
+    if (scopeKey === loadedBranchScopeKey) return;
+    loadedBranchScopeKey = scopeKey;
+    selectedRevision = null;
+    branchMenuOpen = false;
+    branches = [];
+    if (!scope) return;
+    void loadBranches(scope);
+  });
 
   // Residency owns heavyweight tree/editor payload only while this surface is
   // visible. The store keeps a tiny warm LRU after release and protects dirty
@@ -122,7 +182,7 @@
   // semantically (a brand-new path appeared). Renames also surface fromPath so
   // the old name is painted as 'deleted' alongside the new name as 'renamed'.
   let gitStatus = $derived.by<GitStatusEntry[] | undefined>(() => {
-    if (!activeReviewScope) return undefined;
+    if (!activeReviewScope || browsingRevision) return undefined;
     const result = workingDiff.changesFor(activeReviewScope).result;
     if (!result) return undefined;
     const entries: GitStatusEntry[] = [];
@@ -173,9 +233,14 @@
   // share one refresh and the final unmount stops tick-driven review work.
   $effect(() => {
     const scope = activeReviewScope;
-    if (!scope) return;
+    if (!scope || browsingRevision) return;
     return workingDiff.acquireReviewDemand(scope);
   });
+
+  function chooseRevision(revision: string | null): void {
+    selectedRevision = revision;
+    branchMenuOpen = false;
+  }
 
   function onSelectPath(path: string): void {
     const scope = activeFilesScope;
@@ -206,9 +271,18 @@
     void filesStore.save(activeFilesScope).catch(reportError);
   }
 
-  function onRefresh(): void {
+  async function onRefresh(): Promise<void> {
     if (!activeFilesScope) return;
-    void filesStore.loadTree(activeFilesScope, { force: true }).catch(reportError);
+    try {
+      await filesStore.loadTree(activeFilesScope, { force: true });
+      const current = filesStore.openFileFor(activeFilesScope);
+      if (browsingRevision && current) {
+        await filesStore.openFileAt(activeFilesScope, current.relativePath, { force: true });
+      }
+      if (worktreeFilesScope) void loadBranches(worktreeFilesScope);
+    } catch (error) {
+      reportError(error);
+    }
   }
 
   function onChange(next: string): void {
@@ -302,7 +376,7 @@
 
   // Tree scroll: only meaningful when the file tree is visible (no file open).
   $effect(() => {
-    const cwd = activeCwd;
+    const cwd = activeCwd ? `${activeCwd}::${selectedRevision ?? 'working-tree'}` : null;
     const hasTree = !!treeWrapperEl;
     if (!cwd || !hasTree) return;
     return wireScrollPersistence({
@@ -321,7 +395,7 @@
     const path = openFile?.relativePath ?? null;
     const hasEditor = !!editorWrapperEl;
     if (!cwd || !path || !hasEditor) return;
-    const key = `${cwd}::${path}`;
+    const key = `${cwd}::${selectedRevision ?? 'working-tree'}::${path}`;
     return wireScrollPersistence({
       get: () => rightRail.getFilesEditorScrollTop(key),
       save: (v) => rightRail.setFilesEditorScrollTop(key, v),
@@ -358,16 +432,88 @@
     <div class="flex min-w-0 items-center gap-1.5">
       <span class="shrink-0 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Files</span>
       <span class="text-muted-foreground/35" aria-hidden="true">·</span>
-      <span class="truncate text-[11px] text-foreground" title={activeCwd ?? ''}>
+      <span class="max-w-28 truncate text-[11px] text-foreground" title={activeCwd ?? ''}>
         {cwdLabel || 'No session selected'}
       </span>
+      {#if activeCwd}
+        <Popover.Root bind:open={branchMenuOpen}>
+          <Popover.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="outline"
+                size="xs"
+                class="h-6 min-w-0 max-w-48 gap-1 px-1.5"
+                disabled={branchLoading && branches.length === 0}
+                aria-label={`Choose files revision, currently ${selectedRevision ?? 'Working tree'}`}
+                aria-expanded={branchMenuOpen}
+                title={selectedRevision
+                  ? `Viewing committed files on ${selectedRevision}`
+                  : `Viewing editable Working tree${currentBranch ? ` on ${currentBranch}` : ''}`}
+              >
+                {#if branchLoading && branches.length === 0}
+                  <Loader2 class="size-3 shrink-0 animate-spin" />
+                {:else if selectedRevision}
+                  <GitBranch class="size-3 shrink-0" />
+                {:else}
+                  <FolderTree class="size-3 shrink-0" />
+                {/if}
+                <span class="truncate">{selectedRevision ?? 'Working tree'}</span>
+                <ChevronsUpDown class="size-3 shrink-0 text-muted-foreground" />
+              </Button>
+            {/snippet}
+          </Popover.Trigger>
+          <Popover.Content align="start" class="w-72 max-w-[calc(100vw-2rem)] p-0">
+            <Command.Root>
+              <Command.Input placeholder="Find a branch…" />
+              <Command.List class="max-h-64 overflow-y-auto">
+                <Command.Empty>
+                  {branchError ? 'Branches could not be loaded.' : 'No matching branch.'}
+                </Command.Empty>
+                <Command.Group heading="Files revision">
+                  <Command.Item
+                    value="__working_tree__ Working tree editable uncommitted"
+                    data-checked={selectedRevision === null}
+                    onSelect={() => chooseRevision(null)}
+                  >
+                    <FolderTree class="size-3" />
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="truncate">Working tree</span>
+                      <span class="truncate text-[10px] text-muted-foreground">
+                        Editable · includes uncommitted files
+                      </span>
+                    </span>
+                    {#if selectedRevision === null}<Check class="size-3" />{/if}
+                  </Command.Item>
+                  {#each branches as branch (branch.name)}
+                    <Command.Item
+                      value={`branch ${branch.name}`}
+                      data-checked={selectedRevision === branch.name}
+                      onSelect={() => chooseRevision(branch.name)}
+                    >
+                      <GitBranch class="size-3" />
+                      <span class="flex min-w-0 flex-1 flex-col">
+                        <span class="truncate">{branch.name}</span>
+                        <span class="truncate text-[10px] text-muted-foreground">
+                          Committed snapshot · read only{branch.current ? ' · current branch' : ''}
+                        </span>
+                      </span>
+                      {#if selectedRevision === branch.name}<Check class="size-3" />{/if}
+                    </Command.Item>
+                  {/each}
+                </Command.Group>
+              </Command.List>
+            </Command.Root>
+          </Popover.Content>
+        </Popover.Root>
+      {/if}
     </div>
     <div class="flex items-center gap-1">
       {#if activeCwd && (!openFile || isSplit)}
         <Button
           variant="ghost"
           size="icon-xs"
-          onclick={onRefresh}
+          onclick={() => void onRefresh()}
           disabled={tree?.loading}
           aria-label="Refresh file tree"
           title="Refresh"
@@ -414,7 +560,7 @@
   {:else if tree && tree.paths.length === 0}
     <div class="flex flex-col items-center justify-center gap-2 px-3 py-6 text-center text-xs text-muted-foreground">
       <FolderTree class="size-4" />
-      <span>No files in this worktree.</span>
+      <span>{selectedRevision ? `No committed files on ${selectedRevision}.` : 'No files in this worktree.'}</span>
     </div>
   {:else if tree}
     <!-- Split mode lays out editor on the left and tree on the right; narrow
@@ -447,7 +593,10 @@
               {openFile.relativePath}
             </span>
             <span class="flex shrink-0 items-center gap-1 text-[10px]">
-              {#if openFile.saving}
+              {#if browsingRevision}
+                <Lock class="size-3 text-muted-foreground" />
+                <span class="text-muted-foreground">Read only</span>
+              {:else if openFile.saving}
                 <Loader2 class="size-3 animate-spin text-muted-foreground" />
                 <span class="text-muted-foreground">Saving…</span>
               {:else if openFile.error}
@@ -460,18 +609,20 @@
                 <span class="text-emerald-500">Saved</span>
               {/if}
             </span>
-            <Button
-              variant="outline"
-              size="xs"
-              class="gap-1.5 px-2"
-              onclick={onSave}
-              disabled={!dirty || openFile.saving || openFile.binary || openFile.truncated || openFile.unavailable}
-              aria-label="Save file"
-              title="Save (Ctrl/Cmd+S)"
-            >
-              <Save class="size-3" />
-              <span>Save</span>
-            </Button>
+            {#if !browsingRevision}
+              <Button
+                variant="outline"
+                size="xs"
+                class="gap-1.5 px-2"
+                onclick={onSave}
+                disabled={!dirty || openFile.saving || openFile.binary || openFile.truncated || openFile.unavailable}
+                aria-label="Save file"
+                title="Save (Ctrl/Cmd+S)"
+              >
+                <Save class="size-3" />
+                <span>Save</span>
+              </Button>
+            {/if}
           </div>
 
           {#if openFile.error && !openFile.saving}
@@ -509,8 +660,9 @@
                 value={openFile.content}
                 relativePath={openFile.relativePath}
                 rootEl={editorWrapperEl}
-                onChange={onChange}
-                onSave={onSave}
+                onChange={browsingRevision ? undefined : onChange}
+                onSave={browsingRevision ? undefined : onSave}
+                readOnly={browsingRevision}
                 reveal={revealRequest && revealRequest.relativePath === openFile.relativePath
                   ? {
                       line: revealRequest.line,

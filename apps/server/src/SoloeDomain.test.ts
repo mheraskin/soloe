@@ -1383,6 +1383,29 @@ describe("SoloeDomain", () => {
           args: [{ cwd: worktree, refs: ["HEAD", "missing"], ...scope }],
         }),
       ).resolves.toEqual({ resolved: [initial, null] });
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "listTree",
+          args: [{ cwd: worktree, revision: "feature/checkout", ...scope }],
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({ paths: ["app.txt"], isRepo: true }),
+      );
+      await expect(
+        domain.invoke({
+          namespace: "files",
+          method: "readFile",
+          args: [{
+            cwd: worktree,
+            revision: "feature/checkout",
+            relativePath: "app.txt",
+            ...scope,
+          }],
+        }),
+      ).resolves.toEqual(
+        expect.objectContaining({ content: "one\n", unavailable: false }),
+      );
 
       await writeFile(path.join(worktree, "app.txt"), "one\ntwo\n");
       await writeFile(path.join(worktree, "new.txt"), "new\n");

@@ -48,6 +48,7 @@ export interface FileTreeRequest {
   cwd: string;
   runMode: RunMode;
   wslDistro?: string;
+  revision?: string;
   force?: boolean;
 }
 
@@ -63,6 +64,7 @@ export interface FileReadRequest {
   relativePath: string;
   runMode: RunMode;
   wslDistro?: string;
+  revision?: string;
 }
 
 export interface FileReadResult {

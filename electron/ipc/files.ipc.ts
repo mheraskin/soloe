@@ -12,6 +12,7 @@ import type {
 } from '@shared/types/files.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { WorktreeFileIndex } from '../files/WorktreeFileIndex.js';
+import type { GitService } from '../git/GitService.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { PtyManager } from '../terminal/PtyManager.js';
 import { ipcInvoke } from './result.js';
@@ -20,6 +21,7 @@ export interface FilesIpcOptions {
   fileIndex: WorktreeFileIndex;
   store: SessionStore;
   pty: PtyManager;
+  git?: GitService;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
   authorizeScope?: (scope: FileIndexScope) => Promise<boolean>;
 }
@@ -40,6 +42,26 @@ export class FilesIpc {
         write: async (terminalId, data) => opts.pty.write(terminalId, data)
       },
       getSession: (sessionId) => opts.store.get(sessionId),
+      ...(opts.git
+        ? {
+            revisionReader: {
+              listFiles: (scope: FileIndexScope, revision: string) =>
+                opts.git!.listFilesAtRevision(scope.cwd, revision, scope),
+              readFile: (
+                scope: FileIndexScope,
+                revision: string,
+                relativePath: string,
+                maxBytes: number
+              ) => opts.git!.readFileAtRevision(
+                scope.cwd,
+                revision,
+                relativePath,
+                maxBytes,
+                scope
+              )
+            }
+          }
+        : {}),
       getEditor: async () => {
         const binaries = opts.getBinaries ? await opts.getBinaries() : {};
         return binaries.editor;

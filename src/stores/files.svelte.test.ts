@@ -67,6 +67,26 @@ describe('FilesStore Worktree Identity', () => {
     }));
   });
 
+  it('isolates read-only branch snapshots from the editable working tree', async () => {
+    const working = createFilesScope(cwd, { runMode: 'linux' });
+    const branch = createFilesScope(cwd, { runMode: 'linux' }, 'feature/files');
+
+    await store.loadTree(working);
+    await store.loadTree(branch);
+    await store.openFileAt(branch, 'README.md');
+    store.setContent(branch, 'attempted branch edit');
+    await store.save(branch);
+
+    expect(listTree).toHaveBeenNthCalledWith(1, expect.not.objectContaining({ revision: expect.anything() }));
+    expect(listTree).toHaveBeenNthCalledWith(2, expect.objectContaining({ revision: 'feature/files' }));
+    expect(readFile).toHaveBeenCalledWith(expect.objectContaining({ revision: 'feature/files' }));
+    expect(store.openFileFor(branch)?.content).toBe('native content');
+    expect(store.dirtyFor(branch)).toBe(false);
+    expect(store.treeFor(working).paths).toEqual(['native.txt']);
+    expect(store.treeFor(branch).paths).toEqual(['native.txt']);
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
   it('keeps edits made during a save dirty against the exact saved snapshot', async () => {
     const scope = createFilesScope(cwd, { runMode: 'wsl', wslDistro: 'Ubuntu' });
     const pending = deferred<true>();

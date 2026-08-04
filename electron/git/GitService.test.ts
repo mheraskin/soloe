@@ -115,6 +115,30 @@ describe.skipIf(!hasGit)('GitService', () => {
     expect(status.detached).toBe(false);
   });
 
+  it('reads a branch file tree and file contents without checking it out', async () => {
+    await initRepo(tmpRoot);
+    spawnSync('git', ['checkout', '-b', 'feature/files'], { cwd: tmpRoot });
+    await fs.mkdir(path.join(tmpRoot, 'src'));
+    await fs.writeFile(path.join(tmpRoot, 'src', 'branch.txt'), 'branch content\n', 'utf8');
+    spawnSync('git', ['add', '.'], { cwd: tmpRoot });
+    spawnSync('git', ['commit', '-m', 'add branch file'], { cwd: tmpRoot });
+    spawnSync('git', ['checkout', 'main'], { cwd: tmpRoot });
+
+    await expect(svc.listFilesAtRevision(tmpRoot, 'feature/files')).resolves.toEqual({
+      paths: ['a.txt', 'src/branch.txt'],
+      truncated: false,
+      isRepo: true
+    });
+    await expect(
+      svc.readFileAtRevision(tmpRoot, 'feature/files', 'src/branch.txt', 1024)
+    ).resolves.toEqual({ content: 'branch content\n', size: 15 });
+    await expect(
+      svc.readFileAtRevision(tmpRoot, 'main', 'src/branch.txt', 1024)
+    ).resolves.toBeNull();
+    expect(spawnSync('git', ['branch', '--show-current'], { cwd: tmpRoot, encoding: 'utf8' }).stdout.trim())
+      .toBe('main');
+  });
+
   it('dirty: reports untracked and unstaged files', async () => {
     await initRepo(tmpRoot);
     await fs.writeFile(path.join(tmpRoot, 'a.txt'), 'changed\n', 'utf8');
