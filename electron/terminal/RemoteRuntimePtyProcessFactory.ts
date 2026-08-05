@@ -109,6 +109,10 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     return this.client.listRunning();
   }
 
+  setReplayUnbounded(unbounded: boolean): Promise<true> {
+    return this.client.setReplayUnbounded(unbounded);
+  }
+
   attach(terminal: RuntimeTerminalState): PtyProcess {
     const existing = this.processes.get(terminal.terminalId);
     if (existing) return existing;

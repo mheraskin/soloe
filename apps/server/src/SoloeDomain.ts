@@ -150,6 +150,7 @@ export interface RuntimeControl {
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
   listRunning(): Promise<RuntimeTerminalState[]>;
   replay(terminalId: string, afterSeq?: number): Promise<RuntimeReplaySnapshot | null>;
+  setReplayUnbounded?(unbounded: boolean): Promise<unknown>;
   write(terminalId: string, data: string): Promise<unknown>;
   resize(terminalId: string, cols: number, rows: number): Promise<unknown>;
   stop(terminalId: string): Promise<unknown>;
@@ -396,6 +397,11 @@ export class SoloeDomain extends EventEmitter {
     });
     this.settings.onChange((settings) => {
       this.emit("event", "settings.change", settings);
+      void this.options.runtime
+        .setReplayUnbounded?.(settings.terminal.keepFullHistory)
+        .catch((error) => {
+          console.warn("[terminal] failed to update Runtime history retention", error);
+        });
     });
   }
 
@@ -424,6 +430,10 @@ export class SoloeDomain extends EventEmitter {
       this.settings.init(),
       this.projects.init(),
     ]);
+    const initialSettings = await this.settings.get();
+    await this.options.runtime.setReplayUnbounded?.(
+      initialSettings.terminal.keepFullHistory,
+    );
     for (const session of await this.sessions.list()) {
       this.observer.registerTuiSession(session);
     }

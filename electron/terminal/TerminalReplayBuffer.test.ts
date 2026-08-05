@@ -177,6 +177,35 @@ describe('TerminalReplayBuffer', () => {
     expect(replay.snapshot('t-5')).toMatchObject({ data: '', truncated: false });
     expect(replay.snapshot('t-9')).toMatchObject({ data: '', truncated: false });
   });
+
+  it('retains complete output while unbounded and reapplies limits when disabled', () => {
+    const replay = new TerminalReplayBuffer({
+      maxBytesPerTerminal: 6,
+      maxTotalBytes: 6,
+      maxEventsPerTerminal: 2,
+      maxTotalEvents: 2,
+      unbounded: true
+    });
+    replay.append(event('t-1', 1, 'aaa'));
+    replay.append(event('t-1', 2, 'bbb'));
+    replay.append(event('t-1', 3, 'ccc'));
+
+    expect(replay.snapshot('t-1')).toMatchObject({
+      data: 'aaabbbccc',
+      fromSeq: 1,
+      toSeq: 3,
+      truncated: false
+    });
+
+    replay.setUnbounded(false);
+
+    expect(replay.snapshot('t-1')).toMatchObject({
+      data: 'bbbccc',
+      fromSeq: 2,
+      toSeq: 3,
+      truncated: true
+    });
+  });
 });
 
 function event(terminalId: string, seq: number, data: string) {

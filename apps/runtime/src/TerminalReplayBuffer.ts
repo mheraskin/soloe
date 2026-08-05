@@ -12,6 +12,7 @@ export interface TerminalReplayBufferOptions {
   maxTotalBytes?: number;
   maxEventsPerTerminal?: number;
   maxTotalEvents?: number;
+  unbounded?: boolean;
 }
 
 interface ReplayChunk {
@@ -42,6 +43,7 @@ export class TerminalReplayBuffer {
   private readonly maxTotalBytes: number;
   private readonly maxEventsPerTerminal: number;
   private readonly maxTotalEvents: number;
+  private unbounded: boolean;
 
   constructor(options: TerminalReplayBufferOptions = {}) {
     this.maxBytesPerTerminal = positiveInteger(
@@ -54,6 +56,15 @@ export class TerminalReplayBuffer {
       DEFAULT_MAX_EVENTS_PER_TERMINAL,
     );
     this.maxTotalEvents = positiveInteger(options.maxTotalEvents, DEFAULT_MAX_TOTAL_EVENTS);
+    this.unbounded = options.unbounded ?? false;
+  }
+
+  setUnbounded(unbounded: boolean): void {
+    if (this.unbounded === unbounded) return;
+    this.unbounded = unbounded;
+    if (unbounded) return;
+    for (const state of this.states.values()) this.enforceTerminalLimits(state);
+    this.enforceGlobalLimits();
   }
 
   append(event: TerminalOutputEvent): void {
@@ -73,7 +84,10 @@ export class TerminalReplayBuffer {
     state.lastSeq = event.seq;
 
     const bytes = Buffer.byteLength(event.data, "utf8");
-    if (bytes > this.maxBytesPerTerminal || bytes > this.maxTotalBytes) {
+    if (
+      !this.unbounded
+      && (bytes > this.maxBytesPerTerminal || bytes > this.maxTotalBytes)
+    ) {
       state.truncated = true;
       return;
     }
@@ -84,17 +98,26 @@ export class TerminalReplayBuffer {
     this.totalBytes += bytes;
     this.globalOrder.add(chunk);
 
+    if (this.unbounded) return;
+    this.enforceTerminalLimits(state);
+    this.enforceGlobalLimits();
+  }
+
+  private enforceTerminalLimits(state: ReplayState): void {
     while (
-      state.bytes > this.maxBytesPerTerminal ||
-      state.chunks.size > this.maxEventsPerTerminal
+      state.bytes > this.maxBytesPerTerminal
+      || state.chunks.size > this.maxEventsPerTerminal
     ) {
       const oldest = firstOf(state.chunks);
       if (!oldest) break;
       this.evictChunk(state, oldest);
     }
+  }
+
+  private enforceGlobalLimits(): void {
     while (
-      this.totalBytes > this.maxTotalBytes ||
-      this.globalOrder.size > this.maxTotalEvents
+      this.totalBytes > this.maxTotalBytes
+      || this.globalOrder.size > this.maxTotalEvents
     ) {
       const oldest = firstOf(this.globalOrder);
       if (!oldest) break;

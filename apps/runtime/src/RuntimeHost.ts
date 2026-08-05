@@ -113,6 +113,14 @@ export class RuntimeHost {
         const input = params as { terminalId: string; afterSeq?: number };
         return this.replayBuffer.snapshot(input.terminalId, input.afterSeq);
       }
+      case 'setReplayUnbounded': {
+        const input = params as { unbounded?: unknown };
+        if (typeof input.unbounded !== 'boolean') {
+          throw new Error('Invalid replay retention setting');
+        }
+        this.replayBuffer.setUnbounded(input.unbounded);
+        return true;
+      }
       case 'write': {
         const input = params as { terminalId: string; data: string };
         const terminal = this.terminals.get(input.terminalId);

@@ -60,6 +60,10 @@ export class RuntimeClient extends EventEmitter {
     return this.request('replay', { terminalId, afterSeq });
   }
 
+  setReplayUnbounded(unbounded: boolean): Promise<true> {
+    return this.request('setReplayUnbounded', { unbounded });
+  }
+
   write(terminalId: string, data: string): Promise<true> {
     return this.request('write', { terminalId, data });
   }

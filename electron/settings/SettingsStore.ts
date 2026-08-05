@@ -240,6 +240,10 @@ function parseSettings(
       confirmDeleteTabs: pickBoolean(
         terminal['confirmDeleteTabs'],
         DEFAULT_SETTINGS.terminal.confirmDeleteTabs
+      ),
+      keepFullHistory: pickBoolean(
+        terminal['keepFullHistory'],
+        DEFAULT_SETTINGS.terminal.keepFullHistory
       )
     },
     diff: {
@@ -434,6 +438,9 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   }
   if (typeof s.terminal.confirmDeleteTabs !== 'boolean') {
     throw new Error('Invalid terminal.confirmDeleteTabs');
+  }
+  if (typeof s.terminal.keepFullHistory !== 'boolean') {
+    throw new Error('Invalid terminal.keepFullHistory');
   }
   if (!VALID_DIFF_FONT_SIZES.has(s.diff.fontSize)) {
     throw new Error(`Invalid diff.fontSize: ${s.diff.fontSize}`);

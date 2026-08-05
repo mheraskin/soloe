@@ -11,6 +11,9 @@ export interface SettingsAppearance {
 export interface SettingsTerminal {
   fontSize: TerminalFontSizePref;
   confirmDeleteTabs: boolean;
+  // Opt-in because both the Runtime replay buffer and xterm scrollback may
+  // grow for as long as a terminal remains alive.
+  keepFullHistory: boolean;
 }
 
 export interface SettingsDiff {
@@ -179,7 +182,7 @@ export const DEFAULT_SETTINGS: Settings = {
     wslRepositoryRoot: ''
   },
   appearance: { theme: 'dark' },
-  terminal: { fontSize: 13, confirmDeleteTabs: true },
+  terminal: { fontSize: 13, confirmDeleteTabs: true, keepFullHistory: false },
   diff: { fontSize: 13 },
   browser: {
     maxResidentTabs: 2,

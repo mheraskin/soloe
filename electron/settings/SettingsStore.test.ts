@@ -119,6 +119,13 @@ describe('SettingsStore — update', () => {
     expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
   });
 
+  it('merges terminal history retention updates', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({ terminal: { keepFullHistory: true } });
+    expect(updated.terminal.keepFullHistory).toBe(true);
+    expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
+  });
+
   it('merges and validates browser residency updates', async () => {
     const store = new SettingsStore(storePath);
     const updated = await store.update({ browser: { maxResidentTabs: 2 } });
@@ -185,6 +192,13 @@ describe('SettingsStore — update', () => {
     ).rejects.toThrow(/Invalid terminal\.confirmDeleteTabs/);
   });
 
+  it('rejects invalid terminal history retention values', async () => {
+    const store = new SettingsStore(storePath);
+    await expect(
+      store.update({ terminal: { keepFullHistory: 'yes' as never } })
+    ).rejects.toThrow(/Invalid terminal\.keepFullHistory/);
+  });
+
   it('rejects invalid default new session kind', async () => {
     const store = new SettingsStore(storePath);
     await expect(
@@ -224,6 +238,7 @@ describe('SettingsStore — migration', () => {
     expect('fontSize' in s.appearance).toBe(false);
     expect(s.terminal.fontSize).toBe(13);
     expect(s.terminal.confirmDeleteTabs).toBe(true);
+    expect(s.terminal.keepFullHistory).toBe(false);
     expect(s.defaults.newSessionKind).toBe('terminal');
     expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
     expect(s.backend).toEqual(DEFAULT_SETTINGS.backend);

@@ -87,6 +87,7 @@ interface AppServices {
   git: GitService;
   files: WorktreeFileIndex;
   releaseFileIndexGitChanges: () => void;
+  releaseTerminalHistorySettings: () => void;
   diagnostics: DiagnosticsService;
   sessionsIpc: SessionsIpc;
   terminalIpc: TerminalIpc;
@@ -355,6 +356,12 @@ async function setupServices(): Promise<AppServices> {
     getBinaries,
     processFactory: runtimeProcessFactory
   });
+  await manager.setKeepFullHistory((await settings.get()).terminal.keepFullHistory);
+  const releaseTerminalHistorySettings = settings.onChange((next) => {
+    void manager?.setKeepFullHistory(next.terminal.keepFullHistory).catch((error) => {
+      console.warn('[terminal] failed to update Runtime history retention', error);
+    });
+  });
   await manager.rehydrate();
   const terminalIpc = new TerminalIpc({
     pty: manager,
@@ -516,6 +523,7 @@ async function setupServices(): Promise<AppServices> {
     git,
     files,
     releaseFileIndexGitChanges,
+    releaseTerminalHistorySettings,
     diagnostics,
     sessionsIpc,
     terminalIpc,
@@ -732,6 +740,7 @@ async function cleanup(): Promise<void> {
     services.browserIpc.dispose();
     services.browserSessionsIpc.dispose();
     services.releaseFileIndexGitChanges();
+    services.releaseTerminalHistorySettings();
     services.git.dispose();
     await services.pty.dispose();
     await services.runtime.dispose();

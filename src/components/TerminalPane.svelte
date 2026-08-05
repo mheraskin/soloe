@@ -54,6 +54,9 @@
   } = $props();
 
   let fontSize = $derived(settings.current.terminal.fontSize);
+  let terminalScrollback = $derived(
+    settings.current.terminal.keepFullHistory ? 4_294_967_295 : 5000
+  );
   let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   let terminalFontSize = $derived(fontSize);
 
@@ -430,6 +433,7 @@
   $effect(() => {
     if (!host) return;
     const initFontSize = untrack(() => terminalFontSize);
+    const initScrollback = untrack(() => terminalScrollback);
     const t = new Terminal({
       fontFamily: 'JetBrains Mono, Cascadia Code, ui-monospace, monospace',
       fontSize: initFontSize,
@@ -478,7 +482,7 @@
         brightWhite: '#e6e6e6'
       },
       allowProposedApi: true,
-      scrollback: 5000,
+      scrollback: initScrollback,
       convertEol: false
     });
     const f = new FitAddon();
@@ -661,6 +665,13 @@
   $effect(() => {
     const nextVisible = visible;
     untrack(() => outputPresentation?.setVisible(nextVisible));
+  });
+
+  $effect(() => {
+    const scrollback = terminalScrollback;
+    untrack(() => {
+      if (term) term.options.scrollback = scrollback;
+    });
   });
 
   // Only the focused pane owns app-wide terminal commands and document input

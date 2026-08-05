@@ -132,6 +132,11 @@ export class PtyManager extends EventEmitter {
     return this.replayBuffer.snapshot(terminalId, afterSeq);
   }
 
+  async setKeepFullHistory(enabled: boolean): Promise<void> {
+    this.replayBuffer.setUnbounded(enabled);
+    await this.processFactory.setReplayUnbounded?.(enabled);
+  }
+
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
     if (this.disposed) throw new Error('PtyManager disposed');
     const { sessionId } = options;

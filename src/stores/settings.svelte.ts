@@ -99,8 +99,13 @@ export class SettingsStore {
 function withSettingsDefaults(settings: Settings): Settings {
   const browser = settings.browser ?? {};
   const shortcuts = settings.shortcuts ?? {};
+  const terminal = settings.terminal ?? {};
   return {
     ...settings,
+    terminal: {
+      ...DEFAULT_SETTINGS.terminal,
+      ...terminal
+    },
     browser: {
       ...DEFAULT_SETTINGS.browser,
       ...browser
