@@ -49,18 +49,46 @@ export interface InspectorPosition {
   height: number;
 }
 
-export function normalizeSourcePath(filePath: string | null | undefined, projectRoot: string): string | null {
+export interface ResolvedSourcePath {
+  filePath: string;
+  worktreeRoot: string;
+}
+
+export interface ResolvedSourceFrame {
+  frame: ElementSourceFrame;
+  worktreeRoot: string;
+}
+
+export function resolveSourcePath(
+  filePath: string | null | undefined,
+  projectRoot: string,
+  worktreeRoots: readonly string[] = []
+): ResolvedSourcePath | null {
   if (!filePath || !projectRoot) return null;
   const raw = filePath.trim().replaceAll('\\', '/').replace(/^\.\/+/, '');
   if (!raw || raw.includes('\0') || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(raw)) return null;
 
   const root = normalizeAbsoluteRoot(projectRoot);
+  const knownRootByNormalized = new Map<string, string>();
+  for (const candidate of [projectRoot, ...worktreeRoots]) {
+    const normalized = normalizeAbsoluteRoot(candidate);
+    if (normalized && !knownRootByNormalized.has(normalized)) {
+      knownRootByNormalized.set(normalized, candidate.trim());
+    }
+  }
+  const knownRoots = Array.from(knownRootByNormalized)
+    .sort(([a], [b]) => b.length - a.length);
   let relative = raw;
+  let worktreeRoot = projectRoot.trim();
   if (isAbsolutePath(raw)) {
     if (!root) return null;
     const absolute = normalizeAbsoluteRoot(raw);
-    if (absolute === root || absolute.startsWith(`${root}/`)) {
-      relative = absolute.slice(root.length).replace(/^\/+/, '');
+    const matchedRoot = knownRoots.find(
+      ([candidate]) => pathEqualsOrContains(absolute, candidate)
+    );
+    if (matchedRoot) {
+      worktreeRoot = matchedRoot[1];
+      relative = absolute.slice(matchedRoot[0].length).replace(/^\/+/, '');
     } else if (absolute.startsWith('/workspace/') && !root.startsWith('/workspace/')) {
       relative = absolute.slice('/workspace/'.length);
     } else {
@@ -71,21 +99,41 @@ export function normalizeSourcePath(filePath: string | null | undefined, project
   const parts = relative.split('/');
   if (parts.length === 0 || parts.some((part) => !part || part === '.' || part === '..')) return null;
   if (parts.some((part) => part.includes('\0'))) return null;
-  return parts.join('/');
+  return { filePath: parts.join('/'), worktreeRoot };
+}
+
+export function normalizeSourcePath(
+  filePath: string | null | undefined,
+  projectRoot: string,
+  worktreeRoots: readonly string[] = []
+): string | null {
+  return resolveSourcePath(filePath, projectRoot, worktreeRoots)?.filePath ?? null;
 }
 
 export function normalizeSourceFrame(
   frame: ElementSourceFrame | null | undefined,
-  projectRoot: string
+  projectRoot: string,
+  worktreeRoots: readonly string[] = []
 ): ElementSourceFrame | null {
+  return resolveSourceFrame(frame, projectRoot, worktreeRoots)?.frame ?? null;
+}
+
+export function resolveSourceFrame(
+  frame: ElementSourceFrame | null | undefined,
+  projectRoot: string,
+  worktreeRoots: readonly string[] = []
+): ResolvedSourceFrame | null {
   if (!frame) return null;
-  const filePath = normalizeSourcePath(frame.filePath, projectRoot);
-  if (!filePath) return null;
+  const resolution = resolveSourcePath(frame.filePath, projectRoot, worktreeRoots);
+  if (!resolution) return null;
   return {
-    filePath,
-    lineNumber: finitePositiveInteger(frame.lineNumber),
-    columnNumber: finitePositiveInteger(frame.columnNumber),
-    componentName: cleanLabel(frame.componentName)
+    frame: {
+      filePath: resolution.filePath,
+      lineNumber: finitePositiveInteger(frame.lineNumber),
+      columnNumber: finitePositiveInteger(frame.columnNumber),
+      componentName: cleanLabel(frame.componentName)
+    },
+    worktreeRoot: resolution.worktreeRoot
   };
 }
 
@@ -165,6 +213,13 @@ function normalizeAbsoluteRoot(value: string): string {
 
 function isAbsolutePath(value: string): boolean {
   return value.startsWith('/') || /^[A-Za-z]:\//.test(value);
+}
+
+function pathEqualsOrContains(absolutePath: string, root: string): boolean {
+  const caseInsensitive = /^[A-Za-z]:\//.test(root);
+  const candidate = caseInsensitive ? absolutePath.toLowerCase() : absolutePath;
+  const normalizedRoot = caseInsensitive ? root.toLowerCase() : root;
+  return candidate === normalizedRoot || candidate.startsWith(`${normalizedRoot}/`);
 }
 
 function finitePositiveInteger(value: number | null | undefined): number | null {

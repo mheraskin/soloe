@@ -69,6 +69,48 @@ describe('Element Source Inspector state', () => {
     expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/OtherLink.svelte');
   });
 
+  it('opens source from a registered temporary Worktree', () => {
+    const temporaryRoot = '/tmp/app-feature.A1b2C3';
+    elementSourceInspector.registerContext({
+      ...context,
+      worktreeRoots: [context.cwd, temporaryRoot]
+    });
+    elementSourceInspector.setMode('scope-1', 'tab-1', true);
+    elementSourceInspector.receive('scope-1', 'tab-1', {
+      kind: 'select',
+      source: {
+        filePath: `${temporaryRoot}/src/Child.svelte`,
+        lineNumber: 14,
+        columnNumber: 1,
+        componentName: 'Child'
+      }
+    }, null);
+
+    expect(elementSourceInspector.transient?.cwd).toBe(temporaryRoot);
+    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Child.svelte');
+  });
+
+  it('uses the registered Worktree from a stack-only source result', () => {
+    const temporaryRoot = '/tmp/app-stack.A1b2C3';
+    elementSourceInspector.registerContext({
+      ...context,
+      worktreeRoots: [context.cwd, temporaryRoot]
+    });
+    elementSourceInspector.setMode('scope-1', 'tab-1', true);
+    elementSourceInspector.receive('scope-1', 'tab-1', {
+      kind: 'select',
+      stack: [{
+        filePath: `${temporaryRoot}/src/Parent.svelte`,
+        lineNumber: 28,
+        columnNumber: 3,
+        componentName: 'Parent'
+      }]
+    }, null);
+
+    expect(elementSourceInspector.transient?.cwd).toBe(temporaryRoot);
+    expect(elementSourceInspector.transient?.history[0]?.frame?.filePath).toBe('src/Parent.svelte');
+  });
+
   it('keeps pinned viewers while replacing the transient viewer', () => {
     elementSourceInspector.registerContext(context);
     elementSourceInspector.setMode('scope-1', 'tab-1', true);

@@ -24,6 +24,14 @@ describe('element source inspector helpers', () => {
     )).toBe('frontend/dashboard/src/routes/+page.svelte');
   });
 
+  it('resolves absolute source paths from another registered Worktree', () => {
+    expect(normalizeSourcePath(
+      '/tmp/order-ahead-feature.A1b2C3/frontend/dashboard/src/routes/+page.svelte',
+      '/home/user/projects/order-ahead',
+      ['/home/user/projects/order-ahead', '/tmp/order-ahead-feature.A1b2C3']
+    )).toBe('frontend/dashboard/src/routes/+page.svelte');
+  });
+
   it('normalizes source locations without inventing missing positions', () => {
     const frame = normalizeSourceFrame({
       filePath: 'src/Button.svelte',

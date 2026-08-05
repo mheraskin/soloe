@@ -21,6 +21,8 @@
     ScanLine
   } from '@lucide/svelte';
   import { browserStore, type BrowserTabDevice } from '../../stores/browser.svelte';
+  import { git } from '../../stores/git.svelte';
+  import { projects } from '../../stores/projects.svelte';
   import { sessions } from '../../stores/sessions.svelte';
   import { elementSourceInspector } from '../../stores/element-source-inspector.svelte';
   import { findPreset } from '../../lib/browser-devices';
@@ -120,6 +122,10 @@
   function inspectorContext(tabId: string, pageUrl = activeUrl) {
     const session = sessions.selected;
     if (!session) return null;
+    const project = session.projectId ? projects.get(session.projectId) : null;
+    const inventoryRoot = project?.path ?? session.cwd;
+    const worktreeRoots = git.worktreesFor(inventoryRoot, session)?.map((worktree) => worktree.path)
+      ?? [session.cwd];
     return {
       tabId,
       scopeKey: browserStore.activeWorktreeKey,
@@ -127,6 +133,7 @@
       runMode: session.runMode,
       ...(session.wslDistro ? { wslDistro: session.wslDistro } : {}),
       projectRoot: session.cwd,
+      worktreeRoots,
       pageUrl
     };
   }

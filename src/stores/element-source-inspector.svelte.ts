@@ -4,6 +4,7 @@ import {
   formatElementLabel,
   normalizeSourceFrame,
   placeInspectorViewer,
+  resolveSourceFrame,
   type ElementSourceFrame,
   type ElementSourcePayload,
   type HostRect,
@@ -18,6 +19,7 @@ export interface InspectorTabContext {
   runMode: RunMode;
   wslDistro?: string;
   projectRoot: string;
+  worktreeRoots?: readonly string[];
   pageUrl: string;
 }
 
@@ -289,10 +291,21 @@ export class ElementSourceInspectorStore {
     const context = this.contexts.get(this.contextKey(scopeKey, tabId));
     if (!context) return;
     this.cancelTransientClose();
-    const source = normalizeSourceFrame(payload.source, context.projectRoot);
-    const stack = (payload.stack ?? [])
-      .map((frame) => normalizeSourceFrame(frame, context.projectRoot))
-      .filter((frame): frame is ElementSourceFrame => frame !== null);
+    const sourceResolution = resolveSourceFrame(
+      payload.source,
+      context.projectRoot,
+      context.worktreeRoots
+    );
+    const source = sourceResolution?.frame ?? null;
+    const normalizedStack = (payload.stack ?? []).flatMap((candidate) => {
+      const resolution = resolveSourceFrame(
+        candidate,
+        context.projectRoot,
+        context.worktreeRoots
+      );
+      return resolution ? [resolution] : [];
+    });
+    const stack = normalizedStack.map((entry) => entry.frame);
     const frames = source && !stack.some((frame) => sameFrame(frame, source))
       ? [source, ...stack]
       : stack;
@@ -300,6 +313,9 @@ export class ElementSourceInspectorStore {
     // component's render helper (for example, `{@render children?.()}`)
     // never replaces the highlighted element as the first preview.
     const initialFrame = source ?? frames[0] ?? null;
+    const sourceWorktreeRoot = sourceResolution?.worktreeRoot
+      ?? normalizedStack[0]?.worktreeRoot
+      ?? context.cwd;
     const initialHistory: SourceHistoryEntry[] = [{
       frame: initialFrame,
       componentName: initialFrame?.componentName ?? cleanName(payload.componentName),
@@ -315,6 +331,8 @@ export class ElementSourceInspectorStore {
     if (existing && sameViewerTarget(existing, context, initialFrame, payload)) {
       this.transient = {
         ...existing,
+        cwd: sourceWorktreeRoot,
+        projectRoot: sourceWorktreeRoot,
         targetRect,
         position,
         stack: frames,
@@ -328,10 +346,10 @@ export class ElementSourceInspectorStore {
       id,
       tabId,
       scopeKey,
-      cwd: context.cwd,
+      cwd: sourceWorktreeRoot,
       runMode: context.runMode,
       ...(context.wslDistro ? { wslDistro: context.wslDistro } : {}),
-      projectRoot: context.projectRoot,
+      projectRoot: sourceWorktreeRoot,
       pinned: false,
       tagName: payload.tagName?.toLowerCase() ?? 'element',
       label: formatElementLabel(payload),
