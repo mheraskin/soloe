@@ -71,7 +71,6 @@
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
   import { attachMobileViewport } from './lib/mobile-viewport';
   import { changePageZoom } from './lib/page-zoom';
-  import { shouldPassCtrlSlashToTerminal } from './lib/terminal-input';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -1161,7 +1160,6 @@
     if (commandPalette.isOpen || filePalette.open) return;
     if (
       Keymap.splitTerminal.match(e)
-      && !(isTerminalKeyTarget(e) && shouldPassCtrlSlashToTerminal(e))
       && (!shouldIgnoreInTextInput(e) || isTerminalKeyTarget(e))
     ) {
       consume(e);

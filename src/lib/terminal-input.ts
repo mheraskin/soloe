@@ -1,5 +1,6 @@
 export const SHIFT_ENTER_SEQUENCE = '\x1b[13;2u';
 export const AGENT_IMAGE_PASTE_SEQUENCE = '\x16';
+export const CTRL_SLASH_SEQUENCE = '\x1f';
 
 type KeyboardLike = Pick<
   KeyboardEvent,
@@ -30,10 +31,15 @@ export function shouldSendShiftEnterSequence(event: KeyboardLike): boolean {
   );
 }
 
-export function shouldPassCtrlSlashToTerminal(event: KeyboardLike): boolean {
-  // Match the physical key so Ctrl+/ remains terminal-owned on layouts that
-  // require Shift and report the resulting character as either "/" or "?".
-  return event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'Slash';
+export function ctrlSlashSequence(event: KeyboardLike): string | null {
+  // xterm 5.5 does not translate Ctrl+/ itself. Prefer the physical Slash key,
+  // but also match the produced character because many layouts place "/" on
+  // another physical key (for example Shift+7). Emit Ctrl+_ (US, 0x1f), the
+  // control character terminal applications expect from Ctrl+/.
+  const isSlash = event.code === 'Slash' || event.key === '/';
+  return event.ctrlKey && !event.metaKey && !event.altKey && isSlash
+    ? CTRL_SLASH_SEQUENCE
+    : null;
 }
 
 // Sequences emitted for Alt-modified word edit/navigation. Caller must have

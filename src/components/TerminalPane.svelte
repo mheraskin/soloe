@@ -29,10 +29,10 @@
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import {
     AGENT_IMAGE_PASTE_SEQUENCE,
+    ctrlSlashSequence,
     isClipboardPasteShortcut,
     SHIFT_ENTER_SEQUENCE,
     shouldPasteImageViaSavedPath,
-    shouldPassCtrlSlashToTerminal,
     shouldSendShiftEnterSequence
   } from '../lib/terminal-input';
   import { deferTerminalDispose, TerminalFitController } from '../lib/terminal-fit';
@@ -500,7 +500,12 @@
 
     t.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
-      if (shouldPassCtrlSlashToTerminal(e)) return true;
+      const ctrlSlash = ctrlSlashSequence(e);
+      if (ctrlSlash !== null) {
+        e.preventDefault();
+        void ipc.terminal.input(terminalId, ctrlSlash).catch(() => {});
+        return false;
+      }
 
       if (tabIndexFromEvent(e) !== null) return false;
       if (shiftNumberIndexFromEvent(e) !== null) return false;

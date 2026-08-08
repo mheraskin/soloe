@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   AGENT_IMAGE_PASTE_SEQUENCE,
+  CTRL_SLASH_SEQUENCE,
   altWordEditSequence,
+  ctrlSlashSequence,
   isClipboardPasteShortcut,
   SHIFT_ENTER_SEQUENCE,
   shouldPasteImageViaSavedPath,
-  shouldPassCtrlSlashToTerminal,
   shouldSendShiftEnterSequence
 } from './terminal-input';
 import { Keymap } from './keymap';
@@ -34,29 +35,29 @@ describe('terminal input helpers', () => {
     expect(shouldSendShiftEnterSequence(key({ key: 'Enter', shiftKey: true, ctrlKey: true }))).toBe(false);
   });
 
-  it('leaves physical Ctrl+/ exclusively owned by the terminal', () => {
+  it('maps Ctrl+/ across keyboard layouts without invoking terminal split', () => {
     const ctrlSlash = key({
       code: 'Slash',
       ctrlKey: true,
       key: '/'
     });
     const layoutShiftedCtrlSlash = key({
-      code: 'Slash',
+      code: 'Digit7',
       ctrlKey: true,
-      key: '?',
+      key: '/',
       shiftKey: true
     });
 
     expect(Keymap.splitTerminal.match(ctrlSlash)).toBe(false);
-    expect(shouldPassCtrlSlashToTerminal(ctrlSlash)).toBe(true);
+    expect(ctrlSlashSequence(ctrlSlash)).toBe(CTRL_SLASH_SEQUENCE);
     expect(Keymap.splitTerminal.match(layoutShiftedCtrlSlash)).toBe(false);
-    expect(shouldPassCtrlSlashToTerminal(layoutShiftedCtrlSlash)).toBe(true);
-    expect(shouldPassCtrlSlashToTerminal(key({
+    expect(ctrlSlashSequence(layoutShiftedCtrlSlash)).toBe(CTRL_SLASH_SEQUENCE);
+    expect(ctrlSlashSequence(key({
       code: 'Backslash',
       ctrlKey: true,
       key: '|',
       shiftKey: true
-    }))).toBe(false);
+    }))).toBeNull();
   });
 
   it('uses Ctrl+Shift+Backslash for splitting the terminal', () => {
