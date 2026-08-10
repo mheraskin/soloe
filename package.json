@@ -1,9 +1,10 @@
 {
   "name": "soloe",
   "version": "0.1.0",
-  "description": "Manage Claude Code, Codex CLI, and standard terminal sessions in one local desktop app",
-  "license": "Apache-2.0",
+  "description": "Local-first agent development environment for solo developers using CLI agents",
+  "license": "MIT",
   "author": "Mykhail Heraskin",
+  "desktopName": "com.soloe.app.desktop",
   "homepage": "https://github.com/mheraskin/soloe",
   "repository": {
     "type": "git",

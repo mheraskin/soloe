@@ -37,6 +37,7 @@ linux:
   icon: build/icon.png
   category: Development
   executableName: soloe
+  syncDesktopName: true
   target:
     - target: AppImage
       arch:
