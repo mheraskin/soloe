@@ -45,7 +45,9 @@ export declare interface AgentObserverManager {
 export class AgentObserverManager extends EventEmitter {
   private readonly snapshots = new Map<string, ObservedAgentSnapshot>();
   private readonly eventsBySubject = new Map<string, ObserverEvent[]>();
+  private readonly eventOrder = new WeakMap<ObserverEvent, number>();
   private readonly maxEventsPerSubject: number;
+  private nextEventOrder = 0;
 
   constructor(opts: AgentObserverManagerOptions = {}) {
     super();
@@ -54,6 +56,7 @@ export class AgentObserverManager extends EventEmitter {
       this.snapshots.set(snapshot.id, snapshot);
     }
     for (const event of opts.initialEvents ?? []) {
+      this.eventOrder.set(event, this.nextEventOrder++);
       const list = this.eventsBySubject.get(event.subjectId) ?? [];
       list.push(event);
       this.eventsBySubject.set(event.subjectId, list);
@@ -285,6 +288,7 @@ export class AgentObserverManager extends EventEmitter {
       detail: input.detail,
       ...(autoApprovesPermissions === undefined ? {} : { autoApprovesPermissions })
     };
+    this.eventOrder.set(event, this.nextEventOrder++);
     const list = this.eventsBySubject.get(input.subjectId) ?? [];
     list.push(event);
     if (list.length > this.maxEventsPerSubject) {
@@ -323,7 +327,10 @@ export class AgentObserverManager extends EventEmitter {
     const events = subjectId
       ? [...(this.eventsBySubject.get(subjectId) ?? [])]
       : [...this.eventsBySubject.values()].flat();
-    const sorted = events.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const sorted = events.sort((a, b) =>
+      b.timestamp.localeCompare(a.timestamp)
+      || (this.eventOrder.get(b) ?? 0) - (this.eventOrder.get(a) ?? 0)
+    );
     return typeof limit === 'number' ? sorted.slice(0, Math.max(0, limit)) : sorted;
   }
 

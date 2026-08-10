@@ -100,6 +100,34 @@ describe('AgentObserverManager', () => {
     expect(event.autoApprovesPermissions).toBe(true);
   });
 
+  it('lists the latest event first when timestamps match', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const observer = new AgentObserverManager();
+
+      observer.appendEvent({
+        subjectId: session.id,
+        subjectKind: 'session',
+        state: 'waiting_for_approval',
+        summary: 'waiting for approval'
+      });
+      observer.appendEvent({
+        subjectId: session.id,
+        subjectKind: 'session',
+        state: 'running_tool',
+        summary: 'running tool'
+      });
+
+      expect(observer.listEvents(session.id).map((event) => event.state)).toEqual([
+        'running_tool',
+        'waiting_for_approval'
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('publishes one semantic commit for a mutation that emits event and snapshot', () => {
     const observer = new AgentObserverManager();
     const commits = vi.fn();
