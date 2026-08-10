@@ -3,7 +3,10 @@ name: release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch: {}
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -13,29 +16,29 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-            command: npm run package:windows
+            command: pnpm package:windows
             files: |
               release/*.exe
-              release/*.yml
-              release/*.blockmap
           - os: ubuntu-latest
             platform: linux
-            command: npm run package:linux
+            command: pnpm package:linux
             files: |
               release/*.AppImage
               release/*.deb
-              release/*.yml
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v5
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Package ${{ matrix.platform }} build
         run: ${{ matrix.command }}
@@ -61,7 +64,11 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Publish GitHub Release
+      - name: Generate SHA-256 checksums
+        working-directory: release
+        run: sha256sum * > SHA256SUMS.txt
+
+      - name: Publish GitHub pre-release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
