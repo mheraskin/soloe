@@ -17,7 +17,7 @@ import type { UsageLimitInfo } from './UsageLimitDetector.js';
 export interface AgentHookDispatcherOptions {
   observer: AgentObserverManager;
   sessionStore: SessionStore;
-  autoRename?: AutoRenameService;
+  autoRename?: Pick<AutoRenameService, 'maybeRename'>;
   onSessionChange?: (session: Session) => void;
   onLocation?: (sessionId: SessionId, cwd: string) => void | Promise<void>;
   autoApprovesPermissions?: (session: Session) => boolean | Promise<boolean>;
