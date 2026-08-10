@@ -69,6 +69,7 @@ import {
   isBrowserRestoreTabInput
 } from './browser-shortcuts.js';
 import { ModelCatalogService } from './agents/ModelCatalogService.js';
+import { assertSafeExternalUrl } from './security/external-url.js';
 
 interface AppServices {
   store: SessionStore;
@@ -683,7 +684,11 @@ async function createWindow(): Promise<BrowserWindow> {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    try {
+      void shell.openExternal(assertSafeExternalUrl(url));
+    } catch {
+      // Keep untrusted or unsupported protocols inside Electron's deny path.
+    }
     return { action: 'deny' };
   });
 

@@ -9,6 +9,7 @@ import { ResourceUsageObservation } from '../diagnostics/ResourceUsageObservatio
 import { WslUsageSampler } from '../diagnostics/WslUsageSampler.js';
 import { platformInfo } from '@shared/platform.js';
 import { ipcInvoke } from './result.js';
+import { assertSafeExternalUrl } from '../security/external-url.js';
 
 export interface SystemIpcOptions {
   store: SessionStore;
@@ -69,7 +70,7 @@ export class SystemIpc {
 
     ipcMain.handle(IpcChannels.system.openExternal, (_e, url: string) =>
       ipcInvoke(async () => {
-        await shell.openExternal(url);
+        await shell.openExternal(assertSafeExternalUrl(url));
         return true as const;
       })
     );
