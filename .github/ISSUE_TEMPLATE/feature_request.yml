@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a focused improvement to Soloe's solo-developer workflow
+title: 'feat: '
+labels: ['needs-triage']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What developer workflow is difficult today, and who encounters it?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result without prescribing an implementation when possible
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or examples
+      description: Include platform, worktree/session scale, and existing workaround
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Trade-offs and risks
+      description: Note security, privacy, compatibility, or complexity concerns
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched the roadmap and existing issues
+          required: true

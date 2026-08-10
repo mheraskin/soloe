@@ -5,7 +5,7 @@ export interface WslDistroInfo {
   distro: string;
   /** Home directory as a Windows-reachable UNC path, e.g. \\wsl.localhost\Ubuntu\home\mhera */
   homeUnc: string | null;
-  /** Linux-side home path, e.g. /home/user */
+  /** Linux-side home path, e.g. /home/alice */
   homeLinux: string | null;
   available: boolean;
   reason?: string;

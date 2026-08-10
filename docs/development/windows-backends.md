@@ -46,7 +46,7 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 Prepare the Windows checkout:
 
 ```powershell
-Set-Location D:\projects\soloe-win-2
+Set-Location D:\projects\soloe
 corepack enable
 corepack prepare pnpm@10.34.5 --activate
 pnpm install
@@ -59,10 +59,10 @@ dependencies. Do not install them from WSL into this checkout.
 
 Skip this section for a Windows backend.
 
-The current Ubuntu development checkout is:
+An example Ubuntu development checkout is:
 
 ```text
-/home/user/projects/soloe-2
+/home/your-user/projects/soloe
 ```
 
 Inside Ubuntu, install Node.js 22 or newer, Corepack/PNPM, and Git. Rust and
@@ -77,7 +77,7 @@ wsl --distribution Ubuntu -- bash -lc 'node --version && pnpm --version && git -
 Install the Linux-native dependencies once:
 
 ```powershell
-wsl --distribution Ubuntu -- bash -lc 'cd /home/user/projects/soloe-2 && pnpm install'
+wsl --distribution Ubuntu -- bash -lc 'cd /home/your-user/projects/soloe && pnpm install'
 ```
 
 Windows and WSL must not share `node_modules`; `node-pty` is
@@ -88,14 +88,14 @@ platform-specific.
 For Ubuntu WSL:
 
 ```powershell
-Set-Location D:\projects\soloe-win-2
-pnpm configure:backend -- --placement wsl --distro Ubuntu --root /home/user/projects/soloe-2
+Set-Location D:\projects\soloe
+pnpm configure:backend -- --placement wsl --distro Ubuntu --root /home/your-user/projects/soloe
 ```
 
 For native Windows:
 
 ```powershell
-Set-Location D:\projects\soloe-win-2
+Set-Location D:\projects\soloe
 pnpm configure:backend -- --placement windows
 ```
 
@@ -108,7 +108,7 @@ Server in the newly selected placement.
 From the Windows checkout:
 
 ```powershell
-Set-Location D:\projects\soloe-win-2
+Set-Location D:\projects\soloe
 pnpm dev
 ```
 

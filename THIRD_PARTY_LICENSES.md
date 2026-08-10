@@ -69,7 +69,7 @@ The full MIT license text ships with `node_modules/element-source/LICENSE`.
 
 ---
 
-The Apache 2.0 license requires preserving the NOTICE text above whenever
-Soloe is redistributed. Other dependencies of Soloe carry their own license
-terms; this file only enumerates components that require notice-preservation
-or whose terms differ meaningfully from Soloe's own license.
+The Apache 2.0 terms for `@pierre/trees` require preserving its NOTICE text
+when that component is redistributed. Soloe's own source is MIT-licensed;
+every dependency retains its own terms. This file enumerates components that
+require notice preservation or whose terms differ meaningfully from Soloe's.
