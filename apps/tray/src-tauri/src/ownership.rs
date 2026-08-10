@@ -21,6 +21,7 @@ impl TrayInstanceGuard {
         let path = data_directory.join("tray.lock");
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)

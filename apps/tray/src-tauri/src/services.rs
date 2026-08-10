@@ -47,17 +47,12 @@ struct StoredSettings {
     backend: BackendSettings,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum BackendPlacement {
+    #[default]
     Windows,
     Wsl,
-}
-
-impl Default for BackendPlacement {
-    fn default() -> Self {
-        Self::Windows
-    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -598,8 +593,7 @@ impl BackendSupervisor {
         if !self.is_running_on("runtime", &backend) {
             return false;
         }
-        self.running_terminal_count()
-            .map_or(true, |count| count > 0)
+        self.running_terminal_count().is_none_or(|count| count > 0)
     }
 
     pub fn open_logs(&self) -> Result<(), String> {
@@ -703,10 +697,10 @@ impl BackendSupervisor {
                 other => return Err(format!("invalid SOLOE_BACKEND_PLACEMENT: {other}")),
             };
         }
-        if let Ok(value) = env::var("SOLOE_WSL_DISTRO") {
-            if !value.trim().is_empty() {
-                backend.wsl_distro = value.trim().to_string();
-            }
+        if let Ok(value) = env::var("SOLOE_WSL_DISTRO")
+            && !value.trim().is_empty()
+        {
+            backend.wsl_distro = value.trim().to_string();
         }
         if let Ok(value) = env::var("SOLOE_WSL_REPO_ROOT") {
             backend.wsl_repository_root = value.trim().to_string();
@@ -989,15 +983,14 @@ impl BackendSupervisor {
     fn stop_wsl_backend(&self, backend: &ActiveBackend) -> Result<(), String> {
         self.stop_lease();
         let mut failures = Vec::new();
-        if let Some(supervisor) = self.read_info("supervisor") {
-            if supervisor.owner_id.as_deref() == Some(self.owner_id.as_str()) {
-                if let Err(error) = self.processes.terminate(supervisor.pid, false, backend) {
-                    eprintln!(
-                        "[tray] graceful WSL supervisor shutdown failed for PID {}: {error}",
-                        supervisor.pid
-                    );
-                }
-            }
+        if let Some(supervisor) = self.read_info("supervisor")
+            && supervisor.owner_id.as_deref() == Some(self.owner_id.as_str())
+            && let Err(error) = self.processes.terminate(supervisor.pid, false, backend)
+        {
+            eprintln!(
+                "[tray] graceful WSL supervisor shutdown failed for PID {}: {error}",
+                supervisor.pid
+            );
         }
 
         let server_stopped = self
@@ -1006,15 +999,11 @@ impl BackendSupervisor {
         let runtime_stopped = self
             .wait_until("runtime", false, WSL_STOP_TIMEOUT, backend)
             .is_ok();
-        if !server_stopped {
-            if let Err(error) = self.stop_service("server", backend) {
-                failures.push(format!("server: {error}"));
-            }
+        if !server_stopped && let Err(error) = self.stop_service("server", backend) {
+            failures.push(format!("server: {error}"));
         }
-        if !runtime_stopped {
-            if let Err(error) = self.stop_service("runtime", backend) {
-                failures.push(format!("runtime: {error}"));
-            }
+        if !runtime_stopped && let Err(error) = self.stop_service("runtime", backend) {
+            failures.push(format!("runtime: {error}"));
         }
         if !self.is_running_on("server", backend) && !self.is_running_on("runtime", backend) {
             self.remove_stale_info("supervisor");
