@@ -23,6 +23,7 @@
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
   import { sendBracketedPaste } from '../../lib/terminal-paste';
+  import { pasteImagesIntoNote } from '../../lib/note-image-paste';
   import { kbdHints } from '../../stores/kbd-hints.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -103,57 +104,16 @@
     }
   }
 
-  function blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(reader.error ?? new Error('Failed to read pasted image'));
-      reader.onload = () => {
-        const result = typeof reader.result === 'string' ? reader.result : '';
-        resolve(result.replace(/^data:[^,]*,/u, ''));
-      };
-      reader.readAsDataURL(blob);
-    });
-  }
-
   async function onTextareaPaste(event: ClipboardEvent): Promise<void> {
-    const data = event.clipboardData;
-    if (!data) return;
-    const files: File[] = [];
-    for (const item of Array.from(data.items)) {
-      if (item.kind !== 'file') continue;
-      if (!item.type.startsWith('image/')) continue;
-      const file = item.getAsFile();
-      if (file) files.push(file);
-    }
-    if (files.length === 0) return;
-    event.preventDefault();
-    const target = event.currentTarget as HTMLTextAreaElement;
-    const start = target.selectionStart;
-    const end = target.selectionEnd;
-    const before = target.value.substring(0, start);
-    const after = target.value.substring(end);
     try {
-      const payloads = await Promise.all(
-        files.map(async (file) => ({
-          mimeType: file.type,
-          dataBase64: await blobToBase64(file)
-        }))
+      await pasteImagesIntoNote(
+        event,
+        (payloads) => notes.pasteImages(payloads),
+        (content) => {
+          if (notes.isDraft) notes.updateDraftContent(content);
+          else notes.updateSavedContent(content);
+        }
       );
-      const saved = await notes.pasteImages(payloads);
-      if (saved.length === 0) return;
-      // Trailing space so the cursor lands ready for the user to keep typing
-      // after the path, without having to space first.
-      const insertedText = saved.map((img) => img.absolutePath).join(' ') + ' ';
-      const newValue = before + insertedText + after;
-      if (notes.isDraft) {
-        notes.updateDraftContent(newValue);
-      } else {
-        notes.updateSavedContent(newValue);
-      }
-      await tick();
-      const cursor = start + insertedText.length;
-      target.setSelectionRange(cursor, cursor);
-      target.focus();
     } catch (err) {
       reportError(err);
     }

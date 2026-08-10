@@ -16,6 +16,7 @@
   import { sessions } from '../stores/sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { sendBracketedPaste } from '../lib/terminal-paste';
+  import { pasteImagesIntoNote } from '../lib/note-image-paste';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -264,6 +265,21 @@
     }
   }
 
+  async function onEditorPaste(event: ClipboardEvent): Promise<void> {
+    try {
+      await pasteImagesIntoNote(
+        event,
+        (payloads) => notes.pasteImages(payloads),
+        (content) => {
+          if (notes.isDraft) notes.updateDraftContent(content);
+          else notes.updateSavedContent(content);
+        }
+      );
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
   function onEditorKeydown(event: KeyboardEvent): void {
     const commandKey = event.metaKey || event.ctrlKey;
     if (!commandKey || event.altKey) return;
@@ -476,6 +492,7 @@
           class="notes-sticky-editor min-h-0 min-w-0 flex-1 resize-none border-0 bg-transparent px-1 py-1.5 font-mono text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-60"
           oninput={onEditorInput}
           onkeydown={onEditorKeydown}
+          onpaste={(event) => void onEditorPaste(event)}
         ></textarea>
 
         <div class="notes-sticky-actions flex min-h-0 min-w-0 shrink-0 gap-1">
