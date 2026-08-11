@@ -58,7 +58,7 @@ jobs:
       contents: write
     steps:
       - name: Download platform artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: soloe-*-${{ github.sha }}
           path: release
