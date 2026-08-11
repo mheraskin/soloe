@@ -15,6 +15,7 @@ import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.
 
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
+const VALID_TERMINAL_PRESENTATIONS = new Set(['xterm', 'libghostty', 'auto']);
 const VALID_DIFF_FONT_SIZES = new Set([11, 12, 13, 14, 15, 16]);
 const VALID_RUN_MODES = new Set(['windows', 'linux', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
@@ -237,6 +238,11 @@ function parseSettings(
     },
     terminal: {
       fontSize: pickTerminalFontSize(terminal['fontSize'] ?? appearance['fontSize']),
+      presentation: pickEnum(
+        terminal['presentation'],
+        VALID_TERMINAL_PRESENTATIONS,
+        DEFAULT_SETTINGS.terminal.presentation
+      ) as Settings['terminal']['presentation'],
       confirmDeleteTabs: pickBoolean(
         terminal['confirmDeleteTabs'],
         DEFAULT_SETTINGS.terminal.confirmDeleteTabs
@@ -435,6 +441,9 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   if (!VALID_THEMES.has(s.appearance.theme)) throw new Error(`Invalid theme: ${s.appearance.theme}`);
   if (!VALID_TERMINAL_FONT_SIZES.has(s.terminal.fontSize)) {
     throw new Error(`Invalid terminal.fontSize: ${s.terminal.fontSize}`);
+  }
+  if (!VALID_TERMINAL_PRESENTATIONS.has(s.terminal.presentation)) {
+    throw new Error(`Invalid terminal.presentation: ${s.terminal.presentation}`);
   }
   if (typeof s.terminal.confirmDeleteTabs !== 'boolean') {
     throw new Error('Invalid terminal.confirmDeleteTabs');

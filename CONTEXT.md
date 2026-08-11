@@ -52,6 +52,21 @@ _Avoid_: Overview inputs, Git summary
 One resident renderer-side terminal emulator for a running Session, independent of the Session's PTY lifetime.
 _Avoid_: Terminal process, terminal tab
 
+**Terminal Presentation Interface**:
+The shell-neutral presentation Seam used by TerminalPane for attachment, output,
+selection, search, clipboard, configuration, focus, bounds, and disposal.
+_Avoid_: xterm wrapper, Tauri terminal API
+
+**Terminal Presentation Adapter**:
+One implementation of the Terminal Presentation Interface, such as the default
+xterm Adapter or an experimental native libghostty Adapter.
+_Avoid_: PTY backend, Environment Runtime Adapter
+
+**Native Terminal Host**:
+The client-shell boundary that owns an optional native terminal surface and
+hides platform, Tauri, Rust, Zig, C, and libghostty details from Svelte.
+_Avoid_: native PTY host, terminal runtime
+
 **Terminal Replay Tail**:
 A bounded, sequence-qualified Environment Runtime output tail used to initialize or resume a Terminal Presentation before live output is admitted.
 _Avoid_: Terminal cache, output backlog
@@ -185,6 +200,8 @@ _Avoid_: Renderer backend, IPC implementation
 - **Notes Draft Durability** keys Worktree-owned state by **Worktree Identity**, keeps the latest in-memory text immediate, coalesces durable writes by immutable note address, flushes on shutdown, and cancels pending writes before discard
 - **Saved Note Recovery** remains restart-safe until the authoritative note write succeeds; navigation never replaces a dirty saved-note buffer after a failed flush
 - A running Session may outlive its **Terminal Presentation**; visible Sessions and a small recent set own the resident presentations
+- Every **Terminal Presentation Adapter** owns presentation behavior only; the **Environment Runtime** remains the exclusive PTY owner
+- A **Native Terminal Host** may fail or disappear without affecting a running Session; TerminalPane reacquires the xterm **Terminal Presentation Adapter** and recovers through the **Terminal Replay Tail**
 - A running Session may outlive every **Application Server** and client; only
   explicit stop intent sent to the **Environment Runtime** ends its PTY
 - Replacing or rebuilding an **Application Server** disconnects transports but

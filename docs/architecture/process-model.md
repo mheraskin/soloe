@@ -10,6 +10,7 @@ separation, not repository separation, provides lifecycle independence.
 | Application Server (`apps/server`) | Domain state, authenticated HTTP/RPC/WebSocket | Yes |
 | Tray Host (`apps/tray`) | Top-level ownership, start/stop, browser/Electron launch | No; exiting the tray stops everything |
 | Electron client (`apps/desktop-electron`) | Native desktop window and renderer presentation | Yes |
+| Tauri client (`apps/desktop-tauri`) | Experimental native desktop window, browser surfaces, and renderer presentation | Yes |
 | Windows Web Host (`apps/web`) | PWA assets, hot reload, authenticated API proxy | Yes while the tray remains |
 
 On Windows, **Backend Placement** selects where the first two processes run:
@@ -54,12 +55,17 @@ proxies `/api` HTTP/WebSocket traffic to the selected backend. Browser bootstrap
 exchanges the tray-generated authenticated URL for an HttpOnly, SameSite cookie.
 The Application Server never guesses an `out/web` directory from its checkout.
 
-Electron and the browser share the Svelte renderer through separate Renderer
-Backend Adapters. When opened by the tray, Electron is a server-backed client:
+Electron, Tauri, and the browser share the Svelte renderer through separate
+Renderer Backend Adapters. When opened by the tray, Electron is a server-backed client:
 its remote preload uses the same HTTP/WebSocket API while retaining only native
 Windows window and embedded-browser controls over local Electron IPC. The
-browser uses the local HTTP/WebSocket API directly. Both replay visible
-terminals after reconnect.
+browser uses the local HTTP/WebSocket API directly. The experimental Tauri
+client loads that authenticated Web Host URL, keeps native window and browser
+surface controls in its shell, and uses the same Application Server transport.
+Its feature-gated Linux Native Terminal Host may also own a GTK presentation
+surface backed by `libghostty-vt`; bytes and resize intent still cross the same
+Renderer Backend Interface, and the Environment Runtime still owns the PTY.
+All three clients replay visible terminals after reconnect.
 
 The Server composes platform-independent domain services; none import Electron
 globals, `BrowserWindow`, `WebContents`, `ipcMain`, or renderer APIs:
@@ -147,8 +153,8 @@ opened only on demand. Its menu has separate dynamic actions for the Soloe
 Server and agent Runtime. Each changes between Start and Stop for the selected
 Windows/WSL placement, and both are disabled while either transition runs.
 Backend Placement remains visible and configurable in Settings. The menu also
-opens the authenticated browser URL, opens Electron, exposes logs, and quits
-Soloe; there are no redundant status rows.
+opens the authenticated browser URL, opens Electron, launches the experimental
+Tauri client, exposes logs, and quits Soloe; there are no redundant status rows.
 
 Every tray launch creates a unique owner identity. Service records include that
 identity, and the tray refuses to kill a process based only on a stale PID.
@@ -198,6 +204,7 @@ pnpm --filter @soloe/protocol --filter @soloe/runtime --filter @soloe/server typ
 pnpm test
 pnpm test:browser-integration
 pnpm --filter @soloe/desktop-electron build
+pnpm --filter @soloe/desktop-tauri build
 pnpm --filter @soloe/web build
 pnpm --filter @soloe/tray exec tauri build --no-bundle
 cargo test --workspace
@@ -216,6 +223,7 @@ pnpm dev:runtime
 pnpm dev:server
 pnpm dev:web
 pnpm dev:desktop
+pnpm dev:desktop:tauri
 pnpm dev:tray
 ```
 

@@ -2843,6 +2843,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "soloe-desktop-tauri"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "gtk",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "url",
+]
+
+[[package]]
 name = "soloe-terminal"
 version = "0.1.0"
 dependencies = [

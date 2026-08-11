@@ -15,7 +15,7 @@
   import { sidebar } from '../stores/sidebar.svelte';
   import { createFeatureScope, featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
-  import { supportsBackendOperation } from '../lib/ipc';
+  import { rendererBackendTransportKind, supportsBackendOperation } from '../lib/ipc';
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import { clampSplitRatio, splitPaneWidths, type RailSize } from '../lib/rail-widths';
   import { kbdHints } from '../stores/kbd-hints.svelte';
@@ -29,7 +29,10 @@
   const loadDiffTab = () => import('./diff/RailDiffTab.svelte');
   const loadFilesTab = () => import('./files/RailFilesTab.svelte');
   const loadFeatureTab = () => import('./feature/RailFeatureTab.svelte');
-  const loadBrowserTab = () => import('./rail/RailBrowserTab.svelte');
+  const loadBrowserTab = () =>
+    rendererBackendTransportKind() === 'tauri'
+      ? import('./rail/RailBrowserTabTauri.svelte')
+      : import('./rail/RailBrowserTab.svelte');
 
   interface Tab {
     id: RailTabId;

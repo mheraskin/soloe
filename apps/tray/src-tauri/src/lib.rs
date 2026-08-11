@@ -16,6 +16,7 @@ const DEFAULT_TOOLTIP: &str = "Soloe service";
 enum LaunchTarget {
     Browser,
     Electron,
+    Tauri,
 }
 
 impl LaunchTarget {
@@ -23,6 +24,7 @@ impl LaunchTarget {
         match id {
             "open_browser" => Some(Self::Browser),
             "open_electron" => Some(Self::Electron),
+            "open_tauri" => Some(Self::Tauri),
             _ => None,
         }
     }
@@ -31,6 +33,7 @@ impl LaunchTarget {
         match self {
             Self::Browser => "Opening browser…",
             Self::Electron => "Opening Electron client…",
+            Self::Tauri => "Opening Tauri experiment…",
         }
     }
 
@@ -38,6 +41,7 @@ impl LaunchTarget {
         match self {
             Self::Browser => Duration::from_millis(900),
             Self::Electron => Duration::from_millis(2_500),
+            Self::Tauri => Duration::from_millis(2_500),
         }
     }
 }
@@ -205,6 +209,13 @@ pub fn run() {
                 false,
                 None::<&str>,
             )?;
+            let open_tauri = MenuItem::with_id(
+                app,
+                "open_tauri",
+                "Open Tauri experiment",
+                false,
+                None::<&str>,
+            )?;
             let open_logs =
                 MenuItem::with_id(app, "open_logs", "Open Soloe logs", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
@@ -217,6 +228,7 @@ pub fn run() {
                     &separator,
                     &open_browser,
                     &open_electron,
+                    &open_tauri,
                     &open_logs,
                     &separator,
                     &quit,
@@ -228,6 +240,7 @@ pub fn run() {
             let menu_runtime_action = runtime_action.clone();
             let menu_open_browser = open_browser.clone();
             let menu_open_electron = open_electron.clone();
+            let menu_open_tauri = open_tauri.clone();
             let menu_quit = quit.clone();
             let menu_action_state = Arc::new(Mutex::new(MenuActionState {
                 server: MenuServicePhase::Starting,
@@ -257,9 +270,11 @@ pub fn run() {
                         *launching = Some(target);
                         let _ = menu_open_browser.set_enabled(false);
                         let _ = menu_open_electron.set_enabled(false);
+                        let _ = menu_open_tauri.set_enabled(false);
                         let progress_item = match target {
                             LaunchTarget::Browser => &menu_open_browser,
                             LaunchTarget::Electron => &menu_open_electron,
+                            LaunchTarget::Tauri => &menu_open_tauri,
                         };
                         let _ = progress_item.set_text(target.progress_label());
                         if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -275,6 +290,7 @@ pub fn run() {
                     let runtime_action = menu_runtime_action.clone();
                     let open_browser = menu_open_browser.clone();
                     let open_electron = menu_open_electron.clone();
+                    let open_tauri = menu_open_tauri.clone();
                     let quit = menu_quit.clone();
                     let runtime_action_state = Arc::clone(&menu_runtime_action_state);
                     let quit_state = Arc::clone(&menu_quit_state);
@@ -331,6 +347,7 @@ pub fn run() {
                             let _ = runtime_action.set_enabled(false);
                             let _ = open_browser.set_enabled(false);
                             let _ = open_electron.set_enabled(false);
+                            let _ = open_tauri.set_enabled(false);
                             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                                 let _ = tray.set_tooltip(Some(transition.as_str()));
                             }
@@ -340,6 +357,7 @@ pub fn run() {
                             "toggle_runtime" => supervisor.toggle_runtime(),
                             "open_browser" => supervisor.open_browser(),
                             "open_electron" => supervisor.open_electron(),
+                            "open_tauri" => supervisor.open_tauri(),
                             "open_logs" => supervisor.open_logs(),
                             "quit" => {
                                 let requires_confirmation =
@@ -405,6 +423,7 @@ pub fn run() {
                                 let browser_ready = supervisor.browser_address().is_some();
                                 let _ = open_browser.set_enabled(browser_ready);
                                 let _ = open_electron.set_enabled(browser_ready);
+                                let _ = open_tauri.set_enabled(browser_ready);
                                 if let Some(tray) = app.tray_by_id(TRAY_ID) {
                                     let _ = tray.set_tooltip(Some(DEFAULT_TOOLTIP));
                                 }
@@ -424,6 +443,7 @@ pub fn run() {
                             }
                             let _ = open_browser.set_text("Open in browser");
                             let _ = open_electron.set_text("Open Electron client");
+                            let _ = open_tauri.set_text("Open Tauri experiment");
                             let lifecycle_busy = lifecycle_state
                                 .lock()
                                 .map(|state| {
@@ -435,6 +455,7 @@ pub fn run() {
                                 !lifecycle_busy && supervisor.browser_address().is_some();
                             let _ = open_browser.set_enabled(browser_ready);
                             let _ = open_electron.set_enabled(true);
+                            let _ = open_tauri.set_enabled(browser_ready);
                             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                                 let _ = tray.set_tooltip(Some(DEFAULT_TOOLTIP));
                             }
@@ -452,6 +473,7 @@ pub fn run() {
             let startup_runtime_action = runtime_action.clone();
             let startup_open_browser = open_browser.clone();
             let startup_open_electron = open_electron.clone();
+            let startup_open_tauri = open_tauri.clone();
             let startup_lifecycle_state = Arc::clone(&menu_action_state);
             thread::spawn(move || {
                 if let Err(error) = startup_supervisor.start() {
@@ -471,6 +493,7 @@ pub fn run() {
                     let _ = startup_runtime_action.set_enabled(runtime_enabled);
                     let _ = startup_open_browser.set_enabled(browser_ready);
                     let _ = startup_open_electron.set_enabled(browser_ready);
+                    let _ = startup_open_tauri.set_enabled(browser_ready);
                 }
             });
 
@@ -481,6 +504,7 @@ pub fn run() {
             let polling_lifecycle_state = Arc::clone(&menu_action_state);
             let polling_browser = open_browser.clone();
             let polling_electron = open_electron.clone();
+            let polling_tauri = open_tauri.clone();
             let polling_launch_state = Arc::clone(&launch_state);
             thread::spawn(move || {
                 loop {
@@ -527,6 +551,7 @@ pub fn run() {
                         let browser_ready = polling_supervisor.browser_address().is_some();
                         let _ = polling_browser.set_enabled(browser_ready);
                         let _ = polling_electron.set_enabled(browser_ready);
+                        let _ = polling_tauri.set_enabled(browser_ready);
                     }
                 }
             });
@@ -612,11 +637,19 @@ mod tests {
             LaunchTarget::from_menu_id("open_electron"),
             Some(LaunchTarget::Electron)
         );
+        assert_eq!(
+            LaunchTarget::from_menu_id("open_tauri"),
+            Some(LaunchTarget::Tauri)
+        );
         assert_eq!(LaunchTarget::from_menu_id("open_logs"), None);
         assert_eq!(LaunchTarget::Browser.progress_label(), "Opening browser…");
         assert_eq!(
             LaunchTarget::Electron.progress_label(),
             "Opening Electron client…"
+        );
+        assert_eq!(
+            LaunchTarget::Tauri.progress_label(),
+            "Opening Tauri experiment…"
         );
         assert!(
             LaunchTarget::Electron.minimum_feedback() > LaunchTarget::Browser.minimum_feedback()

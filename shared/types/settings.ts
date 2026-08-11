@@ -2,6 +2,7 @@ import type { ShellKind, RunMode, SessionLaunchKind, AgentRuntimeProvider } from
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type TerminalFontSizePref = 11 | 12 | 13 | 14;
+export type TerminalPresentationPref = 'xterm' | 'libghostty' | 'auto';
 export type DiffFontSizePref = 11 | 12 | 13 | 14 | 15 | 16;
 
 export interface SettingsAppearance {
@@ -10,6 +11,8 @@ export interface SettingsAppearance {
 
 export interface SettingsTerminal {
   fontSize: TerminalFontSizePref;
+  // Prefer a complete native host when one exists; every other shell falls back to xterm.
+  presentation: TerminalPresentationPref;
   confirmDeleteTabs: boolean;
   // Opt-in because both the Runtime replay buffer and xterm scrollback may
   // grow for as long as a terminal remains alive.
@@ -182,7 +185,12 @@ export const DEFAULT_SETTINGS: Settings = {
     wslRepositoryRoot: ''
   },
   appearance: { theme: 'dark' },
-  terminal: { fontSize: 13, confirmDeleteTabs: true, keepFullHistory: false },
+  terminal: {
+    fontSize: 13,
+    presentation: 'auto',
+    confirmDeleteTabs: true,
+    keepFullHistory: false
+  },
   diff: { fontSize: 13 },
   browser: {
     maxResidentTabs: 2,

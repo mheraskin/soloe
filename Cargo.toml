@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/soloe-terminal", "apps/tray/src-tauri"]
+members = [
+  "crates/soloe-terminal",
+  "apps/desktop-tauri/src-tauri",
+  "apps/tray/src-tauri",
+]
 resolver = "3"
 
 [workspace.package]

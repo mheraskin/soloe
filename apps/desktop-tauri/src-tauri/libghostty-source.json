@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/ghostty-org/ghostty",
+  "revision": "426386b8579d5e558aa5d4cfdfb003ad06bc4fc5",
+  "license": "MIT",
+  "standaloneApiStatus": "unversioned",
+  "api": "libghostty-vt C API",
+  "integrationStatus": "feature-gated Linux GTK3 vertical slice; disabled in normal builds",
+  "cargoFeature": "libghostty-linux-prototype",
+  "sourceEnvironmentVariable": "SOLOE_LIBGHOSTTY_SOURCE"
+}

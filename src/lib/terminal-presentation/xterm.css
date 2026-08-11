@@ -1,0 +1,25 @@
+.xterm {
+  background: #0f0f10 !important;
+  height: 100%;
+}
+
+.xterm-screen,
+.xterm-viewport {
+  background: #0f0f10 !important;
+}
+
+@media (max-width: 767px) {
+  .terminal-pane-shell .xterm {
+    padding: 0.25rem;
+  }
+
+  .terminal-pane-shell .xterm-viewport {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+  }
+
+  .terminal-pane-shell .xterm-helper-textarea {
+    font-size: 16px !important;
+  }
+}

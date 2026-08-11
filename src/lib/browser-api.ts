@@ -1,8 +1,10 @@
 import type {
   IpcResult,
+  BrowserApi,
   SoloeApi,
   SystemApi,
   TerminalApi,
+  WindowApi,
 } from "@shared/types/ipc.js";
 import type {
   TerminalExitEvent,
@@ -27,12 +29,14 @@ export interface BrowserApiOptions {
   baseUrl?: string;
   token?: string;
   clientId?: string;
-  transport?: Extract<SoloeTransportKind, "browser" | "remote-electron">;
+  transport?: Extract<SoloeTransportKind, "browser" | "remote-electron" | "tauri">;
   saveTextClient?: (request: {
     defaultPath?: string;
     content: string;
   }) => void | Promise<void>;
   openExternalClient?: (url: string) => void | Promise<void>;
+  windowClient?: WindowApi;
+  browserClient?: BrowserApi;
 }
 
 type Listener = (payload: never) => void;
@@ -210,7 +214,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     git: namespace("git", SOLOE_API_METHODS.git),
     files: namespace("files", SOLOE_API_METHODS.files),
     diagnostics: namespace("diagnostics", SOLOE_API_METHODS.diagnostics),
-    window: namespace("window", SOLOE_API_METHODS.window),
+    window: options.windowClient ?? namespace("window", SOLOE_API_METHODS.window),
     agentIntegration: namespace(
       "agentIntegration",
       SOLOE_API_METHODS.agentIntegration,
@@ -221,7 +225,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     diff: namespace("diff", SOLOE_API_METHODS.diff),
     features: namespace("features", SOLOE_API_METHODS.features),
     vault: namespace("vault", SOLOE_API_METHODS.vault),
-    browser: namespace("browser", SOLOE_API_METHODS.browser),
+    browser: options.browserClient ?? namespace("browser", SOLOE_API_METHODS.browser),
     browserSessions: namespace("browserSessions", SOLOE_API_METHODS.browserSessions),
   } as SoloeApi;
 }

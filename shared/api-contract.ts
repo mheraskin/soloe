@@ -1,4 +1,8 @@
-export type SoloeTransportKind = "local-electron" | "remote-electron" | "browser";
+export type SoloeTransportKind =
+  | "local-electron"
+  | "remote-electron"
+  | "browser"
+  | "tauri";
 
 export const SOLOE_API_METHODS = {
   sessions: [
@@ -318,6 +322,11 @@ export const CLIENT_NATIVE_METHODS = new Set<string>([
   "system.openExternal",
 ]);
 
+export const TAURI_NATIVE_METHODS = new Set<string>([
+  ...SOLOE_API_METHODS.window.map((method) => `window.${method}`),
+  ...SOLOE_API_METHODS.browser.map((method) => `browser.${method}`),
+]);
+
 export const SERVER_EVENT_METHODS = new Set<string>([
   "sessions.onChange",
   "sessions.onDelete",
@@ -350,6 +359,7 @@ export type SoloeOperationOwner =
   | "client-native"
   | "local-electron"
   | "electron-native"
+  | "tauri-native"
   | "unsupported";
 
 export function operationOwner(
@@ -364,6 +374,9 @@ export function operationOwner(
       : "local-electron";
   }
   if (CLIENT_NATIVE_METHODS.has(key)) return "client-native";
+  if (transport === "tauri" && TAURI_NATIVE_METHODS.has(key)) {
+    return "tauri-native";
+  }
   if (
     transport === "remote-electron" &&
     REMOTE_ELECTRON_NATIVE_METHODS.has(key)

@@ -6,6 +6,7 @@ import {
   SERVER_EVENT_METHODS,
   SERVER_RPC_METHODS,
   SOLOE_API_METHODS,
+  TAURI_NATIVE_METHODS,
   operationOwner,
   supportsRpc,
 } from "./api-contract.js";
@@ -30,6 +31,7 @@ describe("Soloe API compatibility matrix", () => {
         "local-electron",
         "remote-electron",
         "browser",
+        "tauri",
       ] as const) {
         const owner = operationOwner(transport, namespace!, method!);
         expect(
@@ -46,11 +48,19 @@ describe("Soloe API compatibility matrix", () => {
       SERVER_EVENT_METHODS,
       CLIENT_NATIVE_METHODS,
       REMOTE_ELECTRON_NATIVE_METHODS,
+      TAURI_NATIVE_METHODS,
     ]) {
       for (const key of collection) {
         expect(apiKeys, key).toContain(key);
       }
     }
+  });
+
+  it("keeps Tauri shell operations native while domain operations remain remote", () => {
+    expect(operationOwner("tauri", "window", "minimize")).toBe("tauri-native");
+    expect(operationOwner("tauri", "browser", "openDevTools")).toBe("tauri-native");
+    expect(operationOwner("tauri", "terminal", "input")).toBe("runtime");
+    expect(operationOwner("tauri", "vault", "getSecret")).toBe("application-server");
   });
 
   it("keeps host-bound remote Electron operations native", () => {

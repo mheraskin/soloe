@@ -5,7 +5,11 @@ import { describe, expect, it } from 'vitest';
 const RENDERER_ROOT = path.resolve(process.cwd(), 'src');
 const RENDERER_ADAPTERS = new Set([
   path.join(RENDERER_ROOT, 'lib', 'ipc.ts'),
-  path.join(RENDERER_ROOT, 'lib', 'browser-api.ts')
+  path.join(RENDERER_ROOT, 'lib', 'browser-api.ts'),
+  path.join(RENDERER_ROOT, 'lib', 'tauri-api.ts'),
+  path.join(RENDERER_ROOT, 'lib', 'tauri-browser-host.ts'),
+  path.join(RENDERER_ROOT, 'lib', 'terminal-presentation', 'tauri-native-host.ts'),
+  path.join(RENDERER_ROOT, 'tauri-benchmark', 'tauri-terminal-client.ts')
 ]);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.svelte']);
 
@@ -31,6 +35,9 @@ describe('Renderer Backend Interface compatibility', () => {
       }
       if (/\bfrom\s+['"]electron['"]/.test(source)) {
         violations.push(`${path.relative(process.cwd(), filename)} imports Electron`);
+      }
+      if (/\bfrom\s+['"]@tauri-apps\//.test(source)) {
+        violations.push(`${path.relative(process.cwd(), filename)} imports Tauri`);
       }
     }
 

@@ -667,6 +667,24 @@ impl BackendSupervisor {
             .map_err(|error| format!("failed to open Electron client: {error}"))
     }
 
+    pub fn open_tauri(&self) -> Result<(), String> {
+        let client_url = self
+            .browser_address()
+            .ok_or_else(|| "Soloe Web Host is not running".to_string())?;
+
+        let mut command = Command::new(pnpm_executable());
+        command
+            .args(["--filter", "@soloe/desktop-tauri", "dev"])
+            .current_dir(&self.repository_root)
+            .env("SOLOE_CLIENT_URL", client_url)
+            .env("SOLOE_DATA_DIR", &self.data_directory)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        self.spawn_owned(command, true)
+            .map_err(|error| format!("failed to open experimental Tauri client: {error}"))
+    }
+
     fn configured_backend(&self) -> Result<BackendSettings, String> {
         let settings_path = self.data_directory.join("settings.json");
         let mut backend = match fs::read(&settings_path) {

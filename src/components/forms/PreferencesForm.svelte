@@ -31,6 +31,7 @@
     SettingsBinaries,
     BackendPlacement,
     TerminalFontSizePref,
+    TerminalPresentationPref,
     ThemePref,
     ShiftNumberNavigationTarget
   } from '@shared/types/settings.js';
@@ -62,6 +63,11 @@
 
   const themes: ThemePref[] = ['dark', 'light', 'system'];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
+  const terminalPresentations: Array<{ value: TerminalPresentationPref; label: string }> = [
+    { value: 'auto', label: 'Automatic (recommended)' },
+    { value: 'xterm', label: 'xterm' },
+    { value: 'libghostty', label: 'libghostty (experimental)' }
+  ];
   const diffFontSizes: DiffFontSizePref[] = [11, 12, 13, 14, 15, 16];
   const builtInShortcuts = Object.values(Keymap);
   let runModes = $derived<RunMode[]>(platform.current.availableRunModes);
@@ -249,6 +255,12 @@
   async function setTerminalFontSize(value: TerminalFontSizePref) {
     try {
       await settings.update({ terminal: { fontSize: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setTerminalPresentation(value: TerminalPresentationPref) {
+    try {
+      await settings.update({ terminal: { presentation: value } });
     } catch (e) { reportError(e); }
   }
 
@@ -1098,6 +1110,27 @@
             {/each}
           </Select.Content>
         </Select.Root>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Terminal presentation</Label>
+        <Select.Root
+          type="single"
+          value={settings.current.terminal.presentation}
+          onValueChange={(value) => setTerminalPresentation(value as TerminalPresentationPref)}
+        >
+          <Select.Trigger class="w-full">
+            {terminalPresentations.find((item) => item.value === settings.current.terminal.presentation)?.label}
+          </Select.Trigger>
+          <Select.Content>
+            {#each terminalPresentations as item (item.value)}
+              <Select.Item value={item.value} label={item.label}>{item.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <p class="m-0 text-[11px] text-muted-foreground">
+          Native libghostty is used only after the desktop host reports complete initialization;
+          otherwise Soloe falls back to xterm without restarting the Session.
+        </p>
       </div>
       <div class="flex items-center justify-between gap-3">
         <Label for="pref-confirm-delete-tabs" class="text-xs text-muted-foreground">

@@ -1,4 +1,5 @@
 import type { IpcResult } from '@shared/types/ipc.js';
+import type { SoloeTransportKind } from '@shared/api-contract.js';
 import type {
   CreateWorkerSessionRequest,
   ListObserverEventsRequest,
@@ -443,4 +444,8 @@ export function hasBackendTransport(): boolean {
 export function supportsBackendOperation(namespace: string, method: string): boolean {
   const transport = c?.transport;
   return transport ? transport.supports(namespace, method) : true;
+}
+
+export function rendererBackendTransportKind(): SoloeTransportKind {
+  return c?.transport?.kind ?? 'local-electron';
 }

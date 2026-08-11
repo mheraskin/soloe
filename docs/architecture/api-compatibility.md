@@ -14,7 +14,7 @@ In the table below:
   Runtime, which owns PTYs and agents.
 - **IPC** means the local Electron main process composes the reusable domain
   service directly.
-- **Native** means client-side browser or Electron behavior with no backend
+- **Native** means client-side browser, Electron, or Tauri behavior with no backend
   domain ownership.
 - **Unavailable** is intentional and must return `rpc_not_supported` or expose
   no control.
@@ -53,6 +53,17 @@ Local Electron remains a supported standalone transport. Its IPC handlers
 compose the same platform-independent Files, Git, Notes, Features, Overview,
 Diagnostics, Vault, integrations, and usage services used by the Server;
 renderer code does not own those operations.
+
+The experimental Tauri Renderer Backend Adapter follows the Browser/PWA
+Server column for domain methods and supplies native `window` and embedded
+browser controls in the client shell. It never implements `terminal.start`,
+`input`, `resize`, replay, or stop in Rust; those operations continue through
+the Application Server to the Environment Runtime. Tauri browser DevTools open
+as the platform WebView's external inspector. Docked layout control and complete
+mobile device emulation are not yet implemented. The feature-gated Linux Native
+Terminal Host is a presentation-only shell service: it receives ordered output
+and emits input/resize intent through this Interface, but it never starts,
+resumes, or stops a Session.
 
 ## Browser behavior
 

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Soloe Tauri Experimental",
+  "version": "0.1.0",
+  "identifier": "com.soloe.app.desktop.tauri",
+  "build": {
+    "beforeBuildCommand": "pnpm --dir ../.. --filter @soloe/web build",
+    "frontendDist": "../../../out/web"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../../build/icon.png",
+      "../../../build/icon.ico"
+    ]
+  }
+}

@@ -19,8 +19,13 @@ const bootstrapSkeleton = mount(AppSkeleton, {
   props: { label: 'Starting Soloe' }
 });
 
-const { installBrowserApi } = await import('./lib/browser-api');
-installBrowserApi();
+if ('__TAURI_INTERNALS__' in window) {
+  const { installTauriApi } = await import('./lib/tauri-api');
+  installTauriApi();
+} else {
+  const { installBrowserApi } = await import('./lib/browser-api');
+  installBrowserApi();
+}
 if (
   'serviceWorker' in navigator
   && (window.location.protocol === 'http:' || window.location.protocol === 'https:')
