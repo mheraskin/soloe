@@ -26,6 +26,7 @@ extraResources:
     to: node_modules/smol-toml
 win:
   icon: build/icon.ico
+  artifactName: ${productName}-${version}-windows-${arch}.${ext}
   target:
     - target: nsis
       arch:
