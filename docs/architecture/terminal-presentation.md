@@ -74,12 +74,19 @@ for a shell-owned native surface. `NativeTerminalHost` is the stable boundary
 above platform-specific surface ownership. A future macOS AppKit, Windows,
 Linux, Tauri, or Electron host can implement it without changing TerminalPane.
 
-The source is pinned to Ghostty revision
-`426386b8579d5e558aa5d4cfdfb003ad06bc4fc5` in
-`apps/desktop-tauri/src-tauri/libghostty-source.json`. Ghostty is MIT-licensed.
-[cmux](https://github.com/manaflow-ai/cmux) is an architectural reference for a
-native application embedding libghostty; no cmux source is copied and its GPL
-license is not inherited.
+Soloe has two independently pinned Ghostty integrations. Linux uses official
+Ghostty revision `426386b8579d5e558aa5d4cfdfb003ad06bc4fc5`, recorded in
+`apps/desktop-tauri/src-tauri/libghostty-source.json`. macOS uses the exact
+MIT-licensed `manaflow-ai/ghostty` revision
+`f76c132e526f124fe4aaebd39f516751656844bc`, release tag, and SHA-256 recorded
+in `apps/desktop-tauri/src-tauri/ghostty-surface-source.json`. The latter fork
+adds an unversioned manual-I/O surface Interface that upstream Ghostty does not
+yet expose.
+
+[cmux](https://github.com/manaflow-ai/cmux) is the architectural reference for
+embedding a full Ghostty AppKit/Metal surface. Soloe does not copy cmux Swift or
+application code and does not inherit its GPL license. Soloe independently
+implements its Native Terminal Host against the fork's MIT-licensed C API.
 
 The standard Linux Tauri dev/build scripts prepare the pinned source and enable
 the Linux-only `libghostty-linux-prototype` Cargo feature. It adds the first
@@ -93,22 +100,48 @@ without touching the PTY.
 
 Fresh settings select `auto`. A feature-enabled Linux Tauri host therefore
 uses the native Adapter after the host initializes successfully; direct Cargo,
-Electron, browser, macOS, Windows, and failed native initialization continue to
-use xterm. An explicit `xterm` preference remains the opt-out. The current GTK
+Electron, browser, Windows, and failed native initialization continue to use
+xterm. An explicit `xterm` preference remains the opt-out. The current GTK
 renderer is deliberately a vertical slice, not a parity claim: styled GPU
 rendering, selection, visual search results, links, IME, and robust Wayland
 positioning remain incomplete. The running PTY is untouched by initialization
 failure and output is recovered through the existing replay path.
 
-The pinned Ghostty source also contains `libghostty-internal`, the surface
-library used by Ghostty's macOS/iOS application. Upstream explicitly describes
-that Interface as internal, platform-specific, and unsuitable for external
-embedders. More importantly for Soloe, it creates and owns the terminal process
-and does not expose a supported byte-stream input Interface for an externally
-owned PTY. Using it would violate Environment Runtime ownership. The public
-`libghostty-vt` Interface accepts the Environment Runtime's ordered PTY output,
-so it is the correct foundation until upstream publishes an external native
-surface Interface with manual I/O.
+### macOS full Ghostty surface
+
+Standard macOS Tauri commands download and checksum the pinned universal
+GhosttyKit XCFramework, enable `libghostty-macos-surface`, and attach a child
+AppKit view above the WKWebView terminal placeholder. The Native Terminal Host
+creates `ghostty_surface` with `GHOSTTY_SURFACE_IO_MANUAL`. It never supplies a
+command, working directory, environment, or PTY.
+
+The manual-I/O mode is the architectural hinge. Ordered Terminal Replay Tail
+and live PTY bytes enter through `ghostty_surface_process_output`. Ghostty owns
+terminal protocol parsing and full AppKit/Metal rendering, then returns encoded
+keyboard input and parser replies through `io_write_cb`. The callback follows
+the existing `soloe://native-terminal-input` event and Renderer Backend
+Interface back to the Environment Runtime-owned PTY. `MANUAL_MIRROR` is not
+used because it suppresses parser replies and assumes a second terminal core
+outside Ghostty.
+
+Bounds, real Ghostty grid dimensions, focus, occlusion, mouse input, selection,
+link actions, clipboard paste, buffer export, and disposal stay behind the
+Native Terminal Host. `replace` frees and recreates the Ghostty surface under
+the same Soloe presentation identity before injecting replay, because the fork
+does not expose a complete terminal-state reset. Surface disposal releases
+only presentation resources and never stops the Session PTY.
+
+This is a real full-renderer vertical slice, not a cross-platform parity claim.
+IME/preedit, native visual search highlighting, complete Ghostty configuration
+mapping, app-level shortcut arbitration, and macOS runtime/packaging validation
+remain before promotion. A macOS initialization or surface-creation failure
+falls back to xterm while the running Session and replay remain intact.
+
+Upstream's pinned full surface library is still described as internal and its
+normal surface creates and owns the terminal process. The pinned MIT fork is
+used specifically because its manual-I/O extension removes that ownership
+conflict. The Linux prototype continues using public `libghostty-vt`; it does
+not pretend its Soloe-owned Cairo view is Ghostty's renderer.
 
 `libghostty-vt` WebAssembly is not a complete browser presentation. It provides
 terminal parsing/state but still requires a separately implemented browser
@@ -148,10 +181,14 @@ buffer export, visibility, focus, and disposal. Existing
 ordering, live output admission, dormant behavior, and agent TUI input.
 
 The GTK lifecycle and pinned `libghostty-vt` write/resize/replace/export path
-are covered by feature-gated Rust tests. The existing benchmark framework does
-not yet instantiate shell-owned native surfaces, so it cannot produce an
-honest xterm-versus-libghostty comparison yet. Before promoting the prototype,
-extend that harness to record cold start, idle memory, input latency, burst
-output, animated agent TUI behavior, resize, and terminal-count scaling for
-both Implementations. No comparative number is reported until the same
-workload paints both surfaces.
+are covered by feature-gated Rust tests. The macOS source revision, release
+artifact checksum, build feature, callback lifetime, and shell-neutral FFI are
+pinned in the repository, but AppKit/Metal behavior cannot be executed from the
+Linux/WSL development host.
+
+The existing benchmark framework does not yet instantiate the macOS native
+surface, so it cannot produce an honest xterm-versus-Ghostty comparison yet.
+Before promotion, extend that harness on macOS to record cold start, idle
+memory, input latency, burst output, animated agent TUI behavior, resize, and
+terminal-count scaling for both Implementations. No comparative number is
+reported until the same workload paints both surfaces.

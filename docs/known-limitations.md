@@ -2,7 +2,9 @@
 
 Soloe is pre-release software. The first public alpha should not be published until the blocking items in the [launch checklist](./public-launch-checklist.md) are resolved or explicitly accepted.
 
-- macOS is not supported.
+- macOS is not yet a supported public release target. The experimental Tauri
+  client now has a pinned full Ghostty AppKit/Metal surface, but it still needs
+  native macOS runtime, IME, packaging, signing, and clean-machine validation.
 - The Tauri desktop client is experimental. It uses the existing Node
   Application Server and Environment Runtime, requires the Web Host to be
   running for a functional client, and has not completed the platform test
@@ -17,6 +19,13 @@ Soloe is pre-release software. The first public alpha should not be published un
   robust Wayland positioning remain incomplete. It needs Zig 0.16 to build.
   Direct Cargo builds without the feature, unsupported platforms, and failed
   native initialization fall back to xterm without stopping the Session PTY.
+- Standard macOS Tauri commands download a checksum-pinned GhosttyKit artifact
+  from the MIT `manaflow-ai/ghostty` fork and enable the manual-I/O AppKit
+  surface. This keeps the Environment Runtime as exclusive PTY owner. The
+  initial slice supports rendering, output/replay replacement, keyboard and
+  mouse input, resize, focus, visibility, selection, links, paste, export, and
+  disposal. IME/preedit, visual search highlighting, complete configuration
+  mapping, app-shortcut arbitration, and native test coverage remain incomplete.
 - Windows and Linux installers have not yet completed the clean-machine validation matrix.
 - Early Windows builds will be unsigned and may trigger SmartScreen.
 - The legacy Electron MCP path uses a broader bind for WSL reachability; its effective interface and firewall exposure still need validation.

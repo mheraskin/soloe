@@ -63,7 +63,8 @@ browser uses the local HTTP/WebSocket API directly. The experimental Tauri
 client loads that authenticated Web Host URL, keeps native window and browser
 surface controls in its shell, and uses the same Application Server transport.
 Its feature-gated Linux Native Terminal Host may also own a GTK presentation
-surface backed by `libghostty-vt`; bytes and resize intent still cross the same
+surface backed by `libghostty-vt`, while its feature-gated macOS host may own a
+full Ghostty AppKit/Metal surface in manual-I/O mode; bytes and resize intent still cross the same
 Renderer Backend Interface, and the Environment Runtime still owns the PTY.
 All three clients replay visible terminals after reconnect.
 

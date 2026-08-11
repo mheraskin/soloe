@@ -1,5 +1,8 @@
 #![cfg_attr(
-    not(all(target_os = "linux", feature = "libghostty-linux-prototype")),
+    not(any(
+        all(target_os = "linux", feature = "libghostty-linux-prototype"),
+        all(target_os = "macos", feature = "libghostty-macos-surface")
+    )),
     allow(dead_code)
 )]
 
@@ -7,6 +10,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, WebviewWindow};
 
 pub const LIBGHOSTTY_REVISION: &str = "426386b8579d5e558aa5d4cfdfb003ad06bc4fc5";
+#[cfg_attr(
+    not(all(target_os = "macos", feature = "libghostty-macos-surface")),
+    allow(dead_code)
+)]
+pub const GHOSTTY_SURFACE_REVISION: &str = "f76c132e526f124fe4aaebd39f516751656844bc";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +50,14 @@ pub struct Configuration {
     pub font_family: String,
     pub font_size: f64,
     pub line_height: f64,
+    #[serde(default = "default_scrollback")]
+    #[allow(dead_code)]
+    pub scrollback: usize,
     pub theme: Theme,
+}
+
+fn default_scrollback() -> usize {
+    10_000
 }
 
 #[derive(Deserialize)]
@@ -653,6 +668,7 @@ mod platform {
                 font_family: "monospace".to_string(),
                 font_size: 10.0,
                 line_height: 1.0,
+                scrollback: 10_000,
                 theme: Theme {
                     background: "#000000".to_string(),
                     foreground: "#ffffff".to_string(),
@@ -691,6 +707,7 @@ mod platform {
                     font_family: "monospace".to_string(),
                     font_size: 12.0,
                     line_height: 1.0,
+                    scrollback: 10_000,
                     theme: Theme {
                         background: "#000000".to_string(),
                         foreground: "#ffffff".to_string(),
@@ -726,7 +743,14 @@ mod platform {
     }
 }
 
-#[cfg(not(all(target_os = "linux", feature = "libghostty-linux-prototype")))]
+#[cfg(all(target_os = "macos", feature = "libghostty-macos-surface"))]
+#[path = "native_terminal_host/macos_ghostty_surface.rs"]
+mod platform;
+
+#[cfg(not(any(
+    all(target_os = "linux", feature = "libghostty-linux-prototype"),
+    all(target_os = "macos", feature = "libghostty-macos-surface")
+)))]
 mod platform {
     use super::*;
 
@@ -774,4 +798,30 @@ mod platform {
     disabled!(export_buffer(surface_id: &str) -> String);
     disabled!(scroll_to_bottom(surface_id: &str) -> ());
     disabled!(dispose(surface_id: &str) -> ());
+}
+
+#[cfg(test)]
+mod source_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn macos_surface_source_is_pinned_to_the_compiled_revision() {
+        let metadata: serde_json::Value =
+            serde_json::from_str(include_str!("../ghostty-surface-source.json"))
+                .expect("valid Ghostty surface source metadata");
+        assert_eq!(metadata["revision"], GHOSTTY_SURFACE_REVISION);
+        assert_eq!(metadata["license"], "MIT");
+        assert_eq!(metadata["repository"], "manaflow-ai/ghostty");
+        assert!(
+            metadata["releaseTag"]
+                .as_str()
+                .expect("release tag")
+                .contains(GHOSTTY_SURFACE_REVISION)
+        );
+        assert_eq!(metadata["cargoFeature"], "libghostty-macos-surface");
+        assert_eq!(
+            metadata["sha256"],
+            "af9f8f12e6f41ffe00b5b65f150bb887b19dc752e47d20d3c351696c803509af"
+        );
+    }
 }

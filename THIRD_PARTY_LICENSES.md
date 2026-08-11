@@ -69,6 +69,23 @@ The full MIT license text ships with `node_modules/element-source/LICENSE`.
 
 ---
 
+## Ghostty
+
+The experimental native Terminal Presentation uses official `libghostty-vt`
+on Linux and a checksum-pinned `manaflow-ai/ghostty` manual-I/O surface fork on
+macOS. cmux is an architectural reference only; no cmux application code is
+bundled.
+
+- Project: https://github.com/ghostty-org/ghostty
+- Surface fork: https://github.com/manaflow-ai/ghostty
+- License: MIT
+- Copyright: 2024 Mitchell Hashimoto, Ghostty contributors
+
+The full MIT license is reproduced in
+`apps/desktop-tauri/src-tauri/libghostty-LICENSE`.
+
+---
+
 The Apache 2.0 terms for `@pierre/trees` require preserving its NOTICE text
 when that component is redistributed. Soloe's own source is MIT-licensed;
 every dependency retains its own terms. This file enumerates components that

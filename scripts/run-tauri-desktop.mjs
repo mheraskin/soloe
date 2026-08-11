@@ -6,6 +6,10 @@ import { spawnSync } from 'node:child_process';
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const applicationRoot = resolve(repositoryRoot, 'apps/desktop-tauri');
 const sourceRoot = resolve(repositoryRoot, 'target/libghostty-source');
+const ghosttyKitRoot = resolve(
+  repositoryRoot,
+  'target/ghostty-surface/GhosttyKit.xcframework'
+);
 const [mode, ...forwardedArguments] = process.argv.slice(2);
 
 if (mode !== 'dev' && mode !== 'build') {
@@ -20,6 +24,24 @@ const tauriArguments = [
   ...(mode === 'build' ? ['--no-bundle'] : []),
   ...forwardedArguments
 ];
+
+if (process.platform === 'darwin') {
+  run(process.execPath, [resolve(repositoryRoot, 'scripts/prepare-ghostty-surface.mjs')], {
+    cwd: repositoryRoot
+  });
+  if (!existsSync(ghosttyKitRoot)) {
+    throw new Error(`the pinned GhosttyKit artifact was not prepared at ${ghosttyKitRoot}`);
+  }
+  run(
+    pnpm,
+    [...tauriArguments, '--features', 'libghostty-macos-surface'],
+    {
+      cwd: applicationRoot,
+      env: { ...process.env, SOLOE_GHOSTTYKIT_DIR: ghosttyKitRoot }
+    }
+  );
+  process.exit(0);
+}
 
 if (process.platform !== 'linux') {
   run(pnpm, tauriArguments, { cwd: applicationRoot });

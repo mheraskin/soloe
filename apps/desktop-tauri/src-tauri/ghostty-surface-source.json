@@ -1,0 +1,12 @@
+{
+  "repository": "manaflow-ai/ghostty",
+  "revision": "f76c132e526f124fe4aaebd39f516751656844bc",
+  "releaseTag": "xcframework-f76c132e526f124fe4aaebd39f516751656844bc-crashsubdir-cmux-crash-sentry-off-v1",
+  "archive": "GhosttyKit.xcframework.tar.gz",
+  "sha256": "af9f8f12e6f41ffe00b5b65f150bb887b19dc752e47d20d3c351696c803509af",
+  "license": "MIT",
+  "api": "ghostty_surface C API with manual I/O",
+  "apiStatus": "unversioned fork API",
+  "cargoFeature": "libghostty-macos-surface",
+  "artifactEnvironmentVariable": "SOLOE_GHOSTTYKIT_DIR"
+}

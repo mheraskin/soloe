@@ -4,7 +4,7 @@
   "license": "MIT",
   "standaloneApiStatus": "unversioned",
   "api": "libghostty-vt C API",
-  "integrationStatus": "feature-gated Linux GTK3 vertical slice; disabled in normal builds",
+  "integrationStatus": "feature-gated Linux GTK3 vertical slice enabled by standard Linux Tauri commands",
   "cargoFeature": "libghostty-linux-prototype",
   "sourceEnvironmentVariable": "SOLOE_LIBGHOSTTY_SOURCE"
 }

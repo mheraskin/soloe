@@ -201,6 +201,7 @@ _Avoid_: Renderer backend, IPC implementation
 - **Saved Note Recovery** remains restart-safe until the authoritative note write succeeds; navigation never replaces a dirty saved-note buffer after a failed flush
 - A running Session may outlive its **Terminal Presentation**; visible Sessions and a small recent set own the resident presentations
 - Every **Terminal Presentation Adapter** owns presentation behavior only; the **Environment Runtime** remains the exclusive PTY owner
+- A macOS full Ghostty **Native Terminal Host** uses manual I/O: it receives ordered PTY output and returns encoded input and parser replies, but never creates, adopts, stops, or outlives the Environment Runtime-owned PTY
 - A **Native Terminal Host** may fail or disappear without affecting a running Session; TerminalPane reacquires the xterm **Terminal Presentation Adapter** and recovers through the **Terminal Replay Tail**
 - A running Session may outlive every **Application Server** and client; only
   explicit stop intent sent to the **Environment Runtime** ends its PTY

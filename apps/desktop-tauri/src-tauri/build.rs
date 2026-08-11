@@ -1,19 +1,90 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const LIBGHOSTTY_REVISION: &str = "426386b8579d5e558aa5d4cfdfb003ad06bc4fc5";
+const GHOSTTY_SURFACE_REVISION: &str = "f76c132e526f124fe4aaebd39f516751656844bc";
 
 fn main() {
     println!("cargo:rerun-if-env-changed=SOLOE_LIBGHOSTTY_SOURCE");
+    println!("cargo:rerun-if-env-changed=SOLOE_GHOSTTYKIT_DIR");
     println!("cargo:rerun-if-changed=native-terminal/ghostty_vt_bridge.c");
     println!("cargo:rerun-if-changed=native-terminal/ghostty_vt_bridge.h");
+    println!("cargo:rerun-if-changed=native-terminal/ghostty_surface_bridge.m");
+    println!("cargo:rerun-if-changed=native-terminal/ghostty_surface_bridge.h");
+    println!("cargo:rerun-if-changed=ghostty-surface-source.json");
 
     if env::var_os("CARGO_FEATURE_LIBGHOSTTY_LINUX_PROTOTYPE").is_some() {
         build_libghostty_linux_prototype();
     }
+    if env::var_os("CARGO_FEATURE_LIBGHOSTTY_MACOS_SURFACE").is_some() {
+        build_libghostty_macos_surface();
+    }
 
     tauri_build::build()
+}
+
+fn build_libghostty_macos_surface() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        panic!("libghostty-macos-surface currently supports macOS only");
+    }
+
+    let artifact = env::var_os("SOLOE_GHOSTTYKIT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            panic!("SOLOE_GHOSTTYKIT_DIR must point to the pinned GhosttyKit XCFramework")
+        });
+    let slice = artifact.join("macos-arm64_x86_64");
+    let library = slice.join("ghostty-internal.a");
+    let headers = slice.join("Headers");
+    assert!(
+        library.is_file(),
+        "pinned GhosttyKit static library is missing"
+    );
+    assert!(
+        headers.join("ghostty.h").is_file(),
+        "pinned ghostty.h is missing"
+    );
+    let header = fs::read_to_string(headers.join("ghostty.h"))
+        .expect("failed to read the pinned GhosttyKit header");
+    for symbol in [
+        "GHOSTTY_SURFACE_IO_MANUAL",
+        "ghostty_surface_process_output",
+        "ghostty_surface_set_renderer_realized",
+    ] {
+        assert!(
+            header.contains(symbol),
+            "pinned GhosttyKit does not expose required symbol {symbol}"
+        );
+    }
+
+    cc::Build::new()
+        .file("native-terminal/ghostty_surface_bridge.m")
+        .include("native-terminal")
+        .include(&headers)
+        .define("GHOSTTY_STATIC", None)
+        .flag("-fno-objc-arc")
+        .warnings(true)
+        .compile("soloe_ghostty_surface_bridge");
+
+    println!("cargo:rustc-link-arg={}", library.display());
+    println!("cargo:rustc-link-lib=dylib=c++");
+    for framework in [
+        "AppKit",
+        "Foundation",
+        "Metal",
+        "QuartzCore",
+        "IOSurface",
+        "UniformTypeIdentifiers",
+        "Carbon",
+        "CoreGraphics",
+        "CoreText",
+    ] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
+
+    println!("cargo:rustc-env=SOLOE_GHOSTTY_SURFACE_REVISION={GHOSTTY_SURFACE_REVISION}");
 }
 
 fn build_libghostty_linux_prototype() {
