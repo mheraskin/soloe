@@ -1,0 +1,22 @@
+{
+  "name": "@soloe/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "test": "vitest run src",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@soloe/domain": "workspace:*",
+    "@soloe/protocol": "workspace:*",
+    "@soloe/runtime": "workspace:*",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

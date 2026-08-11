@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible Soloe failure
+title: 'bug: '
+labels: ['needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping make the public alpha more reliable. Remove credentials, private source, and unrelated personal paths before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0-alpha.1 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform/backend
+      options:
+        - Windows native
+        - Windows + WSL
+        - Linux
+        - Browser/PWA client
+        - Electron client
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment details
+      description: OS version, WSL distribution, agent CLI/version, and repository path type when relevant
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the shortest reliable sequence and a minimal public repository when possible
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Paste only the relevant, reviewed excerpt; never include tokens or private source
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for an existing issue
+          required: true
+        - label: I removed credentials, private source, and unrelated personal data
+          required: true

@@ -1,0 +1,20 @@
+[package]
+name = "soloe-tauri-spike"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "soloe_tauri_spike_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+soloe-terminal = { path = "../crates/soloe-terminal" }
+tauri = { version = "2", features = [] }

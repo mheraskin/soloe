@@ -1,0 +1,10 @@
+{
+  "name": "@soloe/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/host.mjs",
+    "build": "vite build --config vite.config.ts",
+    "preview": "node scripts/host.mjs --preview"
+  }
+}

@@ -1,0 +1,1250 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { Tabs } from 'bits-ui';
+  import {
+    Box,
+    Cpu,
+    Palette,
+    PlugZap,
+    Rocket,
+    TerminalSquare,
+    X,
+    GitCompare,
+    FolderTree,
+    Microscope,
+    Globe,
+    KeyRound,
+    NotebookPen,
+    ServerCog,
+    Bell,
+    Keyboard,
+    ScanLine
+  } from '@lucide/svelte';
+  import { settings } from '../../stores/settings.svelte';
+  import { platform } from '../../stores/platform.svelte';
+  import type {
+    DiffFontSizePref,
+    ModelProvider,
+    ModelSelection,
+    ModelTask,
+    QuickLaunchPreset,
+    SettingsBinaries,
+    BackendPlacement,
+    TerminalFontSizePref,
+    ThemePref,
+    ShiftNumberNavigationTarget
+  } from '@shared/types/settings.js';
+  import { modelCatalogFor } from '@shared/model-catalog.js';
+  import type { AgentRuntimeProvider, RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
+  import { runModeLabel } from '@shared/platform.js';
+  import {
+    Keymap,
+    shortcutConflicts,
+    shortcutKeysFromEvent
+  } from '../../lib/keymap';
+  import { shortcutLabel } from '../../lib/element-source-inspector';
+  import { reportError } from '../../stores/toast.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Label } from '$lib/components/ui/label';
+  import { Input } from '$lib/components/ui/input';
+  import { Switch } from '$lib/components/ui/switch';
+  import * as Select from '$lib/components/ui/select';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { cn } from '$lib/utils';
+  import AgentIntegrationForm from './AgentIntegrationForm.svelte';
+  import VaultManagementForm from './VaultManagementForm.svelte';
+  import KindIcon from '../KindIcon.svelte';
+  import {
+    agentNotificationPermission,
+    requestAgentNotificationPermission
+  } from '../../lib/agent-system-notifications';
+
+  const themes: ThemePref[] = ['dark', 'light', 'system'];
+  const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
+  const diffFontSizes: DiffFontSizePref[] = [11, 12, 13, 14, 15, 16];
+  const builtInShortcuts = Object.values(Keymap);
+  let runModes = $derived<RunMode[]>(platform.current.availableRunModes);
+  let shells = $derived<ShellKind[]>(
+    platform.current.platform === 'linux'
+      ? ['auto', 'bash', 'zsh', 'pwsh', 'custom']
+      : ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']
+  );
+  const newSessionKinds: { value: SessionLaunchKind; label: string }[] = [
+    { value: 'terminal', label: 'Terminal' },
+    { value: 'claude_code', label: 'Claude' },
+    { value: 'codex', label: 'Codex' }
+  ];
+  const binaryKeys: { key: keyof SettingsBinaries; label: string; placeholder: string }[] = [
+    { key: 'claude', label: 'Claude binary', placeholder: 'claude' },
+    { key: 'codex', label: 'Codex binary', placeholder: 'codex' },
+    { key: 'git', label: 'git', placeholder: 'git' },
+    { key: 'gh', label: 'gh', placeholder: 'gh' },
+    { key: 'fd', label: 'fd', placeholder: 'fd' },
+    { key: 'rg', label: 'rg', placeholder: 'rg' },
+    { key: 'editor', label: 'External editor', placeholder: 'code' }
+  ];
+
+  const modelTasks: { key: ModelTask; label: string; hint: string }[] = [
+    {
+      key: 'textGeneration',
+      label: 'Session naming',
+      hint: 'Used to auto-rename a session from its first prompt.'
+    },
+    {
+      key: 'gitCommitGeneration',
+      label: 'Git commit messages',
+      hint: 'Used when suggesting commit messages from a diff.'
+    },
+    {
+      key: 'worktreeOverview',
+      label: 'Worktree overview',
+      hint: 'Used to summarize a worktree and answer follow-up questions about it.'
+    }
+  ];
+
+  type TabEntry =
+    | { kind: 'tab'; value: string; label: string; icon: typeof PlugZap }
+    | { kind: 'divider'; label: string };
+
+  const tabs: TabEntry[] = [
+    { kind: 'tab', value: 'backend', label: 'Services', icon: ServerCog },
+    { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
+    { kind: 'tab', value: 'vault', label: 'Vault', icon: KeyRound },
+    { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
+    { kind: 'tab', value: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
+    { kind: 'tab', value: 'notifications', label: 'Notifications', icon: Bell },
+    { kind: 'tab', value: 'models', label: 'Models', icon: Cpu },
+    { kind: 'tab', value: 'quicklaunch', label: 'Quick Launch', icon: Rocket },
+    { kind: 'tab', value: 'terminal', label: 'Terminal', icon: TerminalSquare },
+    { kind: 'tab', value: 'binaries', label: 'Binaries', icon: Box },
+    { kind: 'divider', label: 'Just a divider' },
+    { kind: 'tab', value: 'diff', label: 'Diff', icon: GitCompare },
+    { kind: 'tab', value: 'files', label: 'Files', icon: FolderTree },
+    { kind: 'tab', value: 'featurelab', label: 'Feature Lab', icon: Microscope },
+    { kind: 'tab', value: 'browser', label: 'Browser', icon: Globe },
+    { kind: 'tab', value: 'notes', label: 'Notes', icon: NotebookPen }
+  ];
+
+  let activeTab = $state<string>('backend');
+  let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
+  let lastAppliedTabNonce = -1;
+  let draftPreset: QuickLaunchPreset | null = $state(null);
+  let notificationPermission = $state<NotificationPermission | 'unsupported'>(
+    agentNotificationPermission()
+  );
+  let recordingInspectorShortcut = $state(false);
+  let inspectorShortcutError = $state<string | null>(null);
+
+  onMount(() => {
+    const media = window.matchMedia('(max-width: 767px)');
+    const update = () => {
+      compactViewport = media.matches;
+    };
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  });
+
+  // React to settings.openDialog('integration') and similar by jumping to
+  // the requested tab. The nonce changes on every call so reopening with
+  // the same tab still triggers a switch.
+  $effect(() => {
+    const t = settings.targetTab;
+    if (!t) return;
+    if (t.nonce === lastAppliedTabNonce) return;
+    lastAppliedTabNonce = t.nonce;
+    activeTab = t.tab;
+  });
+
+  $effect(() => {
+    if (activeTab === 'models' || activeTab === 'quicklaunch') {
+      void settings.ensureModelCatalog();
+    }
+  });
+
+  const triggerClass = cn(
+    'settings-tab-trigger group/tab flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm font-medium',
+    'text-muted-foreground transition-colors outline-none',
+    'hover:bg-muted hover:text-foreground',
+    'focus-visible:ring-2 focus-visible:ring-ring/50',
+    'data-[state=active]:bg-muted data-[state=active]:text-foreground'
+  );
+
+  const contentClass = 'settings-tab-content flex flex-col gap-4 px-5 py-4 outline-none';
+
+  function modelKey(value: ModelSelection | undefined): string {
+    return value ? `${value.provider}:${value.id}` : '';
+  }
+
+  function parseModelKey(value: string): ModelSelection | null {
+    const idx = value.indexOf(':');
+    if (idx <= 0) return null;
+    const provider = value.slice(0, idx);
+    const id = value.slice(idx + 1);
+    if (provider !== 'codex' && provider !== 'claude') return null;
+    if (!id) return null;
+    return { provider, id };
+  }
+
+  function modelLabel(value: ModelSelection | undefined): string {
+    if (!value) return 'Select a model';
+    const entry = settings.availableModels.find(
+      (m) => m.provider === value.provider && m.id === value.id
+    );
+    return entry?.label ?? `${value.provider}: ${value.id}`;
+  }
+
+  function providerKind(provider: ModelProvider): 'claude_code' | 'codex' {
+    return provider === 'claude' ? 'claude_code' : 'codex';
+  }
+
+  function presetProviderToModel(provider: AgentRuntimeProvider): ModelProvider {
+    return provider === 'claude_code' ? 'claude' : 'codex';
+  }
+
+  async function setModel(task: ModelTask, value: string) {
+    const parsed = parseModelKey(value);
+    if (!parsed) return;
+    try {
+      await settings.update({ models: { [task]: parsed } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBackendPlacement(value: BackendPlacement) {
+    try {
+      await settings.update({ backend: { placement: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function enableNotifications(): Promise<void> {
+    notificationPermission = await requestAgentNotificationPermission();
+  }
+
+  async function setBackendWslDistro(value: string) {
+    try {
+      await settings.update({
+        backend: { wslDistro: value.trim() || 'Ubuntu' }
+      });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBackendWslRepositoryRoot(value: string) {
+    try {
+      await settings.update({
+        backend: { wslRepositoryRoot: value.trim() }
+      });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setAppearance<K extends 'theme'>(
+    key: K,
+    value: ThemePref
+  ) {
+    try {
+      await settings.update({ appearance: { [key]: value } as never });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setTerminalFontSize(value: TerminalFontSizePref) {
+    try {
+      await settings.update({ terminal: { fontSize: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setDiffFontSize(value: DiffFontSizePref) {
+    try {
+      await settings.update({ diff: { fontSize: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setConfirmDeleteTabs(value: boolean) {
+    try {
+      await settings.update({ terminal: { confirmDeleteTabs: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setKeepFullTerminalHistory(value: boolean) {
+    try {
+      await settings.update({ terminal: { keepFullHistory: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setShiftNumberNavigation(value: ShiftNumberNavigationTarget) {
+    try {
+      await settings.update({ shortcuts: { shiftNumberNavigation: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  function shortcutKeyLabel(key: string): string {
+    return key === 'Ctrl' ? 'Ctrl/Cmd' : key;
+  }
+
+  async function setDefault<K extends 'runMode' | 'wslDistro' | 'shell'>(
+    key: K,
+    value: string
+  ) {
+    try {
+      await settings.update({ defaults: { [key]: value || undefined } as never });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setDefaultCwd(value: string) {
+    try {
+      await settings.update({ defaults: { cwd: value.trim() || '~' } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setDefaultNewSessionKind(value: SessionLaunchKind) {
+    try {
+      await settings.update({ defaults: { newSessionKind: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBinary(key: keyof SettingsBinaries, value: string) {
+    try {
+      await settings.update({ binaries: { [key]: value } as never });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBrowserAutoResumeMinutes(value: number) {
+    const clamped = Number.isFinite(value) && value >= 0 ? Math.min(Math.round(value), 1440) : 0;
+    try {
+      await settings.update({ browser: { pauseAutoResumeMinutes: clamped } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setBrowserMaxResidentTabs(value: number) {
+    const clamped = Number.isFinite(value) ? Math.max(1, Math.min(Math.round(value), 10)) : 2;
+    try {
+      await settings.update({ browser: { maxResidentTabs: clamped } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setElementSourceInspectorEnabled(value: boolean) {
+    try {
+      await settings.update({ browser: { elementSourceInspectorEnabled: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  function startInspectorShortcutRecording(): void {
+    recordingInspectorShortcut = true;
+    inspectorShortcutError = null;
+  }
+
+  function cancelInspectorShortcutRecording(): void {
+    recordingInspectorShortcut = false;
+    inspectorShortcutError = null;
+  }
+
+  function recordInspectorShortcut(event: KeyboardEvent): void {
+    if (!recordingInspectorShortcut) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      cancelInspectorShortcutRecording();
+      return;
+    }
+    const keys = shortcutKeysFromEvent(event);
+    if (!keys || (!keys.includes('Ctrl') && !keys.includes('Alt'))) {
+      inspectorShortcutError = 'Use at least Ctrl/Cmd or Alt with the key.';
+      return;
+    }
+    const conflict = shortcutConflicts(keys);
+    if (conflict.length > 0) {
+      inspectorShortcutError = `Already used by ${conflict[0]!.description}.`;
+      return;
+    }
+    void settings.update({ shortcuts: { elementSourceInspector: keys } })
+      .then(() => {
+        recordingInspectorShortcut = false;
+        inspectorShortcutError = null;
+      })
+      .catch((error) => reportError(error));
+  }
+
+  async function setNotesDraftsPerWorktree(value: boolean) {
+    try {
+      await settings.update({ notes: { draftsPerWorktree: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  const quickLaunchProviders: { value: AgentRuntimeProvider; label: string }[] = [
+    { value: 'claude_code', label: 'Claude' },
+    { value: 'codex', label: 'Codex' }
+  ];
+
+  function generatePresetId(): string {
+    return `ql_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  function addPreset(): void {
+    draftPreset ??= {
+      id: generatePresetId(),
+      label: 'New preset',
+      provider: 'claude_code'
+    };
+  }
+
+  function updateDraftPreset(patch: Partial<QuickLaunchPreset>): void {
+    if (!draftPreset) return;
+    draftPreset = { ...draftPreset, ...patch };
+  }
+
+  async function saveDraftPreset(): Promise<void> {
+    if (!draftPreset) return;
+    const label = draftPreset.label.trim();
+    if (!label) return;
+    const nextPreset: QuickLaunchPreset = {
+      id: draftPreset.id,
+      label,
+      provider: draftPreset.provider,
+      ...(draftPreset.model ? { model: draftPreset.model } : {}),
+      ...(draftPreset.dangerouslySkipPermissions ? { dangerouslySkipPermissions: true } : {}),
+      ...(draftPreset.extraArgs?.trim() ? { extraArgs: draftPreset.extraArgs.trim() } : {})
+    };
+    const next: QuickLaunchPreset[] = [...settings.current.quickLaunch, nextPreset];
+    try {
+      await settings.update({ quickLaunch: next });
+      draftPreset = null;
+    } catch (e) { reportError(e); }
+  }
+
+  function cancelDraftPreset(): void {
+    draftPreset = null;
+  }
+
+  async function removePreset(id: string): Promise<void> {
+    const next = settings.current.quickLaunch.filter((p) => p.id !== id);
+    try {
+      await settings.update({ quickLaunch: next });
+    } catch (e) { reportError(e); }
+  }
+
+  async function updatePreset(id: string, patch: Partial<QuickLaunchPreset>): Promise<void> {
+    const next = settings.current.quickLaunch.map((p) =>
+      p.id === id ? { ...p, ...patch } : p
+    );
+    try {
+      await settings.update({ quickLaunch: next });
+    } catch (e) { reportError(e); }
+  }
+</script>
+
+<Tabs.Root
+  orientation={compactViewport ? 'horizontal' : 'vertical'}
+  value={activeTab}
+  onValueChange={(v) => (activeTab = v)}
+  class="settings-layout flex min-h-0 flex-1 overflow-hidden"
+>
+  <Tabs.List
+    class="settings-nav flex w-44 shrink-0 flex-col items-stretch gap-0.5 border-r border-border bg-muted/30 p-2"
+  >
+    {#each tabs as tab, i (tab.kind === 'tab' ? tab.value : `divider-${i}`)}
+      {#if tab.kind === 'tab'}
+        <Tabs.Trigger value={tab.value} class={triggerClass}>
+          <tab.icon class="size-3.5 shrink-0" />
+          <span>{tab.label}</span>
+        </Tabs.Trigger>
+      {:else}
+        <div
+          class="settings-divider mt-2 mb-1 px-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70"
+        >
+          {tab.label}
+        </div>
+      {/if}
+    {/each}
+  </Tabs.List>
+
+  <ScrollArea class="settings-content min-h-0 flex-1">
+    <Tabs.Content value="backend" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Run terminals and agents in</Label>
+        <Select.Root
+          type="single"
+          value={settings.current.backend.placement}
+          onValueChange={(v) => setBackendPlacement(v as BackendPlacement)}
+        >
+          <Select.Trigger class="w-full">
+            {settings.current.backend.placement === 'wsl' ? 'WSL (Linux)' : 'Windows'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="windows" label="Windows">Windows</Select.Item>
+            <Select.Item value="wsl" label="WSL (Linux)">WSL (Linux)</Select.Item>
+          </Select.Content>
+        </Select.Root>
+        <span class="text-[11px] text-muted-foreground">
+          Choose the environment that runs terminals, agents, and project commands. The tray and
+          Electron app stay on Windows.
+        </span>
+      </div>
+      {#if settings.current.backend.placement === 'wsl'}
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-xs text-muted-foreground" for="pref-backend-wsl-distro">
+            Linux distribution (WSL)
+          </Label>
+          <Input
+            id="pref-backend-wsl-distro"
+            type="text"
+            placeholder="Ubuntu"
+            value={settings.current.backend.wslDistro}
+            onchange={(e) =>
+              setBackendWslDistro((e.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-xs text-muted-foreground" for="pref-backend-wsl-root">
+            Soloe folder in WSL
+          </Label>
+          <Input
+            id="pref-backend-wsl-root"
+            type="text"
+            placeholder="/home/you/projects/soloe-2"
+            value={settings.current.backend.wslRepositoryRoot}
+            onchange={(e) =>
+              setBackendWslRepositoryRoot((e.currentTarget as HTMLInputElement).value)}
+          />
+          <span class="text-[11px] text-muted-foreground">
+            Use a WSL-native checkout with its own PNPM install. Do not reuse Windows node_modules.
+          </span>
+        </div>
+      {/if}
+      <div class="rounded-md border border-border bg-muted/30 p-3 text-[11px] text-muted-foreground">
+        Changes take effect after you stop and start all services from the tray. Stopping services
+        ends running terminals and agents.
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="integration" class={contentClass}>
+      <AgentIntegrationForm />
+    </Tabs.Content>
+
+    <Tabs.Content value="vault" class={contentClass}>
+      <VaultManagementForm />
+    </Tabs.Content>
+
+    <Tabs.Content value="appearance" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Theme</Label>
+        <Select.Root
+          type="single"
+          value={settings.current.appearance.theme}
+          onValueChange={(v) => setAppearance('theme', v as ThemePref)}
+        >
+          <Select.Trigger class="w-full">{settings.current.appearance.theme}</Select.Trigger>
+          <Select.Content>
+            {#each themes as t (t)}
+              <Select.Item value={t} label={t}>{t}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+    </Tabs.Content>
+
+  <Tabs.Content value="shortcuts" class={contentClass}>
+      <div class="flex flex-col gap-1">
+        <h2 class="m-0 text-sm font-medium">Keyboard shortcuts</h2>
+        <p class="m-0 text-[11px] leading-4 text-muted-foreground">
+          Choose what numbered navigation targets, and use the reference below to see the current
+          app-wide bindings.
+        </p>
+      </div>
+
+      <div class="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div class="min-w-0">
+            <Label class="text-sm font-medium">Shift-number navigation</Label>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Applies to <kbd class="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">Ctrl/Cmd</kbd>
+              + <kbd class="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">Shift</kbd>
+              + <kbd class="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">1–9</kbd>.
+            </p>
+          </div>
+          <Select.Root
+            type="single"
+            value={settings.current.shortcuts.shiftNumberNavigation}
+            onValueChange={(v) => setShiftNumberNavigation(v as ShiftNumberNavigationTarget)}
+          >
+            <Select.Trigger class="w-full shrink-0 sm:w-56">
+              {settings.current.shortcuts.shiftNumberNavigation === 'project'
+                ? 'Projects'
+                : 'Worktrees'}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="worktree" label="Worktrees">Worktrees</Select.Item>
+              <Select.Item value="project" label="Projects">Projects</Select.Item>
+            </Select.Content>
+          </Select.Root>
+        </div>
+        <p class="m-0 text-[11px] leading-4 text-muted-foreground">
+          Numbering follows the order shown in the sidebar. A project or worktree without a session
+          opens the new-session picker for that location.
+        </p>
+      </div>
+
+      <div class="flex flex-col gap-3 rounded-md border border-primary/30 bg-primary/5 p-3">
+        <div class="flex items-start gap-2.5">
+          <ScanLine class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div class="min-w-0 flex-1">
+            <Label class="text-sm font-medium">Component inspector</Label>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Toggle inspection mode in the Browser pane and inspect source locations from the
+              rendered page.
+            </p>
+          </div>
+          {#if recordingInspectorShortcut}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              class="shrink-0 border-primary text-primary"
+              onkeydown={recordInspectorShortcut}
+              onblur={cancelInspectorShortcutRecording}
+              onclick={() => undefined}
+              aria-label="Press a new component inspector shortcut"
+            >
+              Press keys…
+            </Button>
+          {:else}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              class="shrink-0 font-mono text-[11px]"
+              onclick={startInspectorShortcutRecording}
+              aria-label="Change component inspector shortcut"
+            >
+              {shortcutLabel(settings.current.shortcuts.elementSourceInspector)}
+            </Button>
+          {/if}
+        </div>
+        {#if recordingInspectorShortcut}
+          <p class="m-0 text-[11px] text-primary" aria-live="polite">
+            Press the new shortcut, or Escape to cancel.
+          </p>
+        {/if}
+        {#if inspectorShortcutError}
+          <p class="m-0 text-[11px] text-destructive" role="alert">{inspectorShortcutError}</p>
+        {/if}
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <h3 class="m-0 text-xs font-medium text-muted-foreground">Current bindings</h3>
+        <div class="overflow-hidden rounded-md border border-border">
+          <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+            <span class="text-xs">Switch to session 1–9</span>
+            <span class="flex shrink-0 items-center gap-1" aria-label="Ctrl or Command plus 1 through 9">
+              {#each ['Ctrl/Cmd', '1–9'] as key (key)}
+                <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{key}</kbd>
+              {/each}
+            </span>
+          </div>
+          <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+            <span class="text-xs">
+              Switch to {settings.current.shortcuts.shiftNumberNavigation === 'project'
+                ? 'project'
+                : 'worktree'} 1–9
+            </span>
+            <span class="flex shrink-0 items-center gap-1" aria-label="Ctrl or Command plus Shift plus 1 through 9">
+              {#each ['Ctrl/Cmd', 'Shift', '1–9'] as key (key)}
+                <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{key}</kbd>
+              {/each}
+            </span>
+          </div>
+          {#each builtInShortcuts.filter((shortcut) => shortcut.id !== Keymap.elementSourceInspector.id) as shortcut, i (shortcut.id)}
+            <div
+              class={`flex items-center justify-between gap-3 px-3 py-2.5 ${
+                i < builtInShortcuts.length - 1 ? 'border-b border-border' : ''
+              }`}
+            >
+              <span class="text-xs">{shortcut.description}</span>
+              <span class="flex shrink-0 items-center gap-1" aria-label={shortcut.keys.map(shortcutKeyLabel).join(' plus ')}>
+                {#each shortcut.keys as key (key)}
+                  <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    {shortcutKeyLabel(key)}
+                  </kbd>
+                {/each}
+              </span>
+            </div>
+          {/each}
+          <div class="flex items-center justify-between gap-3 px-3 py-2.5">
+            <span class="text-xs">Toggle component inspector</span>
+            <span
+              class="flex shrink-0 items-center gap-1"
+              aria-label={shortcutLabel(settings.current.shortcuts.elementSourceInspector)}
+            >
+              {#each settings.current.shortcuts.elementSourceInspector as key (key)}
+                <kbd class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  {shortcutKeyLabel(key)}
+                </kbd>
+              {/each}
+            </span>
+          </div>
+        </div>
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="notifications" class={contentClass}>
+      <div class="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3">
+        <div class="flex items-start gap-2.5">
+          <Bell class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium text-foreground">Agent status notifications</div>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Get a system notification when an agent finishes or needs attention while its
+              session is not currently visible and focused.
+            </p>
+          </div>
+        </div>
+        {#if notificationPermission === 'granted'}
+          <p class="m-0 text-xs font-medium text-success">Notifications are enabled</p>
+        {:else if notificationPermission === 'denied'}
+          <p class="m-0 text-xs text-destructive">
+            Notifications are blocked. Allow them in your browser or system settings.
+          </p>
+        {:else if notificationPermission === 'unsupported'}
+          <p class="m-0 text-xs text-muted-foreground">
+            System notifications are not available in this environment.
+          </p>
+        {:else}
+          <Button class="self-start" size="sm" onclick={enableNotifications}>
+            Enable notifications
+          </Button>
+        {/if}
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="models" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">
+        Pick which CLI handles each background LLM task. Connect a provider in Integration if it
+        isn't listed.
+      </p>
+      {#each modelTasks as task (task.key)}
+        {@const selected = settings.current.models[task.key]}
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-xs text-muted-foreground">{task.label}</Label>
+          <Select.Root
+            type="single"
+            value={modelKey(selected)}
+            onValueChange={(v) => setModel(task.key, v)}
+          >
+            <Select.Trigger class="w-full">
+              <span class="flex items-center gap-2">
+                {#if selected}
+                  <KindIcon kind={providerKind(selected.provider)} size={14} />
+                {/if}
+                <span>{modelLabel(selected)}</span>
+              </span>
+            </Select.Trigger>
+            <Select.Content>
+              {#each settings.availableModels as entry (modelKey(entry))}
+                <Select.Item value={modelKey(entry)} label={entry.label}>
+                  <span class="flex items-center gap-2">
+                    <KindIcon kind={providerKind(entry.provider)} size={14} />
+                    <span>{entry.label}</span>
+                  </span>
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <span class="text-[11px] text-muted-foreground">{task.hint}</span>
+        </div>
+      {/each}
+    </Tabs.Content>
+
+    <Tabs.Content value="quicklaunch" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">
+        Presets appear below the three main icons in the <b>+</b> popover for quick one-click
+        launching.
+      </p>
+      {#each settings.current.quickLaunch as preset (preset.id)}
+        {@const presetModelOptions = modelCatalogFor(settings.availableModels, presetProviderToModel(preset.provider))}
+        {@const presetSelectedModel = presetModelOptions.find((m) => m.id === preset.model)}
+        <div class="flex flex-col gap-2 rounded-md border border-border p-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <KindIcon kind={preset.provider} size={16} />
+              <span class="text-sm font-medium">
+                {preset.label || '(untitled)'}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="size-6 shrink-0 text-muted-foreground hover:text-destructive"
+              title="Remove preset"
+              onclick={() => removePreset(preset.id)}
+            >
+              <X class="size-3.5" />
+            </Button>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-label-${preset.id}`}>Label</Label>
+            <Input
+              id={`ql-label-${preset.id}`}
+              type="text"
+              placeholder="e.g. Opus 4.7"
+              value={preset.label}
+              onchange={(e) =>
+                updatePreset(preset.id, { label: (e.currentTarget as HTMLInputElement).value })}
+            />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Provider</Label>
+            <Select.Root
+              type="single"
+              value={preset.provider}
+              onValueChange={(v) =>
+                updatePreset(preset.id, { provider: v as AgentRuntimeProvider })}
+            >
+              <Select.Trigger class="w-full">
+                {quickLaunchProviders.find((p) => p.value === preset.provider)?.label ?? preset.provider}
+              </Select.Trigger>
+              <Select.Content>
+                {#each quickLaunchProviders as p (p.value)}
+                  <Select.Item value={p.value} label={p.label}>{p.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Model</Label>
+            <Select.Root
+              type="single"
+              value={preset.model ?? '__default__'}
+              onValueChange={(v) =>
+                updatePreset(preset.id, { model: v === '__default__' ? undefined : v })}
+            >
+              <Select.Trigger class="w-full">
+                <span class="flex items-center gap-2">
+                  {#if preset.model}
+                    <KindIcon kind={preset.provider} size={14} />
+                  {/if}
+                  <span>{presetSelectedModel?.label ?? (preset.model || '(CLI default)')}</span>
+                </span>
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="__default__" label="(CLI default)">
+                  (CLI default)
+                </Select.Item>
+                {#each presetModelOptions as entry (entry.id)}
+                  <Select.Item value={entry.id} label={entry.label}>
+                    <span class="flex items-center gap-2">
+                      <KindIcon kind={providerKind(entry.provider)} size={14} />
+                      <span>{entry.label}</span>
+                    </span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          {#if preset.provider === 'claude_code'}
+            <div class="flex items-center gap-2">
+              <Checkbox
+                id={`ql-skip-perms-${preset.id}`}
+                checked={preset.dangerouslySkipPermissions ?? false}
+                onCheckedChange={(v) =>
+                  updatePreset(preset.id, { dangerouslySkipPermissions: v === true || undefined })}
+              />
+              <Label for={`ql-skip-perms-${preset.id}`} class="text-sm text-foreground">
+                --dangerously-skip-permissions
+              </Label>
+            </div>
+          {/if}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-args-${preset.id}`}>
+              Extra CLI args
+            </Label>
+            <Input
+              id={`ql-args-${preset.id}`}
+              type="text"
+              placeholder={preset.provider === 'claude_code'
+                ? '--verbose --allowedTools bash,computer'
+                : '--full-auto'}
+              value={preset.extraArgs ?? ''}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLInputElement).value.trim();
+                updatePreset(preset.id, { extraArgs: v || undefined });
+              }}
+            />
+            <span class="text-[11px] text-muted-foreground">
+              Space-separated flags appended to the CLI command.
+            </span>
+          </div>
+        </div>
+      {/each}
+      {#if draftPreset}
+        {@const draftModelOptions = modelCatalogFor(settings.availableModels, presetProviderToModel(draftPreset.provider))}
+        {@const draftSelectedModel = draftModelOptions.find((m) => m.id === draftPreset?.model)}
+        <div class="flex flex-col gap-2 rounded-md border border-primary/40 bg-primary/5 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <KindIcon kind={draftPreset.provider} size={16} />
+              <span class="text-sm font-medium">
+                {draftPreset.label.trim() || '(new preset)'}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="size-6 shrink-0 text-muted-foreground hover:text-destructive"
+              title="Cancel preset"
+              onclick={cancelDraftPreset}
+            >
+              <X class="size-3.5" />
+            </Button>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-label-${draftPreset.id}`}>Label</Label>
+            <Input
+              id={`ql-label-${draftPreset.id}`}
+              type="text"
+              placeholder="e.g. Claude danger"
+              value={draftPreset.label}
+              oninput={(e) =>
+                updateDraftPreset({ label: (e.currentTarget as HTMLInputElement).value })}
+            />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Provider</Label>
+            <Select.Root
+              type="single"
+              value={draftPreset.provider}
+              onValueChange={(v) =>
+                updateDraftPreset({
+                  provider: v as AgentRuntimeProvider,
+                  model: undefined,
+                  dangerouslySkipPermissions: undefined
+                })}
+            >
+              <Select.Trigger class="w-full">
+                {quickLaunchProviders.find((p) => p.value === draftPreset?.provider)?.label ?? draftPreset.provider}
+              </Select.Trigger>
+              <Select.Content>
+                {#each quickLaunchProviders as p (p.value)}
+                  <Select.Item value={p.value} label={p.label}>{p.label}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground">Model</Label>
+            <Select.Root
+              type="single"
+              value={draftPreset.model ?? '__default__'}
+              onValueChange={(v) =>
+                updateDraftPreset({ model: v === '__default__' ? undefined : v })}
+            >
+              <Select.Trigger class="w-full">
+                <span class="flex items-center gap-2">
+                  {#if draftPreset.model}
+                    <KindIcon kind={draftPreset.provider} size={14} />
+                  {/if}
+                  <span>{draftSelectedModel?.label ?? (draftPreset.model || '(CLI default)')}</span>
+                </span>
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value="__default__" label="(CLI default)">
+                  (CLI default)
+                </Select.Item>
+                {#each draftModelOptions as entry (entry.id)}
+                  <Select.Item value={entry.id} label={entry.label}>
+                    <span class="flex items-center gap-2">
+                      <KindIcon kind={providerKind(entry.provider)} size={14} />
+                      <span>{entry.label}</span>
+                    </span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+          {#if draftPreset.provider === 'claude_code'}
+            <div class="flex items-center gap-2">
+              <Checkbox
+                id={`ql-skip-perms-${draftPreset.id}`}
+                checked={draftPreset.dangerouslySkipPermissions ?? false}
+                onCheckedChange={(v) =>
+                  updateDraftPreset({ dangerouslySkipPermissions: v === true || undefined })}
+              />
+              <Label for={`ql-skip-perms-${draftPreset.id}`} class="text-sm text-foreground">
+                --dangerously-skip-permissions
+              </Label>
+            </div>
+          {/if}
+          <div class="flex flex-col gap-1.5">
+            <Label class="text-xs text-muted-foreground" for={`ql-args-${draftPreset.id}`}>
+              Extra CLI args
+            </Label>
+            <Input
+              id={`ql-args-${draftPreset.id}`}
+              type="text"
+              placeholder={draftPreset.provider === 'claude_code'
+                ? '--verbose --allowedTools bash,computer'
+                : '--full-auto'}
+              value={draftPreset.extraArgs ?? ''}
+              oninput={(e) =>
+                updateDraftPreset({ extraArgs: (e.currentTarget as HTMLInputElement).value })}
+            />
+            <span class="text-[11px] text-muted-foreground">
+              Space-separated flags appended to the CLI command.
+            </span>
+          </div>
+          <div class="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="sm" onclick={cancelDraftPreset}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!draftPreset.label.trim()}
+              onclick={() => void saveDraftPreset()}
+            >
+              Save preset
+            </Button>
+          </div>
+        </div>
+      {/if}
+      <Button variant="outline" class="w-full" onclick={addPreset}>
+        Add preset
+      </Button>
+    </Tabs.Content>
+
+    <Tabs.Content value="terminal" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Quick-open default</Label>
+        <Select.Root
+          type="single"
+          value={settings.current.defaults.newSessionKind}
+          onValueChange={(v) => setDefaultNewSessionKind(v as SessionLaunchKind)}
+        >
+          <Select.Trigger class="w-full">
+            {newSessionKinds.find((k) => k.value === settings.current.defaults.newSessionKind)
+              ?.label ?? 'Terminal'}
+          </Select.Trigger>
+          <Select.Content>
+            {#each newSessionKinds as kind (kind.value)}
+              <Select.Item value={kind.value} label={kind.label}>{kind.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <span class="text-[11px] text-muted-foreground">
+          Session type opened by <kbd class="rounded border border-border px-1 font-mono text-[10px]">Ctrl+T</kbd> and the <b>+</b> button.
+        </span>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Run mode</Label>
+        <Select.Root
+          type="single"
+          value={settings.current.defaults.runMode}
+          onValueChange={(v) => setDefault('runMode', v)}
+        >
+          <Select.Trigger class="w-full">{runModeLabel(settings.current.defaults.runMode)}</Select.Trigger>
+          <Select.Content>
+            {#each runModes as r (r)}
+              <Select.Item value={r} label={runModeLabel(r)}>{runModeLabel(r)}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      {#if settings.current.defaults.runMode === 'wsl'}
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="pref-wsl-distro">WSL distro</Label>
+        <Input
+          id="pref-wsl-distro"
+          type="text"
+          placeholder="Ubuntu"
+          value={settings.current.defaults.wslDistro ?? ''}
+          onchange={(e) => setDefault('wslDistro', (e.currentTarget as HTMLInputElement).value)}
+        />
+      </div>
+      {/if}
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Shell</Label>
+        <Select.Root
+          type="single"
+          value={settings.current.defaults.shell}
+          onValueChange={(v) => setDefault('shell', v)}
+        >
+          <Select.Trigger class="w-full">{settings.current.defaults.shell}</Select.Trigger>
+          <Select.Content>
+            {#each shells as s (s)}
+              <Select.Item value={s} label={s}>{s}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="pref-default-cwd">
+          Default working directory
+        </Label>
+        <Input
+          id="pref-default-cwd"
+          type="text"
+          placeholder="~"
+          value={settings.current.defaults.cwd}
+          onchange={(e) => setDefaultCwd((e.currentTarget as HTMLInputElement).value)}
+        />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Font size</Label>
+        <Select.Root
+          type="single"
+          value={String(settings.current.terminal.fontSize)}
+          onValueChange={(v) => setTerminalFontSize(Number(v) as TerminalFontSizePref)}
+        >
+          <Select.Trigger class="w-full">{settings.current.terminal.fontSize}px</Select.Trigger>
+          <Select.Content>
+            {#each terminalFontSizes as f (f)}
+              <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <Label for="pref-confirm-delete-tabs" class="text-xs text-muted-foreground">
+          Confirm when closing sessions via the trash icon
+        </Label>
+        <Switch
+          id="pref-confirm-delete-tabs"
+          checked={settings.current.terminal.confirmDeleteTabs}
+          onCheckedChange={setConfirmDeleteTabs}
+        />
+      </div>
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex flex-col gap-1">
+          <Label for="pref-keep-full-terminal-history" class="text-xs text-muted-foreground">
+            Keep complete output history
+          </Label>
+          <p class="m-0 text-[11px] text-muted-foreground">
+            Lets running terminals retain and render all future output. This can use substantial
+            memory; output omitted before enabling it cannot be restored.
+          </p>
+        </div>
+        <Switch
+          id="pref-keep-full-terminal-history"
+          checked={settings.current.terminal.keepFullHistory}
+          onCheckedChange={setKeepFullTerminalHistory}
+        />
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="binaries" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">Leave blank to use the binary on PATH.</p>
+      {#each binaryKeys as b (b.key)}
+        <div class="flex flex-col gap-1.5">
+          <Label class="text-xs text-muted-foreground" for={`bin-${b.key}`}>{b.label}</Label>
+          <Input
+            id={`bin-${b.key}`}
+            type="text"
+            placeholder={b.placeholder}
+            value={settings.current.binaries[b.key] ?? ''}
+            onchange={(e) => setBinary(b.key, (e.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
+      {/each}
+    </Tabs.Content>
+
+    <Tabs.Content value="diff" class={contentClass}>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Diff font size</Label>
+        <Select.Root
+          type="single"
+          value={String(settings.current.diff.fontSize)}
+          onValueChange={(v) => setDiffFontSize(Number(v) as DiffFontSizePref)}
+        >
+          <Select.Trigger class="w-full">{settings.current.diff.fontSize}px</Select.Trigger>
+          <Select.Content>
+            {#each diffFontSizes as f (f)}
+              <Select.Item value={String(f)} label={`${f}px`}>{f}px</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="files" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">No file-tree settings yet.</p>
+    </Tabs.Content>
+
+    <Tabs.Content value="featurelab" class={contentClass}>
+      <p class="m-0 text-[11px] text-muted-foreground">No Feature Lab settings yet.</p>
+    </Tabs.Content>
+
+    <Tabs.Content value="browser" class={contentClass}>
+      <div class="flex items-center justify-between gap-3 rounded-md border border-primary/30 bg-primary/5 p-3">
+        <div class="flex min-w-0 items-start gap-2.5">
+          <ScanLine class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div class="min-w-0">
+            <Label for="pref-element-source-inspector" class="text-sm font-medium">
+              Component inspector
+            </Label>
+            <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+              Show the inspector control beside DevTools and enable source metadata in browser
+              pages.
+            </p>
+          </div>
+        </div>
+        <Switch
+          id="pref-element-source-inspector"
+          checked={settings.current.browser.elementSourceInspectorEnabled}
+          onCheckedChange={setElementSourceInspectorEnabled}
+        />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="pref-browser-resident-tabs">
+          Maximum live browser tabs
+        </Label>
+        <Input
+          id="pref-browser-resident-tabs"
+          type="number"
+          min="1"
+          max="10"
+          step="1"
+          value={settings.current.browser.maxResidentTabs}
+          onchange={(e) =>
+            setBrowserMaxResidentTabs(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <span class="text-[11px] text-muted-foreground">
+          The active tab always stays live. Older background tabs suspend automatically and restore
+          from their saved URL when selected.
+        </span>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="pref-browser-auto-resume">
+          Auto-resume paused tabs after (minutes)
+        </Label>
+        <Input
+          id="pref-browser-auto-resume"
+          type="number"
+          min="0"
+          max="1440"
+          step="1"
+          value={settings.current.browser.pauseAutoResumeMinutes}
+          onchange={(e) =>
+            setBrowserAutoResumeMinutes(Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <span class="text-[11px] text-muted-foreground">
+          Paused tabs unmount their webview to free memory. Set to 0 to disable auto-resume — paused
+          tabs then stay paused until you click them.
+        </span>
+      </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="notes" class={contentClass}>
+      <div class="flex items-center justify-between gap-3">
+        <Label for="pref-notes-drafts-per-worktree" class="text-xs text-muted-foreground">
+          Per-worktree drafts and saved-note selection
+        </Label>
+        <Switch
+          id="pref-notes-drafts-per-worktree"
+          checked={settings.current.notes.draftsPerWorktree}
+          onCheckedChange={setNotesDraftsPerWorktree}
+        />
+      </div>
+      <span class="text-[11px] text-muted-foreground">
+        When on, the untitled draft and the last-open saved note are remembered separately for each
+        worktree — switching worktrees swaps the whole notes view. When off, drafts are shared
+        across all worktrees in a project.
+      </span>
+    </Tabs.Content>
+  </ScrollArea>
+</Tabs.Root>

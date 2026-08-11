@@ -1,0 +1,55 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { SpawnSpec } from '@shared/types/terminal.js';
+import type { InnerCommand } from './InnerCommand.js';
+
+export interface NativeRunOptions {
+  cwd: string;
+  baseEnv: Record<string, string | undefined>;
+}
+
+export class NativeCommandBuilder {
+  build(inner: InnerCommand, opts: NativeRunOptions): SpawnSpec {
+    const env = mergeEnv(opts.baseEnv, inner.env);
+    const cwd = expandHome(opts.cwd);
+    return {
+      file: inner.executable,
+      args: inner.args,
+      cwd,
+      env,
+      description: describe(inner, cwd)
+    };
+  }
+}
+
+// Kept as a source-compatible alias for extensions and older tests. The
+// implementation is host-native and is used by both Windows and Linux.
+export class WindowsCommandBuilder extends NativeCommandBuilder {}
+
+function expandHome(cwd: string): string {
+  if (cwd === '~') return os.homedir();
+  if (cwd.startsWith('~/') || cwd.startsWith('~\\')) {
+    return path.join(os.homedir(), cwd.slice(2));
+  }
+  return cwd;
+}
+
+function mergeEnv(
+  base: Record<string, string | undefined>,
+  overrides: Record<string, string>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (typeof v === 'string') out[k] = v;
+  }
+  for (const [k, v] of Object.entries(overrides)) {
+    out[k] = v;
+  }
+  return out;
+}
+
+function describe(inner: InnerCommand, cwd: string): string {
+  const envParts = Object.entries(inner.env).map(([k, v]) => `${k}=${v}`);
+  const cmd = [...envParts, inner.executable, ...inner.args].join(' ');
+  return `[${cwd}] ${cmd}`;
+}
