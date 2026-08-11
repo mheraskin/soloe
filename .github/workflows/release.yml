@@ -44,7 +44,7 @@ jobs:
         run: ${{ matrix.command }}
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: soloe-${{ matrix.platform }}-${{ github.sha }}
           path: ${{ matrix.files }}
