@@ -61,9 +61,17 @@ function request(host: HTMLElement, onResize = vi.fn()): TerminalPresentationCre
 }
 
 describe('LibghosttyTerminalPresentationAdapter contract', () => {
+  let animationFrames: FrameRequestCallback[];
+
   beforeEach(() => {
     TestResizeObserver.instances = [];
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    animationFrames = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
   });
 
   afterEach(() => {
@@ -87,6 +95,7 @@ describe('LibghosttyTerminalPresentationAdapter contract', () => {
       nativeHost,
       request(element, onResize)
     );
+    animationFrames.shift()?.(performance.now());
     await Promise.resolve();
 
     expect(presentation.kind).toBe('libghostty');
@@ -130,5 +139,32 @@ describe('LibghosttyTerminalPresentationAdapter contract', () => {
     const callCount = calls.length;
     await presentation.write('after-dispose');
     expect(calls).toHaveLength(callCount);
+  });
+
+  it('coalesces resize bursts into one native bounds update per frame', async () => {
+    const calls: string[] = [];
+    const surface = nativeSurface(calls);
+    const nativeHost: NativeTerminalHost = {
+      capabilities: vi.fn(async () => ({ available: true, complete: true })),
+      createSurface: vi.fn(async () => surface)
+    };
+    const element = document.createElement('div');
+    element.getBoundingClientRect = () => new DOMRect(10, 20, 900, 500);
+    document.body.append(element);
+    const presentation = await LibghosttyTerminalPresentationAdapter.create(
+      nativeHost,
+      request(element)
+    );
+
+    TestResizeObserver.instances[0]?.callback([], TestResizeObserver.instances[0] as never);
+    TestResizeObserver.instances[0]?.callback([], TestResizeObserver.instances[0] as never);
+    presentation.fit();
+
+    expect(surface.setBounds).not.toHaveBeenCalled();
+    animationFrames.shift()?.(performance.now());
+    await Promise.resolve();
+    expect(surface.setBounds).toHaveBeenCalledOnce();
+
+    presentation.dispose();
   });
 });

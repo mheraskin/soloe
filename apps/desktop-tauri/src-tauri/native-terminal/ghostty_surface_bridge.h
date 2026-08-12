@@ -14,6 +14,7 @@ typedef void (*soloe_ghostty_bytes_cb)(void *userdata,
 typedef void (*soloe_ghostty_text_cb)(void *userdata,
                                       const char *text,
                                       size_t len);
+typedef void (*soloe_ghostty_revision_cb)(void *userdata, uint64_t revision);
 
 typedef struct {
   double x;
@@ -79,5 +80,19 @@ char *soloe_ghostty_surface_export(SoloeGhosttySurface *surface,
                                    size_t *len);
 void soloe_ghostty_surface_free_export(char *text);
 bool soloe_ghostty_surface_scroll_to_bottom(SoloeGhosttySurface *surface);
+
+// Windows parses output on a presentation worker. These functions let the
+// renderer keep the same ordered-write backpressure as xterm without blocking
+// the Win32/WebView UI thread. Other platform bridges keep their synchronous
+// write contract and do not export these symbols.
+uint64_t soloe_ghostty_surface_write_async(SoloeGhosttySurface *surface,
+                                           const uint8_t *bytes,
+                                           size_t len);
+uint64_t soloe_ghostty_surface_replace_async(SoloeGhosttySurface *surface,
+                                             const uint8_t *bytes,
+                                             size_t len);
+void soloe_ghostty_surface_set_output_complete_callback(
+    SoloeGhosttySurface *surface,
+    soloe_ghostty_revision_cb callback);
 
 #endif

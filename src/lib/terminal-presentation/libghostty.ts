@@ -4,6 +4,10 @@ import type {
   TerminalPresentationCreateRequest
 } from './types';
 import type { NativeTerminalHost, NativeTerminalSurface } from './native-host';
+import {
+  isNativeSurfaceBlocked,
+  subscribeNativeSurfaceBlocker
+} from '../native-surface-layout';
 
 /**
  * Thin renderer-side Adapter for a shell-owned libghostty surface.
@@ -19,6 +23,13 @@ export class LibghosttyTerminalPresentationAdapter implements TerminalPresentati
   private visible: boolean;
   private focused: boolean;
   private compactViewport: boolean;
+  private blocked = isNativeSurfaceBlocked();
+  private surfaceVisible: boolean;
+  private resizeFrame: number | null = null;
+  private resizeRequested = false;
+  private resizeInFlight = false;
+  private scrollAfterFit = false;
+  private readonly unsubscribeBlocker: () => void;
 
   private constructor(
     private readonly request: TerminalPresentationCreateRequest,
@@ -27,9 +38,12 @@ export class LibghosttyTerminalPresentationAdapter implements TerminalPresentati
     this.visible = request.visible;
     this.focused = request.focused;
     this.compactViewport = request.compactViewport;
+    this.surfaceVisible = request.visible && !this.blocked;
     this.resizeObserver = new ResizeObserver(() => this.fit());
     this.resizeObserver.observe(request.host);
+    this.unsubscribeBlocker = subscribeNativeSurfaceBlocker(this.onSurfaceBlocked);
     window.addEventListener('soloe:rail-layout', this.onRailLayout);
+    window.addEventListener('soloe:renderer-zoom', this.onRendererZoom);
   }
 
   static async create(
@@ -40,8 +54,8 @@ export class LibghosttyTerminalPresentationAdapter implements TerminalPresentati
     try {
       const adapter = new LibghosttyTerminalPresentationAdapter(request, surface);
       await surface.setConfiguration(request.configuration);
-      await surface.setVisible(request.visible);
-      await surface.setFocused(request.focused);
+      await surface.setVisible(adapter.surfaceVisible);
+      await surface.setFocused(request.focused && !adapter.blocked);
       adapter.fit();
       return adapter;
     } catch (error) {
@@ -61,14 +75,13 @@ export class LibghosttyTerminalPresentationAdapter implements TerminalPresentati
   setVisible(visible: boolean): void {
     if (this.disposed || this.visible === visible) return;
     this.visible = visible;
-    void this.surface.setVisible(visible);
-    if (visible) this.fit();
+    this.syncSurfaceVisibility();
   }
 
   setFocused(focused: boolean, _autofocus: boolean): void {
     if (this.disposed || this.focused === focused) return;
     this.focused = focused;
-    void this.surface.setFocused(focused);
+    if (!this.blocked) void this.surface.setFocused(focused);
   }
 
   setCompactViewport(compact: boolean): void {
@@ -81,21 +94,18 @@ export class LibghosttyTerminalPresentationAdapter implements TerminalPresentati
   }
 
   fit(scrollToBottom = false): void {
-    if (this.disposed || !this.visible || !this.request.host.isConnected) return;
+    if (this.disposed || !this.visible || this.blocked || !this.request.host.isConnected) return;
     if (
       this.compactViewport
       && document.documentElement.hasAttribute('data-mobile-keyboard-open')
     ) return;
-    const bounds = this.request.host.getBoundingClientRect();
-    if (bounds.width < 4 || bounds.height < 4) return;
-    void this.surface.setBounds(bounds).then((size) => {
-      if (size) this.request.callbacks.onResize(size);
-      if (scrollToBottom) void this.surface.scrollToBottom();
-    });
+    this.resizeRequested = true;
+    this.scrollAfterFit ||= scrollToBottom;
+    this.scheduleFit();
   }
 
   focus(): void {
-    if (!this.disposed) void this.surface.setFocused(true);
+    if (!this.disposed && !this.blocked) void this.surface.setFocused(true);
   }
 
   paste(text: string): void {
@@ -131,9 +141,70 @@ export class LibghosttyTerminalPresentationAdapter implements TerminalPresentati
     this.disposed = true;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    if (this.resizeFrame !== null) cancelAnimationFrame(this.resizeFrame);
+    this.resizeFrame = null;
+    this.unsubscribeBlocker();
     window.removeEventListener('soloe:rail-layout', this.onRailLayout);
+    window.removeEventListener('soloe:renderer-zoom', this.onRendererZoom);
     void this.surface.dispose();
   }
+
+  private scheduleFit(): void {
+    if (this.resizeFrame !== null || this.resizeInFlight || this.disposed) return;
+    this.resizeFrame = requestAnimationFrame(() => {
+      this.resizeFrame = null;
+      this.runFit();
+    });
+  }
+
+  private runFit(): void {
+    if (
+      !this.resizeRequested
+      || this.disposed
+      || !this.visible
+      || this.blocked
+      || !this.request.host.isConnected
+    ) return;
+    const bounds = this.request.host.getBoundingClientRect();
+    if (bounds.width < 4 || bounds.height < 4) return;
+    this.resizeRequested = false;
+    const scrollToBottom = this.scrollAfterFit;
+    this.scrollAfterFit = false;
+    this.resizeInFlight = true;
+    void this.surface.setBounds(bounds).then((size) => {
+      if (size && !this.disposed) this.request.callbacks.onResize(size);
+      if (scrollToBottom && !this.disposed) void this.surface.scrollToBottom();
+    }).finally(() => {
+      this.resizeInFlight = false;
+      if (this.resizeRequested) this.scheduleFit();
+    });
+  }
+
+  private syncSurfaceVisibility(): void {
+    const nextVisible = this.visible && !this.blocked;
+    if (nextVisible === this.surfaceVisible) return;
+    this.surfaceVisible = nextVisible;
+    if (!nextVisible) {
+      void this.surface.setFocused(false);
+      void this.surface.setVisible(false);
+      return;
+    }
+    void this.surface.setVisible(true).then(() => {
+      if (this.disposed || this.blocked || !this.visible) return;
+      void this.surface.setFocused(this.focused);
+      this.fit();
+    });
+  }
+
+  private readonly onSurfaceBlocked = (blocked: boolean): void => {
+    if (this.disposed || this.blocked === blocked) return;
+    this.blocked = blocked;
+    this.syncSurfaceVisibility();
+  };
+
+  private readonly onRendererZoom = (): void => {
+    this.fit();
+  };
 
   private readonly onRailLayout = (event: Event): void => {
     const detail = (event as CustomEvent<{ keyboardOpen?: boolean; keyboardClosed?: boolean }>).detail;

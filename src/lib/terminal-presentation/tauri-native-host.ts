@@ -10,16 +10,20 @@ import type {
   TerminalPresentationCreateRequest,
   TerminalPresentationSize
 } from './types';
+import { isNativeSurfaceBlocked, nativeSurfaceBounds } from '../native-surface-layout';
+import { NativeWriteCompletion } from './native-write-completion';
 
 interface NativeSurfaceEvent {
   surfaceId: string;
   data?: string;
   text?: string;
+  revision?: number;
 }
 
 class TauriNativeTerminalSurface implements NativeTerminalSurface {
   private selection = '';
   private unlisteners: UnlistenFn[] = [];
+  private readonly writeCompletion = new NativeWriteCompletion();
 
   constructor(
     private readonly surfaceId: string,
@@ -43,16 +47,29 @@ class TauriNativeTerminalSurface implements NativeTerminalSurface {
         if (payload.surfaceId === this.surfaceId && payload.text) {
           this.request.callbacks.onLink(payload.text);
         }
+      }),
+      await listen<NativeSurfaceEvent>('soloe://native-terminal-output-complete', ({ payload }) => {
+        if (payload.surfaceId === this.surfaceId && payload.revision) {
+          this.writeCompletion.complete(payload.revision);
+        }
       })
     );
   }
 
-  write(data: string): Promise<void> {
-    return invoke('native_terminal_write', { surfaceId: this.surfaceId, data });
+  async write(data: string): Promise<void> {
+    const revision = await invoke<number>('native_terminal_write', {
+      surfaceId: this.surfaceId,
+      data
+    });
+    await this.writeCompletion.wait(revision);
   }
 
-  replace(data: string): Promise<void> {
-    return invoke('native_terminal_replace', { surfaceId: this.surfaceId, data });
+  async replace(data: string): Promise<void> {
+    const revision = await invoke<number>('native_terminal_replace', {
+      surfaceId: this.surfaceId,
+      data
+    });
+    await this.writeCompletion.wait(revision);
   }
 
   setVisible(visible: boolean): Promise<void> {
@@ -66,7 +83,7 @@ class TauriNativeTerminalSurface implements NativeTerminalSurface {
   setBounds(bounds: DOMRectReadOnly): Promise<TerminalPresentationSize | null> {
     return invoke('native_terminal_set_bounds', {
       surfaceId: this.surfaceId,
-      bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+      bounds: nativeSurfaceBounds(bounds)
     });
   }
 
@@ -107,6 +124,7 @@ class TauriNativeTerminalSurface implements NativeTerminalSurface {
   }
 
   async dispose(): Promise<void> {
+    this.writeCompletion.dispose();
     for (const unlisten of this.unlisteners.splice(0)) unlisten();
     await invoke('native_terminal_dispose', { surfaceId: this.surfaceId });
   }
@@ -128,14 +146,15 @@ class TauriNativeTerminalHost implements NativeTerminalHost {
 
   async createSurface(request: TerminalPresentationCreateRequest): Promise<NativeTerminalSurface> {
     const bounds = request.host.getBoundingClientRect();
+    const blocked = isNativeSurfaceBlocked();
     const surfaceId = await invoke<string>('native_terminal_create', {
       request: {
         terminalId: request.terminalId,
         sessionId: request.sessionId,
-        bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+        bounds: nativeSurfaceBounds(bounds),
         configuration: request.configuration,
-        visible: request.visible,
-        focused: request.focused
+        visible: request.visible && !blocked,
+        focused: request.focused && !blocked
       }
     });
     const surface = new TauriNativeTerminalSurface(surfaceId, request);

@@ -3,6 +3,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { BrowserApi, IpcResult, WindowApi } from '@shared/types/ipc.js';
 import { createBrowserApi } from './browser-api';
+import { setRendererZoom } from './native-surface-layout';
 
 interface TauriBackendBootstrap {
   address: string;
@@ -28,9 +29,13 @@ function result(operation: () => void | Promise<void>): Promise<IpcResult<true>>
 }
 
 function zoom(delta: number): Promise<IpcResult<number>> {
-  rendererZoom = Math.max(0.5, Math.min(2, Math.round((rendererZoom + delta) * 10) / 10));
-  return getCurrentWebview().setZoom(rendererZoom)
-    .then(() => ({ ok: true as const, value: rendererZoom }))
+  const next = Math.max(0.5, Math.min(2, Math.round((rendererZoom + delta) * 10) / 10));
+  return getCurrentWebview().setZoom(next)
+    .then(() => {
+      rendererZoom = next;
+      setRendererZoom(next);
+      return { ok: true as const, value: rendererZoom };
+    })
     .catch((error) => ({
       ok: false as const,
       error: error instanceof Error ? error.message : String(error)

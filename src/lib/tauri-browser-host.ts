@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { nativeSurfaceBounds } from './native-surface-layout';
 
 export interface TauriBrowserSurfaceBounds {
   x: number;
@@ -38,7 +39,7 @@ export class TauriBrowserSurface {
 
   static async create(request: TauriBrowserSurfaceCreateRequest): Promise<TauriBrowserSurface> {
     const descriptor = await invoke<BrowserSurfaceDescriptor>('browser_surface_create', {
-      request
+      request: { ...request, bounds: nativeSurfaceBounds(request.bounds) }
     });
     return new TauriBrowserSurface(descriptor);
   }
@@ -48,7 +49,10 @@ export class TauriBrowserSurface {
   }
 
   setBounds(bounds: TauriBrowserSurfaceBounds): Promise<void> {
-    return invoke('browser_surface_set_bounds', { surfaceId: this.surfaceId, bounds });
+    return invoke('browser_surface_set_bounds', {
+      surfaceId: this.surfaceId,
+      bounds: nativeSurfaceBounds(bounds)
+    });
   }
 
   setVisible(visible: boolean): Promise<void> {

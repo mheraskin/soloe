@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <iterator>
 #include <mutex>
 #include <new>
@@ -80,6 +81,11 @@ void TraceValue(const char *event, uintptr_t value) {
 
 struct SoloeGhosttyHost {};
 
+struct PendingOutput {
+  uint64_t revision = 0;
+  std::string data;
+};
+
 struct SoloeGhosttySurface {
   ghostty_config_t config = nullptr;
   ghostty_app_t app = nullptr;
@@ -115,14 +121,16 @@ struct SoloeGhosttySurface {
   int modifier_latch = GHOSTTY_MODS_NONE;
   std::mutex output_mutex;
   std::condition_variable output_cv;
-  std::string pending_output;
+  std::deque<PendingOutput> pending_output;
   std::thread output_thread;
   bool output_stopping = false;
+  uint64_t next_output_revision = 1;
   std::atomic<bool> has_processed_output = false;
   void *event_userdata = nullptr;
   soloe_ghostty_bytes_cb input_cb = nullptr;
   soloe_ghostty_text_cb selection_cb = nullptr;
   soloe_ghostty_text_cb link_cb = nullptr;
+  soloe_ghostty_revision_cb output_complete_cb = nullptr;
 };
 
 std::string WideToUtf8(const wchar_t *value, int length = -1) {
@@ -566,40 +574,49 @@ void IoWrite(void *userdata, const char *bytes, uintptr_t length) {
                       reinterpret_cast<const uint8_t *>(bytes), length);
 }
 
-bool QueueOutput(SoloeGhosttySurface *wrapper,
-                 const uint8_t *bytes,
-                 size_t length) {
+uint64_t QueueOutput(SoloeGhosttySurface *wrapper,
+                     const uint8_t *bytes,
+                     size_t length) {
   if (!wrapper || !wrapper->surface || !wrapper->output_thread.joinable())
-    return false;
+    return 0;
+  uint64_t revision = 0;
   {
     std::lock_guard<std::mutex> lock(wrapper->output_mutex);
-    if (wrapper->output_stopping) return false;
+    if (wrapper->output_stopping) return 0;
+    revision = wrapper->next_output_revision++;
+    PendingOutput output;
+    output.revision = revision;
     if (bytes && length > 0)
-      wrapper->pending_output.append(reinterpret_cast<const char *>(bytes),
-                                     length);
+      output.data.assign(reinterpret_cast<const char *>(bytes), length);
+    wrapper->pending_output.push_back(std::move(output));
   }
   wrapper->output_cv.notify_one();
-  return true;
+  return revision;
 }
 
 void OutputWorker(SoloeGhosttySurface *wrapper) {
   Trace("output worker: started");
   while (wrapper) {
-    std::string batch;
+    PendingOutput output;
     {
       std::unique_lock<std::mutex> lock(wrapper->output_mutex);
       wrapper->output_cv.wait(lock, [wrapper] {
         return wrapper->output_stopping || !wrapper->pending_output.empty();
       });
       if (wrapper->output_stopping) break;
-      const size_t length =
-          std::min(kOutputChunkBytes, wrapper->pending_output.size());
-      batch.assign(wrapper->pending_output.data(), length);
-      wrapper->pending_output.erase(0, length);
+      output = std::move(wrapper->pending_output.front());
+      wrapper->pending_output.pop_front();
     }
-    TraceValue("output worker: processing", batch.size());
-    ghostty_surface_process_output(wrapper->surface, batch.data(), batch.size());
+    for (size_t offset = 0; offset < output.data.size();) {
+      const size_t length = std::min(kOutputChunkBytes, output.data.size() - offset);
+      TraceValue("output worker: processing", length);
+      ghostty_surface_process_output(wrapper->surface, output.data.data() + offset,
+                                    length);
+      offset += length;
+    }
     wrapper->has_processed_output.store(true, std::memory_order_release);
+    if (wrapper->output_complete_cb)
+      wrapper->output_complete_cb(wrapper->event_userdata, output.revision);
     Trace("output worker: processed");
   }
   Trace("output worker: stopped");
@@ -1124,30 +1141,50 @@ void soloe_ghostty_surface_free(SoloeGhosttySurface *wrapper) {
 bool soloe_ghostty_surface_write(SoloeGhosttySurface *wrapper,
                                  const uint8_t *bytes,
                                  size_t length) {
+  return soloe_ghostty_surface_write_async(wrapper, bytes, length) != 0;
+}
+
+uint64_t soloe_ghostty_surface_write_async(SoloeGhosttySurface *wrapper,
+                                           const uint8_t *bytes,
+                                           size_t length) {
   TraceValue("surface write: entered", length);
-  const bool queued = QueueOutput(wrapper, bytes, length);
+  const uint64_t revision = QueueOutput(wrapper, bytes, length);
   Trace("surface write: queued");
-  return queued && wrapper->renderer_healthy.load(std::memory_order_acquire);
+  return wrapper && wrapper->renderer_healthy.load(std::memory_order_acquire)
+             ? revision
+             : 0;
 }
 
 bool soloe_ghostty_surface_replace(SoloeGhosttySurface *wrapper,
                                    const uint8_t *bytes,
                                    size_t length) {
+  return soloe_ghostty_surface_replace_async(wrapper, bytes, length) != 0;
+}
+
+uint64_t soloe_ghostty_surface_replace_async(SoloeGhosttySurface *wrapper,
+                                             const uint8_t *bytes,
+                                             size_t length) {
   TraceValue("surface replace: entered", length);
-  if (!wrapper || !wrapper->surface) return false;
+  if (!wrapper || !wrapper->surface) return 0;
   StopOutputWorker(wrapper);
   if (wrapper->has_processed_output.load(std::memory_order_acquire)) {
     ghostty_surface_free(wrapper->surface);
     Trace("surface replace: old surface freed");
     wrapper->surface = nullptr;
     wrapper->has_processed_output.store(false, std::memory_order_release);
-    if (!CreateInnerSurface(wrapper)) return false;
+    if (!CreateInnerSurface(wrapper)) return 0;
     Trace("surface replace: new surface created");
   } else {
     Trace("surface replace: reused empty surface");
   }
-  if (!StartOutputWorker(wrapper)) return false;
-  return soloe_ghostty_surface_write(wrapper, bytes, length);
+  if (!StartOutputWorker(wrapper)) return 0;
+  return soloe_ghostty_surface_write_async(wrapper, bytes, length);
+}
+
+void soloe_ghostty_surface_set_output_complete_callback(
+    SoloeGhosttySurface *wrapper,
+    soloe_ghostty_revision_cb callback) {
+  if (wrapper) wrapper->output_complete_cb = callback;
 }
 
 bool soloe_ghostty_surface_set_visible(SoloeGhosttySurface *wrapper,

@@ -25,6 +25,10 @@
   import { Input } from '$lib/components/ui/input';
   import * as Popover from '$lib/components/ui/popover';
   import BrowserDeviceMenu from './BrowserDeviceMenu.svelte';
+  import {
+    isNativeSurfaceBlocked,
+    subscribeNativeSurfaceBlocker
+  } from '../../lib/native-surface-layout';
 
   browserStore.ensureSomeTab();
 
@@ -46,6 +50,11 @@
   let initializationError = $state<string | null>(null);
   let lastNavigation = '';
   let resizeObserver: ResizeObserver | null = null;
+  let boundsFrame: number | null = null;
+  let boundsInFlight = false;
+  let boundsRequested = false;
+  let showAfterBounds = false;
+  let nativeBlocked = isNativeSurfaceBlocked();
 
   function bounds(): TauriBrowserSurfaceBounds {
     const rect = host?.getBoundingClientRect();
@@ -65,13 +74,48 @@
   }
 
   function syncBounds(): void {
-    if (!surface) return;
-    void surface.setBounds(bounds()).catch(reportError);
+    boundsRequested = true;
+    if (!surface || nativeBlocked || boundsFrame !== null || boundsInFlight) return;
+    boundsFrame = requestAnimationFrame(() => {
+      boundsFrame = null;
+      runBoundsUpdate();
+    });
+  }
+
+  function runBoundsUpdate(): void {
+    const current = surface;
+    if (!current || nativeBlocked || !boundsRequested) return;
+    boundsRequested = false;
+    boundsInFlight = true;
+    void current.setBounds(bounds()).then(() => {
+      if (showAfterBounds && !nativeBlocked && surface === current) {
+        showAfterBounds = false;
+        return current.setVisible(true);
+      }
+    }).catch(reportError).finally(() => {
+      boundsInFlight = false;
+      if (boundsRequested) syncBounds();
+    });
   }
 
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
+    const unsubscribeBlocker = subscribeNativeSurfaceBlocker((nextBlocked) => {
+      if (nativeBlocked === nextBlocked) return;
+      nativeBlocked = nextBlocked;
+      const current = surface;
+      if (!current) return;
+      if (nextBlocked) {
+        showAfterBounds = false;
+        void current.setVisible(false).catch(reportError);
+      } else {
+        showAfterBounds = true;
+        syncBounds();
+      }
+    });
+    const onRendererZoom = () => syncBounds();
+    window.addEventListener('soloe:renderer-zoom', onRendererZoom);
 
     void (async () => {
       await tick();
@@ -85,7 +129,7 @@
       const created = await TauriBrowserSurface.create({
         url: activeUrl,
         bounds: bounds(),
-        visible: true,
+        visible: !nativeBlocked,
         userAgent: device?.ua || null
       });
       if (disposed) {
@@ -106,6 +150,10 @@
       disposed = true;
       unlisten?.();
       resizeObserver?.disconnect();
+      unsubscribeBlocker();
+      window.removeEventListener('soloe:renderer-zoom', onRendererZoom);
+      if (boundsFrame !== null) cancelAnimationFrame(boundsFrame);
+      boundsFrame = null;
       window.removeEventListener('resize', syncBounds);
       window.removeEventListener('scroll', syncBounds, true);
       const current = surface;
@@ -127,7 +175,7 @@
     const _device = device;
     const _rotated = device?.rotated;
     if (!surface) return;
-    void surface.setBounds(bounds()).catch(reportError);
+    syncBounds();
   });
 
   $effect(() => {
@@ -263,7 +311,7 @@
   {/if}
 
   <div class="relative min-h-0 flex-1 overflow-hidden bg-muted/30">
-    <div bind:this={host} class="absolute inset-0"></div>
+    <div bind:this={host} class="absolute inset-y-0 right-0 left-1.5"></div>
     {#if initializationError}
       <div class="absolute inset-0 z-10 flex items-center justify-center bg-background p-6 text-center text-xs text-destructive">
         Could not initialize the Tauri browser surface: {initializationError}

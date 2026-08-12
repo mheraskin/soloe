@@ -499,7 +499,7 @@
   {#if railOpen && !fullscreen}
     <button
       type="button"
-      class={`rail-resize-handle absolute top-0 left-[-3px] z-10 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'outer' ? 'bg-ring/20' : 'bg-transparent'}`}
+      class={`rail-resize-handle absolute top-0 left-0 z-20 h-full w-1.5 cursor-col-resize outline-none hover:bg-ring/30 focus-visible:bg-ring/40 ${resizing === 'outer' ? 'bg-ring/20' : 'bg-transparent'}`}
       aria-label="Resize rail"
       onpointerdown={startOuterResize}
     >

@@ -365,12 +365,12 @@ fn native_terminal_create(
 }
 
 #[tauri::command]
-fn native_terminal_write(surface_id: String, data: String) -> Result<(), String> {
+fn native_terminal_write(surface_id: String, data: String) -> Result<u64, String> {
     native_terminal_host::write(&surface_id, &data)
 }
 
 #[tauri::command]
-fn native_terminal_replace(surface_id: String, data: String) -> Result<(), String> {
+fn native_terminal_replace(surface_id: String, data: String) -> Result<u64, String> {
     native_terminal_host::replace(&surface_id, &data)
 }
 

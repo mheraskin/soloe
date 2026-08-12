@@ -44,6 +44,8 @@ struct NativeSize {
 
 type BytesCallback = unsafe extern "C" fn(*mut c_void, *const u8, usize);
 type TextCallback = unsafe extern "C" fn(*mut c_void, *const c_char, usize);
+#[cfg(target_os = "windows")]
+type RevisionCallback = unsafe extern "C" fn(*mut c_void, u64);
 
 unsafe extern "C" {
     fn soloe_ghostty_host_new() -> *mut SoloeGhosttyHost;
@@ -99,6 +101,23 @@ unsafe extern "C" {
     ) -> *mut c_char;
     fn soloe_ghostty_surface_free_export(text: *mut c_char);
     fn soloe_ghostty_surface_scroll_to_bottom(surface: *mut SoloeGhosttySurface) -> bool;
+    #[cfg(target_os = "windows")]
+    fn soloe_ghostty_surface_write_async(
+        surface: *mut SoloeGhosttySurface,
+        bytes: *const u8,
+        len: usize,
+    ) -> u64;
+    #[cfg(target_os = "windows")]
+    fn soloe_ghostty_surface_replace_async(
+        surface: *mut SoloeGhosttySurface,
+        bytes: *const u8,
+        len: usize,
+    ) -> u64;
+    #[cfg(target_os = "windows")]
+    fn soloe_ghostty_surface_set_output_complete_callback(
+        surface: *mut SoloeGhosttySurface,
+        callback: RevisionCallback,
+    );
 }
 
 #[derive(Clone, Serialize)]
@@ -113,6 +132,14 @@ struct InputEvent {
 struct TextEvent {
     surface_id: String,
     text: String,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutputCompleteEvent {
+    surface_id: String,
+    revision: u64,
 }
 
 struct CallbackContext {
@@ -255,6 +282,10 @@ pub fn create(app: &AppHandle, request: CreateRequest) -> Result<String, String>
         })?;
         let raw = NonNull::new(raw)
             .ok_or_else(|| "Ghostty failed to create a manual-I/O native surface".to_string())?;
+        #[cfg(target_os = "windows")]
+        unsafe {
+            soloe_ghostty_surface_set_output_complete_callback(raw.as_ptr(), emit_output_complete);
+        }
         host.surfaces.insert(
             id.clone(),
             Surface {
@@ -268,23 +299,51 @@ pub fn create(app: &AppHandle, request: CreateRequest) -> Result<String, String>
     })
 }
 
-pub fn write(surface_id: &str, data: &str) -> Result<(), String> {
+pub fn write(surface_id: &str, data: &str) -> Result<u64, String> {
     with_surface(surface_id, |surface| {
-        checked(
-            unsafe { soloe_ghostty_surface_write(surface.raw.as_ptr(), data.as_ptr(), data.len()) },
-            "Ghostty rejected terminal output",
-        )
+        #[cfg(target_os = "windows")]
+        {
+            let revision = unsafe {
+                soloe_ghostty_surface_write_async(surface.raw.as_ptr(), data.as_ptr(), data.len())
+            };
+            return (revision != 0)
+                .then_some(revision)
+                .ok_or_else(|| "Ghostty rejected terminal output".to_string());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            checked(
+                unsafe {
+                    soloe_ghostty_surface_write(surface.raw.as_ptr(), data.as_ptr(), data.len())
+                },
+                "Ghostty rejected terminal output",
+            )?;
+            Ok(0)
+        }
     })
 }
 
-pub fn replace(surface_id: &str, data: &str) -> Result<(), String> {
+pub fn replace(surface_id: &str, data: &str) -> Result<u64, String> {
     with_surface(surface_id, |surface| {
-        checked(
-            unsafe {
-                soloe_ghostty_surface_replace(surface.raw.as_ptr(), data.as_ptr(), data.len())
-            },
-            "Ghostty failed to recreate the surface for replay replacement",
-        )
+        #[cfg(target_os = "windows")]
+        {
+            let revision = unsafe {
+                soloe_ghostty_surface_replace_async(surface.raw.as_ptr(), data.as_ptr(), data.len())
+            };
+            return (revision != 0).then_some(revision).ok_or_else(|| {
+                "Ghostty failed to recreate the surface for replay replacement".to_string()
+            });
+        }
+        #[cfg(target_os = "macos")]
+        {
+            checked(
+                unsafe {
+                    soloe_ghostty_surface_replace(surface.raw.as_ptr(), data.as_ptr(), data.len())
+                },
+                "Ghostty failed to recreate the surface for replay replacement",
+            )?;
+            Ok(0)
+        }
     })
 }
 
@@ -466,6 +525,21 @@ unsafe extern "C" fn emit_input(userdata: *mut c_void, bytes: *const u8, len: us
         InputEvent {
             surface_id: context.surface_id.clone(),
             data,
+        },
+    );
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "C" fn emit_output_complete(userdata: *mut c_void, revision: u64) {
+    let Some(context) = (unsafe { (userdata as *mut CallbackContext).as_ref() }) else {
+        return;
+    };
+    let _ = context.app.emit_to(
+        "main",
+        "soloe://native-terminal-output-complete",
+        OutputCompleteEvent {
+            surface_id: context.surface_id.clone(),
+            revision,
         },
     );
 }
