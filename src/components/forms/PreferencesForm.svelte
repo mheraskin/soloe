@@ -44,6 +44,7 @@
     shortcutKeysFromEvent
   } from '../../lib/keymap';
   import { shortcutLabel } from '../../lib/element-source-inspector';
+  import { platformBackendOptions, platformShellOptions } from '../../lib/platform-ui';
   import { reportError } from '../../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -71,10 +72,11 @@
   const diffFontSizes: DiffFontSizePref[] = [11, 12, 13, 14, 15, 16];
   const builtInShortcuts = Object.values(Keymap);
   let runModes = $derived<RunMode[]>(platform.current.availableRunModes);
-  let shells = $derived<ShellKind[]>(
-    platform.current.platform === 'linux'
-      ? ['auto', 'bash', 'zsh', 'pwsh', 'custom']
-      : ['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']
+  let shells = $derived<ShellKind[]>(platformShellOptions(platform.current.platform));
+  let backendOptions = $derived(platformBackendOptions(platform.current.platform));
+  let backendLabel = $derived(
+    backendOptions.find((option) => option.value === settings.current.backend.placement)?.label
+      ?? settings.current.backend.placement
   );
   const newSessionKinds: { value: SessionLaunchKind; label: string }[] = [
     { value: 'terminal', label: 'Terminal' },
@@ -478,16 +480,21 @@
           onValueChange={(v) => setBackendPlacement(v as BackendPlacement)}
         >
           <Select.Trigger class="w-full">
-            {settings.current.backend.placement === 'wsl' ? 'WSL (Linux)' : 'Windows'}
+            {backendLabel}
           </Select.Trigger>
           <Select.Content>
-            <Select.Item value="windows" label="Windows">Windows</Select.Item>
-            <Select.Item value="wsl" label="WSL (Linux)">WSL (Linux)</Select.Item>
+            {#each backendOptions as option (option.value)}
+              <Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
+            {/each}
           </Select.Content>
         </Select.Root>
         <span class="text-[11px] text-muted-foreground">
-          Choose the environment that runs terminals, agents, and project commands. The tray and
-          Electron app stay on Windows.
+          {#if platform.current.platform === 'macos'}
+            Terminals, agents, project commands, the tray, and Electron run natively on macOS.
+          {:else}
+            Choose the environment that runs terminals, agents, and project commands. The tray and
+            Electron app stay on Windows.
+          {/if}
         </span>
       </div>
       {#if settings.current.backend.placement === 'wsl'}

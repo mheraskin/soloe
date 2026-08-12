@@ -11,12 +11,14 @@ separation, not repository separation, provides lifecycle independence.
 | Tray Host (`apps/tray`) | Top-level ownership, start/stop, browser/Electron launch | No; exiting the tray stops everything |
 | Electron client (`apps/desktop-electron`) | Native desktop window and renderer presentation | Yes |
 | Tauri client (`apps/desktop-tauri`) | Experimental native desktop window, browser surfaces, and renderer presentation | Yes |
-| Windows Web Host (`apps/web`) | PWA assets, hot reload, authenticated API proxy | Yes while the tray remains |
+| Development Web Host (`apps/web`) | PWA assets, hot reload, authenticated API proxy | Yes while the tray remains |
 
-On Windows, **Backend Placement** selects where the first two processes run:
+**Backend Placement** selects where the first two processes run:
 
 - `windows`: the Application Server and Environment Runtime run as native
   Windows Node.js processes.
+- `macos`: the Application Server and Environment Runtime run as native macOS
+  processes inside the packaged product's private Node/Electron payload.
 - `wsl`: the Application Server and Environment Runtime run inside one selected
   WSL distribution. The runtime socket stays on the WSL filesystem; Windows
   clients reach only the server's authenticated localhost HTTP/WebSocket API.
@@ -49,11 +51,13 @@ The Application Server connects to the Environment Runtime as a client. It
 exposes domain RPC over HTTP and publishes runtime and domain events over
 WebSocket. A per-install token protects both transports.
 
-On Windows, the PWA is always hosted by the Windows Web Host regardless of
-Backend Placement. The web host serves or hot-reloads assets and reverse
-proxies `/api` HTTP/WebSocket traffic to the selected backend. Browser bootstrap
-exchanges the tray-generated authenticated URL for an HttpOnly, SameSite cookie.
-The Application Server never guesses an `out/web` directory from its checkout.
+In source development, the PWA is hosted by the Development Web Host. It serves
+or hot-reloads assets and reverse proxies `/api` HTTP/WebSocket traffic to the
+selected backend. In the packaged macOS product, the same production PWA build
+is served directly by the separate Application Server from an explicit private
+`SOLOE_WEB_ROOT`. Browser bootstrap exchanges the tray-generated authenticated
+URL for an HttpOnly, SameSite cookie. The Application Server never guesses an
+`out/web` directory from its checkout.
 
 Electron, Tauri, and the browser share the Svelte renderer through separate
 Renderer Backend Adapters. When opened by the tray, Electron is a server-backed client:
@@ -157,6 +161,16 @@ Backend Placement remains visible and configurable in Settings. The menu also
 opens the authenticated browser URL, opens Electron, launches the experimental
 Tauri client, exposes logs, and quits Soloe; there are no redundant status rows.
 
+The packaged macOS product is one installed `Soloe.app`, not an app plus a
+second installed service application. The outer Tauri bundle is the menu-bar
+owner and contains a private architecture-matched Electron payload. It runs
+that embedded executable in Node mode as separate Environment Runtime and
+Application Server processes, and in normal Electron mode for the Svelte UI.
+Both the packaged PWA and Electron are clients of the persistent Application
+Server. Closing the last supervised UI window exits only Electron; the tray,
+Runtime, and Server stay available for **Open Soloe** or **Open in browser**
+until **Quit Soloe** ends the complete owned tree.
+
 Every tray launch creates a unique owner identity. Service records include that
 identity, and the tray refuses to kill a process based only on a stale PID.
 Only one tray instance can hold the per-install supervisor lock.
@@ -169,7 +183,7 @@ lease; if the lease disappears or becomes stale, the WSL supervisor stops the
 Application Server first and the Environment Runtime second, then force-cleans
 their process groups if necessary.
 
-Graceful Quit stops tray-launched Electron processes, the Windows Web Host, the
+Graceful Quit stops tray-launched Electron processes, the Development Web Host, the
 Application Server, and finally the Environment Runtime. If the runtime may own
 active terminals, the tray requires a second confirmation action. There is
 currently no ownership-handoff/update mode: replacing the tray stops agents by
@@ -186,10 +200,11 @@ to target the wrong operating system. A placement change applies only after an
 explicit Stop then Start.
 
 In repository development, `pnpm dev` launches the tray. The tray validates the
-Windows and selected backend prerequisites, starts the backend, and starts the
-Windows Web Host. Soloe does not bundle Node.js; a distributable must ship the
-built application sources/assets and require a compatible system Node.js 22 or
-newer.
+native host and selected backend prerequisites, starts the Runtime and Server,
+and starts the Development Web Host. Source and server deployments require a
+compatible system Node.js 22 or newer. The packaged macOS application uses the
+Node runtime embedded in its private Electron payload, so the installed app does
+not require a separate Node installation.
 That packaging choice is deliberately separate from the process architecture:
 rewriting PTY ownership in Rust is not required.
 

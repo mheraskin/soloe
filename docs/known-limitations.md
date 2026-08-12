@@ -2,9 +2,13 @@
 
 Soloe is pre-release software. The first public alpha should not be published until the blocking items in the [launch checklist](./public-launch-checklist.md) are resolved or explicitly accepted.
 
-- macOS is not yet a supported public release target. The experimental Tauri
-  client now has a pinned full Ghostty AppKit/Metal surface, but it still needs
-  native macOS runtime, IME, packaging, signing, and clean-machine validation.
+- Intel macOS has been locally validated for the Electron-based product; the
+  native Apple-silicon CI package exists, but a clean-machine smoke on physical
+  Apple-silicon hardware remains pending.
+- macOS installs as one Soloe application with an embedded on-demand Electron
+  UI. Local development DMGs are ad-hoc signed but not notarized and can be
+  rejected by Gatekeeper. Public artifacts require the release workflow's Apple
+  signing credentials.
 - The Tauri desktop client is experimental. It uses the existing Node
   Application Server and Environment Runtime, requires the Web Host to be
   running for a functional client, and has not completed the platform test
@@ -13,8 +17,9 @@ Soloe is pre-release software. The first public alpha should not be published un
   Docked DevTools, per-tab native residency parity, element-source inspection,
   credential autofill, and complete mobile device emulation remain Electron-only.
 - Standard Linux Tauri dev/build commands enable a GTK3 vertical slice using
-  the exact pinned official `libghostty-vt` source. Fresh settings select it
-  through `auto` after complete native-host initialization. It is not at xterm
+  the exact pinned official `libghostty-vt` source. It is available through the
+  `auto` or `libghostty` presentation setting, but fresh settings currently use
+  xterm. It is not at xterm
   parity: styled GPU rendering, selection, visual search, links, IME, and
   robust Wayland positioning remain incomplete. It needs Zig 0.16 to build.
   Direct Cargo builds without the feature, unsupported platforms, and failed

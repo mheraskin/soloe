@@ -34,6 +34,12 @@ function testRuntimeEndpoint(directory: string): string {
   });
 }
 
+function nativeRunMode(): 'windows' | 'macos' | 'linux' {
+  if (globalThis.process.platform === 'win32') return 'windows';
+  if (globalThis.process.platform === 'darwin') return 'macos';
+  return 'linux';
+}
+
 class PersistentProcess extends EventEmitter implements RuntimeProcess {
   readonly pid = 8080;
   killed = false;
@@ -871,7 +877,7 @@ describe('Soloe Server lifecycle', () => {
           name: 'Browser session',
           projectId: project.id,
           cwd: directory,
-          runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+          runMode: nativeRunMode(),
           launch: { type: 'terminal', shell: 'auto' }
         }
       ]);
@@ -889,7 +895,7 @@ describe('Soloe Server lifecycle', () => {
           name: 'Disposable browser session',
           projectId: project.id,
           cwd: directory,
-          runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+          runMode: nativeRunMode(),
           launch: { type: 'terminal', shell: 'auto' }
         }]
       );
@@ -1101,11 +1107,11 @@ describe('Soloe Server lifecycle', () => {
         cwd: directory,
         relativePath: 'browser-file.txt',
         content: 'server-backed file\n',
-        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+        runMode: nativeRunMode()
       }])).resolves.toBe(true);
       await expect(rpc(baseUrl, 'files', 'listTree', [{
         cwd: directory,
-        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+        runMode: nativeRunMode(),
         force: true
       }])).resolves.toEqual(expect.objectContaining({
         cwd: directory,
@@ -1114,7 +1120,7 @@ describe('Soloe Server lifecycle', () => {
       await expect(rpc(baseUrl, 'files', 'readFile', [{
         cwd: directory,
         relativePath: 'browser-file.txt',
-        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+        runMode: nativeRunMode()
       }])).resolves.toEqual(expect.objectContaining({
         content: 'server-backed file\n',
         binary: false,
@@ -1123,7 +1129,7 @@ describe('Soloe Server lifecycle', () => {
       }));
       await expect(rpc(baseUrl, 'files', 'openInEditor', [{
         cwd: directory,
-        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux',
+        runMode: nativeRunMode(),
         absolutePath: path.join(directory, 'browser-file.txt')
       }])).resolves.toBe(true);
       expect(fileEditorLauncher).toHaveBeenCalledWith(
@@ -1134,7 +1140,7 @@ describe('Soloe Server lifecycle', () => {
         cwd: directory,
         query: 'browser-file',
         limit: 10,
-        runMode: globalThis.process.platform === 'win32' ? 'windows' : 'linux'
+        runMode: nativeRunMode()
       }])).resolves.toEqual([
         expect.objectContaining({ path: 'browser-file.txt' })
       ]);

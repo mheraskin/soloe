@@ -7,6 +7,7 @@
     AgentIntegrationStatus,
     AgentIntegrationTargetStatus
   } from '@shared/types/ipc.js';
+  import { agentIntegrationHostKey } from '../lib/platform-ui';
   import { ipc } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -80,8 +81,7 @@
   }
 
   function hostKey(host: AgentIntegrationHost): AgentIntegrationHostKey {
-    if (host.kind === 'wsl' && host.distro) return { kind: 'wsl', distro: host.distro };
-    return host.kind === 'linux' ? { kind: 'linux' } : { kind: 'windows' };
+    return agentIntegrationHostKey(host);
   }
 
   function providerLabel(provider: Provider): string {

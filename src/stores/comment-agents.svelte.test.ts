@@ -40,6 +40,16 @@ describe('CommentAgentsStore Worktree scope', () => {
     expect(reloaded.byId('bad')).toBeNull();
   });
 
+  it('preserves agents for a native macOS Worktree after persistence', () => {
+    const scope = worktreeScope('/Users/me/Soloe', { runMode: 'macos' });
+    const first = new CommentAgentsStore();
+    first.create({ scope, name: 'reviewer', provider: 'codex' });
+
+    const reloaded = new CommentAgentsStore();
+
+    expect(reloaded.forScope(scope).map((agent) => agent.name)).toEqual(['reviewer']);
+  });
+
   it('adopts path-only agents only through an explicit scoped move', () => {
     const scope = worktreeScope('/workspace/legacy', {
       runMode: 'wsl', wslDistro: 'Ubuntu'

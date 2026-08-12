@@ -6,7 +6,10 @@ directories:
   buildResources: build
 beforeBuild: scripts/electron-builder-before-build.cjs
 files:
-  - out/**/*
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
+  - out/web/**/*
   - build/favicon.svg
   - build/icon.ico
   - build/icon.png
@@ -24,6 +27,8 @@ extraResources:
     to: node_modules/node-pty
   - from: node_modules/smol-toml
     to: node_modules/smol-toml
+  - from: node_modules/ws
+    to: node_modules/ws
 win:
   icon: build/icon.ico
   artifactName: ${productName}-${version}-windows-${arch}.${ext}
@@ -34,6 +39,16 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+mac:
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  artifactName: ${productName}-${version}-macos-${arch}.${ext}
+  target:
+    - target: dmg
+    - target: zip
 linux:
   icon: build/icon.png
   category: Development

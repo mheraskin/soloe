@@ -59,7 +59,7 @@ function isPersistedAgent(value: unknown): value is CommentAgent {
       typeof scope === 'object' &&
       typeof scope.cwd === 'string' &&
       scope.cwd.trim() &&
-      (scope.runMode === 'windows' || scope.runMode === 'linux' ||
+      (scope.runMode === 'windows' || scope.runMode === 'linux' || scope.runMode === 'macos' ||
         (scope.runMode === 'wsl' &&
           typeof scope.wslDistro === 'string' &&
           scope.wslDistro.trim())) &&

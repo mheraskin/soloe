@@ -48,7 +48,7 @@ export interface ProjectDetectResult {
   matchedProjectId: ProjectId | null;
 }
 
-export type ProjectSearchScope = 'windows' | 'linux' | 'wsl';
+export type ProjectSearchScope = 'windows' | 'linux' | 'macos' | 'wsl';
 
 export interface ProjectSuggestOptions {
   scope: ProjectSearchScope;

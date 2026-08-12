@@ -10,7 +10,7 @@ import type {
 import { WslHostDetector, type WslDistroInfo } from './WslHostDetector.js';
 import { hostPlatform } from '@shared/platform.js';
 
-export type HookHostKind = 'windows' | 'linux' | 'wsl';
+export type HookHostKind = 'windows' | 'linux' | 'macos' | 'wsl';
 
 export interface HookHost {
   kind: HookHostKind;
@@ -29,6 +29,7 @@ export interface HookHost {
 export type HookHostKey =
   | { kind: 'windows' }
   | { kind: 'linux' }
+  | { kind: 'macos' }
   | { kind: 'wsl'; distro: string };
 
 export interface HostInstallStatus {
@@ -136,11 +137,11 @@ function buildHookCommand(provider: 'claude' | 'codex'): string {
   return `[ -z "$SOLOE_BRIDGE_URL" ] && { cat >/dev/null 2>&1; exit 0; }; u="$SOLOE_BRIDGE_URL"; ${wslResolve}; ${curl}`;
 }
 
-export function defaultLocalHost(): HookHost {
-  const kind = hostPlatform();
+export function defaultLocalHost(nodePlatform?: string): HookHost {
+  const kind = hostPlatform(nodePlatform);
   return {
     kind,
-    label: kind === 'windows' ? 'Windows' : 'Linux',
+    label: kind === 'windows' ? 'Windows' : kind === 'macos' ? 'macOS' : 'Linux',
     homeDir: os.homedir(),
     available: true
   };

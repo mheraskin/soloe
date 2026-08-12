@@ -9,11 +9,11 @@ Soloe helps one developer plan features, run long-lived agent sessions, manage s
 [![CI](https://github.com/mheraskin/soloe/actions/workflows/ci.yml/badge.svg)](https://github.com/mheraskin/soloe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-> **Pre-release development.** Soloe is preparing for its first public alpha on native Linux and Windows + WSL. There is no Soloe-hosted cloud or telemetry. Early builds will be unsigned.
+> **Pre-release development.** Soloe is preparing for its first public alpha on macOS, native Linux, and Windows + WSL. There is no Soloe-hosted cloud or telemetry. macOS release builds are configured for Developer ID signing and notarization.
 
 _A clean public demo is being prepared. The previous development screenshot was removed from this page because it contained private project context._
 
-[**Download for Windows or Linux**](https://github.com/mheraskin/soloe/releases) · [Why Soloe](#why-i-built-this) · [Feature Lab](#feature-lab-experimental) · [Roadmap](./ROADMAP.md)
+[**Download for macOS, Windows, or Linux**](https://github.com/mheraskin/soloe/releases) · [Why Soloe](#why-i-built-this) · [Feature Lab](#feature-lab-experimental) · [Roadmap](./ROADMAP.md)
 
 ## Why I built this
 
@@ -25,7 +25,7 @@ The name **Soloe** describes that operating model. It is not an argument against
 
 ## What Soloe does today
 
-- **Drives the CLIs you already use.** Runs installed `claude` and `codex` binaries in interactive mode—natively on Linux and Windows, or inside WSL on Windows.
+- **Drives the CLIs you already use.** Runs installed `claude` and `codex` binaries in interactive mode—natively on macOS, Linux, and Windows, or inside WSL on Windows.
 - **Organizes project → worktree → session.** Keeps terminal, Claude Code, and Codex sessions attached to the worktree where the work belongs.
 - **Keeps agents alive outside the UI.** The Environment Runtime owns PTYs independently from the replaceable server, browser, and Electron clients.
 - **Reviews whole features.** Select a commit range, inspect a multi-commit diff, and see line-level commit attribution instead of reviewing only uncommitted changes.
@@ -66,7 +66,8 @@ Windows + WSL remains part of the product's foundation rather than a compatibili
 | Native Linux | Public alpha |
 | Browser/PWA client | Public alpha, locally hosted |
 | Electron client | Public alpha |
-| macOS | Not currently supported |
+| macOS Intel (`x64`) | Public-alpha source build; locally verified |
+| macOS Apple silicon (`arm64`) | Public-alpha native CI build; hardware smoke pending |
 
 ## Install
 
@@ -95,6 +96,12 @@ sudo apt install ./Soloe-*-linux-*.deb
 
 Install `git` and at least one of `claude` or `codex` on the normal Linux `PATH`. Soloe uses native Linux paths and shells and does not invoke WSL on Linux.
 
+### macOS
+
+When the first alpha is available, download the DMG matching the Mac: `x64` for Intel or `arm64` for Apple silicon. Drag the single `Soloe.app` to Applications and launch it normally. Soloe then lives in the menu bar: its separate Runtime and Application Server remain available to **Open in browser** and the on-demand Electron/Svelte **Open Soloe** client. Closing Electron releases only that UI process; **Quit Soloe** stops the tray, server, runtime, clients, PTYs, and agents. There is no separately installed service application. Release artifacts require Developer ID signing and Apple notarization; unsigned local builds are for development only.
+
+Install Git and at least one of `claude` or `codex`. Soloe resolves the user's macOS login-shell `PATH`, so Homebrew installations work for both Intel and Apple-silicon locations. See the [macOS development and release guide](./docs/development/macos.md).
+
 ## Roadmap
 
 The next planning and review surfaces include a visual canvas generated from Markdown plans, a Kanban view of issues and tasks, Wayfinder support, broader Matt Pocock skills compatibility, and AI-assisted summaries for very large commit ranges. Multi-commit review already exists; the planned intelligence layer will help a developer understand which changes in a history of tens or hundreds of commits deserve attention.
@@ -112,7 +119,7 @@ corepack enable
 pnpm install
 ```
 
-On Windows, one command starts the tray, the selected Windows/WSL backend, and the Windows-hosted PWA development server:
+One command starts the tray, the selected native or Windows/WSL backend, and the locally hosted PWA development server:
 
 ```bash
 pnpm dev

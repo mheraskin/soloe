@@ -91,3 +91,48 @@ jobs:
 
       - name: Package Linux builds
         run: pnpm package:linux
+
+  macos-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+            command: pnpm package:macos:x64
+          - runner: macos-latest
+            arch: arm64
+            command: pnpm package:macos:arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck macOS application
+        run: pnpm typecheck
+
+      - name: Test macOS application
+        run: pnpm test
+
+      - name: Test macOS tray ownership
+        run: cargo test --manifest-path apps/tray/src-tauri/Cargo.toml
+
+      - name: Package native macOS build
+        run: ${{ matrix.command }}
+
+      - name: Upload macOS package smoke artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: soloe-macos-${{ matrix.arch }}-${{ github.sha }}
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

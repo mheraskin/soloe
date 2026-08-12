@@ -723,6 +723,27 @@ describe('SessionCommandBuilder — native Linux runMode', () => {
   });
 });
 
+describe('SessionCommandBuilder — native macOS runMode', () => {
+  it('resolves and execs native macOS agents through the user login shell', () => {
+    const spec = builder.build({
+      ...baseFields(),
+      cwd: '/Users/me/proj',
+      runMode: 'macos',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    }, {
+      baseEnv: { HOME: '/Users/me', SHELL: '/bin/zsh' },
+      bridge: { url: 'http://127.0.0.1:3210', token: 'native-token' }
+    });
+
+    expect(spec.file).toBe('/bin/zsh');
+    expect(spec.args[0]).toBe('-lc');
+    const script = decodeAgentScript(spec.args[1]!);
+    expect(script).toContain('command -v codex');
+    expect(script).toContain('SOLOE_BRIDGE_URL=http://127.0.0.1:3210');
+    expect(script).not.toContain('host.wsl.internal');
+  });
+});
+
 describe('wslReachableBridgeUrl', () => {
   it('rewrites 127.0.0.1 to host.wsl.internal', () => {
     expect(wslReachableBridgeUrl('http://127.0.0.1:9000')).toBe('http://host.wsl.internal:9000');

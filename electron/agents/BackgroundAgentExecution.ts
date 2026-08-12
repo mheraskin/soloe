@@ -331,12 +331,15 @@ export class BackgroundAgentExecution {
         processOptions(hostHome())
       );
     }
-    if (request.scope.runMode === 'linux') {
+    if (request.scope.runMode === 'linux' || request.scope.runMode === 'macos') {
       // Use the native login shell only to resolve user-managed binaries
-      // (nvm, bun, ~/.local/bin), then exec the agent in the native Linux process
+      // (nvm, bun, Homebrew, ~/.local/bin), then exec the agent in the native process
       // and filesystem. No WSL or host bridge is involved.
       const inner = buildWslAgentLine({}, argv.executable, argv.args);
-      return this.spawnImpl('bash', ['-lc', inner], processOptions(request.scope.cwd));
+      const shell = request.scope.runMode === 'macos'
+        ? process.env['SHELL']?.trim() || '/bin/zsh'
+        : 'bash';
+      return this.spawnImpl(shell, ['-lc', inner], processOptions(request.scope.cwd));
     }
     if (process.platform === 'win32' && /\.(?:bat|cmd)$/iu.test(argv.executable)) {
       return this.spawnImpl(
@@ -354,15 +357,17 @@ export class BackgroundAgentExecution {
     }
     const command = scope.runMode === 'wsl'
       ? WslCommandBuilder.WSL_EXE
-      : scope.runMode === 'linux'
-        ? 'bash'
+      : scope.runMode === 'linux' || scope.runMode === 'macos'
+        ? scope.runMode === 'macos'
+          ? process.env['SHELL']?.trim() || '/bin/zsh'
+          : 'bash'
         : nativeProbeCommand();
     const args = scope.runMode === 'wsl'
       ? [
           '-d', scope.wslDistro ?? 'Ubuntu',
           'bash', '-lc', buildWslAgentProbeLine(executable)
         ]
-      : scope.runMode === 'linux'
+      : scope.runMode === 'linux' || scope.runMode === 'macos'
         ? ['-lc', buildWslAgentProbeLine(executable)]
         : nativeProbeArgs(executable);
     return new Promise<boolean>((resolve) => {

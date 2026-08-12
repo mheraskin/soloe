@@ -2870,6 +2870,7 @@ name = "soloe-tray"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "libc",
  "serde",
  "serde_json",
  "tauri",

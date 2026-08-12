@@ -13,6 +13,7 @@
     ProjectPathSuggestion,
     ProjectSearchScope
   } from '@shared/types/projects.js';
+  import { runModeLabel } from '@shared/platform.js';
   import { commandPalette } from '../stores/command-palette.svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
@@ -288,7 +289,7 @@
           )}
           onclick={() => (scope = platform.current.defaultRunMode)}
         >
-          {platform.current.platform === 'linux' ? 'Linux' : 'Windows'}
+          {runModeLabel(platform.current.defaultRunMode)}
         </button>
         {#if platform.current.supportsWsl}
         <button

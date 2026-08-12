@@ -1,12 +1,13 @@
 import type { RunMode } from './types/sessions.js';
 import type { HostPlatformInfo } from './types/system.js';
 
-export type SupportedHostPlatform = 'windows' | 'linux';
+export type SupportedHostPlatform = 'windows' | 'linux' | 'macos';
 
 export function hostPlatform(nodePlatform: string = currentNodePlatform()): SupportedHostPlatform {
   if (nodePlatform === 'win32') return 'windows';
   if (nodePlatform === 'linux') return 'linux';
-  throw new Error(`Soloe does not support ${nodePlatform}. Use a Windows or Linux build.`);
+  if (nodePlatform === 'darwin') return 'macos';
+  throw new Error(`Soloe does not support ${nodePlatform}. Use a Windows, Linux, or macOS build.`);
 }
 
 export function nativeRunMode(nodePlatform: string = currentNodePlatform()): Exclude<RunMode, 'wsl'> {
@@ -14,7 +15,8 @@ export function nativeRunMode(nodePlatform: string = currentNodePlatform()): Exc
 }
 
 export function supportedRunModes(platform: SupportedHostPlatform): RunMode[] {
-  return platform === 'windows' ? ['windows', 'wsl'] : ['linux'];
+  if (platform === 'windows') return ['windows', 'wsl'];
+  return [platform];
 }
 
 export function platformInfo(
@@ -39,6 +41,7 @@ export function runModeLabel(runMode: RunMode): string {
   switch (runMode) {
     case 'windows': return 'Windows';
     case 'linux': return 'Linux';
+    case 'macos': return 'macOS';
     case 'wsl': return 'WSL';
   }
 }

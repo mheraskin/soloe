@@ -66,6 +66,17 @@ export class SessionCommandBuilder {
         cwd: session.cwd
       });
     }
+    if (session.runMode === 'macos' && inner.rawLine) {
+      const loginShell = ctx.baseEnv['SHELL']?.trim() || '/bin/zsh';
+      return this.nativeBuilder.build({
+        executable: loginShell,
+        args: ['-lc', inner.rawLine],
+        env: {}
+      }, {
+        cwd: session.cwd,
+        baseEnv: ctx.baseEnv
+      });
+    }
     return this.nativeBuilder.build(inner, {
       cwd: session.cwd,
       baseEnv: ctx.baseEnv

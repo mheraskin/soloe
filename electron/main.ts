@@ -70,6 +70,12 @@ import {
 } from './browser-shortcuts.js';
 import { ModelCatalogService } from './agents/ModelCatalogService.js';
 import { assertSafeExternalUrl } from './security/external-url.js';
+import {
+  applicationMenuTemplate,
+  desktopWindowPolicy,
+  shouldPreventWindowCloseShortcut,
+  shouldQuitAfterLastWindow
+} from './desktop-platform.js';
 
 interface AppServices {
   store: SessionStore;
@@ -617,8 +623,7 @@ async function createWindow(): Promise<BrowserWindow> {
     height: 900,
     minWidth: 800,
     minHeight: 500,
-    autoHideMenuBar: true,
-    frame: false,
+    ...desktopWindowPolicy(),
     show: false,
     title: 'Soloe',
     icon: appIcon,
@@ -678,7 +683,7 @@ async function createWindow(): Promise<BrowserWindow> {
       !input.alt &&
       !input.shift &&
       (process.platform === 'darwin' ? input.meta : input.control);
-    if (isCloseWindowCombo) {
+    if (isCloseWindowCombo && shouldPreventWindowCloseShortcut(process.platform)) {
       event.preventDefault();
     }
   });
@@ -832,7 +837,8 @@ app.on('web-contents-created', (_event, contents) => {
 if (ensureSingleInstance()) {
   pendingDiffIntent = parseDiffArgv(process.argv);
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null);
+    const menuTemplate = applicationMenuTemplate();
+    Menu.setApplicationMenu(menuTemplate.length > 0 ? Menu.buildFromTemplate(menuTemplate) : null);
     ensureWindowsDevShellShortcut(resolveAppIcon());
     if (remoteServerUrl) {
       remoteWindowIpc = new WindowIpc();
@@ -871,7 +877,9 @@ if (ensureSingleInstance()) {
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    if (shouldQuitAfterLastWindow(process.platform, process.env.SOLOE_SUPERVISED_UI === '1')) {
+      app.quit();
+    }
   });
 
   app.on('before-quit', (event) => {

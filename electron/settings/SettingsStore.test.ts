@@ -52,6 +52,25 @@ describe('SettingsStore — defaults', () => {
     );
   });
 
+  it('creates and reloads native macOS defaults on the macOS build', async () => {
+    const macPath = path.join(tmpDir, 'macos.json');
+    const store = new SettingsStore(macPath, 'macos');
+    const defaults = await store.get();
+
+    expect(defaults.defaults.runMode).toBe('macos');
+    expect(defaults.defaults.wslDistro).toBeUndefined();
+    expect(defaults.backend.placement).toBe('macos');
+
+    await store.update({ defaults: { shell: 'zsh', runMode: 'macos' } });
+    await expect(new SettingsStore(macPath, 'macos').get()).resolves.toMatchObject({
+      backend: { placement: 'macos' },
+      defaults: { runMode: 'macos', shell: 'zsh' }
+    });
+    await expect(store.update({ defaults: { runMode: 'wsl' } })).rejects.toThrow(
+      /not available on macos/
+    );
+  });
+
   it('migrates a copied Windows default to native Linux', async () => {
     await fs.writeFile(storePath, JSON.stringify(DEFAULT_SETTINGS), 'utf8');
     const store = new SettingsStore(storePath, 'linux');

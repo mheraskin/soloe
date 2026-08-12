@@ -47,6 +47,39 @@ describe('BackgroundAgentExecution', () => {
     expect(decodeWslScript(probeArgs[1] ?? '')).toContain('NVM_DIR');
   });
 
+  it('finds bare macOS executables through the user login shell', async () => {
+    vi.stubEnv('SHELL', '/bin/zsh');
+    try {
+      let callCount = 0;
+      const spawnMock = vi.fn((...args: Parameters<typeof spawn>) => {
+        callCount += 1;
+        const child = new FakeChild();
+        const commandArgs = args[1] ?? [];
+        queueMicrotask(() => {
+          if (callCount === 1) {
+            child.close(decodeWslScript(commandArgs[1] ?? '').includes('NVM_DIR') ? 0 : 1);
+            return;
+          }
+          child.succeed('macos-resolved');
+        });
+        return child;
+      });
+      const execution = new BackgroundAgentExecution({
+        spawnImpl: spawnMock as unknown as typeof spawn
+      });
+
+      await expect(execution.execute(request({
+        scope: { cwd: '/Users/me/repo', runMode: 'macos' }
+      }))).resolves.toMatchObject({ ok: true, text: 'macos-resolved' });
+
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(spawnMock.mock.calls[0]?.[0]).toBe('/bin/zsh');
+      expect(spawnMock.mock.calls[0]?.[1]?.[0]).toBe('-lc');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('finds bare WSL executables through the same NVM-aware resolver used for launch', async () => {
     const spawnMock = vi.fn((...args: Parameters<typeof spawn>) => {
       const child = new FakeChild();
@@ -92,6 +125,30 @@ describe('BackgroundAgentExecution', () => {
     expect(spawnMock.mock.calls[0]?.[1]).not.toContain('wsl.exe');
     child.succeed('native');
     await expect(pending).resolves.toMatchObject({ ok: true, text: 'native' });
+  });
+
+  it('launches macOS work through the user login shell without a WSL process', async () => {
+    vi.stubEnv('SHELL', '/bin/zsh');
+    try {
+      const child = new FakeChild();
+      const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
+      const execution = new BackgroundAgentExecution({
+        spawnImpl: spawnMock as unknown as typeof spawn,
+        isExecutableAvailable: async () => true
+      });
+      const pending = execution.execute(request({
+        scope: { cwd: '/Users/me/repo', runMode: 'macos' }
+      }));
+
+      await waitFor(() => spawnMock.mock.calls.length === 1);
+      expect(spawnMock.mock.calls[0]?.[0]).toBe('/bin/zsh');
+      expect(spawnMock.mock.calls[0]?.[1]?.[0]).toBe('-lc');
+      expect(spawnMock.mock.calls[0]?.[1]).not.toContain('wsl.exe');
+      child.succeed('native macOS');
+      await expect(pending).resolves.toMatchObject({ ok: true, text: 'native macOS' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('falls back to the first executable that is actually available', async () => {

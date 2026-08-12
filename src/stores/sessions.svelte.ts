@@ -1406,7 +1406,7 @@ function continuationPrompt(
   return lines.join('\n');
 }
 
-function normalizedDefaultCwd(cwd: string, runMode: 'windows' | 'linux' | 'wsl'): string {
+function normalizedDefaultCwd(cwd: string, runMode: RunMode): string {
   if (runMode !== 'wsl') return cwd;
   if (/^\/mnt\/[a-z]\/Users\/[^/\\]+\/?$/i.test(cwd)) return '~';
   if (/^[a-z]:[\\/]+Users[\\/]+[^\\/]+[\\/]?$/i.test(cwd)) return '~';

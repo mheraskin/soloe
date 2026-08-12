@@ -1,0 +1,89 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+const root = new URL('../', import.meta.url);
+
+describe('macOS package contract', () => {
+  it('bundles workspace packages into the Electron main process', () => {
+    const config = readFileSync(new URL('electron.vite.config.ts', root), 'utf8');
+
+    expect(config).toMatch(
+      /externalizeDepsPlugin\(\{[\s\S]*?exclude: \['@soloe\/domain', '@soloe\/protocol', '@soloe\/runtime'\][\s\S]*?\}\)/
+    );
+  });
+
+  it('embeds separate runtime and application-server entries', () => {
+    const config = readFileSync(new URL('electron.vite.config.ts', root), 'utf8');
+    const runtimeHost = readFileSync(new URL('electron/runtime-host.ts', root), 'utf8');
+    const serverHost = readFileSync(new URL('electron/server-host.ts', root), 'utf8');
+
+    expect(config).toContain(
+      "'runtime-host': resolve(__dirname, 'electron/runtime-host.ts')"
+    );
+    expect(config).toContain(
+      "'server-host': resolve(__dirname, 'electron/server-host.ts')"
+    );
+    expect(runtimeHost).toContain('new RuntimeHost({');
+    expect(runtimeHost).toContain('new NodePtyRuntimeProcessFactory()');
+    expect(runtimeHost).toContain('writeServiceInfo(dataDirectory');
+    expect(serverHost).toContain("import { startServerHost } from '../apps/server/src/ServerHost.js'");
+    expect(serverHost).toContain('await startServerHost()');
+  });
+
+  it('builds the browser client into the packaged backend payload', () => {
+    const packageScript = readFileSync(
+      new URL('scripts/package-macos-product.mjs', root),
+      'utf8'
+    );
+    const builderConfig = readFileSync(new URL('electron-builder.yml', root), 'utf8');
+
+    expect(packageScript).toContain("runCommand('pnpm', ['--filter', '@soloe/web', 'build'])");
+    expect(builderConfig).toContain('- out/web/**/*');
+  });
+
+  it('defines native Intel and Apple Silicon single-product package commands', () => {
+    const manifest = JSON.parse(readFileSync(new URL('package.json', root), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+
+    expect(manifest.scripts['package:macos:x64']).toBe(
+      'node scripts/package-macos-product.mjs x64'
+    );
+    expect(manifest.scripts['package:macos:arm64']).toBe(
+      'node scripts/package-macos-product.mjs arm64'
+    );
+  });
+
+  it('ships one Soloe app with the Electron UI embedded inside it', () => {
+    const trayConfig = JSON.parse(
+      readFileSync(new URL('apps/tray/src-tauri/tauri.conf.json', root), 'utf8')
+    ) as {
+      productName: string;
+      identifier: string;
+      bundle: { macOS?: { files?: Record<string, string>; signingIdentity?: string } };
+    };
+    const packageScript = readFileSync(
+      new URL('scripts/package-macos-product.mjs', root),
+      'utf8'
+    );
+
+    expect(trayConfig.productName).toBe('Soloe');
+    expect(trayConfig.identifier).toBe('com.soloe.desktop');
+    expect(trayConfig.bundle.macOS?.files).toEqual({
+      'Resources/Soloe.app': '../../../release/embedded/mac/Soloe.app'
+    });
+    expect(trayConfig.bundle.macOS?.signingIdentity).toBe('-');
+    expect(packageScript).toContain("'--dir'");
+    expect(packageScript).toContain("'-c.appId=com.soloe.ui'");
+    expect(packageScript).toContain("runTool('tauri', ['build']");
+  });
+
+  it('keeps the embedded Electron UI signed-ready with macOS entitlements', () => {
+    const config = readFileSync(new URL('electron-builder.yml', root), 'utf8');
+
+    expect(config).toMatch(/mac:\n(?:.|\n)*?icon: build\/icon\.icns/);
+    expect(config).toMatch(/hardenedRuntime: true/);
+    expect(config).toMatch(/entitlements: build\/entitlements\.mac\.plist/);
+    expect(existsSync(new URL('build/icon.icns', root))).toBe(true);
+  });
+});

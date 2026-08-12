@@ -56,6 +56,18 @@ describe('SessionStore — validation', () => {
     });
   });
 
+  it('creates and reloads only native macOS sessions in the macOS build', async () => {
+    const store = new SessionStore(storePath, 'macos');
+    const created = await store.create(standardDraft({ runMode: 'macos' }));
+
+    await expect(
+      new SessionStore(storePath, 'macos').get(created.id)
+    ).resolves.toMatchObject({ runMode: 'macos' });
+    await expect(
+      store.create(standardDraft({ runMode: 'linux' }))
+    ).rejects.toThrow(/not available on macos/);
+  });
+
   it('rejects an empty/whitespace name', async () => {
     const store = new SessionStore(storePath);
     await expect(store.create(standardDraft({ name: '   ' }))).rejects.toThrow(

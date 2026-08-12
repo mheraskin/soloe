@@ -1,7 +1,7 @@
 export type SessionId = string;
 
-/** `wsl` is hosted by Windows; `linux` is the native Linux desktop runtime. */
-export type RunMode = 'windows' | 'linux' | 'wsl';
+/** `wsl` is hosted by Windows; the other modes are native desktop runtimes. */
+export type RunMode = 'windows' | 'linux' | 'macos' | 'wsl';
 
 export type ShellKind = 'auto' | 'bash' | 'zsh' | 'pwsh' | 'cmd' | 'custom';
 

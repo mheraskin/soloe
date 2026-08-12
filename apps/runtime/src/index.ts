@@ -7,6 +7,10 @@ export {
 } from "./RuntimeEndpoint.js";
 export { RuntimeHost, type RuntimeHostOptions } from "./RuntimeHost.js";
 export {
+  prepareRuntimeEndpoint,
+  secureRuntimeEndpoint,
+} from "./RuntimeSocket.js";
+export {
   ProcessTreeUsageSampler,
   parseProcessUsageRows,
   type ProcessTreeUsageSamplerOptions,

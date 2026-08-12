@@ -47,12 +47,36 @@ struct StoredSettings {
     backend: BackendSettings,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum BackendPlacement {
-    #[default]
     Windows,
+    Macos,
     Wsl,
+}
+
+impl Default for BackendPlacement {
+    fn default() -> Self {
+        native_backend_placement()
+    }
+}
+
+fn native_backend_placement() -> BackendPlacement {
+    if cfg!(target_os = "macos") {
+        BackendPlacement::Macos
+    } else {
+        BackendPlacement::Windows
+    }
+}
+
+impl BackendPlacement {
+    fn host_label(&self) -> &'static str {
+        match self {
+            Self::Windows => "Windows",
+            Self::Macos => "macOS",
+            Self::Wsl => "WSL",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -105,10 +129,7 @@ impl ActiveBackend {
     }
 
     fn host_label(&self) -> &'static str {
-        match self.placement {
-            BackendPlacement::Windows => "Windows",
-            BackendPlacement::Wsl => "WSL",
-        }
+        self.placement.host_label()
     }
 }
 
@@ -216,7 +237,7 @@ impl BackendSupervisor {
             };
         }
         let running = self.is_running_on("server", &backend)
-            || self.is_running_on("web", &self.windows_client_target());
+            || self.is_running_on("web", &self.native_client_target());
         match (lifecycle, running) {
             (_, true) => format!("Stop Soloe server ({host})"),
             (_, false) => format!("Start Soloe server ({host})"),
@@ -227,7 +248,7 @@ impl BackendSupervisor {
         let backend = self.backend_for_existing_services();
         let host = backend.host_label();
         if self.is_running_on("server", &backend)
-            || self.is_running_on("web", &self.windows_client_target())
+            || self.is_running_on("web", &self.native_client_target())
         {
             format!("Stopping Soloe server ({host})…")
         } else {
@@ -245,7 +266,7 @@ impl BackendSupervisor {
             return false;
         }
         let server_running = self.is_running_on("server", &backend)
-            || self.is_running_on("web", &self.windows_client_target());
+            || self.is_running_on("web", &self.native_client_target());
         server_running || self.is_running_on("runtime", &backend)
     }
 
@@ -306,7 +327,7 @@ impl BackendSupervisor {
             );
         }
         if self.is_running_on("server", &backend)
-            || self.is_running_on("web", &self.windows_client_target())
+            || self.is_running_on("web", &self.native_client_target())
         {
             self.stop_server_unlocked()
         } else {
@@ -354,6 +375,18 @@ impl BackendSupervisor {
     fn start_inner(&self) -> Result<(), String> {
         let backend = self.prepare_backend()?;
 
+        if let Some(layout) = bundled_macos_layout() {
+            if !self.is_running_on("runtime", &backend) {
+                self.spawn_packaged_runtime(&layout)?;
+                self.wait_until("runtime", true, START_TIMEOUT, &backend)?;
+            }
+            if !self.is_running_on("server", &backend) {
+                self.spawn_packaged_server(&layout)?;
+                self.wait_until("server", true, START_TIMEOUT, &backend)?;
+            }
+            return Ok(());
+        }
+
         if backend.placement == BackendPlacement::Wsl {
             self.write_wsl_control(true)?;
             self.start_lease()?;
@@ -397,6 +430,10 @@ impl BackendSupervisor {
         if self.is_running_on("runtime", &backend) {
             return Ok(());
         }
+        if let Some(layout) = bundled_macos_layout() {
+            self.spawn_packaged_runtime(&layout)?;
+            return self.wait_until("runtime", true, START_TIMEOUT, &backend);
+        }
         if backend.placement == BackendPlacement::Wsl {
             self.write_wsl_control(false)?;
             self.start_lease()?;
@@ -438,6 +475,12 @@ impl BackendSupervisor {
             }
             self.write_wsl_control(true)?;
             self.wait_until("server", true, START_TIMEOUT, &backend)?;
+        } else if let Some(layout) = bundled_macos_layout() {
+            if !self.is_running_on("server", &backend) {
+                self.spawn_packaged_server(&layout)?;
+                self.wait_until("server", true, START_TIMEOUT, &backend)?;
+            }
+            return Ok(());
         } else if !self.is_running_on("server", &backend) {
             self.spawn_workspace("@soloe/server", "server", &backend)?;
             self.wait_until("server", true, START_TIMEOUT, &backend)?;
@@ -625,7 +668,18 @@ impl BackendSupervisor {
     }
 
     pub fn browser_address(&self) -> Option<String> {
-        let backend = self.windows_client_target();
+        if bundled_macos_layout().is_some() {
+            let backend = self.backend_for_existing_services();
+            return self
+                .read_info("server")
+                .filter(|info| self.service_info_is_running(info, &backend))
+                .and_then(|info| {
+                    let address = info.address?;
+                    let token = info.token?;
+                    Some(format!("{address}/?token={token}"))
+                });
+        }
+        let backend = self.native_client_target();
         self.read_info("web")
             .filter(|info| self.service_info_is_running(info, &backend))
             .and_then(|info| {
@@ -643,6 +697,30 @@ impl BackendSupervisor {
     }
 
     pub fn open_electron(&self) -> Result<(), String> {
+        if let Some(layout) = bundled_macos_layout() {
+            let backend = self.backend_for_existing_services();
+            let server = self
+                .read_info("server")
+                .filter(|info| self.service_info_is_running(info, &backend))
+                .ok_or_else(|| "Soloe server is not running".to_string())?;
+            let address = server
+                .address
+                .ok_or_else(|| "Soloe server did not publish an address".to_string())?;
+            let token = server
+                .token
+                .ok_or_else(|| "Soloe server did not publish an access token".to_string())?;
+            let mut command = layout
+                .ui_spec(&self.data_directory, &address, &token)
+                .command();
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            return self
+                .spawn_owned(command, true)
+                .map_err(|error| format!("failed to open Soloe: {error}"));
+        }
+
         let info = self
             .read_info("server")
             .ok_or_else(|| "Soloe server is not running".to_string())?;
@@ -685,6 +763,17 @@ impl BackendSupervisor {
             .map_err(|error| format!("failed to open experimental Tauri client: {error}"))
     }
 
+    pub fn electron_available(&self) -> bool {
+        if let Err(error) = self.reap_clients() {
+            eprintln!("[tray] failed to reap a closed Soloe UI: {error}");
+        }
+        if bundled_macos_layout().is_some() {
+            let backend = self.backend_for_existing_services();
+            return self.is_running_on("server", &backend);
+        }
+        self.browser_address().is_some()
+    }
+
     fn configured_backend(&self) -> Result<BackendSettings, String> {
         let settings_path = self.data_directory.join("settings.json");
         let mut backend = match fs::read(&settings_path) {
@@ -711,6 +800,7 @@ impl BackendSupervisor {
         if let Some(value) = env::var_os("SOLOE_BACKEND_PLACEMENT") {
             backend.placement = match value.to_string_lossy().to_ascii_lowercase().as_str() {
                 "windows" => BackendPlacement::Windows,
+                "macos" => BackendPlacement::Macos,
                 "wsl" => BackendPlacement::Wsl,
                 other => return Err(format!("invalid SOLOE_BACKEND_PLACEMENT: {other}")),
             };
@@ -741,22 +831,38 @@ impl BackendSupervisor {
     }
 
     fn preflight(&self, backend: &ActiveBackend) -> Result<(), String> {
+        if let Some(layout) = bundled_macos_layout() {
+            if !layout.electron_executable.is_file() {
+                return Err(format!(
+                    "Soloe UI is missing at {}",
+                    layout.electron_executable.display()
+                ));
+            }
+            if !layout.payload_archive.is_file() {
+                return Err(format!(
+                    "Soloe payload is missing at {}",
+                    layout.payload_archive.display()
+                ));
+            }
+            return Ok(());
+        }
         if !self.repository_root.join("package.json").is_file() {
             return Err(format!(
-                "Windows Soloe source is incomplete at {}; expected package.json",
+                "Soloe source is incomplete at {}; expected package.json",
                 self.repository_root.display()
             ));
         }
-        self.preflight_windows_client()?;
+        self.preflight_native_client()?;
         match backend.placement {
-            BackendPlacement::Windows => {
+            BackendPlacement::Windows | BackendPlacement::Macos => {
+                let host = backend.host_label();
                 check_command(
                     Command::new("node").arg("--version"),
-                    "Node.js 22 or newer is required on Windows",
+                    &format!("Node.js 22 or newer is required on {host}"),
                 )?;
                 check_command(
                     Command::new(pnpm_executable()).arg("--version"),
-                    "PNPM is required on Windows; enable the pinned version with Corepack",
+                    &format!("PNPM is required on {host}; enable the pinned version with Corepack"),
                 )?;
                 let mut dependency = Command::new(pnpm_executable());
                 dependency
@@ -771,7 +877,9 @@ impl BackendSupervisor {
                     .current_dir(&self.repository_root);
                 check_command(
                     &mut dependency,
-                    "Windows backend dependencies are missing or incompatible; run pnpm install in the Windows checkout",
+                    &format!(
+                        "{host} backend dependencies are missing or incompatible; run pnpm install in this checkout"
+                    ),
                 )
             }
             BackendPlacement::Wsl => {
@@ -798,14 +906,17 @@ impl BackendSupervisor {
         }
     }
 
-    fn preflight_windows_client(&self) -> Result<(), String> {
+    fn preflight_native_client(&self) -> Result<(), String> {
+        let host = native_backend_placement().host_label();
         check_command(
             Command::new("node").arg("--version"),
-            "Node.js 22 or newer is required on Windows for the browser and desktop clients",
+            &format!(
+                "Node.js 22 or newer is required on {host} for the browser and desktop clients"
+            ),
         )?;
         check_command(
             Command::new(pnpm_executable()).arg("--version"),
-            "PNPM is required on Windows; enable the pinned version with Corepack",
+            &format!("PNPM is required on {host}; enable the pinned version with Corepack"),
         )?;
         let mut dependency = Command::new(pnpm_executable());
         dependency
@@ -813,7 +924,7 @@ impl BackendSupervisor {
             .current_dir(&self.repository_root);
         check_command(
             &mut dependency,
-            "Windows client dependencies are missing; run pnpm install in the Windows checkout",
+            &format!("{host} client dependencies are missing; run pnpm install in this checkout"),
         )
     }
 
@@ -833,7 +944,7 @@ impl BackendSupervisor {
             .map_err(|error| format!("failed to clone {service} log: {error}"))?;
 
         let mut command = match backend.placement {
-            BackendPlacement::Windows => {
+            BackendPlacement::Windows | BackendPlacement::Macos => {
                 let mut command = Command::new(pnpm_executable());
                 command
                     .args(["--filter", workspace, "start"])
@@ -855,6 +966,56 @@ impl BackendSupervisor {
             .stderr(Stdio::from(error_log));
         self.spawn_owned(command, false)
             .map_err(|error| format!("failed to start {workspace}: {error}"))
+    }
+
+    fn spawn_packaged_runtime(&self, layout: &BundledMacosLayout) -> Result<(), String> {
+        let endpoint = self.data_directory.join("runtime.sock");
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.data_directory.join("runtime.log"))
+            .map_err(|error| format!("failed to open runtime log: {error}"))?;
+        let error_log = log
+            .try_clone()
+            .map_err(|error| format!("failed to clone runtime log: {error}"))?;
+        let mut command = layout
+            .runtime_spec(
+                &self.data_directory,
+                &endpoint.to_string_lossy(),
+                &self.owner_id,
+            )
+            .command();
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(error_log));
+        self.spawn_owned(command, false)
+            .map_err(|error| format!("failed to start packaged Soloe runtime: {error}"))
+    }
+
+    fn spawn_packaged_server(&self, layout: &BundledMacosLayout) -> Result<(), String> {
+        let endpoint = self.data_directory.join("runtime.sock");
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.data_directory.join("server.log"))
+            .map_err(|error| format!("failed to open server log: {error}"))?;
+        let error_log = log
+            .try_clone()
+            .map_err(|error| format!("failed to clone server log: {error}"))?;
+        let mut command = layout
+            .server_spec(
+                &self.data_directory,
+                &endpoint.to_string_lossy(),
+                &self.owner_id,
+            )
+            .command();
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(error_log));
+        self.spawn_owned(command, false)
+            .map_err(|error| format!("failed to start packaged Soloe server: {error}"))
     }
 
     fn spawn_wsl_supervisor(&self, backend: &ActiveBackend) -> Result<(), String> {
@@ -895,8 +1056,8 @@ impl BackendSupervisor {
     }
 
     fn start_web_host(&self, backend: &ActiveBackend) -> Result<(), String> {
-        let windows = self.windows_client_target();
-        if self.is_running_on("web", &windows) {
+        let native = self.native_client_target();
+        if self.is_running_on("web", &native) {
             return Ok(());
         }
         let server = self
@@ -937,20 +1098,27 @@ impl BackendSupervisor {
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(error_log));
         self.spawn_owned(command, false)
-            .map_err(|error| format!("failed to start Windows browser host: {error}"))?;
-        self.wait_until("web", true, START_TIMEOUT, &windows)
+            .map_err(|error| format!("failed to start native browser host: {error}"))?;
+        self.wait_until("web", true, START_TIMEOUT, &native)
             .map_err(|error| {
                 format!(
-                    "Windows browser host did not become ready: {error}; run pnpm install in the Windows checkout"
+                    "native browser host did not become ready: {error}; run pnpm install in this checkout"
                 )
             })
     }
 
     fn stop_web_host(&self, _backend: &ActiveBackend) -> Result<(), String> {
-        self.stop_service("web", &self.windows_client_target())
+        self.stop_service("web", &self.native_client_target())
     }
 
     fn spawn_owned(&self, mut command: Command, client: bool) -> Result<(), String> {
+        let children = if client {
+            &self.client_children
+        } else {
+            &self.backend_children
+        };
+        self.reap_children(children, "managed process")?;
+        self.native_owner.prepare_command(&mut command);
         let mut child = command
             .spawn()
             .map_err(|error| format!("process spawn failed: {error}"))?;
@@ -959,17 +1127,46 @@ impl BackendSupervisor {
             let _ = child.wait();
             return Err(error);
         }
-        let children = if client {
-            &self.client_children
-        } else {
-            &self.backend_children
-        };
         let mut children = children
             .lock()
             .map_err(|_| "managed child lock poisoned".to_string())?;
-        children.retain_mut(|existing| existing.try_wait().ok().flatten().is_none());
         children.push(child);
         Ok(())
+    }
+
+    fn reap_clients(&self) -> Result<(), String> {
+        self.reap_children(&self.client_children, "client process")
+    }
+
+    fn reap_children(&self, children: &Mutex<Vec<Child>>, label: &str) -> Result<(), String> {
+        let mut children = children
+            .lock()
+            .map_err(|_| format!("{label} lock poisoned"))?;
+        let mut running = Vec::with_capacity(children.len());
+        let mut failures = Vec::new();
+        for mut child in children.drain(..) {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    if let Err(error) = self.native_owner.release(child.id()) {
+                        failures.push(format!(
+                            "PID {} ownership release failed: {error}",
+                            child.id()
+                        ));
+                    }
+                }
+                Ok(None) => running.push(child),
+                Err(error) => {
+                    failures.push(format!("PID {} status failed: {error}", child.id()));
+                    running.push(child);
+                }
+            }
+        }
+        *children = running;
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
     }
 
     fn stop_clients(&self) -> Result<(), String> {
@@ -1076,7 +1273,11 @@ impl BackendSupervisor {
         }
         let runtime = self.is_running_on("runtime", backend);
         let server = self.is_running_on("server", backend);
-        let web = self.is_running_on("web", &self.windows_client_target());
+        let web = if bundled_macos_layout().is_some() {
+            server
+        } else {
+            self.is_running_on("web", &self.native_client_target())
+        };
         let reconciled = match (runtime, server, web) {
             (true, true, true) => LifecycleState::Running,
             (true, true, false) => {
@@ -1272,9 +1473,9 @@ impl BackendSupervisor {
         })
     }
 
-    fn windows_client_target(&self) -> ActiveBackend {
+    fn native_client_target(&self) -> ActiveBackend {
         ActiveBackend {
-            placement: BackendPlacement::Windows,
+            placement: native_backend_placement(),
             wsl_distro: String::new(),
             wsl_repository_root: String::new(),
             owner_id: self.owner_id.clone(),
@@ -1394,6 +1595,127 @@ fn repository_root() -> PathBuf {
         })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BundledMacosLayout {
+    electron_executable: PathBuf,
+    payload_archive: PathBuf,
+    runtime_script: PathBuf,
+    server_script: PathBuf,
+    web_root: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PackagedProcessSpec {
+    executable: PathBuf,
+    args: Vec<PathBuf>,
+    env: Vec<(String, String)>,
+}
+
+impl PackagedProcessSpec {
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        command.args(&self.args).envs(self.env.iter().cloned());
+        command
+    }
+}
+
+impl BundledMacosLayout {
+    fn runtime_spec(
+        &self,
+        data_directory: &Path,
+        endpoint: &str,
+        owner_id: &str,
+    ) -> PackagedProcessSpec {
+        PackagedProcessSpec {
+            executable: self.electron_executable.clone(),
+            args: vec![self.runtime_script.clone()],
+            env: vec![
+                ("ELECTRON_RUN_AS_NODE".to_string(), "1".to_string()),
+                (
+                    "SOLOE_DATA_DIR".to_string(),
+                    data_directory.to_string_lossy().into_owned(),
+                ),
+                ("SOLOE_OWNER_ID".to_string(), owner_id.to_string()),
+                ("SOLOE_RUNTIME_ENDPOINT".to_string(), endpoint.to_string()),
+            ],
+        }
+    }
+
+    fn server_spec(
+        &self,
+        data_directory: &Path,
+        endpoint: &str,
+        owner_id: &str,
+    ) -> PackagedProcessSpec {
+        PackagedProcessSpec {
+            executable: self.electron_executable.clone(),
+            args: vec![self.server_script.clone()],
+            env: vec![
+                ("ELECTRON_RUN_AS_NODE".to_string(), "1".to_string()),
+                (
+                    "SOLOE_DATA_DIR".to_string(),
+                    data_directory.to_string_lossy().into_owned(),
+                ),
+                ("SOLOE_OWNER_ID".to_string(), owner_id.to_string()),
+                ("SOLOE_RUNTIME_ENDPOINT".to_string(), endpoint.to_string()),
+                (
+                    "SOLOE_WEB_ROOT".to_string(),
+                    self.web_root.to_string_lossy().into_owned(),
+                ),
+            ],
+        }
+    }
+
+    fn ui_spec(
+        &self,
+        data_directory: &Path,
+        server_address: &str,
+        token: &str,
+    ) -> PackagedProcessSpec {
+        PackagedProcessSpec {
+            executable: self.electron_executable.clone(),
+            args: Vec::new(),
+            env: vec![
+                (
+                    "SOLOE_DATA_DIR".to_string(),
+                    data_directory.to_string_lossy().into_owned(),
+                ),
+                (
+                    "SOLOE_CLIENT_SERVER_URL".to_string(),
+                    format!("{server_address}/?token={token}"),
+                ),
+                ("SOLOE_SERVER_TOKEN".to_string(), token.to_string()),
+                ("SOLOE_SUPERVISED_UI".to_string(), "1".to_string()),
+            ],
+        }
+    }
+}
+
+fn bundled_macos_layout_from_executable(executable: &Path) -> Option<BundledMacosLayout> {
+    let contents = executable.parent()?.parent()?;
+    if contents.file_name()?.to_str()? != "Contents" {
+        return None;
+    }
+    let embedded_app = contents.join("Resources").join("Soloe.app");
+    let payload_archive = embedded_app.join("Contents/Resources/app.asar");
+    Some(BundledMacosLayout {
+        electron_executable: embedded_app.join("Contents/MacOS/Soloe"),
+        runtime_script: payload_archive.join("out/main/runtime-host.js"),
+        server_script: payload_archive.join("out/main/server-host.js"),
+        web_root: payload_archive.join("out/web"),
+        payload_archive,
+    })
+}
+
+fn bundled_macos_layout() -> Option<BundledMacosLayout> {
+    #[cfg(target_os = "macos")]
+    {
+        return bundled_macos_layout_from_executable(&env::current_exe().ok()?);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
 fn data_directory() -> PathBuf {
     if let Some(directory) = env::var_os("SOLOE_DATA_DIR") {
         return PathBuf::from(directory);
@@ -1405,10 +1727,10 @@ fn data_directory() -> PathBuf {
     }
     #[cfg(target_os = "macos")]
     {
-        return PathBuf::from(env::var_os("HOME").unwrap_or_else(|| ".".into()))
+        PathBuf::from(env::var_os("HOME").unwrap_or_else(|| ".".into()))
             .join("Library")
             .join("Application Support")
-            .join("Soloe");
+            .join("Soloe")
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -1479,12 +1801,12 @@ fn process_has_owner(pid: u32, backend: &ActiveBackend, owner_id: &str) -> bool 
             .is_ok_and(|status| status.success());
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let _ = (pid, owner_id);
         true
     }
-    #[cfg(all(unix, not(target_os = "windows")))]
+    #[cfg(all(unix, not(any(target_os = "windows", target_os = "macos"))))]
     {
         fs::read(format!("/proc/{pid}/environ"))
             .ok()
@@ -1494,7 +1816,7 @@ fn process_has_owner(pid: u32, backend: &ActiveBackend, owner_id: &str) -> bool 
                     .any(|entry| entry == format!("SOLOE_OWNER_ID={owner_id}").as_bytes())
             })
     }
-    #[cfg(not(any(target_os = "windows", unix)))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
     {
         let _ = (pid, owner_id);
         false
@@ -1684,6 +2006,56 @@ mod tests {
     }
 
     #[test]
+    fn reads_macos_backend_placement_from_shared_settings() {
+        let directory = env::temp_dir().join(format!(
+            "soloe-tray-macos-settings-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&directory);
+        fs::write(
+            directory.join("settings.json"),
+            r#"{"backend":{"placement":"macos"}}"#,
+        )
+        .unwrap();
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
+
+        assert_eq!(
+            supervisor.configured_backend().unwrap().placement,
+            BackendPlacement::Macos
+        );
+        assert_eq!(
+            supervisor.server_action_label(),
+            "Start Soloe server (macOS)"
+        );
+        assert_eq!(
+            supervisor.runtime_action_label(),
+            "Start agent runtime (macOS)"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_uses_native_process_group_membership_as_the_owner_boundary() {
+        let backend = ActiveBackend {
+            placement: BackendPlacement::Macos,
+            wsl_distro: String::new(),
+            wsl_repository_root: String::new(),
+            owner_id: "tray-owner".to_string(),
+            tray_pid: std::process::id(),
+        };
+
+        assert!(process_has_owner(
+            std::process::id(),
+            &backend,
+            "tray-owner"
+        ));
+    }
+
+    #[test]
     fn reads_windows_powershell_utf8_settings_with_a_bom() {
         let directory = env::temp_dir().join(format!(
             "soloe-tray-settings-bom-test-{}",
@@ -1739,6 +2111,148 @@ mod tests {
     #[test]
     fn development_repository_root_contains_the_workspace_manifest() {
         assert!(repository_root().join("package.json").is_file());
+    }
+
+    #[test]
+    fn installed_macos_product_resolves_its_private_runtime_server_web_and_ui() {
+        let layout = bundled_macos_layout_from_executable(Path::new(
+            "/Applications/Soloe.app/Contents/MacOS/soloe-tray",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            layout.electron_executable,
+            PathBuf::from(
+                "/Applications/Soloe.app/Contents/Resources/Soloe.app/Contents/MacOS/Soloe"
+            )
+        );
+        assert_eq!(
+            layout.runtime_script,
+            PathBuf::from(
+                "/Applications/Soloe.app/Contents/Resources/Soloe.app/Contents/Resources/app.asar/out/main/runtime-host.js"
+            )
+        );
+        assert_eq!(
+            layout.server_script,
+            PathBuf::from(
+                "/Applications/Soloe.app/Contents/Resources/Soloe.app/Contents/Resources/app.asar/out/main/server-host.js"
+            )
+        );
+        assert_eq!(
+            layout.web_root,
+            PathBuf::from(
+                "/Applications/Soloe.app/Contents/Resources/Soloe.app/Contents/Resources/app.asar/out/web"
+            )
+        );
+        assert_eq!(
+            layout.payload_archive,
+            PathBuf::from(
+                "/Applications/Soloe.app/Contents/Resources/Soloe.app/Contents/Resources/app.asar"
+            )
+        );
+
+        let runtime = layout.runtime_spec(
+            Path::new("/Users/ada/Library/Application Support/Soloe"),
+            "/tmp/soloe.sock",
+            "tray-owner",
+        );
+        assert_eq!(runtime.executable, layout.electron_executable);
+        assert_eq!(runtime.args, vec![layout.runtime_script.clone()]);
+        assert_eq!(
+            runtime.env,
+            vec![
+                ("ELECTRON_RUN_AS_NODE".to_string(), "1".to_string()),
+                (
+                    "SOLOE_DATA_DIR".to_string(),
+                    "/Users/ada/Library/Application Support/Soloe".to_string()
+                ),
+                ("SOLOE_OWNER_ID".to_string(), "tray-owner".to_string()),
+                (
+                    "SOLOE_RUNTIME_ENDPOINT".to_string(),
+                    "/tmp/soloe.sock".to_string()
+                )
+            ]
+        );
+
+        let server = layout.server_spec(
+            Path::new("/Users/ada/Library/Application Support/Soloe"),
+            "/tmp/soloe.sock",
+            "tray-owner",
+        );
+        assert_eq!(server.executable, layout.electron_executable);
+        assert_eq!(server.args, vec![layout.server_script.clone()]);
+        assert_eq!(
+            server.env,
+            vec![
+                ("ELECTRON_RUN_AS_NODE".to_string(), "1".to_string()),
+                (
+                    "SOLOE_DATA_DIR".to_string(),
+                    "/Users/ada/Library/Application Support/Soloe".to_string()
+                ),
+                ("SOLOE_OWNER_ID".to_string(), "tray-owner".to_string()),
+                (
+                    "SOLOE_RUNTIME_ENDPOINT".to_string(),
+                    "/tmp/soloe.sock".to_string()
+                ),
+                (
+                    "SOLOE_WEB_ROOT".to_string(),
+                    concat!(
+                        "/Applications/Soloe.app/Contents/Resources/Soloe.app/Contents/",
+                        "Resources/app.asar/out/web"
+                    )
+                    .to_string()
+                )
+            ]
+        );
+
+        let ui = layout.ui_spec(
+            Path::new("/Users/ada/Library/Application Support/Soloe"),
+            "http://127.0.0.1:4317",
+            "secret-token",
+        );
+        assert_eq!(ui.executable, layout.electron_executable);
+        assert!(ui.args.is_empty());
+        assert_eq!(
+            ui.env,
+            vec![
+                (
+                    "SOLOE_DATA_DIR".to_string(),
+                    "/Users/ada/Library/Application Support/Soloe".to_string()
+                ),
+                (
+                    "SOLOE_CLIENT_SERVER_URL".to_string(),
+                    "http://127.0.0.1:4317/?token=secret-token".to_string()
+                ),
+                ("SOLOE_SERVER_TOKEN".to_string(), "secret-token".to_string()),
+                ("SOLOE_SUPERVISED_UI".to_string(), "1".to_string())
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exited_ui_children_are_reaped_without_waiting_for_another_launch() {
+        let directory =
+            env::temp_dir().join(format!("soloe-tray-client-reap-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 0"]);
+        supervisor.spawn_owned(command, true).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            supervisor.reap_clients().unwrap();
+            if supervisor.client_children.lock().unwrap().is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "exited UI child was not reaped");
+            thread::sleep(Duration::from_millis(25));
+        }
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -1870,24 +2384,25 @@ mod tests {
         let _ = fs::create_dir_all(&directory);
         let processes = Arc::new(FakeProcessOperations::with_running([2001, 2002, 2003]));
         let supervisor = test_supervisor(directory.clone(), processes.clone());
+        let host = native_backend_placement().host_label();
         assert_eq!(
             supervisor.server_action_label(),
-            "Start Soloe server (Windows)"
+            format!("Start Soloe server ({host})")
         );
         assert_eq!(
             supervisor.runtime_action_label(),
-            "Start agent runtime (Windows)"
+            format!("Start agent runtime ({host})")
         );
         assert!(!supervisor.server_action_enabled());
         assert!(supervisor.runtime_action_enabled());
         supervisor.set_lifecycle(LifecycleState::Starting);
         assert_eq!(
             supervisor.server_action_label(),
-            "Starting Soloe server (Windows)…"
+            format!("Starting Soloe server ({host})…")
         );
         assert_eq!(
             supervisor.runtime_action_label(),
-            "Starting agent runtime (Windows)…"
+            format!("Starting agent runtime ({host})…")
         );
         assert!(!supervisor.server_action_enabled());
         assert!(!supervisor.runtime_action_enabled());
@@ -1899,11 +2414,11 @@ mod tests {
         .unwrap();
         assert_eq!(
             supervisor.server_action_label(),
-            "Start Soloe server (Windows)"
+            format!("Start Soloe server ({host})")
         );
         assert_eq!(
             supervisor.runtime_action_label(),
-            "Stop agent runtime (Windows)"
+            format!("Stop agent runtime ({host})")
         );
         assert!(supervisor.server_action_enabled());
         assert!(supervisor.runtime_action_enabled());
@@ -1915,7 +2430,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             supervisor.server_action_label(),
-            "Stop Soloe server (Windows)"
+            format!("Stop Soloe server ({host})")
         );
 
         fs::write(
@@ -1925,16 +2440,16 @@ mod tests {
         .unwrap();
         assert_eq!(
             supervisor.server_action_label(),
-            "Stop Soloe server (Windows)"
+            format!("Stop Soloe server ({host})")
         );
         supervisor.set_lifecycle(LifecycleState::Stopping);
         assert_eq!(
             supervisor.server_action_label(),
-            "Stopping Soloe server (Windows)…"
+            format!("Stopping Soloe server ({host})…")
         );
         assert_eq!(
             supervisor.runtime_action_label(),
-            "Stopping agent runtime (Windows)…"
+            format!("Stopping agent runtime ({host})…")
         );
         assert!(!supervisor.server_action_enabled());
         assert!(!supervisor.runtime_action_enabled());

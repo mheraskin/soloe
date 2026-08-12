@@ -5,6 +5,7 @@
   import { settings } from '../../stores/settings.svelte';
   import { platform } from '../../stores/platform.svelte';
   import { ipc } from '../../lib/ipc';
+  import { platformRunModeOptions } from '../../lib/platform-ui';
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
   import { Button } from '$lib/components/ui/button';
@@ -74,6 +75,7 @@
     if (!projectModal.draft.defaultRunMode) return 'Inherit from settings';
     return labelForRunMode(projectModal.draft.defaultRunMode);
   });
+  let runModeOptions = $derived(platformRunModeOptions(platform.current));
 </script>
 
 <div class="flex flex-col gap-1.5">
@@ -109,12 +111,9 @@
       <Select.Trigger class="w-full">{runModeLabel}</Select.Trigger>
       <Select.Content>
         <Select.Item value="__inherit__" label="Inherit from settings">Inherit from settings</Select.Item>
-        {#if platform.current.platform === 'linux'}
-          <Select.Item value="linux" label="Linux">Linux</Select.Item>
-        {:else}
-          <Select.Item value="windows" label="Windows">Windows</Select.Item>
-          <Select.Item value="wsl" label="WSL">WSL</Select.Item>
-        {/if}
+        {#each runModeOptions as option (option.value)}
+          <Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
+        {/each}
       </Select.Content>
     </Select.Root>
   </div>

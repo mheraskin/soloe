@@ -291,7 +291,12 @@ function parseSession(raw: unknown, platform?: SupportedHostPlatform): Session |
   if (typeof raw['name'] !== 'string') return null;
   if (typeof raw['cwd'] !== 'string') return null;
   const runMode = raw['runMode'];
-  if (runMode !== 'windows' && runMode !== 'linux' && runMode !== 'wsl') return null;
+  if (
+    runMode !== 'windows'
+    && runMode !== 'linux'
+    && runMode !== 'macos'
+    && runMode !== 'wsl'
+  ) return null;
   if (typeof raw['createdAt'] !== 'string') return null;
   if (typeof raw['lastUsedAt'] !== 'string') return null;
   const session = migrateRawSession(raw);
