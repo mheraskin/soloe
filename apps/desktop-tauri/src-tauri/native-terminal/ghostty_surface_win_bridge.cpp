@@ -13,12 +13,14 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <mutex>
 #include <new>
 #include <string>
+#include <thread>
 
 #include "ghostty.h"
 extern "C" {
@@ -29,7 +31,6 @@ constexpr wchar_t kWindowClass[] = L"SoloeGhosttyNativeTerminalWindow";
 constexpr UINT kWakeupMessage = WM_APP + 0x317;
 constexpr UINT kSelectionChangedMessage = WM_APP + 0x318;
 constexpr UINT kRenderMessage = WM_APP + 0x319;
-constexpr UINT kOutputMessage = WM_APP + 0x31a;
 constexpr size_t kOutputChunkBytes = 64 * 1024;
 constexpr UINT kCopyCommand = 1;
 constexpr UINT kPasteCommand = 2;
@@ -112,9 +113,12 @@ struct SoloeGhosttySurface {
   bool right_captured = false;
   wchar_t pending_high_surrogate = 0;
   int modifier_latch = GHOSTTY_MODS_NONE;
+  std::mutex output_mutex;
+  std::condition_variable output_cv;
   std::string pending_output;
-  bool output_message_pending = false;
-  bool has_processed_output = false;
+  std::thread output_thread;
+  bool output_stopping = false;
+  std::atomic<bool> has_processed_output = false;
   void *event_userdata = nullptr;
   soloe_ghostty_bytes_cb input_cb = nullptr;
   soloe_ghostty_text_cb selection_cb = nullptr;
@@ -565,34 +569,78 @@ void IoWrite(void *userdata, const char *bytes, uintptr_t length) {
 bool QueueOutput(SoloeGhosttySurface *wrapper,
                  const uint8_t *bytes,
                  size_t length) {
-  if (!wrapper || !wrapper->surface) return false;
-  if (bytes && length > 0)
-    wrapper->pending_output.append(reinterpret_cast<const char *>(bytes),
-                                   length);
-  if (wrapper->pending_output.empty() || wrapper->output_message_pending)
-    return true;
-  wrapper->output_message_pending =
-      PostMessageW(wrapper->child, kOutputMessage, 0, 0) != 0;
-  return wrapper->output_message_pending;
+  if (!wrapper || !wrapper->surface || !wrapper->output_thread.joinable())
+    return false;
+  {
+    std::lock_guard<std::mutex> lock(wrapper->output_mutex);
+    if (wrapper->output_stopping) return false;
+    if (bytes && length > 0)
+      wrapper->pending_output.append(reinterpret_cast<const char *>(bytes),
+                                     length);
+  }
+  wrapper->output_cv.notify_one();
+  return true;
 }
 
-void ProcessPendingOutput(SoloeGhosttySurface *wrapper) {
-  if (!wrapper || !wrapper->surface) return;
-  if (wrapper->app) ghostty_app_tick(wrapper->app);
-  const size_t length =
-      std::min(kOutputChunkBytes, wrapper->pending_output.size());
-  if (length > 0) {
-    ghostty_surface_process_output(wrapper->surface,
-                                  wrapper->pending_output.data(), length);
-    wrapper->pending_output.erase(0, length);
-    wrapper->has_processed_output = true;
+void OutputWorker(SoloeGhosttySurface *wrapper) {
+  Trace("output worker: started");
+  while (wrapper) {
+    std::string batch;
+    {
+      std::unique_lock<std::mutex> lock(wrapper->output_mutex);
+      wrapper->output_cv.wait(lock, [wrapper] {
+        return wrapper->output_stopping || !wrapper->pending_output.empty();
+      });
+      if (wrapper->output_stopping) break;
+      const size_t length =
+          std::min(kOutputChunkBytes, wrapper->pending_output.size());
+      batch.assign(wrapper->pending_output.data(), length);
+      wrapper->pending_output.erase(0, length);
+    }
+    TraceValue("output worker: processing", batch.size());
+    ghostty_surface_process_output(wrapper->surface, batch.data(), batch.size());
+    wrapper->has_processed_output.store(true, std::memory_order_release);
+    Trace("output worker: processed");
   }
-  if (!wrapper->pending_output.empty()) {
-    wrapper->output_message_pending =
-        PostMessageW(wrapper->child, kOutputMessage, 0, 0) != 0;
-  } else {
-    wrapper->output_message_pending = false;
+  Trace("output worker: stopped");
+}
+
+bool StartOutputWorker(SoloeGhosttySurface *wrapper) {
+  if (!wrapper || wrapper->output_thread.joinable()) return false;
+  {
+    std::lock_guard<std::mutex> lock(wrapper->output_mutex);
+    wrapper->output_stopping = false;
+    wrapper->pending_output.clear();
   }
+  try {
+    wrapper->output_thread = std::thread(OutputWorker, wrapper);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+void StopOutputWorker(SoloeGhosttySurface *wrapper) {
+  if (!wrapper || !wrapper->output_thread.joinable()) return;
+  {
+    std::lock_guard<std::mutex> lock(wrapper->output_mutex);
+    wrapper->output_stopping = true;
+    wrapper->pending_output.clear();
+  }
+  wrapper->output_cv.notify_one();
+  const HANDLE thread = wrapper->output_thread.native_handle();
+  while (WaitForSingleObject(thread, 0) != WAIT_OBJECT_0) {
+    const DWORD result = MsgWaitForMultipleObjects(
+        1, &thread, FALSE, 50, QS_POSTMESSAGE | QS_SENDMESSAGE);
+    if (result != WAIT_OBJECT_0 + 1) continue;
+    MSG message = {};
+    while (PeekMessageW(&message, wrapper->child, kWakeupMessage,
+                        kRenderMessage, PM_REMOVE)) {
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
+  }
+  wrapper->output_thread.join();
 }
 
 bool EnsureGhosttyInitialized() {
@@ -791,11 +839,6 @@ LRESULT CALLBACK TerminalWindowProc(HWND window,
         ghostty_surface_refresh(wrapper->surface);
       Trace("render message: complete");
       return 0;
-    case kOutputMessage:
-      TraceValue("output message: entered", wrapper->pending_output.size());
-      ProcessPendingOutput(wrapper);
-      TraceValue("output message: complete", wrapper->pending_output.size());
-      return 0;
     case WM_SIZE:
     case WM_DPICHANGED_AFTERPARENT:
       UpdateSurfaceMetrics(wrapper);
@@ -950,8 +993,9 @@ bool EnsureWindowClass() {
 }
 
 void DestroySurface(SoloeGhosttySurface *wrapper) {
-  if (!wrapper || wrapper->closing.exchange(true, std::memory_order_acq_rel))
-    return;
+  if (!wrapper || wrapper->closing.load(std::memory_order_acquire)) return;
+  StopOutputWorker(wrapper);
+  if (wrapper->closing.exchange(true, std::memory_order_acq_rel)) return;
   if (wrapper->surface) {
     ghostty_surface_set_focus(wrapper->surface, false);
     ghostty_surface_free(wrapper->surface);
@@ -1055,6 +1099,11 @@ SoloeGhosttySurface *soloe_ghostty_surface_new(
     return nullptr;
   }
   wrapper->closing.store(false, std::memory_order_release);
+  if (!StartOutputWorker(wrapper)) {
+    DestroySurface(wrapper);
+    delete wrapper;
+    return nullptr;
+  }
   SetWindowPos(wrapper->child, HWND_TOP, DipToPixel(parent, bounds.x),
                DipToPixel(parent, bounds.y),
                DipToPixel(parent, std::max(1.0, bounds.width)),
@@ -1086,18 +1135,18 @@ bool soloe_ghostty_surface_replace(SoloeGhosttySurface *wrapper,
                                    size_t length) {
   TraceValue("surface replace: entered", length);
   if (!wrapper || !wrapper->surface) return false;
-  wrapper->pending_output.clear();
-  wrapper->output_message_pending = false;
-  if (wrapper->has_processed_output) {
+  StopOutputWorker(wrapper);
+  if (wrapper->has_processed_output.load(std::memory_order_acquire)) {
     ghostty_surface_free(wrapper->surface);
     Trace("surface replace: old surface freed");
     wrapper->surface = nullptr;
-    wrapper->has_processed_output = false;
+    wrapper->has_processed_output.store(false, std::memory_order_release);
     if (!CreateInnerSurface(wrapper)) return false;
     Trace("surface replace: new surface created");
   } else {
     Trace("surface replace: reused empty surface");
   }
+  if (!StartOutputWorker(wrapper)) return false;
   return soloe_ghostty_surface_write(wrapper, bytes, length);
 }
 
