@@ -212,8 +212,12 @@ describe("monorepo boundaries", () => {
       "utf8",
     );
     expect(windowsBridge).toContain("kSelectionChangedMessage");
+    expect(windowsBridge).toContain("kRenderMessage");
     expect(windowsBridge).toContain(
       "PostMessageW(wrapper->child, kSelectionChangedMessage, 0, 0)",
+    );
+    expect(windowsBridge).toContain(
+      "PostMessageW(wrapper->child, kRenderMessage, 0, 0)",
     );
     expect(patch).toContain("ExecManualOnly.zig");
     expect(patch).toContain("builtin.object_format != .coff");

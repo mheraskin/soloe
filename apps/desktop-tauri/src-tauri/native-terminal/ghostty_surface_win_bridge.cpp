@@ -28,6 +28,7 @@ extern "C" {
 constexpr wchar_t kWindowClass[] = L"SoloeGhosttyNativeTerminalWindow";
 constexpr UINT kWakeupMessage = WM_APP + 0x317;
 constexpr UINT kSelectionChangedMessage = WM_APP + 0x318;
+constexpr UINT kRenderMessage = WM_APP + 0x319;
 constexpr UINT kCopyCommand = 1;
 constexpr UINT kPasteCommand = 2;
 constexpr int kWglContextMajorVersionArb = 0x2091;
@@ -481,7 +482,12 @@ bool Action(ghostty_app_t app, ghostty_target_s, ghostty_action_s action) {
            action.tag == GHOSTTY_ACTION_RENDERER_HEALTH;
   switch (action.tag) {
     case GHOSTTY_ACTION_RENDER:
-      if (wrapper->surface) ghostty_surface_refresh(wrapper->surface);
+      // app_tick can publish render while Ghostty still owns internal state.
+      // Calling refresh here re-enters the same surface and deadlocks the
+      // Win32 message thread after a replay. Schedule it after the callback
+      // and app tick have unwound instead.
+      if (wrapper->child)
+        PostMessageW(wrapper->child, kRenderMessage, 0, 0);
       return true;
     case GHOSTTY_ACTION_RENDERER_HEALTH:
       wrapper->renderer_healthy.store(
@@ -702,6 +708,10 @@ LRESULT CALLBACK TerminalWindowProc(HWND window,
     case kSelectionChangedMessage:
       if (!wrapper->closing.load(std::memory_order_acquire))
         EmitSelection(wrapper);
+      return 0;
+    case kRenderMessage:
+      if (!wrapper->closing.load(std::memory_order_acquire) && wrapper->surface)
+        ghostty_surface_refresh(wrapper->surface);
       return 0;
     case WM_SIZE:
     case WM_DPICHANGED_AFTERPARENT:
