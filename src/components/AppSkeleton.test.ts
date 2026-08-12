@@ -13,4 +13,14 @@ describe('AppSkeleton', () => {
     expect(body).toContain('data-loading-region="terminal"');
     expect(body).toContain('data-loading-region="rail"');
   });
+
+  it('reserves native macOS traffic lights without drawing right-side window controls', () => {
+    const { body } = render(AppSkeleton, {
+      props: { macosWindowControls: true }
+    });
+
+    expect(body).toContain('data-window-controls="macos"');
+    expect(body).toContain('ml-[76px]');
+    expect(body).not.toContain('data-loading-region="window-controls"');
+  });
 });

@@ -62,6 +62,7 @@
   import { worktreeScope } from '@shared/worktree-identity.js';
   import { sessionRefreshIntents } from './lib/worktree-polling-policy';
   import { displaySessionKind } from './lib/session-agent';
+  import { usesMacosNativeWindowControls } from './lib/platform-ui';
   import {
     displayedAgentState as resolveDisplayedAgentState,
     displayedAgentSummary
@@ -106,6 +107,10 @@
   let suppressCollapsedDropdownSelect = false;
   let initialLoadState = $state<'loading' | 'ready' | 'error'>('loading');
   let initialLoadError = $state<string | null>(null);
+  const rendererUsesMacosWindowControls = usesMacosNativeWindowControls();
+  let macosWindowControls = $derived(
+    rendererUsesMacosWindowControls || platform.current.platform === 'macos'
+  );
   let isMobile = $state(false);
   let mobilePage = $state<MobileWorkspacePage>('workspace');
   let requestedMobileMode = $state<MobileWorkspaceMode>('terminal');
@@ -1212,7 +1217,7 @@
 <ModeWatcher defaultMode="dark" />
 
 {#if initialLoadState === 'loading'}
-  <AppSkeleton label="Loading workspace" />
+  <AppSkeleton label="Loading workspace" {macosWindowControls} />
 {:else if initialLoadState === 'error'}
   <div class="flex h-full flex-col overflow-hidden bg-background text-foreground">
     <header
@@ -1222,7 +1227,7 @@
       <img
         src={appIconUrl}
         alt=""
-        class={`mr-1.5 size-3.5 flex-none ${platform.current.platform === 'macos' ? 'ml-[76px]' : 'ml-3'}`}
+        class={`mr-1.5 size-3.5 flex-none ${macosWindowControls ? 'ml-[76px]' : 'ml-3'}`}
         draggable="false"
       />
       <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
@@ -1256,7 +1261,7 @@
     <img
       src={appIconUrl}
       alt=""
-      class={`mr-1.5 size-3.5 flex-none ${platform.current.platform === 'macos' ? 'ml-[76px]' : 'ml-3'}`}
+      class={`mr-1.5 size-3.5 flex-none ${macosWindowControls ? 'ml-[76px]' : 'ml-3'}`}
       draggable="false"
     />
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
@@ -1538,7 +1543,7 @@
       >
         <Settings class="size-3.5" />
       </Button>
-      {#if platform.current.platform !== 'macos' && supportsBackendOperation('window', 'minimize')}
+      {#if !macosWindowControls && supportsBackendOperation('window', 'minimize')}
         <Button
           variant="ghost"
           class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"

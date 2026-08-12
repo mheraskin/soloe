@@ -864,7 +864,7 @@
   });
 </script>
 
-<div class="terminal-pane-shell relative h-full w-full bg-[#0f0f10] p-2">
+<div class="terminal-pane-shell relative h-full w-full bg-[#0f0f10]">
   {#if !ready}
     <div
       class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
@@ -969,7 +969,6 @@
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(0, 1fr);
       overflow: hidden;
-      padding: 0.25rem;
     }
 
     .terminal-find {
@@ -988,10 +987,6 @@
     .terminal-find :global([data-slot='button']) {
       min-width: 2.75rem;
       min-height: 2.75rem;
-    }
-
-    :global(.xterm) {
-      padding: 0.25rem;
     }
 
     :global(.xterm-viewport) {

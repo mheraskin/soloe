@@ -1,7 +1,13 @@
 <script lang="ts">
   import appIconUrl from '../../build/favicon.svg';
 
-  let { label = 'Loading Soloe' }: { label?: string } = $props();
+  let {
+    label = 'Loading Soloe',
+    macosWindowControls = false
+  }: {
+    label?: string;
+    macosWindowControls?: boolean;
+  } = $props();
 </script>
 
 <div
@@ -14,14 +20,25 @@
   <header
     class="flex h-7 shrink-0 items-center border-b border-border bg-card"
     style="-webkit-app-region: drag"
+    data-window-controls={macosWindowControls ? 'macos' : 'custom'}
   >
-    <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none opacity-70" />
+    <img
+      src={appIconUrl}
+      alt=""
+      class={`mr-1.5 size-3.5 flex-none opacity-70 ${macosWindowControls ? 'ml-[76px]' : 'ml-3'}`}
+    />
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
-    <div class="ml-auto flex h-full items-center gap-3 px-3" aria-hidden="true">
-      <span class="loading-block h-2 w-8 rounded-sm"></span>
-      <span class="loading-block h-2 w-8 rounded-sm"></span>
-      <span class="loading-block h-2 w-8 rounded-sm"></span>
-    </div>
+    {#if !macosWindowControls}
+      <div
+        class="ml-auto flex h-full items-center gap-3 px-3"
+        data-loading-region="window-controls"
+        aria-hidden="true"
+      >
+        <span class="loading-block h-2 w-8 rounded-sm"></span>
+        <span class="loading-block h-2 w-8 rounded-sm"></span>
+        <span class="loading-block h-2 w-8 rounded-sm"></span>
+      </div>
+    {/if}
   </header>
 
   <div class="flex min-h-0 flex-1">

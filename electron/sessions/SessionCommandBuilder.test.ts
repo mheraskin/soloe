@@ -724,6 +724,25 @@ describe('SessionCommandBuilder — native Linux runMode', () => {
 });
 
 describe('SessionCommandBuilder — native macOS runMode', () => {
+  it('enables the native zsh prompt integration that reports cwd changes', () => {
+    const spec = builder.build({
+      ...baseFields(),
+      cwd: '/Users/me/proj',
+      runMode: 'macos',
+      launch: { type: 'terminal', shell: 'auto' }
+    }, {
+      baseEnv: {
+        HOME: '/Users/me',
+        SHELL: '/bin/zsh',
+        TERM_PROGRAM: 'ghostty'
+      }
+    });
+
+    expect(spec.file).toBe('/bin/zsh');
+    expect(spec.args).toEqual(['-l']);
+    expect(spec.env['TERM_PROGRAM']).toBe('Apple_Terminal');
+  });
+
   it('resolves and execs native macOS agents through the user login shell', () => {
     const spec = builder.build({
       ...baseFields(),

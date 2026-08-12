@@ -4,7 +4,8 @@ import {
   platformBackendOptions,
   runModePathPlaceholder,
   platformRunModeOptions,
-  platformShellOptions
+  platformShellOptions,
+  usesMacosNativeWindowControls
 } from './platform-ui';
 
 describe('platform UI', () => {
@@ -40,5 +41,20 @@ describe('platform UI', () => {
     expect(platformBackendOptions('macos')).toEqual([
       { value: 'macos', label: 'macOS' }
     ]);
+  });
+
+  it('detects native macOS Electron window controls before backend state loads', () => {
+    expect(usesMacosNativeWindowControls(
+      'Mozilla/5.0 Electron/41.10.3',
+      'MacIntel'
+    )).toBe(true);
+    expect(usesMacosNativeWindowControls(
+      'Mozilla/5.0 Version/18.0 Safari/605.1.15',
+      'MacIntel'
+    )).toBe(false);
+    expect(usesMacosNativeWindowControls(
+      'Mozilla/5.0 Electron/41.10.3',
+      'Win32'
+    )).toBe(false);
   });
 });

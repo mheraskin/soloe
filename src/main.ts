@@ -10,13 +10,17 @@ import '@fontsource/jetbrains-mono/700.css';
 // so it's loaded as a secondary monospace family for the terminal stack.
 import '@fontsource/cascadia-code/400.css';
 import '@fontsource/cascadia-code/700.css';
+import { usesMacosNativeWindowControls } from './lib/platform-ui';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('Missing #app root element');
 
 const bootstrapSkeleton = mount(AppSkeleton, {
   target,
-  props: { label: 'Starting Soloe' }
+  props: {
+    label: 'Starting Soloe',
+    macosWindowControls: usesMacosNativeWindowControls()
+  }
 });
 
 const { installBrowserApi } = await import('./lib/browser-api');

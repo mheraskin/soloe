@@ -12,6 +12,13 @@ export interface RunModeOption {
   label: string;
 }
 
+export function usesMacosNativeWindowControls(
+  userAgent: string = typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  navigatorPlatform: string = typeof navigator === 'undefined' ? '' : navigator.platform
+): boolean {
+  return /\bElectron\//u.test(userAgent) && navigatorPlatform.startsWith('Mac');
+}
+
 export function platformRunModeOptions(info: HostPlatformInfo): RunModeOption[] {
   return info.availableRunModes.map((value) => ({ value, label: runModeLabel(value) }));
 }

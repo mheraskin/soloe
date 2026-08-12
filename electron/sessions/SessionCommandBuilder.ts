@@ -1,6 +1,7 @@
 import type {
   AgentLaunch,
   AgentRuntimeInfo,
+  RunMode,
   Session,
   SessionId,
   TerminalLaunch
@@ -170,7 +171,7 @@ export class SessionCommandBuilder {
     return {
       executable: resolved.executable,
       args: resolved.args,
-      env: { ...shellLocationEnv(resolved.executable, ctx.baseEnv), ...bridgeEnv }
+      env: { ...shellLocationEnv(resolved.executable, ctx.baseEnv, s.runMode), ...bridgeEnv }
     };
   }
 
@@ -529,8 +530,15 @@ const POWERSHELL_LOCATION_SCRIPT =
 
 function shellLocationEnv(
   executable: string,
-  baseEnv: Record<string, string | undefined>
+  baseEnv: Record<string, string | undefined>,
+  runMode: RunMode
 ): Record<string, string> {
+  if (runMode === 'macos' && isZsh(executable)) {
+    // macOS ships an OSC-7 precmd hook in /etc/zshrc_Apple_Terminal. Selecting
+    // that integration makes `cd` observable without touching the user's zsh
+    // files or replacing their prompt.
+    return { TERM_PROGRAM: 'Apple_Terminal' };
+  }
   if (!isBash(executable)) return {};
   const previous = baseEnv['PROMPT_COMMAND'];
   return {
@@ -540,6 +548,10 @@ function shellLocationEnv(
 
 function isBash(executable: string): boolean {
   return executableName(executable) === 'bash';
+}
+
+function isZsh(executable: string): boolean {
+  return executableName(executable) === 'zsh';
 }
 
 function isPowerShell(executable: string): boolean {
