@@ -1,0 +1,238 @@
+diff --git a/build.zig b/build.zig
+index 19498fc62..ea90e70a3 100644
+--- a/build.zig
++++ b/build.zig
+@@ -190,7 +190,10 @@ pub fn build(b: *std.Build) !void {
+         // reasons). It is just the glue between Ghostty GUI on macOS and
+         // the full Ghostty GUI core.
+         const lib_shared = try buildpkg.GhosttyLib.initShared(b, &deps);
+-        const lib_static = try buildpkg.GhosttyLib.initStatic(b, &deps);
++        const lib_static = if (config.target.result.os.tag == .windows)
++            null
++        else
++            try buildpkg.GhosttyLib.initStatic(b, &deps);
+ 
+         // We shouldn't have this guard but we don't currently
+         // build on macOS this way ironically so we need to fix that.
+@@ -198,10 +201,9 @@ pub fn build(b: *std.Build) !void {
+             lib_shared.installHeader(); // Only need one header
+             if (config.target.result.os.tag == .windows) {
+                 lib_shared.install("ghostty-internal.dll");
+-                lib_static.install("ghostty-internal-static.lib");
+             } else {
+                 lib_shared.install("libghostty-internal.so");
+-                lib_static.install("ghostty-internal.a");
++                lib_static.?.install("ghostty-internal.a");
+             }
+         }
+         resources.install();
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 5aa36c320..7f257c89d 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -868,7 +868,10 @@ pub fn init(
+         // application owns the PTY/session and Ghostty only renders bytes and
+         // encodes input. Delete this branch when upstream exposes an
+         // embedder-owned IO backend.
+-        const use_manual_io = if (comptime @hasDecl(apprt.runtime.Surface, "usesManualIo"))
++        const use_manual_io = if (comptime builtin.os.tag == .windows)
++            // Soloe's Windows embedder never gives Ghostty PTY ownership.
++            true
++        else if (comptime @hasDecl(apprt.runtime.Surface, "usesManualIo"))
+             rt_surface.usesManualIo()
+         else
+             false;
+diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
+index e6bb3eec5..9db855c4f 100644
+--- a/src/termio/Exec.zig
++++ b/src/termio/Exec.zig
+@@ -574,12 +574,19 @@ pub const Config = struct {
+ };
+ 
+ const Subprocess = struct {
+-    const c = @cImport({
+-        @cInclude("errno.h");
+-        @cInclude("signal.h");
+-        @cInclude("sys/ioctl.h");
+-        @cInclude("unistd.h");
+-    });
++    // Soloe's Windows library is manual-I/O-only, so the POSIX subprocess is
++    // unreachable. Keep the layout declaration compilable without pretending
++    // that Windows supplies ioctl/unistd; any actual exec backend use remains
++    // excluded at compile time by Surface.init above.
++    const c = if (builtin.os.tag == .windows) struct {
++        pub const pid_t = i32;
++    } else
++        @cImport({
++            @cInclude("errno.h");
++            @cInclude("signal.h");
++            @cInclude("sys/ioctl.h");
++            @cInclude("unistd.h");
++        });
+ 
+     arena: std.heap.ArenaAllocator,
+     cwd: ?[:0]const u8,
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 1e50dfabc..e208c6265 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -4379,22 +4379,22 @@ pub const CAPI = struct {
+                 const entry = try grid.resolver.collection.getEntry(run.font_index);
+                 const face = try grid.resolver.collection.getFace(run.font_index);
+ 
++                var family_buf: [256]u8 = undefined;
++                const family: []const u8 = face.name(&family_buf) catch "";
+                 var ps_buf: [256]u8 = undefined;
+-                const ps_name: []const u8 = blk: {
++                const ps_name: []const u8 = if (comptime builtin.os.tag.isDarwin()) blk: {
+                     const s = face.font.copyPostScriptName();
+                     defer s.release();
+                     break :blk s.cstring(&ps_buf, .utf8) orelse "";
+-                };
+-                var family_buf: [256]u8 = undefined;
+-                const family: []const u8 = face.name(&family_buf) catch "";
++                } else family;
+                 var url_buf: [1024]u8 = undefined;
+-                const url_path: ?[]const u8 = blk: {
++                const url_path: ?[]const u8 = if (comptime builtin.os.tag.isDarwin()) blk: {
+                     const url = face.font.copyAttribute(.url) orelse break :blk null;
+                     defer url.release();
+                     const path = url.copyPath() orelse break :blk null;
+                     defer path.release();
+                     break :blk path.cstring(&url_buf, .utf8);
+-                };
++                } else null;
+                 if (shaped.len > 0) {
+                     run_is_color = face.isColorGlyph(shaped[0].glyph_index);
+                 }
+diff --git a/src/termio.zig b/src/termio.zig
+index 72f6d3b49..b809e9aa2 100644
+--- a/src/termio.zig
++++ b/src/termio.zig
+@@ -18,6 +18,7 @@
+ //! specific backend/mailbox capabilities, and sets up the necessary threads.
+ 
+ const stream_handler = @import("termio/stream_handler.zig");
++const builtin = @import("builtin");
+ // cmux fork: manual IO lets an embedder own terminal transport while reusing
+ // Ghostty's renderer/parser. Delete when upstream has an equivalent backend.
+ const manual = @import("termio/Manual.zig");
+@@ -25,7 +26,10 @@ const manual = @import("termio/Manual.zig");
+ const message = @import("termio/message.zig");
+ pub const backend = @import("termio/backend.zig");
+ pub const mailbox = @import("termio/mailbox.zig");
+-pub const Exec = @import("termio/Exec.zig");
++pub const Exec = if (builtin.os.tag == .windows)
++    @import("termio/ExecManualOnly.zig")
++else
++    @import("termio/Exec.zig");
+ pub const Manual = manual.Manual;
+ pub const ManualConfig = manual.Config;
+ pub const ManualThreadData = manual.ThreadData;
+diff --git a/src/quirks_memset.zig b/src/quirks_memset.zig
+index 8f31d01f2..4b7a0dc31 100644
+--- a/src/quirks_memset.zig
++++ b/src/quirks_memset.zig
+@@ -70,7 +70,7 @@ comptime {
+     const enabled =
+         std.simd.suggestVectorLength(u8) != null and
+         builtin.object_format != .c and
+-        !(linkage == .weak and builtin.object_format == .coff);
++        builtin.object_format != .coff;
+ 
+     if (enabled) @export(&memset, .{
+         .name = "memset",
+diff --git a/src/termio/ExecManualOnly.zig b/src/termio/ExecManualOnly.zig
+new file mode 100644
+index 000000000..174143092
+--- /dev/null
++++ b/src/termio/ExecManualOnly.zig
+@@ -0,0 +1,88 @@
++//! Compile-time placeholder for Windows embedded builds that use manual I/O.
++//!
++//! The full Exec backend owns a subprocess and PTY. Soloe's Environment
++//! Runtime owns both, so its Windows Ghostty library must never instantiate
++//! that backend. Keeping this placeholder behind the existing Backend union
++//! preserves shared type shapes without importing POSIX-only Exec code.
++const Exec = @This();
++
++const std = @import("std");
++const configpkg = @import("../config.zig");
++const Command = @import("../Command.zig");
++const ProcessInfo = @import("../pty.zig").ProcessInfo;
++const renderer = @import("../renderer.zig");
++const terminal = @import("../terminal/main.zig");
++const termio = @import("../termio.zig");
++
++subprocess: struct {
++    args: []const [:0]const u8 = &.{},
++} = .{},
++
++pub const Config = struct {
++    command: ?configpkg.Command = null,
++    env: std.process.Environ.Map,
++    env_override: configpkg.RepeatableStringMap = .{},
++    shell_integration: configpkg.Config.ShellIntegration = .detect,
++    shell_integration_features: configpkg.Config.ShellIntegrationFeatures = .{},
++    cursor_blink: ?bool = null,
++    working_directory: ?[]const u8 = null,
++    resources_dir: ?[]const u8,
++    term: []const u8,
++    rt_pre_exec_info: Command.RtPreExecInfo,
++    rt_post_fork_info: Command.RtPostForkInfo,
++};
++
++pub fn init(_: std.mem.Allocator, _: Config) !Exec {
++    return error.ExecBackendUnavailable;
++}
++
++pub fn deinit(_: *Exec) void {}
++
++pub fn initTerminal(_: *Exec, _: *terminal.Terminal) void {}
++
++pub fn threadEnter(
++    _: *Exec,
++    _: std.mem.Allocator,
++    _: *termio.Termio,
++    _: *termio.Termio.ThreadData,
++) !void {
++    return error.ExecBackendUnavailable;
++}
++
++pub fn threadExit(_: *Exec, _: *termio.Termio.ThreadData) void {}
++
++pub fn focusGained(_: *Exec, _: *termio.Termio.ThreadData, _: bool) !void {
++    return error.ExecBackendUnavailable;
++}
++
++pub fn resize(_: *Exec, _: renderer.GridSize, _: renderer.ScreenSize) !void {
++    return error.ExecBackendUnavailable;
++}
++
++pub fn queueWrite(
++    _: *Exec,
++    _: std.mem.Allocator,
++    _: *termio.Termio.ThreadData,
++    _: []const u8,
++    _: bool,
++) !void {
++    return error.ExecBackendUnavailable;
++}
++
++pub fn childExitedAbnormally(
++    _: *Exec,
++    _: std.mem.Allocator,
++    _: *terminal.Terminal,
++    _: u32,
++    _: u64,
++) !void {
++    return error.ExecBackendUnavailable;
++}
++
++pub fn getProcessInfo(_: *Exec, comptime info: ProcessInfo) ?ProcessInfo.Type(info) {
++    return null;
++}
++
++pub const ThreadData = struct {
++    pub fn deinit(_: *ThreadData, _: std.mem.Allocator) void {}
++};

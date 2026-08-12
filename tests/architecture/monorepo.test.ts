@@ -176,6 +176,31 @@ describe("monorepo boundaries", () => {
     expect(shell).not.toContain('data_directory().join("web.json")');
     expect(shell).toContain("backend_initialization_script(backend.as_ref())");
   });
+
+  it("pins the Windows Ghostty build to Soloe's manual-I/O compatibility patch", async () => {
+    const metadata = JSON.parse(
+      await readFile(
+        path.join(root, "apps/desktop-tauri/src-tauri/ghostty-surface-source.json"),
+        "utf8",
+      ),
+    ) as {
+      windowsPatch?: string;
+      windowsZigVersion?: string;
+    };
+    const prepare = await readFile(
+      path.join(root, "scripts/prepare-ghostty-windows.mjs"),
+      "utf8",
+    );
+    const patch = await readFile(path.join(root, metadata.windowsPatch ?? ""), "utf8");
+
+    expect(metadata.windowsZigVersion).toBe("0.16.0");
+    expect(metadata.windowsPatch).toBe("patches/ghostty/windows-manual-io.patch");
+    expect(prepare).toContain("applyPinnedPatch(windowsPatch, destination)");
+    expect(prepare).toContain("prependExecutableDirectory(zigExecutable)");
+    expect(patch).toContain("ExecManualOnly.zig");
+    expect(patch).toContain("builtin.object_format != .coff");
+    expect(patch).not.toContain("git@github.com");
+  });
 });
 
 async function manifest(relativePath: string): Promise<PackageManifest> {

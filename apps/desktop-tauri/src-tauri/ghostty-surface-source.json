@@ -13,6 +13,7 @@
   "windowsSourceDirectory": "target/ghostty-windows-source",
   "windowsSourceEnvironmentVariable": "SOLOE_GHOSTTY_WINDOWS_SOURCE",
   "windowsZigVersion": "0.16.0",
+  "windowsPatch": "patches/ghostty/windows-manual-io.patch",
   "windowsDll": "zig-out/lib/ghostty-internal.dll",
   "windowsImportLibrary": "zig-out/lib/ghostty-internal.lib",
   "windowsHeader": "zig-out/include/ghostty.h"

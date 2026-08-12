@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { delimiter, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -11,6 +11,7 @@ const metadata = JSON.parse(
   )
 );
 const destination = resolve(repositoryRoot, metadata.windowsSourceDirectory);
+const windowsPatch = resolve(repositoryRoot, metadata.windowsPatch);
 const requiredArtifacts = [
   metadata.windowsDll,
   metadata.windowsImportLibrary,
@@ -34,6 +35,8 @@ if (currentRevision !== metadata.revision) {
   );
 }
 
+applyPinnedPatch(windowsPatch, destination);
+
 if (!requiredArtifacts.every(existsSync)) {
   if (process.platform !== 'win32') {
     throw new Error(
@@ -41,13 +44,21 @@ if (!requiredArtifacts.every(existsSync)) {
         + `build preparation must run in Windows with Zig ${metadata.windowsZigVersion}`
     );
   }
-  const zigVersion = run('zig', ['version'], { capture: true });
+  const zigExecutable = resolveWindowsExecutable('zig');
+  const zigEnvironment = prependExecutableDirectory(zigExecutable);
+  const zigVersion = run(zigExecutable, ['version'], {
+    capture: true,
+    env: zigEnvironment
+  });
   if (zigVersion !== metadata.windowsZigVersion) {
     throw new Error(
       `Windows Ghostty requires Zig ${metadata.windowsZigVersion}; found ${zigVersion}`
     );
   }
-  run('zig', ['build', '-Doptimize=ReleaseFast'], { cwd: destination });
+  run(zigExecutable, ['build', '-Doptimize=ReleaseFast'], {
+    cwd: destination,
+    env: zigEnvironment
+  });
 }
 
 for (const artifact of requiredArtifacts) {
@@ -69,9 +80,44 @@ for (const symbol of [
 
 console.log(destination);
 
+function applyPinnedPatch(patch, checkout) {
+  if (!existsSync(patch)) {
+    throw new Error(`the pinned Windows Ghostty patch is missing: ${patch}`);
+  }
+  const alreadyApplied = spawnSync(
+    'git',
+    ['apply', '--reverse', '--check', patch],
+    { cwd: checkout, encoding: 'utf8', stdio: 'pipe' }
+  );
+  if (alreadyApplied.status === 0) return;
+
+  run('git', ['apply', '--check', patch], { cwd: checkout });
+  run('git', ['apply', patch], { cwd: checkout });
+}
+
+function resolveWindowsExecutable(command) {
+  const matches = run('where.exe', [command], { capture: true })
+    .split(/\r?\n/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (matches.length === 0) {
+    throw new Error(`${command} was not found on PATH`);
+  }
+  return matches[0];
+}
+
+function prependExecutableDirectory(executable) {
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') ?? 'Path';
+  return {
+    ...process.env,
+    [pathKey]: `${dirname(executable)}${delimiter}${process.env[pathKey] ?? ''}`
+  };
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? repositoryRoot,
+    env: options.env ?? process.env,
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit'
   });
