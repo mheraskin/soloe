@@ -27,6 +27,7 @@ extern "C" {
 
 constexpr wchar_t kWindowClass[] = L"SoloeGhosttyNativeTerminalWindow";
 constexpr UINT kWakeupMessage = WM_APP + 0x317;
+constexpr UINT kSelectionChangedMessage = WM_APP + 0x318;
 constexpr UINT kCopyCommand = 1;
 constexpr UINT kPasteCommand = 2;
 constexpr int kWglContextMajorVersionArb = 0x2091;
@@ -488,7 +489,12 @@ bool Action(ghostty_app_t app, ghostty_target_s, ghostty_action_s action) {
           std::memory_order_release);
       return true;
     case GHOSTTY_ACTION_SELECTION_CHANGED:
-      EmitSelection(wrapper);
+      // Ghostty can publish this action while its renderer-state mutex is
+      // held. Reading the selection from inside the callback re-enters the
+      // surface and deadlocks the Tauri window thread. Defer the read until
+      // the current Ghostty callback and app tick have fully unwound.
+      if (wrapper->child)
+        PostMessageW(wrapper->child, kSelectionChangedMessage, 0, 0);
       return true;
     case GHOSTTY_ACTION_OPEN_URL:
       if (wrapper->link_cb && action.action.open_url.url)
@@ -692,6 +698,10 @@ LRESULT CALLBACK TerminalWindowProc(HWND window,
     case kWakeupMessage:
       if (!wrapper->closing.load(std::memory_order_acquire) && wrapper->app)
         ghostty_app_tick(wrapper->app);
+      return 0;
+    case kSelectionChangedMessage:
+      if (!wrapper->closing.load(std::memory_order_acquire))
+        EmitSelection(wrapper);
       return 0;
     case WM_SIZE:
     case WM_DPICHANGED_AFTERPARENT:

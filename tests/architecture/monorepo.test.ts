@@ -204,6 +204,17 @@ describe("monorepo boundaries", () => {
     expect(tauriBuild).toContain('"ucrt"');
     expect(tauriBuild).toContain('"vcruntime"');
     expect(tauriBuild).toContain('"msvcprt"');
+    const windowsBridge = await readFile(
+      path.join(
+        root,
+        "apps/desktop-tauri/src-tauri/native-terminal/ghostty_surface_win_bridge.cpp",
+      ),
+      "utf8",
+    );
+    expect(windowsBridge).toContain("kSelectionChangedMessage");
+    expect(windowsBridge).toContain(
+      "PostMessageW(wrapper->child, kSelectionChangedMessage, 0, 0)",
+    );
     expect(patch).toContain("ExecManualOnly.zig");
     expect(patch).toContain("builtin.object_format != .coff");
     expect(patch).not.toContain("git@github.com");
