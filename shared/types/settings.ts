@@ -187,7 +187,7 @@ export const DEFAULT_SETTINGS: Settings = {
   appearance: { theme: 'dark' },
   terminal: {
     fontSize: 13,
-    presentation: 'auto',
+    presentation: 'xterm',
     confirmDeleteTabs: true,
     keepFullHistory: false
   },

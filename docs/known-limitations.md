@@ -10,9 +10,9 @@ Soloe is pre-release software. The first public alpha should not be published un
   rejected by Gatekeeper. Public artifacts require the release workflow's Apple
   signing credentials.
 - The Tauri desktop client is experimental. It uses the existing Node
-  Application Server and Environment Runtime, requires the Web Host to be
-  running for a functional client, and has not completed the platform test
-  matrix.
+  Application Server and Environment Runtime, loads a bundled Svelte client,
+  and still requires a reachable authenticated backend. It has not completed
+  the platform test matrix.
 - Tauri's embedded browser surface currently opens external platform DevTools.
   Docked DevTools, per-tab native residency parity, element-source inspection,
   credential autofill, and complete mobile device emulation remain Electron-only.

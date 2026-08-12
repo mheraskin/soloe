@@ -37,9 +37,9 @@ describe('SettingsStore — defaults', () => {
     expect(settings.shortcuts.elementSourceInspector).toEqual(['Ctrl', 'Alt', 'Shift', 'S']);
   });
 
-  it('prefers a completely initialized native Terminal Presentation by default', async () => {
+  it('uses xterm as the default Terminal Presentation', async () => {
     const settings = await new SettingsStore(path.join(tmpDir, 'default.json')).get();
-    expect(settings.terminal.presentation).toBe('auto');
+    expect(settings.terminal.presentation).toBe('xterm');
   });
 
   it('selects native Linux defaults for the Linux build', async () => {

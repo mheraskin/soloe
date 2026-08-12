@@ -13,9 +13,9 @@ On Linux these commands prepare the pinned official Ghostty source. On macOS
 they prepare the checksum-pinned GhosttyKit artifact. On Windows they publicly
 clone and verify the pinned surface fork and build its full Win32/WGL renderer.
 Each platform enables only its Native Terminal Host feature and selects it
-through the default `auto` preference after complete initialization. Any failed
-native initialization uses xterm automatically without touching the Session
-PTY.
+only when `auto` or `libghostty` is selected and initialization completes.
+Fresh settings temporarily default to xterm. Any failed native initialization
+uses xterm automatically without touching the Session PTY.
 
 ## Windows full Ghostty surface
 
@@ -65,10 +65,9 @@ nix shell nixpkgs#zig -c env \
   cargo build -p soloe-desktop-tauri --features libghostty-linux-prototype
 ```
 
-The feature makes the capability available and fresh settings use `auto`, so a
-successfully initialized Linux native host is selected by default. Choose
-`xterm` in Settings to opt out. Direct builds without the feature and all
-unsupported platforms safely fall back to xterm.
+The feature makes the capability available. Choose `auto` or `libghostty` in
+Settings to exercise it; fresh settings temporarily use xterm. Direct builds
+without the feature and all unsupported platforms safely fall back to xterm.
 
 The Linux prototype creates a shell-owned GTK surface, associates it with a
 Soloe Session, consumes replay/live PTY output, emits keyboard and paste input

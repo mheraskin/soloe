@@ -98,10 +98,11 @@ output, emits keyboard and paste input back through the Renderer Backend
 Interface, resizes, focuses, hides/shows, exports its buffer, and disposes
 without touching the PTY.
 
-Fresh settings select `auto`. A feature-enabled Linux Tauri host therefore
-uses the native Adapter after the host initializes successfully; direct Cargo,
-Electron, browser, and failed native initialization continue to use
-xterm. An explicit `xterm` preference remains the opt-out. The current GTK
+Fresh settings currently select `xterm` while the native paths are being
+validated. A feature-enabled Linux Tauri host can select the native Adapter
+through `auto` or `libghostty` after the host initializes successfully; direct
+Cargo, Electron, browser, and failed native initialization continue to use
+xterm. The current GTK
 renderer is deliberately a vertical slice, not a parity claim: styled GPU
 rendering, selection, visual search results, links, IME, and robust Wayland
 positioning remain incomplete. The running PTY is untouched by initialization
@@ -180,8 +181,8 @@ The Terminal settings vocabulary accepts:
 - `libghostty`: request the experimental native Adapter, with the same safe
   fallback when capability discovery or initialization fails.
 
-`auto` is the default for fresh settings. It changes selection only; it never
-changes Session or PTY ownership.
+`xterm` is the temporary default for fresh settings. `auto` changes selection
+only; it never changes Session or PTY ownership.
 
 The factory does not select a native Adapter merely because a shell command
 exists. The Native Terminal Host must report both `available` and `complete`,
