@@ -22,6 +22,7 @@ Install:
 - Git;
 - Rust stable with the MSVC toolchain;
 - Visual Studio 2022 Build Tools with **Desktop development with C++**;
+- Zig 0.16.0 for the experimental full Ghostty Win32/WGL terminal surface;
 - WebView2 Runtime (normally present on Windows 10/11);
 - WSL and the desired distribution when using a WSL backend.
 

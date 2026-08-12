@@ -34,6 +34,7 @@
     "dev:tray": "pnpm --filter @soloe/tray dev",
     "prepare:libghostty": "node scripts/prepare-libghostty.mjs",
     "prepare:ghostty-surface": "node scripts/prepare-ghostty-surface.mjs",
+    "prepare:ghostty-windows": "node scripts/prepare-ghostty-windows.mjs",
     "configure:backend": "node scripts/configure-backend.mjs",
     "dev:tauri-ui": "vite --config vite.tauri.config.ts",
     "dev:tauri": "tauri dev",

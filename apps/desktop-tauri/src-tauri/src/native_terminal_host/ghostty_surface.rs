@@ -129,7 +129,7 @@ struct Surface {
 
 struct Host {
     raw: NonNull<SoloeGhosttyHost>,
-    parent_nsview: *mut c_void,
+    parent_view: *mut c_void,
     surfaces: HashMap<String, Surface>,
 }
 
@@ -148,16 +148,59 @@ thread_local! {
 
 static NEXT_SURFACE_ID: AtomicU32 = AtomicU32::new(1);
 
-pub fn initialize(window: &WebviewWindow) -> Result<(), String> {
-    let parent_nsview = window
+#[cfg(target_os = "macos")]
+fn parent_view(window: &WebviewWindow) -> Result<*mut c_void, String> {
+    window
         .ns_view()
-        .map_err(|error| format!("failed to access Tauri AppKit view: {error}"))?;
+        .map_err(|error| format!("failed to access Tauri AppKit view: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn parent_view(window: &WebviewWindow) -> Result<*mut c_void, String> {
+    window
+        .hwnd()
+        .map(|handle| handle.0.cast())
+        .map_err(|error| format!("failed to access Tauri Win32 window: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn platform_name() -> &'static str {
+    "macos"
+}
+
+#[cfg(target_os = "windows")]
+fn platform_name() -> &'static str {
+    "windows"
+}
+
+#[cfg(target_os = "macos")]
+fn implementation_name() -> &'static str {
+    "tauri-ghostty-appkit-metal-manual-io"
+}
+
+#[cfg(target_os = "windows")]
+fn implementation_name() -> &'static str {
+    "tauri-ghostty-win32-wgl-manual-io"
+}
+
+#[cfg(target_os = "macos")]
+fn success_reason() -> &'static str {
+    "full Ghostty AppKit/Metal surface with Environment Runtime-owned PTY"
+}
+
+#[cfg(target_os = "windows")]
+fn success_reason() -> &'static str {
+    "full Ghostty Win32/WGL surface with Environment Runtime-owned PTY"
+}
+
+pub fn initialize(window: &WebviewWindow) -> Result<(), String> {
+    let parent_view = parent_view(window)?;
     let raw = NonNull::new(unsafe { soloe_ghostty_host_new() })
         .ok_or_else(|| "failed to initialize the pinned Ghostty surface runtime".to_string())?;
     HOST.with(|slot| {
         *slot.borrow_mut() = Some(Host {
             raw,
-            parent_nsview,
+            parent_view,
             surfaces: HashMap::new(),
         });
     });
@@ -169,14 +212,14 @@ pub fn capabilities() -> Capabilities {
     Capabilities {
         available: initialized,
         complete: initialized,
-        platform: "macos",
-        implementation: "tauri-ghostty-appkit-metal-manual-io",
+        platform: platform_name(),
+        implementation: implementation_name(),
         revision: GHOSTTY_SURFACE_REVISION,
         vertical_slice: initialized,
         reason: if initialized {
-            "full Ghostty AppKit/Metal surface with Environment Runtime-owned PTY".to_string()
+            success_reason().to_string()
         } else {
-            "the macOS Ghostty surface runtime did not initialize".to_string()
+            "the full Ghostty surface runtime did not initialize".to_string()
         },
     }
 }
@@ -199,7 +242,7 @@ pub fn create(app: &AppHandle, request: CreateRequest) -> Result<String, String>
         let raw = with_native_configuration(&request.configuration, |configuration| unsafe {
             soloe_ghostty_surface_new(
                 host.raw.as_ptr(),
-                host.parent_nsview,
+                host.parent_view,
                 request.bounds.into(),
                 configuration,
                 request.visible,
@@ -211,7 +254,7 @@ pub fn create(app: &AppHandle, request: CreateRequest) -> Result<String, String>
             )
         })?;
         let raw = NonNull::new(raw)
-            .ok_or_else(|| "Ghostty failed to create a manual-I/O AppKit surface".to_string())?;
+            .ok_or_else(|| "Ghostty failed to create a manual-I/O native surface".to_string())?;
         host.surfaces.insert(
             id.clone(),
             Surface {
@@ -469,7 +512,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_neutral_bounds_preserve_dom_coordinates_for_the_appkit_bridge() {
+    fn shell_neutral_bounds_preserve_dom_coordinates_for_the_native_bridge() {
         let native: NativeBounds = Bounds {
             x: 12.5,
             y: 24.0,

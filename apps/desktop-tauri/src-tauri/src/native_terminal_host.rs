@@ -1,7 +1,8 @@
 #![cfg_attr(
     not(any(
         all(target_os = "linux", feature = "libghostty-linux-prototype"),
-        all(target_os = "macos", feature = "libghostty-macos-surface")
+        all(target_os = "macos", feature = "libghostty-macos-surface"),
+        all(target_os = "windows", feature = "libghostty-windows-surface")
     )),
     allow(dead_code)
 )]
@@ -9,9 +10,19 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, WebviewWindow};
 
+#[cfg_attr(
+    any(
+        all(target_os = "macos", feature = "libghostty-macos-surface"),
+        all(target_os = "windows", feature = "libghostty-windows-surface")
+    ),
+    allow(dead_code)
+)]
 pub const LIBGHOSTTY_REVISION: &str = "426386b8579d5e558aa5d4cfdfb003ad06bc4fc5";
 #[cfg_attr(
-    not(all(target_os = "macos", feature = "libghostty-macos-surface")),
+    not(any(
+        all(target_os = "macos", feature = "libghostty-macos-surface"),
+        all(target_os = "windows", feature = "libghostty-windows-surface")
+    )),
     allow(dead_code)
 )]
 pub const GHOSTTY_SURFACE_REVISION: &str = "f76c132e526f124fe4aaebd39f516751656844bc";
@@ -744,12 +755,17 @@ mod platform {
 }
 
 #[cfg(all(target_os = "macos", feature = "libghostty-macos-surface"))]
-#[path = "native_terminal_host/macos_ghostty_surface.rs"]
+#[path = "native_terminal_host/ghostty_surface.rs"]
+mod platform;
+
+#[cfg(all(target_os = "windows", feature = "libghostty-windows-surface"))]
+#[path = "native_terminal_host/ghostty_surface.rs"]
 mod platform;
 
 #[cfg(not(any(
     all(target_os = "linux", feature = "libghostty-linux-prototype"),
-    all(target_os = "macos", feature = "libghostty-macos-surface")
+    all(target_os = "macos", feature = "libghostty-macos-surface"),
+    all(target_os = "windows", feature = "libghostty-windows-surface")
 )))]
 mod platform {
     use super::*;
@@ -805,7 +821,7 @@ mod source_metadata_tests {
     use super::*;
 
     #[test]
-    fn macos_surface_source_is_pinned_to_the_compiled_revision() {
+    fn full_surface_source_is_pinned_to_the_compiled_revision() {
         let metadata: serde_json::Value =
             serde_json::from_str(include_str!("../ghostty-surface-source.json"))
                 .expect("valid Ghostty surface source metadata");
@@ -819,6 +835,16 @@ mod source_metadata_tests {
                 .contains(GHOSTTY_SURFACE_REVISION)
         );
         assert_eq!(metadata["cargoFeature"], "libghostty-macos-surface");
+        assert_eq!(
+            metadata["windowsCargoFeature"],
+            "libghostty-windows-surface"
+        );
+        assert_eq!(metadata["windowsZigVersion"], "0.16.0");
+        assert_eq!(
+            metadata["windowsSourceEnvironmentVariable"],
+            "SOLOE_GHOSTTY_WINDOWS_SOURCE"
+        );
+        assert_eq!(metadata["windowsDll"], "zig-out/lib/ghostty-internal.dll");
         assert_eq!(
             metadata["sha256"],
             "af9f8f12e6f41ffe00b5b65f150bb887b19dc752e47d20d3c351696c803509af"

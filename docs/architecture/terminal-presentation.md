@@ -76,7 +76,7 @@ Linux, Tauri, or Electron host can implement it without changing TerminalPane.
 
 Soloe has two independently pinned Ghostty integrations. Linux uses official
 Ghostty revision `426386b8579d5e558aa5d4cfdfb003ad06bc4fc5`, recorded in
-`apps/desktop-tauri/src-tauri/libghostty-source.json`. macOS uses the exact
+`apps/desktop-tauri/src-tauri/libghostty-source.json`. macOS and Windows use the exact
 MIT-licensed `manaflow-ai/ghostty` revision
 `f76c132e526f124fe4aaebd39f516751656844bc`, release tag, and SHA-256 recorded
 in `apps/desktop-tauri/src-tauri/ghostty-surface-source.json`. The latter fork
@@ -100,14 +100,14 @@ without touching the PTY.
 
 Fresh settings select `auto`. A feature-enabled Linux Tauri host therefore
 uses the native Adapter after the host initializes successfully; direct Cargo,
-Electron, browser, Windows, and failed native initialization continue to use
+Electron, browser, and failed native initialization continue to use
 xterm. An explicit `xterm` preference remains the opt-out. The current GTK
 renderer is deliberately a vertical slice, not a parity claim: styled GPU
 rendering, selection, visual search results, links, IME, and robust Wayland
 positioning remain incomplete. The running PTY is untouched by initialization
 failure and output is recovered through the existing replay path.
 
-### macOS full Ghostty surface
+### macOS and Windows full Ghostty surfaces
 
 Standard macOS Tauri commands download and checksum the pinned universal
 GhosttyKit XCFramework, enable `libghostty-macos-surface`, and attach a child
@@ -136,6 +136,28 @@ IME/preedit, native visual search highlighting, complete Ghostty configuration
 mapping, app-level shortcut arbitration, and macOS runtime/packaging validation
 remain before promotion. A macOS initialization or surface-creation failure
 falls back to xterm while the running Session and replay remain intact.
+
+Standard Windows Tauri commands publicly clone the same exact pinned MIT fork,
+verify its Git revision, require Zig 0.16.0, and build the fork's
+`ghostty-internal.dll` plus import library. The DLL is copied beside the Tauri
+executable. No authenticated GitHub client or private artifact is required.
+
+The Windows Native Terminal Host attaches a child HWND above WebView2 and gives
+Ghostty an embedder-owned WGL context through `GHOSTTY_PLATFORM_OPENGL`. It uses
+the same `GHOSTTY_SURFACE_IO_MANUAL` flow as macOS: the Environment Runtime
+continues owning the PTY while Ghostty owns parsing, rendering, input encoding,
+selection, clipboard behavior, and protocol replies. Replay replacement
+recreates only the Ghostty surface, then injects the authoritative replay tail.
+
+The initial Windows slice supports ordered output and replay, physical and text
+keyboard input, mouse input and selection, links, clipboard paste, complete
+buffer export, resize with real grid dimensions, focus, visibility, scrolling,
+configuration updates, and disposal. Its renderer requires OpenGL 4.3. Native
+creation failure—including inadequate drivers or remote sessions exposing only
+the legacy Microsoft OpenGL implementation—automatically falls back to xterm
+without stopping or replacing the Session PTY. Advanced IME/preedit, visual
+search highlighting, app-level shortcut arbitration, installer DLL packaging,
+and the clean-machine/driver matrix remain promotion work.
 
 Upstream's pinned full surface library is still described as internal and its
 normal surface creates and owns the terminal process. The pinned MIT fork is
@@ -184,7 +206,11 @@ The GTK lifecycle and pinned `libghostty-vt` write/resize/replace/export path
 are covered by feature-gated Rust tests. The macOS source revision, release
 artifact checksum, build feature, callback lifetime, and shell-neutral FFI are
 pinned in the repository, but AppKit/Metal behavior cannot be executed from the
-Linux/WSL development host.
+Linux/WSL development host. The Windows bridge can be syntax-checked for a
+Windows target from WSL. The full fork requires the Windows SDK and MSVC C/C++
+headers, so building its DLL, linking the Tauri client, and interactive
+Win32/WGL validation must run from Developer PowerShell on a Windows machine
+with a qualifying graphics driver.
 
 The existing benchmark framework does not yet instantiate the macOS native
 surface, so it cannot produce an honest xterm-versus-Ghostty comparison yet.

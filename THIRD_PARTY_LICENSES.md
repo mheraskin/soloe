@@ -73,8 +73,9 @@ The full MIT license text ships with `node_modules/element-source/LICENSE`.
 
 The experimental native Terminal Presentation uses official `libghostty-vt`
 on Linux and a checksum-pinned `manaflow-ai/ghostty` manual-I/O surface fork on
-macOS. cmux is an architectural reference only; no cmux application code is
-bundled.
+macOS and Windows. The Windows WGL host adapts the fork's MIT-licensed Windows
+embedding example behind Soloe's Native Terminal Host. cmux is an architectural
+reference only; no cmux application code is bundled.
 
 - Project: https://github.com/ghostty-org/ghostty
 - Surface fork: https://github.com/manaflow-ai/ghostty

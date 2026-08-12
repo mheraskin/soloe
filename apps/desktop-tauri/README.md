@@ -9,10 +9,32 @@ pnpm --filter @soloe/desktop-tauri dev
 pnpm --filter @soloe/desktop-tauri build
 ```
 
-On Linux these commands prepare the pinned Ghostty source, use Zig from `PATH`
-or Nix, enable the native prototype, and select it through the default `auto`
-preference after complete initialization. Other platforms and any failed native
-initialization use xterm automatically.
+On Linux these commands prepare the pinned official Ghostty source. On macOS
+they prepare the checksum-pinned GhosttyKit artifact. On Windows they publicly
+clone and verify the pinned surface fork and build its full Win32/WGL renderer.
+Each platform enables only its Native Terminal Host feature and selects it
+through the default `auto` preference after complete initialization. Any failed
+native initialization uses xterm automatically without touching the Session
+PTY.
+
+## Windows full Ghostty surface
+
+Install Zig 0.16.0 and Visual Studio 2022 Build Tools with **Desktop development
+with C++**, then use the standard Tauri commands from Developer PowerShell:
+
+```powershell
+pnpm --filter @soloe/desktop-tauri dev
+pnpm --filter @soloe/desktop-tauri build
+```
+
+The preparation script uses public HTTPS Git access, verifies the exact fork
+revision, and builds `ghostty-internal.dll`; it does not require `gh` or a
+GitHub login. The DLL is copied beside the Tauri executable. The host attaches
+a child HWND above WebView2 and uses `GHOSTTY_SURFACE_IO_MANUAL`, so the
+Environment Runtime remains the only PTY owner. OpenGL 4.3 is required. A
+missing build toolchain stops the build with an actionable error. An
+incompatible graphics driver or native surface creation failure is reported
+and falls back to xterm without touching the Session PTY.
 
 ## Linux libghostty vertical slice
 
@@ -21,7 +43,7 @@ that builds a native GTK3 terminal surface around the exact official
 `libghostty-vt` revision in `src-tauri/libghostty-source.json`.
 The pinned upstream MIT notice is retained in `src-tauri/libghostty-LICENSE`.
 
-Prepare the pinned source with the authenticated GitHub CLI:
+Prepare the pinned source over public HTTPS Git access:
 
 ```sh
 pnpm prepare:libghostty

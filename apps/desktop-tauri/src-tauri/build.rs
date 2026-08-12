@@ -9,10 +9,12 @@ const GHOSTTY_SURFACE_REVISION: &str = "f76c132e526f124fe4aaebd39f516751656844bc
 fn main() {
     println!("cargo:rerun-if-env-changed=SOLOE_LIBGHOSTTY_SOURCE");
     println!("cargo:rerun-if-env-changed=SOLOE_GHOSTTYKIT_DIR");
+    println!("cargo:rerun-if-env-changed=SOLOE_GHOSTTY_WINDOWS_SOURCE");
     println!("cargo:rerun-if-changed=native-terminal/ghostty_vt_bridge.c");
     println!("cargo:rerun-if-changed=native-terminal/ghostty_vt_bridge.h");
     println!("cargo:rerun-if-changed=native-terminal/ghostty_surface_bridge.m");
     println!("cargo:rerun-if-changed=native-terminal/ghostty_surface_bridge.h");
+    println!("cargo:rerun-if-changed=native-terminal/ghostty_surface_win_bridge.cpp");
     println!("cargo:rerun-if-changed=ghostty-surface-source.json");
 
     if env::var_os("CARGO_FEATURE_LIBGHOSTTY_LINUX_PROTOTYPE").is_some() {
@@ -21,8 +23,93 @@ fn main() {
     if env::var_os("CARGO_FEATURE_LIBGHOSTTY_MACOS_SURFACE").is_some() {
         build_libghostty_macos_surface();
     }
+    if env::var_os("CARGO_FEATURE_LIBGHOSTTY_WINDOWS_SURFACE").is_some() {
+        build_libghostty_windows_surface();
+    }
 
     tauri_build::build()
+}
+
+fn build_libghostty_windows_surface() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        panic!("libghostty-windows-surface currently supports Windows only");
+    }
+
+    let source = env::var_os("SOLOE_GHOSTTY_WINDOWS_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            panic!("SOLOE_GHOSTTY_WINDOWS_SOURCE must point to the pinned Ghostty fork checkout")
+        });
+    verify_surface_revision(&source);
+
+    let library_dir = source.join("zig-out/lib");
+    let dll = library_dir.join("ghostty-internal.dll");
+    let import_library = library_dir.join("ghostty-internal.lib");
+    let headers = source.join("zig-out/include");
+    for artifact in [&dll, &import_library, &headers.join("ghostty.h")] {
+        assert!(
+            artifact.exists(),
+            "pinned Windows Ghostty artifact is missing: {}",
+            artifact.display()
+        );
+    }
+    let header = fs::read_to_string(headers.join("ghostty.h"))
+        .expect("failed to read the pinned Windows Ghostty header");
+    for symbol in [
+        "GHOSTTY_PLATFORM_OPENGL",
+        "GHOSTTY_SURFACE_IO_MANUAL",
+        "ghostty_surface_process_output",
+    ] {
+        assert!(
+            header.contains(symbol),
+            "pinned Windows Ghostty library does not expose required symbol {symbol}"
+        );
+    }
+
+    cc::Build::new()
+        .cpp(true)
+        .file("native-terminal/ghostty_surface_win_bridge.cpp")
+        .include("native-terminal")
+        .include(&headers)
+        .flag_if_supported("/std:c++17")
+        .warnings(true)
+        .compile("soloe_ghostty_surface_win_bridge");
+
+    println!("cargo:rustc-link-search=native={}", library_dir.display());
+    println!("cargo:rustc-link-lib=dylib=ghostty-internal");
+    for library in ["gdi32", "opengl32", "user32"] {
+        println!("cargo:rustc-link-lib=dylib={library}");
+    }
+    copy_windows_runtime_dll(&dll);
+    println!("cargo:rustc-env=SOLOE_GHOSTTY_SURFACE_REVISION={GHOSTTY_SURFACE_REVISION}");
+}
+
+fn copy_windows_runtime_dll(dll: &Path) {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo did not provide OUT_DIR"));
+    let profile_dir = out_dir
+        .ancestors()
+        .nth(3)
+        .expect("unexpected Cargo OUT_DIR layout for Windows");
+    fs::copy(dll, profile_dir.join("ghostty-internal.dll"))
+        .expect("failed to copy ghostty-internal.dll beside the Tauri executable");
+}
+
+fn verify_surface_revision(source: &Path) {
+    let output = Command::new("git")
+        .current_dir(source)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap_or_else(|error| panic!("failed to verify Ghostty surface revision: {error}"));
+    assert!(
+        output.status.success(),
+        "Ghostty surface source is not a Git checkout"
+    );
+    let revision = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        revision.trim(),
+        GHOSTTY_SURFACE_REVISION,
+        "Ghostty surface source revision does not match ghostty-surface-source.json"
+    );
 }
 
 fn build_libghostty_macos_surface() {

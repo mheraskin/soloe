@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import {
+  createWriteStream,
   existsSync,
   mkdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -22,7 +25,19 @@ const artifactRoot = resolve(destination, 'GhosttyKit.xcframework');
 const libraryPath = resolve(artifactRoot, 'macos-arm64_x86_64/ghostty-internal.a');
 const headerPath = resolve(artifactRoot, 'macos-arm64_x86_64/Headers/ghostty.h');
 const stampPath = resolve(destination, '.source.json');
-const expectedStamp = JSON.stringify(metadata, null, 2) + '\n';
+const macosSourceMetadata = Object.fromEntries([
+  'repository',
+  'revision',
+  'releaseTag',
+  'archive',
+  'sha256',
+  'license',
+  'api',
+  'apiStatus',
+  'cargoFeature',
+  'artifactEnvironmentVariable'
+].map((key) => [key, metadata[key]]));
+const expectedStamp = JSON.stringify(macosSourceMetadata, null, 2) + '\n';
 const requiredSymbols = [
   'GHOSTTY_SURFACE_IO_MANUAL',
   'ghostty_surface_process_output',
@@ -43,17 +58,9 @@ if (existsSync(stampPath)) {
 
 mkdirSync(destination, { recursive: true });
 if (!existsSync(archivePath)) {
-  run('gh', [
-    'release',
-    'download',
-    metadata.releaseTag,
-    '--repo',
-    metadata.repository,
-    '--pattern',
-    metadata.archive,
-    '--dir',
-    destination
-  ]);
+  const releaseUrl = `https://github.com/${metadata.repository}/releases/download/`
+    + `${encodeURIComponent(metadata.releaseTag)}/${encodeURIComponent(metadata.archive)}`;
+  await download(releaseUrl, archivePath);
 }
 
 const actualSha256 = createHash('sha256').update(readFileSync(archivePath)).digest('hex');
@@ -97,5 +104,20 @@ function run(command, args) {
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`${command} exited with status ${result.status ?? 'unknown'}`);
+  }
+}
+
+async function download(url, destinationPath) {
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok || !response.body) {
+    throw new Error(`failed to download ${url}: HTTP ${response.status}`);
+  }
+  try {
+    await pipeline(Readable.fromWeb(response.body), createWriteStream(destinationPath, {
+      flags: 'wx'
+    }));
+  } catch (error) {
+    if (existsSync(destinationPath)) unlinkSync(destinationPath);
+    throw error;
   }
 }

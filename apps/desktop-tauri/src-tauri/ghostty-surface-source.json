@@ -8,5 +8,12 @@
   "api": "ghostty_surface C API with manual I/O",
   "apiStatus": "unversioned fork API",
   "cargoFeature": "libghostty-macos-surface",
-  "artifactEnvironmentVariable": "SOLOE_GHOSTTYKIT_DIR"
+  "artifactEnvironmentVariable": "SOLOE_GHOSTTYKIT_DIR",
+  "windowsCargoFeature": "libghostty-windows-surface",
+  "windowsSourceDirectory": "target/ghostty-windows-source",
+  "windowsSourceEnvironmentVariable": "SOLOE_GHOSTTY_WINDOWS_SOURCE",
+  "windowsZigVersion": "0.16.0",
+  "windowsDll": "zig-out/lib/ghostty-internal.dll",
+  "windowsImportLibrary": "zig-out/lib/ghostty-internal.lib",
+  "windowsHeader": "zig-out/include/ghostty.h"
 }

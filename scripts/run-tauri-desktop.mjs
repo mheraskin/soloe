@@ -10,6 +10,7 @@ const ghosttyKitRoot = resolve(
   repositoryRoot,
   'target/ghostty-surface/GhosttyKit.xcframework'
 );
+const ghosttyWindowsRoot = resolve(repositoryRoot, 'target/ghostty-windows-source');
 const [mode, ...forwardedArguments] = process.argv.slice(2);
 
 if (mode !== 'dev' && mode !== 'build') {
@@ -38,6 +39,21 @@ if (process.platform === 'darwin') {
     {
       cwd: applicationRoot,
       env: { ...process.env, SOLOE_GHOSTTYKIT_DIR: ghosttyKitRoot }
+    }
+  );
+  process.exit(0);
+}
+
+if (process.platform === 'win32') {
+  run(process.execPath, [resolve(repositoryRoot, 'scripts/prepare-ghostty-windows.mjs')], {
+    cwd: repositoryRoot
+  });
+  run(
+    pnpm,
+    [...tauriArguments, '--features', 'libghostty-windows-surface'],
+    {
+      cwd: applicationRoot,
+      env: { ...process.env, SOLOE_GHOSTTY_WINDOWS_SOURCE: ghosttyWindowsRoot }
     }
   );
   process.exit(0);

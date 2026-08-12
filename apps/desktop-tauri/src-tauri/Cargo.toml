@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 default = []
 libghostty-linux-prototype = []
 libghostty-macos-surface = []
+libghostty-windows-surface = []
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

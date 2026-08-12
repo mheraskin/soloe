@@ -26,6 +26,13 @@ Soloe is pre-release software. The first public alpha should not be published un
   mouse input, resize, focus, visibility, selection, links, paste, export, and
   disposal. IME/preedit, visual search highlighting, complete configuration
   mapping, app-shortcut arbitration, and native test coverage remain incomplete.
+- Standard Windows Tauri commands publicly clone and verify the same pinned MIT
+  Ghostty fork and build its full Win32/WGL surface with Zig 0.16.0. The
+  Environment Runtime remains the PTY owner through manual I/O. OpenGL 4.3 is
+  required; incompatible graphics drivers and failed native initialization fall
+  back to xterm without stopping the Session. Advanced IME/preedit, visual
+  search highlighting, shortcut arbitration, installer DLL packaging, and the
+  clean-machine graphics-driver matrix remain incomplete.
 - Windows and Linux installers have not yet completed the clean-machine validation matrix.
 - Early Windows builds will be unsigned and may trigger SmartScreen.
 - The legacy Electron MCP path uses a broader bind for WSL reachability; its effective interface and firewall exposure still need validation.

@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const repository = 'ghostty-org/ghostty';
+const repository = 'https://github.com/ghostty-org/ghostty.git';
 const revision = '426386b8579d5e558aa5d4cfdfb003ad06bc4fc5';
 const destination = resolve('target/libghostty-source');
 
@@ -20,7 +20,7 @@ function run(command, args, options = {}) {
 }
 
 if (!existsSync(destination)) {
-  run('gh', ['repo', 'clone', repository, destination, '--', '--no-checkout']);
+  run('git', ['clone', '--filter=blob:none', '--no-checkout', repository, destination]);
   run('git', ['checkout', '--detach', revision], { cwd: destination });
 }
 
