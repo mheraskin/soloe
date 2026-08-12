@@ -46,6 +46,7 @@ export const SOLOE_API_METHODS = {
     "usage",
   ],
   settings: ["get", "update", "modelCatalog", "onChange"],
+  connections: ["get", "refresh", "add", "remove", "select", "onChange"],
   projects: [
     "list",
     "get",
@@ -310,6 +311,7 @@ export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
   "browser.openDevTools",
   "browser.setDevToolsLayout",
   "browser.closeDevTools",
+  ...SOLOE_API_METHODS.connections.map((method) => `connections.${method}`),
   ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`),
 ]);
 

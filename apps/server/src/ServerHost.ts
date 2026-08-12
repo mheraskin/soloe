@@ -36,6 +36,9 @@ export async function startServerHost(): Promise<RunningServerHost> {
     port: Number(process.env.SOLOE_SERVER_PORT ?? "4317"),
     token,
     webRoot: process.env.SOLOE_WEB_ROOT ?? "",
+    ...(process.env.SOLOE_TAILSCALE_ALLOWED_USERS !== undefined
+      ? { allowedTailscaleUsers: process.env.SOLOE_TAILSCALE_ALLOWED_USERS }
+      : {}),
     rpcHandler: (call) => domain.invoke(call),
     clientDisconnected: (clientId) => domain.releaseClient(clientId),
     clientReconnected: (clientId) => domain.recoverClient(clientId),

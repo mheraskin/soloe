@@ -205,6 +205,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     observer: namespace("observer", SOLOE_API_METHODS.observer),
     system,
     settings: namespace("settings", SOLOE_API_METHODS.settings),
+    connections: namespace("connections", SOLOE_API_METHODS.connections),
     projects: namespace("projects", SOLOE_API_METHODS.projects),
     notes: namespace("notes", SOLOE_API_METHODS.notes),
     git: namespace("git", SOLOE_API_METHODS.git),

@@ -32,6 +32,11 @@ import type {
   SessionUpdate
 } from '@shared/types/sessions.js';
 import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
+import type {
+  AddMachineConnectionRequest,
+  ConnectionId,
+  ConnectionSnapshot
+} from '@shared/types/connections.js';
 import type { SystemUsageRequest } from '@shared/types/system.js';
 import type {
   Project,
@@ -191,6 +196,16 @@ const soloe: SoloeApi = {
     modelCatalog: () => ipcRenderer.invoke(IpcChannels.settings.modelCatalog),
     onChange: (cb: (settings: Settings) => void) =>
       subscribe<Settings>(IpcChannels.settings.change, cb)
+  },
+  connections: {
+    get: () => ipcRenderer.invoke(IpcChannels.connections.get),
+    refresh: () => ipcRenderer.invoke(IpcChannels.connections.refresh),
+    add: (request: AddMachineConnectionRequest) =>
+      ipcRenderer.invoke(IpcChannels.connections.add, request),
+    remove: (id: ConnectionId) => ipcRenderer.invoke(IpcChannels.connections.remove, id),
+    select: (id: ConnectionId) => ipcRenderer.invoke(IpcChannels.connections.select, id),
+    onChange: (cb: (snapshot: ConnectionSnapshot) => void) =>
+      subscribe<ConnectionSnapshot>(IpcChannels.connections.change, cb)
   },
   projects: {
     list: () => ipcRenderer.invoke(IpcChannels.projects.list),

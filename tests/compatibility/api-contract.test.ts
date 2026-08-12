@@ -30,6 +30,7 @@ describe("Soloe API transport contract", () => {
     expect([...REMOTE_ELECTRON_NATIVE_METHODS].every((method) =>
       method.startsWith("window.") ||
       method.startsWith("browser.") ||
+      method.startsWith("connections.") ||
       method.startsWith("vault.")
     )).toBe(true);
   });

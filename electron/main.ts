@@ -1,7 +1,8 @@
-import { app, BrowserWindow, Menu, Notification, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, net, session, shell } from 'electron';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { existsSync, mkdirSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { OUTPUT_BATCH_INTERVAL_MS } from '@shared/types/terminal.js';
 import type { DiffWorktreeTarget } from '@shared/types/diff-rpc.js';
 import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
@@ -64,6 +65,10 @@ import { VaultIpc } from './ipc/vault.ipc.js';
 import { BrowserIpc } from './ipc/browser.ipc.js';
 import { BrowserSessionStore } from './browser/BrowserSessionStore.js';
 import { BrowserSessionsIpc } from './ipc/browser-sessions.ipc.js';
+import { ConnectionsIpc } from './ipc/connections.ipc.js';
+import { ConnectionRegistry } from './connections/ConnectionRegistry.js';
+import { TailscaleDiscovery } from './connections/TailscaleDiscovery.js';
+import { probeSoloeEndpoint } from './connections/SoloeEndpointProbe.js';
 import {
   isBrowserDevToolsToggleInput,
   isBrowserRestoreTabInput
@@ -119,14 +124,51 @@ interface AppServices {
   browserSessionsIpc: BrowserSessionsIpc;
 }
 
+async function initializeConnections(): Promise<void> {
+  const userDataPath = app.getPath('userData');
+  const tailscale = new TailscaleDiscovery();
+  connectionRegistry = new ConnectionRegistry({
+    filePath: path.join(userDataPath, 'connections.json'),
+    localName: hostname().trim() || 'This device',
+    discover: () => tailscale.discover(),
+    probe: (endpoint) => probeSoloeEndpoint(endpoint, (input, init) => net.fetch(String(input), init))
+  });
+  await connectionRegistry.init();
+  connectionsIpc = new ConnectionsIpc({
+    registry: connectionRegistry,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  connectionsIpc.register();
+
+  const inheritedLocalServerUrl =
+    process.env.SOLOE_LOCAL_SERVER_URL?.trim()
+    || process.env.SOLOE_CLIENT_SERVER_URL?.trim()
+    || null;
+  if (!process.env.SOLOE_LOCAL_SERVER_URL && inheritedLocalServerUrl) {
+    process.env.SOLOE_LOCAL_SERVER_URL = inheritedLocalServerUrl;
+  }
+
+  const selectedEndpoint = connectionRegistry.activeEndpoint();
+  selectedRemoteWebHost = selectedEndpoint !== null;
+  remoteServerUrl = selectedEndpoint ?? inheritedLocalServerUrl;
+  if (remoteServerUrl) {
+    process.env.SOLOE_CLIENT_SERVER_URL = remoteServerUrl;
+  } else {
+    delete process.env.SOLOE_CLIENT_SERVER_URL;
+  }
+  process.env.SOLOE_CLIENT_TAILSCALE_SESSION = selectedRemoteWebHost ? '1' : '0';
+}
+
 let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
 let cleanedUp = false;
 let remoteWindowIpc: WindowIpc | null = null;
 let remoteBrowserIpc: BrowserIpc | null = null;
 let remoteVaultIpc: VaultIpc | null = null;
-
-const remoteServerUrl = process.env.SOLOE_CLIENT_SERVER_URL?.trim() || null;
+let connectionsIpc: ConnectionsIpc | null = null;
+let connectionRegistry: ConnectionRegistry | null = null;
+let remoteServerUrl: string | null = null;
+let selectedRemoteWebHost = false;
 
 interface DiffIntent {
   commits?: string[];
@@ -697,8 +739,42 @@ async function createWindow(): Promise<BrowserWindow> {
     return { action: 'deny' };
   });
 
+  if (selectedRemoteWebHost && remoteServerUrl) {
+    const trustedOrigin = new URL(remoteServerUrl).origin;
+    win.webContents.on('will-navigate', (event, url) => {
+      let destination: URL;
+      try {
+        destination = new URL(url);
+      } catch {
+        event.preventDefault();
+        return;
+      }
+      if (destination.origin === trustedOrigin) return;
+      event.preventDefault();
+      try {
+        void shell.openExternal(assertSafeExternalUrl(url));
+      } catch {
+        // Keep unsupported navigation inside Electron's deny path.
+      }
+    });
+  }
+
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (!app.isPackaged && devUrl) {
+  if (selectedRemoteWebHost && remoteServerUrl) {
+    let recoveredLocally = false;
+    win.webContents.on(
+      'did-fail-load',
+      (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+        if (!isMainFrame || recoveredLocally || errorCode === -3) return;
+        recoveredLocally = true;
+        console.warn(
+          `[desktop] failed to load ${validatedUrl || remoteServerUrl}: ${errorDescription}; opening connection recovery UI`
+        );
+        void win.loadFile(path.join(__dirname, '../renderer/index.html'));
+      }
+    );
+    await win.loadURL(remoteServerUrl);
+  } else if (!app.isPackaged && devUrl) {
     await win.loadURL(devUrl);
   } else {
     await win.loadFile(path.join(__dirname, '../renderer/index.html'));
@@ -771,6 +847,9 @@ async function cleanup(): Promise<void> {
   remoteBrowserIpc = null;
   remoteVaultIpc?.dispose();
   remoteVaultIpc = null;
+  connectionsIpc?.dispose();
+  connectionsIpc = null;
+  connectionRegistry = null;
 }
 
 function ensureSingleInstance(): boolean {
@@ -840,6 +919,7 @@ if (ensureSingleInstance()) {
     const menuTemplate = applicationMenuTemplate();
     Menu.setApplicationMenu(menuTemplate.length > 0 ? Menu.buildFromTemplate(menuTemplate) : null);
     ensureWindowsDevShellShortcut(resolveAppIcon());
+    await initializeConnections();
     if (remoteServerUrl) {
       remoteWindowIpc = new WindowIpc();
       remoteBrowserIpc = new BrowserIpc();
@@ -852,7 +932,11 @@ if (ensureSingleInstance()) {
       remoteVaultIpc.register();
       console.info(`[desktop] using Application Server at ${new URL(remoteServerUrl).origin}`);
     } else {
-      services = await setupServices();
+      try {
+        services = await setupServices();
+      } catch (error) {
+        console.error('[desktop] local backend is unavailable; connection switching remains available', error);
+      }
     }
     mainWindow = await createWindow();
     if (pendingDiffIntent) {

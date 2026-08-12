@@ -22,8 +22,8 @@ separation, not repository separation, provides lifecycle independence.
   WSL distribution. The runtime socket stays on the WSL filesystem; Windows
   clients reach only the server's authenticated localhost HTTP/WebSocket API.
 
-The Tray Host, Windows Web Host, Electron client, and ordinary browser always
-remain on Windows.
+The Tray Host, platform Web Host, Electron client, and ordinary browser remain
+on the client machine.
 Backend Placement is separate from a Session's shell/run-mode settings.
 
 `apps/mobile/` is intentionally only a placeholder. Mobile access is currently
@@ -60,10 +60,20 @@ URL for an HttpOnly, SameSite cookie. The Application Server never guesses an
 
 Electron and the browser share the Svelte renderer through separate Renderer
 Backend Adapters. When opened by the tray, Electron is a server-backed client:
-its remote preload uses the same HTTP/WebSocket API while retaining only native
-Windows window and embedded-browser controls over local Electron IPC. The
-browser uses the local HTTP/WebSocket API directly. Both replay visible
-terminals after reconnect.
+its remote preload uses the same HTTP/WebSocket API while retaining native
+macOS or Windows window, connection-registry, and embedded-browser controls
+over local Electron IPC. The browser uses the local HTTP/WebSocket API
+directly. Both replay visible terminals after reconnect.
+
+The Electron-owned Device Connection Registry catalogs the local supervised
+Server plus discovered or manually trusted Tailscale HTTPS endpoints. It hides
+CLI parsing, readiness probes, durable selection, and relaunch behavior behind
+the Renderer Backend Interface. Selecting a device changes only the desktop
+client's Application Server transport; it neither relocates Backend Placement
+nor stops an Environment Runtime. The registry stores endpoints and health
+metadata, while remote authentication remains in a Secure, HttpOnly cookie.
+Both the development Web Host and the packaged macOS Application Server expose
+the same readiness and Tailscale identity-to-session contract.
 
 The Server composes platform-independent domain services; none import Electron
 globals, `BrowserWindow`, `WebContents`, `ipcMain`, or renderer APIs:

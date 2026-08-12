@@ -137,6 +137,12 @@ import type {
   BrowserSessionSnapshot,
   BrowserSessionUpdateRequest
 } from './browser-sessions.js';
+import type {
+  AddMachineConnectionRequest,
+  ConnectionId,
+  ConnectionSelectionResult,
+  ConnectionSnapshot
+} from './connections.js';
 
 export const IpcChannels = {
   sessions: {
@@ -188,6 +194,14 @@ export const IpcChannels = {
     update: 'settings:update',
     modelCatalog: 'settings:model-catalog',
     change: 'settings:change'
+  },
+  connections: {
+    get: 'connections:get',
+    refresh: 'connections:refresh',
+    add: 'connections:add',
+    remove: 'connections:remove',
+    select: 'connections:select',
+    change: 'connections:change'
   },
   projects: {
     list: 'projects:list',
@@ -328,6 +342,7 @@ export type IpcChannel =
   | (typeof IpcChannels.observer)[keyof typeof IpcChannels.observer]
   | (typeof IpcChannels.system)[keyof typeof IpcChannels.system]
   | (typeof IpcChannels.settings)[keyof typeof IpcChannels.settings]
+  | (typeof IpcChannels.connections)[keyof typeof IpcChannels.connections]
   | (typeof IpcChannels.projects)[keyof typeof IpcChannels.projects]
   | (typeof IpcChannels.notes)[keyof typeof IpcChannels.notes]
   | (typeof IpcChannels.git)[keyof typeof IpcChannels.git]
@@ -419,6 +434,15 @@ export interface SettingsApi {
   update(patch: SettingsUpdate): Promise<IpcResult<Settings>>;
   modelCatalog(): Promise<IpcResult<ModelCatalogEntry[]>>;
   onChange(listener: (settings: Settings) => void): () => void;
+}
+
+export interface ConnectionsApi {
+  get(): Promise<IpcResult<ConnectionSnapshot>>;
+  refresh(): Promise<IpcResult<ConnectionSnapshot>>;
+  add(request: AddMachineConnectionRequest): Promise<IpcResult<ConnectionSnapshot>>;
+  remove(id: ConnectionId): Promise<IpcResult<ConnectionSnapshot>>;
+  select(id: ConnectionId): Promise<IpcResult<ConnectionSelectionResult>>;
+  onChange(cb: (snapshot: ConnectionSnapshot) => void): () => void;
 }
 
 export interface ProjectsApi {
@@ -665,6 +689,7 @@ export interface SoloeApi {
   observer: ObserverApi;
   system: SystemApi;
   settings: SettingsApi;
+  connections: ConnectionsApi;
   projects: ProjectsApi;
   notes: NotesApi;
   git: GitApi;

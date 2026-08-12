@@ -155,6 +155,18 @@ _Avoid_: Electron IPC wrapper, preload global
 One shell-specific implementation of the Renderer Backend Interface, such as the current Electron preload transport or a future Tauri transport.
 _Avoid_: Renderer backend, IPC implementation
 
+**Soloe Device**:
+One tailnet machine exposing a Soloe Application Server and its associated Environment Runtime to authorized clients.
+_Avoid_: Backend URL, remote workspace
+
+**Device Connection Registry**:
+The client-local, restart-safe catalog of this device and trusted remote Soloe Device endpoints, their availability, and the active selection.
+_Avoid_: Backend list, Tailscale token store
+
+**Active Device Connection**:
+The restart-applied desktop-client selection of one Soloe Device's Application Server without taking ownership of its Environment Runtime.
+_Avoid_: Backend Placement, moved session
+
 ## Relationships
 
 - A **Worktree** has at most one in-flight **Worktree Observation**
@@ -216,6 +228,12 @@ _Avoid_: Renderer backend, IPC implementation
 - Every Svelte Module crosses the **Renderer Backend Interface**; only a **Renderer Backend Adapter** may access shell-specific globals or transport primitives
 - Electron IPC and browser HTTP/WebSocket are separate **Renderer Backend
   Adapters** over the same UI; neither owns agent process lifetime
+- The **Device Connection Registry** discovers exact Tailscale HTTPS endpoints,
+  probes Soloe readiness, and persists endpoint metadata without backend bearer
+  tokens
+- Changing the **Active Device Connection** replaces only the Renderer Backend
+  Adapter's Application Server destination; it does not stop agents on the old
+  or new Soloe Device
 
 ## Example dialogue
 

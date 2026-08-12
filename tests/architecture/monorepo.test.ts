@@ -113,10 +113,12 @@ describe("monorepo boundaries", () => {
     );
   });
 
-  it("keeps the remote Electron renderer on the Windows client side", async () => {
+  it("loads a selected Tailscale web host only in the disposable Electron client", async () => {
     const main = await readFile(path.join(root, "electron/main.ts"), "utf8");
 
-    expect(main).not.toContain("win.loadURL(remoteServerUrl)");
+    expect(main).toContain("if (selectedRemoteWebHost && remoteServerUrl)");
+    expect(main).toContain("await win.loadURL(remoteServerUrl)");
+    expect(main).toContain("SOLOE_CLIENT_TAILSCALE_SESSION");
   });
 
   it("shows the application shell before loading deferred renderer modules", async () => {

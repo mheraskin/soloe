@@ -8,6 +8,7 @@
     FolderOpen,
     Maximize2,
     Minus,
+    Monitor,
     PanelLeftOpen,
     Plus,
     RotateCcw,
@@ -24,6 +25,7 @@
   } from '@shared/types/sessions.js';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
+  import { connections } from './stores/connections.svelte';
   import { platform } from './stores/platform.svelte';
   import { projects } from './stores/projects.svelte';
   import { notes } from './stores/notes.svelte';
@@ -90,6 +92,7 @@
   import KindIcon from './components/KindIcon.svelte';
   import AppSkeleton from './components/AppSkeleton.svelte';
   import SettingsDialog from './components/SettingsDialog.svelte';
+  import ConnectionMenu from './components/ConnectionMenu.svelte';
   import appIconUrl from '../build/favicon.svg';
 
   const loadNewSessionModal = () => import('./components/NewSessionModal.svelte');
@@ -141,11 +144,13 @@
     window.addEventListener('soloe:focus-pane', openFocusedPane);
     sessions.attachListeners();
     settings.attachListeners();
+    connections.attachListeners();
     projects.attachListeners();
     notes.attachListeners();
     git.attachListeners();
     workingDiff.attachListeners();
     vaultStore.attachListeners();
+    void connections.load().catch(reportError);
     const detachToast = ipc.notify.onToast((t) => {
       const opts = t.description ? { description: t.description } : undefined;
       if (t.severity === 'error') toast.error(t.message, opts);
@@ -170,6 +175,7 @@
       detachToast();
       sessions.detach();
       settings.detach();
+      connections.detach();
       projects.detach();
       notes.detach();
       workingDiff.detach();
@@ -1231,6 +1237,9 @@
         draggable="false"
       />
       <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
+      <div class="ml-1" style="-webkit-app-region: no-drag">
+        <ConnectionMenu />
+      </div>
     </header>
     <main class="flex min-h-0 flex-1 items-center justify-center p-6">
       <div class="flex max-w-md flex-col items-center text-center">
@@ -1247,8 +1256,21 @@
           <RotateCcw class="size-3.5" />
           Retry
         </Button>
+        {#if connections.supported}
+          <Button
+            variant="outline"
+            class="mt-2 gap-2"
+            onclick={() => settings.openDialog('connections')}
+          >
+            <Monitor class="size-3.5" />
+            Connection settings
+          </Button>
+        {/if}
       </div>
     </main>
+    {#if settings.dialogOpen}
+      <SettingsDialog />
+    {/if}
   </div>
 {:else}
 <div class="app-shell flex flex-col overflow-hidden">
@@ -1265,6 +1287,9 @@
       draggable="false"
     />
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
+    <div class="ml-1" style="-webkit-app-region: no-drag">
+      <ConnectionMenu />
+    </div>
     {#if sidebar.hidden}
       <div class="ml-1 flex self-stretch" style="-webkit-app-region: no-drag">
         <Button

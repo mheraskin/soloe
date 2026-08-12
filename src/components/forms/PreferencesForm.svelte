@@ -15,6 +15,7 @@
     Globe,
     KeyRound,
     NotebookPen,
+    Network,
     ServerCog,
     Bell,
     Keyboard,
@@ -54,6 +55,7 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { cn } from '$lib/utils';
   import AgentIntegrationForm from './AgentIntegrationForm.svelte';
+  import ConnectionsForm from './ConnectionsForm.svelte';
   import VaultManagementForm from './VaultManagementForm.svelte';
   import KindIcon from '../KindIcon.svelte';
   import {
@@ -111,6 +113,7 @@
 
   const tabs: TabEntry[] = [
     { kind: 'tab', value: 'backend', label: 'Services', icon: ServerCog },
+    { kind: 'tab', value: 'connections', label: 'Connections', icon: Network },
     { kind: 'tab', value: 'integration', label: 'Integration', icon: PlugZap },
     { kind: 'tab', value: 'vault', label: 'Vault', icon: KeyRound },
     { kind: 'tab', value: 'appearance', label: 'Appearance', icon: Palette },
@@ -520,6 +523,10 @@
         Changes take effect after you stop and start all services from the tray. Stopping services
         ends running terminals and agents.
       </div>
+    </Tabs.Content>
+
+    <Tabs.Content value="connections" class={contentClass}>
+      <ConnectionsForm />
     </Tabs.Content>
 
     <Tabs.Content value="integration" class={contentClass}>

@@ -15,6 +15,7 @@ export interface SoloeServerOptions {
   port?: number;
   token: string;
   webRoot?: string;
+  allowedTailscaleUsers?: string;
   rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
   clientDisconnected?: (clientId: string) => void;
   clientReconnected?: (clientId: string) => void;
@@ -35,6 +36,7 @@ export class SoloeServer {
     port: number;
     token: string;
     webRoot: string;
+    allowedTailscaleUsers?: string;
     rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
     clientDisconnected?: (clientId: string) => void;
     clientReconnected?: (clientId: string) => void;
@@ -59,6 +61,9 @@ export class SoloeServer {
       port: options.port ?? 0,
       token: options.token,
       webRoot: options.webRoot ?? "",
+      ...(options.allowedTailscaleUsers !== undefined
+        ? { allowedTailscaleUsers: options.allowedTailscaleUsers }
+        : {}),
       ...(options.rpcHandler ? { rpcHandler: options.rpcHandler } : {}),
       ...(options.clientDisconnected
         ? { clientDisconnected: options.clientDisconnected }
@@ -96,6 +101,14 @@ export class SoloeServer {
           response.writeHead(204).end();
           return;
         }
+        if (request.method === "GET" && url.pathname === "/__soloe/ready") {
+          response.writeHead(200, {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+          });
+          response.end(JSON.stringify({ ready: true }));
+          return;
+        }
         if (
           request.method === "GET" &&
           url.pathname === "/" &&
@@ -103,7 +116,38 @@ export class SoloeServer {
         ) {
           response.writeHead(302, {
             location: "/",
-            "set-cookie": `soloe_token=${encodeURIComponent(this.options.token)}; HttpOnly; SameSite=Strict; Path=/`,
+            "set-cookie": this.sessionCookie(false),
+          });
+          response.end();
+          return;
+        }
+        if (
+          request.method === "POST" &&
+          url.pathname === "/__soloe/auth/tailscale"
+        ) {
+          if (this.isAuthorized(request)) {
+            response.writeHead(204, { "cache-control": "no-store" }).end();
+            return;
+          }
+          if (this.trustedTailscaleIdentity(request)) {
+            response.writeHead(204, {
+              "set-cookie": this.sessionCookie(true),
+              "cache-control": "no-store",
+            }).end();
+            return;
+          }
+          this.json(response, 401, { error: "unauthorized" });
+          return;
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname === "/" &&
+          this.trustedTailscaleIdentity(request)
+        ) {
+          response.writeHead(302, {
+            location: "/",
+            "set-cookie": this.sessionCookie(true),
+            "cache-control": "no-store",
           });
           response.end();
           return;
@@ -438,14 +482,39 @@ export class SoloeServer {
     const cookies = request.headers.cookie?.split(";") ?? [];
     for (const cookie of cookies) {
       const [name, ...parts] = cookie.trim().split("=");
-      if (
-        name === "soloe_token" &&
-        this.tokensMatch(decodeURIComponent(parts.join("=")))
-      ) {
-        return true;
+      if (name !== "soloe_token") continue;
+      try {
+        if (this.tokensMatch(decodeURIComponent(parts.join("=")))) return true;
+      } catch {
+        return false;
       }
     }
     return false;
+  }
+
+  private trustedTailscaleIdentity(request: IncomingMessage): string | null {
+    if (!isLoopback(request.socket.remoteAddress)) return null;
+    const header = request.headers["tailscale-user-login"];
+    if (typeof header !== "string" || !header.trim()) return null;
+    const identity = header.trim();
+    if (this.options.allowedTailscaleUsers === undefined) return identity;
+    const allowed = new Set(
+      this.options.allowedTailscaleUsers
+        .split(",")
+        .map((entry) => entry.trim().toLowerCase())
+        .filter(Boolean),
+    );
+    return allowed.has(identity.toLowerCase()) ? identity : null;
+  }
+
+  private sessionCookie(secure: boolean): string {
+    return [
+      `soloe_token=${encodeURIComponent(this.options.token)}`,
+      "HttpOnly",
+      "SameSite=Strict",
+      "Path=/",
+      ...(secure ? ["Secure"] : []),
+    ].join("; ");
   }
 
   private allowedRendererOrigin(origin: string | undefined): string | null {
@@ -704,6 +773,16 @@ function contentType(file: string): string {
     case ".woff2":
       return "font/woff2";
     default:
-  return "application/octet-stream";
+      return "application/octet-stream";
   }
+}
+
+function isLoopback(address: string | undefined): boolean {
+  if (!address) return false;
+  const normalized = address.toLowerCase();
+  return (
+    normalized === "::1" ||
+    normalized.startsWith("127.") ||
+    normalized.startsWith("::ffff:127.")
+  );
 }

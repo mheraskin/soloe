@@ -153,6 +153,20 @@ a `Secure`, `HttpOnly`, `SameSite=Strict` session cookie and is redirected to
 the clean root URL. The existing tray-token launch remains available as a
 localhost fallback.
 
+The tray obtains its exact MagicDNS hostname from `tailscale status --json` and
+adds only that hostname to the web host allowlist. Use
+`SOLOE_TAILSCALE_CLI` to select another Tailscale executable or
+`SOLOE_TAILSCALE_HOSTNAME` to provide an exact `.ts.net` hostname when the CLI
+is unavailable. The identity-to-cookie exchange also supports a secure POST so
+desktop clients do not need to retain a tokenized URL.
+
+Electron's **Settings > Connections** page discovers online tailnet peers,
+probes their HTTPS readiness endpoint, and presents running Soloe devices in
+the title-bar device menu. A selected device is remembered and applied by
+relaunching only Electron. A trusted Tailscale Serve URL may be added manually;
+the client registry persists endpoints and selection, never backend bearer
+tokens.
+
 Left- or right-click the Soloe tray icon and choose:
 
 - **Start/Stop Soloe server (WSL/Windows)** for the replaceable Application

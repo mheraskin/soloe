@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { describe, expect, it } from "vitest";
 import {
   createBrowserHostMiddleware,
+  resolveBrowserHostAllowedHosts,
   trustedTailscaleIdentity,
 } from "./browser-host";
 
@@ -9,6 +10,44 @@ const backendUrl = "http://127.0.0.1:4317";
 const token = "server-token";
 
 describe("Soloe browser host authentication", () => {
+  it("accepts only explicit normalized hostnames for the Tailscale proxy", () => {
+    expect(
+      resolveBrowserHostAllowedHosts(
+        " LaptopLores.tail1ab873.ts.net. , review.example.com, laptoplores.tail1ab873.ts.net ",
+      ),
+    ).toEqual(["laptoplores.tail1ab873.ts.net", "review.example.com"]);
+    expect(resolveBrowserHostAllowedHosts(undefined)).toEqual([]);
+    expect(() => resolveBrowserHostAllowedHosts(".ts.net")).toThrow(
+      "Invalid Soloe browser host",
+    );
+  });
+
+  it("creates a native client session from a trusted Tailscale identity", () => {
+    const response = request({
+      method: "POST",
+      path: "/__soloe/auth/tailscale",
+      headers: { "tailscale-user-login": "owner@example.com" },
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers["set-cookie"]).toBe(
+      "soloe_token=server-token; HttpOnly; SameSite=Strict; Path=/; Secure",
+    );
+    expect(response.body).toBe("");
+  });
+
+  it("accepts an existing native client session without requiring a new identity header", () => {
+    const response = request({
+      method: "POST",
+      path: "/__soloe/auth/tailscale",
+      headers: { cookie: "soloe_token=server-token" },
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers).toEqual({ "cache-control": "no-store" });
+    expect(response.body).toBe("");
+  });
+
   it("exchanges a trusted Tailscale identity for a secure browser session", () => {
     const response = request({
       headers: { "tailscale-user-login": "owner@example.com" },
@@ -63,6 +102,14 @@ describe("Soloe browser host authentication", () => {
     ).toBeNull();
   });
 
+  it("rejects a malformed session cookie without failing the host middleware", () => {
+    const response = request({
+      headers: { cookie: "soloe_token=%" },
+    });
+
+    expect(response.status).toBe(401);
+  });
+
   it("preserves the tray token bootstrap and authenticated cookie flow", () => {
     const bootstrap = request({ path: "/?token=server-token" });
     expect(bootstrap.status).toBe(302);
@@ -79,6 +126,7 @@ describe("Soloe browser host authentication", () => {
 
   function request(
     requestOptions: {
+      method?: string;
       path?: string;
       headers?: Record<string, string>;
     },
@@ -91,6 +139,7 @@ describe("Soloe browser host authentication", () => {
     });
     const captured: CapturedResponse = { status: 0, headers: {}, body: "" };
     const incoming = {
+      method: requestOptions.method ?? "GET",
       url: requestOptions.path ?? "/",
       headers: requestOptions.headers ?? {},
       socket: { remoteAddress: "127.0.0.1" },

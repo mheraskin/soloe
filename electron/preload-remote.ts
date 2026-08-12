@@ -2,9 +2,11 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import {
   IpcChannels,
   type BrowserApi,
+  type ConnectionsApi,
   type VaultApi,
   type WindowApi
 } from '@shared/types/ipc.js';
+import type { ConnectionSnapshot } from '@shared/types/connections.js';
 import type { VaultChangeEvent } from '@shared/types/vault.js';
 import type {
   CloseDevToolsRequest,
@@ -20,11 +22,12 @@ const serverUrl = process.env.SOLOE_CLIENT_SERVER_URL;
 if (!serverUrl) {
   throw new Error('SOLOE_CLIENT_SERVER_URL is required for the remote Electron preload');
 }
+const tailscaleSession = process.env.SOLOE_CLIENT_TAILSCALE_SESSION === '1';
 
 const api = createBrowserApi({
   baseUrl: serverUrl,
-  transport: 'remote-electron',
-  ...(process.env.SOLOE_SERVER_TOKEN
+  transport: tailscaleSession ? 'browser' : 'remote-electron',
+  ...(!tailscaleSession && process.env.SOLOE_SERVER_TOKEN
     ? { token: process.env.SOLOE_SERVER_TOKEN }
     : {})
 });
@@ -52,6 +55,15 @@ const browserApi: BrowserApi = {
     ipcRenderer.invoke(IpcChannels.browser.closeDevTools, request)
 };
 
+const connectionsApi: ConnectionsApi = {
+  get: () => ipcRenderer.invoke(IpcChannels.connections.get),
+  refresh: () => ipcRenderer.invoke(IpcChannels.connections.refresh),
+  add: (request) => ipcRenderer.invoke(IpcChannels.connections.add, request),
+  remove: (id) => ipcRenderer.invoke(IpcChannels.connections.remove, id),
+  select: (id) => ipcRenderer.invoke(IpcChannels.connections.select, id),
+  onChange: (cb) => subscribe<ConnectionSnapshot>(IpcChannels.connections.change, cb)
+};
+
 function subscribe<T>(channel: string, cb: (event: T) => void): () => void {
   const handler = (_event: IpcRendererEvent, payload: T) => cb(payload);
   ipcRenderer.on(channel, handler);
@@ -69,7 +81,8 @@ const vaultApi: VaultApi = {
 
 api.window = windowApi;
 api.browser = browserApi;
-api.vault = vaultApi;
+if (!tailscaleSession) api.vault = vaultApi;
+api.connections = connectionsApi;
 contextBridge.exposeInMainWorld('soloe', api);
 
 ipcRenderer.on(

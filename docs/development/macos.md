@@ -30,6 +30,36 @@ pnpm dev:desktop
 
 The native tray is independently runnable with `pnpm dev:tray`. In a packaged build, the tray starts the Runtime and standalone Server. **Open Soloe** starts at most one remote Electron client, **Open in browser** opens the packaged web client, and both connect to that Server. Closing Electron exits only that client; the Server, browser access, Runtime, and agents remain available. **Quit Soloe** ends every process owned by the product. macOS application data and service records live under `~/Library/Application Support/Soloe` unless `SOLOE_DATA_DIR` overrides the location.
 
+## Tailscale device connections
+
+To make one machine available to other tailnet devices, enable Tailscale Serve
+for the active Soloe web endpoint. Source development uses the web host on
+4318; the packaged application serves the production PWA from its Application
+Server on 4317:
+
+```bash
+# Source checkout
+tailscale serve --bg 4318
+
+# Packaged Soloe.app
+tailscale serve --bg 4317
+```
+
+Electron's **Settings > Connections** page reads `tailscale status --json`,
+probes online peers at their exact MagicDNS HTTPS names, and lists only peers
+whose `/__soloe/ready` endpoint identifies a running Soloe host. The same
+devices appear in the title-bar device menu. Selecting a different device
+persists the choice and relaunches only the Electron client; runtimes and agents
+on either machine continue running. Select **This device** to return to the
+tray-provided local Server.
+
+A trusted `https://` MagicDNS or Tailscale Serve URL can also be saved manually.
+The registry stores endpoint metadata, not backend bearer tokens. Remote access
+uses the Secure, HttpOnly session issued from Tailscale identity headers. The
+Tailscale executable can be overridden with `SOLOE_TAILSCALE_CLI`; a host that
+cannot run the CLI can provide its exact `.ts.net` name with
+`SOLOE_TAILSCALE_HOSTNAME`.
+
 ## Packages
 
 Build on the native architecture so native modules match Electron:

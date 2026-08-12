@@ -30,6 +30,7 @@ vi.mock('../src/lib/browser-api.js', () => ({
 
 const previousServerUrl = process.env.SOLOE_CLIENT_SERVER_URL;
 const previousServerToken = process.env.SOLOE_SERVER_TOKEN;
+const previousTailscaleSession = process.env.SOLOE_CLIENT_TAILSCALE_SESSION;
 
 afterEach(() => {
   vi.resetModules();
@@ -38,10 +39,13 @@ afterEach(() => {
   else process.env.SOLOE_CLIENT_SERVER_URL = previousServerUrl;
   if (previousServerToken === undefined) delete process.env.SOLOE_SERVER_TOKEN;
   else process.env.SOLOE_SERVER_TOKEN = previousServerToken;
+  if (previousTailscaleSession === undefined) delete process.env.SOLOE_CLIENT_TAILSCALE_SESSION;
+  else process.env.SOLOE_CLIENT_TAILSCALE_SESSION = previousTailscaleSession;
 });
 
 describe('remote Electron preload', () => {
   it('keeps host-encrypted vault operations local to Electron', async () => {
+    delete process.env.SOLOE_CLIENT_TAILSCALE_SESSION;
     process.env.SOLOE_CLIENT_SERVER_URL = 'http://127.0.0.1:43891';
     process.env.SOLOE_SERVER_TOKEN = 'remote-test-token';
 
@@ -68,12 +72,18 @@ describe('remote Electron preload', () => {
 
     const exposed = mocks.exposeInMainWorld.mock.calls[0]?.[1] as SoloeApi;
     for (const namespace of Object.keys(SOLOE_API_METHODS)) {
-      if (namespace === 'window' || namespace === 'browser' || namespace === 'vault') continue;
+      if (
+        namespace === 'window'
+        || namespace === 'browser'
+        || namespace === 'vault'
+        || namespace === 'connections'
+      ) continue;
       expect(exposed[namespace as keyof SoloeApi], namespace).toBe(originalNamespaces[namespace]);
     }
     expect(exposed.window).not.toBe(originalNamespaces.window);
     expect(exposed.browser).not.toBe(originalNamespaces.browser);
     expect(exposed.vault).not.toBe(originalNamespaces.vault);
+    expect(exposed.connections).not.toBe(originalNamespaces.connections);
 
     await exposed.window.minimize();
     await exposed.window.toggleMaximize();
@@ -121,7 +131,33 @@ describe('remote Electron preload', () => {
     expect(REMOTE_ELECTRON_NATIVE_METHODS).toEqual(new Set([
       ...SOLOE_API_METHODS.window.map((method) => `window.${method}`),
       ...SOLOE_API_METHODS.browser.map((method) => `browser.${method}`),
-      ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`)
+      ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`),
+      ...SOLOE_API_METHODS.connections.map((method) => `connections.${method}`)
     ]));
+  });
+
+  it('keeps a Tailscale device vault on the selected remote machine', async () => {
+    process.env.SOLOE_CLIENT_SERVER_URL = 'https://alpha.tail1234.ts.net';
+    process.env.SOLOE_SERVER_TOKEN = 'must-not-cross-the-tailnet';
+    process.env.SOLOE_CLIENT_TAILSCALE_SESSION = '1';
+    const serverNamespaces = Object.fromEntries(
+      Object.keys(SOLOE_API_METHODS).map((namespace) => [
+        namespace,
+        { transportMarker: `server:${namespace}` }
+      ])
+    ) as unknown as SoloeApi;
+    const remoteVault = serverNamespaces.vault;
+    const unsupportedConnections = serverNamespaces.connections;
+    mocks.createBrowserApi.mockReturnValue(serverNamespaces);
+
+    await import('./preload-remote.js');
+
+    expect(mocks.createBrowserApi).toHaveBeenCalledWith({
+      baseUrl: 'https://alpha.tail1234.ts.net',
+      transport: 'browser'
+    });
+    const exposed = mocks.exposeInMainWorld.mock.calls[0]?.[1] as SoloeApi;
+    expect(exposed.vault).toBe(remoteVault);
+    expect(exposed.connections).not.toBe(unsupportedConnections);
   });
 });

@@ -12,18 +12,34 @@ interface TailscaleIdentityOptions {
   allowedUsers?: string | undefined;
 }
 
+export function resolveBrowserHostAllowedHosts(
+  configuredHosts: string | undefined,
+): string[] {
+  const allowedHosts: string[] = [];
+  for (const entry of configuredHosts?.split(",") ?? []) {
+    const hostname = entry.trim().toLowerCase().replace(/\.$/, "");
+    if (!hostname) continue;
+    if (!isExplicitHostname(hostname)) {
+      throw new Error(`Invalid Soloe browser host: ${entry.trim()}`);
+    }
+    if (!allowedHosts.includes(hostname)) allowedHosts.push(hostname);
+  }
+  return allowedHosts;
+}
+
 export function createBrowserHostMiddleware(
   options: BrowserHostMiddlewareOptions,
 ): Connect.NextHandleFunction {
   return (request, response, next) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/__soloe/ready") {
-      response.writeHead(200, {
+      const ready = Boolean(options.backendUrl && options.token);
+      response.writeHead(ready ? 200 : 503, {
         "content-type": "application/json",
         "cache-control": "no-store",
       });
       response.end(
-        JSON.stringify({ ready: true, backend: options.backendUrl ?? null }),
+        JSON.stringify({ ready, backend: options.backendUrl ?? null }),
       );
       return;
     }
@@ -44,6 +60,25 @@ export function createBrowserHostMiddleware(
     if (url.pathname === "/" && url.searchParams.get("token") === options.token) {
       redirectWithSession(response, options.token, false);
       return;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/__soloe/auth/tailscale"
+    ) {
+      if (authorized(request.headers.cookie, options.token)) {
+        respondAuthenticated(response);
+        return;
+      }
+      const identity = trustedTailscaleIdentity({
+        header: request.headers["tailscale-user-login"],
+        remoteAddress: request.socket.remoteAddress,
+        allowedUsers: options.allowedTailscaleUsers,
+      });
+      if (identity) {
+        respondWithSession(response, options.token);
+        return;
+      }
     }
 
     if (authorized(request.headers.cookie, options.token)) {
@@ -109,6 +144,24 @@ function redirectWithSession(
   response.end();
 }
 
+function respondWithSession(
+  response: Parameters<Connect.NextHandleFunction>[1],
+  token: string,
+): void {
+  response.writeHead(204, {
+    "set-cookie": sessionCookie(token, true),
+    "cache-control": "no-store",
+  });
+  response.end();
+}
+
+function respondAuthenticated(
+  response: Parameters<Connect.NextHandleFunction>[1],
+): void {
+  response.writeHead(204, { "cache-control": "no-store" });
+  response.end();
+}
+
 function sessionCookie(token: string, secure: boolean): string {
   return [
     `soloe_token=${encodeURIComponent(token)}`,
@@ -122,11 +175,20 @@ function sessionCookie(token: string, secure: boolean): string {
 function authorized(cookieHeader: string | undefined, expected: string): boolean {
   for (const cookie of cookieHeader?.split(";") ?? []) {
     const [name, ...value] = cookie.trim().split("=");
-    if (name === "soloe_token" && decodeURIComponent(value.join("=")) === expected) {
-      return true;
+    if (name !== "soloe_token") continue;
+    try {
+      if (decodeURIComponent(value.join("=")) === expected) return true;
+    } catch {
+      return false;
     }
   }
   return false;
+}
+
+function isExplicitHostname(hostname: string): boolean {
+  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(
+    hostname,
+  );
 }
 
 function isLoopback(address: string | undefined): boolean {

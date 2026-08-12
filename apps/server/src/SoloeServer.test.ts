@@ -510,6 +510,65 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
+  it('discovers and authenticates the packaged web client through Tailscale Serve', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-tailscale-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const webRoot = path.join(directory, 'web');
+    await mkdir(webRoot);
+    await writeFile(path.join(webRoot, 'index.html'), '<main>Remote Soloe device</main>');
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      webRoot,
+      allowedTailscaleUsers: 'owner@example.com'
+    });
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const ready = await fetch(new URL('/__soloe/ready', baseUrl));
+      expect(ready.status).toBe(200);
+      expect(await ready.json()).toEqual({ ready: true });
+
+      const denied = await fetch(new URL('/__soloe/auth/tailscale', baseUrl), {
+        method: 'POST',
+        headers: { 'tailscale-user-login': 'shared@example.com' }
+      });
+      expect(denied.status).toBe(401);
+      const malformedCookie = await fetch(new URL('/api/runtime/sessions', baseUrl), {
+        headers: { cookie: 'soloe_token=%' }
+      });
+      expect(malformedCookie.status).toBe(401);
+
+      const authenticated = await fetch(new URL('/__soloe/auth/tailscale', baseUrl), {
+        method: 'POST',
+        headers: { 'tailscale-user-login': 'OWNER@example.com' }
+      });
+      expect(authenticated.status).toBe(204);
+      expect(authenticated.headers.get('set-cookie')).toContain(
+        'soloe_token=test-token; HttpOnly; SameSite=Strict; Path=/; Secure'
+      );
+
+      const bootstrap = await fetch(new URL('/', baseUrl), {
+        redirect: 'manual',
+        headers: { 'tailscale-user-login': 'owner@example.com' }
+      });
+      expect(bootstrap.status).toBe(302);
+      expect(bootstrap.headers.get('location')).toBe('/');
+      expect(bootstrap.headers.get('set-cookie')).toContain('; Secure');
+    } finally {
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('returns an actionable response when browser assets are missing', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-web-missing-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);

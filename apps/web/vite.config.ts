@@ -3,11 +3,17 @@ import type { Plugin } from "vite";
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
-import { createBrowserHostMiddleware } from "./browser-host";
+import {
+  createBrowserHostMiddleware,
+  resolveBrowserHostAllowedHosts,
+} from "./browser-host";
 
 const repositoryRoot = resolve(__dirname, "../..");
 const webPort = Number(process.env.SOLOE_WEB_PORT ?? "4318");
 const backendUrl = process.env.SOLOE_SERVER_URL;
+const allowedHosts = resolveBrowserHostAllowedHosts(
+  process.env.SOLOE_WEB_ALLOWED_HOSTS,
+);
 
 export default defineConfig({
   root: resolve(repositoryRoot, "src"),
@@ -15,7 +21,7 @@ export default defineConfig({
   plugins: [soloeBrowserHost(), tailwindcss(), svelte()],
   server: {
     host: "127.0.0.1",
-    allowedHosts: ["laptoplores.tail1ab873.ts.net"],
+    allowedHosts,
     port: webPort,
     strictPort: true,
     ...(backendUrl
@@ -32,7 +38,7 @@ export default defineConfig({
   },
   preview: {
     host: "127.0.0.1",
-    allowedHosts: ["laptoplores.tail1ab873.ts.net"],
+    allowedHosts,
     port: webPort,
     strictPort: true,
     ...(backendUrl

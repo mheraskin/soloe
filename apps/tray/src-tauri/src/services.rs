@@ -14,6 +14,55 @@ const START_TIMEOUT: Duration = Duration::from_secs(20);
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const WSL_STOP_TIMEOUT: Duration = Duration::from_secs(12);
 
+fn tailscale_dns_name_from_status(status: &[u8]) -> Result<String, String> {
+    let status: serde_json::Value = serde_json::from_slice(status)
+        .map_err(|error| format!("invalid Tailscale status JSON: {error}"))?;
+    let hostname = status
+        .get("Self")
+        .and_then(|value| value.get("DNSName"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Tailscale status did not include Self.DNSName".to_string())?
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if !is_explicit_tailscale_hostname(&hostname) {
+        return Err(format!("invalid Tailscale MagicDNS hostname: {hostname:?}"));
+    }
+    Ok(hostname)
+}
+
+fn detect_tailscale_dns_name() -> Option<String> {
+    if let Ok(hostname) = env::var("SOLOE_TAILSCALE_HOSTNAME") {
+        let hostname = hostname.trim().trim_end_matches('.').to_ascii_lowercase();
+        return is_explicit_tailscale_hostname(&hostname).then_some(hostname);
+    }
+
+    let executable = env::var_os("SOLOE_TAILSCALE_CLI").unwrap_or_else(|| "tailscale".into());
+    let output = Command::new(executable)
+        .args(["status", "--json"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    tailscale_dns_name_from_status(&output.stdout).ok()
+}
+
+fn is_explicit_tailscale_hostname(hostname: &str) -> bool {
+    hostname.len() <= 253
+        && hostname.ends_with(".ts.net")
+        && hostname.split('.').count() >= 4
+        && hostname.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LifecycleState {
     Starting,
@@ -1067,6 +1116,15 @@ impl BackendSupervisor {
             .env("SOLOE_OWNER_ID", &self.owner_id)
             .env("SOLOE_SERVER_URL", &address)
             .env("SOLOE_SERVER_TOKEN", &token);
+        if let Some(hostname) = detect_tailscale_dns_name() {
+            let allowed_hosts = match env::var("SOLOE_WEB_ALLOWED_HOSTS") {
+                Ok(configured) if !configured.trim().is_empty() => {
+                    format!("{configured},{hostname}")
+                }
+                _ => hostname,
+            };
+            command.env("SOLOE_WEB_ALLOWED_HOSTS", allowed_hosts);
+        }
         let log = OpenOptions::new()
             .create(true)
             .append(true)
@@ -1860,6 +1918,21 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::sync::Mutex;
+
+    #[test]
+    fn reads_the_exact_magicdns_hostname_from_tailscale_status() {
+        let status = br#"{
+            "Self": {
+                "DNSName": "LaptopLores.tail1ab873.ts.net."
+            }
+        }"#;
+
+        assert_eq!(
+            tailscale_dns_name_from_status(status).unwrap(),
+            "laptoplores.tail1ab873.ts.net"
+        );
+        assert!(tailscale_dns_name_from_status(br#"{"Self":{"DNSName":".ts.net"}}"#).is_err());
+    }
 
     #[derive(Default)]
     struct FakeProcessOperations {

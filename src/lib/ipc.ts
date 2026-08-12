@@ -236,6 +236,17 @@ export const backend = {
     modelCatalog: async () => unwrap(await c.settings.modelCatalog()),
     onChange: (cb: (s: Settings) => void) => c.settings.onChange(cb)
   },
+  connections: {
+    get: async () => unwrap(await c.connections.get()),
+    refresh: async () => unwrap(await c.connections.refresh()),
+    add: async (request: Parameters<typeof c.connections.add>[0]) =>
+      unwrap(await c.connections.add(toIpcPayload(request))),
+    remove: async (id: Parameters<typeof c.connections.remove>[0]) =>
+      unwrap(await c.connections.remove(id)),
+    select: async (id: Parameters<typeof c.connections.select>[0]) =>
+      unwrap(await c.connections.select(id)),
+    onChange: (cb: Parameters<typeof c.connections.onChange>[0]) => c.connections.onChange(cb)
+  },
   projects: {
     list: async () => unwrap(await c.projects.list()),
     get: async (id: ProjectId) => unwrap(await c.projects.get(id)),
