@@ -191,12 +191,19 @@ describe("monorepo boundaries", () => {
       path.join(root, "scripts/prepare-ghostty-windows.mjs"),
       "utf8",
     );
+    const tauriBuild = await readFile(
+      path.join(root, "apps/desktop-tauri/src-tauri/build.rs"),
+      "utf8",
+    );
     const patch = await readFile(path.join(root, metadata.windowsPatch ?? ""), "utf8");
 
     expect(metadata.windowsZigVersion).toBe("0.16.0");
     expect(metadata.windowsPatch).toBe("patches/ghostty/windows-manual-io.patch");
     expect(prepare).toContain("applyPinnedPatch(windowsPatch, destination)");
     expect(prepare).toContain("prependExecutableDirectory(zigExecutable)");
+    expect(tauriBuild).toContain('"ucrt"');
+    expect(tauriBuild).toContain('"vcruntime"');
+    expect(tauriBuild).toContain('"msvcprt"');
     expect(patch).toContain("ExecManualOnly.zig");
     expect(patch).toContain("builtin.object_format != .coff");
     expect(patch).not.toContain("git@github.com");

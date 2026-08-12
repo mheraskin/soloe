@@ -77,7 +77,14 @@ fn build_libghostty_windows_surface() {
 
     println!("cargo:rustc-link-search=native={}", library_dir.display());
     println!("cargo:rustc-link-lib=dylib=ghostty-internal");
-    for library in ["gdi32", "opengl32", "user32"] {
+    for library in [
+        "gdi32",
+        "opengl32",
+        "user32",
+        "ucrt",
+        "vcruntime",
+        "msvcprt",
+    ] {
         println!("cargo:rustc-link-lib=dylib={library}");
     }
     copy_windows_runtime_dll(&dll);
