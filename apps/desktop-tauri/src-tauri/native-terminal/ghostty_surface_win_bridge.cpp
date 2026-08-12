@@ -275,30 +275,38 @@ void *WglGetProcAddress(void *userdata, const char *name) {
 }
 
 bool WglMakeCurrent(void *userdata) {
+  Trace("wgl make current: entered");
   auto *wrapper = static_cast<SoloeGhosttySurface *>(userdata);
   if (!wrapper || !wrapper->device_context || !wrapper->render_context)
     return false;
   EnterCriticalSection(&wrapper->context_lock);
+  Trace("wgl make current: lock acquired");
   if (!wrapper->wgl_make_current(wrapper->device_context,
                                  wrapper->render_context)) {
     LeaveCriticalSection(&wrapper->context_lock);
+    Trace("wgl make current: failed");
     return false;
   }
+  Trace("wgl make current: complete");
   return true;
 }
 
 void WglClearCurrent(void *userdata) {
+  Trace("wgl clear current: entered");
   auto *wrapper = static_cast<SoloeGhosttySurface *>(userdata);
   if (!wrapper) return;
   wrapper->wgl_make_current(nullptr, nullptr);
   LeaveCriticalSection(&wrapper->context_lock);
+  Trace("wgl clear current: complete");
 }
 
 void WglSwapBuffers(void *userdata) {
+  Trace("wgl swap buffers: entered");
   auto *wrapper = static_cast<SoloeGhosttySurface *>(userdata);
   if (!wrapper || !wrapper->device_context) return;
   if (!wrapper->wgl_swap_buffers(wrapper->device_context))
     wrapper->renderer_healthy.store(false, std::memory_order_release);
+  Trace("wgl swap buffers: complete");
 }
 
 bool VersionAtLeast43(const char *version) {
