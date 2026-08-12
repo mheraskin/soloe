@@ -197,9 +197,6 @@
     <div
       role="group"
       class={cn('flex items-center gap-1 px-0.5 py-0.5', isDraggingSelf && 'opacity-40')}
-      draggable={onWorktreeDrop ? 'true' : undefined}
-      ondragstart={onHeaderDragStart}
-      ondragend={onHeaderDragEnd}
     >
       <Collapsible.Trigger
         class={cn(
@@ -209,6 +206,9 @@
             : 'text-muted-foreground hover:bg-muted hover:text-foreground'
         )}
         aria-label={`Toggle worktree ${title}`}
+        draggable={onWorktreeDrop ? 'true' : undefined}
+        ondragstart={onHeaderDragStart}
+        ondragend={onHeaderDragEnd}
       >
         {#if kbdIndex !== null}
           <span

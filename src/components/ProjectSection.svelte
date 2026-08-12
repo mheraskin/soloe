@@ -342,9 +342,6 @@
           {...props}
           data-project-id={project.id}
           class={cn('flex items-center gap-1', isDraggingSelf && 'opacity-40')}
-          draggable={onProjectDrop ? 'true' : undefined}
-          ondragstart={onProjectDragStart}
-          ondragend={onProjectDragEnd}
         >
           <span class="relative flex min-w-0 flex-1">
             <Collapsible.Trigger
@@ -353,6 +350,9 @@
                 isActiveProject ? 'bg-accent/60 border-border' : 'hover:bg-muted'
               )}
               aria-label={`Toggle ${project.name} project`}
+              draggable={onProjectDrop ? 'true' : undefined}
+              ondragstart={onProjectDragStart}
+              ondragend={onProjectDragEnd}
             >
               {#if kbdIndex !== null}
                 <span

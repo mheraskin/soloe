@@ -14,6 +14,7 @@ const testTmpDir =
 export default defineConfig({
   plugins: [svelte({ hot: false })],
   resolve: {
+    conditions: ['browser'],
     alias: {
       '@shared': resolve(__dirname, 'shared'),
       '@': resolve(__dirname, 'src'),
