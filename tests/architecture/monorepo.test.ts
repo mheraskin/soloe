@@ -169,8 +169,11 @@ describe("monorepo boundaries", () => {
     expect(config.build.devUrl).toBe("http://127.0.0.1:5174");
     expect(config.build.frontendDist).toBe("../../../out/tauri-renderer");
     expect(html).toContain('src="/main.ts"');
+    expect(html).toContain('href="/app.css"');
     expect(html).not.toContain("tauri-benchmark/main.ts");
     expect(shell).toContain('WebviewUrl::App("tauri.html".into())');
+    expect(shell).toContain('data_directory().join("server.json")');
+    expect(shell).not.toContain('data_directory().join("web.json")');
     expect(shell).toContain("backend_initialization_script(backend.as_ref())");
   });
 });

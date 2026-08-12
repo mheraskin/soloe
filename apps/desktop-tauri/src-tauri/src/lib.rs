@@ -532,7 +532,7 @@ fn backend_record() -> Option<WebServiceRecord> {
             return Some(record);
         }
     }
-    fs::read(data_directory().join("web.json"))
+    fs::read(data_directory().join("server.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<WebServiceRecord>(&bytes).ok())
 }

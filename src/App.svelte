@@ -107,6 +107,9 @@
   let initialLoadState = $state<'loading' | 'ready' | 'error'>('loading');
   let initialLoadError = $state<string | null>(null);
   let isMobile = $state(false);
+  let nativeMacTitlebar = $derived(
+    navigator.platform.startsWith('Mac') || platform.current.platform === 'macos'
+  );
   let mobilePage = $state<MobileWorkspacePage>('workspace');
   let requestedMobileMode = $state<MobileWorkspaceMode>('terminal');
   let mobileMode = $derived<MobileWorkspaceMode>(
@@ -1223,10 +1226,42 @@
       <img
         src={appIconUrl}
         alt=""
-        class={`mr-1.5 size-3.5 flex-none ${platform.current.platform === 'macos' ? 'ml-[76px]' : 'ml-3'}`}
+        class={`mr-1.5 size-3.5 flex-none ${nativeMacTitlebar ? 'ml-[76px]' : 'ml-3'}`}
         draggable="false"
       />
       <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
+      <div data-tauri-drag-region class="flex-1 self-stretch" aria-hidden="true"></div>
+      {#if !nativeMacTitlebar && supportsBackendOperation('window', 'minimize')}
+        <div class="titlebar-actions flex shrink-0 self-stretch" style="-webkit-app-region: no-drag">
+          <Button
+            variant="ghost"
+            class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+            onclick={() => ipc.window.minimize()}
+            aria-label="Minimize"
+            title="Minimize"
+          >
+            <Minus class="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+            onclick={() => ipc.window.toggleMaximize()}
+            aria-label="Maximize"
+            title="Maximize"
+          >
+            <Maximize2 class="size-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            class="h-full w-[42px] rounded-none text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
+            onclick={() => ipc.window.close()}
+            aria-label="Close"
+            title="Close"
+          >
+            <X class="size-3.5" />
+          </Button>
+        </div>
+      {/if}
     </header>
     <main class="flex min-h-0 flex-1 items-center justify-center p-6">
       <div class="flex max-w-md flex-col items-center text-center">
@@ -1258,7 +1293,7 @@
     <img
       src={appIconUrl}
       alt=""
-      class={`mr-1.5 size-3.5 flex-none ${platform.current.platform === 'macos' ? 'ml-[76px]' : 'ml-3'}`}
+      class={`mr-1.5 size-3.5 flex-none ${nativeMacTitlebar ? 'ml-[76px]' : 'ml-3'}`}
       draggable="false"
     />
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
@@ -1540,7 +1575,7 @@
       >
         <Settings class="size-3.5" />
       </Button>
-      {#if platform.current.platform !== 'macos' && supportsBackendOperation('window', 'minimize')}
+      {#if !nativeMacTitlebar && supportsBackendOperation('window', 'minimize')}
         <Button
           variant="ghost"
           class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"

@@ -746,15 +746,24 @@ impl BackendSupervisor {
     }
 
     pub fn open_tauri(&self) -> Result<(), String> {
-        let client_url = self
-            .browser_address()
-            .ok_or_else(|| "Soloe Web Host is not running".to_string())?;
+        let backend = self.backend_for_existing_services();
+        let server = self
+            .read_info("server")
+            .filter(|info| self.service_info_is_running(info, &backend))
+            .ok_or_else(|| "Soloe server is not running".to_string())?;
+        let address = server
+            .address
+            .ok_or_else(|| "Soloe server did not publish an address".to_string())?;
+        let token = server
+            .token
+            .ok_or_else(|| "Soloe server did not publish an access token".to_string())?;
 
         let mut command = Command::new(pnpm_executable());
         command
             .args(["--filter", "@soloe/desktop-tauri", "dev"])
             .current_dir(&self.repository_root)
-            .env("SOLOE_CLIENT_URL", client_url)
+            .env("SOLOE_CLIENT_URL", address)
+            .env("SOLOE_SERVER_TOKEN", token)
             .env("SOLOE_DATA_DIR", &self.data_directory)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

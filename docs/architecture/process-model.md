@@ -65,9 +65,9 @@ its remote preload uses the same HTTP/WebSocket API while retaining only native
 Windows window and embedded-browser controls over local Electron IPC. The
 browser uses the local HTTP/WebSocket API directly. The experimental Tauri
 client loads its bundled Svelte assets so Tauri capabilities remain available,
-then receives the authenticated Web Host/Application Server address as bootstrap
-data. It keeps native window and browser-surface controls in its shell while
-using the same Application Server transport.
+then receives the authenticated Application Server address as bootstrap data.
+It keeps native window and browser-surface controls in its shell while using the
+same Application Server transport.
 Its feature-gated Linux Native Terminal Host may also own a GTK presentation
 surface backed by `libghostty-vt`, while its feature-gated macOS host may own a
 full Ghostty AppKit/Metal surface in manual-I/O mode; bytes and resize intent still cross the same
