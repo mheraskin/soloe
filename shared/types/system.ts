@@ -1,6 +1,6 @@
 import type { RunMode } from './sessions.js';
 
-export type HostPlatform = 'windows' | 'linux';
+export type HostPlatform = 'windows' | 'linux' | 'macos';
 
 export interface HostPlatformInfo {
   platform: HostPlatform;

@@ -105,11 +105,11 @@ describe("monorepo boundaries", () => {
     }
   });
 
-  it("bundles source-only runtime code into the Electron main process", async () => {
+  it("bundles source-only workspace code into the Electron main process", async () => {
     const config = await readFile(path.join(root, "electron.vite.config.ts"), "utf8");
 
-    expect(config).toContain(
-      "externalizeDepsPlugin({ exclude: ['@soloe/runtime'] })",
+    expect(config).toMatch(
+      /exclude:\s*\[\s*'@soloe\/domain',\s*'@soloe\/protocol',\s*'@soloe\/runtime'\s*\]/,
     );
   });
 

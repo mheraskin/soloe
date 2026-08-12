@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseToml } from 'smol-toml';
 import {
   HookInstaller,
+  defaultLocalHost,
   mergeClaudeHooks,
   removeSoloeFromClaude,
   mergeCodexHooks,
@@ -39,6 +40,14 @@ describe('HookInstaller', () => {
 
   afterEach(() => {
     rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it('exposes a native macOS integration host for darwin', () => {
+    expect(defaultLocalHost('darwin')).toMatchObject({
+      kind: 'macos',
+      label: 'macOS',
+      available: true
+    });
   });
 
   it('does not expose backend home paths in public status', async () => {

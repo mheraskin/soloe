@@ -17,7 +17,18 @@ describe('host platform', () => {
     });
   });
 
+  it('maps darwin to only the native macOS runtime', () => {
+    expect(hostPlatform('darwin')).toBe('macos');
+    expect(nativeRunMode('darwin')).toBe('macos');
+    expect(platformInfo('darwin')).toEqual({
+      platform: 'macos',
+      defaultRunMode: 'macos',
+      availableRunModes: ['macos'],
+      supportsWsl: false
+    });
+  });
+
   it('fails explicitly on unbuilt host platforms', () => {
-    expect(() => hostPlatform('darwin')).toThrow(/does not support darwin/);
+    expect(() => hostPlatform('freebsd')).toThrow(/does not support freebsd/);
   });
 });

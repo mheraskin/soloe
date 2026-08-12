@@ -524,11 +524,12 @@ export interface WindowApi {
   close(): Promise<IpcResult<true>>;
 }
 
-export type AgentIntegrationHostKind = 'windows' | 'linux' | 'wsl';
+export type AgentIntegrationHostKind = 'windows' | 'linux' | 'macos' | 'wsl';
 
 export type AgentIntegrationHostKey =
   | { kind: 'windows' }
   | { kind: 'linux' }
+  | { kind: 'macos' }
   | { kind: 'wsl'; distro: string };
 
 export interface AgentIntegrationHost {

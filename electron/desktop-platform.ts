@@ -1,0 +1,52 @@
+import type { BrowserWindowConstructorOptions, MenuItemConstructorOptions } from 'electron';
+
+export type DesktopWindowPolicy = Pick<
+  BrowserWindowConstructorOptions,
+  'autoHideMenuBar' | 'frame' | 'titleBarStyle' | 'trafficLightPosition'
+>;
+
+export function desktopWindowPolicy(
+  platform: NodeJS.Platform = process.platform
+): DesktopWindowPolicy {
+  if (platform === 'darwin') {
+    return {
+      autoHideMenuBar: false,
+      frame: true,
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 10, y: 7 }
+    };
+  }
+  return { autoHideMenuBar: true, frame: false };
+}
+
+export function shouldQuitAfterLastWindow(
+  platform: NodeJS.Platform = process.platform,
+  supervised = false
+): boolean {
+  return platform !== 'darwin' || supervised;
+}
+
+export function shouldPreventWindowCloseShortcut(
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  return platform !== 'darwin';
+}
+
+export function shouldShowCustomWindowControls(
+  platform: NodeJS.Platform | 'macos' = process.platform
+): boolean {
+  return platform !== 'darwin' && platform !== 'macos';
+}
+
+export function applicationMenuTemplate(
+  platform: NodeJS.Platform = process.platform
+): MenuItemConstructorOptions[] {
+  if (platform !== 'darwin') return [];
+  return [
+    { role: 'appMenu' },
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' }
+  ];
+}

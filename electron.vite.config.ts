@@ -5,7 +5,11 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@soloe/runtime'] })],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ['@soloe/domain', '@soloe/protocol', '@soloe/runtime']
+      })
+    ],
     resolve: {
       alias: {
         '@shared': resolve(__dirname, 'shared')
@@ -14,7 +18,11 @@ export default defineConfig({
     build: {
       outDir: resolve(__dirname, 'out/main'),
       lib: {
-        entry: resolve(__dirname, 'electron/main.ts'),
+        entry: {
+          main: resolve(__dirname, 'electron/main.ts'),
+          'runtime-host': resolve(__dirname, 'electron/runtime-host.ts'),
+          'server-host': resolve(__dirname, 'electron/server-host.ts')
+        },
         formats: ['cjs']
       },
       rollupOptions: {

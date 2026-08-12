@@ -2,7 +2,8 @@
 
 Soloe is pre-release software. The first public alpha should not be published until the blocking items in the [launch checklist](./public-launch-checklist.md) are resolved or explicitly accepted.
 
-- macOS is not supported.
+- Intel macOS has been locally validated; the native Apple-silicon CI package exists, but a clean-machine smoke on physical Apple-silicon hardware remains pending.
+- macOS installs as one Soloe application with an embedded on-demand UI; local development DMGs are ad-hoc signed but not notarized and can be rejected by Gatekeeper. Public artifacts require the release workflow's Apple signing credentials.
 - Windows and Linux installers have not yet completed the clean-machine validation matrix.
 - Early Windows builds will be unsigned and may trigger SmartScreen.
 - The legacy Electron MCP path uses a broader bind for WSL reachability; its effective interface and firewall exposure still need validation.

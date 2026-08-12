@@ -1219,7 +1219,12 @@
       class="app-error-titlebar flex h-7 shrink-0 items-center border-b border-border bg-card select-none"
       style="-webkit-app-region: drag"
     >
-      <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
+      <img
+        src={appIconUrl}
+        alt=""
+        class={`mr-1.5 size-3.5 flex-none ${platform.current.platform === 'macos' ? 'ml-[76px]' : 'ml-3'}`}
+        draggable="false"
+      />
       <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
     </header>
     <main class="flex min-h-0 flex-1 items-center justify-center p-6">
@@ -1248,7 +1253,12 @@
     class="app-titlebar flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
     style="-webkit-app-region: drag"
   >
-    <img src={appIconUrl} alt="" class="mr-1.5 ml-3 size-3.5 flex-none" draggable="false" />
+    <img
+      src={appIconUrl}
+      alt=""
+      class={`mr-1.5 size-3.5 flex-none ${platform.current.platform === 'macos' ? 'ml-[76px]' : 'ml-3'}`}
+      draggable="false"
+    />
     <span class="text-[11px] tracking-wider text-muted-foreground">Soloe</span>
     {#if sidebar.hidden}
       <div class="ml-1 flex self-stretch" style="-webkit-app-region: no-drag">
@@ -1528,7 +1538,7 @@
       >
         <Settings class="size-3.5" />
       </Button>
-      {#if supportsBackendOperation('window', 'minimize')}
+      {#if platform.current.platform !== 'macos' && supportsBackendOperation('window', 'minimize')}
         <Button
           variant="ghost"
           class="mobile-window-control h-full w-[42px] rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Soloe Service",
+  "productName": "Soloe",
   "version": "0.1.0",
-  "identifier": "com.soloe.service",
+  "identifier": "com.soloe.desktop",
   "app": {
     "windows": [],
     "security": {
@@ -15,6 +15,12 @@
     "icon": [
       "../../../build/icon.png",
       "../../../build/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "files": {
+        "Resources/Soloe.app": "../../../release/embedded/mac/Soloe.app"
+      }
+    }
   }
 }

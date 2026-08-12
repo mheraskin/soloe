@@ -10,7 +10,11 @@ Confirm `wsl.exe --status` succeeds, the selected distribution appears in `wsl.e
 
 ## An agent command is not found
 
-Soloe uses the `PATH` of the selected Windows, Linux, or WSL environment. A CLI installed on Windows is not automatically available inside WSL, and the reverse is also true.
+Soloe uses the `PATH` of the selected macOS, Windows, Linux, or WSL environment. A CLI installed on Windows is not automatically available inside WSL, and the reverse is also true. On macOS, verify the command is visible from the configured login shell (`$SHELL -lic 'command -v claude; command -v codex'`); GUI applications do not inherit an interactive terminal's environment directly.
+
+## macOS blocks a local build
+
+Developer-built applications may be unsigned or development-signed and are not equivalent to a notarized release. Prefer a signed release artifact. For a local build, inspect it with `codesign --verify --deep --strict --verbose=2 <app>` and do not bypass Gatekeeper for an application whose source or signature you do not trust.
 
 ## A repository path fails
 

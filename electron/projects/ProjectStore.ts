@@ -30,7 +30,7 @@ interface StorageShape {
 }
 
 const STORAGE_VERSION = 2;
-const VALID_RUN_MODES = new Set(['windows', 'linux', 'wsl']);
+const VALID_RUN_MODES = new Set(['windows', 'linux', 'macos', 'wsl']);
 
 export interface ProjectStoreOptions {
   gitBinary?: string;
@@ -208,7 +208,9 @@ export class ProjectStore {
   ): Promise<ProjectSuggestResult> {
     await this.ensureLoaded();
     const requested: ProjectSuggestOptions = options ?? {
-      scope: this.options.platform === 'linux' ? 'linux' : 'windows'
+      scope: this.options.platform === 'linux' || this.options.platform === 'macos'
+        ? this.options.platform
+        : 'windows'
     };
     const nativeHome = this.options.homeDir ?? os.homedir();
     const parsed = parseProjectQuery(query, requested, nativeHome);
@@ -347,7 +349,7 @@ export class ProjectStore {
 
   private findByPath(repoPath: string): ProjectId | null {
     if (!this.cache) return null;
-    const windowsHost = this.options.platform !== 'linux';
+    const windowsHost = this.options.platform === undefined || this.options.platform === 'windows';
     const norm = normalizePath(repoPath, windowsHost);
     for (const project of this.cache.values()) {
       if (normalizePath(project.path, windowsHost) === norm) return project.id;
@@ -539,6 +541,10 @@ function parseProjectQuery(
     const remainder = trimmed.slice(6).replace(/^[\s]+/, '');
     return buildNativeParsed(remainder, remainder, 'linux', nativeHome);
   }
+  if (trimmed.toLowerCase().startsWith('macos:')) {
+    const remainder = trimmed.slice(6).replace(/^[\s]+/, '');
+    return buildNativeParsed(remainder, remainder, 'macos', nativeHome);
+  }
   const uncMatch = trimmed.match(WSL_UNC_RE);
   if (uncMatch) {
     const distro = uncMatch[1] ?? 'Ubuntu';
@@ -552,7 +558,7 @@ function parseProjectQuery(
   return buildNativeParsed(
     trimmed,
     trimmed,
-    options.scope === 'linux' ? 'linux' : 'windows',
+    options.scope,
     nativeHome
   );
 }
@@ -696,7 +702,7 @@ function pathScope(
   platform: SupportedHostPlatform = 'windows'
 ): ProjectSearchScope {
   if (project.defaultRunMode) return project.defaultRunMode;
-  if (platform === 'linux') return 'linux';
+  if (platform === 'linux' || platform === 'macos') return platform;
   if (project.path.startsWith('/')) return 'wsl';
   return 'windows';
 }

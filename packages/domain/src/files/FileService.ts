@@ -450,7 +450,7 @@ function fileIndexScope(
 ): FileIndexScope {
   const cwd = request.cwd?.trim();
   if (!cwd) throw new DomainError("invalid_worktree", "cwd is required");
-  if (!["linux", "windows", "wsl"].includes(request.runMode)) {
+  if (!["linux", "macos", "windows", "wsl"].includes(request.runMode)) {
     throw new DomainError("invalid_worktree", "runMode is invalid");
   }
   if (request.runMode === "wsl" && !request.wslDistro?.trim() && process.platform === "win32") {

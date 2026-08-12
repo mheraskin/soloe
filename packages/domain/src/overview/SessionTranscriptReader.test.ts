@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +28,7 @@ describe("SessionTranscriptReader authorization", () => {
   it("reads an authorized WSL transcript natively on a WSL backend", async () => {
     const home = await fixtureHome();
     const transcript = await claudeTranscript(home, "/repo", "allowed.jsonl");
+    const canonicalTranscript = await realpath(transcript);
     const reader = new SessionTranscriptReader({
       homeDir: home,
       useWslHostBridge: false,
@@ -37,7 +45,7 @@ describe("SessionTranscriptReader authorization", () => {
         provider: "claude_code",
         sessionId: "allowed",
         displayName: "Allowed",
-        sessionFile: transcript,
+        sessionFile: canonicalTranscript,
       }),
     ]);
   });

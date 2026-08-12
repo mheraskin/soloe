@@ -7,6 +7,7 @@
   import { platform } from '../stores/platform.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { validateDraft } from '../lib/sessions-helpers';
+  import { platformRunModeOptions, runModePathPlaceholder } from '../lib/platform-ui';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -62,6 +63,7 @@
   }
 
   let runModeLabel = $derived(labelForRunMode(modal.draft.runMode));
+  let runModeOptions = $derived(platformRunModeOptions(platform.current));
 </script>
 
 <Dialog.Root open={modal.open} {onOpenChange}>
@@ -94,7 +96,7 @@
           id="ses-cwd"
           type="text"
           required
-          placeholder={modal.draft.runMode === 'windows' ? 'C:\\Users\\you\\project' : '/home/you/project'}
+          placeholder={runModePathPlaceholder(modal.draft.runMode)}
           value={modal.draft.cwd}
           oninput={(e) => setBase('cwd', (e.currentTarget as HTMLInputElement).value)}
         />
@@ -110,12 +112,9 @@
           >
             <Select.Trigger class="w-full">{runModeLabel}</Select.Trigger>
             <Select.Content>
-              {#if platform.current.platform === 'linux'}
-                <Select.Item value="linux" label="Linux">Linux</Select.Item>
-              {:else}
-                <Select.Item value="windows" label="Windows">Windows</Select.Item>
-                <Select.Item value="wsl" label="WSL">WSL</Select.Item>
-              {/if}
+              {#each runModeOptions as option (option.value)}
+                <Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
+              {/each}
             </Select.Content>
           </Select.Root>
         </div>

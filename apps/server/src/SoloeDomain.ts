@@ -2027,7 +2027,10 @@ function validateIntegrationRequest(value: unknown): AgentIntegrationHostKey {
   const host = request.host as Record<string, unknown>;
   if (
     Object.keys(host).some((key) => key !== "kind" && key !== "distro") ||
-    (host.kind !== "windows" && host.kind !== "linux" && host.kind !== "wsl")
+    (host.kind !== "windows" &&
+      host.kind !== "linux" &&
+      host.kind !== "macos" &&
+      host.kind !== "wsl")
   ) {
     throw invalidIntegrationRequest("Agent integration host is invalid");
   }
@@ -2126,6 +2129,7 @@ function validateFileOpenRequest(value: unknown): FileOpenRequest {
     typeof request.cwd !== "string" ||
     (request.runMode !== "linux" &&
       request.runMode !== "windows" &&
+      request.runMode !== "macos" &&
       request.runMode !== "wsl") ||
     (request.wslDistro !== undefined &&
       typeof request.wslDistro !== "string")
@@ -2408,11 +2412,12 @@ function validateOverviewRequest(
     runMode !== undefined &&
     runMode !== "windows" &&
     runMode !== "linux" &&
+    runMode !== "macos" &&
     runMode !== "wsl"
   ) {
     throw new RpcError(
       "invalid_overview_request",
-      "runMode must be windows, linux, or wsl",
+      "runMode must be windows, linux, macos, or wsl",
     );
   }
   const wslDistro =
@@ -2720,8 +2725,13 @@ function sameLogicalPath(left: string, right: string): boolean {
     left.startsWith("\\\\") ||
     right.startsWith("\\\\");
   const pathApi = windowsPath ? path.win32 : path.posix;
-  const normalizedLeft = pathApi.normalize(left).replace(/[\\/]+$/u, "");
-  const normalizedRight = pathApi.normalize(right).replace(/[\\/]+$/u, "");
+  const normalize = (value: string): string => {
+    const normalized = pathApi.normalize(value).replace(/[\\/]+$/u, "");
+    if (windowsPath || process.platform !== "darwin") return normalized;
+    return normalized.replace(/^\/private(?=\/(?:etc|tmp|var)(?:\/|$))/u, "");
+  };
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
   return windowsPath
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
@@ -2770,6 +2780,7 @@ function validateFeatureRequest(value: unknown): Record<string, unknown> & {
   if (
     request.runMode !== "windows" &&
     request.runMode !== "linux" &&
+    request.runMode !== "macos" &&
     request.runMode !== "wsl"
   ) {
     throw new RpcError("invalid_feature_request", "runMode is invalid");
@@ -3014,6 +3025,7 @@ function validateGitContext(request: Record<string, unknown>): void {
     request.runMode !== undefined &&
     request.runMode !== "windows" &&
     request.runMode !== "linux" &&
+    request.runMode !== "macos" &&
     request.runMode !== "wsl"
   ) {
     throw invalidGitRequest("runMode is invalid");

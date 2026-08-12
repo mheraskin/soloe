@@ -1296,6 +1296,8 @@ describe("SoloeDomain", () => {
     git(worktree, ["branch", "feature/checkout"]);
     git(worktree, ["remote", "add", "origin", remote]);
     const initial = git(worktree, ["rev-parse", "HEAD"]);
+    const canonicalWorktree = await realpath(worktree);
+    const canonicalCreatedWorktree = path.join(await realpath(directory), "worktree-created");
 
     const runtime = {
       start: vi.fn(),
@@ -1331,7 +1333,7 @@ describe("SoloeDomain", () => {
         }),
       ).resolves.toEqual(
         expect.objectContaining({
-          repoPath: worktree,
+          repoPath: canonicalWorktree,
           branch: "main",
           dirty: false,
         }),
@@ -1343,7 +1345,7 @@ describe("SoloeDomain", () => {
             method,
             args: [{ repoPath: worktree, force: true, ...scope }],
           }),
-        ).resolves.toEqual(expect.objectContaining({ repoPath: worktree, isRepo: true }));
+        ).resolves.toEqual(expect.objectContaining({ repoPath: canonicalWorktree, isRepo: true }));
       }
       await expect(
         domain.invoke({
@@ -1352,7 +1354,7 @@ describe("SoloeDomain", () => {
           args: [{ repoPath: worktree, ...scope }],
         }),
       ).resolves.toEqual([
-        expect.objectContaining({ path: worktree, branch: "main", isMain: true }),
+        expect.objectContaining({ path: canonicalWorktree, branch: "main", isMain: true }),
       ]);
       await expect(
         domain.invoke({
@@ -1616,7 +1618,7 @@ describe("SoloeDomain", () => {
         }),
       ).resolves.toEqual(
         expect.objectContaining({
-          path: createdWorktree,
+          path: canonicalCreatedWorktree,
           branch: "feature/server-worktree",
         }),
       );
@@ -1629,7 +1631,7 @@ describe("SoloeDomain", () => {
         }),
       ).resolves.toEqual(
         expect.objectContaining({
-          repoPath: createdWorktree,
+          repoPath: canonicalCreatedWorktree,
           branch: "feature/server-worktree",
           dirty: true,
           untracked: 1,
@@ -1709,7 +1711,7 @@ describe("SoloeDomain", () => {
           expect(published).toContainEqual({
             event: "git.change",
             payload: {
-              repoPath: worktree,
+              repoPath: canonicalWorktree,
               runMode: "wsl",
               wslDistro: "Ubuntu-Test",
             },

@@ -2,9 +2,9 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::process::Child;
-use std::sync::Arc;
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -129,8 +129,16 @@ impl NativeProcessOwner {
         self.inner.assign(child)
     }
 
+    pub fn prepare_command(&self, command: &mut Command) {
+        self.inner.prepare_command(command);
+    }
+
     pub fn owns_pid(&self, pid: u32) -> bool {
         self.inner.owns_pid(pid)
+    }
+
+    pub fn release(&self, pid: u32) -> Result<(), String> {
+        self.inner.release(pid)
     }
 
     pub fn terminate_all(&self) -> Result<(), String> {
@@ -138,23 +146,132 @@ impl NativeProcessOwner {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(unix)]
+struct NativeProcessOwnerInner {
+    process_groups: Mutex<Vec<u32>>,
+}
+
+#[cfg(unix)]
+impl NativeProcessOwnerInner {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            process_groups: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn prepare_command(&self, command: &mut Command) {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    fn assign(&self, child: &Child) -> Result<(), String> {
+        let pid = child.id();
+        let process_group = unsafe { libc::getpgid(pid as libc::pid_t) };
+        if process_group != pid as libc::pid_t {
+            return Err(format!(
+                "PID {pid} was not started as an isolated Soloe process group"
+            ));
+        }
+        let mut groups = self
+            .process_groups
+            .lock()
+            .map_err(|_| "native process-group lock poisoned".to_string())?;
+        if !groups.contains(&pid) {
+            groups.push(pid);
+        }
+        Ok(())
+    }
+
+    fn owns_pid(&self, pid: u32) -> bool {
+        let process_group = unsafe { libc::getpgid(pid as libc::pid_t) };
+        if process_group <= 0 {
+            return false;
+        }
+        self.process_groups
+            .lock()
+            .is_ok_and(|groups| groups.contains(&(process_group as u32)))
+    }
+
+    fn release(&self, pid: u32) -> Result<(), String> {
+        let mut groups = self
+            .process_groups
+            .lock()
+            .map_err(|_| "native process-group lock poisoned".to_string())?;
+        groups.retain(|group| *group != pid);
+        Ok(())
+    }
+
+    fn terminate_all(&self) -> Result<(), String> {
+        let groups = self
+            .process_groups
+            .lock()
+            .map_err(|_| "native process-group lock poisoned".to_string())?
+            .clone();
+        let mut failures = Vec::new();
+        for group in &groups {
+            if !unix_signal_process_group(*group, libc::SIGTERM)
+                && unix_process_group_has_live_process(*group)
+            {
+                failures.push(format!("failed to terminate process group {group}"));
+            }
+        }
+        thread::sleep(Duration::from_millis(150));
+        for group in &groups {
+            if unix_process_group_has_live_process(*group)
+                && !unix_signal_process_group(*group, libc::SIGKILL)
+            {
+                failures.push(format!("failed to kill process group {group}"));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn unix_signal_process_group(process_group: u32, signal: libc::c_int) -> bool {
+    unsafe { libc::kill(-(process_group as libc::pid_t), signal) == 0 }
+}
+
+#[cfg(unix)]
+fn unix_process_group_has_live_process(process_group: u32) -> bool {
+    Command::new("ps")
+        .args(["-axo", "pgid=,stat="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| {
+            String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                let mut columns = line.split_whitespace();
+                columns.next().and_then(|value| value.parse::<u32>().ok()) == Some(process_group)
+                    && columns
+                        .next()
+                        .is_some_and(|status| !status.starts_with('Z'))
+            })
+        })
+}
+
+#[cfg(not(any(unix, target_os = "windows")))]
 struct NativeProcessOwnerInner;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(unix, target_os = "windows")))]
 impl NativeProcessOwnerInner {
     fn new() -> Result<Self, String> {
         Ok(Self)
     }
-
+    fn prepare_command(&self, _command: &mut Command) {}
     fn assign(&self, _child: &Child) -> Result<(), String> {
         Ok(())
     }
-
     fn owns_pid(&self, _pid: u32) -> bool {
-        true
+        false
     }
-
+    fn release(&self, _pid: u32) -> Result<(), String> {
+        Ok(())
+    }
     fn terminate_all(&self) -> Result<(), String> {
         Ok(())
     }
@@ -223,6 +340,8 @@ mod windows_job {
             Ok(())
         }
 
+        pub(super) fn prepare_command(&self, _command: &mut Command) {}
+
         pub(super) fn owns_pid(&self, pid: u32) -> bool {
             let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
             if process.is_null() {
@@ -232,6 +351,10 @@ mod windows_job {
             let checked = unsafe { IsProcessInJob(process, self.handle, &mut result) };
             unsafe { CloseHandle(process) };
             checked != 0 && result != 0
+        }
+
+        pub(super) fn release(&self, _pid: u32) -> Result<(), String> {
+            Ok(())
         }
 
         pub(super) fn terminate_all(&self) -> Result<(), String> {
@@ -270,6 +393,15 @@ mod tests {
     #[cfg(target_os = "windows")]
     use std::time::{Duration, Instant};
 
+    #[cfg(unix)]
+    use std::process::{Command, Stdio};
+
+    #[cfg(unix)]
+    use std::thread;
+
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
+
     #[test]
     fn a_second_tray_cannot_acquire_the_same_lock() {
         let directory =
@@ -298,6 +430,51 @@ mod tests {
         drop(lease);
         assert!(!directory.join("tray-lease.json").exists());
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_all_ends_an_owned_unix_process_group() {
+        let owner = NativeProcessOwner::new().unwrap();
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30 & wait"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        owner.prepare_command(&mut command);
+        let mut child = command.spawn().unwrap();
+        owner.assign(&child).unwrap();
+        assert!(owner.owns_pid(child.id()));
+
+        owner.terminate_all().unwrap();
+        let _ = child.wait();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while owner.owns_pid(child.id()) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert!(!owner.owns_pid(child.id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn released_unix_process_group_is_no_longer_owned() {
+        let owner = NativeProcessOwner::new().unwrap();
+        let mut command = Command::new("sleep");
+        command
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        owner.prepare_command(&mut command);
+        let mut child = command.spawn().unwrap();
+        owner.assign(&child).unwrap();
+        assert!(owner.owns_pid(child.id()));
+
+        owner.release(child.id()).unwrap();
+        assert!(!owner.owns_pid(child.id()));
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 
     #[cfg(target_os = "windows")]

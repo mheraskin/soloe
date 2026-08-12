@@ -487,8 +487,9 @@ export class GitService {
 
     this.invalidate(info);
     const worktrees = await this.listWorktrees(info.repoPath, true, context);
+    const comparableTargetPath = await fs.realpath(targetPath).catch(() => targetPath);
     const created = worktrees.find((worktree) =>
-      normalizeComparablePath(worktree.path) === normalizeComparablePath(targetPath)
+      normalizeComparablePath(worktree.path) === normalizeComparablePath(comparableTargetPath)
     );
     if (!created) throw new Error('Worktree was created but could not be rediscovered');
     return created;

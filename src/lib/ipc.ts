@@ -6,7 +6,13 @@ import type {
   ObserverEvent,
   SendWorkerPromptRequest
 } from '@shared/types/agents.js';
-import type { Session, SessionDraft, SessionId, SessionUpdate } from '@shared/types/sessions.js';
+import type {
+  RunMode,
+  Session,
+  SessionDraft,
+  SessionId,
+  SessionUpdate
+} from '@shared/types/sessions.js';
 import type { Settings, SettingsUpdate } from '@shared/types/settings.js';
 import type { SystemUsageRequest } from '@shared/types/system.js';
 import type {
@@ -401,12 +407,12 @@ export const backend = {
       unwrap(await c.features.setIssueStatus(toIpcPayload(request))),
     subscribe: async (request: {
       cwd: string;
-      runMode: 'windows' | 'linux' | 'wsl';
+      runMode: RunMode;
       wslDistro?: string;
     }) => unwrap(await c.features.subscribe(toIpcPayload(request))),
     unsubscribe: async (request: {
       cwd: string;
-      runMode: 'windows' | 'linux' | 'wsl';
+      runMode: RunMode;
       wslDistro?: string;
     }) => unwrap(await c.features.unsubscribe(toIpcPayload(request))),
     onChange: (cb: (event: FeatureChangeEvent) => void) => c.features.onChange(cb)

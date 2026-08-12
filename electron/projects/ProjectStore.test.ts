@@ -46,7 +46,7 @@ describe('ProjectStore — create/list', () => {
 });
 
 describe('ProjectStore — open', () => {
-  it.skipIf(process.platform === 'win32')(
+  it.skipIf(process.platform !== 'linux')(
     'uses native Linux project scope and case-sensitive paths',
     async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-linux-open-'));
@@ -76,6 +76,21 @@ describe('ProjectStore — open', () => {
     );
     await expect(store.create(draft({ defaultRunMode: 'wsl', defaultWslDistro: 'Ubuntu' })))
       .rejects.toThrow(/not available on linux/);
+  });
+
+  it('creates, reloads, and suggests native macOS projects on the macOS build', async () => {
+    const store = new ProjectStore(storePath, { platform: 'macos', homeDir: tmpDir });
+    const created = await store.create(
+      draft({ path: tmpDir, defaultRunMode: 'macos' })
+    );
+
+    expect((await store.suggestPaths('', undefined, 20)).scope).toBe('macos');
+    await expect(
+      new ProjectStore(storePath, { platform: 'macos' }).get(created.id)
+    ).resolves.toMatchObject({ path: tmpDir, defaultRunMode: 'macos' });
+    await expect(
+      store.create(draft({ defaultRunMode: 'linux' }))
+    ).rejects.toThrow(/not available on macos/);
   });
 
   it('infers the project name from the opened path', async () => {
@@ -396,7 +411,7 @@ describe.runIf(hasGit)('ProjectStore — detectFromPath', () => {
 });
 
 describe('ProjectStore — suggestPaths', () => {
-  it.skipIf(process.platform === 'win32')(
+  it.skipIf(process.platform !== 'linux')(
     'discovers native Linux directories with case-sensitive identities',
     async () => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-linux-suggest-'));

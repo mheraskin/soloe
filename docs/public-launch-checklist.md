@@ -174,7 +174,7 @@ Still requiring review or documentation:
 - [ ] Feature Lab with GitHub-tracker, local-Markdown, partial, and absent setup artifacts.
 - [ ] Tailscale Serve disabled, enabled, and allowlisted configurations.
 
-macOS stays on the roadmap rather than in the launch matrix until it can be built, tested, and supported.
+Intel macOS is now in the launch matrix. Native arm64 packaging is configured and tested in CI; the clean-machine physical Apple-silicon smoke remains an explicit release gate.
 
 ## 8. Feature Lab and Matt Pocock skills
 
@@ -275,7 +275,8 @@ Not required for the first public alpha:
 
 - [ ] Auto-update.
 - [ ] Code signing.
-- [ ] macOS support.
+- [x] Intel macOS support and native x64/arm64 packaging.
+- [ ] Physical Apple-silicon clean-machine smoke.
 - [ ] A completed visual canvas.
 - [ ] A completed Kanban or Wayfinder integration.
 - [ ] AI summarization of 100-commit histories.

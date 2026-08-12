@@ -112,6 +112,18 @@ describe('DiffCommentsStore review sections', () => {
     expect(reloaded.forWorktree(debian)).toEqual([]);
   });
 
+  it('preserves comments for a native macOS Worktree after persistence', () => {
+    const scope = worktreeScope('/Users/me/Soloe', { runMode: 'macos' });
+    const first = new DiffCommentsStore();
+    first.add(anchoredComment('macos-persisted', scope, 'wt', 'macOS'));
+
+    const reloaded = new DiffCommentsStore();
+
+    expect(reloaded.forWorktree(scope).map((comment) => comment.id)).toEqual([
+      'macos-persisted'
+    ]);
+  });
+
   it('ignores malformed scoped persistence instead of collapsing runtime identity', () => {
     localStorage.setItem(
       'soloe.diffComments.v2',

@@ -16,11 +16,11 @@ import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
 const VALID_DIFF_FONT_SIZES = new Set([11, 12, 13, 14, 15, 16]);
-const VALID_RUN_MODES = new Set(['windows', 'linux', 'wsl']);
+const VALID_RUN_MODES = new Set(['windows', 'linux', 'macos', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
 const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
-const VALID_BACKEND_PLACEMENTS = new Set(['windows', 'wsl']);
+const VALID_BACKEND_PLACEMENTS = new Set(['windows', 'macos', 'wsl']);
 const VALID_SHIFT_NUMBER_NAVIGATION_TARGETS = new Set(['worktree', 'project']);
 const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration', 'worktreeOverview'];
 
@@ -35,7 +35,7 @@ export class SettingsStore {
     private readonly filePath: string,
     private readonly platform: SupportedHostPlatform = 'windows'
   ) {
-    this.defaults = defaultSettingsForRunMode(platform === 'linux' ? 'linux' : 'wsl');
+    this.defaults = defaultSettingsForRunMode(platform === 'windows' ? 'wsl' : platform);
   }
 
   async init(): Promise<void> {
@@ -221,7 +221,7 @@ function parseSettings(
       placement: pickEnum(
         backend['placement'],
         VALID_BACKEND_PLACEMENTS,
-        DEFAULT_SETTINGS.backend.placement
+        defaultsForHost.backend.placement
       ) as Settings['backend']['placement'],
       wslDistro: pickNonEmptyString(
         backend['wslDistro'],
