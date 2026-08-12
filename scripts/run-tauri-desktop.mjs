@@ -105,7 +105,8 @@ function isAvailable(command) {
 }
 
 function run(command, args, options) {
-  const result = spawnSync(command, args, {
+  const invocation = windowsCommandInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, {
     ...options,
     stdio: 'inherit'
   });
@@ -113,4 +114,14 @@ function run(command, args, options) {
   if (result.status !== 0) {
     throw new Error(`${command} exited with status ${result.status ?? 'unknown'}`);
   }
+}
+
+function windowsCommandInvocation(command, args) {
+  if (process.platform !== 'win32' || !command.toLowerCase().endsWith('.cmd')) {
+    return { command, args };
+  }
+  return {
+    command: process.env.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', command, ...args]
+  };
 }

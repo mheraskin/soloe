@@ -201,6 +201,17 @@ describe("monorepo boundaries", () => {
     expect(patch).toContain("builtin.object_format != .coff");
     expect(patch).not.toContain("git@github.com");
   });
+
+  it("launches Windows PNPM command shims through the command interpreter", async () => {
+    const launcher = await readFile(
+      path.join(root, "scripts/run-tauri-desktop.mjs"),
+      "utf8",
+    );
+
+    expect(launcher).toContain("windowsCommandInvocation(command, args)");
+    expect(launcher).toContain("process.env.ComSpec || 'cmd.exe'");
+    expect(launcher).toContain("args: ['/d', '/s', '/c', command, ...args]");
+  });
 });
 
 async function manifest(relativePath: string): Promise<PackageManifest> {
