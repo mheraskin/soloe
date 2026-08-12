@@ -29,6 +29,8 @@ constexpr wchar_t kWindowClass[] = L"SoloeGhosttyNativeTerminalWindow";
 constexpr UINT kWakeupMessage = WM_APP + 0x317;
 constexpr UINT kSelectionChangedMessage = WM_APP + 0x318;
 constexpr UINT kRenderMessage = WM_APP + 0x319;
+constexpr UINT kOutputMessage = WM_APP + 0x31a;
+constexpr size_t kOutputChunkBytes = 64 * 1024;
 constexpr UINT kCopyCommand = 1;
 constexpr UINT kPasteCommand = 2;
 constexpr int kWglContextMajorVersionArb = 0x2091;
@@ -110,6 +112,9 @@ struct SoloeGhosttySurface {
   bool right_captured = false;
   wchar_t pending_high_surrogate = 0;
   int modifier_latch = GHOSTTY_MODS_NONE;
+  std::string pending_output;
+  bool output_message_pending = false;
+  bool has_processed_output = false;
   void *event_userdata = nullptr;
   soloe_ghostty_bytes_cb input_cb = nullptr;
   soloe_ghostty_text_cb selection_cb = nullptr;
@@ -549,6 +554,39 @@ void IoWrite(void *userdata, const char *bytes, uintptr_t length) {
                       reinterpret_cast<const uint8_t *>(bytes), length);
 }
 
+bool QueueOutput(SoloeGhosttySurface *wrapper,
+                 const uint8_t *bytes,
+                 size_t length) {
+  if (!wrapper || !wrapper->surface) return false;
+  if (bytes && length > 0)
+    wrapper->pending_output.append(reinterpret_cast<const char *>(bytes),
+                                   length);
+  if (wrapper->pending_output.empty() || wrapper->output_message_pending)
+    return true;
+  wrapper->output_message_pending =
+      PostMessageW(wrapper->child, kOutputMessage, 0, 0) != 0;
+  return wrapper->output_message_pending;
+}
+
+void ProcessPendingOutput(SoloeGhosttySurface *wrapper) {
+  if (!wrapper || !wrapper->surface) return;
+  if (wrapper->app) ghostty_app_tick(wrapper->app);
+  const size_t length =
+      std::min(kOutputChunkBytes, wrapper->pending_output.size());
+  if (length > 0) {
+    ghostty_surface_process_output(wrapper->surface,
+                                  wrapper->pending_output.data(), length);
+    wrapper->pending_output.erase(0, length);
+    wrapper->has_processed_output = true;
+  }
+  if (!wrapper->pending_output.empty()) {
+    wrapper->output_message_pending =
+        PostMessageW(wrapper->child, kOutputMessage, 0, 0) != 0;
+  } else {
+    wrapper->output_message_pending = false;
+  }
+}
+
 bool EnsureGhosttyInitialized() {
   static std::once_flag once;
   static int result = -1;
@@ -744,6 +782,11 @@ LRESULT CALLBACK TerminalWindowProc(HWND window,
       if (!wrapper->closing.load(std::memory_order_acquire) && wrapper->surface)
         ghostty_surface_refresh(wrapper->surface);
       Trace("render message: complete");
+      return 0;
+    case kOutputMessage:
+      TraceValue("output message: entered", wrapper->pending_output.size());
+      ProcessPendingOutput(wrapper);
+      TraceValue("output message: complete", wrapper->pending_output.size());
       return 0;
     case WM_SIZE:
     case WM_DPICHANGED_AFTERPARENT:
@@ -1025,12 +1068,9 @@ bool soloe_ghostty_surface_write(SoloeGhosttySurface *wrapper,
                                  const uint8_t *bytes,
                                  size_t length) {
   TraceValue("surface write: entered", length);
-  if (!wrapper || !wrapper->surface) return false;
-  if (bytes && length > 0)
-    ghostty_surface_process_output(wrapper->surface,
-                                  reinterpret_cast<const char *>(bytes), length);
-  Trace("surface write: complete");
-  return wrapper->renderer_healthy.load(std::memory_order_acquire);
+  const bool queued = QueueOutput(wrapper, bytes, length);
+  Trace("surface write: queued");
+  return queued && wrapper->renderer_healthy.load(std::memory_order_acquire);
 }
 
 bool soloe_ghostty_surface_replace(SoloeGhosttySurface *wrapper,
@@ -1038,11 +1078,18 @@ bool soloe_ghostty_surface_replace(SoloeGhosttySurface *wrapper,
                                    size_t length) {
   TraceValue("surface replace: entered", length);
   if (!wrapper || !wrapper->surface) return false;
-  ghostty_surface_free(wrapper->surface);
-  Trace("surface replace: old surface freed");
-  wrapper->surface = nullptr;
-  if (!CreateInnerSurface(wrapper)) return false;
-  Trace("surface replace: new surface created");
+  wrapper->pending_output.clear();
+  wrapper->output_message_pending = false;
+  if (wrapper->has_processed_output) {
+    ghostty_surface_free(wrapper->surface);
+    Trace("surface replace: old surface freed");
+    wrapper->surface = nullptr;
+    wrapper->has_processed_output = false;
+    if (!CreateInnerSurface(wrapper)) return false;
+    Trace("surface replace: new surface created");
+  } else {
+    Trace("surface replace: reused empty surface");
+  }
   return soloe_ghostty_surface_write(wrapper, bytes, length);
 }
 

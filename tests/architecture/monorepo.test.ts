@@ -213,6 +213,9 @@ describe("monorepo boundaries", () => {
     );
     expect(windowsBridge).toContain("kSelectionChangedMessage");
     expect(windowsBridge).toContain("kRenderMessage");
+    expect(windowsBridge).toContain("kOutputMessage");
+    expect(windowsBridge).toContain("kOutputChunkBytes = 64 * 1024");
+    expect(windowsBridge).toContain("ProcessPendingOutput(wrapper)");
     expect(windowsBridge).toContain(
       "PostMessageW(wrapper->child, kSelectionChangedMessage, 0, 0)",
     );
