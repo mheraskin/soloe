@@ -372,8 +372,8 @@ pub fn run() {
                                     eprintln!("[tray] {error}");
                                 }
                                 let exit_code = if result.is_ok() { 0 } else { 1 };
-                                app.cleanup_before_exit();
-                                std::process::exit(exit_code);
+                                app.exit(exit_code);
+                                return;
                             }
                             _ => Ok(()),
                         };
@@ -580,6 +580,18 @@ mod tests {
             state.request(false, Instant::now()),
             ConfirmationIntent::Begin
         );
+    }
+
+    #[test]
+    fn tray_quit_delegates_native_cleanup_to_the_tauri_event_loop() {
+        let source = include_str!("lib.rs");
+        let event_loop_exit = ["app.", "exit(exit_code);"].concat();
+        let direct_cleanup = ["app.", "cleanup_before_exit();"].concat();
+        let direct_process_exit = ["std::process::", "exit(exit_code);"].concat();
+
+        assert_eq!(source.matches(&event_loop_exit).count(), 1);
+        assert!(!source.contains(&direct_cleanup));
+        assert!(!source.contains(&direct_process_exit));
     }
 
     #[test]

@@ -36,6 +36,7 @@
     shouldSendShiftEnterSequence
   } from '../lib/terminal-input';
   import { deferTerminalDispose, TerminalFitController } from '../lib/terminal-fit';
+  import { usesMacosOverlayScrollbars } from '../lib/platform-ui';
   import type { ClipboardImagePayload } from '@shared/types/files.js';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
@@ -59,6 +60,7 @@
   );
   let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   let terminalFontSize = $derived(fontSize);
+  const macosOverlayScrollbars = usesMacosOverlayScrollbars();
 
   let host: HTMLDivElement | undefined = $state();
   let findInput: HTMLInputElement | null = $state(null);
@@ -864,7 +866,10 @@
   });
 </script>
 
-<div class="terminal-pane-shell relative h-full w-full bg-[#0f0f10]">
+<div
+  class="terminal-pane-shell relative h-full w-full bg-[#0f0f10]"
+  data-overlay-scrollbars={macosOverlayScrollbars ? 'macos' : undefined}
+>
   {#if !ready}
     <div
       class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
@@ -958,6 +963,15 @@
   :global(.xterm-screen),
   :global(.xterm-viewport) {
     background: #0f0f10 !important;
+  }
+
+  .terminal-pane-shell[data-overlay-scrollbars='macos'] :global(.xterm-viewport) {
+    scrollbar-width: none;
+  }
+
+  .terminal-pane-shell[data-overlay-scrollbars='macos'] :global(.xterm-viewport::-webkit-scrollbar) {
+    width: 0;
+    height: 0;
   }
 
   @media (max-width: 767px) {

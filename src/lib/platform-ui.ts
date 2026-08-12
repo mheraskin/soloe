@@ -19,6 +19,12 @@ export function usesMacosNativeWindowControls(
   return /\bElectron\//u.test(userAgent) && navigatorPlatform.startsWith('Mac');
 }
 
+export function usesMacosOverlayScrollbars(
+  navigatorPlatform: string = typeof navigator === 'undefined' ? '' : navigator.platform
+): boolean {
+  return navigatorPlatform.startsWith('Mac');
+}
+
 export function platformRunModeOptions(info: HostPlatformInfo): RunModeOption[] {
   return info.availableRunModes.map((value) => ({ value, label: runModeLabel(value) }));
 }

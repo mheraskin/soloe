@@ -5,7 +5,8 @@ import {
   runModePathPlaceholder,
   platformRunModeOptions,
   platformShellOptions,
-  usesMacosNativeWindowControls
+  usesMacosNativeWindowControls,
+  usesMacosOverlayScrollbars
 } from './platform-ui';
 
 describe('platform UI', () => {
@@ -56,5 +57,12 @@ describe('platform UI', () => {
       'Mozilla/5.0 Electron/41.10.3',
       'Win32'
     )).toBe(false);
+  });
+
+  it('detects macOS overlay scrollbars in desktop and web renderers', () => {
+    expect(usesMacosOverlayScrollbars('MacIntel')).toBe(true);
+    expect(usesMacosOverlayScrollbars('MacArm')).toBe(true);
+    expect(usesMacosOverlayScrollbars('Win32')).toBe(false);
+    expect(usesMacosOverlayScrollbars('Linux x86_64')).toBe(false);
   });
 });
