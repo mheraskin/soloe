@@ -6,11 +6,25 @@ import type {
   ConnectionSnapshot,
   MachineConnection,
   MachineConnectionSource,
+  MachineConnectionTrust,
   TailscaleConnectionInfo
 } from '@shared/types/connections.js';
+import {
+  isDeviceId,
+  negotiateDeviceProtocol,
+  parseDeviceDescriptor,
+  type DeviceDescriptor,
+  type DeviceId,
+  type DeviceProtocolCompatibility,
+  type DeviceProtocolRange
+} from '@shared/types/devices.js';
 import type { TailscaleDiscoveryResult } from './TailscaleDiscovery.js';
 
-interface PersistedMachine {
+const MAX_CONNECTIONS = 64;
+const MAX_ENABLED_CONNECTIONS = 10;
+const MAX_ENDPOINT_ALIASES = 8;
+
+interface PersistedMachineV1 {
   id: ConnectionId;
   name: string;
   endpoint: string;
@@ -19,17 +33,41 @@ interface PersistedMachine {
   lastSeenAt?: string;
 }
 
-interface PersistedConnections {
+interface PersistedMachineV2 extends PersistedMachineV1 {
+  endpointAliases: string[];
+  trust: Exclude<MachineConnectionTrust, 'local'>;
+  enabled?: boolean;
+  deviceId?: DeviceId;
+  observedDeviceId?: DeviceId;
+  protocol?: DeviceProtocolRange;
+  capabilityRevision?: string;
+  capabilities?: string[];
+  serverEpoch?: string;
+}
+
+interface PersistedConnectionsV1 {
   version: 1;
   activeId: ConnectionId;
-  machines: PersistedMachine[];
+  machines: PersistedMachineV1[];
 }
+
+interface PersistedConnectionsV2 {
+  version: 2;
+  activeId: ConnectionId;
+  machines: PersistedMachineV2[];
+}
+
+type ParsedConnections = PersistedConnectionsV1 | PersistedConnectionsV2;
 
 export interface ConnectionRegistryOptions {
   filePath: string;
   localName: string;
   discover: () => Promise<TailscaleDiscoveryResult>;
   probe: (endpoint: string) => Promise<boolean>;
+  describe?: (endpoint: string) => Promise<{
+    descriptor: DeviceDescriptor;
+    compatibility: DeviceProtocolCompatibility;
+  }>;
   now?: () => Date;
 }
 
@@ -59,9 +97,11 @@ export class ConnectionRegistry {
   async init(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
-    let parsed: PersistedConnections | null = null;
+    let parsed: ParsedConnections | null = null;
+    let source = '';
     try {
-      parsed = parsePersisted(JSON.parse(await fs.readFile(this.options.filePath, 'utf8')));
+      source = await fs.readFile(this.options.filePath, 'utf8');
+      parsed = parsePersisted(JSON.parse(source));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         console.warn('[connections] ignored unreadable connection registry', error);
@@ -69,18 +109,17 @@ export class ConnectionRegistry {
     }
     if (!parsed) return;
     this.activeId = parsed.activeId;
-    for (const machine of parsed.machines) {
-      this.machines.set(machine.id, {
-        ...machine,
-        status: 'unknown',
-        active: machine.id === this.activeId,
-        isSelf: false
-      });
+    for (const persisted of parsed.machines) {
+      const machine = persistedMachineProjection(persisted, this.activeId);
+      this.machines.set(machine.id, machine);
     }
     if (this.activeId !== 'local' && !this.machines.has(this.activeId)) {
       this.activeId = 'local';
     }
     this.applyActiveState();
+    if (parsed.version === 1) {
+      await this.backupV1AndPersist(source);
+    }
   }
 
   async get(): Promise<ConnectionSnapshot> {
@@ -103,22 +142,136 @@ export class ConnectionRegistry {
   async add(rawEndpoint: string): Promise<ConnectionSnapshot> {
     await this.init();
     const endpoint = normalizeSoloeEndpoint(rawEndpoint);
-    const id = connectionIdForEndpoint(endpoint);
-    const existing = this.machines.get(id);
+    const existingEntry = this.findByEndpoint(endpoint);
+    const id = existingEntry?.[0] ?? connectionIdForEndpoint(endpoint);
+    const existing = existingEntry?.[1];
     const available = await this.options.probe(endpoint);
     const seenAt = available ? this.now().toISOString() : existing?.lastSeenAt;
     this.machines.set(id, {
+      ...(existing ?? provisionalMachine(id, endpoint, displayNameForEndpoint(endpoint))),
       id,
       name: existing?.name ?? displayNameForEndpoint(endpoint),
       endpoint,
+      endpointAliases: mergeAliases(existing?.endpointAliases ?? [], [endpoint]),
       source: 'manual',
       status: available ? 'available' : 'unavailable',
       active: id === this.activeId,
       isSelf: false,
-      ...(existing?.os ? { os: existing.os } : {}),
       ...(seenAt ? { lastSeenAt: seenAt } : {})
     });
     await this.persist();
+    if (available && this.options.describe) {
+      try {
+        const described = await this.options.describe(endpoint);
+        return await this.bindDescriptor(
+          endpoint,
+          described.descriptor,
+          described.compatibility
+        );
+      } catch (error) {
+        if (error instanceof ConnectionIdentityMismatchError) throw error;
+        // Legacy or temporarily unauthorized servers remain provisional.
+      }
+    }
+    return this.publish();
+  }
+
+  async bindDescriptor(
+    rawEndpoint: string,
+    input: DeviceDescriptor,
+    compatibility?: DeviceProtocolCompatibility
+  ): Promise<ConnectionSnapshot> {
+    await this.init();
+    const endpoint = normalizeSoloeEndpoint(rawEndpoint);
+    const descriptor = parseDeviceDescriptor(input);
+    const negotiated = compatibility ?? negotiateDeviceProtocol(descriptor.protocol);
+    let entry = this.findByEndpoint(endpoint);
+    if (!entry) {
+      const id = connectionIdForEndpoint(endpoint);
+      const machine = provisionalMachine(id, endpoint, displayNameForEndpoint(endpoint));
+      this.machines.set(id, machine);
+      entry = [id, machine];
+    }
+    const [currentId, current] = entry;
+    if (current.deviceId && current.deviceId !== descriptor.deviceId) {
+      this.machines.set(currentId, {
+        ...current,
+        status: 'available',
+        trust: 'identity-mismatch',
+        observedDeviceId: descriptor.deviceId,
+        serverEpoch: descriptor.serverEpoch,
+        lastSeenAt: this.now().toISOString()
+      });
+      await this.persist();
+      this.publish();
+      throw new ConnectionIdentityMismatchError(
+        endpoint,
+        current.deviceId,
+        descriptor.deviceId
+      );
+    }
+
+    if (currentId === 'local') {
+      this.machines.set('local', descriptorProjection({
+        ...current,
+        endpointAliases: [],
+        trust: 'local',
+        isSelf: true
+      }, descriptor, negotiated));
+      await this.persist();
+      return this.publish();
+    }
+
+    const targetId = deviceConnectionId(descriptor.deviceId);
+    const target = this.machines.get(targetId);
+    const endpointAliases = mergeAliases(
+      target?.endpointAliases ?? [],
+      current.endpointAliases,
+      [endpoint]
+    );
+    const active = this.activeId === currentId || this.activeId === targetId;
+    const merged: MachineConnection = descriptorProjection({
+      ...(target ?? current),
+      id: targetId,
+      endpoint,
+      endpointAliases,
+      source: target?.source === 'manual' || current.source === 'manual'
+        ? 'manual'
+        : 'discovered',
+      status: 'available',
+      trust: 'pinned',
+      active,
+      isSelf: false,
+      lastSeenAt: this.now().toISOString()
+    }, descriptor, negotiated);
+    if (currentId !== targetId) this.machines.delete(currentId);
+    this.machines.set(targetId, merged);
+    if (active) this.activeId = targetId;
+    this.applyActiveState();
+    await this.persist();
+    return this.publish();
+  }
+
+  async bindLocalDescriptor(
+    input: DeviceDescriptor,
+    compatibility?: DeviceProtocolCompatibility
+  ): Promise<ConnectionSnapshot> {
+    await this.init();
+    const descriptor = parseDeviceDescriptor(input);
+    const local = this.machines.get('local');
+    if (!local) throw new Error('The local device connection is unavailable.');
+    if (local.deviceId && local.deviceId !== descriptor.deviceId) {
+      throw new ConnectionIdentityMismatchError(
+        'local',
+        local.deviceId,
+        descriptor.deviceId
+      );
+    }
+    this.machines.set('local', descriptorProjection(
+      local,
+      descriptor,
+      compatibility ?? negotiateDeviceProtocol(descriptor.protocol)
+    ));
     return this.publish();
   }
 
@@ -131,10 +284,35 @@ export class ConnectionRegistry {
     return this.publish();
   }
 
+  async setEnabled(id: ConnectionId, enabled: boolean): Promise<ConnectionSnapshot> {
+    await this.init();
+    const machine = this.machines.get(id);
+    if (!machine) throw new Error(`Unknown Soloe Device: ${id}`);
+    if (id === 'local' && !enabled) throw new Error('The local Device cannot be disabled.');
+    if (enabled && id !== 'local') {
+      if (!machine.deviceId || machine.trust !== 'pinned') {
+        throw new Error('Verify the Device identity before enabling this connection.');
+      }
+      if (machine.compatibility && machine.compatibility.status !== 'compatible') {
+        throw new Error('This Device is not protocol-compatible with the cockpit.');
+      }
+      const enabledCount = [...this.machines.values()].filter((candidate) => candidate.enabled).length;
+      if (!machine.enabled && enabledCount >= MAX_ENABLED_CONNECTIONS) {
+        throw new Error(`Cockpit supports at most ${MAX_ENABLED_CONNECTIONS} enabled Devices.`);
+      }
+    }
+    this.machines.set(id, { ...machine, enabled });
+    await this.persist();
+    return this.publish();
+  }
+
   async select(id: ConnectionId): Promise<ConnectionSelectionResult> {
     await this.init();
     const machine = this.machines.get(id);
     if (!machine) throw new Error(`Unknown Soloe device: ${id}`);
+    if (machine.trust === 'identity-mismatch') {
+      throw new Error(`${machine.name} no longer presents its pinned Device identity.`);
+    }
     if (machine.status === 'unavailable') {
       throw new Error(`${machine.name} is not currently reachable.`);
     }
@@ -181,22 +359,26 @@ export class ConnectionRegistry {
     if (discovery.state === 'connected') {
       for (const device of discovery.devices) {
         if (device.isSelf || !device.online) continue;
-        const endpoint = `https://${device.dnsName}`;
+        const endpoint = normalizeSoloeEndpoint(`https://${device.dnsName}`);
+        const existing = this.findByEndpoint(endpoint);
         targets.set(endpoint, {
           endpoint,
-          name: device.name,
-          source: 'discovered',
+          name: existing?.[1].trust === 'pinned' ? existing[1].name : device.name,
+          source: existing?.[1].source === 'manual' ? 'manual' : 'discovered',
           ...(device.os ? { os: device.os } : {}),
-          existingId: connectionIdForEndpoint(endpoint)
+          existingId: existing?.[0] ?? connectionIdForEndpoint(endpoint)
         });
       }
     }
 
     const results = await Promise.all(
-      [...targets.values()].slice(0, 64).map(async (target) => ({
-        target,
-        available: await this.options.probe(target.endpoint).catch(() => false)
-      }))
+      [...targets.values()].slice(0, MAX_CONNECTIONS).map(async (target) => {
+        const available = await this.options.probe(target.endpoint).catch(() => false);
+        const described = available && this.options.describe
+          ? await this.options.describe(target.endpoint).catch(() => undefined)
+          : undefined;
+        return { target, available, described };
+      })
     );
     const seenAt = this.now().toISOString();
     for (const { target, available } of results) {
@@ -204,14 +386,16 @@ export class ConnectionRegistry {
       const existing = this.machines.get(id);
       if (!available && !existing) continue;
       this.machines.set(id, {
+        ...(existing ?? provisionalMachine(id, target.endpoint, target.name)),
         id,
-        name: target.name,
+        name: existing?.trust === 'pinned' ? existing.name : target.name,
         endpoint: target.endpoint,
+        endpointAliases: mergeAliases(existing?.endpointAliases ?? [], [target.endpoint]),
         source: target.source,
         status: available ? 'available' : 'unavailable',
         active: id === this.activeId,
         isSelf: false,
-        ...(target.os ? { os: target.os } : {}),
+        ...(target.os && existing?.trust !== 'pinned' ? { os: target.os } : {}),
         ...(available
           ? { lastSeenAt: seenAt }
           : existing?.lastSeenAt
@@ -221,6 +405,18 @@ export class ConnectionRegistry {
     }
     this.refreshedAt = seenAt;
     await this.persist();
+    for (const { target, described } of results) {
+      if (!described) continue;
+      try {
+        await this.bindDescriptor(
+          target.endpoint,
+          described.descriptor,
+          described.compatibility
+        );
+      } catch (error) {
+        if (!(error instanceof ConnectionIdentityMismatchError)) throw error;
+      }
+    }
     return this.publish();
   }
 
@@ -229,11 +425,23 @@ export class ConnectionRegistry {
       id: 'local',
       name: this.options.localName,
       endpoint: null,
+      endpointAliases: [],
       source: 'local',
       status: 'available',
+      trust: 'local',
+      enabled: true,
       active: true,
       isSelf: true
     });
+  }
+
+  private findByEndpoint(endpoint: string): [ConnectionId, MachineConnection] | undefined {
+    for (const entry of this.machines) {
+      if (entry[1].endpoint === endpoint || entry[1].endpointAliases.includes(endpoint)) {
+        return entry;
+      }
+    }
+    return undefined;
   }
 
   private applyActiveState(): void {
@@ -244,7 +452,7 @@ export class ConnectionRegistry {
 
   private snapshot(): ConnectionSnapshot {
     const machines = [...this.machines.values()]
-      .map((machine) => ({ ...machine }))
+      .map((machine) => cloneMachine(machine))
       .sort((left, right) => {
         if (left.id === 'local') return -1;
         if (right.id === 'local') return 1;
@@ -273,22 +481,15 @@ export class ConnectionRegistry {
   }
 
   private persist(): Promise<void> {
-    const persisted: PersistedConnections = {
-      version: 1,
+    const persisted: PersistedConnectionsV2 = {
+      version: 2,
       activeId: this.activeId,
       machines: [...this.machines.values()]
         .filter((machine): machine is MachineConnection & { endpoint: string } =>
           machine.id !== 'local' && machine.endpoint !== null
         )
-        .slice(0, 64)
-        .map((machine) => ({
-          id: machine.id,
-          name: machine.name,
-          endpoint: machine.endpoint,
-          source: machine.source === 'manual' ? 'manual' : 'discovered',
-          ...(machine.os ? { os: machine.os } : {}),
-          ...(machine.lastSeenAt ? { lastSeenAt: machine.lastSeenAt } : {})
-        }))
+        .slice(0, MAX_CONNECTIONS)
+        .map(persistedMachine)
     };
     const write = this.persistQueue.then(async () => {
       await fs.mkdir(path.dirname(this.options.filePath), { recursive: true });
@@ -298,6 +499,29 @@ export class ConnectionRegistry {
     });
     this.persistQueue = write.catch(() => undefined);
     return write;
+  }
+
+  private async backupV1AndPersist(source: string): Promise<void> {
+    const backup = `${this.options.filePath}.v1.bak`;
+    try {
+      await fs.writeFile(backup, source, { encoding: 'utf8', flag: 'wx' });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    await this.persist();
+  }
+}
+
+export class ConnectionIdentityMismatchError extends Error {
+  readonly code = 'device_identity_mismatch';
+
+  constructor(
+    readonly endpoint: string,
+    readonly expectedDeviceId: DeviceId,
+    readonly observedDeviceId: DeviceId
+  ) {
+    super(`Endpoint ${endpoint} presents Device ${observedDeviceId}, not pinned Device ${expectedDeviceId}.`);
+    this.name = 'ConnectionIdentityMismatchError';
   }
 }
 
@@ -331,38 +555,228 @@ export function connectionIdForEndpoint(endpoint: string): ConnectionId {
   return `tailscale:${host}`;
 }
 
+export function deviceConnectionId(deviceId: DeviceId): ConnectionId {
+  if (!isDeviceId(deviceId)) throw new Error('Device ID must be a UUID.');
+  return `device:${deviceId}`;
+}
+
+function provisionalMachine(
+  id: ConnectionId,
+  endpoint: string,
+  name: string
+): MachineConnection {
+  return {
+    id,
+    name,
+    endpoint,
+    endpointAliases: [endpoint],
+    source: 'discovered',
+    status: 'unknown',
+    trust: 'provisional',
+    enabled: false,
+    active: false,
+    isSelf: false
+  };
+}
+
+function descriptorProjection(
+  machine: MachineConnection,
+  descriptor: DeviceDescriptor,
+  compatibility: DeviceProtocolCompatibility
+): MachineConnection {
+  return {
+    ...machine,
+    name: descriptor.name,
+    deviceId: descriptor.deviceId,
+    trust: machine.id === 'local' ? 'local' : 'pinned',
+    os: descriptor.platform,
+    protocol: { ...descriptor.protocol },
+    compatibility: { ...compatibility },
+    capabilityRevision: descriptor.capabilities.revision,
+    capabilities: [...descriptor.capabilities.features],
+    serverEpoch: descriptor.serverEpoch,
+    observedDeviceId: undefined
+  };
+}
+
+function persistedMachineProjection(
+  machine: PersistedMachineV1 | PersistedMachineV2,
+  activeId: ConnectionId
+): MachineConnection {
+  const versionTwo = 'endpointAliases' in machine;
+  const protocol = versionTwo ? machine.protocol : undefined;
+  return {
+    id: machine.id,
+    name: machine.name,
+    endpoint: machine.endpoint,
+    endpointAliases: versionTwo ? [...machine.endpointAliases] : [machine.endpoint],
+    source: machine.source,
+    status: 'unknown',
+    trust: versionTwo ? machine.trust : 'provisional',
+    enabled: versionTwo ? machine.enabled ?? machine.id === activeId : machine.id === activeId,
+    active: machine.id === activeId,
+    isSelf: false,
+    ...(versionTwo && machine.deviceId ? { deviceId: machine.deviceId } : {}),
+    ...(versionTwo && machine.observedDeviceId
+      ? { observedDeviceId: machine.observedDeviceId }
+      : {}),
+    ...(machine.os ? { os: machine.os } : {}),
+    ...(protocol
+      ? {
+          protocol: { ...protocol },
+          compatibility: negotiateDeviceProtocol(protocol)
+        }
+      : {}),
+    ...(versionTwo && machine.capabilityRevision
+      ? { capabilityRevision: machine.capabilityRevision }
+      : {}),
+    ...(versionTwo && machine.capabilities
+      ? { capabilities: [...machine.capabilities] }
+      : {}),
+    ...(versionTwo && machine.serverEpoch ? { serverEpoch: machine.serverEpoch } : {}),
+    ...(machine.lastSeenAt ? { lastSeenAt: machine.lastSeenAt } : {})
+  };
+}
+
+function persistedMachine(
+  machine: MachineConnection & { endpoint: string }
+): PersistedMachineV2 {
+  return {
+    id: machine.id,
+    name: machine.name,
+    endpoint: machine.endpoint,
+    endpointAliases: [...machine.endpointAliases],
+    source: machine.source === 'manual' ? 'manual' : 'discovered',
+    trust: machine.trust === 'local' ? 'provisional' : machine.trust,
+    enabled: machine.enabled,
+    ...(machine.deviceId ? { deviceId: machine.deviceId } : {}),
+    ...(machine.observedDeviceId ? { observedDeviceId: machine.observedDeviceId } : {}),
+    ...(machine.os ? { os: machine.os } : {}),
+    ...(machine.protocol ? { protocol: { ...machine.protocol } } : {}),
+    ...(machine.capabilityRevision ? { capabilityRevision: machine.capabilityRevision } : {}),
+    ...(machine.capabilities ? { capabilities: [...machine.capabilities] } : {}),
+    ...(machine.serverEpoch ? { serverEpoch: machine.serverEpoch } : {}),
+    ...(machine.lastSeenAt ? { lastSeenAt: machine.lastSeenAt } : {})
+  };
+}
+
+function cloneMachine(machine: MachineConnection): MachineConnection {
+  return {
+    ...machine,
+    endpointAliases: [...machine.endpointAliases],
+    ...(machine.capabilities ? { capabilities: [...machine.capabilities] } : {}),
+    ...(machine.protocol ? { protocol: { ...machine.protocol } } : {}),
+    ...(machine.compatibility ? { compatibility: { ...machine.compatibility } } : {})
+  };
+}
+
+function mergeAliases(...groups: string[][]): string[] {
+  const result: string[] = [];
+  for (const group of groups) {
+    for (const rawEndpoint of group) {
+      let endpoint: string;
+      try {
+        endpoint = normalizeSoloeEndpoint(rawEndpoint);
+      } catch {
+        continue;
+      }
+      if (!result.includes(endpoint)) result.push(endpoint);
+      if (result.length >= MAX_ENDPOINT_ALIASES) return result;
+    }
+  }
+  return result;
+}
+
 function displayNameForEndpoint(endpoint: string): string {
   return new URL(endpoint).hostname.split('.')[0] || new URL(endpoint).hostname;
 }
 
-function parsePersisted(value: unknown): PersistedConnections | null {
-  if (!isRecord(value) || value['version'] !== 1 || !Array.isArray(value['machines'])) return null;
-  const activeId = parseConnectionId(value['activeId']) ?? 'local';
-  const machines = value['machines']
-    .map((machine) => parsePersistedMachine(machine))
-    .filter((machine): machine is PersistedMachine => machine !== null)
-    .slice(0, 64);
-  return { version: 1, activeId, machines };
+function parsePersisted(value: unknown): ParsedConnections | null {
+  if (!isRecord(value) || !Array.isArray(value['machines'])) return null;
+  if (value['version'] === 1) {
+    const activeId = parseConnectionId(value['activeId']) ?? 'local';
+    const machines = value['machines']
+      .map(parsePersistedMachineV1)
+      .filter((machine): machine is PersistedMachineV1 => machine !== null)
+      .slice(0, MAX_CONNECTIONS);
+    return { version: 1, activeId, machines };
+  }
+  if (value['version'] === 2) {
+    const activeId = parseConnectionId(value['activeId']) ?? 'local';
+    const machines = value['machines']
+      .map(parsePersistedMachineV2)
+      .filter((machine): machine is PersistedMachineV2 => machine !== null)
+      .slice(0, MAX_CONNECTIONS);
+    return { version: 2, activeId, machines };
+  }
+  return null;
 }
 
-function parsePersistedMachine(value: unknown): PersistedMachine | null {
+function parsePersistedMachineV1(value: unknown): PersistedMachineV1 | null {
+  const common = parsePersistedMachineCommon(value);
+  if (!common || connectionIdForEndpoint(common.endpoint) !== common.id) return null;
+  return common;
+}
+
+function parsePersistedMachineV2(value: unknown): PersistedMachineV2 | null {
+  const common = parsePersistedMachineCommon(value);
+  if (!common || !isRecord(value)) return null;
+  const deviceId = isDeviceId(value['deviceId']) ? value['deviceId'] : undefined;
+  const idDevice = common.id.startsWith('device:') ? common.id.slice('device:'.length) : null;
+  if ((idDevice !== null && (!deviceId || idDevice !== deviceId)) || (idDevice === null && deviceId)) {
+    return null;
+  }
+  if (idDevice === null && connectionIdForEndpoint(common.endpoint) !== common.id) return null;
+  const trust = parseTrust(value['trust'], Boolean(deviceId));
+  if (!trust) return null;
+  const enabled = typeof value['enabled'] === 'boolean' ? value['enabled'] : undefined;
+  const aliases = Array.isArray(value['endpointAliases'])
+    ? mergeAliases([common.endpoint], value['endpointAliases'].filter(
+        (endpoint): endpoint is string => typeof endpoint === 'string'
+      ))
+    : [common.endpoint];
+  const observedDeviceId = isDeviceId(value['observedDeviceId'])
+    ? value['observedDeviceId']
+    : undefined;
+  if ((trust === 'identity-mismatch') !== Boolean(observedDeviceId)) return null;
+  const protocol = parseProtocol(value['protocol']);
+  const capabilityRevision = boundedToken(value['capabilityRevision']);
+  const capabilities = parseCapabilities(value['capabilities']);
+  const serverEpoch = isDeviceId(value['serverEpoch']) ? value['serverEpoch'] : undefined;
+  return {
+    ...common,
+    endpointAliases: aliases,
+    trust,
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(deviceId ? { deviceId } : {}),
+    ...(observedDeviceId ? { observedDeviceId } : {}),
+    ...(protocol ? { protocol } : {}),
+    ...(capabilityRevision ? { capabilityRevision } : {}),
+    ...(capabilities ? { capabilities } : {}),
+    ...(serverEpoch ? { serverEpoch } : {})
+  };
+}
+
+function parsePersistedMachineCommon(value: unknown): PersistedMachineV1 | null {
   if (!isRecord(value)) return null;
   const id = parseConnectionId(value['id']);
   const name = typeof value['name'] === 'string' ? value['name'].trim() : '';
   const source = value['source'] === 'manual' ? 'manual' : 'discovered';
-  if (!id || id === 'local' || !name || typeof value['endpoint'] !== 'string') return null;
+  if (!id || id === 'local' || !name || name.length > 128 || typeof value['endpoint'] !== 'string') {
+    return null;
+  }
   let endpoint: string;
   try {
     endpoint = normalizeSoloeEndpoint(value['endpoint']);
   } catch {
     return null;
   }
-  if (connectionIdForEndpoint(endpoint) !== id) return null;
-  const os = typeof value['os'] === 'string' && value['os'].trim() ? value['os'].trim() : null;
-  const lastSeenAt =
-    typeof value['lastSeenAt'] === 'string' && value['lastSeenAt'].trim()
-      ? value['lastSeenAt'].trim()
-      : null;
+  const os = typeof value['os'] === 'string' && value['os'].trim()
+    ? value['os'].trim().slice(0, 64)
+    : null;
+  const lastSeenAt = typeof value['lastSeenAt'] === 'string' && value['lastSeenAt'].trim()
+    ? value['lastSeenAt'].trim()
+    : null;
   return {
     id,
     name,
@@ -375,9 +789,69 @@ function parsePersistedMachine(value: unknown): PersistedMachine | null {
 
 function parseConnectionId(value: unknown): ConnectionId | null {
   if (value === 'local') return value;
-  return typeof value === 'string' && value.startsWith('tailscale:')
-    ? value as ConnectionId
-    : null;
+  if (typeof value !== 'string') return null;
+  if (value.startsWith('tailscale:') && value.length > 'tailscale:'.length) {
+    return value as ConnectionId;
+  }
+  if (value.startsWith('device:') && isDeviceId(value.slice('device:'.length))) {
+    return value as ConnectionId;
+  }
+  return null;
+}
+
+function parseTrust(
+  value: unknown,
+  hasDeviceId: boolean
+): Exclude<MachineConnectionTrust, 'local'> | null {
+  if (!hasDeviceId) return value === 'provisional' ? 'provisional' : null;
+  return value === 'pinned' || value === 'identity-mismatch' ? value : null;
+}
+
+function parseProtocol(value: unknown): DeviceProtocolRange | undefined {
+  if (!isRecord(value)) return undefined;
+  const range = {
+    current: value['current'],
+    minimum: value['minimum'],
+    maximum: value['maximum']
+  };
+  if (
+    !Number.isSafeInteger(range.current)
+    || !Number.isSafeInteger(range.minimum)
+    || !Number.isSafeInteger(range.maximum)
+  ) return undefined;
+  const protocol: DeviceProtocolRange = {
+    current: range.current as number,
+    minimum: range.minimum as number,
+    maximum: range.maximum as number
+  };
+  try {
+    negotiateDeviceProtocol(protocol);
+    return protocol;
+  } catch {
+    return undefined;
+  }
+}
+
+function boundedToken(value: unknown): string | undefined {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 128
+    && /^[a-zA-Z0-9._:-]+$/u.test(value)
+    ? value
+    : undefined;
+}
+
+function parseCapabilities(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length > 128) return undefined;
+  const capabilities = value.filter((entry): entry is string =>
+    typeof entry === 'string'
+    && entry.length > 0
+    && entry.length <= 128
+    && /^[a-z][a-z0-9.-]*$/u.test(entry)
+  );
+  return capabilities.length === value.length && new Set(capabilities).size === capabilities.length
+    ? capabilities
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

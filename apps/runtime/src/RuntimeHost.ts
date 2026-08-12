@@ -9,6 +9,10 @@ import type {
 } from './RuntimeProcess.js';
 import { ProcessTreeUsageSampler } from "./ProcessTreeUsageSampler.js";
 import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
+import {
+  TerminalInputLeaseError,
+  TerminalInputLeaseManager
+} from './TerminalInputLeaseManager.js';
 import { TerminalLocationParser } from '../../../shared/terminal-location.js';
 
 export interface RuntimeHostOptions {
@@ -37,9 +41,13 @@ export class RuntimeHost {
   private readonly outputSequence = new Map<string, number>();
   private readonly replayBuffer = new TerminalReplayBuffer();
   private readonly usageSampler: Pick<ProcessTreeUsageSampler, "sample">;
+  private readonly inputLeases: TerminalInputLeaseManager;
 
   constructor(private readonly options: RuntimeHostOptions) {
     this.usageSampler = options.usageSampler ?? new ProcessTreeUsageSampler();
+    this.inputLeases = new TerminalInputLeaseManager({
+      onChange: (event) => this.broadcast('inputLease', event)
+    });
   }
 
   async listen(): Promise<void> {
@@ -69,6 +77,7 @@ export class RuntimeHost {
     this.terminalBySession.clear();
     this.outputSequence.clear();
     this.replayBuffer.clear();
+    this.inputLeases.clear();
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
     const server = this.server;
@@ -96,7 +105,8 @@ export class RuntimeHost {
       socket.write(`${JSON.stringify({
         id: (request! as RuntimeRequest | undefined)?.id ?? 0,
         ok: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof TerminalInputLeaseError ? { code: error.code } : {})
       })}\n`);
     }
   }
@@ -121,10 +131,40 @@ export class RuntimeHost {
         this.replayBuffer.setUnbounded(input.unbounded);
         return true;
       }
+      case 'acquireInputLease': {
+        const input = params as { terminalId: string; ownerId: string; takeover?: boolean };
+        this.requireTerminal(input.terminalId);
+        return this.inputLeases.acquire(input.terminalId, input.ownerId, {
+          takeover: input.takeover === true
+        });
+      }
+      case 'currentInputLease': {
+        const input = params as { terminalId: string };
+        this.requireTerminal(input.terminalId);
+        return this.inputLeases.current(input.terminalId);
+      }
+      case 'releaseInputLease': {
+        const input = params as { terminalId: string; ownerId: string; leaseId: string };
+        return this.inputLeases.release(input.terminalId, input.ownerId, input.leaseId);
+      }
+      case 'releaseInputLeases': {
+        const input = params as { ownerId: string };
+        return this.inputLeases.releaseOwner(input.ownerId);
+      }
       case 'write': {
-        const input = params as { terminalId: string; data: string };
-        const terminal = this.terminals.get(input.terminalId);
-        if (!terminal) throw new Error(`Terminal not found: ${input.terminalId}`);
+        const input = params as {
+          terminalId: string;
+          data: string;
+          ownerId?: string;
+          leaseId?: string;
+        };
+        const terminal = this.requireTerminal(input.terminalId);
+        if (input.ownerId && input.leaseId) {
+          this.inputLeases.authorizeInput(input.terminalId, input.ownerId, input.leaseId);
+        } else {
+          const legacy = this.inputLeases.acquire(input.terminalId, 'legacy-runtime-control');
+          this.inputLeases.authorizeInput(input.terminalId, legacy.ownerId, legacy.leaseId);
+        }
         terminal.process.write(input.data);
         return true;
       }
@@ -147,6 +187,12 @@ export class RuntimeHost {
       default:
         throw new Error(`Unknown runtime method: ${method}`);
     }
+  }
+
+  private requireTerminal(terminalId: string): RunningTerminal {
+    const terminal = this.terminals.get(terminalId);
+    if (!terminal) throw new Error(`Terminal not found: ${terminalId}`);
+    return terminal;
   }
 
   private async start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState> {
@@ -208,6 +254,7 @@ export class RuntimeHost {
       this.terminals.delete(terminalId);
       this.terminalBySession.delete(input.sessionId);
       this.outputSequence.delete(terminalId);
+      this.inputLeases.clearTerminal(terminalId);
       this.broadcast('exit', {
         terminalId,
         sessionId: input.sessionId,

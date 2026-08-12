@@ -2,3 +2,8 @@ export * from './sessions.js';
 export * from './agents.js';
 export * from './terminal.js';
 export * from './ipc.js';
+export * from './devices.js';
+export * from './cockpit.js';
+export * from './commands.js';
+export * from './providers.js';
+export * from './workspaces.js';

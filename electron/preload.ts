@@ -4,12 +4,14 @@ import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
   AgentIntegrationStatus,
+  CockpitApi,
   SoloeApi,
   TerminalInputPayload,
   TerminalOutputDemandPayload,
   TerminalResizePayload,
   ToastNotification
 } from '@shared/types/ipc.js';
+import type { CockpitEvent } from '@shared/types/cockpit.js';
 import type {
   CommentsRpcRequest,
   CommentsRpcResponse
@@ -203,10 +205,68 @@ const soloe: SoloeApi = {
     add: (request: AddMachineConnectionRequest) =>
       ipcRenderer.invoke(IpcChannels.connections.add, request),
     remove: (id: ConnectionId) => ipcRenderer.invoke(IpcChannels.connections.remove, id),
+    setEnabled: (id: ConnectionId, enabled: boolean) =>
+      ipcRenderer.invoke(IpcChannels.connections.enable, id, enabled),
     select: (id: ConnectionId) => ipcRenderer.invoke(IpcChannels.connections.select, id),
     onChange: (cb: (snapshot: ConnectionSnapshot) => void) =>
       subscribe<ConnectionSnapshot>(IpcChannels.connections.change, cb)
   },
+  cockpit: {
+    snapshot: () => ipcRenderer.invoke(IpcChannels.cockpit.snapshot),
+    refresh: () => ipcRenderer.invoke(IpcChannels.cockpit.refresh),
+    setDemand: (demand) => ipcRenderer.invoke(IpcChannels.cockpit.demand, demand),
+    setFilter: (deviceIds) => ipcRenderer.invoke(IpcChannels.cockpit.filter, deviceIds),
+    setDefaultPlacement: (deviceId) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.defaultPlacement, deviceId),
+    transactCatalog: (transaction) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.transactCatalog, transaction),
+    exportCatalog: () => ipcRenderer.invoke(IpcChannels.cockpit.exportCatalog),
+    importCatalog: (request) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.importCatalog, request),
+    workspacePlan: (deviceId, intent) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.workspacePlan, deviceId, intent),
+    workspaceExecute: (command) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.workspaceExecute, command),
+    workspaceGetCommand: (deviceId, cockpitId, commandId) =>
+      ipcRenderer.invoke(
+        IpcChannels.cockpit.workspaceGetCommand,
+        deviceId,
+        cockpitId,
+        commandId
+      ),
+    placementPlan: (intent) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.placementPlan, intent),
+    placementExecute: (planId, acknowledgements) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.placementExecute, planId, acknowledgements),
+    alignmentPlan: (intent) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.alignmentPlan, intent),
+    alignmentExecute: (planId, acknowledgements) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.alignmentExecute, planId, acknowledgements),
+    publicationPlan: (intent) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.publicationPlan, intent),
+    publicationExecute: (planId, acknowledgements) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.publicationExecute, planId, acknowledgements),
+    sourceLifecyclePlan: (intent) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.sourceLifecyclePlan, intent),
+    sourceLifecycleExecute: (planId, acknowledgements) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.sourceLifecycleExecute, planId, acknowledgements),
+    operationGet: (operationId) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.operationGet, operationId),
+    operationListRecoverable: () =>
+      ipcRenderer.invoke(IpcChannels.cockpit.operationListRecoverable),
+    terminalInput: (request) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.terminalInput, request),
+    terminalInputLease: (request) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.terminalInputLease, request),
+    terminalResize: (request) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.terminalResize, request),
+    terminalReplay: (request) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.terminalReplay, request),
+    terminalStop: (request) =>
+      ipcRenderer.invoke(IpcChannels.cockpit.terminalStop, request),
+    onEvent: (cb: (event: CockpitEvent) => void) =>
+      subscribe<CockpitEvent>(IpcChannels.cockpit.event, cb)
+  } satisfies CockpitApi,
   projects: {
     list: () => ipcRenderer.invoke(IpcChannels.projects.list),
     get: (id: ProjectId) => ipcRenderer.invoke(IpcChannels.projects.get, id),

@@ -1,17 +1,38 @@
-export type ConnectionId = 'local' | `tailscale:${string}`;
+import type {
+  DeviceId,
+  DeviceProtocolCompatibility,
+  DeviceProtocolRange
+} from './devices.js';
+
+export type ConnectionId = 'local' | `tailscale:${string}` | `device:${DeviceId}`;
 
 export type MachineConnectionSource = 'local' | 'discovered' | 'manual';
 export type MachineConnectionStatus = 'available' | 'unavailable' | 'unknown';
+export type MachineConnectionTrust =
+  | 'local'
+  | 'provisional'
+  | 'pinned'
+  | 'identity-mismatch';
 
 export interface MachineConnection {
   id: ConnectionId;
   name: string;
   endpoint: string | null;
+  endpointAliases: string[];
   source: MachineConnectionSource;
   status: MachineConnectionStatus;
+  trust: MachineConnectionTrust;
+  enabled: boolean;
   active: boolean;
   isSelf: boolean;
+  deviceId?: DeviceId;
+  observedDeviceId?: DeviceId;
   os?: string;
+  protocol?: DeviceProtocolRange;
+  compatibility?: DeviceProtocolCompatibility;
+  capabilityRevision?: string;
+  capabilities?: string[];
+  serverEpoch?: string;
   lastSeenAt?: string;
 }
 

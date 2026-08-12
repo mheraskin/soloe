@@ -162,10 +162,14 @@ desktop clients do not need to retain a tokenized URL.
 
 Electron's **Settings > Connections** page discovers online tailnet peers,
 probes their HTTPS readiness endpoint, and presents running Soloe devices in
-the title-bar device menu. A selected device is remembered and applied by
-relaunching only Electron. A trusted Tailscale Serve URL may be added manually;
-the client registry persists endpoints and selection, never backend bearer
-tokens.
+the Workspace Device filter. Enabled compatible Devices remain live
+concurrently. The filter changes only presentation, and default placement is a
+separate preference for future Sessions; neither relaunches Electron nor stops
+or reroutes existing Sessions. A trusted Tailscale Serve URL may be added
+manually; the client registry persists endpoints and pinned Device identities,
+never backend bearer tokens. Use
+`SOLOE_LEGACY_EXCLUSIVE_CONNECTION=1` only when testing the one-release
+exclusive-selector compatibility path.
 
 Left- or right-click the Soloe tray icon and choose:
 
@@ -241,6 +245,14 @@ cargo test --workspace
 pnpm --filter @soloe/tray exec tauri build --no-bundle
 git diff --check
 ```
+
+The multi-Device suite additionally covers durable Device identity and event
+envelopes, colliding composite IDs, Workspace catalog migration/projection,
+plan/receipt idempotency, real temporary Git repositories and remotes,
+isolated-source loss scanning, terminal input leases, and checksummed catalog
+portability. A release smoke should connect two real Devices and confirm that
+filtering, archiving metadata, client replacement, and one Device outage never
+terminate either Runtime.
 
 First run the automated browser/remote-Electron profile. It creates isolated
 normal and large Git repositories, starts a Runtime and Server, and verifies

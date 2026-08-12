@@ -16,7 +16,6 @@ import type {
 import { launchProvider } from '@shared/types/sessions.js';
 import { ipc } from '../lib/ipc';
 import { projects } from './projects.svelte';
-import { git, type WorktreeInventory } from './git.svelte';
 import { settings } from './settings.svelte';
 import { randomName } from '../lib/random-name';
 import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelte';
@@ -296,8 +295,6 @@ export class SessionsStore {
   // Successful Worktree inventories are serialized through one reconciliation
   // queue. This prevents duplicate archive attempts without maintaining an
   // independent renderer polling cadence.
-  private inventoryReconcileQueue: Promise<void> = Promise.resolve();
-  private inventoryScan: Promise<void> | null = null;
 
   statusFor(id: SessionId): SessionStatus {
     return this.runtime[id]?.status ?? 'stopped';
@@ -420,91 +417,9 @@ export class SessionsStore {
           : null;
         agentNotifications.primeSnapshot(snapshot, session, this.selectedId);
       }
-      // Catch removals that occurred while Soloe was closed. Subsequent
-      // reconciliation is driven by successful Worktree inventories.
-      if (document.visibilityState !== 'hidden') {
-        void this.reconcileKnownWorktreeInventories();
-      }
     } finally {
       this.loading = false;
     }
-  }
-
-  // Archive sessions whose Worktree disappeared from a successful Git
-  // inventory. Empty inventories remain inconclusive because a healthy repo
-  // always lists its main Worktree; IPC failures also resolve to empty.
-  private queueWorktreeInventory(inventory: WorktreeInventory): void {
-    const projectIds = new Set(
-      this.sessions.flatMap((session) => session.projectId ? [session.projectId] : [])
-    );
-    for (const projectId of projectIds) {
-      const project = projects.get(projectId);
-      if (!project?.path) continue;
-      const runMode = inventory.context.runMode ?? project.defaultRunMode;
-      if (!sameWorktreePath(project.path, inventory.repoPath, runMode)) continue;
-      if (
-        runMode === 'wsl'
-        && inventory.context.wslDistro
-        && project.defaultWslDistro
-        && inventory.context.wslDistro !== project.defaultWslDistro
-      ) continue;
-      this.queueProjectInventory(projectId, inventory.worktrees);
-    }
-  }
-
-  private queueProjectInventory(
-    projectId: string,
-    worktrees: WorktreeInventory['worktrees']
-  ): Promise<void> {
-    this.inventoryReconcileQueue = this.inventoryReconcileQueue
-      .then(() => this.reconcileProjectInventory(projectId, worktrees))
-      .catch(() => {
-        // One failed archive must not poison future inventory reconciliation.
-      });
-    return this.inventoryReconcileQueue;
-  }
-
-  private async reconcileProjectInventory(
-    projectId: string,
-    worktrees: WorktreeInventory['worktrees']
-  ): Promise<void> {
-    if (worktrees.length === 0) return;
-    const group = this.sessions.filter(
-      (session) => session.projectId === projectId && session.cwd.trim().length > 0
-    );
-    const orphaned = group.filter((session) =>
-      !worktrees.some((worktree) => sameWorktreePath(worktree.path, session.cwd, session.runMode))
-    );
-    for (const session of orphaned) {
-      try {
-        await this.archive(session.id);
-      } catch {
-        // Best effort; a later successful inventory retries surviving sessions.
-      }
-    }
-  }
-
-  private reconcileKnownWorktreeInventories(): Promise<void> {
-    if (this.inventoryScan) return this.inventoryScan;
-    const projectIds = new Set(
-      this.sessions.flatMap((session) => session.projectId ? [session.projectId] : [])
-    );
-    const request = Promise.all(Array.from(projectIds, async (projectId) => {
-      const project = projects.get(projectId);
-      if (!project?.path) return;
-      const sample = this.sessions.find((session) => session.projectId === projectId);
-      if (!sample) return;
-      const context = {
-        runMode: sample.runMode,
-        ...(sample.wslDistro ? { wslDistro: sample.wslDistro } : {})
-      };
-      const worktrees = await git.loadWorktrees(project.path, false, context).catch(() => []);
-      await this.queueProjectInventory(projectId, worktrees);
-    })).then(() => undefined).finally(() => {
-      if (this.inventoryScan === request) this.inventoryScan = null;
-    });
-    this.inventoryScan = request;
-    return request;
   }
 
   toggleArchivedFor(projectId: string): void {
@@ -680,14 +595,7 @@ export class SessionsStore {
         void this.recoverAfterReconnect();
       })
     );
-    this.detachers.push(
-      git.onWorktrees((inventory) => this.queueWorktreeInventory(inventory))
-    );
-
     const onVisibility = () => {
-      if (document.visibilityState !== 'hidden') {
-        void this.reconcileKnownWorktreeInventories();
-      }
       if (
         this.selectedId
         && document.visibilityState === 'visible'
@@ -785,7 +693,7 @@ export class SessionsStore {
         session,
         ...this.archived.filter((item) => item.id !== session.id)
       ].sort(compareArchivedSessions);
-      this.clearActiveSessionState(session.id, nextSelectedId);
+      this.clearSessionNavigation(session.id, nextSelectedId);
       return;
     }
     this.archived = this.archived.filter((item) => item.id !== session.id);
@@ -803,17 +711,11 @@ export class SessionsStore {
     });
   }
 
-  private clearActiveSessionState(
+  private clearSessionNavigation(
     id: SessionId,
     nextSelectedId: SessionId | null
   ): void {
     this.clearSplitIfInvolves(id);
-    agentNotifications.removeSession(id);
-    this.runtimeEventVersion += 1;
-    const next = { ...this.runtime };
-    delete next[id];
-    this.runtime = next;
-    this.clearTerminalCwd(id);
     this.forgetLastSelectedId(id);
     if (this.selectedId === id) {
       if (nextSelectedId) this.select(nextSelectedId);
@@ -821,11 +723,24 @@ export class SessionsStore {
     }
   }
 
+  private clearDeletedSessionState(
+    id: SessionId,
+    nextSelectedId: SessionId | null
+  ): void {
+    this.clearSessionNavigation(id, nextSelectedId);
+    agentNotifications.removeSession(id);
+    this.runtimeEventVersion += 1;
+    const next = { ...this.runtime };
+    delete next[id];
+    this.runtime = next;
+    this.clearTerminalCwd(id);
+  }
+
   private applySessionDelete(id: SessionId): void {
     const nextSelectedId = this.selectedId === id ? this.pickNextAfterRemoval(id) : null;
     this.sessions = this.sessions.filter((session) => session.id !== id);
     this.archived = this.archived.filter((session) => session.id !== id);
-    this.clearActiveSessionState(id, nextSelectedId);
+    this.clearDeletedSessionState(id, nextSelectedId);
 
     this.observerSnapshotVersion += 1;
     this.observerEventVersion += 1;
@@ -1039,18 +954,7 @@ export class SessionsStore {
   async archive(id: SessionId): Promise<void> {
     this.clearSplitIfInvolves(id);
     const session = this.sessions.find((s) => s.id === id);
-    if (!session?.projectId) {
-      await this.remove(id);
-      return;
-    }
-    const rt = this.runtime[id];
-    if (rt && rt.terminalId && (rt.status === 'running' || rt.status === 'starting')) {
-      try {
-        await ipc.terminal.stop(rt.terminalId);
-      } catch {
-        // continue with archive even if stop fails
-      }
-    }
+    if (!session) return;
     const updated = await ipc.sessions.update(id, { archivedAt: new Date().toISOString() });
     this.upsertSession(updated);
   }

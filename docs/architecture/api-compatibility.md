@@ -1,11 +1,22 @@
 # API compatibility
 
 `shared/api-contract.ts` is the authoritative compatibility declaration. It
-enumerates every `SoloeApi` method, the Application Server RPC handlers, server
-events, runtime-owned methods, browser-native helpers, and the only methods
-that remote Electron may override locally. Contract tests compare that
+enumerates every `SoloeApi` method, host-private `DEVICE_RPC_METHODS`, the
+Application Server RPC handlers, server events, runtime-owned methods,
+browser-native helpers, and the only methods that remote Electron may override
+locally. Contract tests compare that
 declaration with the real `SoloeDomain` handler table and the visible PWA pane
 requirements.
+
+There are now two intentionally different API layers:
+
+- `SoloeApi` is the complete single-Device renderer contract. The Application
+  Server implements its authenticated RPC/event half and Electron supplies
+  native client behavior.
+- optional `CockpitApi` is an Electron-hosted semantic port. It aggregates
+  multiple `SoloeApi`/Device transports, owns catalog coordination, and routes
+  every physical request by a composite Device reference. The PWA does not
+  construct a socket set or receive Device credentials.
 
 In the table below:
 
@@ -43,16 +54,39 @@ In the table below:
 | `features` | `scan`, `setBranchStatus`, `setIssueStatus`, `subscribe`, `unsubscribe`, `onChange` | IPC | Server | Server | Application Server |
 | `vault` | `list`, `save`, `update`, `delete`, `getSecret`, `onChange` | IPC | Server | Server | Application Server |
 | `browser` | `enableDeviceEmulation`, `disableDeviceEmulation`, `setUserAgent`, `openDevTools`, `setDevToolsLayout`, `closeDevTools` | Native | Native | Unavailable | Electron WebContents |
+| `cockpit` | snapshot/refresh/demand, filter/default placement, catalog transaction/export/import, workspace/placement/alignment/publication/source-lifecycle plan+execute, operation recovery, terminal composite routing/input takeover, events | IPC | IPC | Unavailable | Electron Cockpit Coordinator, with Device/Runtime effects delegated to their owners |
 
-Remote Electron's preload starts with the browser/server adapter and replaces
-only the `window` and `browser` objects. A regression test enumerates every
-namespace above and fails if any other object is replaced with Electron IPC.
-Its main process registers only `WindowIpc` and `BrowserIpc` in remote mode.
+Remote Electron's preload starts with the browser/server adapter and keeps
+window/browser controls, the connection registry, Vault, and the Cockpit port
+on Electron IPC. Device domain reads still use the authenticated server
+adapter. Contract tests enumerate these exceptions so another namespace cannot
+silently bypass the transport boundary.
 
 Local Electron remains a supported standalone transport. Its IPC handlers
 compose the same platform-independent Files, Git, Notes, Features, Overview,
 Diagnostics, Vault, integrations, and usage services used by the Server;
 renderer code does not own those operations.
+
+## Device protocol extensions
+
+The Cockpit does not expose generic Git or arbitrary RPC forwarding. Its
+host-private `DevicePort` negotiates the authenticated Device descriptor, then
+uses the following typed server capabilities:
+
+| Capability | Device RPCs | Authority |
+| --- | --- | --- |
+| Description/snapshot | bounded descriptor plus epoch/sequence-qualified snapshot | Application Server |
+| Workspace device state | `workspaceDevice.snapshot`, `plan`, `execute`, `getCommand` | Application Server and Device operation journal |
+| Placed Sessions | preallocated create and optimistic Session Source binding | Application Server Session store |
+| Terminal control | acquire/current/release input lease plus ordinary input/replay/resize/stop | Environment Runtime |
+| GitHub publication | provider status/owners, repository plan/execute/getCommand | Device-local provider adapter and journal |
+
+`DeviceCommandEnvelope` binds a UUID command to Cockpit, actor client, target
+Device, capability revision, plan token/expiry, expected entity versions, and
+optional exact Checkout evidence. A repeated successful command returns its
+durable receipt without repeating effects; a different intent under the same
+ID is rejected. Plans expose blockers, warnings, and required acknowledgements
+before any filesystem, Git, Session, or provider effect.
 
 ## Browser behavior
 
@@ -83,6 +117,7 @@ The Server publishes:
 - project and settings snapshots;
 - observer snapshots/events;
 - terminal output, status, exit, and location;
+- terminal input-lease acquisition, renewal, expiry, release, and takeover;
 - Notes, Git, Feature Lab, and Vault changes;
 - Worktree Overview chunks;
 - agent-integration changes;
@@ -96,6 +131,13 @@ output is recovered from the last observed sequence through bounded replay.
 Overview tasks either resume from backend-owned state or return an explicit
 restart state.
 
+Cockpit transports opt into `envelope-v1`. Each event is attributable to a
+Device ID and server epoch and has a monotonic sequence. The host rejects
+events from a replaced socket, a changed identity, an old epoch, or a sequence
+gap and repairs from an authority snapshot/cursor. Output demand is partitioned
+per Device and Terminal so a non-visible terminal is not fanned out to every
+client.
+
 ## Security and diagnostics
 
 HTTP RPC and WebSocket events share the token-protected localhost boundary.
@@ -103,6 +145,14 @@ Handlers validate request shape, placement, WSL distribution, worktree
 identity, relative paths, payload size, and destructive Git inputs. Files and
 Notes reject traversal and symlink escape. Vault list/change payloads never
 contain secrets; `getSecret` is the only explicit secret read.
+
+Workspace operations accept semantic intents, validated refs/URLs, bounded
+managed paths, immutable OIDs, and non-force Git primitives. The Cockpit never
+receives Git/provider credentials or source bytes from one Device to replay on
+another. Cleanup is blocked unless a fresh Device scan proves the isolated
+Checkout is non-main, clean (including ignored/untracked data), published or
+otherwise reachable, unconsumed, correctly owned, and free of active
+operations.
 
 Remote Electron development may load the renderer from a different loopback
 origin than the Application Server. The Server answers `POST /api/rpc`
@@ -122,13 +172,21 @@ services.
 `rpc_not_supported` means the client contract does not advertise that
 transport/method pair. Check, in order:
 
-1. the method exists in `SOLOE_API_METHODS`;
+1. renderer methods exist in `SOLOE_API_METHODS`, while host-private Device
+   methods exist in `DEVICE_RPC_METHODS` and are intentionally not renderer
+   methods;
 2. an RPC method exists in `SERVER_RPC_METHODS`, or an event exists in
    `SERVER_EVENT_METHODS`;
 3. `SoloeDomain` has the matching handler;
 4. `src/lib/browser-api.ts` maps the method arguments correctly;
 5. the UI capability requirement names the same namespace and method;
 6. client and server builds come from the same revision.
+
+For Cockpit failures, also compare the descriptor protocol range and required
+feature names. An incompatible or partially capable Device remains visible but
+is not offered unsupported mutation plans. `terminal_input_owned` means another
+authenticated client currently owns terminal input; the UI may explicitly
+take over rather than silently stealing control.
 
 Do not add a UI-only stub or a second handwritten support list. Add the real
 handler and update the central contract so compatibility tests can detect

@@ -298,6 +298,77 @@ describe('Environment Runtime lifecycle', () => {
     }
   });
 
+  it('arbitrates terminal input across clients with visible takeover', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const process = new FakeRuntimeProcess();
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => process }
+    });
+
+    try {
+      await host.listen();
+      const firstClient = await RuntimeClient.connect(endpoint);
+      const secondClient = await RuntimeClient.connect(endpoint);
+      const started = await firstClient.start({
+        sessionId: 'session-1',
+        spec: {
+          file: 'test-shell',
+          args: [],
+          cwd: directory,
+          env: {}
+        },
+        cols: 100,
+        rows: 30
+      });
+      const firstLease = await firstClient.acquireInputLease(
+        started.terminalId,
+        'client-a'
+      );
+
+      await firstClient.write(started.terminalId, 'first', {
+        ownerId: 'client-a',
+        leaseId: firstLease.leaseId
+      });
+      await expect(
+        secondClient.acquireInputLease(started.terminalId, 'client-b')
+      ).rejects.toThrow(/controlled by client-a/u);
+
+      const visibleTakeover = new Promise((resolve) =>
+        firstClient.once('inputLease', resolve)
+      );
+      const secondLease = await secondClient.acquireInputLease(
+        started.terminalId,
+        'client-b',
+        true
+      );
+      await expect(visibleTakeover).resolves.toMatchObject({
+        type: 'taken-over',
+        terminalId: started.terminalId,
+        previousOwnerId: 'client-a',
+        lease: { ownerId: 'client-b' }
+      });
+      await expect(
+        firstClient.write(started.terminalId, 'stale', {
+          ownerId: 'client-a',
+          leaseId: firstLease.leaseId
+        })
+      ).rejects.toThrow(/controlled by client-b/u);
+      await secondClient.write(started.terminalId, 'second', {
+        ownerId: 'client-b',
+        leaseId: secondLease.leaseId
+      });
+
+      expect(process.writes).toEqual(['first', 'second']);
+      firstClient.disconnect();
+      secondClient.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('stops a running Session only when explicitly requested', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);

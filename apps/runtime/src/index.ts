@@ -34,3 +34,8 @@ export {
   TerminalReplayBuffer,
   type TerminalReplayBufferOptions,
 } from "./TerminalReplayBuffer.js";
+export {
+  TerminalInputLeaseError,
+  TerminalInputLeaseManager,
+  type TerminalInputLeaseManagerOptions,
+} from "./TerminalInputLeaseManager.js";

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -38,7 +39,7 @@ describe.skipIf(!hasGit)('GitService', () => {
     await initRepo(tmpRoot);
     const closes = [vi.fn(), vi.fn(), vi.fn()];
     let watcherIndex = 0;
-    const watchImpl = vi.fn(() => ({
+    const watchImpl = vi.fn(() => Object.assign(new EventEmitter(), {
       close: closes[watcherIndex++]!
     }));
     const observedSvc = new GitService({ watchImpl: watchImpl as never });
@@ -59,6 +60,35 @@ describe.skipIf(!hasGit)('GitService', () => {
 
       releaseSecond();
       expect(closes.every((close) => close.mock.calls.length === 1)).toBe(true);
+    } finally {
+      observedSvc.dispose();
+    }
+  });
+
+  it('contains asynchronous filesystem watcher failures', async () => {
+    await initRepo(tmpRoot);
+    const watchers = Array.from({ length: 3 }, () => {
+      const watcher = new EventEmitter() as EventEmitter & { close: ReturnType<typeof vi.fn> };
+      watcher.close = vi.fn();
+      return watcher;
+    });
+    let watcherIndex = 0;
+    const observedSvc = new GitService({
+      watchImpl: vi.fn(() => watchers[watcherIndex++]!) as never
+    });
+
+    try {
+      const release = await observedSvc.acquireObservation(tmpRoot);
+      const resourceError = Object.assign(new Error('too many open files, watch'), {
+        code: 'EMFILE'
+      });
+
+      expect(() => watchers[0]!.emit('error', resourceError)).not.toThrow();
+      expect(watchers[0]!.close).toHaveBeenCalledOnce();
+
+      release();
+      expect(watchers[1]!.close).toHaveBeenCalledOnce();
+      expect(watchers[2]!.close).toHaveBeenCalledOnce();
     } finally {
       observedSvc.dispose();
     }

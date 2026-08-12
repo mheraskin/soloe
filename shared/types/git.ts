@@ -56,6 +56,11 @@ export interface GitCreateWorktreeRequest extends GitRepoRequest {
   baseRef: string;
 }
 
+export type GitWorkspaceWorktreeSource =
+  | { kind: 'existing-branch'; ref: string }
+  | { kind: 'new-branch'; ref: string; baseOid: string }
+  | { kind: 'detached'; oid: string };
+
 export interface GitAheadBehind {
   repoPath: string;
   isRepo: boolean;
@@ -87,6 +92,20 @@ export interface GitWorktree {
   detached: boolean;
   bare: boolean;
   isMain: boolean;
+}
+
+/** Fresh, Device-local evidence used to decide whether a Checkout can be removed safely. */
+export interface GitCheckoutLossEvidence {
+  certain: boolean;
+  observedAt: string;
+  headOid: string | null;
+  branchRef: string | null;
+  detached: boolean;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  ignored: number | null;
+  unpublishedCommits: number | null;
 }
 
 export interface GitBranch {
@@ -369,6 +388,23 @@ export interface GitRemoteOpResult {
   stdout: string;
   stderr: string;
 }
+
+export interface GitRemoteEvidence {
+  remote: string;
+  remoteUrl: string;
+  branchRef: string;
+  localOid: string | null;
+  remoteOid: string | null;
+  observedAt: string;
+}
+
+export type GitRevisionRelation =
+  | 'same'
+  | 'left-ahead'
+  | 'right-ahead'
+  | 'diverged'
+  | 'unrelated'
+  | 'missing';
 
 export interface FileDiff {
   path: string;

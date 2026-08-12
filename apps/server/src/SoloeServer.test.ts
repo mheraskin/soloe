@@ -11,6 +11,7 @@ import {
   writeFile
 } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
+import type { DeviceDescriptor } from '@shared/types/devices.js';
 import type {
   RuntimeProcess,
   RuntimeProcessFactory,
@@ -25,6 +26,20 @@ import { SoloeServer } from './SoloeServer.js';
 import { SoloeDomain } from './SoloeDomain.js';
 
 let endpointSequence = 0;
+
+const TEST_DEVICE_DESCRIPTOR: DeviceDescriptor = {
+  schemaVersion: 1,
+  deviceId: '11111111-1111-4111-8111-111111111111',
+  name: 'Test Device',
+  platform: 'linux',
+  serverEpoch: '22222222-2222-4222-8222-222222222222',
+  service: { name: 'soloe-server', version: '0.1.0' },
+  protocol: { current: 1, minimum: 1, maximum: 1 },
+  capabilities: {
+    revision: 'capability-revision-1',
+    features: ['device.describe.v1', 'events.envelope.v1']
+  }
+};
 
 function testRuntimeEndpoint(directory: string): string {
   endpointSequence += 1;
@@ -326,6 +341,207 @@ describe('Soloe Server lifecycle', () => {
       });
     } finally {
       socket?.close();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('serves authenticated Device description and snapshot metadata', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-describe-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      deviceDescriptor: TEST_DEVICE_DESCRIPTOR
+    });
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      const unauthorized = await fetch(new URL('/api/device/describe', baseUrl));
+      expect(unauthorized.status).toBe(401);
+
+      const described = await request(baseUrl, '/api/device/describe');
+      expect(described.status).toBe(200);
+      expect(described.headers.get('cache-control')).toBe('no-store');
+      await expect(described.json()).resolves.toEqual(TEST_DEVICE_DESCRIPTOR);
+
+      const snapshot = await request(baseUrl, '/api/device/snapshot');
+      expect(snapshot.status).toBe(200);
+      await expect(snapshot.json()).resolves.toEqual({
+        deviceId: TEST_DEVICE_DESCRIPTOR.deviceId,
+        serverEpoch: TEST_DEVICE_DESCRIPTOR.serverEpoch,
+        capturedAt: expect.any(String),
+        eventCursor: {
+          serverEpoch: TEST_DEVICE_DESCRIPTOR.serverEpoch,
+          sequence: 0
+        },
+        value: { runningSessions: [] }
+      });
+    } finally {
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('offers attributable sequenced events as an opt-in without changing legacy clients', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-envelopes-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      deviceDescriptor: TEST_DEVICE_DESCRIPTOR
+    });
+    let legacy: WebSocket | undefined;
+    let enveloped: WebSocket | undefined;
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      legacy = new WebSocket(
+        new URL('/api/runtime/events?token=test-token', baseUrl).toString()
+      );
+      enveloped = new WebSocket(
+        new URL(
+          '/api/runtime/events?token=test-token&eventFormat=envelope-v1',
+          baseUrl
+        ).toString()
+      );
+      await Promise.all([opened(legacy), opened(enveloped)]);
+
+      const legacyMessage = nextMessage(legacy);
+      const firstEnvelope = nextMessage(enveloped);
+      server.publish('sessions.changed', { revision: 7 }, {
+        entityRef: 'session:one',
+        entityVersion: 7,
+        commandId: 'command-one'
+      });
+      await expect(legacyMessage).resolves.toEqual({
+        event: 'sessions.changed',
+        payload: { revision: 7 }
+      });
+      await expect(firstEnvelope).resolves.toEqual({
+        event: 'sessions.changed',
+        deviceId: TEST_DEVICE_DESCRIPTOR.deviceId,
+        serverEpoch: TEST_DEVICE_DESCRIPTOR.serverEpoch,
+        sequence: 1,
+        entityRef: 'session:one',
+        entityVersion: 7,
+        commandId: 'command-one',
+        observedAt: expect.any(String),
+        payload: { revision: 7 }
+      });
+
+      const secondEnvelope = nextMessage(enveloped);
+      server.publish('sessions.changed', { revision: 8 });
+      await expect(secondEnvelope).resolves.toEqual(expect.objectContaining({
+        deviceId: TEST_DEVICE_DESCRIPTOR.deviceId,
+        serverEpoch: TEST_DEVICE_DESCRIPTOR.serverEpoch,
+        sequence: 2,
+        payload: { revision: 8 }
+      }));
+      const snapshot = await request(baseUrl, '/api/device/snapshot');
+      await expect(snapshot.json()).resolves.toEqual(expect.objectContaining({
+        eventCursor: {
+          serverEpoch: TEST_DEVICE_DESCRIPTOR.serverEpoch,
+          sequence: 2
+        }
+      }));
+    } finally {
+      legacy?.close();
+      enveloped?.close();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes terminal bytes only to envelope clients that demand that Terminal', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-output-demand-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      deviceDescriptor: TEST_DEVICE_DESCRIPTOR,
+      rpcHandler: async () => true
+    });
+    let owner: WebSocket | undefined;
+    let other: WebSocket | undefined;
+    let legacy: WebSocket | undefined;
+
+    try {
+      await runtime.listen();
+      const baseUrl = await server.listen();
+      owner = new WebSocket(new URL(
+        '/api/runtime/events?token=test-token&eventFormat=envelope-v1&clientId=owner',
+        baseUrl
+      ));
+      other = new WebSocket(new URL(
+        '/api/runtime/events?token=test-token&eventFormat=envelope-v1&clientId=other',
+        baseUrl
+      ));
+      legacy = new WebSocket(new URL('/api/runtime/events?token=test-token', baseUrl));
+      await Promise.all([opened(owner), opened(other), opened(legacy)]);
+      const ownerMessages: unknown[] = [];
+      const otherMessages: unknown[] = [];
+      const legacyMessages: unknown[] = [];
+      owner.addEventListener('message', (event) => ownerMessages.push(JSON.parse(String(event.data))));
+      other.addEventListener('message', (event) => otherMessages.push(JSON.parse(String(event.data))));
+      legacy.addEventListener('message', (event) => legacyMessages.push(JSON.parse(String(event.data))));
+
+      const demand = await request(baseUrl, '/api/rpc', {
+        method: 'POST',
+        body: {
+          namespace: 'terminal',
+          method: 'setOutputDemand',
+          args: [{ terminalId: 'wanted', active: true }],
+          clientId: 'owner'
+        }
+      });
+      await expect(demand.json()).resolves.toEqual({ ok: true, value: true });
+      server.publish('output', {
+        terminalId: 'wanted',
+        sessionId: 'same-session',
+        data: 'private bytes',
+        seq: 1
+      });
+      server.publish('sessions.changed', { revision: 1 });
+      await vi.waitFor(() => expect(ownerMessages).toHaveLength(2));
+      await vi.waitFor(() => expect(otherMessages).toHaveLength(1));
+      await vi.waitFor(() => expect(legacyMessages).toHaveLength(2));
+
+      expect(ownerMessages).toEqual([
+        expect.objectContaining({ event: 'output', sequence: 1 }),
+        expect.objectContaining({ event: 'sessions.changed', sequence: 2 })
+      ]);
+      expect(otherMessages).toEqual([
+        expect.objectContaining({ event: 'sessions.changed', sequence: 1 })
+      ]);
+      expect(legacyMessages[0]).toEqual(expect.objectContaining({ event: 'output' }));
+    } finally {
+      owner?.close();
+      other?.close();
+      legacy?.close();
       await server.close();
       await runtime.shutdown();
       await rm(directory, { recursive: true, force: true });

@@ -22,6 +22,12 @@
   import ProjectSection from './ProjectSection.svelte';
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
+  import WorkspaceNavigation from './WorkspaceNavigation.svelte';
+  import { cockpit } from '../stores/cockpit.svelte';
+
+  onMount(() => {
+    if (!cockpit.loaded) void cockpit.load().catch(reportError);
+  });
 
   const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
   const MAX_WIDTH = SIDEBAR_MAX_WIDTH;
@@ -339,6 +345,9 @@
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
     <div class="flex flex-col gap-1 p-1.5">
+      {#if cockpit.supported && cockpit.loaded && cockpit.snapshot.navigation}
+        <WorkspaceNavigation filter={query} />
+      {:else}
       {#if standaloneVisible.length > 0}
         <div class="flex flex-col gap-px">
           {#each standaloneVisible as session (session.id)}
@@ -357,6 +366,7 @@
           />
         {/if}
       {/each}
+      {/if}
     </div>
   </ScrollArea>
   <button

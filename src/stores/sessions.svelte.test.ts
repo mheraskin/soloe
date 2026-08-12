@@ -14,6 +14,7 @@ const {
   off,
   listener,
   terminalStart,
+  terminalStop,
   terminalStatusListeners,
   terminalExitListeners,
   terminalLocationListeners,
@@ -22,6 +23,8 @@ const {
   projectGet,
   loadWorktrees,
   sessionCreate,
+  sessionUpdate,
+  sessionDelete,
   sessionList,
   sessionListArchived,
   sessionChanges,
@@ -49,6 +52,7 @@ const {
     off: detach,
     listener: vi.fn(() => detach),
     terminalStart: vi.fn(),
+    terminalStop: vi.fn(),
     terminalStatusListeners: [] as Array<(event: TerminalStatusEvent) => void>,
     terminalExitListeners: [] as Array<(event: TerminalExitEvent) => void>,
     terminalLocationListeners: [] as Array<(event: TerminalLocationEvent) => void>,
@@ -57,6 +61,8 @@ const {
     projectGet: vi.fn(() => null as { path: string } | null),
     loadWorktrees: vi.fn(async () => [] as Array<{ path: string }>),
     sessionCreate: vi.fn(),
+    sessionUpdate: vi.fn(),
+    sessionDelete: vi.fn(),
     sessionList: vi.fn(),
     sessionListArchived: vi.fn(),
     sessionChanges: changes,
@@ -84,6 +90,7 @@ vi.mock('../lib/ipc', () => ({
   ipc: {
     terminal: {
       start: terminalStart,
+      stop: terminalStop,
       onStatus: vi.fn((callback: (event: TerminalStatusEvent) => void) => {
         terminalStatusListeners.push(callback);
         return off;
@@ -109,6 +116,8 @@ vi.mock('../lib/ipc', () => ({
     },
     sessions: {
       create: sessionCreate,
+      update: sessionUpdate,
+      delete: sessionDelete,
       list: sessionList,
       listArchived: sessionListArchived,
       onChange: sessionChangeListener,
@@ -162,6 +171,7 @@ describe('SessionsStore', () => {
     vi.useFakeTimers();
     listener.mockClear();
     terminalStart.mockReset();
+    terminalStop.mockReset();
     terminalStatusListeners.length = 0;
     terminalExitListeners.length = 0;
     terminalLocationListeners.length = 0;
@@ -176,6 +186,8 @@ describe('SessionsStore', () => {
     sessionList.mockResolvedValue([]);
     sessionListArchived.mockReset();
     sessionListArchived.mockResolvedValue([]);
+    sessionUpdate.mockReset();
+    sessionDelete.mockReset();
     terminalListRunning.mockReset();
     terminalListRunning.mockResolvedValue([]);
     observerList.mockReset();
@@ -189,10 +201,10 @@ describe('SessionsStore', () => {
     vi.useRealTimers();
   });
 
-  it('uses inventory events without allocating a periodic sweep timer', () => {
+  it('does not couple Session lifecycle to Worktree inventory', () => {
     const store = new SessionsStore();
     store.attachListeners();
-    expect(onWorktrees).toHaveBeenCalledTimes(1);
+    expect(onWorktrees).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
 
     setVisibility('hidden');
@@ -209,7 +221,7 @@ describe('SessionsStore', () => {
     store.attachListeners();
     store.detach();
     expect(vi.getTimerCount()).toBe(0);
-    expect(inventoryOff).toHaveBeenCalledTimes(1);
+    expect(inventoryOff).not.toHaveBeenCalled();
 
     setVisibility('hidden');
     setVisibility('visible');
@@ -224,7 +236,7 @@ describe('SessionsStore', () => {
     store.detach();
   });
 
-  it('archives the only session when its worktree was removed', async () => {
+  it('keeps a session visible when its Worktree disappears from inventory', async () => {
     const store = new SessionsStore();
     store.sessions = [session({ id: 'orphan', cwd: '/repo/removed' })];
     projectGet.mockReturnValue({ path: '/repo' });
@@ -234,8 +246,40 @@ describe('SessionsStore', () => {
     store.attachListeners();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(archive).toHaveBeenCalledWith('orphan');
+    expect(archive).not.toHaveBeenCalled();
     store.detach();
+  });
+
+  it('archives metadata without stopping a running unassigned session', async () => {
+    const store = new SessionsStore();
+    const active = session({ projectId: undefined });
+    const archived = session({
+      projectId: undefined,
+      archivedAt: '2026-08-13T10:00:00.000Z'
+    });
+    store.sessions = [active];
+    store.runtime = {
+      session: {
+        sessionId: 'session',
+        terminalId: 'terminal-1',
+        status: 'running'
+      }
+    };
+    sessionUpdate.mockResolvedValueOnce(archived);
+
+    await store.archive('session');
+
+    expect(sessionUpdate).toHaveBeenCalledWith('session', {
+      archivedAt: expect.any(String)
+    });
+    expect(terminalStop).not.toHaveBeenCalled();
+    expect(sessionDelete).not.toHaveBeenCalled();
+    expect(store.sessions).toEqual([]);
+    expect(store.archived).toEqual([archived]);
+    expect(store.runtime.session).toMatchObject({
+      terminalId: 'terminal-1',
+      status: 'running'
+    });
   });
 
   it('does not archive Windows spelling variants of the same Worktree', async () => {

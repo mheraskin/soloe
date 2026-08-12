@@ -1,10 +1,18 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 
 import { RuntimeClient } from "@soloe/runtime";
+import {
+  SOLOE_EVENT_FORMAT_V1,
+  parseDeviceDescriptor,
+  type DeviceDescriptor,
+  type DeviceEventEnvelope,
+} from "@shared/types/devices.js";
+
+import { DeviceDescriptorService } from "./DeviceDescriptorService.js";
 
 const MAX_JSON_REQUEST_BYTES = 32 * 1024 * 1024;
 const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
@@ -14,6 +22,7 @@ export interface SoloeServerOptions {
   host?: string;
   port?: number;
   token: string;
+  deviceDescriptor?: DeviceDescriptor;
   webRoot?: string;
   allowedTailscaleUsers?: string;
   rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
@@ -29,12 +38,19 @@ export interface BrowserRpcCall {
   clientId?: string;
 }
 
+export interface DeviceEventMetadata {
+  entityRef?: string;
+  entityVersion?: number;
+  commandId?: string;
+}
+
 export class SoloeServer {
   private readonly options: {
     runtimeEndpoint: string;
     host: string;
     port: number;
     token: string;
+    deviceDescriptor: DeviceDescriptor;
     webRoot: string;
     allowedTailscaleUsers?: string;
     rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
@@ -51,7 +67,12 @@ export class SoloeServer {
   }> = [];
   private readonly clientSocketCounts = new Map<string, number>();
   private readonly socketClientIds = new WeakMap<WebSocket, string>();
+  private readonly envelopedSockets = new WeakSet<WebSocket>();
+  private readonly socketEventSequences = new WeakMap<WebSocket, number>();
+  private readonly clientEventSequences = new Map<string, number>();
+  private readonly clientOutputDemand = new Map<string, Set<string>>();
   private readonly clientDisconnectTimers = new Map<string, NodeJS.Timeout>();
+  private eventSequence = 0;
   private closing = false;
 
   constructor(options: SoloeServerOptions) {
@@ -60,6 +81,10 @@ export class SoloeServer {
       host: options.host ?? "127.0.0.1",
       port: options.port ?? 0,
       token: options.token,
+      deviceDescriptor: parseDeviceDescriptor(
+        options.deviceDescriptor
+          ?? new DeviceDescriptorService({ deviceId: randomUUID() }).describe(),
+      ),
       webRoot: options.webRoot ?? "",
       ...(options.allowedTailscaleUsers !== undefined
         ? { allowedTailscaleUsers: options.allowedTailscaleUsers }
@@ -179,7 +204,8 @@ export class SoloeServer {
       }
       if (
         !this.isAuthorized(request) &&
-        !this.tokensMatch(url.searchParams.get("token"))
+        !this.tokensMatch(url.searchParams.get("token")) &&
+        !this.trustedTailscaleIdentity(request)
       ) {
         socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         socket.destroy();
@@ -191,6 +217,15 @@ export class SoloeServer {
     });
     webSocketServer.on("connection", (webSocket, request) => {
       const url = new URL(request.url ?? "/", "http://localhost");
+      const eventFormat = url.searchParams.get("eventFormat");
+      if (eventFormat !== null && eventFormat !== SOLOE_EVENT_FORMAT_V1) {
+        webSocket.close(1008, "unsupported event format");
+        return;
+      }
+      if (eventFormat === SOLOE_EVENT_FORMAT_V1) {
+        this.envelopedSockets.add(webSocket);
+        this.socketEventSequences.set(webSocket, 0);
+      }
       const rawClientId = url.searchParams.get("clientId");
       const clientId = validClientId(rawClientId);
       if (rawClientId !== null && !clientId) {
@@ -212,7 +247,7 @@ export class SoloeServer {
       webSocket.once("close", () => this.releaseClientSocket(clientId));
       if (reconnected) this.options.clientReconnected?.(clientId);
     });
-    const runtimeListeners = ["output", "exit", "location"].map((event) => {
+    const runtimeListeners = ["output", "exit", "location", "inputLease"].map((event) => {
       const listener = (payload: unknown) => this.publish(event, payload);
       runtimeClient.on(event, listener);
       return { event, listener };
@@ -259,6 +294,8 @@ export class SoloeServer {
     for (const timer of this.clientDisconnectTimers.values()) clearTimeout(timer);
     this.clientDisconnectTimers.clear();
     this.clientSocketCounts.clear();
+    this.clientEventSequences.clear();
+    this.clientOutputDemand.clear();
     const server = this.server;
     this.server = undefined;
     const webSocketServer = this.webSocketServer;
@@ -294,25 +331,46 @@ export class SoloeServer {
     this.runtimeClient = undefined;
   }
 
-  publish(event: string, payload: unknown): void {
+  publish(
+    event: string,
+    payload: unknown,
+    metadata: DeviceEventMetadata = {},
+  ): void {
+    this.eventSequence += 1;
     if (!this.webSocketServer) return;
-    const message = JSON.stringify({ event, payload });
+    const legacyMessage = JSON.stringify({ event, payload });
     for (const client of this.webSocketServer.clients) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+        if (!this.envelopedSockets.has(client)) {
+          client.send(legacyMessage);
+          continue;
+        }
+        if (!this.shouldDeliverEnvelopedEvent(client, event, payload)) continue;
+        client.send(JSON.stringify(this.nextEventEnvelope(client, event, payload, metadata)));
       }
     }
   }
 
-  publishToClient(clientId: string, event: string, payload: unknown): void {
+  publishToClient(
+    clientId: string,
+    event: string,
+    payload: unknown,
+    metadata: DeviceEventMetadata = {},
+  ): void {
+    this.eventSequence += 1;
     if (!this.webSocketServer) return;
-    const message = JSON.stringify({ event, payload });
+    const legacyMessage = JSON.stringify({ event, payload });
     for (const client of this.webSocketServer.clients) {
       if (
         client.readyState === WebSocket.OPEN &&
         this.socketClientIds.get(client) === clientId
       ) {
-        client.send(message);
+        if (!this.envelopedSockets.has(client)) {
+          client.send(legacyMessage);
+          continue;
+        }
+        if (!this.shouldDeliverEnvelopedEvent(client, event, payload)) continue;
+        client.send(JSON.stringify(this.nextEventEnvelope(client, event, payload, metadata)));
       }
     }
   }
@@ -323,6 +381,40 @@ export class SoloeServer {
     response: ServerResponse,
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://localhost");
+
+    if (request.method === "GET" && url.pathname === "/api/device/describe") {
+      response.setHeader("cache-control", "no-store");
+      this.json(response, 200, this.options.deviceDescriptor);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/device/snapshot") {
+      const rawClientId = url.searchParams.get("clientId");
+      const clientId = rawClientId === null ? null : validClientId(rawClientId);
+      if (rawClientId !== null && !clientId) {
+        throw new RpcTransportError(
+          "invalid_client_identity",
+          "Snapshot client identity is invalid",
+          400,
+        );
+      }
+      const sequence = clientId
+        ? this.clientEventSequences.get(clientId) ?? 0
+        : this.eventSequence;
+      const runningSessions = await runtimeClient.listRunning();
+      response.setHeader("cache-control", "no-store");
+      this.json(response, 200, {
+        deviceId: this.options.deviceDescriptor.deviceId,
+        serverEpoch: this.options.deviceDescriptor.serverEpoch,
+        capturedAt: new Date().toISOString(),
+        eventCursor: {
+          serverEpoch: this.options.deviceDescriptor.serverEpoch,
+          sequence,
+        },
+        value: { runningSessions },
+      });
+      return;
+    }
 
     if (url.pathname === "/api/runtime/sessions") {
       if (request.method === "GET") {
@@ -350,9 +442,13 @@ export class SoloeServer {
         requestBytes,
       });
       try {
+        const value = await this.options.rpcHandler(call);
+        if (call.namespace === "terminal" && call.method === "setOutputDemand") {
+          this.updateOutputDemand(call);
+        }
         const result = {
           ok: true,
-          value: await this.options.rpcHandler(call),
+          value,
         } as const;
         const responseBytes = Buffer.byteLength(JSON.stringify(result));
         if (responseBytes > MAX_RPC_RESPONSE_BYTES) {
@@ -409,7 +505,14 @@ export class SoloeServer {
       }
       if (request.method === "POST" && operation === "input") {
         const body = await this.readJson<{ data: string }>(request);
-        await runtimeClient.write(terminalId, body.data);
+        const lease = await runtimeClient.acquireInputLease(
+          terminalId,
+          "legacy-http-client",
+        );
+        await runtimeClient.write(terminalId, body.data, {
+          ownerId: lease.ownerId,
+          leaseId: lease.leaseId,
+        });
         response.writeHead(204).end();
         return;
       }
@@ -468,6 +571,79 @@ export class SoloeServer {
   private json(response: ServerResponse, status: number, value: unknown): void {
     response.writeHead(status, { "content-type": "application/json" });
     response.end(JSON.stringify(value));
+  }
+
+  private nextEventEnvelope(
+    client: WebSocket,
+    event: string,
+    payload: unknown,
+    metadata: DeviceEventMetadata,
+  ): DeviceEventEnvelope {
+    const clientId = this.socketClientIds.get(client);
+    const sequence = clientId
+      ? (this.clientEventSequences.get(clientId) ?? 0) + 1
+      : (this.socketEventSequences.get(client) ?? 0) + 1;
+    if (clientId) this.clientEventSequences.set(clientId, sequence);
+    else this.socketEventSequences.set(client, sequence);
+    return {
+      event,
+      deviceId: this.options.deviceDescriptor.deviceId,
+      serverEpoch: this.options.deviceDescriptor.serverEpoch,
+      sequence,
+      ...(metadata.entityRef !== undefined
+        ? { entityRef: metadata.entityRef }
+        : {}),
+      ...(metadata.entityVersion !== undefined
+        ? { entityVersion: metadata.entityVersion }
+        : {}),
+      ...(metadata.commandId !== undefined
+        ? { commandId: metadata.commandId }
+        : {}),
+      observedAt: new Date().toISOString(),
+      payload,
+    };
+  }
+
+  private shouldDeliverEnvelopedEvent(
+    client: WebSocket,
+    event: string,
+    payload: unknown,
+  ): boolean {
+    if (event !== "output") return true;
+    const clientId = this.socketClientIds.get(client);
+    if (!clientId) return true;
+    if (!payload || typeof payload !== "object") return false;
+    const terminalId = (payload as { terminalId?: unknown }).terminalId;
+    return typeof terminalId === "string"
+      && Boolean(this.clientOutputDemand.get(clientId)?.has(terminalId));
+  }
+
+  private updateOutputDemand(call: BrowserRpcCall): void {
+    if (!call.clientId) {
+      throw new RpcTransportError(
+        "client_identity_required",
+        "Terminal output demand requires a client identity",
+        400,
+      );
+    }
+    const value = call.args[0];
+    if (!value || typeof value !== "object") {
+      throw malformedOutputDemand();
+    }
+    const payload = value as { terminalId?: unknown; active?: unknown };
+    if (
+      typeof payload.terminalId !== "string" ||
+      !payload.terminalId.trim() ||
+      payload.terminalId.length > 512 ||
+      typeof payload.active !== "boolean"
+    ) {
+      throw malformedOutputDemand();
+    }
+    const demand = this.clientOutputDemand.get(call.clientId) ?? new Set<string>();
+    if (payload.active) demand.add(payload.terminalId);
+    else demand.delete(payload.terminalId);
+    if (demand.size > 0) this.clientOutputDemand.set(call.clientId, demand);
+    else this.clientOutputDemand.delete(call.clientId);
   }
 
   private isAuthorized(request: IncomingMessage): boolean {
@@ -594,10 +770,16 @@ export class SoloeServer {
       return;
     }
     this.clientSocketCounts.delete(clientId);
-    if (this.closing || !this.options.clientDisconnected) return;
+    if (this.closing) {
+      this.clientOutputDemand.delete(clientId);
+      this.clientEventSequences.delete(clientId);
+      return;
+    }
     const timer = setTimeout(() => {
       this.clientDisconnectTimers.delete(clientId);
       if (!this.clientSocketCounts.has(clientId)) {
+        this.clientOutputDemand.delete(clientId);
+        this.clientEventSequences.delete(clientId);
         this.options.clientDisconnected?.(clientId);
       }
     }, this.options.clientDisconnectGraceMs);
@@ -707,6 +889,14 @@ function malformedRpc(): RpcTransportError {
   return new RpcTransportError(
     "malformed_rpc_body",
     "RPC body must contain a valid namespace, method, and args array",
+    400,
+  );
+}
+
+function malformedOutputDemand(): RpcTransportError {
+  return new RpcTransportError(
+    "malformed_terminal_output_demand",
+    "Terminal output demand must contain a terminalId and active boolean",
     400,
   );
 }

@@ -7,12 +7,14 @@ import type {
 } from './RuntimeProcess.js';
 import type { RuntimeUsageSnapshot } from "@soloe/protocol";
 import type { TerminalReplaySnapshot } from './TerminalReplayBuffer.js';
+import type { TerminalInputLease } from '../../../shared/types/terminal.js';
 
 interface RuntimeResponse {
   id: number;
   ok: boolean;
   value?: unknown;
   error?: string;
+  code?: string;
 }
 
 interface PendingRequest {
@@ -64,8 +66,32 @@ export class RuntimeClient extends EventEmitter {
     return this.request('setReplayUnbounded', { unbounded });
   }
 
-  write(terminalId: string, data: string): Promise<true> {
-    return this.request('write', { terminalId, data });
+  acquireInputLease(
+    terminalId: string,
+    ownerId: string,
+    takeover = false
+  ): Promise<TerminalInputLease> {
+    return this.request('acquireInputLease', { terminalId, ownerId, takeover });
+  }
+
+  currentInputLease(terminalId: string): Promise<TerminalInputLease | null> {
+    return this.request('currentInputLease', { terminalId });
+  }
+
+  releaseInputLease(terminalId: string, ownerId: string, leaseId: string): Promise<boolean> {
+    return this.request('releaseInputLease', { terminalId, ownerId, leaseId });
+  }
+
+  releaseInputLeases(ownerId: string): Promise<number> {
+    return this.request('releaseInputLeases', { ownerId });
+  }
+
+  write(
+    terminalId: string,
+    data: string,
+    control?: { ownerId: string; leaseId: string }
+  ): Promise<true> {
+    return this.request('write', { terminalId, data, ...control });
   }
 
   resize(terminalId: string, cols: number, rows: number): Promise<true> {
@@ -111,6 +137,12 @@ export class RuntimeClient extends EventEmitter {
     if (!pending) return;
     this.pending.delete(response.id);
     if (response.ok) pending.resolve(response.value);
-    else pending.reject(new Error(response.error ?? 'Environment Runtime request failed'));
+    else {
+      const error = new Error(response.error ?? 'Environment Runtime request failed') as Error & {
+        code?: string;
+      };
+      if (response.code) error.code = response.code;
+      pending.reject(error);
+    }
   }
 }

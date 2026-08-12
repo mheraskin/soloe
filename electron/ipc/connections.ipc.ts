@@ -12,6 +12,7 @@ interface ConnectionsIpcOptions {
   registry: ConnectionRegistry;
   getWindows: () => BrowserWindow[];
   relaunch?: () => void;
+  legacyExclusiveRelaunch?: boolean;
 }
 
 export class ConnectionsIpc {
@@ -37,13 +38,19 @@ export class ConnectionsIpc {
     ipcMain.handle(IpcChannels.connections.remove, (_event, id: ConnectionId) =>
       ipcInvoke(() => this.options.registry.remove(id))
     );
+    ipcMain.handle(
+      IpcChannels.connections.enable,
+      (_event, id: ConnectionId, enabled: boolean) =>
+        ipcInvoke(() => this.options.registry.setEnabled(id, enabled))
+    );
     ipcMain.handle(IpcChannels.connections.select, (_event, id: ConnectionId) =>
       ipcInvoke(async () => {
         const result = await this.options.registry.select(id);
-        if (result.relaunching) {
+        const relaunching = result.relaunching && this.options.legacyExclusiveRelaunch === true;
+        if (relaunching) {
           setTimeout(() => (this.options.relaunch ?? relaunchApplication)(), 50);
         }
-        return result;
+        return { ...result, relaunching };
       })
     );
     this.detachListener = this.options.registry.onChange((snapshot) => {
@@ -57,6 +64,7 @@ export class ConnectionsIpc {
     ipcMain.removeHandler(IpcChannels.connections.refresh);
     ipcMain.removeHandler(IpcChannels.connections.add);
     ipcMain.removeHandler(IpcChannels.connections.remove);
+    ipcMain.removeHandler(IpcChannels.connections.enable);
     ipcMain.removeHandler(IpcChannels.connections.select);
     this.detachListener?.();
     this.detachListener = null;

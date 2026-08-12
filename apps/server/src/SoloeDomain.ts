@@ -27,6 +27,7 @@ import type {
   SessionId,
   SessionUpdate,
 } from "../../../shared/types/sessions.js";
+import type { DeviceId } from "../../../shared/types/devices.js";
 import { effectiveAgentProvider } from "../../../shared/types/sessions.js";
 import { sessionAutoApprovesPermissions } from "../../../shared/agent-permissions.js";
 import type { SettingsUpdate } from "../../../shared/types/settings.js";
@@ -109,6 +110,11 @@ import {
   WorktreeFactsCollector,
   WorktreeOverviewService,
   WorktreeFileIndex,
+  DeviceOperationStore,
+  GhCliGitHubAdapter,
+  GitHubProviderService,
+  WorkspaceDeviceStore,
+  WorkspaceDeviceService,
   VaultStore,
   VaultStoreError,
   WslHostDetector,
@@ -145,13 +151,37 @@ import { NodePtyProcessFactory } from "../../../electron/terminal/NodePtyProcess
 import { BridgePersistence } from "../../../electron/integrations/BridgePersistence.js";
 import { ProcessTreeUsageSampler } from "@soloe/runtime";
 import { BackendUsageObservation } from "./BackendUsageObservation.js";
+import type { DeviceCommandEnvelope } from "../../../shared/types/commands.js";
+import type {
+  DevicePlacedSessionRequest,
+  DeviceSessionSourceUpdateRequest,
+  DeviceWorkspaceIntent,
+} from "../../../shared/types/workspaces.js";
+import type { CreateGitHubRepositoryIntent } from "../../../shared/types/providers.js";
+import type { TerminalInputLease } from "../../../shared/types/terminal.js";
 
 export interface RuntimeControl {
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
   listRunning(): Promise<RuntimeTerminalState[]>;
   replay(terminalId: string, afterSeq?: number): Promise<RuntimeReplaySnapshot | null>;
   setReplayUnbounded?(unbounded: boolean): Promise<unknown>;
-  write(terminalId: string, data: string): Promise<unknown>;
+  acquireInputLease?(
+    terminalId: string,
+    ownerId: string,
+    takeover?: boolean,
+  ): Promise<TerminalInputLease>;
+  currentInputLease?(terminalId: string): Promise<TerminalInputLease | null>;
+  releaseInputLease?(
+    terminalId: string,
+    ownerId: string,
+    leaseId: string,
+  ): Promise<boolean>;
+  releaseInputLeases?(ownerId: string): Promise<number>;
+  write(
+    terminalId: string,
+    data: string,
+    control?: { ownerId: string; leaseId: string },
+  ): Promise<unknown>;
   resize(terminalId: string, cols: number, rows: number): Promise<unknown>;
   stop(terminalId: string): Promise<unknown>;
   usage?(): Promise<RuntimeUsageSnapshot>;
@@ -166,6 +196,8 @@ export interface DomainCall {
 
 export interface SoloeDomainOptions {
   dataDirectory: string;
+  deviceId?: DeviceId;
+  workspaceManagedRoots?: string[];
   runtime: RuntimeControl;
   featureArtifacts?: FeatureArtifactObservation;
   usageObservation?: Pick<BackendUsageObservation, "observe" | "reset">;
@@ -214,6 +246,10 @@ export class SoloeDomain extends EventEmitter {
   private readonly sessions: SessionStore;
   private readonly settings: SettingsStore;
   private readonly projects: ProjectStore;
+  private readonly workspaceDevice: WorkspaceDeviceStore | null;
+  private readonly workspaceOperations: DeviceOperationStore | null;
+  private readonly workspaceService: WorkspaceDeviceService | null;
+  private githubProviderService: GitHubProviderService | null = null;
   private readonly browserSessions: BrowserSessionStore;
   private readonly files: FileService;
   private readonly diagnostics: DiagnosticsService;
@@ -279,12 +315,39 @@ export class SoloeDomain extends EventEmitter {
     this.projects = new ProjectStore(path.join(options.dataDirectory, "projects.json"), {
       platform: hostPlatform(),
     });
+    this.workspaceDevice = options.deviceId
+      ? new WorkspaceDeviceStore(
+          path.join(options.dataDirectory, "device-workspaces.json"),
+          options.deviceId,
+        )
+      : null;
+    this.workspaceOperations = options.deviceId
+      ? new DeviceOperationStore(
+          path.join(options.dataDirectory, "device-operations.json"),
+          options.deviceId,
+        )
+      : null;
     this.browserSessions = new BrowserSessionStore(
       path.join(options.dataDirectory, "browser-sessions.json"),
     );
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
+    this.workspaceService = this.workspaceDevice && this.workspaceOperations
+      ? new WorkspaceDeviceService({
+          workspace: this.workspaceDevice,
+          operations: this.workspaceOperations,
+          git: this.git,
+          managedRoots: options.workspaceManagedRoots ?? [
+            path.join(options.dataDirectory, "workspaces"),
+          ],
+          capabilityRevision: "workspace-device-service-v1",
+          listSessions: async () => [
+            ...(await this.sessions.list()),
+            ...(await this.sessions.listArchived()),
+          ],
+        })
+      : null;
     this.files = new FileService({
       fileIndex: new WorktreeFileIndex({
         getBinaries: async () => (await this.settings.get()).binaries,
@@ -429,8 +492,20 @@ export class SoloeDomain extends EventEmitter {
       this.sessions.init(),
       this.settings.init(),
       this.projects.init(),
+      this.workspaceDevice?.init(),
+      this.workspaceOperations?.init(),
+      this.workspaceService?.init(),
     ]);
+    await this.adoptLegacyWorkspaceState();
     const initialSettings = await this.settings.get();
+    if (this.options.deviceId && this.workspaceOperations) {
+      this.githubProviderService = new GitHubProviderService({
+        deviceId: this.options.deviceId,
+        capabilityRevision: "github-provider-service-v1",
+        operations: this.workspaceOperations,
+        adapter: new GhCliGitHubAdapter({ binary: initialSettings.binaries.gh ?? "gh" }),
+      });
+    }
     await this.options.runtime.setReplayUnbounded?.(
       initialSettings.terminal.keepFullHistory,
     );
@@ -594,11 +669,78 @@ export class SoloeDomain extends EventEmitter {
   }
 
   async invoke(call: DomainCall): Promise<unknown> {
+    if (call.namespace === "githubProvider") {
+      if (!this.githubProviderService) {
+        throw new RpcError(
+          "github_provider_unavailable",
+          "This application server has no Device-owned GitHub provider.",
+        );
+      }
+      if (call.method === "status") {
+        requireArgumentCount("githubProvider.status", call.args, 0);
+        return this.githubProviderService.status();
+      }
+      if (call.method === "listOwners") {
+        requireArgumentCount("githubProvider.listOwners", call.args, 0);
+        return this.githubProviderService.listOwners();
+      }
+      if (call.method === "planCreateRepository") {
+        requireArgumentCount("githubProvider.planCreateRepository", call.args, 1);
+        return this.githubProviderService.plan(call.args[0] as CreateGitHubRepositoryIntent);
+      }
+      if (call.method === "execute") {
+        requireArgumentCount("githubProvider.execute", call.args, 1);
+        return this.githubProviderService.execute(
+          call.args[0] as DeviceCommandEnvelope<CreateGitHubRepositoryIntent>,
+        );
+      }
+      if (call.method === "getCommand") {
+        requireArgumentCount("githubProvider.getCommand", call.args, 2);
+        return this.githubProviderService.getCommand(
+          String(call.args[0] ?? ""),
+          String(call.args[1] ?? ""),
+        );
+      }
+      throw unsupportedRpc("githubProvider", call.method);
+    }
+    if (call.namespace === "workspaceDevice") {
+      if (call.method === "snapshot") {
+        requireArgumentCount("workspaceDevice.snapshot", call.args, 0);
+        if (!this.workspaceDevice) {
+          throw new RpcError(
+            "workspace_device_unavailable",
+            "This application server has no durable Device identity.",
+          );
+        }
+        return this.workspaceDevice.snapshot();
+      }
+      if (call.method === "plan") {
+        requireArgumentCount("workspaceDevice.plan", call.args, 1);
+        if (!this.workspaceService) throw workspaceDeviceUnavailable();
+        return this.workspaceService.plan(call.args[0] as DeviceWorkspaceIntent);
+      }
+      if (call.method === "execute") {
+        requireArgumentCount("workspaceDevice.execute", call.args, 1);
+        if (!this.workspaceService) throw workspaceDeviceUnavailable();
+        return this.workspaceService.execute(
+          call.args[0] as DeviceCommandEnvelope<DeviceWorkspaceIntent>,
+        );
+      }
+      if (call.method === "getCommand") {
+        requireArgumentCount("workspaceDevice.getCommand", call.args, 2);
+        if (!this.workspaceService) throw workspaceDeviceUnavailable();
+        return this.workspaceService.getCommand(
+          String(call.args[0] ?? ""),
+          String(call.args[1] ?? ""),
+        );
+      }
+      throw unsupportedRpc("workspaceDevice", call.method);
+    }
     if (call.namespace === "sessions") {
       return this.sessionsCall(call.method, call.args);
     }
     if (call.namespace === "terminal") {
-      return this.terminalCall(call.method, call.args);
+      return this.terminalCall(call.method, call.args, call.clientId);
     }
     if (call.namespace === "projects") {
       return this.projectsCall(call.method, call.args);
@@ -686,6 +828,49 @@ export class SoloeDomain extends EventEmitter {
       "rpc_not_supported",
       `RPC ${call.namespace}.${call.method} is not supported by the application server`,
     );
+  }
+
+  private async adoptLegacyWorkspaceState(): Promise<void> {
+    if (!this.workspaceDevice) return;
+    const [projects, activeSessions, archivedSessions] = await Promise.all([
+      this.projects.list(),
+      this.sessions.list(),
+      this.sessions.listArchived(),
+    ]);
+    const adopted = await this.workspaceDevice.adoptLegacy({
+      migrationKey: "legacy-projects-sessions-v1",
+      projects,
+      sessions: [...activeSessions, ...archivedSessions],
+    });
+    await this.bindAdoptedSessionSources(adopted.sessionSources);
+  }
+
+  private async reconcileLegacyWorkspaceState(): Promise<void> {
+    if (!this.workspaceDevice) return;
+    const [projects, activeSessions, archivedSessions] = await Promise.all([
+      this.projects.list(),
+      this.sessions.list(),
+      this.sessions.listArchived(),
+    ]);
+    const reconciled = await this.workspaceDevice.reconcileLegacy({
+      projects,
+      sessions: [...activeSessions, ...archivedSessions],
+    });
+    await this.bindAdoptedSessionSources(reconciled.sessionSources);
+  }
+
+  private async bindAdoptedSessionSources(
+    bindings: Awaited<ReturnType<WorkspaceDeviceStore['reconcileLegacy']>>['sessionSources'],
+  ): Promise<void> {
+    for (const binding of bindings) {
+      const session = await this.sessions.get(binding.sessionId);
+      if (!session || session.source) continue;
+      await this.sessions.bindSource(
+        session.id,
+        binding.source,
+        session.version ?? 1,
+      );
+    }
   }
 
   private async systemCall(method: string, args: unknown[]): Promise<unknown> {
@@ -981,6 +1166,7 @@ export class SoloeDomain extends EventEmitter {
       this.featureSubscriptionReleases.delete(clientId);
       for (const release of featureReleases.values()) release();
     }
+    void this.options.runtime.releaseInputLeases?.(clientId).catch(() => undefined);
     this.cancelOverviewStreams(clientId, "client disconnected");
   }
 
@@ -1594,10 +1780,16 @@ export class SoloeDomain extends EventEmitter {
         return this.projects.list();
       case "get":
         return this.projects.get(args[0] as ProjectId);
-      case "create":
-        return this.projects.create(args[0] as ProjectDraft);
-      case "open":
-        return this.projects.open(args[0] as ProjectOpenRequest);
+      case "create": {
+        const project = await this.projects.create(args[0] as ProjectDraft);
+        await this.reconcileLegacyWorkspaceState();
+        return project;
+      }
+      case "open": {
+        const project = await this.projects.open(args[0] as ProjectOpenRequest);
+        await this.reconcileLegacyWorkspaceState();
+        return project;
+      }
       case "update":
         return this.projects.update(args[0] as ProjectId, args[1] as ProjectUpdate);
       case "delete":
@@ -1631,15 +1823,41 @@ export class SoloeDomain extends EventEmitter {
         return this.sessions.listArchived();
       case "get":
         return this.sessions.get(args[0] as SessionId);
-      case "create":
-        return this.changeSession(
-          this.observeSession(
-            await this.sessions.create({
-              ...(args[0] as SessionDraft),
-              runtimeMode: "tui",
-            }),
-          ),
-        );
+      case "create": {
+        const created = await this.sessions.create({
+          ...(args[0] as SessionDraft),
+          runtimeMode: "tui",
+        });
+        await this.reconcileLegacyWorkspaceState();
+        const session = (await this.sessions.get(created.id)) ?? created;
+        return this.changeSession(this.observeSession(session));
+      }
+      case "createPlaced": {
+        requireArgumentCount("sessions.createPlaced", args, 1);
+        const request = args[0] as DevicePlacedSessionRequest;
+        if (!request || typeof request !== "object" || typeof request.sessionId !== "string") {
+          throw new RpcError("invalid_request", "Placed Session request is invalid");
+        }
+        const created = await this.sessions.createWithId(request.sessionId, {
+          ...request.draft,
+          runtimeMode: "tui",
+        });
+        await this.reconcileLegacyWorkspaceState();
+        const session = (await this.sessions.get(created.id)) ?? created;
+        return this.changeSession(this.observeSession(session));
+      }
+      case "bindSource": {
+        requireArgumentCount("sessions.bindSource", args, 1);
+        const request = args[0] as DeviceSessionSourceUpdateRequest;
+        if (!request || typeof request !== "object") {
+          throw new RpcError("invalid_request", "Session Source update is invalid");
+        }
+        return this.changeSession(this.observeSession(await this.sessions.bindSource(
+          request.sessionId,
+          request.source,
+          request.expectedVersion,
+        )));
+      }
       case "update":
         return this.changeSession(
           this.observeSession(
@@ -1671,7 +1889,11 @@ export class SoloeDomain extends EventEmitter {
     }
   }
 
-  private async terminalCall(method: string, args: unknown[]): Promise<unknown> {
+  private async terminalCall(
+    method: string,
+    args: unknown[],
+    clientId?: string,
+  ): Promise<unknown> {
     switch (method) {
       case "start":
         return this.startTerminal(
@@ -1692,14 +1914,50 @@ export class SoloeDomain extends EventEmitter {
           ...(args[1] as { cols?: number; rows?: number } | undefined),
         });
       }
+      case "acquireInputLease": {
+        const ownerId = requireTerminalClientId(clientId);
+        const acquire = this.options.runtime.acquireInputLease;
+        if (!acquire) throw terminalInputLeaseUnavailable();
+        return acquire.call(
+          this.options.runtime,
+          requireTerminalId(args[0]),
+          ownerId,
+          args[1] === true,
+        );
+      }
+      case "currentInputLease": {
+        const current = this.options.runtime.currentInputLease;
+        if (!current) throw terminalInputLeaseUnavailable();
+        return current.call(this.options.runtime, requireTerminalId(args[0]));
+      }
+      case "releaseInputLease": {
+        const ownerId = requireTerminalClientId(clientId);
+        const release = this.options.runtime.releaseInputLease;
+        if (!release) throw terminalInputLeaseUnavailable();
+        return release.call(
+          this.options.runtime,
+          requireTerminalId(args[0]),
+          ownerId,
+          requireTerminalLeaseId(args[1]),
+        );
+      }
       case "input": {
-        const terminalId = args[0] as string;
+        const terminalId = requireTerminalId(args[0]);
         const data = args[1] as string;
+        let control: { ownerId: string; leaseId: string } | undefined;
+        if (clientId && this.options.runtime.acquireInputLease) {
+          const lease = await this.options.runtime.acquireInputLease(
+            terminalId,
+            clientId,
+            false,
+          );
+          control = { ownerId: clientId, leaseId: lease.leaseId };
+        }
         const interruptedSessionId = await this.interruptedAgentSessionId(
           terminalId,
           data,
         );
-        await this.options.runtime.write(terminalId, data);
+        await this.options.runtime.write(terminalId, data, control);
         if (interruptedSessionId) {
           const snapshot = this.observer.getSnapshot(interruptedSessionId);
           if (snapshot && snapshot.state !== "idle" && snapshot.state !== "exited") {
@@ -1860,6 +2118,50 @@ function unsupportedRpc(namespace: string, method: string): RpcError {
     "rpc_not_supported",
     `RPC ${namespace}.${method} is not supported by the application server`,
   );
+}
+
+function workspaceDeviceUnavailable(): RpcError {
+  return new RpcError(
+    "workspace_device_unavailable",
+    "This application server has no durable Device Workspace service.",
+  );
+}
+
+function terminalInputLeaseUnavailable(): RpcError {
+  return new RpcError(
+    "terminal_input_lease_unavailable",
+    "This Environment Runtime does not support terminal input leases.",
+  );
+}
+
+function requireTerminalClientId(clientId: string | undefined): string {
+  if (!clientId) {
+    throw new RpcError(
+      "client_identity_required",
+      "Terminal input control requires a client identity.",
+    );
+  }
+  return clientId;
+}
+
+function requireTerminalId(value: unknown): string {
+  return requireTerminalIdentity(value, "Terminal ID");
+}
+
+function requireTerminalLeaseId(value: unknown): string {
+  return requireTerminalIdentity(value, "Terminal input lease ID");
+}
+
+function requireTerminalIdentity(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || !value.trim()
+    || value.length > 512
+    || /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new RpcError("invalid_terminal_request", `${label} is invalid.`);
+  }
+  return value.trim();
 }
 
 function validateCommentsResponse(value: unknown): CommentsRpcResponse {

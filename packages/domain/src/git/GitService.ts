@@ -10,13 +10,17 @@ import type {
   GitChangeEvent,
   GitCommit,
   GitCommitResult,
+  GitCheckoutLossEvidence,
   GitDirty,
   GitHistoryCommit,
   GitHistoryRef,
   GitRemoteOpResult,
+  GitRemoteEvidence,
+  GitRevisionRelation,
   GitShortstat,
   GitStatus,
   GitWorktree,
+  GitWorkspaceWorktreeSource,
   RangeChange,
   ReviewDiffTarget,
   WorkingChange,
@@ -493,6 +497,379 @@ export class GitService {
     );
     if (!created) throw new Error('Worktree was created but could not be rediscovered');
     return created;
+  }
+
+  async addWorkspaceWorktree(
+    repoPath: string,
+    worktreePath: string,
+    source: GitWorkspaceWorktreeSource,
+    context: GitRepoContext = {}
+  ): Promise<GitWorktree> {
+    const targetPath = worktreePath.trim();
+    if (!targetPath || !path.isAbsolute(targetPath)) {
+      throw new Error('Workspace Worktree path must be absolute.');
+    }
+    const info = await this.resolveRepo(repoPath, context);
+    if (!info) throw new Error(`Not a git repository: ${repoPath}`);
+    let args: string[];
+    if (source.kind === 'existing-branch') {
+      const ref = source.ref.trim();
+      if (!ref.startsWith('refs/heads/')) {
+        throw new Error('Workspace Branch Source must use a full refs/heads/... ref.');
+      }
+      assertGitSucceeded(
+        await this.runInRepo(info, ['check-ref-format', ref]),
+        `Invalid Branch ref: ${ref}`
+      );
+      assertGitSucceeded(
+        await this.runInRepo(info, ['rev-parse', '--verify', `${ref}^{commit}`]),
+        `Branch not found: ${ref}`
+      );
+      const worktrees = await this.listWorktrees(info.repoPath, true, context);
+      const branchName = ref.slice('refs/heads/'.length);
+      const consumer = worktrees.find((worktree) => worktree.branch === branchName);
+      if (consumer) {
+        throw new Error(`Branch ${ref} is already checked out at ${consumer.path}.`);
+      }
+      args = ['worktree', 'add', targetPath, branchName];
+    } else if (source.kind === 'new-branch') {
+      const ref = requiredBranchRef(source.ref);
+      const baseOid = requiredOid(source.baseOid);
+      const existing = await this.runInRepo(info, ['show-ref', '--verify', '--quiet', ref]);
+      if (existing.code === 0) throw new Error(`Generated Branch already exists: ${ref}`);
+      assertGitSucceeded(
+        await this.runInRepo(info, ['rev-parse', '--verify', `${baseOid}^{commit}`]),
+        `Isolated base revision not found: ${baseOid}`
+      );
+      args = [
+        'worktree', 'add', '-b', ref.slice('refs/heads/'.length), targetPath, baseOid
+      ];
+    } else {
+      const oid = source.oid.trim();
+      if (!/^[0-9a-fA-F]{40,64}$/u.test(oid)) {
+        throw new Error('Detached Workspace Source must be a full object ID.');
+      }
+      assertGitSucceeded(
+        await this.runInRepo(info, ['rev-parse', '--verify', `${oid}^{commit}`]),
+        `Revision not found: ${oid}`
+      );
+      args = ['worktree', 'add', '--detach', targetPath, oid];
+    }
+    assertGitSucceeded(
+      await this.runInRepo(info, args),
+      'Failed to prepare Workspace Worktree'
+    );
+    this.invalidate(info);
+    const worktrees = await this.listWorktrees(info.repoPath, true, context);
+    const comparableTargetPath = await fs.realpath(targetPath).catch(() => targetPath);
+    const created = worktrees.find((worktree) =>
+      normalizeComparablePath(worktree.path) === normalizeComparablePath(comparableTargetPath)
+    );
+    if (!created) throw new Error('Workspace Worktree was created but could not be rediscovered.');
+    return created;
+  }
+
+  async removeWorkspaceWorktree(
+    repoPath: string,
+    worktreePath: string,
+    context: GitRepoContext = {}
+  ): Promise<void> {
+    const targetPath = worktreePath.trim();
+    if (!targetPath || !path.isAbsolute(targetPath)) {
+      throw new Error('Workspace Worktree path must be absolute.');
+    }
+    const info = await this.resolveRepo(repoPath, context);
+    if (!info) throw new Error(`Not a git repository: ${repoPath}`);
+    const worktrees = await this.listWorktrees(info.repoPath, true, context);
+    const comparableTargetPath = await fs.realpath(targetPath).catch(() => targetPath);
+    const target = worktrees.find((worktree) =>
+      normalizeComparablePath(worktree.path) === normalizeComparablePath(comparableTargetPath)
+    );
+    if (!target) return;
+    if (target.isMain || target.bare) throw new Error('The main or bare Checkout cannot be removed.');
+    const status = await this.getStatus(target.path, true, context);
+    if (status.dirty) throw new Error('A dirty Workspace Worktree cannot be removed.');
+    assertGitSucceeded(
+      await this.runInRepo(info, ['worktree', 'remove', target.path]),
+      'Failed to remove Workspace Worktree'
+    );
+    this.invalidate(info);
+  }
+
+  async scanCheckoutLoss(
+    cwd: string,
+    context: GitRepoContext = {}
+  ): Promise<GitCheckoutLossEvidence> {
+    const info = await this.resolveRepo(cwd, context);
+    const observedAt = new Date().toISOString();
+    if (!info) {
+      return {
+        certain: false,
+        observedAt,
+        headOid: null,
+        branchRef: null,
+        detached: false,
+        staged: 0,
+        unstaged: 0,
+        untracked: 0,
+        ignored: null,
+        unpublishedCommits: null
+      };
+    }
+    const [status, ignoredResult, unpublishedResult] = await Promise.all([
+      this.getStatus(cwd, true, context),
+      this.runInRepo(info, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z']),
+      this.runInRepo(info, ['rev-list', '--count', 'HEAD', '--not', '--remotes'])
+    ]);
+    const ignored = ignoredResult.code === 0
+      ? ignoredResult.stdout.split('\0').filter(Boolean).length
+      : null;
+    const unpublishedCommits = unpublishedResult.code === 0
+      ? parseNonNegativeInteger(unpublishedResult.stdout)
+      : null;
+    return {
+      certain: status.isRepo && ignored !== null && unpublishedCommits !== null,
+      observedAt,
+      headOid: status.head,
+      branchRef: status.branch ? `refs/heads/${status.branch}` : null,
+      detached: status.detached,
+      staged: status.staged,
+      unstaged: status.unstaged,
+      untracked: status.untracked,
+      ignored,
+      unpublishedCommits
+    };
+  }
+
+  async cloneRepository(
+    sourceUrl: string,
+    targetPath: string,
+    options: { branchRef?: string; runMode?: RunMode; wslDistro?: string } = {}
+  ): Promise<GitStatus> {
+    const source = safeCloneSource(sourceUrl);
+    const target = targetPath.trim();
+    const wsl = options.runMode === 'wsl';
+    if (!target || !(wsl ? path.posix.isAbsolute(target) : path.isAbsolute(target))) {
+      throw new Error('Clone target path must be absolute.');
+    }
+    const parent = wsl ? path.posix.dirname(target) : path.dirname(target);
+    if (wsl) {
+      if (!options.wslDistro?.trim()) throw new Error('WSL clone requires a distribution.');
+    } else {
+      await fs.mkdir(parent, { recursive: true });
+      if (await fs.lstat(target).then(() => true).catch(() => false)) {
+        throw new Error('Clone target path already exists.');
+      }
+    }
+    const args = ['clone', '--origin', 'origin'];
+    if (options.branchRef) {
+      const ref = requiredBranchRef(options.branchRef);
+      args.push('--branch', ref.slice('refs/heads/'.length));
+    }
+    args.push('--', source, target);
+    const result = wsl
+      ? await this.runWsl(options.wslDistro!.trim(), parent, args)
+      : await this.run(parent, args);
+    assertGitSucceeded(result, 'Failed to clone Project Presence');
+    this.repoResolutions.delete(repoResolutionKey(target, options));
+    return this.getStatus(target, true, options);
+  }
+
+  async inspectRemoteEvidence(
+    cwd: string,
+    options: {
+      remote: string;
+      branchRef: string;
+      runMode?: RunMode;
+      wslDistro?: string;
+    }
+  ): Promise<GitRemoteEvidence> {
+    const info = await this.resolveRepo(cwd, options);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const remote = requiredRemoteName(options.remote);
+    const branchRef = requiredBranchRef(options.branchRef);
+    const [urlResult, localResult, remoteResult] = await Promise.all([
+      this.runInRepo(info, ['remote', 'get-url', remote]),
+      this.runInRepo(info, ['rev-parse', '--verify', `${branchRef}^{commit}`]),
+      this.runInRepo(info, ['ls-remote', '--heads', remote, branchRef])
+    ]);
+    assertGitSucceeded(urlResult, `Remote not found: ${remote}`);
+    if (remoteResult.code !== 0) {
+      throw new Error(remoteResult.stderr.trim() || `Failed to inspect remote ${remote}`);
+    }
+    return {
+      remote,
+      remoteUrl: redactRemoteUrl(urlResult.stdout.trim()),
+      branchRef,
+      localOid: localResult.code === 0 ? canonicalOid(localResult.stdout) : null,
+      remoteOid: oidFromLsRemote(remoteResult.stdout),
+      observedAt: new Date().toISOString()
+    };
+  }
+
+  async hasRemote(
+    cwd: string,
+    remoteName: string,
+    context: GitRepoContext = {}
+  ): Promise<boolean> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const remote = requiredRemoteName(remoteName);
+    return (await this.runInRepo(info, ['remote', 'get-url', remote])).code === 0;
+  }
+
+  async fetchRemoteEvidence(
+    cwd: string,
+    options: {
+      remote: string;
+      branchRef: string;
+      runMode?: RunMode;
+      wslDistro?: string;
+    }
+  ): Promise<GitRemoteEvidence> {
+    const info = await this.resolveRepo(cwd, options);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const remote = requiredRemoteName(options.remote);
+    requiredBranchRef(options.branchRef);
+    assertGitSucceeded(
+      await this.runInRepo(info, ['fetch', '--prune', remote]),
+      `Failed to fetch remote ${remote}`
+    );
+    this.invalidate(info);
+    return this.inspectRemoteEvidence(cwd, options);
+  }
+
+  async pushBranch(
+    cwd: string,
+    options: {
+      remote: string;
+      branchRef: string;
+      expectedLocalOid: string;
+      expectedRemoteOid: string | null;
+      runMode?: RunMode;
+      wslDistro?: string;
+    }
+  ): Promise<GitRemoteEvidence> {
+    const info = await this.resolveRepo(cwd, options);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const remote = requiredRemoteName(options.remote);
+    const branchRef = requiredBranchRef(options.branchRef);
+    const expectedLocalOid = requiredOid(options.expectedLocalOid);
+    const local = await this.runInRepo(info, ['rev-parse', '--verify', `${branchRef}^{commit}`]);
+    assertGitSucceeded(local, `Local Branch not found: ${branchRef}`);
+    if (canonicalOid(local.stdout) !== expectedLocalOid) {
+      throw new Error('The local Branch changed after preflight.');
+    }
+    const before = await this.inspectRemoteEvidence(cwd, { ...options, remote, branchRef });
+    if (before.remoteOid !== options.expectedRemoteOid) {
+      throw new Error('The remote Branch changed after preflight.');
+    }
+    assertGitSucceeded(
+      await this.runInRepo(info, ['push', remote, `${branchRef}:${branchRef}`]),
+      `Failed to publish ${branchRef}`
+    );
+    this.invalidate(info);
+    return this.inspectRemoteEvidence(cwd, { ...options, remote, branchRef });
+  }
+
+  async publishNewRemoteBranch(
+    cwd: string,
+    options: {
+      remote: string;
+      remoteUrl: string;
+      branchRef: string;
+      expectedLocalOid: string;
+      runMode?: RunMode;
+      wslDistro?: string;
+    }
+  ): Promise<GitRemoteEvidence> {
+    const info = await this.resolveRepo(cwd, options);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const remote = requiredRemoteName(options.remote);
+    const remoteUrl = safeCloneSource(options.remoteUrl);
+    const branchRef = requiredBranchRef(options.branchRef);
+    const expectedLocalOid = requiredOid(options.expectedLocalOid);
+    const existing = await this.runInRepo(info, ['remote', 'get-url', remote]);
+    if (existing.code === 0) throw new Error(`Git remote already exists: ${remote}`);
+    const local = await this.runInRepo(info, ['rev-parse', '--verify', `${branchRef}^{commit}`]);
+    assertGitSucceeded(local, `Local Branch not found: ${branchRef}`);
+    if (canonicalOid(local.stdout) !== expectedLocalOid) {
+      throw new Error('The local Branch changed after publication preflight.');
+    }
+    assertGitSucceeded(
+      await this.runInRepo(info, ['remote', 'add', remote, remoteUrl]),
+      `Failed to add Git remote ${remote}`
+    );
+    this.invalidate(info);
+    return this.pushBranch(cwd, {
+      remote,
+      branchRef,
+      expectedLocalOid,
+      expectedRemoteOid: null,
+      ...(options.runMode ? { runMode: options.runMode } : {}),
+      ...(options.wslDistro ? { wslDistro: options.wslDistro } : {})
+    });
+  }
+
+  async fastForwardBranch(
+    cwd: string,
+    options: {
+      branchRef: string;
+      expectedHeadOid: string;
+      targetOid: string;
+      runMode?: RunMode;
+      wslDistro?: string;
+    }
+  ): Promise<GitStatus> {
+    const info = await this.resolveRepo(cwd, options);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const branchRef = requiredBranchRef(options.branchRef);
+    const expected = requiredOid(options.expectedHeadOid);
+    const target = requiredOid(options.targetOid);
+    const status = await this.getStatus(cwd, true, options);
+    if (status.dirty) throw new Error('A dirty Checkout cannot be fast-forwarded.');
+    if (status.detached || status.branch !== branchRef.slice('refs/heads/'.length)) {
+      throw new Error(`Checkout is not on ${branchRef}.`);
+    }
+    if (status.head !== expected) throw new Error('Checkout HEAD changed after preflight.');
+    assertGitSucceeded(
+      await this.runInRepo(info, ['rev-parse', '--verify', `${target}^{commit}`]),
+      `Fast-forward target is unavailable: ${target}`
+    );
+    const ancestor = await this.runInRepo(info, ['merge-base', '--is-ancestor', expected, target]);
+    if (ancestor.code !== 0) throw new Error('Target is not a safe fast-forward of the Checkout.');
+    assertGitSucceeded(
+      await this.runInRepo(info, ['merge', '--ff-only', target]),
+      'Failed to fast-forward Checkout'
+    );
+    this.invalidate(info);
+    return this.getStatus(cwd, true, options);
+  }
+
+  async compareRevisions(
+    cwd: string,
+    leftOid: string,
+    rightOid: string,
+    context: GitRepoContext = {}
+  ): Promise<GitRevisionRelation> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) return 'missing';
+    const left = requiredOid(leftOid);
+    const right = requiredOid(rightOid);
+    const availability = await Promise.all([
+      this.runInRepo(info, ['cat-file', '-e', `${left}^{commit}`]),
+      this.runInRepo(info, ['cat-file', '-e', `${right}^{commit}`])
+    ]);
+    if (availability.some((result) => result.code !== 0)) return 'missing';
+    if (left === right) return 'same';
+    const [leftAncestor, rightAncestor, mergeBase] = await Promise.all([
+      this.runInRepo(info, ['merge-base', '--is-ancestor', left, right]),
+      this.runInRepo(info, ['merge-base', '--is-ancestor', right, left]),
+      this.runInRepo(info, ['merge-base', left, right])
+    ]);
+    if (leftAncestor.code === 0) return 'right-ahead';
+    if (rightAncestor.code === 0) return 'left-ahead';
+    return mergeBase.code === 0 ? 'diverged' : 'unrelated';
   }
 
   // List every file with pending working-tree changes (staged + unstaged +
@@ -1228,9 +1605,21 @@ export class GitService {
     ]) {
       try {
         const watchImpl = this.options.watchImpl ?? watch;
-        cache.watchers.push(
-          watchImpl(target, { persistent: false }, () => this.invalidate(cache.info))
+        const watcher = watchImpl(
+          target,
+          { persistent: false },
+          () => this.invalidate(cache.info)
         );
+        watcher.once('error', () => {
+          const index = cache.watchers.indexOf(watcher);
+          if (index >= 0) cache.watchers.splice(index, 1);
+          try {
+            watcher.close();
+          } catch {
+            // A failed native watcher may already be closed.
+          }
+        });
+        cache.watchers.push(watcher);
       } catch {
         // Some repos have no index yet; the next status call will still work.
       }
@@ -1679,6 +2068,82 @@ function runWslGit(
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
+}
+
+function safeCloneSource(value: string): string {
+  const source = value.trim();
+  if (
+    !source
+    || source.length > 4_096
+    || source.startsWith('-')
+    || /[\u0000-\u001f\u007f]/u.test(source)
+  ) throw new Error('Clone source is invalid.');
+  if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(source)) {
+    let parsed: URL;
+    try {
+      parsed = new URL(source);
+    } catch {
+      throw new Error('Clone source URL is invalid.');
+    }
+    if (parsed.username || parsed.password) {
+      throw new Error('Clone source URL must not embed credentials.');
+    }
+    if (!['https:', 'ssh:', 'file:'].includes(parsed.protocol)) {
+      throw new Error(`Clone source protocol is not allowed: ${parsed.protocol}`);
+    }
+  }
+  return source;
+}
+
+function requiredRemoteName(value: string): string {
+  const remote = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(remote)) {
+    throw new Error('Git remote name is invalid.');
+  }
+  return remote;
+}
+
+function requiredBranchRef(value: string): string {
+  const ref = value.trim();
+  if (!/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(ref) || ref.includes('..')) {
+    throw new Error('Git Branch must be a valid full refs/heads/... ref.');
+  }
+  return ref;
+}
+
+function requiredOid(value: string): string {
+  const oid = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(oid)) {
+    throw new Error('Git revision must be a full object ID.');
+  }
+  return oid;
+}
+
+function canonicalOid(output: string): string {
+  return requiredOid(output.trim().split(/\s/u)[0] ?? '');
+}
+
+function parseNonNegativeInteger(output: string): number | null {
+  const value = Number.parseInt(output.trim(), 10);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function oidFromLsRemote(output: string): string | null {
+  const first = output.trim().split(/\r?\n/u).find(Boolean);
+  if (!first) return null;
+  return canonicalOid(first);
+}
+
+function redactRemoteUrl(value: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//iu.test(value)) return value;
+  try {
+    const parsed = new URL(value);
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.toString();
+  } catch {
+    return value;
+  }
 }
 
 interface TrackedNumstat {

@@ -65,6 +65,22 @@ export interface TerminalStartOptions {
   rows?: number;
 }
 
+export interface TerminalInputLease {
+  terminalId: TerminalId;
+  leaseId: string;
+  ownerId: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+export interface TerminalInputLeaseEvent {
+  type: 'acquired' | 'renewed' | 'released' | 'expired' | 'taken-over';
+  terminalId: TerminalId;
+  lease: TerminalInputLease | null;
+  previousOwnerId?: string;
+  observedAt: string;
+}
+
 export const DEFAULT_COLS = 120;
 export const DEFAULT_ROWS = 30;
 export const OUTPUT_BATCH_INTERVAL_MS = 16;

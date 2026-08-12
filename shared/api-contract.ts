@@ -46,7 +46,7 @@ export const SOLOE_API_METHODS = {
     "usage",
   ],
   settings: ["get", "update", "modelCatalog", "onChange"],
-  connections: ["get", "refresh", "add", "remove", "select", "onChange"],
+  connections: ["get", "refresh", "add", "remove", "setEnabled", "select", "onChange"],
   projects: [
     "list",
     "get",
@@ -188,7 +188,30 @@ export const UI_STARTUP_RPCS = [
   "agentIntegration.status",
 ] as const;
 
+/**
+ * Authenticated Application Server RPCs used only by the host-private
+ * multi-Device adapter. They are deliberately absent from renderer SoloeApi:
+ * the Cockpit exposes semantic plan/routing methods instead of raw forwarding.
+ */
+export const DEVICE_RPC_METHODS = new Set<string>([
+  "githubProvider.status",
+  "githubProvider.listOwners",
+  "githubProvider.planCreateRepository",
+  "githubProvider.execute",
+  "githubProvider.getCommand",
+  "workspaceDevice.snapshot",
+  "workspaceDevice.plan",
+  "workspaceDevice.execute",
+  "workspaceDevice.getCommand",
+  "sessions.createPlaced",
+  "sessions.bindSource",
+  "terminal.acquireInputLease",
+  "terminal.currentInputLease",
+  "terminal.releaseInputLease",
+]);
+
 export const SERVER_RPC_METHODS = new Set<string>([
+  ...DEVICE_RPC_METHODS,
   "sessions.list",
   "sessions.listArchived",
   "sessions.get",

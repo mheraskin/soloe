@@ -13,12 +13,216 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FeatureArtifactObservation, HookInstaller } from "@soloe/domain";
+import { TerminalInputLeaseManager } from "@soloe/runtime";
 import { hostPlatform } from "../../../shared/platform.js";
 import { SERVER_RPC_METHODS } from "../../../shared/api-contract.js";
 import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 describe("SoloeDomain", () => {
+  it("arbitrates terminal input by authenticated client and supports explicit takeover", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-terminal-lease-"));
+    let leaseSequence = 0;
+    const leases = new TerminalInputLeaseManager({
+      leaseId: () => `lease-${++leaseSequence}`,
+    });
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      acquireInputLease: vi.fn(async (terminalId: string, ownerId: string, takeover = false) =>
+        leases.acquire(terminalId, ownerId, { takeover })),
+      currentInputLease: vi.fn(async (terminalId: string) => leases.current(terminalId)),
+      releaseInputLease: vi.fn(async (terminalId: string, ownerId: string, leaseId: string) =>
+        leases.release(terminalId, ownerId, leaseId)),
+      releaseInputLeases: vi.fn(async (ownerId: string) => leases.releaseOwner(ownerId)),
+      write: vi.fn(async (
+        terminalId: string,
+        _data: string,
+        control: { ownerId: string; leaseId: string },
+      ) => leases.authorizeInput(terminalId, control.ownerId, control.leaseId)),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+
+    try {
+      await domain.init();
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "input",
+        args: ["terminal-1", "first"],
+        clientId: "client-a",
+      })).resolves.toBe(true);
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "input",
+        args: ["terminal-1", "racing"],
+        clientId: "client-b",
+      })).rejects.toMatchObject({ code: "terminal_input_owned" });
+
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "acquireInputLease",
+        args: ["terminal-1", true],
+        clientId: "client-b",
+      })).resolves.toMatchObject({ ownerId: "client-b" });
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "input",
+        args: ["terminal-1", "second"],
+        clientId: "client-b",
+      })).resolves.toBe(true);
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "currentInputLease",
+        args: ["terminal-1"],
+      })).resolves.toMatchObject({ ownerId: "client-b" });
+
+      domain.releaseClient("client-b");
+      expect(leases.current("terminal-1")).toBeNull();
+      expect(runtime.write).toHaveBeenCalledTimes(2);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a preallocated placed Session idempotently through the server contract", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-placed-session-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+    const request = {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      draft: {
+        name: "Placed",
+        cwd: directory,
+        runMode: hostPlatform(),
+        launch: { type: "terminal", shell: "auto" },
+      },
+    };
+    try {
+      await domain.init();
+      const first = await domain.invoke({
+        namespace: "sessions",
+        method: "createPlaced",
+        args: [request],
+      });
+      const retried = await domain.invoke({
+        namespace: "sessions",
+        method: "createPlaced",
+        args: [request],
+      });
+
+      expect(retried).toEqual(first);
+      await expect(domain.invoke({
+        namespace: "sessions",
+        method: "createPlaced",
+        args: [{ ...request, draft: { ...request.draft, name: "Different" } }],
+      })).rejects.toThrow("different placement intent");
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("adopts legacy Projects and Sessions into its Device Workspace registry", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-workspaces-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const legacy = new SoloeDomain({ dataDirectory: directory, runtime });
+
+    try {
+      await legacy.init();
+      const project = (await legacy.invoke({
+        namespace: "projects",
+        method: "create",
+        args: [{ name: "Compiler", path: directory }],
+      })) as { id: string };
+      const session = (await legacy.invoke({
+        namespace: "sessions",
+        method: "create",
+        args: [{
+          name: "Main shell",
+          cwd: directory,
+          runMode: hostPlatform(),
+          projectId: project.id,
+          launch: { type: "terminal", shell: "auto" },
+        }],
+      })) as { id: string };
+      await legacy.dispose();
+
+      const deviceId = "11111111-1111-4111-8111-111111111111";
+      const deviceDomain = new SoloeDomain({ dataDirectory: directory, runtime, deviceId });
+      try {
+        await deviceDomain.init();
+        const snapshot = await deviceDomain.invoke({
+          namespace: "workspaceDevice",
+          method: "snapshot",
+          args: [],
+        });
+        expect(snapshot).toEqual(expect.objectContaining({
+          deviceId,
+          repositories: [expect.objectContaining({ legacyProjectId: project.id })],
+          checkouts: [expect.objectContaining({ path: directory, role: "main" })],
+        }));
+        await expect(deviceDomain.invoke({
+          namespace: "sessions",
+          method: "get",
+          args: [session.id],
+        })).resolves.toEqual(expect.objectContaining({
+          version: 2,
+          source: expect.objectContaining({
+            kind: "existing-checkout",
+            adopted: true,
+          }),
+        }));
+
+        const later = (await deviceDomain.invoke({
+          namespace: "sessions",
+          method: "create",
+          args: [{
+            name: "Later worktree",
+            cwd: path.join(directory, "later"),
+            runMode: hostPlatform(),
+            projectId: project.id,
+            launch: { type: "terminal", shell: "auto" },
+          }],
+        })) as { id: string; source?: unknown };
+        expect(later.source).toEqual(expect.objectContaining({
+          kind: "existing-checkout",
+          adopted: true,
+        }));
+        await expect(deviceDomain.invoke({
+          namespace: "workspaceDevice",
+          method: "snapshot",
+          args: [],
+        })).resolves.toEqual(expect.objectContaining({
+          checkouts: expect.arrayContaining([
+            expect.objectContaining({ path: path.join(directory, "later") }),
+          ]),
+        }));
+      } finally {
+        await deviceDomain.dispose();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("implements every RPC required during shared UI startup", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-startup-"));
     const runtime = {

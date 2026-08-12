@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CLIENT_NATIVE_METHODS,
+  DEVICE_RPC_METHODS,
   PWA_PANE_REQUIREMENTS,
   REMOTE_ELECTRON_NATIVE_METHODS,
   SERVER_EVENT_METHODS,
@@ -40,9 +41,18 @@ describe("Soloe API compatibility matrix", () => {
     }
   });
 
-  it("contains every advertised RPC, event, and native replacement", () => {
+  it("classifies every advertised RPC, event, and native replacement", () => {
+    for (const key of SERVER_RPC_METHODS) {
+      expect(
+        apiKeys.has(key) || DEVICE_RPC_METHODS.has(key),
+        `${key} is neither renderer-visible nor a host-private Device RPC`,
+      ).toBe(true);
+    }
+    for (const key of DEVICE_RPC_METHODS) {
+      expect(SERVER_RPC_METHODS, key).toContain(key);
+      expect(apiKeys, `${key} must stay behind CockpitApi`).not.toContain(key);
+    }
     for (const collection of [
-      SERVER_RPC_METHODS,
       SERVER_EVENT_METHODS,
       CLIENT_NATIVE_METHODS,
       REMOTE_ELECTRON_NATIVE_METHODS,

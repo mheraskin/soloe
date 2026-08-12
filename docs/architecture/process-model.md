@@ -9,7 +9,7 @@ separation, not repository separation, provides lifecycle independence.
 | Environment Runtime (`apps/runtime`) | PTYs, input, resize, bounded replay, terminal identity | No; this is the agent lifetime boundary |
 | Application Server (`apps/server`) | Domain state, authenticated HTTP/RPC/WebSocket | Yes |
 | Tray Host (`apps/tray`) | Top-level ownership, start/stop, browser/Electron launch | No; exiting the tray stops everything |
-| Electron client (`apps/desktop-electron`) | Native desktop window and renderer presentation | Yes |
+| Electron client and Cockpit Coordinator (`apps/desktop-electron`) | Native window, cockpit-local Workspace catalog, concurrent Device clients, composite routing, and renderer projection | Yes |
 | Development Web Host (`apps/web`) | PWA assets, hot reload, authenticated API proxy | Yes while the tray remains |
 
 **Backend Placement** selects where the first two processes run:
@@ -30,6 +30,30 @@ Backend Placement is separate from a Session's shell/run-mode settings.
 the responsive PWA produced by `apps/web`; a future native mobile application
 can occupy the reserved directory without duplicating today's web build.
 
+## Cockpit, Device, and Runtime authority
+
+The Electron host is a Cockpit. Its versioned local catalog is authoritative
+for logical Projects, Workspaces, Workspace Sources, Workspace Locations,
+Session Memberships, ordering, and the default placement preference. A
+Workspace may therefore remain visible with no online Device or no physical
+Checkout. The catalog stores references and observations; it is not a replica
+of any Device filesystem.
+
+Each enabled Soloe Device remains authoritative for its durable identity,
+Repository and Checkout registry, Session records and Session Sources, Git
+evidence, provider operations, and idempotent Device command receipts. The
+Cockpit connects to enabled Devices concurrently and addresses physical state
+with composite references such as `(DeviceId, SessionId)` and
+`(DeviceId, CheckoutId)`. Endpoint URLs and display names are mutable aliases,
+not identity.
+
+The Environment Runtime remains the final authority for PTYs, terminal replay,
+and terminal input ownership. A Regroup changes only cockpit Session
+Membership. Work on another Device or Checkout creates a successor Session;
+it never relocates a live process. Archiving changes Session metadata only.
+Stopping a terminal, deleting a Session, and cleaning an isolated Checkout are
+separate explicit actions.
+
 ## Runtime boundary
 
 The Environment Runtime listens on a per-user Unix socket or Windows named
@@ -43,6 +67,12 @@ continues into the bounded replay tail and is recovered by sequence when a
 client reconnects. Stopping the agent runtime or exiting the tray is different:
 the tray is the top-level owner and intentionally shuts down the runtime and
 its PTYs.
+
+Terminal input is arbitrated by a Runtime-owned expiring lease. The first
+authenticated client to write acquires and renews control; another client is
+rejected until the lease expires or it performs an explicit visible takeover.
+Resize, replay, and observation do not require input ownership. Client
+disconnect, terminal exit, and Runtime shutdown release the relevant leases.
 
 ## Server and clients
 
@@ -67,13 +97,21 @@ directly. Both replay visible terminals after reconnect.
 
 The Electron-owned Device Connection Registry catalogs the local supervised
 Server plus discovered or manually trusted Tailscale HTTPS endpoints. It hides
-CLI parsing, readiness probes, durable selection, and relaunch behavior behind
-the Renderer Backend Interface. Selecting a device changes only the desktop
-client's Application Server transport; it neither relocates Backend Placement
-nor stops an Environment Runtime. The registry stores endpoints and health
-metadata, while remote authentication remains in a Secure, HttpOnly cookie.
-Both the development Web Host and the packaged macOS Application Server expose
-the same readiness and Tailscale identity-to-session contract.
+CLI parsing, readiness probes, durable Device-ID pinning, enablement, and
+connection health behind the Renderer Backend Interface. Enabled compatible
+Devices stay connected concurrently. The Device selector is a projection
+filter, and default placement is a separate preference used only for future
+Session creation; neither changes an existing Session's route, relaunches the
+desktop, nor stops a Runtime. Registry records contain endpoint metadata but no
+bearer tokens or provider credentials. Remote authentication remains in an
+isolated Secure, HttpOnly cookie context for that Device.
+
+The old process-wide active endpoint remains readable only for migration. It
+affects startup and relaunch behavior exclusively when
+`SOLOE_LEGACY_EXCLUSIVE_CONNECTION=1`; normal operation always anchors the
+desktop to its local host and lets the Cockpit Coordinator manage remote
+Devices. Both the development Web Host and packaged macOS Application Server
+expose the same readiness and Tailscale identity-to-session contract.
 
 The Server composes platform-independent domain services; none import Electron
 globals, `BrowserWindow`, `WebContents`, `ipcMain`, or renderer APIs:
@@ -82,6 +120,8 @@ globals, `BrowserWindow`, `WebContents`, `ipcMain`, or renderer APIs:
 | --- | --- |
 | Files | scoped tree/search/read/write, binary and size metadata, terminal paste |
 | Git | repository reads/mutations, review materialization, demand-based observation |
+| Device workspace | stable Repository/Checkout identity, placement plans, loss scans, clone, bounded alignment, promotion/cleanup, and durable receipts |
+| GitHub provider | Device-local `gh` capability, explicit repository-creation plans, and idempotent receipts |
 | Notes | revision-aware CRUD, images, cleanup, multi-client change events |
 | Features | scans, branch/issue state, reference-counted artifact observation |
 | Overview | worktree evidence, cache, streamed generation, task-scoped cancellation |
@@ -107,6 +147,22 @@ projects, settings, Notes, Git, Features, Vault, integrations, observers, and
 Overview refresh after reconnect so a missed WebSocket message cannot leave a
 client permanently stale. Subscription ownership uses stable client IDs and
 disconnect cleanup removes only that client's demand.
+
+Multi-Device transports first authenticate and read a bounded Device
+descriptor containing the durable Device ID, server epoch, protocol range, and
+capability revision. Enveloped events carry Device ID, epoch, monotonic
+sequence, observation time, and optional entity/command attribution. A changed
+pinned identity is rejected; an epoch or sequence gap triggers snapshot repair
+instead of applying an ambiguous event. One slow, offline, or incompatible
+Device does not block snapshots from the others.
+
+Physical mutations use immutable preflight plans and UUID command envelopes.
+The Device verifies target identity, capability revision, plan expiry, entity
+versions, and Git evidence before executing. Its bounded journal makes a
+successful command idempotent and requires receipt inspection after an
+ambiguous/interrupted outcome. Cross-Device placement, publication, alignment,
+and source-lifecycle work is an additive Cockpit saga: partial resources remain
+visible for recovery and are never hidden behind a false transaction claim.
 
 The Runtime is unaffected by browser, Electron, or Server replacement. A
 server-only restart reconnects to the existing Runtime; clients reconnect to

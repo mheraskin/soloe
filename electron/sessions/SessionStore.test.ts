@@ -157,6 +157,50 @@ describe('SessionStore — update/delete', () => {
     expect(await store.list()).toEqual([]);
     expect((await store.get(created.id))?.archivedAt).toBe(archivedAt);
   });
+
+  it('binds a Session Source with optimistic entity versioning', async () => {
+    const store = new SessionStore(storePath);
+    const created = await store.create(standardDraft());
+
+    const bound = await store.bindSource(created.id, {
+      kind: 'existing-checkout',
+      checkoutId: '11111111-1111-4111-8111-111111111111',
+      adopted: true
+    }, 1);
+
+    expect(bound).toMatchObject({
+      version: 2,
+      source: {
+        kind: 'existing-checkout',
+        checkoutId: '11111111-1111-4111-8111-111111111111',
+        adopted: true
+      }
+    });
+    await expect(store.bindSource(created.id, {
+      kind: 'existing-checkout',
+      checkoutId: '22222222-2222-4222-8222-222222222222',
+      adopted: true
+    }, 1)).rejects.toMatchObject({ code: 'session_version_conflict' });
+    expect((await store.get(created.id))?.source).toEqual(bound.source);
+  });
+
+  it('creates a preallocated placement Session idempotently and rejects a conflicting retry', async () => {
+    const store = new SessionStore(storePath);
+    const id = '11111111-1111-4111-8111-111111111111';
+    const draft = standardDraft({
+      source: {
+        kind: 'workspace-location',
+        checkoutId: '22222222-2222-4222-8222-222222222222'
+      }
+    });
+
+    const created = await store.createWithId(id, draft);
+    const retried = await store.createWithId(id, draft);
+
+    expect(retried).toEqual(created);
+    await expect(store.createWithId(id, { ...draft, name: 'Different' }))
+      .rejects.toThrow('different placement intent');
+  });
 });
 
 describe('SessionStore — disk round-trip', () => {
@@ -245,5 +289,29 @@ describe('SessionStore — disk round-trip', () => {
     );
     const store = new SessionStore(storePath);
     expect((await store.list()).map((s) => s.id)).toEqual(['empty-claude']);
+  });
+
+  it('migrates legacy records to entity version 1 without guessing a Session Source', async () => {
+    await fs.writeFile(
+      storePath,
+      JSON.stringify({
+        version: 1,
+        sessions: [{
+          id: 'legacy',
+          name: 'Legacy',
+          cwd: '/repo',
+          runMode: 'linux',
+          launch: { type: 'terminal', shell: 'auto' },
+          createdAt: '2026-01-01T00:00:00.000Z',
+          lastUsedAt: '2026-01-01T00:00:00.000Z'
+        }]
+      }),
+      'utf8'
+    );
+
+    const store = new SessionStore(storePath);
+    expect(await store.get('legacy')).toMatchObject({ version: 1 });
+    expect((await store.get('legacy'))?.source).toBeUndefined();
+    expect(JSON.parse(await fs.readFile(storePath, 'utf8'))).toMatchObject({ version: 2 });
   });
 });

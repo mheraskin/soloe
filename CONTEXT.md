@@ -4,9 +4,33 @@ Soloe coordinates terminal sessions and repository observations across native an
 
 ## Language
 
+**Project**:
+A cockpit-owned logical source-code project that may be present on zero or more Devices. It is not a path, Checkout, Device, or Git remote.
+_Avoid_: Repository checkout, project folder
+
+**Project Presence**:
+An explicit association between a Project and one Device-owned Repository.
+_Avoid_: Project copy, remote project
+
+**Workspace**:
+A durable human grouping inside one Project with one Workspace Source and ordered Session memberships. It may exist without a Checkout on any Device.
+_Avoid_: Worktree, Branch, folder, Work Area
+
+**Workspace Source**:
+The versioned Git intent for a Workspace: a Branch, pull request, or pinned Revision. It does not claim that any Checkout currently conforms to that intent.
+_Avoid_: Current branch, synced state
+
+**Workspace Location**:
+One Workspace's ordinary realization through a Device-owned Checkout. Locations on separate Devices are independent physical resources.
+_Avoid_: Shared folder, synchronized copy
+
 **Worktree**:
-A repository checkout that can own one or more Soloe sessions.
-_Avoid_: Folder, workspace
+A physical repository checkout on exactly one Device. It can realize a Workspace Location, belong to an isolated Session, be the main Checkout, or remain external.
+_Avoid_: Workspace, logical project
+
+**Checkout**:
+A Device-owned stable record for one Worktree whose path is a mutable locator rather than its identity.
+_Avoid_: Workspace, path identity
 
 **Working Tree Snapshot**:
 One coherent generation containing repository status, line totals, and working changes for a Worktree.
@@ -52,6 +76,26 @@ _Avoid_: Overview inputs, Git summary
 One resident renderer-side terminal emulator for a running Session, independent of the Session's PTY lifetime.
 _Avoid_: Terminal process, terminal tab
 
+**Session**:
+A user-visible interactive work record owned by exactly one Device and bound to one Session Source.
+_Avoid_: Tab, terminal process
+
+**Session Source**:
+The Device-authoritative binding from a Session to its exact Checkout and provenance, whether a Workspace Location, isolated Worktree, or adopted external Checkout.
+_Avoid_: Current cwd, containing Workspace
+
+**Session Membership**:
+The cockpit-owned placement and order of a device-scoped Session inside a Workspace. Changing it is a Regroup and does not change the Session Source.
+_Avoid_: Session location, cwd binding
+
+**Regroup**:
+A logical change to Session Membership that leaves its Device, Environment Runtime, cwd, and Session Source unchanged.
+_Avoid_: Move, migrate process
+
+**Successor Session**:
+A new Session created on a prepared destination when work must continue on another Device or Checkout; the original remains independent.
+_Avoid_: Moved Session, migrated PTY
+
 **Terminal Replay Tail**:
 A bounded, sequence-qualified Environment Runtime output tail used to initialize or resume a Terminal Presentation before live output is admitted.
 _Avoid_: Terminal cache, output backlog
@@ -82,6 +126,10 @@ _Avoid_: Session run mode, terminal shell, WSL connector
 **Terminal Output Demand**:
 Ref-counted intent from a visible Terminal Presentation to publish one PTY's live output across the main-to-renderer boundary.
 _Avoid_: Terminal listener, running terminal
+
+**Terminal Input Lease**:
+The Environment Runtime-owned, expiring right of one authenticated client to write to one terminal, with explicit visible takeover.
+_Avoid_: Focused terminal, permanent lock
 
 **Terminal Semantic Observation**:
 One bounded interpretation of a terminal output batch for location, approval, and usage-limit facts, independent of presentation visibility.
@@ -156,16 +204,28 @@ One shell-specific implementation of the Renderer Backend Interface, such as the
 _Avoid_: Renderer backend, IPC implementation
 
 **Soloe Device**:
-One tailnet machine exposing a Soloe Application Server and its associated Environment Runtime to authorized clients.
-_Avoid_: Backend URL, remote workspace
+One trusted machine with a durable Device identity that exposes a Soloe Application Server and its associated Environment Runtime.
+_Avoid_: Backend URL, remote workspace, endpoint
+
+**Cockpit**:
+One desktop host, its local logical catalog and preferences, and its concurrent connections to enabled Soloe Devices.
+_Avoid_: Home server, active backend
+
+**Cockpit Catalog**:
+The cockpit-local authority for Projects, Workspaces, Workspace Sources, Session Memberships, and ordering. It references Device facts but does not replicate them.
+_Avoid_: Device database, synchronized metadata
 
 **Device Connection Registry**:
-The client-local, restart-safe catalog of this device and trusted remote Soloe Device endpoints, their availability, and the active selection.
+The client-local, restart-safe catalog of this Device and trusted remote Soloe Device endpoints, durable identity pins, enablement, and availability. Legacy active selection is migration data only.
 _Avoid_: Backend list, Tailscale token store
 
-**Active Device Connection**:
-The restart-applied desktop-client selection of one Soloe Device's Application Server without taking ownership of its Environment Runtime.
-_Avoid_: Backend Placement, moved session
+**Default Placement Device**:
+The cockpit preference suggested for new Session placement, independent from the Device view filter and from every existing Session's owner.
+_Avoid_: Active backend, current server
+
+**Alignment Evidence**:
+Timestamped Device facts used to compare a Workspace Source, Location, or Session Source without claiming filesystem synchronization.
+_Avoid_: Sync state, source of truth
 
 ## Relationships
 
@@ -212,6 +272,7 @@ _Avoid_: Backend Placement, moved session
 - A **Terminal Replay Tail** is capped at 4 MiB and 4,096 live events per Session, plus 32 MiB and 32,768 live events globally; its chronologies contain only retained chunks, and snapshot overlap is removed before ordered live output is admitted
 - A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
 - The first visible **Terminal Presentation** acquires **Terminal Output Demand** for its PTY; the final hidden owner releases cross-process publication without stopping replay retention or agent observation
+- Terminal input requires a current **Terminal Input Lease**; another client must wait for expiry or explicitly take over, and neither lease loss nor takeover stops the PTY
 - Each output batch receives one **Terminal Semantic Observation** before replay publication; usage-limit state outranks approval redraws and hidden presentations remain observable
 - One **Review Surface** owns one text-selection action; resident file bodies contribute exact review-entry identity without adding global listeners
 - A **Review Surface** auto-loads ordinary resident untracked text through two shared admissions; dependency, cache, generated-output, binary, and oversized paths remain explicit-load only
@@ -228,12 +289,13 @@ _Avoid_: Backend Placement, moved session
 - Every Svelte Module crosses the **Renderer Backend Interface**; only a **Renderer Backend Adapter** may access shell-specific globals or transport primitives
 - Electron IPC and browser HTTP/WebSocket are separate **Renderer Backend
   Adapters** over the same UI; neither owns agent process lifetime
-- The **Device Connection Registry** discovers exact Tailscale HTTPS endpoints,
-  probes Soloe readiness, and persists endpoint metadata without backend bearer
-  tokens
-- Changing the **Active Device Connection** replaces only the Renderer Backend
-  Adapter's Application Server destination; it does not stop agents on the old
-  or new Soloe Device
+- A **Project** owns zero or more **Workspaces** and zero or more **Project Presences**
+- A **Workspace** owns one **Workspace Source**, zero or more **Workspace Locations**, and ordered **Session Memberships**
+- Every **Workspace Location** and **Session Source** references a **Checkout** owned by exactly one **Soloe Device**
+- A **Regroup** changes only **Session Membership**; another Device or Checkout requires a **Successor Session**
+- The **Cockpit Catalog** remains authoritative while Devices are offline and treats cached Device observations as evidence rather than replicated facts
+- The **Device Connection Registry** discovers exact Tailscale HTTPS endpoints, pins durable Device identities, and persists enablement without bearer tokens
+- A Device filter changes only the cockpit projection; the **Default Placement Device** changes only a future-placement suggestion, and neither stops a Session
 
 ## Example dialogue
 

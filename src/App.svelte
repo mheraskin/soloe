@@ -93,6 +93,8 @@
   import AppSkeleton from './components/AppSkeleton.svelte';
   import SettingsDialog from './components/SettingsDialog.svelte';
   import ConnectionMenu from './components/ConnectionMenu.svelte';
+  import CockpitTerminalViewer from './components/CockpitTerminalViewer.svelte';
+  import { cockpit } from './stores/cockpit.svelte';
   import appIconUrl from '../build/favicon.svg';
 
   const loadNewSessionModal = () => import('./components/NewSessionModal.svelte');
@@ -1625,11 +1627,21 @@
             aria-hidden={mobileMode !== 'terminal'}
             inert={mobileMode !== 'terminal'}
           >
-            <TerminalArea
-              active={mobilePage === 'workspace'}
-              interactive={mobilePage === 'workspace' && mobileMode === 'terminal'}
-              onOpenNavigation={() => navigateMobile('navigation')}
-            />
+            <div class={cockpit.selectedProjection ? 'hidden' : 'contents'}>
+              <TerminalArea
+                active={mobilePage === 'workspace'}
+                interactive={mobilePage === 'workspace' && mobileMode === 'terminal'}
+                onOpenNavigation={() => navigateMobile('navigation')}
+              />
+            </div>
+            {#if cockpit.selectedProjection}
+              <div class="h-full p-2">
+                <CockpitTerminalViewer
+                  projection={cockpit.selectedProjection}
+                  onClose={() => cockpit.clearSelectedSession()}
+                />
+              </div>
+            {/if}
           </div>
           <div
             class="mobile-workspace-surface mobile-workspace-pane"
@@ -1658,7 +1670,17 @@
       {/if}
       <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
       <div class={railFullscreen ? 'hidden' : 'contents'}>
-        <TerminalArea />
+        <div class={cockpit.selectedProjection ? 'hidden' : 'contents'}>
+          <TerminalArea />
+        </div>
+        {#if cockpit.selectedProjection}
+          <div class="min-w-0 flex-1 p-3">
+            <CockpitTerminalViewer
+              projection={cockpit.selectedProjection}
+              onClose={() => cockpit.clearSelectedSession()}
+            />
+          </div>
+        {/if}
       </div>
       <RightRail fullscreen={railFullscreen} />
     </div>

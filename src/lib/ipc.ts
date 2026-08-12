@@ -100,6 +100,43 @@ import type {
 import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
 import type {
+  CockpitCatalogExportBundle,
+  CockpitCatalogImportRequest,
+  CockpitCatalogImportResult,
+  CockpitDemand,
+  CockpitEvent,
+  CockpitTerminalInputRequest,
+  CockpitTerminalInputLeaseRequest,
+  CockpitTerminalReplayRequest,
+  CockpitTerminalResizeRequest,
+  CockpitTerminalStopRequest
+} from '@shared/types/cockpit.js';
+import type { DeviceId } from '@shared/types/devices.js';
+import type {
+  CatalogTransaction,
+  CockpitAlignWorkspaceIntent,
+  CockpitAlignWorkspaceOperation,
+  CockpitAlignWorkspacePlan,
+  CockpitPlaceSessionIntent,
+  CockpitPlaceSessionOperation,
+  CockpitPlaceSessionPlan,
+  CockpitSessionSourceLifecycleIntent,
+  CockpitSessionSourceLifecycleOperation,
+  CockpitSessionSourceLifecyclePlan,
+  DeviceWorkspaceIntent,
+  DeviceWorkspacePlan
+} from '@shared/types/workspaces.js';
+import type {
+  CockpitOperation,
+  DeviceCommandEnvelope,
+  DeviceOperationReceipt
+} from '@shared/types/commands.js';
+import type {
+  CockpitPublishProjectIntent,
+  CockpitPublishProjectOperation,
+  CockpitPublishProjectPlan
+} from '@shared/types/providers.js';
+import type {
   VaultChangeEvent,
   VaultDeleteRequest,
   VaultGetSecretRequest,
@@ -131,6 +168,11 @@ export function toIpcPayload<T>(value: T): T {
 }
 
 const c = globalThis.window?.soloe as Window['soloe'];
+function requiredCockpit(): NonNullable<Window['soloe']['cockpit']> {
+  const cockpit = c?.cockpit;
+  if (!cockpit) throw new Error('Multi-Device cockpit is unavailable in this host.');
+  return cockpit;
+}
 const terminalReconnect = (
   c?.terminal as (typeof c.terminal & {
     onReconnect?: (listener: () => void) => () => void;
@@ -243,9 +285,101 @@ export const backend = {
       unwrap(await c.connections.add(toIpcPayload(request))),
     remove: async (id: Parameters<typeof c.connections.remove>[0]) =>
       unwrap(await c.connections.remove(id)),
+    setEnabled: async (
+      id: Parameters<typeof c.connections.setEnabled>[0],
+      enabled: Parameters<typeof c.connections.setEnabled>[1]
+    ) => unwrap(await c.connections.setEnabled(id, enabled)),
     select: async (id: Parameters<typeof c.connections.select>[0]) =>
       unwrap(await c.connections.select(id)),
     onChange: (cb: Parameters<typeof c.connections.onChange>[0]) => c.connections.onChange(cb)
+  },
+  cockpit: {
+    supported: Boolean(c?.cockpit),
+    snapshot: async () => unwrap(await requiredCockpit().snapshot()),
+    refresh: async () => unwrap(await requiredCockpit().refresh()),
+    setDemand: async (demand: CockpitDemand) =>
+      unwrap(await requiredCockpit().setDemand(toIpcPayload(demand))),
+    setFilter: async (deviceIds: DeviceId[]) =>
+      unwrap(await requiredCockpit().setFilter([...deviceIds])),
+    setDefaultPlacement: async (deviceId: DeviceId) =>
+      unwrap(await requiredCockpit().setDefaultPlacement(deviceId)),
+    transactCatalog: async (transaction: CatalogTransaction) =>
+      unwrap(await requiredCockpit().transactCatalog(toIpcPayload(transaction))),
+    exportCatalog: async (): Promise<CockpitCatalogExportBundle> =>
+      unwrap(await requiredCockpit().exportCatalog()),
+    importCatalog: async (
+      request: CockpitCatalogImportRequest
+    ): Promise<CockpitCatalogImportResult> =>
+      unwrap(await requiredCockpit().importCatalog(toIpcPayload(request))),
+    workspacePlan: async (
+      deviceId: DeviceId,
+      intent: DeviceWorkspaceIntent
+    ): Promise<DeviceWorkspacePlan> =>
+      unwrap(await requiredCockpit().workspacePlan(deviceId, toIpcPayload(intent))),
+    workspaceExecute: async (
+      command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
+    ): Promise<DeviceOperationReceipt> =>
+      unwrap(await requiredCockpit().workspaceExecute(toIpcPayload(command))),
+    workspaceGetCommand: async (
+      deviceId: DeviceId,
+      cockpitId: string,
+      commandId: string
+    ): Promise<DeviceOperationReceipt | null> =>
+      unwrap(await requiredCockpit().workspaceGetCommand(deviceId, cockpitId, commandId)),
+    placementPlan: async (
+      intent: CockpitPlaceSessionIntent
+    ): Promise<CockpitPlaceSessionPlan> =>
+      unwrap(await requiredCockpit().placementPlan(toIpcPayload(intent))),
+    placementExecute: async (
+      planId: string,
+      acknowledgements: string[]
+    ): Promise<CockpitPlaceSessionOperation> =>
+      unwrap(await requiredCockpit().placementExecute(planId, [...acknowledgements])),
+    alignmentPlan: async (
+      intent: CockpitAlignWorkspaceIntent
+    ): Promise<CockpitAlignWorkspacePlan> =>
+      unwrap(await requiredCockpit().alignmentPlan(toIpcPayload(intent))),
+    alignmentExecute: async (
+      planId: string,
+      acknowledgements: string[]
+    ): Promise<CockpitAlignWorkspaceOperation> =>
+      unwrap(await requiredCockpit().alignmentExecute(planId, [...acknowledgements])),
+    publicationPlan: async (
+      intent: CockpitPublishProjectIntent
+    ): Promise<CockpitPublishProjectPlan> =>
+      unwrap(await requiredCockpit().publicationPlan(toIpcPayload(intent))),
+    publicationExecute: async (
+      planId: string,
+      acknowledgements: string[]
+    ): Promise<CockpitPublishProjectOperation> =>
+      unwrap(await requiredCockpit().publicationExecute(planId, [...acknowledgements])),
+    sourceLifecyclePlan: async (
+      intent: CockpitSessionSourceLifecycleIntent
+    ): Promise<CockpitSessionSourceLifecyclePlan> =>
+      unwrap(await requiredCockpit().sourceLifecyclePlan(toIpcPayload(intent))),
+    sourceLifecycleExecute: async (
+      planId: string,
+      acknowledgements: string[]
+    ): Promise<CockpitSessionSourceLifecycleOperation> =>
+      unwrap(await requiredCockpit().sourceLifecycleExecute(planId, [...acknowledgements])),
+    operationGet: async (
+      operationId: string
+    ): Promise<CockpitOperation | null> =>
+      unwrap(await requiredCockpit().operationGet(operationId)),
+    operationListRecoverable: async (): Promise<CockpitOperation[]> =>
+      unwrap(await requiredCockpit().operationListRecoverable()),
+    terminalInput: async (request: CockpitTerminalInputRequest) =>
+      unwrap(await requiredCockpit().terminalInput(toIpcPayload(request))),
+    terminalInputLease: async (request: CockpitTerminalInputLeaseRequest) =>
+      unwrap(await requiredCockpit().terminalInputLease(toIpcPayload(request))),
+    terminalResize: async (request: CockpitTerminalResizeRequest) =>
+      unwrap(await requiredCockpit().terminalResize(toIpcPayload(request))),
+    terminalReplay: async (request: CockpitTerminalReplayRequest) =>
+      unwrap(await requiredCockpit().terminalReplay(toIpcPayload(request))),
+    terminalStop: async (request: CockpitTerminalStopRequest) =>
+      unwrap(await requiredCockpit().terminalStop(toIpcPayload(request))),
+    onEvent: (listener: (event: CockpitEvent) => void) =>
+      requiredCockpit().onEvent(listener)
   },
   projects: {
     list: async () => unwrap(await c.projects.list()),

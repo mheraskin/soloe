@@ -113,11 +113,11 @@ describe("monorepo boundaries", () => {
     );
   });
 
-  it("loads a selected Tailscale web host only in the disposable Electron client", async () => {
+  it("keeps the packaged renderer loaded while Device clients connect independently", async () => {
     const main = await readFile(path.join(root, "electron/main.ts"), "utf8");
 
-    expect(main).toContain("if (selectedRemoteWebHost && remoteServerUrl)");
-    expect(main).toContain("await win.loadURL(remoteServerUrl)");
+    expect(main).not.toContain("await win.loadURL(remoteServerUrl)");
+    expect(main).toContain("await win.loadFile(path.join(__dirname, '../renderer/index.html'))");
     expect(main).toContain("SOLOE_CLIENT_TAILSCALE_SESSION");
   });
 

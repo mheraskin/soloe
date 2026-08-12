@@ -12,6 +12,7 @@ export interface ServiceInfo {
   endpoint?: string;
   address?: string;
   token?: string;
+  deviceId?: string;
 }
 
 export async function loadOrCreateServerToken(dataDirectory: string): Promise<string> {

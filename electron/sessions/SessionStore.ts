@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   AgentLaunch,
   AgentRuntimeInfo,
@@ -12,6 +13,8 @@ import type {
   TerminalLaunch
 } from '@shared/types/sessions.js';
 import { isSessionColor } from '@shared/types/sessions.js';
+import { isDeviceId } from '@shared/types/devices.js';
+import type { SessionSource } from '@shared/types/workspaces.js';
 import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.js';
 
 interface StorageShape {
@@ -35,11 +38,12 @@ type LegacySessionDraft = Omit<SessionDraft, 'launch'> & {
   extraArgs?: string[];
 };
 
-const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 2;
 
 export class SessionStore {
   private cache: Map<SessionId, Session> | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
+  private needsStorageRewrite = false;
 
   constructor(
     private readonly filePath: string,
@@ -51,8 +55,9 @@ export class SessionStore {
     if (this.cache) return;
     this.cache = await this.loadFromDisk();
     const assignedSortIndices = this.assignMissingSortIndices();
-    if (assignedSortIndices) {
+    if (assignedSortIndices || this.needsStorageRewrite) {
       await this.persist();
+      this.needsStorageRewrite = false;
     }
   }
 
@@ -79,15 +84,36 @@ export class SessionStore {
 
   async create(draft: SessionDraft | LegacySessionDraft): Promise<Session> {
     await this.ensureLoaded();
+    return this.createNew(this.generateId(draft.name), draft);
+  }
+
+  async createWithId(id: SessionId, draft: SessionDraft): Promise<Session> {
+    await this.ensureLoaded();
+    if (!isDeviceId(id)) throw new Error('Placed Session ID must be a UUID');
+    const normalizedDraft = normalizeSessionDraft(draft);
+    const existing = this.cache!.get(id);
+    if (existing) {
+      if (!draftMatchesSession(normalizedDraft, existing)) {
+        throw new Error(`Session ${id} already exists with a different placement intent`);
+      }
+      return structuredClone(existing);
+    }
+    return this.createNew(id, normalizedDraft);
+  }
+
+  private async createNew(
+    id: SessionId,
+    draft: SessionDraft | LegacySessionDraft
+  ): Promise<Session> {
     const normalizedDraft = normalizeSessionDraft(draft);
     const hasUserInput =
       normalizedDraft.hasUserInput ?? initialHasUserInput(normalizedDraft);
     const durableDraft = assignNewClaudeSessionId(normalizedDraft);
     const now = new Date().toISOString();
-    const id = this.generateId(durableDraft.name);
     const session = {
       ...durableDraft,
       id,
+      version: 1,
       createdAt: now,
       lastUsedAt: now,
       sortIndex: this.nextSortIndex(),
@@ -100,7 +126,7 @@ export class SessionStore {
     validateSession(session, this.platform);
     this.cache!.set(id, session);
     await this.persist();
-    return session;
+    return structuredClone(session);
   }
 
   async update(id: SessionId, patch: SessionUpdate): Promise<Session> {
@@ -116,12 +142,37 @@ export class SessionStore {
       ...patch,
       ...(isManualRename ? { autoNamed: false } : {}),
       id: existing.id,
-      createdAt: existing.createdAt
+      createdAt: existing.createdAt,
+      version: (existing.version ?? 1) + 1,
+      ...(existing.source ? { source: existing.source } : {})
     } as Session;
     validateSession(merged, this.platform);
     this.cache!.set(id, merged);
     await this.persist();
     return merged;
+  }
+
+  async bindSource(
+    id: SessionId,
+    source: SessionSource,
+    expectedVersion: number
+  ): Promise<Session> {
+    await this.ensureLoaded();
+    const existing = this.cache!.get(id);
+    if (!existing) throw new Error(`Session not found: ${id}`);
+    const actualVersion = existing.version ?? 1;
+    if (actualVersion !== expectedVersion) {
+      throw new SessionVersionConflictError(id, expectedVersion, actualVersion);
+    }
+    validateSessionSource(source);
+    const updated: Session = {
+      ...existing,
+      version: actualVersion + 1,
+      source: structuredClone(source)
+    };
+    this.cache!.set(id, updated);
+    await this.persist();
+    return structuredClone(updated);
   }
 
   async delete(id: SessionId): Promise<void> {
@@ -221,6 +272,8 @@ export class SessionStore {
       return new Map();
     }
     const sessions = parseStorage(parsed, this.platform);
+    this.needsStorageRewrite = parsedStorageVersion(parsed) !== STORAGE_VERSION
+      || sessions.some((session) => session.version === undefined);
     return new Map(sessions.map((s) => [s.id, s]));
   }
 
@@ -310,6 +363,10 @@ function parseSession(raw: unknown, platform?: SupportedHostPlatform): Session |
 }
 
 function validateSession(s: Session, platform?: SupportedHostPlatform): void {
+  if (s.version !== undefined && (!Number.isSafeInteger(s.version) || s.version < 1)) {
+    throw new Error('Session version must be a positive integer');
+  }
+  if (s.source !== undefined) validateSessionSource(s.source);
   if (!s.name.trim()) throw new Error('Session name is required');
   if (!s.cwd.trim()) throw new Error('Session cwd is required');
   if (s.runMode === 'wsl' && !s.wslDistro) {
@@ -321,6 +378,10 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
   if (s.projectId !== undefined && (typeof s.projectId !== 'string' || !s.projectId.trim())) {
     throw new Error('projectId must be a non-empty string when set');
   }
+  if (s.originSessionRef !== undefined && (
+    !isDeviceId(s.originSessionRef.deviceId)
+    || !s.originSessionRef.sessionId?.trim()
+  )) throw new Error('originSessionRef must be a valid composite Session reference');
   if (s.tags !== undefined) {
     if (!Array.isArray(s.tags) || s.tags.some((t) => typeof t !== 'string')) {
       throw new Error('tags must be an array of strings when set');
@@ -449,6 +510,29 @@ function normalizeSessionDraft(draft: SessionDraft | LegacySessionDraft): Sessio
   return { ...rest, launch } as unknown as SessionDraft;
 }
 
+function draftMatchesSession(draft: SessionDraft, session: Session): boolean {
+  for (const [key, desired] of Object.entries(draft)) {
+    if (key === 'version') continue;
+    let actual = (session as unknown as Record<string, unknown>)[key];
+    if (
+      key === 'launch'
+      && desired
+      && typeof desired === 'object'
+      && (desired as AgentLaunch).type === 'agent'
+      && (desired as AgentLaunch).provider === 'claude_code'
+      && (desired as AgentLaunch).resumeMode === 'new'
+      && !(desired as AgentLaunch).claudeSessionId
+      && actual
+      && typeof actual === 'object'
+    ) {
+      const { claudeSessionId: _generated, ...rest } = actual as AgentLaunch;
+      actual = rest;
+    }
+    if (!isDeepStrictEqual(actual, desired)) return false;
+  }
+  return true;
+}
+
 function migrateRawSession(raw: Record<string, unknown>): Session | null {
   const launch = parseLaunch(raw);
   if (!launch) return null;
@@ -471,9 +555,56 @@ function migrateRawSession(raw: Record<string, unknown>): Session | null {
   const runtime = parseCurrentAgentRuntime(rawRuntime);
   return {
     ...rest,
+    version: Number.isSafeInteger(raw['version']) && (raw['version'] as number) > 0
+      ? raw['version'] as number
+      : 1,
     launch,
     ...(runtime ? { currentAgentRuntime: runtime } : {})
   } as unknown as Session;
+}
+
+function validateSessionSource(source: SessionSource): void {
+  if (!source || typeof source !== 'object' || !isDeviceId(source.checkoutId)) {
+    throw new Error('Session Source requires a UUID Checkout ID');
+  }
+  if (source.kind === 'workspace-location') {
+    if (source.locationCorrelation !== undefined && !isDeviceId(source.locationCorrelation)) {
+      throw new Error('Session Source Location correlation must be a UUID');
+    }
+    return;
+  }
+  if (source.kind === 'existing-checkout') {
+    if (typeof source.adopted !== 'boolean') throw new Error('Adopted Session Source is invalid');
+    return;
+  }
+  if (source.kind === 'isolated-worktree') {
+    if (
+      source.ownership !== 'session'
+      || !source.base
+      || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(source.base.oid)
+    ) throw new Error('Isolated Session Source is invalid');
+    return;
+  }
+  throw new Error('Session Source kind is invalid');
+}
+
+function parsedStorageVersion(raw: unknown): number | null {
+  return isObject(raw) && Number.isSafeInteger(raw['version'])
+    ? raw['version'] as number
+    : null;
+}
+
+export class SessionVersionConflictError extends Error {
+  readonly code = 'session_version_conflict';
+
+  constructor(
+    readonly sessionId: SessionId,
+    readonly expectedVersion: number,
+    readonly actualVersion: number
+  ) {
+    super(`Session ${sessionId} version ${expectedVersion} is stale; current version is ${actualVersion}.`);
+    this.name = 'SessionVersionConflictError';
+  }
 }
 
 function parseCurrentAgentRuntime(raw: unknown): AgentRuntimeInfo | null {

@@ -8,6 +8,8 @@ import {
 } from "@soloe/runtime";
 
 import { SoloeDomain } from "./SoloeDomain.js";
+import { DeviceDescriptorService } from "./DeviceDescriptorService.js";
+import { DeviceIdentityStore } from "./DeviceIdentityStore.js";
 import { SoloeServer } from "./SoloeServer.js";
 
 export interface RunningServerHost {
@@ -17,6 +19,11 @@ export interface RunningServerHost {
 
 export async function startServerHost(): Promise<RunningServerHost> {
   const dataDirectory = resolveSoloeDataDirectory();
+  const identity = await new DeviceIdentityStore(dataDirectory).loadOrCreate();
+  const descriptor = new DeviceDescriptorService({
+    deviceId: identity.deviceId,
+    serviceVersion: process.env.npm_package_version ?? "0.1.0",
+  }).describe();
   const ownerId = process.env.SOLOE_OWNER_ID;
   const token =
     process.env.SOLOE_SERVER_TOKEN ??
@@ -27,6 +34,7 @@ export async function startServerHost(): Promise<RunningServerHost> {
   const domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
   const domain = new SoloeDomain({
     dataDirectory,
+    deviceId: identity.deviceId,
     runtime: domainRuntime,
     enableAgentBridge: true,
   });
@@ -35,6 +43,7 @@ export async function startServerHost(): Promise<RunningServerHost> {
     host: process.env.SOLOE_SERVER_HOST ?? "127.0.0.1",
     port: Number(process.env.SOLOE_SERVER_PORT ?? "4317"),
     token,
+    deviceDescriptor: descriptor,
     webRoot: process.env.SOLOE_WEB_ROOT ?? "",
     ...(process.env.SOLOE_TAILSCALE_ALLOWED_USERS !== undefined
       ? { allowedTailscaleUsers: process.env.SOLOE_TAILSCALE_ALLOWED_USERS }
@@ -58,9 +67,16 @@ export async function startServerHost(): Promise<RunningServerHost> {
       ...(ownerId ? { ownerId } : {}),
       address,
       token,
+      deviceId: identity.deviceId,
     });
     process.stdout.write(
-      `${JSON.stringify({ service: "server", address, ready: true })}\n`,
+      `${JSON.stringify({
+        service: "server",
+        address,
+        deviceId: identity.deviceId,
+        serverEpoch: descriptor.serverEpoch,
+        ready: true,
+      })}\n`,
     );
 
     let closed = false;

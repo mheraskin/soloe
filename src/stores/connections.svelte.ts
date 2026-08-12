@@ -73,6 +73,10 @@ export class ConnectionsStore {
     this.snapshot = await ipc.connections.remove(id);
   }
 
+  async setEnabled(id: ConnectionId, enabled: boolean): Promise<void> {
+    this.snapshot = await ipc.connections.setEnabled(id, enabled);
+  }
+
   async select(id: ConnectionId): Promise<void> {
     if (id === this.snapshot.activeId || this.switchingId) return;
     this.switchingId = id;

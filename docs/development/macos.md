@@ -48,10 +48,12 @@ tailscale serve --bg 4317
 Electron's **Settings > Connections** page reads `tailscale status --json`,
 probes online peers at their exact MagicDNS HTTPS names, and lists only peers
 whose `/__soloe/ready` endpoint identifies a running Soloe host. The same
-devices appear in the title-bar device menu. Selecting a different device
-persists the choice and relaunches only the Electron client; runtimes and agents
-on either machine continue running. Select **This device** to return to the
-tray-provided local Server.
+Devices appear in the Workspace navigation filter. Enabled compatible Devices
+stay connected concurrently; choosing one filters the projection, while
+default placement independently suggests where the next Session should be
+created. Neither action relaunches Electron, changes an existing Session's
+owner, nor stops a Runtime. The legacy exclusive/relaunch behavior is available
+only for migration testing with `SOLOE_LEGACY_EXCLUSIVE_CONNECTION=1`.
 
 A trusted `https://` MagicDNS or Tailscale Serve URL can also be saved manually.
 The registry stores endpoint metadata, not backend bearer tokens. Remote access
@@ -85,3 +87,9 @@ The release workflow fails before packaging when credentials are absent, imports
 Before publishing, run `pnpm typecheck`, `pnpm test`, Rust formatting/Clippy/tests, and both native package jobs. Verify the Runtime and standalone Server start without Electron, **Open in browser** and **Open Soloe** share backend state, closing Electron leaves browser access and agents running, reopening works, a PTY can be spawned, and **Quit Soloe** cleans the complete owned process group.
 
 Intel macOS has passed this flow locally. Native arm64 packaging is configured on an Apple-silicon CI runner, but the final clean-machine smoke must be repeated on physical Apple-silicon hardware when available.
+
+For multi-Device validation, connect at least two enabled Devices with
+colliding local Session IDs, place shared and isolated Sessions, and verify that
+filter changes, catalog archiving, Electron restart, and one Device disconnect
+do not stop either Runtime. Exercise explicit input takeover from two clients,
+then export/import the catalog and verify the checksum/backup recovery path.

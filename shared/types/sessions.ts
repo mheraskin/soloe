@@ -1,3 +1,6 @@
+import type { SessionSource } from './workspaces.js';
+import type { SessionRef } from './devices.js';
+
 export type SessionId = string;
 
 /** `wsl` is hosted by Windows; the other modes are native desktop runtimes. */
@@ -81,6 +84,10 @@ export type AgentObservedState =
 
 export interface Session {
   id: SessionId;
+  /** Device-authoritative entity version; absent only on pre-v2 wire compatibility records. */
+  version?: number;
+  /** Exact physical source binding; absent until legacy adoption or explicit placement. */
+  source?: SessionSource;
   launch: SessionLaunch;
   kind?: SessionKind;
   resumeMode?: ClaudeResumeMode | CodexResumeMode;
@@ -92,6 +99,8 @@ export interface Session {
   createdAt: string;
   lastUsedAt: string;
   originSessionId?: SessionId;
+  /** Composite provenance for a Successor Session; safe across Device-local ID collisions. */
+  originSessionRef?: SessionRef;
   workerId?: string;
   providerThreadId?: string;
   transcriptPath?: string;
@@ -118,7 +127,7 @@ export interface Session {
 
 export type SessionDraft = Omit<Session, 'id' | 'createdAt' | 'lastUsedAt'>;
 
-export type SessionUpdate = Partial<Omit<Session, 'id' | 'createdAt'>>;
+export type SessionUpdate = Partial<Omit<Session, 'id' | 'createdAt' | 'version' | 'source'>>;
 
 export type SessionStatus = 'stopped' | 'starting' | 'running' | 'exited' | 'error';
 

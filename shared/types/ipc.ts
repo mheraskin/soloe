@@ -143,6 +143,45 @@ import type {
   ConnectionSelectionResult,
   ConnectionSnapshot
 } from './connections.js';
+import type {
+  CockpitCatalogExportBundle,
+  CockpitCatalogImportRequest,
+  CockpitCatalogImportResult,
+  CockpitDemand,
+  CockpitEvent,
+  CockpitSnapshot,
+  CockpitTerminalInputRequest,
+  CockpitTerminalInputLeaseRequest,
+  CockpitTerminalInputLeaseResult,
+  CockpitTerminalReplay,
+  CockpitTerminalReplayRequest,
+  CockpitTerminalResizeRequest,
+  CockpitTerminalStopRequest
+} from './cockpit.js';
+import type { DeviceId } from './devices.js';
+import type { CatalogTransaction } from './workspaces.js';
+import type { DeviceWorkspaceIntent, DeviceWorkspacePlan } from './workspaces.js';
+import type {
+  CockpitAlignWorkspaceIntent,
+  CockpitAlignWorkspaceOperation,
+  CockpitAlignWorkspacePlan,
+  CockpitPlaceSessionIntent,
+  CockpitPlaceSessionOperation,
+  CockpitPlaceSessionPlan,
+  CockpitSessionSourceLifecycleIntent,
+  CockpitSessionSourceLifecycleOperation,
+  CockpitSessionSourceLifecyclePlan
+} from './workspaces.js';
+import type {
+  CockpitOperation,
+  DeviceCommandEnvelope,
+  DeviceOperationReceipt
+} from './commands.js';
+import type {
+  CockpitPublishProjectIntent,
+  CockpitPublishProjectOperation,
+  CockpitPublishProjectPlan
+} from './providers.js';
 
 export const IpcChannels = {
   sessions: {
@@ -200,6 +239,7 @@ export const IpcChannels = {
     refresh: 'connections:refresh',
     add: 'connections:add',
     remove: 'connections:remove',
+    enable: 'connections:enable',
     select: 'connections:select',
     change: 'connections:change'
   },
@@ -333,6 +373,35 @@ export const IpcChannels = {
   browserSessions: {
     get: 'browser-sessions:get',
     update: 'browser-sessions:update'
+  },
+  cockpit: {
+    snapshot: 'cockpit:snapshot',
+    refresh: 'cockpit:refresh',
+    demand: 'cockpit:demand',
+    filter: 'cockpit:filter',
+    defaultPlacement: 'cockpit:default-placement',
+    transactCatalog: 'cockpit:transact-catalog',
+    exportCatalog: 'cockpit:export-catalog',
+    importCatalog: 'cockpit:import-catalog',
+    workspacePlan: 'cockpit:workspace-plan',
+    workspaceExecute: 'cockpit:workspace-execute',
+    workspaceGetCommand: 'cockpit:workspace-get-command',
+    placementPlan: 'cockpit:placement-plan',
+    placementExecute: 'cockpit:placement-execute',
+    alignmentPlan: 'cockpit:alignment-plan',
+    alignmentExecute: 'cockpit:alignment-execute',
+    publicationPlan: 'cockpit:publication-plan',
+    publicationExecute: 'cockpit:publication-execute',
+    sourceLifecyclePlan: 'cockpit:source-lifecycle-plan',
+    sourceLifecycleExecute: 'cockpit:source-lifecycle-execute',
+    operationGet: 'cockpit:operation-get',
+    operationListRecoverable: 'cockpit:operation-list-recoverable',
+    terminalInput: 'cockpit:terminal-input',
+    terminalInputLease: 'cockpit:terminal-input-lease',
+    terminalResize: 'cockpit:terminal-resize',
+    terminalReplay: 'cockpit:terminal-replay',
+    terminalStop: 'cockpit:terminal-stop',
+    event: 'cockpit:event'
   }
 } as const;
 
@@ -357,7 +426,8 @@ export type IpcChannel =
   | (typeof IpcChannels.features)[keyof typeof IpcChannels.features]
   | (typeof IpcChannels.vault)[keyof typeof IpcChannels.vault]
   | (typeof IpcChannels.browser)[keyof typeof IpcChannels.browser]
-  | (typeof IpcChannels.browserSessions)[keyof typeof IpcChannels.browserSessions];
+  | (typeof IpcChannels.browserSessions)[keyof typeof IpcChannels.browserSessions]
+  | (typeof IpcChannels.cockpit)[keyof typeof IpcChannels.cockpit];
 
 export type IpcResult<T> =
   | { ok: true; value: T }
@@ -441,6 +511,7 @@ export interface ConnectionsApi {
   refresh(): Promise<IpcResult<ConnectionSnapshot>>;
   add(request: AddMachineConnectionRequest): Promise<IpcResult<ConnectionSnapshot>>;
   remove(id: ConnectionId): Promise<IpcResult<ConnectionSnapshot>>;
+  setEnabled(id: ConnectionId, enabled: boolean): Promise<IpcResult<ConnectionSnapshot>>;
   select(id: ConnectionId): Promise<IpcResult<ConnectionSelectionResult>>;
   onChange(cb: (snapshot: ConnectionSnapshot) => void): () => void;
 }
@@ -677,6 +748,69 @@ export interface BrowserSessionsApi {
   update(request: BrowserSessionUpdateRequest): Promise<IpcResult<true>>;
 }
 
+export interface CockpitApi {
+  snapshot(): Promise<IpcResult<CockpitSnapshot>>;
+  refresh(): Promise<IpcResult<CockpitSnapshot>>;
+  setDemand(demand: CockpitDemand): Promise<IpcResult<true>>;
+  setFilter(deviceIds: DeviceId[]): Promise<IpcResult<CockpitSnapshot>>;
+  setDefaultPlacement(deviceId: DeviceId): Promise<IpcResult<CockpitSnapshot>>;
+  transactCatalog(transaction: CatalogTransaction): Promise<IpcResult<CockpitSnapshot>>;
+  exportCatalog(): Promise<IpcResult<CockpitCatalogExportBundle>>;
+  importCatalog(
+    request: CockpitCatalogImportRequest
+  ): Promise<IpcResult<CockpitCatalogImportResult>>;
+  workspacePlan(
+    deviceId: DeviceId,
+    intent: DeviceWorkspaceIntent
+  ): Promise<IpcResult<DeviceWorkspacePlan>>;
+  workspaceExecute(
+    command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
+  ): Promise<IpcResult<DeviceOperationReceipt>>;
+  workspaceGetCommand(
+    deviceId: DeviceId,
+    cockpitId: string,
+    commandId: string
+  ): Promise<IpcResult<DeviceOperationReceipt | null>>;
+  placementPlan(
+    intent: CockpitPlaceSessionIntent
+  ): Promise<IpcResult<CockpitPlaceSessionPlan>>;
+  placementExecute(
+    planId: string,
+    acknowledgements: string[]
+  ): Promise<IpcResult<CockpitPlaceSessionOperation>>;
+  alignmentPlan(
+    intent: CockpitAlignWorkspaceIntent
+  ): Promise<IpcResult<CockpitAlignWorkspacePlan>>;
+  alignmentExecute(
+    planId: string,
+    acknowledgements: string[]
+  ): Promise<IpcResult<CockpitAlignWorkspaceOperation>>;
+  publicationPlan(
+    intent: CockpitPublishProjectIntent
+  ): Promise<IpcResult<CockpitPublishProjectPlan>>;
+  publicationExecute(
+    planId: string,
+    acknowledgements: string[]
+  ): Promise<IpcResult<CockpitPublishProjectOperation>>;
+  sourceLifecyclePlan(
+    intent: CockpitSessionSourceLifecycleIntent
+  ): Promise<IpcResult<CockpitSessionSourceLifecyclePlan>>;
+  sourceLifecycleExecute(
+    planId: string,
+    acknowledgements: string[]
+  ): Promise<IpcResult<CockpitSessionSourceLifecycleOperation>>;
+  operationGet(operationId: string): Promise<IpcResult<CockpitOperation | null>>;
+  operationListRecoverable(): Promise<IpcResult<CockpitOperation[]>>;
+  terminalInput(request: CockpitTerminalInputRequest): Promise<IpcResult<true>>;
+  terminalInputLease(
+    request: CockpitTerminalInputLeaseRequest
+  ): Promise<IpcResult<CockpitTerminalInputLeaseResult>>;
+  terminalResize(request: CockpitTerminalResizeRequest): Promise<IpcResult<true>>;
+  terminalReplay(request: CockpitTerminalReplayRequest): Promise<IpcResult<CockpitTerminalReplay>>;
+  terminalStop(request: CockpitTerminalStopRequest): Promise<IpcResult<true>>;
+  onEvent(listener: (event: CockpitEvent) => void): () => void;
+}
+
 export interface TransportCapabilities {
   kind: import("../api-contract.js").SoloeTransportKind;
   supports(namespace: string, method: string): boolean;
@@ -705,6 +839,7 @@ export interface SoloeApi {
   vault: VaultApi;
   browser: BrowserApi;
   browserSessions: BrowserSessionsApi;
+  cockpit?: CockpitApi;
 }
 
 declare global {
