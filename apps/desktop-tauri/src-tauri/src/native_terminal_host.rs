@@ -101,11 +101,11 @@ pub fn create(app: &AppHandle, request: CreateRequest) -> Result<String, String>
     platform::create(app, request)
 }
 
-pub fn write(surface_id: &str, data: &str) -> Result<(), String> {
+pub fn write(surface_id: &str, data: &str) -> Result<u64, String> {
     platform::write(surface_id, data)
 }
 
-pub fn replace(surface_id: &str, data: &str) -> Result<(), String> {
+pub fn replace(surface_id: &str, data: &str) -> Result<u64, String> {
     platform::replace(surface_id, data)
 }
 
@@ -364,19 +364,19 @@ mod platform {
         })
     }
 
-    pub fn write(surface_id: &str, data: &str) -> Result<(), String> {
+    pub fn write(surface_id: &str, data: &str) -> Result<u64, String> {
         with_surface(surface_id, |surface| {
             surface.terminal.write(data);
             surface.drawing_area.queue_draw();
-            Ok(())
+            Ok(0)
         })
     }
 
-    pub fn replace(surface_id: &str, data: &str) -> Result<(), String> {
+    pub fn replace(surface_id: &str, data: &str) -> Result<u64, String> {
         with_surface(surface_id, |surface| {
             surface.terminal.replace(data);
             surface.drawing_area.queue_draw();
-            Ok(())
+            Ok(0)
         })
     }
 
@@ -802,8 +802,8 @@ mod platform {
         };
     }
 
-    disabled!(write(surface_id: &str, data: &str) -> ());
-    disabled!(replace(surface_id: &str, data: &str) -> ());
+    disabled!(write(surface_id: &str, data: &str) -> u64);
+    disabled!(replace(surface_id: &str, data: &str) -> u64);
     disabled!(set_visible(surface_id: &str, visible: bool) -> ());
     disabled!(set_focused(surface_id: &str, focused: bool) -> ());
     disabled!(set_bounds(surface_id: &str, bounds: Bounds) -> TerminalSize);
