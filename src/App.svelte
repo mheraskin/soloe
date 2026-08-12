@@ -1216,6 +1216,7 @@
 {:else if initialLoadState === 'error'}
   <div class="flex h-full flex-col overflow-hidden bg-background text-foreground">
     <header
+      data-tauri-drag-region
       class="app-error-titlebar flex h-7 shrink-0 items-center border-b border-border bg-card select-none"
       style="-webkit-app-region: drag"
     >
@@ -1249,6 +1250,7 @@
 <div class="app-shell flex flex-col overflow-hidden">
   {#if !isMobile}
   <header
+    data-tauri-drag-region
     use:closeMenusFromTitleBar
     class="app-titlebar flex h-7 flex-shrink-0 items-center border-b border-border bg-card select-none"
     style="-webkit-app-region: drag"
@@ -1527,7 +1529,7 @@
         {/if}
       {/if}
     {/if}
-    <div class="flex-1 self-stretch" aria-hidden="true"></div>
+    <div data-tauri-drag-region class="flex-1 self-stretch" aria-hidden="true"></div>
     <div class="titlebar-actions flex shrink-0 self-stretch" style="-webkit-app-region: no-drag">
       <Button
         variant="ghost"

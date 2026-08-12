@@ -185,6 +185,45 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
+  it.each(['http://tauri.localhost', 'tauri://localhost'])(
+    'allows authenticated RPC calls from the local Tauri origin %s',
+    async (rendererOrigin) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-tauri-cors-'));
+      const runtimeEndpoint = testRuntimeEndpoint(directory);
+      const runtime = new RuntimeHost({
+        endpoint: runtimeEndpoint,
+        processFactory: { spawn: () => new PersistentProcess() }
+      });
+      const server = new SoloeServer({
+        runtimeEndpoint,
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        rpcHandler: async () => 'tauri-rpc'
+      });
+
+      try {
+        await runtime.listen();
+        const baseUrl = await server.listen();
+        const preflight = await fetch(new URL('/api/rpc', baseUrl), {
+          method: 'OPTIONS',
+          headers: {
+            origin: rendererOrigin,
+            'access-control-request-method': 'POST',
+            'access-control-request-headers': 'authorization,content-type'
+          }
+        });
+
+        expect(preflight.status).toBe(204);
+        expect(preflight.headers.get('access-control-allow-origin')).toBe(rendererOrigin);
+      } finally {
+        await server.close();
+        await runtime.shutdown();
+        await rm(directory, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('exposes runtime control without owning the terminal process', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-api-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);

@@ -452,15 +452,22 @@ export class SoloeServer {
     if (!origin) return null;
     try {
       const url = new URL(origin);
-      if (url.protocol !== "http:") return null;
-      if (
-        url.hostname !== "localhost" &&
-        url.hostname !== "127.0.0.1" &&
-        url.hostname !== "[::1]"
-      ) {
-        return null;
+      if (url.protocol === "http:") {
+        if (
+          url.hostname === "localhost" ||
+          url.hostname === "127.0.0.1" ||
+          url.hostname === "[::1]"
+        ) {
+          return url.origin;
+        }
+        if (url.hostname === "tauri.localhost" && url.port === "") {
+          return origin;
+        }
       }
-      return url.origin;
+      if (url.protocol === "tauri:" && url.hostname === "localhost" && url.port === "") {
+        return origin;
+      }
+      return null;
     } catch {
       return null;
     }

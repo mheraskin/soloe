@@ -4,18 +4,13 @@
   "description": "Soloe experimental Tauri desktop client",
   "windows": ["main"],
   "webviews": ["main"],
-  "remote": {
-    "urls": [
-      "http://127.0.0.1:*",
-      "http://localhost:*"
-    ]
-  },
   "permissions": [
     "core:default",
     "core:event:default",
     "core:window:allow-close",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
     "core:webview:allow-set-webview-zoom"
   ]
 }

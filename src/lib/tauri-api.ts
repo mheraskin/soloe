@@ -4,6 +4,17 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { BrowserApi, IpcResult, WindowApi } from '@shared/types/ipc.js';
 import { createBrowserApi } from './browser-api';
 
+interface TauriBackendBootstrap {
+  address: string;
+  token: string;
+}
+
+declare global {
+  interface Window {
+    __SOLOE_TAURI_BACKEND__?: TauriBackendBootstrap | null;
+  }
+}
+
 let rendererZoom = 1;
 
 function result(operation: () => void | Promise<void>): Promise<IpcResult<true>> {
@@ -51,8 +62,10 @@ export function isTauriRenderer(): boolean {
 
 export function installTauriApi(): void {
   if (window.soloe) return;
+  const backend = window.__SOLOE_TAURI_BACKEND__;
   window.soloe = createBrowserApi({
     transport: 'tauri',
+    ...(backend ? { baseUrl: backend.address, token: backend.token } : {}),
     windowClient,
     browserClient,
     openExternalClient: (url) => invoke('open_external', { url })

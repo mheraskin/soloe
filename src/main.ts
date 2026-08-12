@@ -27,7 +27,8 @@ if ('__TAURI_INTERNALS__' in window) {
   installBrowserApi();
 }
 if (
-  'serviceWorker' in navigator
+  !('__TAURI_INTERNALS__' in window)
+  && 'serviceWorker' in navigator
   && (window.location.protocol === 'http:' || window.location.protocol === 'https:')
 ) {
   window.addEventListener(

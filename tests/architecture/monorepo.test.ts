@@ -143,6 +143,36 @@ describe("monorepo boundaries", () => {
       expect(source, file).not.toMatch(/\bnpm(?:\.cmd)?\b/);
     }
   });
+
+  it("loads the full bundled renderer in the experimental Tauri shell", async () => {
+    const config = JSON.parse(
+      await readFile(
+        path.join(root, "apps/desktop-tauri/src-tauri/tauri.conf.json"),
+        "utf8",
+      ),
+    ) as {
+      build: {
+        beforeDevCommand?: string;
+        beforeBuildCommand?: string;
+        devUrl?: string;
+        frontendDist?: string;
+      };
+    };
+    const html = await readFile(path.join(root, "src/tauri.html"), "utf8");
+    const shell = await readFile(
+      path.join(root, "apps/desktop-tauri/src-tauri/src/lib.rs"),
+      "utf8",
+    );
+
+    expect(config.build.beforeDevCommand).toContain("dev:tauri-ui");
+    expect(config.build.beforeBuildCommand).toContain("build:tauri-ui");
+    expect(config.build.devUrl).toBe("http://127.0.0.1:5174");
+    expect(config.build.frontendDist).toBe("../../../out/tauri-renderer");
+    expect(html).toContain('src="/main.ts"');
+    expect(html).not.toContain("tauri-benchmark/main.ts");
+    expect(shell).toContain('WebviewUrl::App("tauri.html".into())');
+    expect(shell).toContain("backend_initialization_script(backend.as_ref())");
+  });
 });
 
 async function manifest(relativePath: string): Promise<PackageManifest> {

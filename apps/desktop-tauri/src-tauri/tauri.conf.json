@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.soloe.app.desktop.tauri",
   "build": {
-    "beforeBuildCommand": "pnpm --dir ../.. --filter @soloe/web build",
-    "frontendDist": "../../../out/web"
+    "beforeDevCommand": "pnpm --dir ../.. dev:tauri-ui",
+    "beforeBuildCommand": "pnpm --dir ../.. build:tauri-ui",
+    "devUrl": "http://127.0.0.1:5174",
+    "frontendDist": "../../../out/tauri-renderer"
   },
   "app": {
     "windows": [],

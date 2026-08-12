@@ -23,8 +23,8 @@ separation, not repository separation, provides lifecycle independence.
   WSL distribution. The runtime socket stays on the WSL filesystem; Windows
   clients reach only the server's authenticated localhost HTTP/WebSocket API.
 
-The Tray Host, Windows Web Host, Electron client, and ordinary browser always
-remain on Windows.
+The Tray Host, Development Web Host, Electron client, Tauri client, and
+ordinary browser remain native to the client platform.
 Backend Placement is separate from a Session's shell/run-mode settings.
 
 `apps/mobile/` is intentionally only a placeholder. Mobile access is currently
@@ -64,8 +64,10 @@ Renderer Backend Adapters. When opened by the tray, Electron is a server-backed 
 its remote preload uses the same HTTP/WebSocket API while retaining only native
 Windows window and embedded-browser controls over local Electron IPC. The
 browser uses the local HTTP/WebSocket API directly. The experimental Tauri
-client loads that authenticated Web Host URL, keeps native window and browser
-surface controls in its shell, and uses the same Application Server transport.
+client loads its bundled Svelte assets so Tauri capabilities remain available,
+then receives the authenticated Web Host/Application Server address as bootstrap
+data. It keeps native window and browser-surface controls in its shell while
+using the same Application Server transport.
 Its feature-gated Linux Native Terminal Host may also own a GTK presentation
 surface backed by `libghostty-vt`, while its feature-gated macOS host may own a
 full Ghostty AppKit/Metal surface in manual-I/O mode; bytes and resize intent still cross the same

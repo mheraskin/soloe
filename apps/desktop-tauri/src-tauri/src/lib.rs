@@ -473,7 +473,7 @@ fn platform_open_external(url: &str) -> Result<std::process::ExitStatus, String>
         .map_err(|error| format!("failed to open URL: {error}"))
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 struct WebServiceRecord {
     address: String,
     token: String,
@@ -508,22 +508,38 @@ fn data_directory() -> PathBuf {
     }
 }
 
-fn client_url() -> WebviewUrl {
+fn client_url_record(value: &str, fallback_token: Option<&str>) -> Option<WebServiceRecord> {
+    let mut url = Url::parse(value).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let token = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "token").then(|| value.into_owned()))
+        .or_else(|| fallback_token.map(str::to_owned))?;
+    url.set_query(None);
+    url.set_fragment(None);
+    Some(WebServiceRecord {
+        address: url.to_string(),
+        token,
+    })
+}
+
+fn backend_record() -> Option<WebServiceRecord> {
     if let Ok(value) = env::var("SOLOE_CLIENT_URL") {
-        if let Ok(url) = Url::parse(&value) {
-            return WebviewUrl::External(url);
+        let fallback_token = env::var("SOLOE_SERVER_TOKEN").ok();
+        if let Some(record) = client_url_record(&value, fallback_token.as_deref()) {
+            return Some(record);
         }
     }
-    let record = fs::read(data_directory().join("web.json"))
+    fs::read(data_directory().join("web.json"))
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<WebServiceRecord>(&bytes).ok());
-    if let Some(record) = record {
-        if let Ok(mut url) = Url::parse(&record.address) {
-            url.query_pairs_mut().append_pair("token", &record.token);
-            return WebviewUrl::External(url);
-        }
-    }
-    WebviewUrl::App("index.html".into())
+        .and_then(|bytes| serde_json::from_slice::<WebServiceRecord>(&bytes).ok())
+}
+
+fn backend_initialization_script(record: Option<&WebServiceRecord>) -> String {
+    let serialized = serde_json::to_string(&record).unwrap_or_else(|_| "null".to_string());
+    format!("window.__SOLOE_TAURI_BACKEND__ = {serialized};")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -561,11 +577,15 @@ pub fn run() {
             open_external,
         ])
         .setup(|app| {
-            let window = WebviewWindowBuilder::new(app, "main", client_url())
-                .title("Soloe — Tauri experimental")
-                .inner_size(1280.0, 800.0)
-                .min_inner_size(720.0, 480.0)
-                .build()?;
+            let backend = backend_record();
+            let window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("tauri.html".into()))
+                    .title("Soloe — Tauri experimental")
+                    .decorations(cfg!(target_os = "macos"))
+                    .initialization_script(backend_initialization_script(backend.as_ref()))
+                    .inner_size(1280.0, 800.0)
+                    .min_inner_size(720.0, 480.0)
+                    .build()?;
             if let Err(error) = native_terminal_host::initialize(&window) {
                 eprintln!("failed to initialize native terminal host: {error}");
             }
@@ -573,4 +593,45 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Soloe Tauri desktop client");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WebServiceRecord, backend_initialization_script, client_url_record};
+
+    #[test]
+    fn client_url_becomes_a_token_authenticated_backend_record() {
+        assert_eq!(
+            client_url_record("http://127.0.0.1:4318/?token=test-token#ignored", None),
+            Some(WebServiceRecord {
+                address: "http://127.0.0.1:4318/".to_string(),
+                token: "test-token".to_string(),
+            })
+        );
+        assert_eq!(
+            client_url_record("https://example.test/", Some("fallback-token")),
+            Some(WebServiceRecord {
+                address: "https://example.test/".to_string(),
+                token: "fallback-token".to_string(),
+            })
+        );
+        assert_eq!(client_url_record("file:///tmp/soloe", Some("token")), None);
+    }
+
+    #[test]
+    fn backend_bootstrap_is_serialized_as_data() {
+        let script = backend_initialization_script(Some(&WebServiceRecord {
+            address: "http://127.0.0.1:4318/".to_string(),
+            token: "quote-\"-and-newline-\n".to_string(),
+        }));
+
+        assert_eq!(
+            script,
+            "window.__SOLOE_TAURI_BACKEND__ = {\"address\":\"http://127.0.0.1:4318/\",\"token\":\"quote-\\\"-and-newline-\\n\"};"
+        );
+        assert_eq!(
+            backend_initialization_script(None),
+            "window.__SOLOE_TAURI_BACKEND__ = null;"
+        );
+    }
 }
