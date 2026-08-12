@@ -48,6 +48,33 @@ using WglSetPixelFormatFn = BOOL(WINAPI *)(HDC, int, const PIXELFORMATDESCRIPTOR
 using WglSwapBuffersFn = BOOL(WINAPI *)(HDC);
 using GlGetStringFn = const GLubyte *(APIENTRY *)(GLenum);
 
+void Trace(const char *message) {
+  char trace_path[MAX_PATH] = {};
+  if (!message ||
+      GetEnvironmentVariableA("GHOSTTY_EMBED_TRACE", trace_path,
+                              static_cast<DWORD>(std::size(trace_path))) == 0)
+    return;
+  HANDLE trace = CreateFileA(trace_path, FILE_APPEND_DATA,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (trace == INVALID_HANDLE_VALUE) return;
+  const char prefix[] = "[soloe-ghostty] ";
+  const char newline[] = "\r\n";
+  DWORD written = 0;
+  WriteFile(trace, prefix, sizeof(prefix) - 1, &written, nullptr);
+  WriteFile(trace, message, static_cast<DWORD>(std::strlen(message)), &written,
+            nullptr);
+  WriteFile(trace, newline, sizeof(newline) - 1, &written, nullptr);
+  CloseHandle(trace);
+}
+
+void TraceValue(const char *event, uintptr_t value) {
+  char message[128] = {};
+  std::snprintf(message, std::size(message), "%s: %llu", event,
+                static_cast<unsigned long long>(value));
+  Trace(message);
+}
+
 struct SoloeGhosttyHost {};
 
 struct SoloeGhosttySurface {
@@ -480,6 +507,7 @@ bool Action(ghostty_app_t app, ghostty_target_s, ghostty_action_s action) {
   if (wrapper->closing.load(std::memory_order_acquire))
     return action.tag == GHOSTTY_ACTION_RENDER ||
            action.tag == GHOSTTY_ACTION_RENDERER_HEALTH;
+  TraceValue("action", static_cast<uintptr_t>(action.tag));
   switch (action.tag) {
     case GHOSTTY_ACTION_RENDER:
       // app_tick can publish render while Ghostty still owns internal state.
@@ -702,16 +730,20 @@ LRESULT CALLBACK TerminalWindowProc(HWND window,
   if (!wrapper) return DefWindowProcW(window, message, wparam, lparam);
   switch (message) {
     case kWakeupMessage:
+      Trace("app tick: entered");
       if (!wrapper->closing.load(std::memory_order_acquire) && wrapper->app)
         ghostty_app_tick(wrapper->app);
+      Trace("app tick: complete");
       return 0;
     case kSelectionChangedMessage:
       if (!wrapper->closing.load(std::memory_order_acquire))
         EmitSelection(wrapper);
       return 0;
     case kRenderMessage:
+      Trace("render message: entered");
       if (!wrapper->closing.load(std::memory_order_acquire) && wrapper->surface)
         ghostty_surface_refresh(wrapper->surface);
+      Trace("render message: complete");
       return 0;
     case WM_SIZE:
     case WM_DPICHANGED_AFTERPARENT:
@@ -916,6 +948,7 @@ SoloeGhosttySurface *soloe_ghostty_surface_new(
     soloe_ghostty_bytes_cb input_cb,
     soloe_ghostty_text_cb selection_cb,
     soloe_ghostty_text_cb link_cb) {
+  Trace("surface new: entered");
   auto parent = static_cast<HWND>(parent_hwnd);
   if (!host || !parent || !IsWindow(parent)) return nullptr;
   auto *wrapper = new (std::nothrow) SoloeGhosttySurface();
@@ -978,6 +1011,7 @@ SoloeGhosttySurface *soloe_ghostty_surface_new(
                SWP_NOACTIVATE | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
   ghostty_app_set_focus(wrapper->app, focused);
   if (focused) SetFocus(wrapper->child);
+  Trace("surface new: complete");
   return wrapper;
 }
 
@@ -990,45 +1024,55 @@ void soloe_ghostty_surface_free(SoloeGhosttySurface *wrapper) {
 bool soloe_ghostty_surface_write(SoloeGhosttySurface *wrapper,
                                  const uint8_t *bytes,
                                  size_t length) {
+  TraceValue("surface write: entered", length);
   if (!wrapper || !wrapper->surface) return false;
   if (bytes && length > 0)
     ghostty_surface_process_output(wrapper->surface,
                                   reinterpret_cast<const char *>(bytes), length);
+  Trace("surface write: complete");
   return wrapper->renderer_healthy.load(std::memory_order_acquire);
 }
 
 bool soloe_ghostty_surface_replace(SoloeGhosttySurface *wrapper,
                                    const uint8_t *bytes,
                                    size_t length) {
+  TraceValue("surface replace: entered", length);
   if (!wrapper || !wrapper->surface) return false;
   ghostty_surface_free(wrapper->surface);
+  Trace("surface replace: old surface freed");
   wrapper->surface = nullptr;
   if (!CreateInnerSurface(wrapper)) return false;
+  Trace("surface replace: new surface created");
   return soloe_ghostty_surface_write(wrapper, bytes, length);
 }
 
 bool soloe_ghostty_surface_set_visible(SoloeGhosttySurface *wrapper,
                                        bool visible) {
+  Trace("surface visible: entered");
   if (!wrapper || !wrapper->surface || !wrapper->child) return false;
   wrapper->visible = visible;
   ShowWindow(wrapper->child, visible ? SW_SHOWNA : SW_HIDE);
   ghostty_surface_set_occlusion(wrapper->surface, visible);
+  Trace("surface visible: complete");
   return true;
 }
 
 bool soloe_ghostty_surface_set_focused(SoloeGhosttySurface *wrapper,
                                        bool focused) {
+  Trace("surface focus: entered");
   if (!wrapper || !wrapper->surface) return false;
   wrapper->focused = focused;
   ghostty_app_set_focus(wrapper->app, focused);
   ghostty_surface_set_focus(wrapper->surface, focused);
   if (focused && wrapper->child) SetFocus(wrapper->child);
+  Trace("surface focus: complete");
   return true;
 }
 
 bool soloe_ghostty_surface_set_bounds(SoloeGhosttySurface *wrapper,
                                       SoloeGhosttyBounds bounds,
                                       SoloeGhosttySize *size) {
+  Trace("surface bounds: entered");
   if (!wrapper || !wrapper->surface || !wrapper->child || !size) return false;
   wrapper->bounds = bounds;
   if (!SetWindowPos(wrapper->child, HWND_TOP,
@@ -1042,12 +1086,14 @@ bool soloe_ghostty_surface_set_bounds(SoloeGhosttySurface *wrapper,
   const ghostty_surface_size_s native_size = ghostty_surface_size(wrapper->surface);
   size->columns = native_size.columns;
   size->rows = native_size.rows;
+  Trace("surface bounds: complete");
   return true;
 }
 
 bool soloe_ghostty_surface_set_configuration(
     SoloeGhosttySurface *wrapper,
     SoloeGhosttyConfiguration configuration) {
+  Trace("surface configuration: entered");
   if (!wrapper || !wrapper->surface ||
       !AssignConfiguration(wrapper, configuration))
     return false;
@@ -1055,6 +1101,7 @@ bool soloe_ghostty_surface_set_configuration(
   if (!config) return false;
   ghostty_surface_update_config(wrapper->surface, config);
   ghostty_config_free(config);
+  Trace("surface configuration: complete");
   return true;
 }
 
