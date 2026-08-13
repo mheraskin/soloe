@@ -206,7 +206,10 @@ export class WorkspaceDeviceStore {
     const sessionSources: DeviceSessionSourceBinding[] = [];
     for (const session of request.sessions) {
       validateLegacySession(session);
-      let repositoryId = session.projectId ? projectRepositories[session.projectId] : undefined;
+      const existingCheckout = checkoutByScope.get(checkoutScopeKey(session));
+      let repositoryId =
+        existingCheckout?.repositoryId ??
+        (session.projectId ? projectRepositories[session.projectId] : undefined);
       if (!repositoryId) {
         const standaloneLegacyId = `standalone:${session.id}`;
         let repository = next.repositories.find(

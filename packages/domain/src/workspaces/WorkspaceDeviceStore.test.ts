@@ -63,6 +63,43 @@ describe('WorkspaceDeviceStore', () => {
     expect(repeated).toEqual(migrated);
   });
 
+  it('binds standalone legacy Sessions sharing a physical Checkout to one Repository', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'soloe-device-workspaces-'));
+    directories.push(directory);
+    const store = new WorkspaceDeviceStore(
+      path.join(directory, 'device-workspaces.json'),
+      DEVICE_ID,
+      { now: () => new Date('2026-08-13T05:45:53.663Z') }
+    );
+    await store.init();
+
+    const migrated = await store.adoptLegacy({
+      migrationKey: 'legacy-projects-sessions-v1',
+      projects: [],
+      sessions: [
+        standaloneLegacySession('dune', '~'),
+        standaloneLegacySession('sage', '~'),
+        standaloneLegacySession('frost', '~')
+      ]
+    });
+
+    expect(migrated.snapshot.repositories).toHaveLength(1);
+    expect(migrated.snapshot.checkouts).toHaveLength(1);
+    expect(migrated.snapshot.checkouts[0]).toMatchObject({
+      path: '~',
+      runMode: 'macos',
+      role: 'external'
+    });
+    expect(migrated.sessionSources.map(({ sessionId }) => sessionId)).toEqual([
+      'dune',
+      'sage',
+      'frost'
+    ]);
+    expect(
+      new Set(migrated.sessionSources.map(({ source }) => source.checkoutId))
+    ).toEqual(new Set([migrated.snapshot.checkouts[0]!.id]));
+  });
+
   it('reconciles newly-created legacy Sessions without duplicating stable records', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'soloe-device-workspaces-'));
     directories.push(directory);
@@ -208,6 +245,18 @@ function legacySession(
     runMode,
     ...(wslDistro ? { wslDistro } : {}),
     projectId: 'compiler',
+    launch: { type: 'terminal', shell: 'auto' },
+    createdAt: '2025-01-01T00:00:00.000Z',
+    lastUsedAt: '2025-01-02T00:00:00.000Z'
+  };
+}
+
+function standaloneLegacySession(id: string, cwd: string): Session {
+  return {
+    id,
+    name: id,
+    cwd,
+    runMode: 'macos',
     launch: { type: 'terminal', shell: 'auto' },
     createdAt: '2025-01-01T00:00:00.000Z',
     lastUsedAt: '2025-01-02T00:00:00.000Z'
