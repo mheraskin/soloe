@@ -4,12 +4,11 @@ import { describe, expect, it } from 'vitest';
 const root = new URL('../', import.meta.url);
 
 describe('macOS package contract', () => {
-  it('bundles workspace packages into the Electron main process', () => {
+  it('bundles workspaces and externalizes packaged Electron dependencies', () => {
     const config = readFileSync(new URL('electron.vite.config.ts', root), 'utf8');
 
-    expect(config).toMatch(
-      /externalizeDepsPlugin\(\{[\s\S]*?exclude: \['@soloe\/domain', '@soloe\/protocol', '@soloe\/runtime'\][\s\S]*?\}\)/
-    );
+    expect(config).toContain('externalizeDeps: false');
+    expect(config).toContain("external: ['electron', 'node-pty', 'smol-toml', 'ws']");
   });
 
   it('embeds separate runtime and application-server entries', () => {

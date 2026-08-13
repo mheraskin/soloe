@@ -5,17 +5,13 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   main: {
-    plugins: [
-      externalizeDepsPlugin({
-        exclude: ['@soloe/domain', '@soloe/protocol', '@soloe/runtime']
-      })
-    ],
     resolve: {
       alias: {
         '@shared': resolve(__dirname, 'shared')
       }
     },
     build: {
+      externalizeDeps: false,
       outDir: resolve(__dirname, 'out/main'),
       lib: {
         entry: {
@@ -26,7 +22,10 @@ export default defineConfig({
         formats: ['cjs']
       },
       rollupOptions: {
-        external: ['electron', 'node-pty']
+        // Keep this deterministic when PNPM runs Electron Vite from the
+        // desktop workspace, whose package manifest differs from the root.
+        // Electron is built in; the other packages are copied beside app.asar.
+        external: ['electron', 'node-pty', 'smol-toml', 'ws']
       }
     }
   },

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -105,12 +106,15 @@ describe("monorepo boundaries", () => {
     }
   });
 
-  it("bundles source-only workspace code into the Electron main process", async () => {
-    const config = await readFile(path.join(root, "electron.vite.config.ts"), "utf8");
+  it("externalizes packaged Electron dependencies from the desktop workspace", () => {
+    const external = resolvedElectronMainExternals();
 
-    expect(config).toMatch(
-      /exclude:\s*\[\s*'@soloe\/domain',\s*'@soloe\/protocol',\s*'@soloe\/runtime'\s*\]/,
+    expect(external).toEqual(
+      expect.arrayContaining(["electron", "node-pty", "smol-toml", "ws"]),
     );
+    expect(external).not.toContain("@soloe/domain");
+    expect(external).not.toContain("@soloe/protocol");
+    expect(external).not.toContain("@soloe/runtime");
   });
 
   it("keeps the packaged renderer loaded while Device clients connect independently", async () => {
@@ -149,4 +153,28 @@ describe("monorepo boundaries", () => {
 
 async function manifest(relativePath: string): Promise<PackageManifest> {
   return JSON.parse(await readFile(path.join(root, relativePath), "utf8")) as PackageManifest;
+}
+
+function resolvedElectronMainExternals(): string[] {
+  const configFile = path.join(root, "electron.vite.config.ts");
+  const script = `
+    import { resolveConfig as resolveElectronConfig } from "electron-vite";
+    import { resolveConfig as resolveViteConfig } from "vite";
+
+    const electron = await resolveElectronConfig(
+      { configFile: ${JSON.stringify(configFile)} },
+      "build",
+    );
+    if (!electron.config?.main) throw new Error("Electron main config is missing");
+    const vite = await resolveViteConfig(electron.config.main, {
+      command: "build",
+      mode: "production",
+    });
+    process.stdout.write(JSON.stringify((vite.build.rollupOptions.external ?? []).map(String)));
+  `;
+  const output = execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: path.join(root, "apps/desktop-electron"),
+    encoding: "utf8",
+  });
+  return JSON.parse(output) as string[];
 }

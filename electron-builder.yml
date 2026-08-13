@@ -20,7 +20,7 @@ extraResources:
     to: build/icon.ico
   - from: build/icon.png
     to: build/icon.png
-  # electron-vite bundles everything except these two runtime dependencies.
+  # electron-vite bundles everything except these runtime dependencies.
   # Placing them beside app.asar makes them available through Node's normal
   # parent node_modules lookup and keeps node-pty's native binary unpacked.
   - from: node_modules/node-pty
