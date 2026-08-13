@@ -630,9 +630,12 @@ function descriptorProjection(
   descriptor: DeviceDescriptor,
   compatibility: DeviceProtocolCompatibility
 ): MachineConnection {
-  const updateRequired = compatibility.status !== 'compatible'
-    || REQUIRED_MULTI_DEVICE_CAPABILITIES.some(
-      (capability) => !descriptor.capabilities.features.includes(capability)
+  const updateRequired = machine.id !== 'local'
+    && (
+      compatibility.status !== 'compatible'
+      || REQUIRED_MULTI_DEVICE_CAPABILITIES.some(
+        (capability) => !descriptor.capabilities.features.includes(capability)
+      )
     );
   return {
     ...machine,

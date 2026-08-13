@@ -164,6 +164,20 @@ describe('ConnectionRegistry', () => {
     }));
   });
 
+  it('does not apply remote capability requirements to the running local Device', async () => {
+    const local = descriptor(DEVICE_A, 'Studio Mac');
+    local.capabilities.features = ['workspace-device.v1'];
+    const registry = createRegistry();
+
+    const snapshot = await registry.bindLocalDescriptor(local);
+
+    expect(snapshot.machines).toContainEqual(expect.objectContaining({
+      id: 'local',
+      enabled: true,
+      updateRequired: false
+    }));
+  });
+
   it('adopts a new backend-owned identity after a discovered machine is reset', async () => {
     let advertisedDeviceId = DEVICE_A;
     const registry = createRegistry({
