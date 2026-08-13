@@ -35,6 +35,17 @@ describe.skipIf(!hasGit)('GitService', () => {
     expect(status.isRepo).toBe(false);
   });
 
+  it('reads the canonical remote URL without contacting the remote', async () => {
+    await initRepo(tmpRoot);
+    spawnSync('git', ['remote', 'add', 'origin', 'https://example.test/acme/repository.git'], {
+      cwd: tmpRoot
+    });
+
+    await expect(svc.getRemoteUrl(tmpRoot)).resolves.toBe(
+      'https://example.test/acme/repository.git'
+    );
+  });
+
   it('keeps passive repository reads watcher-free and observes only while leased', async () => {
     await initRepo(tmpRoot);
     const closes = [vi.fn(), vi.fn(), vi.fn()];

@@ -9,7 +9,7 @@ separation, not repository separation, provides lifecycle independence.
 | Environment Runtime (`apps/runtime`) | PTYs, input, resize, bounded replay, terminal identity | No; this is the agent lifetime boundary |
 | Application Server (`apps/server`) | Domain state, authenticated HTTP/RPC/WebSocket | Yes |
 | Tray Host (`apps/tray`) | Top-level ownership, start/stop, browser/Electron launch | No; exiting the tray stops everything |
-| Electron client and Cockpit Coordinator (`apps/desktop-electron`) | Native window, cockpit-local Workspace catalog, concurrent Device clients, composite routing, and renderer projection | Yes |
+| Electron client and multi-Device Sessions service (`apps/desktop-electron`) | Native window, concurrent Device inventory, composite Session/terminal routing, and renderer projection | Yes |
 | Development Web Host (`apps/web`) | PWA assets, hot reload, authenticated API proxy | Yes while the tray remains |
 
 **Backend Placement** selects where the first two processes run:
@@ -30,29 +30,26 @@ Backend Placement is separate from a Session's shell/run-mode settings.
 the responsive PWA produced by `apps/web`; a future native mobile application
 can occupy the reserved directory without duplicating today's web build.
 
-## Cockpit, Device, and Runtime authority
+## Client, Device, and Runtime authority
 
-The Electron host is a Cockpit. Its versioned local catalog is authoritative
-for logical Projects, Workspaces, Workspace Sources, Workspace Locations,
-Session Memberships, ordering, and the default placement preference. A
-Workspace may therefore remain visible with no online Device or no physical
-Checkout. The catalog stores references and observations; it is not a replica
-of any Device filesystem.
+Each Soloe Device is authoritative for its durable identity, Project records,
+Repository and Checkout registry, Session records, Git evidence, provider
+operations, and idempotent Device command receipts. The Electron host connects
+to compatible Devices concurrently and derives one Project → Workspace →
+Session view from their inventories. It does not store a second logical catalog
+or Session-membership model.
 
-Each enabled Soloe Device remains authoritative for its durable identity,
-Repository and Checkout registry, Session records and Session Sources, Git
-evidence, provider operations, and idempotent Device command receipts. The
-Cockpit connects to enabled Devices concurrently and addresses physical state
-with composite references such as `(DeviceId, SessionId)` and
-`(DeviceId, CheckoutId)`. Endpoint URLs and display names are mutable aliases,
-not identity.
+Physical state is addressed with composite references such as
+`(DeviceId, SessionId)` and `(DeviceId, CheckoutId)`. Endpoint URLs and display
+names are mutable aliases, not identity. Projects are merged by canonical Git
+remote; Workspaces are merged by Project plus Branch or pinned Revision; every
+physical Location and Session retains its owning Device.
 
 The Environment Runtime remains the final authority for PTYs, terminal replay,
-and terminal input ownership. A Regroup changes only cockpit Session
-Membership. Work on another Device or Checkout creates a successor Session;
-it never relocates a live process. Archiving changes Session metadata only.
-Stopping a terminal, deleting a Session, and cleaning an isolated Checkout are
-separate explicit actions.
+and terminal input ownership. Work on another Device or Checkout creates a
+successor Session; it never relocates a live process. Archiving changes Session
+metadata only. Stopping a terminal, deleting a Session, and cleaning an isolated
+Checkout are separate explicit actions.
 
 ## Runtime boundary
 
@@ -96,20 +93,19 @@ over local Electron IPC. The browser uses the local HTTP/WebSocket API
 directly. Both replay visible terminals after reconnect.
 
 The Electron-owned Device Connection Registry catalogs the local supervised
-Server plus discovered or manually trusted Tailscale HTTPS endpoints. It hides
-CLI parsing, readiness probes, durable Device-ID pinning, enablement, and
-connection health behind the Renderer Backend Interface. Enabled compatible
-Devices stay connected concurrently. The Device selector is a projection
-filter, and default placement is a separate preference used only for future
-Session creation; neither changes an existing Session's route, relaunches the
-desktop, nor stops a Runtime. Registry records contain endpoint metadata but no
-bearer tokens or provider credentials. Remote authentication remains in an
-isolated Secure, HttpOnly cookie context for that Device.
+Server plus automatically discovered Tailscale HTTPS endpoints. It hides CLI
+parsing, readiness probes, durable Device-ID pinning, compatibility, and
+connection health behind the Renderer Backend Interface. Compatible Devices
+stay connected concurrently. The Device menu reports status only; it neither
+filters navigation nor changes an existing Session's route. Registry records
+contain endpoint metadata but no bearer tokens or provider credentials. Remote
+authentication remains in an isolated Secure, HttpOnly cookie context for that
+Device.
 
 The old process-wide active endpoint remains readable only for migration. It
 affects startup and relaunch behavior exclusively when
 `SOLOE_LEGACY_EXCLUSIVE_CONNECTION=1`; normal operation always anchors the
-desktop to its local host and lets the Cockpit Coordinator manage remote
+desktop to its local host and lets the multi-Device Sessions service manage remote
 Devices. Both the development Web Host and packaged macOS Application Server
 expose the same readiness and Tailscale identity-to-session contract.
 
@@ -160,9 +156,9 @@ Physical mutations use immutable preflight plans and UUID command envelopes.
 The Device verifies target identity, capability revision, plan expiry, entity
 versions, and Git evidence before executing. Its bounded journal makes a
 successful command idempotent and requires receipt inspection after an
-ambiguous/interrupted outcome. Cross-Device placement, publication, alignment,
-and source-lifecycle work is an additive Cockpit saga: partial resources remain
-visible for recovery and are never hidden behind a false transaction claim.
+ambiguous/interrupted outcome. Multi-step Device work is additive: partial
+resources remain visible for recovery and are never hidden behind a false
+transaction claim.
 
 The Runtime is unaffected by browser, Electron, or Server replacement. A
 server-only restart reconnects to the existing Runtime; clients reconnect to

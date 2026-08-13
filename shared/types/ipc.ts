@@ -109,6 +109,7 @@ import type {
   TerminalExitEvent,
   TerminalId,
   TerminalLocationEvent,
+  TerminalInputLease,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStartResult,
@@ -143,45 +144,14 @@ import type {
   ConnectionSelectionResult,
   ConnectionSnapshot
 } from './connections.js';
+import type { DeviceEventEnvelope, SessionRef, TerminalRef } from './devices.js';
 import type {
-  CockpitCatalogExportBundle,
-  CockpitCatalogImportRequest,
-  CockpitCatalogImportResult,
-  CockpitDemand,
-  CockpitEvent,
-  CockpitSnapshot,
-  CockpitTerminalInputRequest,
-  CockpitTerminalInputLeaseRequest,
-  CockpitTerminalInputLeaseResult,
-  CockpitTerminalReplay,
-  CockpitTerminalReplayRequest,
-  CockpitTerminalResizeRequest,
-  CockpitTerminalStopRequest
-} from './cockpit.js';
-import type { DeviceId } from './devices.js';
-import type { CatalogTransaction } from './workspaces.js';
-import type { DeviceWorkspaceIntent, DeviceWorkspacePlan } from './workspaces.js';
-import type {
-  CockpitAlignWorkspaceIntent,
-  CockpitAlignWorkspaceOperation,
-  CockpitAlignWorkspacePlan,
-  CockpitPlaceSessionIntent,
-  CockpitPlaceSessionOperation,
-  CockpitPlaceSessionPlan,
-  CockpitSessionSourceLifecycleIntent,
-  CockpitSessionSourceLifecycleOperation,
-  CockpitSessionSourceLifecyclePlan
-} from './workspaces.js';
-import type {
-  CockpitOperation,
-  DeviceCommandEnvelope,
-  DeviceOperationReceipt
-} from './commands.js';
-import type {
-  CockpitPublishProjectIntent,
-  CockpitPublishProjectOperation,
-  CockpitPublishProjectPlan
-} from './providers.js';
+  CreateMultiDeviceSessionRequest,
+  DeviceTerminalReplay,
+  MultiDeviceSessionCreationPlan,
+  MultiDeviceSessionState,
+  MultiDeviceSessionView
+} from './multi-device-sessions.js';
 
 export const IpcChannels = {
   sessions: {
@@ -193,8 +163,22 @@ export const IpcChannels = {
     delete: 'sessions:delete',
     reorder: 'sessions:reorder',
     previewCommand: 'sessions:preview-command',
+    deviceState: 'sessions:device-state',
+    refreshDevices: 'sessions:refresh-devices',
+    createOnDevice: 'sessions:create-on-device',
+    planCreateOnDevice: 'sessions:plan-create-on-device',
+    executeCreateOnDevice: 'sessions:execute-create-on-device',
+    startOnDevice: 'sessions:start-on-device',
+    deviceTerminalDemand: 'sessions:device-terminal-demand',
+    deviceTerminalInput: 'sessions:device-terminal-input',
+    deviceTerminalInputLease: 'sessions:device-terminal-input-lease',
+    deviceTerminalResize: 'sessions:device-terminal-resize',
+    deviceTerminalReplay: 'sessions:device-terminal-replay',
+    deviceTerminalStop: 'sessions:device-terminal-stop',
     changed: 'sessions:changed',
-    deleted: 'sessions:deleted'
+    deleted: 'sessions:deleted',
+    deviceStateChanged: 'sessions:device-state-changed',
+    deviceEvent: 'sessions:device-event'
   },
   terminal: {
     start: 'terminal:start',
@@ -373,35 +357,6 @@ export const IpcChannels = {
   browserSessions: {
     get: 'browser-sessions:get',
     update: 'browser-sessions:update'
-  },
-  cockpit: {
-    snapshot: 'cockpit:snapshot',
-    refresh: 'cockpit:refresh',
-    demand: 'cockpit:demand',
-    filter: 'cockpit:filter',
-    defaultPlacement: 'cockpit:default-placement',
-    transactCatalog: 'cockpit:transact-catalog',
-    exportCatalog: 'cockpit:export-catalog',
-    importCatalog: 'cockpit:import-catalog',
-    workspacePlan: 'cockpit:workspace-plan',
-    workspaceExecute: 'cockpit:workspace-execute',
-    workspaceGetCommand: 'cockpit:workspace-get-command',
-    placementPlan: 'cockpit:placement-plan',
-    placementExecute: 'cockpit:placement-execute',
-    alignmentPlan: 'cockpit:alignment-plan',
-    alignmentExecute: 'cockpit:alignment-execute',
-    publicationPlan: 'cockpit:publication-plan',
-    publicationExecute: 'cockpit:publication-execute',
-    sourceLifecyclePlan: 'cockpit:source-lifecycle-plan',
-    sourceLifecycleExecute: 'cockpit:source-lifecycle-execute',
-    operationGet: 'cockpit:operation-get',
-    operationListRecoverable: 'cockpit:operation-list-recoverable',
-    terminalInput: 'cockpit:terminal-input',
-    terminalInputLease: 'cockpit:terminal-input-lease',
-    terminalResize: 'cockpit:terminal-resize',
-    terminalReplay: 'cockpit:terminal-replay',
-    terminalStop: 'cockpit:terminal-stop',
-    event: 'cockpit:event'
   }
 } as const;
 
@@ -426,8 +381,7 @@ export type IpcChannel =
   | (typeof IpcChannels.features)[keyof typeof IpcChannels.features]
   | (typeof IpcChannels.vault)[keyof typeof IpcChannels.vault]
   | (typeof IpcChannels.browser)[keyof typeof IpcChannels.browser]
-  | (typeof IpcChannels.browserSessions)[keyof typeof IpcChannels.browserSessions]
-  | (typeof IpcChannels.cockpit)[keyof typeof IpcChannels.cockpit];
+  | (typeof IpcChannels.browserSessions)[keyof typeof IpcChannels.browserSessions];
 
 export type IpcResult<T> =
   | { ok: true; value: T }
@@ -442,9 +396,36 @@ export interface SessionsApi {
   delete(id: SessionId): Promise<IpcResult<true>>;
   reorder(orderedIds: SessionId[]): Promise<IpcResult<Session[]>>;
   previewCommand(id: SessionId): Promise<IpcResult<SpawnSpec>>;
+  deviceState?(): Promise<IpcResult<MultiDeviceSessionState>>;
+  refreshDevices?(): Promise<IpcResult<MultiDeviceSessionState>>;
+  createOnDevice?(
+    request: CreateMultiDeviceSessionRequest
+  ): Promise<IpcResult<MultiDeviceSessionView>>;
+  planCreateOnDevice?(
+    request: CreateMultiDeviceSessionRequest
+  ): Promise<IpcResult<MultiDeviceSessionCreationPlan>>;
+  executeCreateOnDevice?(planId: string): Promise<IpcResult<MultiDeviceSessionView>>;
+  startOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionView>>;
+  setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
+  deviceTerminalInput?(request: { ref: TerminalRef; data: string }): Promise<IpcResult<true>>;
+  deviceTerminalInputLease?(
+    request: { ref: TerminalRef; takeover?: boolean }
+  ): Promise<IpcResult<TerminalInputLease>>;
+  deviceTerminalResize?(
+    request: { ref: TerminalRef; cols: number; rows: number }
+  ): Promise<IpcResult<true>>;
+  deviceTerminalReplay?(
+    ref: TerminalRef,
+    afterSeq?: number
+  ): Promise<IpcResult<DeviceTerminalReplay>>;
+  deviceTerminalStop?(ref: TerminalRef): Promise<IpcResult<true>>;
 
   onChange(listener: (session: Session) => void): () => void;
   onDelete(listener: (sessionId: SessionId) => void): () => void;
+  onDeviceStateChange?(
+    listener: (state: MultiDeviceSessionState) => void
+  ): () => void;
+  onDeviceEvent?(listener: (event: DeviceEventEnvelope) => void): () => void;
 }
 
 export interface TerminalInputPayload {
@@ -748,69 +729,6 @@ export interface BrowserSessionsApi {
   update(request: BrowserSessionUpdateRequest): Promise<IpcResult<true>>;
 }
 
-export interface CockpitApi {
-  snapshot(): Promise<IpcResult<CockpitSnapshot>>;
-  refresh(): Promise<IpcResult<CockpitSnapshot>>;
-  setDemand(demand: CockpitDemand): Promise<IpcResult<true>>;
-  setFilter(deviceIds: DeviceId[]): Promise<IpcResult<CockpitSnapshot>>;
-  setDefaultPlacement(deviceId: DeviceId): Promise<IpcResult<CockpitSnapshot>>;
-  transactCatalog(transaction: CatalogTransaction): Promise<IpcResult<CockpitSnapshot>>;
-  exportCatalog(): Promise<IpcResult<CockpitCatalogExportBundle>>;
-  importCatalog(
-    request: CockpitCatalogImportRequest
-  ): Promise<IpcResult<CockpitCatalogImportResult>>;
-  workspacePlan(
-    deviceId: DeviceId,
-    intent: DeviceWorkspaceIntent
-  ): Promise<IpcResult<DeviceWorkspacePlan>>;
-  workspaceExecute(
-    command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
-  ): Promise<IpcResult<DeviceOperationReceipt>>;
-  workspaceGetCommand(
-    deviceId: DeviceId,
-    cockpitId: string,
-    commandId: string
-  ): Promise<IpcResult<DeviceOperationReceipt | null>>;
-  placementPlan(
-    intent: CockpitPlaceSessionIntent
-  ): Promise<IpcResult<CockpitPlaceSessionPlan>>;
-  placementExecute(
-    planId: string,
-    acknowledgements: string[]
-  ): Promise<IpcResult<CockpitPlaceSessionOperation>>;
-  alignmentPlan(
-    intent: CockpitAlignWorkspaceIntent
-  ): Promise<IpcResult<CockpitAlignWorkspacePlan>>;
-  alignmentExecute(
-    planId: string,
-    acknowledgements: string[]
-  ): Promise<IpcResult<CockpitAlignWorkspaceOperation>>;
-  publicationPlan(
-    intent: CockpitPublishProjectIntent
-  ): Promise<IpcResult<CockpitPublishProjectPlan>>;
-  publicationExecute(
-    planId: string,
-    acknowledgements: string[]
-  ): Promise<IpcResult<CockpitPublishProjectOperation>>;
-  sourceLifecyclePlan(
-    intent: CockpitSessionSourceLifecycleIntent
-  ): Promise<IpcResult<CockpitSessionSourceLifecyclePlan>>;
-  sourceLifecycleExecute(
-    planId: string,
-    acknowledgements: string[]
-  ): Promise<IpcResult<CockpitSessionSourceLifecycleOperation>>;
-  operationGet(operationId: string): Promise<IpcResult<CockpitOperation | null>>;
-  operationListRecoverable(): Promise<IpcResult<CockpitOperation[]>>;
-  terminalInput(request: CockpitTerminalInputRequest): Promise<IpcResult<true>>;
-  terminalInputLease(
-    request: CockpitTerminalInputLeaseRequest
-  ): Promise<IpcResult<CockpitTerminalInputLeaseResult>>;
-  terminalResize(request: CockpitTerminalResizeRequest): Promise<IpcResult<true>>;
-  terminalReplay(request: CockpitTerminalReplayRequest): Promise<IpcResult<CockpitTerminalReplay>>;
-  terminalStop(request: CockpitTerminalStopRequest): Promise<IpcResult<true>>;
-  onEvent(listener: (event: CockpitEvent) => void): () => void;
-}
-
 export interface TransportCapabilities {
   kind: import("../api-contract.js").SoloeTransportKind;
   supports(namespace: string, method: string): boolean;
@@ -839,7 +757,6 @@ export interface SoloeApi {
   vault: VaultApi;
   browser: BrowserApi;
   browserSessions: BrowserSessionsApi;
-  cockpit?: CockpitApi;
 }
 
 declare global {

@@ -50,7 +50,7 @@ describe("Soloe API compatibility matrix", () => {
     }
     for (const key of DEVICE_RPC_METHODS) {
       expect(SERVER_RPC_METHODS, key).toContain(key);
-      expect(apiKeys, `${key} must stay behind CockpitApi`).not.toContain(key);
+      expect(apiKeys, `${key} must stay behind the host Sessions API`).not.toContain(key);
     }
     for (const collection of [
       SERVER_EVENT_METHODS,

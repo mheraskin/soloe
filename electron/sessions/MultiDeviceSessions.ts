@@ -1,0 +1,758 @@
+import type {
+  DeviceDescriptor,
+  DeviceEventEnvelope,
+  DeviceId,
+  SessionRef,
+  TerminalRef
+} from '@shared/types/devices.js';
+import type { GitWorktree } from '@shared/types/git.js';
+import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
+import type { Session, SessionDraft, SessionRuntimeState } from '@shared/types/sessions.js';
+import type { TerminalInputLease, TerminalStartResult } from '@shared/types/terminal.js';
+import type {
+  DevicePlacedSessionRequest,
+  DeviceWorkspaceIntent,
+  DeviceWorkspacePlan,
+  RepositoryIdentity
+} from '@shared/types/workspaces.js';
+import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
+import { randomUUID } from 'node:crypto';
+import type {
+  CreateMultiDeviceSessionRequest,
+  DeviceProjectInventory,
+  DeviceSessionInventory,
+  DeviceTerminalReplay,
+  MultiDeviceSessionCreationPlan,
+  MultiDeviceSessionState,
+  MultiDeviceSessionView,
+  ProjectView,
+  SessionDeviceView,
+  WorkspaceLocationView,
+  WorkspaceView
+} from '@shared/types/multi-device-sessions.js';
+export type {
+  CreateMultiDeviceSessionRequest,
+  DeviceProjectInventory,
+  DeviceSessionInventory,
+  DeviceTerminalReplay,
+  MultiDeviceSessionState,
+  MultiDeviceSessionView,
+  ProjectView,
+  SessionDeviceView,
+  WorkspaceLocationView,
+  WorkspaceView
+} from '@shared/types/multi-device-sessions.js';
+
+export interface SessionDeviceStatus {
+  deviceId: DeviceId;
+  state: 'idle' | 'connecting' | 'ready' | 'offline' | 'incompatible' | 'disposed';
+  descriptor: DeviceDescriptor | null;
+  error?: string;
+}
+
+export interface SessionDevice {
+  readonly deviceId: DeviceId;
+  readonly local: boolean;
+  readonly status: SessionDeviceStatus;
+  connect(): Promise<SessionDeviceStatus>;
+  readInventory(): Promise<DeviceSessionInventory>;
+  setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void>;
+  terminalInput(terminalId: string, data: string): Promise<void>;
+  terminalAcquireInputLease?(
+    terminalId: string,
+    takeover?: boolean
+  ): Promise<TerminalInputLease>;
+  terminalResize(terminalId: string, cols: number, rows: number): Promise<void>;
+  terminalReplay(terminalId: string, afterSeq?: number): Promise<DeviceTerminalReplay>;
+  terminalStop(terminalId: string): Promise<void>;
+  createSession?(request: DevicePlacedSessionRequest): Promise<Session>;
+  startSession?(sessionId: string): Promise<TerminalStartResult>;
+  workspacePlan?(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan>;
+  workspaceExecute?(
+    command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
+  ): Promise<DeviceOperationReceipt>;
+  openProject?(request: ProjectOpenRequest): Promise<Project>;
+  onEvent(listener: (event: DeviceEventEnvelope) => void): () => void;
+  onStatus(listener: (status: SessionDeviceStatus) => void): () => void;
+  dispose(): void | Promise<void>;
+}
+
+interface StoredSessionCreationPlan {
+  public: MultiDeviceSessionCreationPlan;
+  request: CreateMultiDeviceSessionRequest;
+  devicePlan: DeviceWorkspacePlan | null;
+}
+
+export class MultiDeviceSessions {
+  private devices: SessionDevice[];
+  private readonly inventories = new Map<DeviceId, DeviceSessionInventory>();
+  private readonly stateListeners = new Set<(state: MultiDeviceSessionState) => void>();
+  private readonly eventListeners = new Set<(event: DeviceEventEnvelope) => void>();
+  private readonly deviceDetachers = new Map<DeviceId, {
+    device: SessionDevice;
+    detach: Array<() => void>;
+  }>();
+  private readonly creationPlans = new Map<string, StoredSessionCreationPlan>();
+  private readonly clientId = randomUUID();
+  private refreshRequest: Promise<MultiDeviceSessionState> | null = null;
+  private revision = 0;
+  private currentState: MultiDeviceSessionState;
+
+  constructor(options: { devices: SessionDevice[] }) {
+    this.devices = [...options.devices];
+    this.currentState = projectState([], this.devices, 0);
+  }
+
+  state(): MultiDeviceSessionState {
+    return structuredClone(this.currentState);
+  }
+
+  onState(listener: (state: MultiDeviceSessionState) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  onDeviceEvent(listener: (event: DeviceEventEnvelope) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
+
+  async refresh(): Promise<MultiDeviceSessionState> {
+    if (this.refreshRequest) return this.refreshRequest;
+    const request = this.refreshNow().finally(() => {
+      if (this.refreshRequest === request) this.refreshRequest = null;
+    });
+    this.refreshRequest = request;
+    return request;
+  }
+
+  private async refreshNow(): Promise<MultiDeviceSessionState> {
+    this.attachDevices();
+    const inventories = await Promise.all(this.devices.map(async (device) => {
+      try {
+        const status = await device.connect();
+        if (status.state === 'ready') {
+          const inventory = await device.readInventory();
+          if (inventory.descriptor.deviceId !== device.deviceId) {
+            throw new Error('Device inventory identity differs from its connection identity.');
+          }
+          this.inventories.set(device.deviceId, structuredClone(inventory));
+        }
+      } catch {
+        // A previously read inventory remains useful as disabled presentation
+        // while its owning Device is temporarily unavailable.
+      }
+      const inventory = this.inventories.get(device.deviceId);
+      return inventory ? { device, inventory: structuredClone(inventory) } : null;
+    }));
+    this.revision += 1;
+    const state = projectState(
+      inventories.filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+      this.devices,
+      this.revision
+    );
+    this.currentState = state;
+    for (const listener of this.stateListeners) listener(structuredClone(state));
+    return structuredClone(state);
+  }
+
+  async reconcileDevices(nextDevices: SessionDevice[]): Promise<MultiDeviceSessionState> {
+    await this.refreshRequest?.catch(() => undefined);
+    const seen = new Set<DeviceId>();
+    for (const device of nextDevices) {
+      if (seen.has(device.deviceId)) throw new Error(`Duplicate Device: ${device.deviceId}`);
+      seen.add(device.deviceId);
+    }
+    const nextById = new Map(nextDevices.map((device) => [device.deviceId, device]));
+    const removed: SessionDevice[] = [];
+    for (const current of this.devices) {
+      if (nextById.get(current.deviceId) === current) continue;
+      this.detachDevice(current.deviceId);
+      this.inventories.delete(current.deviceId);
+      removed.push(current);
+    }
+    this.devices = [...nextDevices];
+    await Promise.allSettled(removed.map((device) => device.dispose()));
+    return this.refresh();
+  }
+
+  async create(request: CreateMultiDeviceSessionRequest): Promise<MultiDeviceSessionView> {
+    const plan = await this.planCreate(request);
+    if (plan.action !== 'use-existing-location') {
+      this.creationPlans.delete(plan.planId);
+      throw new Error('Review the Project preparation before creating this Session.');
+    }
+    return this.executeCreate(plan.planId);
+  }
+
+  async planCreate(
+    request: CreateMultiDeviceSessionRequest
+  ): Promise<MultiDeviceSessionCreationPlan> {
+    const state = this.currentState.revision > 0 ? this.currentState : await this.refresh();
+    const project = state.projects.find((candidate) =>
+      candidate.workspaces.some((workspace) => workspace.key === request.workspaceKey)
+    );
+    const workspace = project?.workspaces.find((candidate) => candidate.key === request.workspaceKey);
+    if (!project || !workspace) throw new Error('Workspace is unavailable.');
+    const device = this.requireReadyDevice(request.targetDeviceId);
+    const deviceName = device.status.descriptor?.name ?? request.targetDeviceId;
+    const location = workspace.locations.find((candidate) =>
+      candidate.deviceId === request.targetDeviceId && candidate.available
+    );
+    const planId = randomUUID();
+    if (location) {
+      const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+      const plan: MultiDeviceSessionCreationPlan = {
+        planId,
+        workspaceKey: request.workspaceKey,
+        targetDeviceId: request.targetDeviceId,
+        deviceName,
+        action: 'use-existing-location',
+        targetPath: location.path,
+        executable: true,
+        blockers: [],
+        warnings: [],
+        expiresAt
+      };
+      this.creationPlans.set(planId, {
+        public: plan,
+        request: structuredClone(request),
+        devicePlan: null
+      });
+      return structuredClone(plan);
+    }
+
+    const gitRepository = project.repository?.kind === 'git' ? project.repository : null;
+    const action = this.inventories.get(request.targetDeviceId)?.projects.some((candidate) =>
+      repositoryKey(candidate.repository) === project.key
+    )
+      ? 'prepare-workspace-location'
+      : 'clone-project';
+    const blockers: string[] = [];
+    if (
+      !device.workspacePlan
+      || !device.workspaceExecute
+      || (action === 'clone-project' && !device.openProject)
+    ) {
+      blockers.push('Update Soloe on this device to prepare Projects remotely.');
+    }
+    if (!gitRepository) {
+      blockers.push('This Project has no Git remote to clone on another device.');
+    }
+    if (action === 'prepare-workspace-location' && !workspace.branch) {
+      blockers.push('This revision Workspace cannot be prepared automatically yet.');
+    }
+    if (blockers.length > 0) {
+      const plan: MultiDeviceSessionCreationPlan = {
+        planId,
+        workspaceKey: request.workspaceKey,
+        targetDeviceId: request.targetDeviceId,
+        deviceName,
+        action,
+        targetPath: null,
+        executable: false,
+        blockers,
+        warnings: [],
+        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString()
+      };
+      this.creationPlans.set(planId, {
+        public: plan,
+        request: structuredClone(request),
+        devicePlan: null
+      });
+      return structuredClone(plan);
+    }
+
+    const targetInventory = this.inventories.get(request.targetDeviceId)!;
+    const targetProject = targetInventory.projects.find((candidate) =>
+      repositoryKey(candidate.repository) === project.key
+    );
+    const runMode = targetProject?.project.defaultRunMode ?? targetInventory.descriptor.platform;
+    let intent: DeviceWorkspaceIntent;
+    if (action === 'prepare-workspace-location') {
+      if (!targetProject?.repositoryId || !workspace.branch) {
+        throw new Error('The selected Device has incomplete Project metadata.');
+      }
+      intent = {
+        kind: 'prepare-workspace-location',
+        repositoryId: targetProject.repositoryId,
+        checkoutId: randomUUID(),
+        runMode,
+        ...(targetProject.project.defaultWslDistro
+          ? { wslDistro: targetProject.project.defaultWslDistro }
+          : {}),
+        source: {
+          kind: 'branch',
+          localRef: branchRef(workspace.branch)
+        }
+      };
+    } else {
+      intent = {
+        kind: 'clone-project-presence',
+        repositoryId: randomUUID(),
+        checkoutId: randomUUID(),
+        sourceUrl: gitRepository!.canonicalUrl,
+        runMode,
+        ...(workspace.branch ? { branchRef: branchRef(workspace.branch) } : {}),
+        identity: structuredClone(gitRepository!)
+      };
+    }
+    const devicePlan = await device.workspacePlan!(intent);
+    if (devicePlan.targetDeviceId !== request.targetDeviceId) {
+      throw new Error('The Device returned a preparation plan for another device.');
+    }
+    const plan: MultiDeviceSessionCreationPlan = {
+      planId,
+      workspaceKey: request.workspaceKey,
+      targetDeviceId: request.targetDeviceId,
+      deviceName,
+      action,
+      targetPath: devicePlan.preview.targetPath || null,
+      executable: devicePlan.executable,
+      blockers: [...devicePlan.blockers],
+      warnings: [...devicePlan.warnings],
+      expiresAt: devicePlan.expiresAt
+    };
+    this.creationPlans.set(planId, {
+      public: plan,
+      request: structuredClone(request),
+      devicePlan: structuredClone(devicePlan)
+    });
+    return structuredClone(plan);
+  }
+
+  async executeCreate(planId: string): Promise<MultiDeviceSessionView> {
+    const stored = this.creationPlans.get(planId);
+    if (!stored) throw new Error('Session creation plan is unavailable.');
+    this.creationPlans.delete(planId);
+    if (!stored.public.executable) {
+      throw new Error(stored.public.blockers.join(' ') || 'Session creation is blocked.');
+    }
+    if (Date.parse(stored.public.expiresAt) <= Date.now()) {
+      throw new Error('Session creation plan expired. Review it again.');
+    }
+    const device = this.requireReadyDevice(stored.public.targetDeviceId);
+    if (stored.devicePlan) {
+      if (!device.workspaceExecute) throw new Error('The selected Device cannot prepare Workspaces.');
+      const commandId = randomUUID();
+      const command: DeviceCommandEnvelope<DeviceWorkspaceIntent> = {
+        schemaVersion: 1,
+        clientId: this.clientId,
+        commandId,
+        targetDeviceId: stored.public.targetDeviceId,
+        actorClientId: this.clientId,
+        expectedEntityVersions: {
+          workspace: stored.devicePlan.expectedWorkspaceRevision,
+          ...(stored.devicePlan.expectedCheckoutVersion !== undefined
+            ? { checkout: stored.devicePlan.expectedCheckoutVersion }
+            : {})
+        },
+        capabilityRevision: stored.devicePlan.capabilityRevision,
+        planToken: stored.devicePlan.planToken,
+        planExpiresAt: stored.devicePlan.expiresAt,
+        intent: structuredClone(stored.devicePlan.intent)
+      };
+      const receipt = await device.workspaceExecute(command);
+      const checkout = successfulCheckout(receipt, command);
+      if (stored.public.action === 'clone-project') {
+        if (!device.openProject) throw new Error('The selected Device cannot register the cloned Project.');
+        await device.openProject({
+          path: checkout.path,
+          defaultRunMode: checkout.runMode,
+          ...(checkout.wslDistro ? { defaultWslDistro: checkout.wslDistro } : {})
+        });
+      }
+      await this.refresh();
+    }
+    return this.createAtLocation(stored.request);
+  }
+
+  private async createAtLocation(
+    request: CreateMultiDeviceSessionRequest
+  ): Promise<MultiDeviceSessionView> {
+    const state = this.currentState.revision > 0 ? this.currentState : await this.refresh();
+    const workspace = state.projects
+      .flatMap((project) => project.workspaces)
+      .find((candidate) => candidate.key === request.workspaceKey);
+    const location = workspace?.locations.find((candidate) =>
+      candidate.deviceId === request.targetDeviceId && candidate.available
+    );
+    if (!location) throw new Error('The Workspace Location is unavailable after preparation.');
+    const device = this.requireReadyDevice(request.targetDeviceId);
+    if (!device.createSession || !device.startSession) {
+      throw new Error('The selected Device cannot create Sessions.');
+    }
+    const inventory = this.inventories.get(device.deviceId);
+    const physicalProject = inventory?.projects.find((candidate) =>
+      candidate.project.id === location.projectId
+    )?.project;
+    const runMode = physicalProject?.defaultRunMode ?? inventory?.descriptor.platform;
+    if (!runMode) throw new Error('The selected Workspace has no runnable location.');
+    const sessionId = randomUUID();
+    const draft: SessionDraft = {
+      ...structuredClone(request.session),
+      cwd: location.path,
+      runMode,
+      projectId: location.projectId,
+      runtimeMode: 'tui'
+    };
+    const created = await device.createSession({ sessionId, draft });
+    await device.startSession(created.id);
+    const refreshed = await this.refresh();
+    const projection = refreshed.projects
+      .flatMap((projectView) => projectView.workspaces)
+      .flatMap((workspaceView) => workspaceView.sessions)
+      .find((candidate) =>
+        candidate.ref.deviceId === device.deviceId
+        && candidate.ref.sessionId === created.id
+      );
+    if (!projection) throw new Error('The created Session was not returned by its Device.');
+    return projection;
+  }
+
+  async startSession(ref: SessionRef): Promise<MultiDeviceSessionView> {
+    const current = findSession(this.currentState, ref);
+    if (!current) throw new Error('Session is unavailable.');
+    if (!current.available) throw new Error(`Device ${current.deviceName} is offline.`);
+    if (current.runtime?.terminalId && current.runtime.status === 'running') {
+      return structuredClone(current);
+    }
+    const device = this.requireReadyDevice(ref.deviceId);
+    if (!device.startSession) throw new Error('The selected Device cannot start Sessions.');
+    await device.startSession(ref.sessionId);
+    const refreshed = await this.refresh();
+    const started = findSession(refreshed, ref);
+    if (!started?.runtime?.terminalId || started.runtime.status !== 'running') {
+      throw new Error('The Session did not start on its Device.');
+    }
+    return structuredClone(started);
+  }
+
+  async terminalInput(ref: TerminalRef, data: string): Promise<void> {
+    await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data);
+  }
+
+  async terminalAcquireInputLease(
+    ref: TerminalRef,
+    takeover = false
+  ): Promise<TerminalInputLease> {
+    const device = this.requireReadyDevice(ref.deviceId);
+    if (!device.terminalAcquireInputLease) {
+      throw new Error('The selected Device does not support terminal input control.');
+    }
+    return device.terminalAcquireInputLease(ref.terminalId, takeover);
+  }
+
+  async terminalResize(ref: TerminalRef, cols: number, rows: number): Promise<void> {
+    await this.requireReadyDevice(ref.deviceId).terminalResize(ref.terminalId, cols, rows);
+  }
+
+  terminalReplay(ref: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {
+    return this.requireReadyDevice(ref.deviceId).terminalReplay(ref.terminalId, afterSeq);
+  }
+
+  async terminalStop(ref: TerminalRef): Promise<void> {
+    await this.requireReadyDevice(ref.deviceId).terminalStop(ref.terminalId);
+  }
+
+  async setTerminalOutputDemand(refs: TerminalRef[]): Promise<void> {
+    const byDevice = new Map<DeviceId, Set<string>>();
+    for (const ref of refs) {
+      const terminals = byDevice.get(ref.deviceId) ?? new Set<string>();
+      terminals.add(ref.terminalId);
+      byDevice.set(ref.deviceId, terminals);
+    }
+    await Promise.all(this.devices.map((device) =>
+      device.setTerminalOutputDemand(byDevice.get(device.deviceId) ?? new Set())
+    ));
+  }
+
+  async dispose(): Promise<void> {
+    for (const deviceId of [...this.deviceDetachers.keys()]) this.detachDevice(deviceId);
+    await Promise.allSettled(this.devices.map((device) => device.dispose()));
+    this.devices = [];
+    this.inventories.clear();
+    this.stateListeners.clear();
+    this.eventListeners.clear();
+    this.creationPlans.clear();
+  }
+
+  private attachDevices(): void {
+    for (const device of this.devices) {
+      const existing = this.deviceDetachers.get(device.deviceId);
+      if (existing?.device === device) continue;
+      if (existing) this.detachDevice(device.deviceId);
+      this.deviceDetachers.set(device.deviceId, {
+        device,
+        detach: [
+          device.onEvent((event) => {
+            for (const listener of this.eventListeners) listener(structuredClone(event));
+            if (
+              event.event === 'sessions.change'
+              || event.event === 'sessions.delete'
+              || event.event === 'transport.repair'
+            ) {
+              void this.refresh().catch(() => undefined);
+            }
+          }),
+          device.onStatus(() => this.publishCachedState())
+        ]
+      });
+    }
+  }
+
+  private detachDevice(deviceId: DeviceId): void {
+    const record = this.deviceDetachers.get(deviceId);
+    if (!record) return;
+    this.deviceDetachers.delete(deviceId);
+    for (const detach of record.detach) detach();
+  }
+
+  private publishCachedState(): void {
+    this.revision += 1;
+    const inventories = this.devices.flatMap((device) => {
+      const inventory = this.inventories.get(device.deviceId);
+      return inventory ? [{ device, inventory: structuredClone(inventory) }] : [];
+    });
+    this.currentState = projectState(inventories, this.devices, this.revision);
+    for (const listener of this.stateListeners) listener(structuredClone(this.currentState));
+  }
+
+  private requireReadyDevice(deviceId: DeviceId): SessionDevice {
+    const device = this.devices.find((candidate) => candidate.deviceId === deviceId);
+    if (!device) throw new Error(`Unknown Device: ${deviceId}`);
+    if (device.status.state !== 'ready') {
+      throw new Error(`Device ${device.status.descriptor?.name ?? deviceId} is offline.`);
+    }
+    return device;
+  }
+}
+
+function findSession(
+  state: MultiDeviceSessionState,
+  ref: SessionRef
+): MultiDeviceSessionView | null {
+  return [
+    ...state.projects.flatMap((project) =>
+      project.workspaces.flatMap((workspace) => workspace.sessions)
+    ),
+    ...state.unassigned,
+    ...state.archivedSessions
+  ].find((session) =>
+    session.ref.deviceId === ref.deviceId && session.ref.sessionId === ref.sessionId
+  ) ?? null;
+}
+
+interface ProjectBuilder {
+  key: string;
+  name: string;
+  repository: RepositoryIdentity | null;
+  workspaces: Map<string, WorkspaceBuilder>;
+}
+
+interface WorkspaceBuilder {
+  key: string;
+  name: string;
+  branch: string | null;
+  locations: WorkspaceLocationView[];
+  sessions: MultiDeviceSessionView[];
+}
+
+function projectState(
+  inventories: Array<{ device: SessionDevice; inventory: DeviceSessionInventory }>,
+  devices: SessionDevice[],
+  revision: number
+): MultiDeviceSessionState {
+  const projects = new Map<string, ProjectBuilder>();
+  const workspaceByLocalPath = new Map<string, WorkspaceBuilder>();
+  const unassigned: MultiDeviceSessionView[] = [];
+  const archivedSessions: MultiDeviceSessionView[] = [];
+
+  for (const { device, inventory } of inventories) {
+    const deviceName = inventory.descriptor.name;
+    for (const projectInventory of inventory.projects) {
+      const projectKey = repositoryKey(projectInventory.repository)
+        ?? `device:${device.deviceId}/project:${projectInventory.project.id}`;
+      let project = projects.get(projectKey);
+      if (!project) {
+        project = {
+          key: projectKey,
+          name: projectInventory.project.name,
+          repository: structuredClone(projectInventory.repository),
+          workspaces: new Map()
+        };
+        projects.set(projectKey, project);
+      }
+      for (const worktree of projectInventory.worktrees) {
+        const workspaceKey = `${projectKey}/${worktreeSourceKey(worktree, device.deviceId)}`;
+        let workspace = project.workspaces.get(workspaceKey);
+        if (!workspace) {
+          workspace = {
+            key: workspaceKey,
+            name: workspaceName(worktree),
+            branch: worktree.branch,
+            locations: [],
+            sessions: []
+          };
+          project.workspaces.set(workspaceKey, workspace);
+        }
+        workspace.locations.push({
+          key: `${device.deviceId}/${encodeURIComponent(worktree.path)}`,
+          deviceId: device.deviceId,
+          deviceName,
+          projectId: projectInventory.project.id,
+          path: worktree.path,
+          available: device.status.state === 'ready',
+          isMain: worktree.isMain
+        });
+        workspaceByLocalPath.set(
+          localPathKey(device.deviceId, projectInventory.project.id, worktree.path),
+          workspace
+        );
+      }
+    }
+
+    for (const session of inventory.sessions) {
+      const view = sessionView(device, inventory, session);
+      const workspace = session.projectId
+        ? workspaceByLocalPath.get(localPathKey(device.deviceId, session.projectId, session.cwd))
+        : null;
+      if (workspace) workspace.sessions.push(view);
+      else unassigned.push(view);
+    }
+    for (const session of inventory.archivedSessions) {
+      archivedSessions.push(sessionView(device, inventory, session));
+    }
+  }
+
+  const projectedProjects = [...projects.values()]
+    .map((project): ProjectView => ({
+      key: project.key,
+      name: project.name,
+      repository: structuredClone(project.repository),
+      workspaces: [...project.workspaces.values()]
+        .map((workspace): WorkspaceView => ({
+          key: workspace.key,
+          name: workspace.name,
+          branch: workspace.branch,
+          locations: workspace.locations.sort(compareLocations),
+          sessions: workspace.sessions.sort(compareSessions)
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name))
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return {
+    revision,
+    capturedAt: new Date().toISOString(),
+    devices: devices
+      .map(deviceView)
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    projects: projectedProjects,
+    unassigned: unassigned.sort(compareSessions),
+    archivedSessions: archivedSessions.sort(compareSessions)
+  };
+}
+
+function deviceView(device: SessionDevice): SessionDeviceView {
+  const descriptor = device.status.descriptor;
+  return {
+    deviceId: device.deviceId,
+    name: descriptor?.name ?? `Device ${device.deviceId.slice(0, 8)}`,
+    state: device.status.state,
+    available: device.status.state === 'ready',
+    local: device.local,
+    ...(descriptor ? { platform: descriptor.platform } : {}),
+    ...(device.status.error ? { error: device.status.error } : {})
+  };
+}
+
+function sessionView(
+  device: SessionDevice,
+  inventory: DeviceSessionInventory,
+  session: Session
+): MultiDeviceSessionView {
+  const ref = { deviceId: device.deviceId, sessionId: session.id };
+  return {
+    ref,
+    key: `${ref.deviceId}/${encodeURIComponent(ref.sessionId)}`,
+    deviceName: inventory.descriptor.name,
+    available: device.status.state === 'ready',
+    session: structuredClone(session),
+    runtime: structuredClone(
+      inventory.runtimes.find((runtime) => runtime.sessionId === session.id) ?? null
+    )
+  };
+}
+
+function repositoryKey(repository: RepositoryIdentity | null): string | null {
+  if (!repository || repository.kind !== 'git') return null;
+  return `git:${repository.canonicalUrl.trim().replace(/\.git$/iu, '').toLocaleLowerCase()}`;
+}
+
+function worktreeSourceKey(worktree: GitWorktree, deviceId: DeviceId): string {
+  if (worktree.branch) return `branch:${worktree.branch}`;
+  if (worktree.head) return `revision:${worktree.head}`;
+  return `location:${deviceId}/${encodeURIComponent(worktree.path)}`;
+}
+
+function workspaceName(worktree: GitWorktree): string {
+  if (worktree.branch) return worktree.branch;
+  if (worktree.head) return worktree.head.slice(0, 12);
+  return worktree.path.replace(/[\\/]+$/u, '').split(/[\\/]/u).at(-1) || 'Workspace';
+}
+
+function localPathKey(deviceId: DeviceId, projectId: string, path: string): string {
+  const normalized = path.trim().replace(/\\/gu, '/').replace(/\/+$/u, '').toLocaleLowerCase();
+  return `${deviceId}\u0000${projectId}\u0000${normalized}`;
+}
+
+function compareLocations(left: WorkspaceLocationView, right: WorkspaceLocationView): number {
+  return left.deviceName.localeCompare(right.deviceName) || left.path.localeCompare(right.path);
+}
+
+function compareSessions(left: MultiDeviceSessionView, right: MultiDeviceSessionView): number {
+  return (left.session.sortIndex ?? Number.MAX_SAFE_INTEGER)
+    - (right.session.sortIndex ?? Number.MAX_SAFE_INTEGER)
+    || left.session.name.localeCompare(right.session.name);
+}
+
+function branchRef(branch: string): string {
+  return branch.startsWith('refs/') ? branch : `refs/heads/${branch}`;
+}
+
+function successfulCheckout(
+  receipt: DeviceOperationReceipt,
+  command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
+): import('@shared/types/workspaces.js').CheckoutRecord {
+  if (
+    receipt.clientId !== command.clientId
+    || receipt.commandId !== command.commandId
+    || receipt.targetDeviceId !== command.targetDeviceId
+    || receipt.kind !== command.intent.kind
+  ) {
+    throw new Error('The Device returned a receipt for another preparation command.');
+  }
+  if (receipt.state !== 'succeeded') {
+    throw new Error(receipt.error?.message ?? 'The Device could not prepare the Workspace.');
+  }
+  const result = receipt.result;
+  if (!result || typeof result !== 'object') {
+    throw new Error('The Device preparation receipt has no result.');
+  }
+  const checkout = (result as { checkout?: unknown }).checkout;
+  if (!checkout || typeof checkout !== 'object') {
+    throw new Error('The Device preparation receipt has no Checkout.');
+  }
+  const candidate = checkout as Partial<import('@shared/types/workspaces.js').CheckoutRecord>;
+  if (
+    typeof candidate.id !== 'string'
+    || typeof candidate.repositoryId !== 'string'
+    || typeof candidate.path !== 'string'
+    || typeof candidate.runMode !== 'string'
+    || candidate.lifecycle !== 'ready'
+  ) {
+    throw new Error('The Device preparation receipt contains an invalid Checkout.');
+  }
+  return structuredClone(candidate as import('@shared/types/workspaces.js').CheckoutRecord);
+}

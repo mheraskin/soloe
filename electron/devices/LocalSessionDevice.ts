@@ -1,7 +1,7 @@
 import type {
-  CockpitTerminalReplay,
-  DeviceReadSnapshot
-} from '@shared/types/cockpit.js';
+  SessionDeviceSnapshot,
+  DeviceTerminalReplay
+} from '@shared/types/multi-device-sessions.js';
 import type {
   DeviceDescriptor,
   DeviceEventEnvelope,
@@ -16,6 +16,8 @@ import type {
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { WorkspaceDeviceStore } from '@soloe/domain';
 import type { ProjectStore } from '../projects/ProjectStore.js';
+import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
+import type { GitService } from '../git/GitService.js';
 import type { WorkspaceDeviceService } from '@soloe/domain';
 import type { GitHubProviderService } from '@soloe/domain';
 import type {
@@ -35,14 +37,19 @@ import type {
   GitHubRepositoryPlan
 } from '@shared/types/providers.js';
 import type { PtyManager } from '../terminal/PtyManager.js';
-import type { DevicePort, DevicePortStatus } from './DevicePort.js';
 import { TerminalInputLeaseManager } from '@soloe/runtime';
 import { randomUUID } from 'node:crypto';
+import type {
+  DeviceSessionInventory,
+  SessionDevice,
+  SessionDeviceStatus
+} from '../sessions/MultiDeviceSessions.js';
 
-export interface LocalDeviceClientOptions {
+export interface LocalSessionDeviceOptions {
   descriptor: DeviceDescriptor;
   sessions: SessionStore;
-  projects?: Pick<ProjectStore, 'list'>;
+  projects?: Pick<ProjectStore, 'list' | 'open'>;
+  git?: Pick<GitService, 'listWorktrees' | 'getRemoteUrl'>;
   workspaceDevice?: Pick<WorkspaceDeviceStore, 'snapshot' | 'reconcileLegacy'>;
   workspaceService?: Pick<WorkspaceDeviceService, 'plan' | 'execute' | 'getCommand'>;
   githubProvider?: Pick<GitHubProviderService, 'status' | 'listOwners' | 'plan' | 'execute' | 'getCommand'>;
@@ -50,11 +57,12 @@ export interface LocalDeviceClientOptions {
   clientId?: string;
 }
 
-export class LocalDeviceClient implements DevicePort {
+export class LocalSessionDevice implements SessionDevice {
   readonly deviceId: DeviceId;
-  private currentStatus: DevicePortStatus;
+  readonly local = true;
+  private currentStatus: SessionDeviceStatus;
   private readonly eventListeners = new Set<(event: DeviceEventEnvelope) => void>();
-  private readonly statusListeners = new Set<(status: DevicePortStatus) => void>();
+  private readonly statusListeners = new Set<(status: SessionDeviceStatus) => void>();
   private readonly demandedTerminals = new Set<string>();
   private sequence = 0;
   private connected = false;
@@ -63,9 +71,9 @@ export class LocalDeviceClient implements DevicePort {
   private readonly clientId: string;
   private readonly inputLeases: TerminalInputLeaseManager;
 
-  constructor(private readonly options: LocalDeviceClientOptions) {
+  constructor(private readonly options: LocalSessionDeviceOptions) {
     this.deviceId = options.descriptor.deviceId;
-    this.clientId = options.clientId ?? `cockpit-${randomUUID()}`;
+    this.clientId = options.clientId ?? `sessions-${randomUUID()}`;
     this.inputLeases = new TerminalInputLeaseManager({
       onChange: (event) => this.publishEvent('inputLease', event)
     });
@@ -76,11 +84,11 @@ export class LocalDeviceClient implements DevicePort {
     };
   }
 
-  get status(): DevicePortStatus {
+  get status(): SessionDeviceStatus {
     return structuredClone(this.currentStatus);
   }
 
-  async connect(): Promise<DevicePortStatus> {
+  async connect(): Promise<SessionDeviceStatus> {
     this.assertActive();
     if (!this.connected) this.attachPtyEvents();
     this.connected = true;
@@ -93,7 +101,7 @@ export class LocalDeviceClient implements DevicePort {
     return this.status;
   }
 
-  async snapshot(): Promise<DeviceReadSnapshot> {
+  async snapshot(): Promise<SessionDeviceSnapshot> {
     this.assertActive();
     if (!this.connected) await this.connect();
     let [sessions, archivedSessions] = await Promise.all([
@@ -130,6 +138,52 @@ export class LocalDeviceClient implements DevicePort {
     };
   }
 
+  async readInventory(): Promise<DeviceSessionInventory> {
+    const state = await this.snapshot();
+    const projects = await this.options.projects?.list() ?? [];
+    const projectInventories = await Promise.all(projects.map(async (project) => {
+      const runMode = project.defaultRunMode ?? this.options.descriptor.platform;
+      const worktrees = this.options.git
+        ? await this.options.git.listWorktrees(project.path, false, {
+            runMode,
+            ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+          })
+        : [];
+      const canonicalUrl = this.options.git
+        ? await this.options.git.getRemoteUrl(project.path, 'origin', {
+            runMode,
+            ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+          }).catch(() => null)
+        : null;
+      const repositoryRecord = state.workspace?.repositories.find((candidate) =>
+        candidate.legacyProjectId === project.id
+      ) ?? (() => {
+        const checkout = state.workspace?.checkouts.find((candidate) =>
+          sameDevicePath(candidate.path, project.path)
+        );
+        return checkout
+          ? state.workspace?.repositories.find((candidate) => candidate.id === checkout.repositoryId)
+          : undefined;
+      })();
+      return {
+        project: structuredClone(project),
+        repository: structuredClone(
+          canonicalUrl ? { kind: 'git' as const, canonicalUrl } : repositoryRecord?.identity ?? null
+        ),
+        repositoryId: repositoryRecord?.id ?? null,
+        worktrees: structuredClone(worktrees)
+      };
+    }));
+    return {
+      descriptor: state.descriptor,
+      projects: projectInventories,
+      sessions: state.sessions,
+      archivedSessions: state.archivedSessions,
+      runtimes: state.runtimes,
+      capturedAt: state.capturedAt
+    };
+  }
+
   async setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void> {
     this.assertActive();
     this.demandedTerminals.clear();
@@ -161,7 +215,7 @@ export class LocalDeviceClient implements DevicePort {
     this.options.pty.resize(requiredId(terminalId), { cols, rows });
   }
 
-  async terminalReplay(terminalId: string, afterSeq = 0): Promise<CockpitTerminalReplay> {
+  async terminalReplay(terminalId: string, afterSeq = 0): Promise<DeviceTerminalReplay> {
     this.assertActive();
     const id = requiredId(terminalId);
     const snapshot = await this.options.pty.replay(id, afterSeq);
@@ -196,12 +250,12 @@ export class LocalDeviceClient implements DevicePort {
   }
 
   workspaceGetCommand(
-    cockpitId: string,
+    clientId: string,
     commandId: string
   ): Promise<DeviceOperationReceipt | null> {
     this.assertActive();
     if (!this.options.workspaceService) throw new Error('Local Workspace placement is unavailable.');
-    return Promise.resolve(this.options.workspaceService.getCommand(cockpitId, commandId));
+    return Promise.resolve(this.options.workspaceService.getCommand(clientId, commandId));
   }
 
   createSession(request: DevicePlacedSessionRequest): Promise<Session> {
@@ -215,6 +269,12 @@ export class LocalDeviceClient implements DevicePort {
   startSession(sessionId: string): Promise<TerminalStartResult> {
     this.assertActive();
     return this.options.pty.start({ sessionId: requiredId(sessionId) });
+  }
+
+  openProject(request: ProjectOpenRequest): Promise<Project> {
+    this.assertActive();
+    if (!this.options.projects) throw new Error('Local Project registration is unavailable.');
+    return this.options.projects.open(structuredClone(request));
   }
 
   rebindSessionSource(request: DeviceSessionSourceUpdateRequest): Promise<Session> {
@@ -253,12 +313,12 @@ export class LocalDeviceClient implements DevicePort {
   }
 
   githubProviderGetCommand(
-    cockpitId: string,
+    clientId: string,
     commandId: string
   ): Promise<DeviceOperationReceipt | null> {
     this.assertActive();
     if (!this.options.githubProvider) throw new Error('GitHub provider is unavailable.');
-    return Promise.resolve(this.options.githubProvider.getCommand(cockpitId, commandId));
+    return Promise.resolve(this.options.githubProvider.getCommand(clientId, commandId));
   }
 
   onEvent(listener: (event: DeviceEventEnvelope) => void): () => void {
@@ -266,7 +326,7 @@ export class LocalDeviceClient implements DevicePort {
     return () => this.eventListeners.delete(listener);
   }
 
-  onStatus(listener: (status: DevicePortStatus) => void): () => void {
+  onStatus(listener: (status: SessionDeviceStatus) => void): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
   }
@@ -335,4 +395,9 @@ function requiredId(value: string): string {
   const id = value.trim();
   if (!id) throw new Error('Terminal ID is required.');
   return id;
+}
+
+function sameDevicePath(left: string, right: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/\\/gu, '/').replace(/\/+$/u, '').toLocaleLowerCase();
+  return normalize(left) === normalize(right);
 }

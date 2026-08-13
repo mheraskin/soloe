@@ -93,8 +93,8 @@
   import AppSkeleton from './components/AppSkeleton.svelte';
   import SettingsDialog from './components/SettingsDialog.svelte';
   import ConnectionMenu from './components/ConnectionMenu.svelte';
-  import CockpitTerminalViewer from './components/CockpitTerminalViewer.svelte';
-  import { cockpit } from './stores/cockpit.svelte';
+  import DeviceTerminalViewer from './components/DeviceTerminalViewer.svelte';
+  import { deviceSessions } from './stores/device-sessions.svelte';
   import appIconUrl from '../build/favicon.svg';
 
   const loadNewSessionModal = () => import('./components/NewSessionModal.svelte');
@@ -183,6 +183,7 @@
       workingDiff.detach();
       git.detach();
       vaultStore.detach();
+      deviceSessions.detach();
     };
   });
 
@@ -254,6 +255,7 @@
         settings.load(),
         projects.load(),
         sessions.load(),
+        deviceSessions.load(),
         browserStore.load()
       ]);
       initialLoadState = 'ready';
@@ -1627,19 +1629,21 @@
             aria-hidden={mobileMode !== 'terminal'}
             inert={mobileMode !== 'terminal'}
           >
-            <div class={cockpit.selectedProjection ? 'hidden' : 'contents'}>
+            <div class={deviceSessions.selectedProjection ? 'hidden' : 'contents'}>
               <TerminalArea
                 active={mobilePage === 'workspace'}
                 interactive={mobilePage === 'workspace' && mobileMode === 'terminal'}
                 onOpenNavigation={() => navigateMobile('navigation')}
               />
             </div>
-            {#if cockpit.selectedProjection}
+            {#if deviceSessions.selectedProjection}
               <div class="h-full p-2">
-                <CockpitTerminalViewer
-                  projection={cockpit.selectedProjection}
-                  onClose={() => cockpit.clearSelectedSession()}
-                />
+                {#key deviceSessions.selectedProjection.key}
+                  <DeviceTerminalViewer
+                    projection={deviceSessions.selectedProjection}
+                    onClose={() => deviceSessions.clearSelectedSession()}
+                  />
+                {/key}
               </div>
             {/if}
           </div>
@@ -1670,15 +1674,17 @@
       {/if}
       <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
       <div class={railFullscreen ? 'hidden' : 'contents'}>
-        <div class={cockpit.selectedProjection ? 'hidden' : 'contents'}>
+        <div class={deviceSessions.selectedProjection ? 'hidden' : 'contents'}>
           <TerminalArea />
         </div>
-        {#if cockpit.selectedProjection}
+        {#if deviceSessions.selectedProjection}
           <div class="min-w-0 flex-1 p-3">
-            <CockpitTerminalViewer
-              projection={cockpit.selectedProjection}
-              onClose={() => cockpit.clearSelectedSession()}
-            />
+            {#key deviceSessions.selectedProjection.key}
+              <DeviceTerminalViewer
+                projection={deviceSessions.selectedProjection}
+                onClose={() => deviceSessions.clearSelectedSession()}
+              />
+            {/key}
           </div>
         {/if}
       </div>

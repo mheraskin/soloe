@@ -126,7 +126,7 @@ export class WorkspaceDeviceService {
     PreparedWorkspaceLocationResult | ClonedProjectPresenceResult | CheckoutLifecycleResult
     | PushedWorkspaceBranchResult | FastForwardedWorkspaceBranchResult
   >> {
-    const prior = this.options.operations.get(command.cockpitId, command.commandId);
+    const prior = this.options.operations.get(command.clientId, command.commandId);
     if (prior) {
       return this.options.operations.execute(
         command,
@@ -177,8 +177,8 @@ export class WorkspaceDeviceService {
     });
   }
 
-  getCommand(cockpitId: string, commandId: string): DeviceOperationReceipt | null {
-    return this.options.operations.get(cockpitId, commandId);
+  getCommand(clientId: string, commandId: string): DeviceOperationReceipt | null {
+    return this.options.operations.get(clientId, commandId);
   }
 
   private async planWorkspaceLocation(

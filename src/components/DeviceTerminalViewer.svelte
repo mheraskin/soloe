@@ -5,15 +5,16 @@
   import { X } from '@lucide/svelte';
   import '@xterm/xterm/css/xterm.css';
 
-  import type { CockpitSessionProjection } from '@shared/types/cockpit.js';
+  import type { TerminalRef } from '@shared/types/devices.js';
+  import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import type { TerminalOutputEvent } from '@shared/types/terminal.js';
-  import { cockpit } from '../stores/cockpit.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
 
   let {
     projection,
     onClose
   }: {
-    projection: CockpitSessionProjection;
+    projection: MultiDeviceSessionView;
     onClose: () => void;
   } = $props();
 
@@ -21,16 +22,20 @@
   let error = $state<string | null>(null);
   let restoring = $state(true);
   let takingControl = $state(false);
-  let terminalRef = $derived(projection.runtime?.terminalRef ?? null);
+  let terminalRef = $derived<TerminalRef | null>(
+    projection.runtime?.terminalId
+      ? { deviceId: projection.ref.deviceId, terminalId: projection.runtime.terminalId }
+      : null
+  );
   let inputLease = $derived(
-    terminalRef ? cockpit.terminalInputLeaseEvent(terminalRef) : null
+    terminalRef ? deviceSessions.terminalInputLeaseEvent(terminalRef) : null
   );
 
   async function takeInputControl(): Promise<void> {
     if (!terminalRef || takingControl) return;
     takingControl = true;
     try {
-      await cockpit.takeTerminalInputControl(terminalRef);
+      await deviceSessions.takeTerminalInputControl(terminalRef);
       error = null;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -40,7 +45,8 @@
   }
 
   onMount(() => {
-    if (!host || !terminalRef) {
+    const ref = terminalRef;
+    if (!host || !ref) {
       error = 'This Session has no running terminal to attach.';
       restoring = false;
       return;
@@ -89,24 +95,11 @@
     const write = (data: string): Promise<void> => new Promise((resolve) => {
       terminal.write(data, resolve);
     });
-    const queueOutput = (event: TerminalOutputEvent): void => {
-      if (!active || event.seq <= appliedSeq) return;
-      if (restoringOutput || event.seq !== appliedSeq + 1) {
-        pending.set(event.seq, event);
-        if (!restoringOutput) void recover();
-        return;
-      }
-      outputQueue = outputQueue.then(async () => {
-        if (!active || event.seq <= appliedSeq) return;
-        await write(event.data);
-        appliedSeq = event.seq;
-      });
-    };
     const recover = async (): Promise<void> => {
       if (restoringOutput || !active) return;
       restoringOutput = true;
       try {
-        const replay = await cockpit.terminalReplay(terminalRef, appliedSeq);
+        const replay = await deviceSessions.terminalReplay(ref, appliedSeq);
         if (!active) return;
         if (replay.snapshot) {
           await write(replay.snapshot.data);
@@ -126,15 +119,28 @@
         restoring = false;
       }
     };
+    const queueOutput = (event: TerminalOutputEvent): void => {
+      if (!active || event.seq <= appliedSeq) return;
+      if (restoringOutput || event.seq !== appliedSeq + 1) {
+        pending.set(event.seq, event);
+        if (!restoringOutput) void recover();
+        return;
+      }
+      outputQueue = outputQueue.then(async () => {
+        if (!active || event.seq <= appliedSeq) return;
+        await write(event.data);
+        appliedSeq = event.seq;
+      });
+    };
 
-    const attachment = cockpit.acquireTerminalOutput(terminalRef, queueOutput);
+    const attachment = deviceSessions.acquireTerminalOutput(ref, queueOutput);
     void attachment.ready
       .then(async () => {
-        const replay = await cockpit.terminalReplay(terminalRef, 0);
+        const replay = await deviceSessions.terminalReplay(ref, 0);
         if (!active) return;
         if (replay.snapshot) {
           if (replay.snapshot.truncated) {
-            await write('\r\n\x1b[33m[Earlier terminal output omitted]\x1b[0m\r\n');
+            await write('\r\n\u001b[33m[Earlier terminal output omitted]\u001b[0m\r\n');
           }
           await write(replay.snapshot.data);
           appliedSeq = replay.snapshot.toSeq;
@@ -156,11 +162,11 @@
       if (!active || !host?.isConnected) return;
       try {
         fit.fit();
-        void cockpit.terminalResize(terminalRef, terminal.cols, terminal.rows).catch((cause) => {
+        void deviceSessions.terminalResize(ref, terminal.cols, terminal.rows).catch((cause) => {
           if (active) error = cause instanceof Error ? cause.message : String(cause);
         });
       } catch {
-        // A zero-sized settings panel will be fitted on the next observation.
+        // A zero-sized panel will be fitted on the next observation.
       }
     };
     const resizeObserver = new ResizeObserver(resize);
@@ -170,7 +176,7 @@
       terminal.focus();
     });
     const input = terminal.onData((data) => {
-      void cockpit.terminalInput(terminalRef, data).catch((cause) => {
+      void deviceSessions.terminalInput(ref, data).catch((cause) => {
         if (active) error = cause instanceof Error ? cause.message : String(cause);
       });
     });
@@ -190,7 +196,7 @@
     <div class="min-w-0 flex-1">
       <p class="m-0 truncate text-xs font-medium">{projection.session.name}</p>
       <p class="m-0 truncate text-[10px] text-muted-foreground">
-        {projection.deviceName} · {projection.runtime?.state.status ?? 'stopped'}
+        {projection.deviceName} · {projection.runtime?.status ?? 'stopped'}
       </p>
       {#if inputLease?.lease}
         <p class="m-0 truncate text-[10px] text-muted-foreground">
@@ -201,8 +207,8 @@
     <button
       type="button"
       class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-      aria-label="Close Device terminal"
-      title="Close terminal attachment"
+      aria-label="Close remote terminal"
+      title="Close remote terminal"
       onclick={onClose}
     >
       <X class="size-4" />

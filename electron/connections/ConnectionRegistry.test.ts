@@ -164,6 +164,29 @@ describe('ConnectionRegistry', () => {
     }));
   });
 
+  it('requires the Sessions inventory capability before connecting a discovered Device', async () => {
+    const old = descriptor(DEVICE_A, 'Old Alpha');
+    old.capabilities.features = old.capabilities.features.filter(
+      (feature) => feature !== 'sessions.multi-device.v1'
+    );
+    const registry = createRegistry({
+      probe: async () => true,
+      discover: async () => CONNECTED,
+      describe: async () => ({
+        descriptor: old,
+        compatibility: { status: 'compatible', negotiatedVersion: 1 }
+      })
+    });
+
+    const snapshot = await registry.refresh();
+
+    expect(snapshot.machines).toContainEqual(expect.objectContaining({
+      id: deviceConnectionId(DEVICE_A),
+      enabled: false,
+      updateRequired: true
+    }));
+  });
+
   it('does not apply remote capability requirements to the running local Device', async () => {
     const local = descriptor(DEVICE_A, 'Studio Mac');
     local.capabilities.features = ['workspace-device.v1'];
@@ -417,6 +440,7 @@ describe('ConnectionRegistry', () => {
           'device.describe.v1',
           'device.snapshot.v1',
           'events.envelope.v1',
+          'sessions.multi-device.v1',
           'runtime.sessions.v1',
           'runtime.terminal-input-lease.v1',
           'runtime.terminal-replay.v1',

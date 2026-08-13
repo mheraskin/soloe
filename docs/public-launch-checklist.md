@@ -30,7 +30,7 @@ The old checklist's Windows + WSL emphasis remains important as the origin and a
 - [x] Explain the name: Soloe optimizes the development loop around one developer's judgment and capacity.
 - [x] Make clear that “solo” is not criticism of teams or collaboration.
 - [x] Avoid “replace your team,” “autonomous engineer,” “unlimited agents,” and generic “10x” claims.
-- [x] Avoid defining Soloe only as a desktop cockpit now that browser/PWA and split runtime/server clients exist.
+- [x] Avoid defining Soloe only as a desktop client now that browser/PWA and split runtime/server clients exist.
 - [ ] Test the short description with early users before freezing GitHub and social copy.
 
 Recommended one-line description:

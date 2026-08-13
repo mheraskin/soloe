@@ -23,10 +23,10 @@
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
   import WorkspaceNavigation from './WorkspaceNavigation.svelte';
-  import { cockpit } from '../stores/cockpit.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
 
   onMount(() => {
-    if (!cockpit.loaded) void cockpit.load().catch(reportError);
+    if (!deviceSessions.loaded) void deviceSessions.load().catch(reportError);
   });
 
   const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
@@ -345,7 +345,7 @@
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
     <div class="flex flex-col gap-1 p-1.5">
-      {#if cockpit.supported && cockpit.loaded && cockpit.snapshot.navigation}
+      {#if deviceSessions.supported && deviceSessions.loaded}
         <WorkspaceNavigation filter={query} />
       {:else}
       {#if standaloneVisible.length > 0}

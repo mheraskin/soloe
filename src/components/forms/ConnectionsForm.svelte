@@ -5,6 +5,7 @@
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
   import {
+    connectionDiscoverySummary,
     connectionDevicePresentation,
     connectionDevices
   } from '../../lib/device-presentation.js';
@@ -42,7 +43,9 @@
     if (tailscale.state === 'not-running') {
       return 'Open the Tailscale app and sign in. Return here and refresh; Soloe does not need to restart.';
     }
-    if (tailscale.sharing.state === 'ready') return null;
+    if (tailscale.state === 'connected' && tailscale.sharing.state === 'ready') {
+      return connectionDiscoverySummary(visibleMachines);
+    }
     return tailscale.sharing.message
       ?? tailscale.message
       ?? 'Refresh after finishing Tailscale setup.';
@@ -124,7 +127,7 @@
               }`}
             >
               <span
-                class={`size-1.5 rounded-full ${
+                class={`size-2 rounded-full ${
                   presentation.tone === 'online'
                     ? 'bg-success'
                     : presentation.tone === 'update'

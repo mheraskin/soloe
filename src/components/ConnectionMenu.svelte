@@ -2,14 +2,13 @@
   import { onMount } from 'svelte';
   import { Monitor, RefreshCw, Settings2 } from '@lucide/svelte';
   import { connections } from '../stores/connections.svelte';
-  import { cockpit } from '../stores/cockpit.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
+  import {
+    connectionDevicePresentation,
+    connectionDevices
+  } from '../lib/device-presentation.js';
   import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
-  import {
-    deviceFilterPresentation,
-    devicePresentation,
-    reconcileDeviceSummaries
-  } from '../lib/device-presentation.js';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 
@@ -17,107 +16,73 @@
 
   onMount(() => {
     if (!connections.loaded) void connections.load().catch(reportError);
-    if (!cockpit.loaded) void cockpit.load().catch(reportError);
+    if (!deviceSessions.loaded) void deviceSessions.load().catch(reportError);
   });
 
-  async function focus(deviceId: string | null): Promise<void> {
-    try {
-      await cockpit.setFilter(deviceId ? [deviceId] : []);
-    } catch (error) {
-      reportError(error);
-    }
+  let visibleMachines = $derived(connectionDevices(connections.snapshot.machines));
+  let localMachine = $derived(visibleMachines.find((machine) => machine.isSelf) ?? null);
+
+  function dotClass(tone: 'online' | 'offline' | 'update'): string {
+    if (tone === 'online') return 'bg-success';
+    if (tone === 'update') return 'bg-warning';
+    return 'bg-muted-foreground/35';
   }
 
-  let connectionReady = $derived(
-    connections.snapshot.tailscale.state === 'connected'
-      && connections.snapshot.tailscale.sharing.state === 'ready'
-  );
-  let menuDevices = $derived(reconcileDeviceSummaries(
-    cockpit.snapshot.devices,
-    connections.snapshot.machines
-  ));
-  let filterPresentation = $derived(deviceFilterPresentation(
-    menuDevices,
-    cockpit.snapshot.filterDeviceIds
-  ));
+  async function refresh(): Promise<void> {
+    await connections.refresh();
+    await deviceSessions.refresh();
+  }
 </script>
 
 {#if connections.supported}
-  {#if !connectionReady}
-    <Button
-      variant="ghost"
-      size="icon-xs"
-      class="ml-1 size-6 text-muted-foreground/80"
-      title="Devices"
-      aria-label="Devices"
-      onclick={() => settings.openDialog('connections')}
-    >
-      <Monitor class="size-3" />
-    </Button>
-  {:else}
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            variant="ghost"
-            size="icon-xs"
-            class="ml-1 size-6 text-muted-foreground/80"
-            title="Devices"
-            aria-label="Devices"
-          >
-            <Monitor class="size-3" />
-          </Button>
-        {/snippet}
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="start" class="w-72">
-        {#if filterPresentation.showAggregate}
-          <DropdownMenu.Item
-            class={filterPresentation.selectedDeviceId === null ? 'bg-primary/10 text-primary focus:bg-primary/15 focus:text-primary' : ''}
-            onSelect={() => void focus(null)}
-          >
-            <Monitor />
-            <span>All Devices</span>
-          </DropdownMenu.Item>
-        {/if}
-        {#each menuDevices as device (device.deviceId)}
-          {@const presentation = devicePresentation(device)}
-          <DropdownMenu.Item
-            class={filterPresentation.selectedDeviceId === device.deviceId ? 'bg-primary/10 text-primary focus:bg-primary/15 focus:text-primary' : ''}
-            disabled={!presentation.actionable}
-            onSelect={() => void focus(filterPresentation.showAggregate ? device.deviceId : null)}
-          >
-            <span
-              class={`size-1.5 shrink-0 rounded-full ${
-                presentation.tone === 'online'
-                  ? 'bg-success'
-                  : presentation.tone === 'update'
-                    ? 'bg-warning'
-                    : 'bg-muted-foreground/35'
-              }`}
-              aria-hidden="true"
-            ></span>
-            <span class="min-w-0 flex-1 truncate">{presentation.label}</span>
-          </DropdownMenu.Item>
-        {/each}
-        <DropdownMenu.Separator />
-        <DropdownMenu.Item
-          disabled={connections.refreshing || cockpit.refreshing}
-          onSelect={() => {
-            void connections.refresh()
-              .then(() => cockpit.refresh())
-              .catch(reportError);
-          }}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger>
+      {#snippet child({ props })}
+        <Button
+          {...props}
+          variant="ghost"
+          size="xs"
+          class="ml-1 min-w-0 max-w-64 gap-1.5 px-2 text-muted-foreground/80"
+          title={localMachine?.name ?? 'This device'}
+          aria-label={'Devices: ' + (localMachine?.name ?? 'This device')}
         >
-          <RefreshCw class={connections.refreshing || cockpit.refreshing ? 'motion-safe:animate-spin' : ''} />
-          <span>{connections.refreshing || cockpit.refreshing ? 'Finding Sessions…' : 'Refresh'}</span>
+          <Monitor class="size-3" />
+          <span class="truncate">{localMachine?.name ?? 'This device'}</span>
+        </Button>
+      {/snippet}
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="start" class="w-80">
+      <DropdownMenu.Label>Devices</DropdownMenu.Label>
+      {#each visibleMachines as machine (machine.id)}
+        {@const presentation = connectionDevicePresentation(machine)}
+        <div
+          class={'flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm '
+            + (presentation.isLocal ? 'bg-primary/10 text-primary ' : '')
+            + (presentation.tone !== 'online' && !presentation.isLocal ? 'opacity-60' : '')}
+          role="status"
+        >
+          <span class={'size-2 shrink-0 rounded-full ' + dotClass(presentation.tone)} aria-hidden="true"></span>
+          <span class="min-w-0 flex-1 truncate">{presentation.name}</span>
+          <span class="shrink-0 text-xs text-muted-foreground">
+            {presentation.isLocal ? 'This device' : presentation.status}
+          </span>
+        </div>
+      {:else}
+        <div class="px-2 py-2 text-sm text-muted-foreground">Loading this device…</div>
+      {/each}
+      <DropdownMenu.Separator />
+      <DropdownMenu.Item
+        disabled={connections.refreshing || deviceSessions.refreshing}
+        onSelect={() => void refresh().catch(reportError)}
+      >
+        <RefreshCw class={connections.refreshing || deviceSessions.refreshing ? 'motion-safe:animate-spin' : ''} />
+        <span>{connections.refreshing || deviceSessions.refreshing ? 'Refreshing…' : 'Refresh'}</span>
+      </DropdownMenu.Item>
+      {#if showSettings}
+        <DropdownMenu.Item onSelect={() => settings.openDialog('connections')}>
+          <Settings2 /> <span>Connection settings…</span>
         </DropdownMenu.Item>
-        {#if showSettings}
-          <DropdownMenu.Item onSelect={() => settings.openDialog('connections')}>
-            <Settings2 /> <span>Connection settings…</span>
-          </DropdownMenu.Item>
-        {/if}
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
-  {/if}
+      {/if}
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
 {/if}

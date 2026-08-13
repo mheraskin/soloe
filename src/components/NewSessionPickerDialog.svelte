@@ -5,16 +5,12 @@
     SessionLaunch,
     SessionLaunchKind
   } from '@shared/types/sessions.js';
-  import type {
-    CockpitPlaceSessionOperation,
-    CockpitPlaceSessionPlan
-  } from '@shared/types/workspaces.js';
+  import type { MultiDeviceSessionCreationPlan } from '@shared/types/multi-device-sessions.js';
   import { newSessionPicker } from '../stores/new-session-picker.svelte';
   import { settings } from '../stores/settings.svelte';
   import { sessions } from '../stores/sessions.svelte';
-  import { cockpit } from '../stores/cockpit.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
-  import { devicePresentation } from '../lib/device-presentation.js';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import KindIcon from './KindIcon.svelte';
@@ -23,40 +19,37 @@
   let claudeButton: HTMLButtonElement | null = $state(null);
   let codexButton: HTMLButtonElement | null = $state(null);
   let kind = $state<SessionLaunchKind>('terminal');
-  let workspaceId = $state('');
+  let workspaceKey = $state('');
   let deviceId = $state('');
-  let sourceMode = $state<'shared' | 'isolated'>('shared');
-  let plan = $state<CockpitPlaceSessionPlan | null>(null);
-  let acknowledgements = $state<string[]>([]);
-  let operation = $state<CockpitPlaceSessionOperation | null>(null);
   let busy = $state(false);
   let error = $state<string | null>(null);
+  let plan = $state<MultiDeviceSessionCreationPlan | null>(null);
   let wasOpen = false;
 
-  let workspaces = $derived(
-    (cockpit.snapshot.catalog?.workspaces ?? [])
-      .filter((workspace) => !workspace.archivedAt)
-      .sort((left, right) => left.order - right.order)
+  let workspaceChoices = $derived(
+    deviceSessions.state.projects.flatMap((project) =>
+      project.workspaces.map((workspace) => ({ project, workspace }))
+    )
   );
-  let devices = $derived(cockpit.snapshot.devices);
-  let readyDevices = $derived(devices.filter((device) => devicePresentation(device).actionable));
-  let placementAvailable = $derived(cockpit.supported && workspaces.length > 0);
-  let selectedWorkspace = $derived(
-    workspaces.find((workspace) => workspace.id === workspaceId) ?? null
+  let selectedChoice = $derived(
+    workspaceChoices.find((choice) => choice.workspace.key === workspaceKey) ?? null
   );
-  let selectedProject = $derived(
-    selectedWorkspace
-      ? cockpit.snapshot.catalog?.projects.find((project) => project.id === selectedWorkspace?.projectId)
-        ?? null
-      : null
+  let selectedDevice = $derived(
+    deviceSessions.state.devices.find((device) => device.deviceId === deviceId) ?? null
+  );
+  let selectedLocation = $derived(
+    selectedChoice?.workspace.locations.find((location) => location.deviceId === deviceId) ?? null
+  );
+  let placementAvailable = $derived(
+    deviceSessions.supported && deviceSessions.loaded && workspaceChoices.length > 0
   );
 
   function ctxOpts() {
-    const c = newSessionPicker.context;
+    const context = newSessionPicker.context;
     return {
-      ...(c.projectId ? { projectId: c.projectId } : {}),
-      ...(c.cwd ? { cwd: c.cwd } : {}),
-      ...(c.branch ? { branch: c.branch } : {})
+      ...(context.projectId ? { projectId: context.projectId } : {}),
+      ...(context.cwd ? { cwd: context.cwd } : {}),
+      ...(context.branch ? { branch: context.branch } : {})
     };
   }
 
@@ -71,38 +64,32 @@
   }
 
   function buttonFor(value: SessionLaunchKind): HTMLButtonElement | null {
-    switch (value) {
-      case 'terminal': return terminalButton;
-      case 'claude_code': return claudeButton;
-      case 'codex': return codexButton;
-    }
+    if (value === 'terminal') return terminalButton;
+    if (value === 'claude_code') return claudeButton;
+    return codexButton;
   }
 
   function initializePlacement(): void {
     kind = settings.current.defaults.newSessionKind;
-    const legacyProjectId = newSessionPicker.context.projectId;
-    const mappedProjectId = legacyProjectId
-      ? cockpit.snapshot.catalog?.migrations
-          .map((migration) => migration.projectMap[legacyProjectId])
-          .find(Boolean)
-      : undefined;
-    workspaceId = workspaces.find((workspace) => workspace.projectId === mappedProjectId)?.id
-      ?? workspaces[0]?.id
-      ?? '';
-    const preferred = devices.find((device) =>
-      device.deviceId === cockpit.snapshot.defaultPlacementDeviceId
-      && devicePresentation(device).actionable
+    const contextual = workspaceChoices.find((choice) =>
+      choice.workspace.locations.some((location) =>
+        location.projectId === newSessionPicker.context.projectId
+        || location.path === newSessionPicker.context.cwd
+      )
     );
-    deviceId = preferred?.deviceId ?? readyDevices[0]?.deviceId ?? '';
-    sourceMode = 'shared';
-    resetPlan();
-  }
-
-  function resetPlan(): void {
-    plan = null;
-    acknowledgements = [];
-    operation = null;
+    const choice = contextual ?? workspaceChoices[0] ?? null;
+    workspaceKey = choice?.workspace.key ?? '';
+    const preferredLocation = choice?.workspace.locations.find((location) => {
+      const device = deviceSessions.device(location.deviceId);
+      return device?.local && location.available;
+    }) ?? choice?.workspace.locations.find((location) => location.available);
+    deviceId = preferredLocation?.deviceId
+      ?? deviceSessions.state.devices.find((device) => device.local && device.available)?.deviceId
+      ?? deviceSessions.state.devices.find((device) => device.available)?.deviceId
+      ?? '';
+    busy = false;
     error = null;
+    plan = null;
   }
 
   function launchFor(value: SessionLaunchKind): SessionLaunch {
@@ -123,24 +110,28 @@
     return 'Terminal';
   }
 
+  function resetPlan(): void {
+    plan = null;
+    error = null;
+  }
+
+  function creationRequest() {
+    return {
+      workspaceKey,
+      targetDeviceId: deviceId,
+      session: {
+        name: sessionName(kind),
+        launch: launchFor(kind)
+      }
+    };
+  }
+
   async function preflight(): Promise<void> {
-    if (!workspaceId || !deviceId) return;
+    if (!workspaceKey || !deviceId) return;
     busy = true;
-    resetPlan();
+    error = null;
     try {
-      plan = await cockpit.planSessionPlacement({
-        kind: 'place-session',
-        workspaceId,
-        targetDeviceId: deviceId,
-        sourceMode,
-        session: {
-          name: sessionName(kind),
-          launch: launchFor(kind)
-        }
-      });
-      acknowledgements = plan.acknowledgements
-        .filter((item) => !item.required)
-        .map((item) => item.id);
+      plan = await deviceSessions.planCreate(creationRequest());
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -148,19 +139,13 @@
     }
   }
 
-  function toggleAcknowledgement(id: string, checked: boolean): void {
-    acknowledgements = checked
-      ? [...new Set([...acknowledgements, id])]
-      : acknowledgements.filter((candidate) => candidate !== id);
-  }
-
-  async function executePlacement(): Promise<void> {
+  async function execute(): Promise<void> {
     if (!plan) return;
     busy = true;
     error = null;
     try {
-      operation = await cockpit.executeSessionPlacement(plan.planId, acknowledgements);
-      if (operation.state === 'succeeded') newSessionPicker.close();
+      await deviceSessions.executeCreate(plan.planId);
+      newSessionPicker.close();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -188,7 +173,7 @@
       <Dialog.Title>New session</Dialog.Title>
       <Dialog.Description>
         {placementAvailable
-          ? 'Choose a Workspace, Device, and physical source before anything is created.'
+          ? 'Choose the Workspace and the device where this Session will run.'
           : 'Pick a session kind.'}
       </Dialog.Description>
     </Dialog.Header>
@@ -237,68 +222,54 @@
 
     {#if placementAvailable}
       <div class="grid gap-3 pt-2">
-        <label class="grid gap-1 text-xs font-medium" for="placement-workspace">
+        <label class="grid gap-1 text-xs font-medium" for="session-workspace">
           Workspace
           <select
-            id="placement-workspace"
+            id="session-workspace"
             class="h-9 rounded-md border border-input bg-background px-2 font-normal"
-            bind:value={workspaceId}
-            onchange={resetPlan}
+            bind:value={workspaceKey}
+            onchange={() => {
+              resetPlan();
+              const next = workspaceChoices.find((choice) => choice.workspace.key === workspaceKey);
+              const existing = next?.workspace.locations.find((location) => location.deviceId === deviceId && location.available);
+              if (!existing) {
+                deviceId = next?.workspace.locations.find((location) => location.available)?.deviceId ?? deviceId;
+              }
+            }}
           >
-            {#each workspaces as workspace (workspace.id)}
-              {@const project = cockpit.snapshot.catalog?.projects.find((candidate) => candidate.id === workspace.projectId)}
-              <option value={workspace.id}>{project?.name ?? 'Project'} / {workspace.name}</option>
+            {#each workspaceChoices as choice (choice.workspace.key)}
+              <option value={choice.workspace.key}>{choice.project.name} / {choice.workspace.name}</option>
             {/each}
           </select>
         </label>
 
-        <label class="grid gap-1 text-xs font-medium" for="placement-device">
-          Device
+        <label class="grid gap-1 text-xs font-medium" for="session-device">
+          Run on
           <select
-            id="placement-device"
+            id="session-device"
             class="h-9 rounded-md border border-input bg-background px-2 font-normal"
             bind:value={deviceId}
             onchange={resetPlan}
           >
-            {#each devices as device (device.deviceId)}
-              {@const presentation = devicePresentation(device)}
-              <option value={device.deviceId} disabled={!presentation.actionable}>
-                {presentation.label}
+            {#each deviceSessions.state.devices as device (device.deviceId)}
+              {@const hasLocation = selectedChoice?.workspace.locations.some((location) => location.deviceId === device.deviceId)}
+              <option value={device.deviceId} disabled={!device.available}>
+                {device.name}{device.local ? ' · This device' : ''}{device.available ? '' : ' · Offline'}{hasLocation ? '' : ' · Needs project'}
               </option>
             {/each}
           </select>
         </label>
 
-        <fieldset class="grid gap-1 text-xs">
-          <legend class="font-medium">Source mode</legend>
-          <div class="grid grid-cols-2 gap-2">
-            <label class="flex items-start gap-2 rounded-md border border-border p-2">
-              <input
-                type="radio"
-                bind:group={sourceMode}
-                value="shared"
-                onchange={resetPlan}
-              />
-              <span><strong>Shared</strong><br /><span class="text-muted-foreground">Reuse or prepare the Workspace Location.</span></span>
-            </label>
-            <label class="flex items-start gap-2 rounded-md border border-border p-2">
-              <input
-                type="radio"
-                bind:group={sourceMode}
-                value="isolated"
-                onchange={resetPlan}
-              />
-              <span><strong>Isolated</strong><br /><span class="text-muted-foreground">Session-owned Worktree with guarded cleanup.</span></span>
-            </label>
-          </div>
-        </fieldset>
-
         <div class="rounded-md border border-border bg-muted/30 p-2 text-xs">
-          <div class="font-medium">Placement</div>
-          <div class="text-muted-foreground">
-            {selectedProject?.name ?? 'Project'} / {selectedWorkspace?.name ?? 'Workspace'}
-            on {devices.find((device) => device.deviceId === deviceId)?.name ?? 'Device'}
-          </div>
+          {#if selectedLocation}
+            <div class="font-medium">{selectedDevice?.name}</div>
+            <div class="truncate font-mono text-muted-foreground" title={selectedLocation.path}>{selectedLocation.path}</div>
+          {:else}
+            <div class="font-medium">Project needs to be prepared on {selectedDevice?.name ?? 'this device'}</div>
+            <div class="text-muted-foreground">
+              Soloe will show the exact clone or Worktree path for review before creating anything.
+            </div>
+          {/if}
         </div>
 
         {#if error}
@@ -308,55 +279,38 @@
         {/if}
 
         {#if plan}
-          <section class="grid gap-2 rounded-md border border-border p-3 text-xs" aria-label="Placement preflight">
+          <section class="grid gap-2 rounded-md border border-border p-3 text-xs" aria-label="Session creation review">
             <div class="flex items-center justify-between gap-2">
-              <strong>{plan.preview.action.replaceAll('-', ' ')}</strong>
+              <strong>
+                {plan.action === 'use-existing-location'
+                  ? 'Use existing Workspace Location'
+                  : plan.action === 'clone-project'
+                    ? 'Clone Project on this device'
+                    : 'Create Workspace Location on this device'}
+              </strong>
               <span>{plan.executable ? 'Ready' : 'Blocked'}</span>
             </div>
-            <dl class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-muted-foreground">
-              <dt>Device</dt><dd>{plan.preview.deviceName}</dd>
-              <dt>Source</dt><dd>{plan.preview.source.kind}</dd>
-              <dt>Path</dt><dd class="truncate font-mono" title={plan.preview.targetPath}>{plan.preview.targetPath || 'Not available'}</dd>
-            </dl>
+            {#if plan.targetPath}
+              <div class="truncate font-mono text-muted-foreground" title={plan.targetPath}>{plan.targetPath}</div>
+            {/if}
+            {#each plan.warnings as warning (warning)}
+              <p class="m-0 text-warning">{warning}</p>
+            {/each}
             {#each plan.blockers as blocker (blocker)}
               <p class="m-0 text-destructive" role="alert">{blocker}</p>
             {/each}
-            {#each plan.acknowledgements as acknowledgement (acknowledgement.id)}
-              <label class="flex gap-2 rounded border border-warning/40 p-2">
-                <input
-                  type="checkbox"
-                  checked={acknowledgements.includes(acknowledgement.id)}
-                  onchange={(event) => toggleAcknowledgement(
-                    acknowledgement.id,
-                    event.currentTarget.checked
-                  )}
-                />
-                <span>{acknowledgement.label}</span>
-              </label>
-            {/each}
           </section>
-        {/if}
-
-        {#if operation?.state === 'needs-attention'}
-          <p class="m-0 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs" role="status">
-            Session created safely, but it is stopped: {operation.result?.startError ?? operation.message}
-          </p>
         {/if}
 
         <div class="flex justify-end gap-2">
           <Button variant="ghost" onclick={() => newSessionPicker.close()} disabled={busy}>Cancel</Button>
           {#if plan}
-            <Button
-              onclick={() => void executePlacement()}
-              disabled={busy || !plan.executable || plan.acknowledgements.some(
-                (item) => item.required && !acknowledgements.includes(item.id)
-              )}
-            >
+            <Button onclick={() => void execute()} disabled={busy || !plan.executable}>
               {busy ? 'Creating…' : 'Create session'}
             </Button>
           {:else}
-            <Button onclick={() => void preflight()} disabled={busy || !workspaceId || !deviceId || readyDevices.length === 0}>
-              {busy ? 'Checking…' : 'Review placement'}
+            <Button onclick={() => void preflight()} disabled={busy || !selectedDevice?.available || !workspaceKey}>
+              {busy ? 'Checking…' : 'Review'}
             </Button>
           {/if}
         </div>

@@ -95,14 +95,14 @@ export class GitHubProviderService {
     return this.options.adapter.listOwners();
   }
 
-  getCommand(cockpitId: string, commandId: string): DeviceOperationReceipt | null {
-    return this.options.operations.get(cockpitId, commandId);
+  getCommand(clientId: string, commandId: string): DeviceOperationReceipt | null {
+    return this.options.operations.get(clientId, commandId);
   }
 
   async execute(
     command: DeviceCommandEnvelope<CreateGitHubRepositoryIntent>
   ): Promise<DeviceOperationReceipt<CreatedGitHubRepository>> {
-    const prior = this.options.operations.get(command.cockpitId, command.commandId);
+    const prior = this.options.operations.get(command.clientId, command.commandId);
     if (prior) {
       return this.options.operations.execute(
         command,

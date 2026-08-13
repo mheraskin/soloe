@@ -2,15 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
 
 import type {
-  CockpitTerminalReplay,
-  DeviceReadSnapshot
-} from '@shared/types/cockpit.js';
+  SessionDeviceSnapshot,
+  DeviceTerminalReplay
+} from '@shared/types/multi-device-sessions.js';
 import type {
   DeviceDescriptor,
   DeviceEventEnvelope,
   DeviceId
 } from '@shared/types/devices.js';
 import type { Session, SessionRuntimeState } from '@shared/types/sessions.js';
+import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
+import type { GitWorktree } from '@shared/types/git.js';
 import type {
   TerminalInputLease,
   TerminalReplaySnapshot,
@@ -35,11 +37,15 @@ import {
   type DeviceTransportStatus
 } from '../connections/DeviceTransport.js';
 import type { FetchLike } from '../connections/SoloeEndpointProbe.js';
-import type { DevicePort, DevicePortStatus } from './DevicePort.js';
+import type {
+  DeviceSessionInventory,
+  SessionDevice,
+  SessionDeviceStatus
+} from '../sessions/MultiDeviceSessions.js';
 
 const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
 
-export interface RemoteDeviceClientOptions {
+export interface RemoteSessionDeviceOptions {
   deviceId: DeviceId;
   endpoint: string;
   fetchImpl: FetchLike;
@@ -48,27 +54,30 @@ export interface RemoteDeviceClientOptions {
   bootstrapTailscale?: boolean;
   clientId?: string;
   reconnectDelay?: (attempt: number) => number;
+  local?: boolean;
 }
 
-export class RemoteDeviceClient implements DevicePort {
+export class RemoteSessionDevice implements SessionDevice {
   readonly deviceId: DeviceId;
+  readonly local: boolean;
   private readonly clientId: string;
   private readonly transport: DeviceTransport;
   private readonly eventListeners = new Set<(event: DeviceEventEnvelope) => void>();
-  private readonly statusListeners = new Set<(status: DevicePortStatus) => void>();
+  private readonly statusListeners = new Set<(status: SessionDeviceStatus) => void>();
   private demandedTerminals = new Set<string>();
-  private currentStatus: DevicePortStatus;
+  private currentStatus: SessionDeviceStatus;
   private detachTransportEvent: () => void;
   private detachTransportStatus: () => void;
   private detachTransportRepair: () => void;
-  private connectRequest: Promise<DevicePortStatus> | null = null;
+  private connectRequest: Promise<SessionDeviceStatus> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private disposed = false;
 
-  constructor(private readonly options: RemoteDeviceClientOptions) {
+  constructor(private readonly options: RemoteSessionDeviceOptions) {
     this.deviceId = options.deviceId;
-    this.clientId = options.clientId ?? `cockpit-${randomUUID()}`;
+    this.local = options.local ?? false;
+    this.clientId = options.clientId ?? `sessions-${randomUUID()}`;
     this.currentStatus = {
       deviceId: this.deviceId,
       state: 'idle',
@@ -94,11 +103,11 @@ export class RemoteDeviceClient implements DevicePort {
     });
   }
 
-  get status(): DevicePortStatus {
+  get status(): SessionDeviceStatus {
     return cloneStatus(this.currentStatus);
   }
 
-  async connect(): Promise<DevicePortStatus> {
+  async connect(): Promise<SessionDeviceStatus> {
     if (this.disposed) throw new Error(`Device ${this.deviceId} client is disposed.`);
     if (this.connectRequest) return this.connectRequest;
     if (this.reconnectTimer) {
@@ -115,7 +124,7 @@ export class RemoteDeviceClient implements DevicePort {
     return request;
   }
 
-  private async connectNow(): Promise<DevicePortStatus> {
+  private async connectNow(): Promise<SessionDeviceStatus> {
     try {
       await this.transport.connect();
       if (this.transport.status.compatibility?.status !== 'compatible') {
@@ -141,7 +150,7 @@ export class RemoteDeviceClient implements DevicePort {
     }
   }
 
-  async snapshot(): Promise<DeviceReadSnapshot> {
+  async snapshot(): Promise<SessionDeviceSnapshot> {
     if (!this.currentStatus.descriptor) await this.connect();
     const descriptor = this.currentStatus.descriptor;
     if (!descriptor) throw new Error(`Device ${this.deviceId} did not provide a descriptor.`);
@@ -156,6 +165,61 @@ export class RemoteDeviceClient implements DevicePort {
     return {
       descriptor: structuredClone(descriptor),
       workspace,
+      sessions,
+      archivedSessions,
+      runtimes,
+      capturedAt: new Date().toISOString()
+    };
+  }
+
+  async readInventory(): Promise<DeviceSessionInventory> {
+    if (!this.currentStatus.descriptor) await this.connect();
+    const descriptor = this.currentStatus.descriptor;
+    if (!descriptor) throw new Error(`Device ${this.deviceId} did not provide a descriptor.`);
+    const [workspace, projects, sessions, archivedSessions, runtimes] = await Promise.all([
+      descriptor.capabilities.features.includes('workspace-device.v1')
+        ? this.rpc<DeviceWorkspaceSnapshot>('workspaceDevice', 'snapshot', [])
+        : Promise.resolve(null),
+      this.rpc<Project[]>('projects', 'list', []),
+      this.rpc<Session[]>('sessions', 'list', []),
+      this.rpc<Session[]>('sessions', 'listArchived', []),
+      this.rpc<SessionRuntimeState[]>('terminal', 'listRunning', [])
+    ]);
+    const projectInventories = await Promise.all(projects.map(async (project) => {
+      const runMode = project.defaultRunMode ?? descriptor.platform;
+      const gitRequest = {
+        repoPath: project.path,
+        force: false,
+        runMode,
+        ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
+      };
+      const [worktrees, remoteUrl] = await Promise.all([
+        this.rpc<GitWorktree[]>('git', 'worktrees', [gitRequest]),
+        this.rpc<unknown>('git', 'remoteUrl', [gitRequest]).catch(() => null)
+      ]);
+      const canonicalUrl = validRemoteUrl(remoteUrl);
+      const repositoryRecord = workspace?.repositories.find((candidate) =>
+        candidate.legacyProjectId === project.id
+      ) ?? (() => {
+        const checkout = workspace?.checkouts.find((candidate) =>
+          sameDevicePath(candidate.path, project.path)
+        );
+        return checkout
+          ? workspace?.repositories.find((candidate) => candidate.id === checkout.repositoryId)
+          : undefined;
+      })();
+      return {
+        project: structuredClone(project),
+        repository: structuredClone(
+          canonicalUrl ? { kind: 'git' as const, canonicalUrl } : repositoryRecord?.identity ?? null
+        ),
+        repositoryId: repositoryRecord?.id ?? null,
+        worktrees: structuredClone(worktrees)
+      };
+    }));
+    return {
+      descriptor: structuredClone(descriptor),
+      projects: projectInventories,
       sessions,
       archivedSessions,
       runtimes,
@@ -201,7 +265,7 @@ export class RemoteDeviceClient implements DevicePort {
   async terminalReplay(
     terminalId: string,
     afterSeq = 0
-  ): Promise<CockpitTerminalReplay> {
+  ): Promise<DeviceTerminalReplay> {
     const id = requiredId(terminalId, 'Terminal');
     const snapshot = await this.rpc<TerminalReplaySnapshot | null>(
       'terminal',
@@ -232,10 +296,10 @@ export class RemoteDeviceClient implements DevicePort {
   }
 
   workspaceGetCommand(
-    cockpitId: string,
+    clientId: string,
     commandId: string
   ): Promise<DeviceOperationReceipt | null> {
-    return this.rpc('workspaceDevice', 'getCommand', [cockpitId, commandId]);
+    return this.rpc('workspaceDevice', 'getCommand', [clientId, commandId]);
   }
 
   createSession(request: DevicePlacedSessionRequest): Promise<Session> {
@@ -245,6 +309,10 @@ export class RemoteDeviceClient implements DevicePort {
   startSession(sessionId: string): Promise<TerminalStartResult> {
     const id = requiredId(sessionId, 'Session');
     return this.rpc('terminal', 'start', [{ sessionId: id }]);
+  }
+
+  openProject(request: ProjectOpenRequest): Promise<Project> {
+    return this.rpc('projects', 'open', [structuredClone(request)]);
   }
 
   rebindSessionSource(request: DeviceSessionSourceUpdateRequest): Promise<Session> {
@@ -270,10 +338,10 @@ export class RemoteDeviceClient implements DevicePort {
   }
 
   githubProviderGetCommand(
-    cockpitId: string,
+    clientId: string,
     commandId: string
   ): Promise<DeviceOperationReceipt | null> {
-    return this.rpc('githubProvider', 'getCommand', [cockpitId, commandId]);
+    return this.rpc('githubProvider', 'getCommand', [clientId, commandId]);
   }
 
   onEvent(listener: (event: DeviceEventEnvelope) => void): () => void {
@@ -281,7 +349,7 @@ export class RemoteDeviceClient implements DevicePort {
     return () => this.eventListeners.delete(listener);
   }
 
-  onStatus(listener: (status: DevicePortStatus) => void): () => void {
+  onStatus(listener: (status: SessionDeviceStatus) => void): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
   }
@@ -368,7 +436,7 @@ export class RemoteDeviceClient implements DevicePort {
   }
 
   private updateTransportStatus(status: DeviceTransportStatus): void {
-    const state: DevicePortStatus['state'] = status.state === 'disposed'
+    const state: SessionDeviceStatus['state'] = status.state === 'disposed'
       ? 'disposed'
       : status.state === 'connecting'
         ? 'connecting'
@@ -441,7 +509,7 @@ function createNodeSocket(url: string): {
   };
 }
 
-function cloneStatus(status: DevicePortStatus): DevicePortStatus {
+function cloneStatus(status: SessionDeviceStatus): SessionDeviceStatus {
   return {
     ...status,
     descriptor: status.descriptor ? structuredClone(status.descriptor) : null
@@ -466,6 +534,18 @@ function positiveInteger(value: number, label: string): number {
 function nonNegativeInteger(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label} is invalid.`);
   return value;
+}
+
+function sameDevicePath(left: string, right: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/\\/gu, '/').replace(/\/+$/u, '').toLocaleLowerCase();
+  return normalize(left) === normalize(right);
+}
+
+function validRemoteUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 4_096 || /[\u0000-\u001f\u007f]/u.test(trimmed)) return null;
+  return trimmed;
 }
 
 async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {

@@ -718,6 +718,20 @@ export class GitService {
     return (await this.runInRepo(info, ['remote', 'get-url', remote])).code === 0;
   }
 
+  async getRemoteUrl(
+    cwd: string,
+    remoteName = 'origin',
+    context: GitRepoContext = {}
+  ): Promise<string | null> {
+    const info = await this.resolveRepo(cwd, context);
+    if (!info) throw new Error(`Not a git repository: ${cwd}`);
+    const remote = requiredRemoteName(remoteName);
+    const result = await this.runInRepo(info, ['remote', 'get-url', remote]);
+    if (result.code !== 0) return null;
+    const url = result.stdout.trim();
+    return url ? redactRemoteUrl(url) : null;
+  }
+
   async fetchRemoteEvidence(
     cwd: string,
     options: {

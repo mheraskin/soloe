@@ -15,6 +15,7 @@ const BASE_CAPABILITIES = [
   'events.envelope.v1',
   'events.legacy.v1',
   'rpc.legacy.v1',
+  'sessions.multi-device.v1',
   'runtime.sessions.v1',
   'runtime.terminal-input-lease.v1',
   'runtime.terminal-replay.v1',

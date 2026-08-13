@@ -9,9 +9,9 @@ Soloe is pre-release software. The first public alpha should not be published un
 - The legacy Electron MCP path uses a broader bind for WSL reachability; its effective interface and firewall exposure still need validation.
 - Electron uses an unsandboxed preload and a browser webview. Context isolation is enabled, but the combined boundary needs continued review.
 - Optional Tailscale Serve access is not strictly local-only. Soloe configures its dedicated route after Tailscale sign-in, while tailnet membership and policy remain the user's security boundary.
-- Workspace organization is cockpit-local. Two desktop Cockpits can connect to
-  the same Devices but do not automatically converge Project/Workspace names,
-  ordering, or Session Membership; use checksummed export/import deliberately.
+- Multi-Device navigation is derived from Device-published Project, Worktree,
+  and Session inventories. Empty logical Workspaces with no Location on any
+  Device are not represented.
 - Multi-Device support coordinates independent Git Checkouts. It does not
   replicate files continuously or transfer uncommitted bytes between Devices.
   Alignment is limited to normal push followed by fetch/fast-forward with exact
@@ -23,9 +23,8 @@ Soloe is pre-release software. The first public alpha should not be published un
 - GitHub is the only provider adapter. Ordinary Git remains available without
   `gh`, and repository creation is disabled on Devices where `gh` is absent or
   unauthenticated.
-- Catalog import is explicit replacement with a local backup, not merge or
-  replication. It changes logical metadata only and never removes physical
-  Repositories, Checkouts, Sessions, or Runtime processes.
+- A physical iPhone/desktop and multi-computer Tailscale smoke matrix remains
+  outstanding; automated coverage uses simulator and transport fixtures.
 - Feature Lab supports a narrow, evolving set of Markdown plan, coverage, issue, and agent-setup artifacts.
 - Visual canvas, Markdown-to-canvas conversion, Kanban, Wayfinder, broader Matt Pocock skills compatibility, and AI-assisted large-history summaries are roadmap items, not current features.
 - Diagnostics and logs can contain sensitive development context. Review and redact them before sharing.

@@ -7,7 +7,7 @@ import { DeviceOperationStore } from '../../workspaces/DeviceOperationStore.js';
 import { GitHubProviderService } from './GitHubProviderService.js';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
-const COCKPIT_ID = '22222222-2222-4222-8222-222222222222';
+const CLIENT_ID = '22222222-2222-4222-8222-222222222222';
 const COMMAND_ID = '33333333-3333-4333-8333-333333333333';
 
 describe('GitHubProviderService', () => {
@@ -64,7 +64,7 @@ describe('GitHubProviderService', () => {
     });
     const command = {
       schemaVersion: 1 as const,
-      cockpitId: COCKPIT_ID,
+      clientId: CLIENT_ID,
       commandId: COMMAND_ID,
       targetDeviceId: DEVICE_ID,
       actorClientId: 'test-client',

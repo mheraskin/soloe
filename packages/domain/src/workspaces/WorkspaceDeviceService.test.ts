@@ -17,7 +17,7 @@ import { WorkspaceDeviceStore } from './WorkspaceDeviceStore.js';
 import { WorkspaceDeviceService } from './WorkspaceDeviceService.js';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
-const COCKPIT_ID = '22222222-2222-4222-8222-222222222222';
+const CLIENT_ID = '22222222-2222-4222-8222-222222222222';
 const COMMAND_ID = '33333333-3333-4333-8333-333333333333';
 const CHECKOUT_ID = '44444444-4444-4444-8444-444444444444';
 
@@ -86,7 +86,7 @@ describe('WorkspaceDeviceService', () => {
     })).rejects.toThrow('managed root');
   });
 
-  it('allocates a safe Device-managed path when the cockpit does not know filesystem roots', async () => {
+  it('allocates a safe Device-managed path when the client does not know filesystem roots', async () => {
     const fixture = await createFixture();
     const intent = {
       kind: 'prepare-workspace-location',
@@ -440,7 +440,7 @@ function command(
 ): DeviceCommandEnvelope<DeviceWorkspaceIntent> {
   return {
     schemaVersion: 1,
-    cockpitId: COCKPIT_ID,
+    clientId: CLIENT_ID,
     commandId,
     targetDeviceId: DEVICE_ID,
     actorClientId: 'test-client',

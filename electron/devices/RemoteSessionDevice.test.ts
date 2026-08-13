@@ -1,16 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DeviceDescriptor } from '@shared/types/devices.js';
-import { RemoteDeviceClient } from './RemoteDeviceClient.js';
+import { RemoteSessionDevice } from './RemoteSessionDevice.js';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 const FIRST_EPOCH = '22222222-2222-4222-8222-222222222222';
 const SECOND_EPOCH = '33333333-3333-4333-8333-333333333333';
 
-describe('RemoteDeviceClient', () => {
+describe('RemoteSessionDevice', () => {
   it('includes the Device-owned Repository and Checkout registry in snapshots', async () => {
     const namespaces: string[] = [];
-    const client = new RemoteDeviceClient({
+    const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,
       endpoint: 'https://alpha.example.test',
       fetchImpl: async (input, init) => {
@@ -49,7 +49,7 @@ describe('RemoteDeviceClient', () => {
 
   it('uses typed Session create/start calls on the owning remote Device', async () => {
     const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
-    const client = new RemoteDeviceClient({
+    const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,
       endpoint: 'https://alpha.example.test',
       fetchImpl: async (input, init) => {
@@ -92,9 +92,63 @@ describe('RemoteDeviceClient', () => {
     client.dispose();
   });
 
+  it('rejects malformed repository identity returned by a remote Device', async () => {
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') return jsonResponse(descriptor(FIRST_EPOCH));
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+        };
+        if (request.namespace === 'workspaceDevice') {
+          return jsonResponse({
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              revision: 1,
+              deviceId: DEVICE_ID,
+              repositories: [],
+              checkouts: []
+            }
+          });
+        }
+        if (request.namespace === 'projects') {
+          return jsonResponse({
+            ok: true,
+            value: request.method === 'list'
+              ? [{
+                  id: 'project-1',
+                  name: 'Soloe',
+                  path: '/work/soloe',
+                  createdAt: '2026-08-13T08:00:00.000Z',
+                  lastOpenedAt: '2026-08-13T09:00:00.000Z'
+                }]
+              : []
+          });
+        }
+        if (request.namespace === 'git' && request.method === 'worktrees') {
+          return jsonResponse({ ok: true, value: [] });
+        }
+        if (request.namespace === 'git' && request.method === 'remoteUrl') {
+          return jsonResponse({ ok: true, value: [] });
+        }
+        return jsonResponse({ ok: true, value: [] });
+      },
+      socketFactory: () => new FakeSocket()
+    });
+
+    const inventory = await client.readInventory();
+
+    expect(inventory.projects[0]?.repository).toBeNull();
+    client.dispose();
+  });
+
   it('routes GitHub provider status, planning, and execution to the owning Device', async () => {
     const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
-    const client = new RemoteDeviceClient({
+    const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,
       endpoint: 'https://alpha.example.test',
       fetchImpl: async (input, init) => {
@@ -118,7 +172,7 @@ describe('RemoteDeviceClient', () => {
     };
     const command = {
       schemaVersion: 1 as const,
-      cockpitId: '44444444-4444-4444-8444-444444444444',
+      clientId: '44444444-4444-4444-8444-444444444444',
       commandId: '55555555-5555-4555-8555-555555555555',
       targetDeviceId: DEVICE_ID,
       actorClientId: 'test',
@@ -147,7 +201,7 @@ describe('RemoteDeviceClient', () => {
     let serverEpoch = FIRST_EPOCH;
     const sockets: FakeSocket[] = [];
     const statuses: string[] = [];
-    const client = new RemoteDeviceClient({
+    const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,
       endpoint: 'https://alpha.example.test',
       fetchImpl: async (input, init) => {
@@ -198,7 +252,7 @@ describe('RemoteDeviceClient', () => {
 
   it('retries an initially offline Device until the descriptor becomes reachable', async () => {
     let attempts = 0;
-    const client = new RemoteDeviceClient({
+    const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,
       endpoint: 'https://alpha.example.test',
       fetchImpl: async () => {

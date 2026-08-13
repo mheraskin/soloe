@@ -7,7 +7,7 @@ import type { DeviceCommandEnvelope } from '@shared/types/commands.js';
 import { DeviceOperationConflictError, DeviceOperationStore } from './DeviceOperationStore.js';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
-const COCKPIT_ID = '22222222-2222-4222-8222-222222222222';
+const CLIENT_ID = '22222222-2222-4222-8222-222222222222';
 const COMMAND_ID = '33333333-3333-4333-8333-333333333333';
 
 describe('DeviceOperationStore', () => {
@@ -37,7 +37,7 @@ describe('DeviceOperationStore', () => {
     expect(first.state).toBe('succeeded');
     expect(repeated).toEqual(first);
     expect(effect).toHaveBeenCalledOnce();
-    expect(restarted.get(COCKPIT_ID, COMMAND_ID)).toEqual(first);
+    expect(restarted.get(CLIENT_ID, COMMAND_ID)).toEqual(first);
   });
 
   it('rejects command ID reuse with different intent', async () => {
@@ -59,7 +59,7 @@ describe('DeviceOperationStore', () => {
 function command(): DeviceCommandEnvelope<{ checkoutId: string }> {
   return {
     schemaVersion: 1,
-    cockpitId: COCKPIT_ID,
+    clientId: CLIENT_ID,
     commandId: COMMAND_ID,
     targetDeviceId: DEVICE_ID,
     actorClientId: 'test-client',

@@ -1211,6 +1211,11 @@ export class SoloeDomain extends EventEmitter {
           await this.authorizeGitPath(request.repoPath, request);
           return this.git.listWorktrees(request.repoPath, request.force, request);
         }
+        case "remoteUrl": {
+          const request = args[0] as GitRepoRequest;
+          await this.authorizeGitPath(request.repoPath, request);
+          return this.git.getRemoteUrl(request.repoPath, "origin", request);
+        }
         case "branches": {
           const request = args[0] as GitRepoRequest;
           await this.authorizeGitPath(request.repoPath, request);
@@ -3161,6 +3166,7 @@ const GIT_REPO_PATH_METHODS = new Set([
   "shortstat",
   "dirty",
   "worktrees",
+  "remoteUrl",
   "branches",
   "recentCommits",
   "refHistory",

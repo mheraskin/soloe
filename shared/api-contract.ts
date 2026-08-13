@@ -191,9 +191,10 @@ export const UI_STARTUP_RPCS = [
 /**
  * Authenticated Application Server RPCs used only by the host-private
  * multi-Device adapter. They are deliberately absent from renderer SoloeApi:
- * the Cockpit exposes semantic plan/routing methods instead of raw forwarding.
+ * the Client exposes semantic plan/routing methods instead of raw forwarding.
  */
 export const DEVICE_RPC_METHODS = new Set<string>([
+  "git.remoteUrl",
   "githubProvider.status",
   "githubProvider.listOwners",
   "githubProvider.planCreateRepository",
@@ -274,6 +275,7 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "git.shortstat",
   "git.dirty",
   "git.worktrees",
+  "git.remoteUrl",
   "git.branches",
   "git.recentCommits",
   "git.refHistory",

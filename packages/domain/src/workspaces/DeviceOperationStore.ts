@@ -67,10 +67,10 @@ export class DeviceOperationStore {
     this.initialized = true;
   }
 
-  get(cockpitId: string, commandId: string): DeviceOperationReceipt | null {
+  get(clientId: string, commandId: string): DeviceOperationReceipt | null {
     this.assertInitialized();
     const receipt = this.state.receipts.find((candidate) =>
-      candidate.cockpitId === cockpitId && candidate.commandId === commandId
+      candidate.clientId === clientId && candidate.commandId === commandId
     );
     return receipt ? structuredClone(receipt) : null;
   }
@@ -95,11 +95,11 @@ export class DeviceOperationStore {
     const operationKind = requiredToken(kind, 'operation kind');
     const intentDigest = digestIntent(command.intent);
     const previous = this.state.receipts.find((candidate) =>
-      candidate.cockpitId === command.cockpitId && candidate.commandId === command.commandId
+      candidate.clientId === command.clientId && candidate.commandId === command.commandId
     );
     if (previous) {
       if (previous.intentDigest !== intentDigest || previous.kind !== operationKind) {
-        throw new DeviceOperationConflictError(command.cockpitId, command.commandId);
+        throw new DeviceOperationConflictError(command.clientId, command.commandId);
       }
       if (previous.state === 'succeeded') {
         return structuredClone(previous) as DeviceOperationReceipt<TResult>;
@@ -110,7 +110,7 @@ export class DeviceOperationStore {
     const timestamp = this.now().toISOString();
     const receipt: DeviceOperationReceipt<TResult> = {
       schemaVersion: 1,
-      cockpitId: command.cockpitId,
+      clientId: command.clientId,
       commandId: command.commandId,
       targetDeviceId: this.deviceId,
       kind: operationKind,
@@ -147,10 +147,10 @@ export class DeviceOperationStore {
       .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
     const remove = new Set(
       removable.slice(0, this.state.receipts.length - this.maxReceipts)
-        .map((receipt) => `${receipt.cockpitId}\0${receipt.commandId}`)
+        .map((receipt) => `${receipt.clientId}\0${receipt.commandId}`)
     );
     this.state.receipts = this.state.receipts.filter((receipt) =>
-      !remove.has(`${receipt.cockpitId}\0${receipt.commandId}`)
+      !remove.has(`${receipt.clientId}\0${receipt.commandId}`)
     );
     if (this.state.receipts.length > this.maxReceipts) {
       throw new Error('Device Operation journal is full of unfinished receipts.');
@@ -174,8 +174,8 @@ export class DeviceOperationStore {
 export class DeviceOperationConflictError extends Error {
   readonly code = 'command_id_conflict';
 
-  constructor(readonly cockpitId: string, readonly commandId: string) {
-    super(`Command ${commandId} was already used with different intent by Cockpit ${cockpitId}.`);
+  constructor(readonly clientId: string, readonly commandId: string) {
+    super(`Command ${commandId} was already used with different intent by Client ${clientId}.`);
     this.name = 'DeviceOperationConflictError';
   }
 }
@@ -193,7 +193,7 @@ function validateCommand(command: DeviceCommandEnvelope, deviceId: DeviceId): vo
   if (
     !command
     || command.schemaVersion !== 1
-    || !isDeviceId(command.cockpitId)
+    || !isDeviceId(command.clientId)
     || !isDeviceId(command.commandId)
     || command.targetDeviceId !== deviceId
     || !requiredToken(command.actorClientId, 'actor client ID')
@@ -252,7 +252,7 @@ function validateReceipt(value: unknown, deviceId: DeviceId): void {
   if (
     !isRecord(value)
     || value['schemaVersion'] !== 1
-    || !isDeviceId(value['cockpitId'])
+    || !isDeviceId(value['clientId'])
     || !isDeviceId(value['commandId'])
     || value['targetDeviceId'] !== deviceId
     || typeof value['kind'] !== 'string'

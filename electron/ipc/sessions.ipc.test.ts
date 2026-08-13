@@ -31,6 +31,7 @@ describe('SessionsIpc lifecycle broadcasts', () => {
     const created = session('created', 0);
     const updated = { ...created, name: 'Updated' };
     const reordered = [session('second', 0), { ...updated, sortIndex: 1 }];
+    const onInventoryChanged = vi.fn();
     const store = {
       create: vi.fn(async () => created),
       update: vi.fn(async () => updated),
@@ -40,6 +41,7 @@ describe('SessionsIpc lifecycle broadcasts', () => {
     const ipc = new SessionsIpc({
       store: store as never,
       commandBuilder: {} as never,
+      onInventoryChanged,
       getWindows: () => [
         window(firstSend, false),
         window(secondSend, false),
@@ -65,6 +67,7 @@ describe('SessionsIpc lifecycle broadcasts', () => {
       expect(send).toHaveBeenCalledWith(IpcChannels.sessions.deleted, created.id);
     }
     expect(destroyedSend).not.toHaveBeenCalled();
+    expect(onInventoryChanged).toHaveBeenCalledTimes(4);
     ipc.dispose();
   });
 });

@@ -1,6 +1,5 @@
 import type { DeviceId } from './devices.js';
-import type { CockpitOperation, CockpitPlan, DeviceOperationReceipt } from './commands.js';
-import type { WorkspaceId } from './workspaces.js';
+import type { DeviceOperationReceipt } from './commands.js';
 
 export type GitHubRepositoryVisibility = 'private' | 'public';
 
@@ -55,48 +54,3 @@ export interface CreatedGitHubRepository {
 }
 
 export type GitHubRepositoryOperationReceipt = DeviceOperationReceipt<CreatedGitHubRepository>;
-
-export interface CockpitPublishProjectIntent {
-  kind: 'publish-project';
-  workspaceId: WorkspaceId;
-  sourceDeviceId: DeviceId;
-  owner: string;
-  name: string;
-  visibility: GitHubRepositoryVisibility;
-  description?: string;
-  remote?: string;
-}
-
-export interface CockpitPublishProjectPreview {
-  projectName: string;
-  workspaceName: string;
-  deviceName: string;
-  branchRef: string;
-  remote: string;
-  localOid: string;
-  owner: string;
-  name: string;
-  visibility: GitHubRepositoryVisibility;
-  url: string;
-}
-
-export type CockpitPublishProjectPlan = CockpitPlan<
-  CockpitPublishProjectIntent,
-  CockpitPublishProjectPreview
-> & {
-  kind: 'publish-project';
-  catalogRevision: number;
-  projectVersion: number;
-  providerPlan: GitHubRepositoryPlan;
-  devicePlan: import('./workspaces.js').DeviceWorkspacePlan;
-};
-
-export interface CockpitPublishProjectResult {
-  projectId: string;
-  repository: CreatedGitHubRepository;
-  providerReceipt: GitHubRepositoryOperationReceipt;
-  pushReceipt: DeviceOperationReceipt | null;
-  pushed: boolean;
-}
-
-export type CockpitPublishProjectOperation = CockpitOperation<CockpitPublishProjectResult>;

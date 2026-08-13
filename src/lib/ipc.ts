@@ -99,43 +99,11 @@ import type {
 } from '@shared/types/browser-sessions.js';
 import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
+import type { DeviceEventEnvelope, SessionRef, TerminalRef } from '@shared/types/devices.js';
 import type {
-  CockpitCatalogExportBundle,
-  CockpitCatalogImportRequest,
-  CockpitCatalogImportResult,
-  CockpitDemand,
-  CockpitEvent,
-  CockpitTerminalInputRequest,
-  CockpitTerminalInputLeaseRequest,
-  CockpitTerminalReplayRequest,
-  CockpitTerminalResizeRequest,
-  CockpitTerminalStopRequest
-} from '@shared/types/cockpit.js';
-import type { DeviceId } from '@shared/types/devices.js';
-import type {
-  CatalogTransaction,
-  CockpitAlignWorkspaceIntent,
-  CockpitAlignWorkspaceOperation,
-  CockpitAlignWorkspacePlan,
-  CockpitPlaceSessionIntent,
-  CockpitPlaceSessionOperation,
-  CockpitPlaceSessionPlan,
-  CockpitSessionSourceLifecycleIntent,
-  CockpitSessionSourceLifecycleOperation,
-  CockpitSessionSourceLifecyclePlan,
-  DeviceWorkspaceIntent,
-  DeviceWorkspacePlan
-} from '@shared/types/workspaces.js';
-import type {
-  CockpitOperation,
-  DeviceCommandEnvelope,
-  DeviceOperationReceipt
-} from '@shared/types/commands.js';
-import type {
-  CockpitPublishProjectIntent,
-  CockpitPublishProjectOperation,
-  CockpitPublishProjectPlan
-} from '@shared/types/providers.js';
+  CreateMultiDeviceSessionRequest,
+  MultiDeviceSessionState
+} from '@shared/types/multi-device-sessions.js';
 import type {
   VaultChangeEvent,
   VaultDeleteRequest,
@@ -168,11 +136,6 @@ export function toIpcPayload<T>(value: T): T {
 }
 
 const c = globalThis.window?.soloe as Window['soloe'];
-function requiredCockpit(): NonNullable<Window['soloe']['cockpit']> {
-  const cockpit = c?.cockpit;
-  if (!cockpit) throw new Error('Multi-Device cockpit is unavailable in this host.');
-  return cockpit;
-}
 const terminalReconnect = (
   c?.terminal as (typeof c.terminal & {
     onReconnect?: (listener: () => void) => () => void;
@@ -193,6 +156,7 @@ export const backend = {
       terminalReconnect ? terminalReconnect(listener) : () => {}
   },
   sessions: {
+    devicesSupported: Boolean(c?.sessions.deviceState),
     list: async () => unwrap(await c.sessions.list()),
     listArchived: async () => unwrap(await c.sessions.listArchived()),
     get: async (id: SessionId) => unwrap(await c.sessions.get(id)),
@@ -203,8 +167,72 @@ export const backend = {
     reorder: async (orderedIds: SessionId[]) =>
       unwrap(await c.sessions.reorder([...orderedIds])),
     previewCommand: async (id: SessionId) => unwrap(await c.sessions.previewCommand(id)),
+    deviceState: async (): Promise<MultiDeviceSessionState> => {
+      if (!c.sessions.deviceState) throw new Error('Multi-Device Sessions are unavailable.');
+      return unwrap(await c.sessions.deviceState());
+    },
+    refreshDevices: async (): Promise<MultiDeviceSessionState> => {
+      if (!c.sessions.refreshDevices) throw new Error('Multi-Device Sessions are unavailable.');
+      return unwrap(await c.sessions.refreshDevices());
+    },
+    createOnDevice: async (request: CreateMultiDeviceSessionRequest) => {
+      if (!c.sessions.createOnDevice) throw new Error('Multi-Device Sessions are unavailable.');
+      return unwrap(await c.sessions.createOnDevice(toIpcPayload(request)));
+    },
+    planCreateOnDevice: async (request: CreateMultiDeviceSessionRequest) => {
+      if (!c.sessions.planCreateOnDevice) throw new Error('Multi-Device Session planning is unavailable.');
+      return unwrap(await c.sessions.planCreateOnDevice(toIpcPayload(request)));
+    },
+    executeCreateOnDevice: async (planId: string) => {
+      if (!c.sessions.executeCreateOnDevice) throw new Error('Multi-Device Session creation is unavailable.');
+      return unwrap(await c.sessions.executeCreateOnDevice(planId));
+    },
+    startOnDevice: async (ref: SessionRef) => {
+      if (!c.sessions.startOnDevice) throw new Error('Multi-Device Session start is unavailable.');
+      return unwrap(await c.sessions.startOnDevice(toIpcPayload(ref)));
+    },
+    setDeviceTerminalDemand: async (refs: TerminalRef[]) => {
+      if (!c.sessions.setDeviceTerminalDemand) {
+        throw new Error('Multi-Device terminal output is unavailable.');
+      }
+      return unwrap(await c.sessions.setDeviceTerminalDemand(toIpcPayload(refs)));
+    },
+    deviceTerminalInput: async (ref: TerminalRef, data: string) => {
+      if (!c.sessions.deviceTerminalInput) {
+        throw new Error('Multi-Device terminal input is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalInput(toIpcPayload({ ref, data })));
+    },
+    deviceTerminalInputLease: async (ref: TerminalRef, takeover = false) => {
+      if (!c.sessions.deviceTerminalInputLease) {
+        throw new Error('Multi-Device terminal input control is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalInputLease(toIpcPayload({ ref, takeover })));
+    },
+    deviceTerminalResize: async (ref: TerminalRef, cols: number, rows: number) => {
+      if (!c.sessions.deviceTerminalResize) {
+        throw new Error('Multi-Device terminal resize is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalResize(toIpcPayload({ ref, cols, rows })));
+    },
+    deviceTerminalReplay: async (ref: TerminalRef, afterSeq = 0) => {
+      if (!c.sessions.deviceTerminalReplay) {
+        throw new Error('Multi-Device terminal replay is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalReplay(toIpcPayload(ref), afterSeq));
+    },
+    deviceTerminalStop: async (ref: TerminalRef) => {
+      if (!c.sessions.deviceTerminalStop) {
+        throw new Error('Multi-Device terminal stop is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalStop(toIpcPayload(ref)));
+    },
     onChange: (cb: (session: Session) => void) => c.sessions.onChange(cb),
-    onDelete: (cb: (sessionId: SessionId) => void) => c.sessions.onDelete(cb)
+    onDelete: (cb: (sessionId: SessionId) => void) => c.sessions.onDelete(cb),
+    onDeviceStateChange: (cb: (state: MultiDeviceSessionState) => void) =>
+      c.sessions.onDeviceStateChange?.(cb) ?? (() => undefined),
+    onDeviceEvent: (cb: (event: DeviceEventEnvelope) => void) =>
+      c.sessions.onDeviceEvent?.(cb) ?? (() => undefined)
   },
   terminal: {
     start: async (opts: TerminalStartOptions) => unwrap(await c.terminal.start(toIpcPayload(opts))),
@@ -292,94 +320,6 @@ export const backend = {
     select: async (id: Parameters<typeof c.connections.select>[0]) =>
       unwrap(await c.connections.select(id)),
     onChange: (cb: Parameters<typeof c.connections.onChange>[0]) => c.connections.onChange(cb)
-  },
-  cockpit: {
-    supported: Boolean(c?.cockpit),
-    snapshot: async () => unwrap(await requiredCockpit().snapshot()),
-    refresh: async () => unwrap(await requiredCockpit().refresh()),
-    setDemand: async (demand: CockpitDemand) =>
-      unwrap(await requiredCockpit().setDemand(toIpcPayload(demand))),
-    setFilter: async (deviceIds: DeviceId[]) =>
-      unwrap(await requiredCockpit().setFilter([...deviceIds])),
-    setDefaultPlacement: async (deviceId: DeviceId) =>
-      unwrap(await requiredCockpit().setDefaultPlacement(deviceId)),
-    transactCatalog: async (transaction: CatalogTransaction) =>
-      unwrap(await requiredCockpit().transactCatalog(toIpcPayload(transaction))),
-    exportCatalog: async (): Promise<CockpitCatalogExportBundle> =>
-      unwrap(await requiredCockpit().exportCatalog()),
-    importCatalog: async (
-      request: CockpitCatalogImportRequest
-    ): Promise<CockpitCatalogImportResult> =>
-      unwrap(await requiredCockpit().importCatalog(toIpcPayload(request))),
-    workspacePlan: async (
-      deviceId: DeviceId,
-      intent: DeviceWorkspaceIntent
-    ): Promise<DeviceWorkspacePlan> =>
-      unwrap(await requiredCockpit().workspacePlan(deviceId, toIpcPayload(intent))),
-    workspaceExecute: async (
-      command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
-    ): Promise<DeviceOperationReceipt> =>
-      unwrap(await requiredCockpit().workspaceExecute(toIpcPayload(command))),
-    workspaceGetCommand: async (
-      deviceId: DeviceId,
-      cockpitId: string,
-      commandId: string
-    ): Promise<DeviceOperationReceipt | null> =>
-      unwrap(await requiredCockpit().workspaceGetCommand(deviceId, cockpitId, commandId)),
-    placementPlan: async (
-      intent: CockpitPlaceSessionIntent
-    ): Promise<CockpitPlaceSessionPlan> =>
-      unwrap(await requiredCockpit().placementPlan(toIpcPayload(intent))),
-    placementExecute: async (
-      planId: string,
-      acknowledgements: string[]
-    ): Promise<CockpitPlaceSessionOperation> =>
-      unwrap(await requiredCockpit().placementExecute(planId, [...acknowledgements])),
-    alignmentPlan: async (
-      intent: CockpitAlignWorkspaceIntent
-    ): Promise<CockpitAlignWorkspacePlan> =>
-      unwrap(await requiredCockpit().alignmentPlan(toIpcPayload(intent))),
-    alignmentExecute: async (
-      planId: string,
-      acknowledgements: string[]
-    ): Promise<CockpitAlignWorkspaceOperation> =>
-      unwrap(await requiredCockpit().alignmentExecute(planId, [...acknowledgements])),
-    publicationPlan: async (
-      intent: CockpitPublishProjectIntent
-    ): Promise<CockpitPublishProjectPlan> =>
-      unwrap(await requiredCockpit().publicationPlan(toIpcPayload(intent))),
-    publicationExecute: async (
-      planId: string,
-      acknowledgements: string[]
-    ): Promise<CockpitPublishProjectOperation> =>
-      unwrap(await requiredCockpit().publicationExecute(planId, [...acknowledgements])),
-    sourceLifecyclePlan: async (
-      intent: CockpitSessionSourceLifecycleIntent
-    ): Promise<CockpitSessionSourceLifecyclePlan> =>
-      unwrap(await requiredCockpit().sourceLifecyclePlan(toIpcPayload(intent))),
-    sourceLifecycleExecute: async (
-      planId: string,
-      acknowledgements: string[]
-    ): Promise<CockpitSessionSourceLifecycleOperation> =>
-      unwrap(await requiredCockpit().sourceLifecycleExecute(planId, [...acknowledgements])),
-    operationGet: async (
-      operationId: string
-    ): Promise<CockpitOperation | null> =>
-      unwrap(await requiredCockpit().operationGet(operationId)),
-    operationListRecoverable: async (): Promise<CockpitOperation[]> =>
-      unwrap(await requiredCockpit().operationListRecoverable()),
-    terminalInput: async (request: CockpitTerminalInputRequest) =>
-      unwrap(await requiredCockpit().terminalInput(toIpcPayload(request))),
-    terminalInputLease: async (request: CockpitTerminalInputLeaseRequest) =>
-      unwrap(await requiredCockpit().terminalInputLease(toIpcPayload(request))),
-    terminalResize: async (request: CockpitTerminalResizeRequest) =>
-      unwrap(await requiredCockpit().terminalResize(toIpcPayload(request))),
-    terminalReplay: async (request: CockpitTerminalReplayRequest) =>
-      unwrap(await requiredCockpit().terminalReplay(toIpcPayload(request))),
-    terminalStop: async (request: CockpitTerminalStopRequest) =>
-      unwrap(await requiredCockpit().terminalStop(toIpcPayload(request))),
-    onEvent: (listener: (event: CockpitEvent) => void) =>
-      requiredCockpit().onEvent(listener)
   },
   projects: {
     list: async () => unwrap(await c.projects.list()),

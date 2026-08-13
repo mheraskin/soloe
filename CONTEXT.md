@@ -5,19 +5,15 @@ Soloe coordinates terminal sessions and repository observations across native an
 ## Language
 
 **Project**:
-A cockpit-owned logical source-code project that may be present on zero or more Devices. It is not a path, Checkout, Device, or Git remote.
+A source-code repository identified by its canonical Git remote. A Project may have independent physical locations on several Devices.
 _Avoid_: Repository checkout, project folder
 
-**Project Presence**:
-An explicit association between a Project and one Device-owned Repository.
-_Avoid_: Project copy, remote project
-
 **Workspace**:
-A durable human grouping inside one Project with one Workspace Source and ordered Session memberships. It may exist without a Checkout on any Device.
-_Avoid_: Worktree, Branch, folder, Work Area
+A logical workstream inside one Project, normally identified by a Branch or pinned Revision. The same Workspace can have independent Locations on several Devices.
+_Avoid_: Device, shared folder, Session group
 
 **Workspace Source**:
-The versioned Git intent for a Workspace: a Branch, pull request, or pinned Revision. It does not claim that any Checkout currently conforms to that intent.
+The Git intent for a Workspace: a Branch, pull request, or pinned Revision. It does not claim that every Location currently conforms to that intent.
 _Avoid_: Current branch, synced state
 
 **Workspace Location**:
@@ -77,20 +73,12 @@ One resident renderer-side terminal emulator for a running Session, independent 
 _Avoid_: Terminal process, terminal tab
 
 **Session**:
-A user-visible interactive work record owned by exactly one Device and bound to one Session Source.
+A user-visible interactive work record owned and executed by exactly one Device, normally bound to one Workspace Location on that Device.
 _Avoid_: Tab, terminal process
 
 **Session Source**:
-The Device-authoritative binding from a Session to its exact Checkout and provenance, whether a Workspace Location, isolated Worktree, or adopted external Checkout.
-_Avoid_: Current cwd, containing Workspace
-
-**Session Membership**:
-The cockpit-owned placement and order of a device-scoped Session inside a Workspace. Changing it is a Regroup and does not change the Session Source.
-_Avoid_: Session location, cwd binding
-
-**Regroup**:
-A logical change to Session Membership that leaves its Device, Environment Runtime, cwd, and Session Source unchanged.
-_Avoid_: Move, migrate process
+The Device-authoritative binding from a Session to its exact Checkout and provenance. The client derives Project and Workspace presentation from that binding instead of storing a second membership record.
+_Avoid_: Sidebar membership, current filter
 
 **Successor Session**:
 A new Session created on a prepared destination when work must continue on another Device or Checkout; the original remains independent.
@@ -207,21 +195,9 @@ _Avoid_: Renderer backend, IPC implementation
 One trusted machine with a durable Device identity that exposes a Soloe Application Server and its associated Environment Runtime.
 _Avoid_: Backend URL, remote workspace, endpoint
 
-**Cockpit**:
-One desktop host, its local logical catalog and preferences, and its concurrent connections to enabled Soloe Devices.
-_Avoid_: Home server, active backend
-
-**Cockpit Catalog**:
-The cockpit-local authority for Projects, Workspaces, Workspace Sources, Session Memberships, and ordering. It references Device facts but does not replicate them.
-_Avoid_: Device database, synchronized metadata
-
 **Device Connection Registry**:
-The client-local, restart-safe catalog of this Device and trusted remote Soloe Device endpoints, durable identity pins, enablement, and availability. Legacy active selection is migration data only.
-_Avoid_: Backend list, Tailscale token store
-
-**Default Placement Device**:
-The cockpit preference suggested for new Session placement, independent from the Device view filter and from every existing Session's owner.
-_Avoid_: Active backend, current server
+The client-local cache of this Device and automatically discovered Soloe Devices, including durable identity pins and last-known availability. Tailscale credentials and per-Device enablement are not part of this model.
+_Avoid_: Device picker, Tailscale token store
 
 **Alignment Evidence**:
 Timestamped Device facts used to compare a Workspace Source, Location, or Session Source without claiming filesystem synchronization.
@@ -289,13 +265,13 @@ _Avoid_: Sync state, source of truth
 - Every Svelte Module crosses the **Renderer Backend Interface**; only a **Renderer Backend Adapter** may access shell-specific globals or transport primitives
 - Electron IPC and browser HTTP/WebSocket are separate **Renderer Backend
   Adapters** over the same UI; neither owns agent process lifetime
-- A **Project** owns zero or more **Workspaces** and zero or more **Project Presences**
-- A **Workspace** owns one **Workspace Source**, zero or more **Workspace Locations**, and ordered **Session Memberships**
+- A **Project** is merged across Devices by canonical Git repository identity
+- A **Workspace** is merged across Devices by Project and Workspace Source
 - Every **Workspace Location** and **Session Source** references a **Checkout** owned by exactly one **Soloe Device**
-- A **Regroup** changes only **Session Membership**; another Device or Checkout requires a **Successor Session**
-- The **Cockpit Catalog** remains authoritative while Devices are offline and treats cached Device observations as evidence rather than replicated facts
-- The **Device Connection Registry** discovers exact Tailscale HTTPS endpoints, pins durable Device identities, and persists enablement without bearer tokens
-- A Device filter changes only the cockpit projection; the **Default Placement Device** changes only a future-placement suggestion, and neither stops a Session
+- Every **Session** remains owned by its Device; opening it routes terminal control to that Device and never migrates its process
+- The Sessions interface derives Project → Workspace → Session navigation from current and last-known Device inventories; it stores no parallel logical catalog or Session membership
+- Offline Device observations remain visible but disabled, and creating work on a different Device requires an explicit preparation review before a **Successor Session** is created
+- The **Device Connection Registry** discovers Tailscale HTTPS endpoints automatically, pins durable Device identities, and stores no bearer tokens
 
 ## Example dialogue
 

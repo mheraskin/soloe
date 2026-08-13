@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DeviceDescriptor } from '@shared/types/devices.js';
-import { LocalDeviceClient } from './LocalDeviceClient.js';
+import { LocalSessionDevice } from './LocalSessionDevice.js';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 
-describe('LocalDeviceClient', () => {
+describe('LocalSessionDevice', () => {
   it('reconciles legacy records before publishing a Device snapshot', async () => {
     const session = {
       id: 'later',
@@ -37,7 +37,7 @@ describe('LocalDeviceClient', () => {
       })),
       snapshot: vi.fn(() => deviceWorkspace())
     };
-    const client = new LocalDeviceClient({
+    const client = new LocalSessionDevice({
       descriptor: descriptor(),
       sessions: sessions as never,
       projects: projects as never,
@@ -92,7 +92,7 @@ describe('LocalDeviceClient', () => {
       on: vi.fn(),
       off: vi.fn()
     };
-    const client = new LocalDeviceClient({
+    const client = new LocalSessionDevice({
       descriptor: descriptor(),
       sessions: sessions as never,
       pty: pty as never

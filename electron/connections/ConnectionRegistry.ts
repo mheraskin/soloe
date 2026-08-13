@@ -27,6 +27,7 @@ const REQUIRED_MULTI_DEVICE_CAPABILITIES = [
   'device.describe.v1',
   'device.snapshot.v1',
   'events.envelope.v1',
+  'sessions.multi-device.v1',
   'runtime.sessions.v1',
   'runtime.terminal-input-lease.v1',
   'runtime.terminal-replay.v1',
@@ -330,14 +331,14 @@ export class ConnectionRegistry {
         throw new Error('Verify the Device identity before enabling this connection.');
       }
       if (machine.compatibility && machine.compatibility.status !== 'compatible') {
-        throw new Error('This Device is not protocol-compatible with the cockpit.');
+        throw new Error('This Device is not protocol-compatible with the client.');
       }
       if (machine.updateRequired) {
         throw new Error('Update Soloe on this Device before connecting it.');
       }
       const enabledCount = [...this.machines.values()].filter((candidate) => candidate.enabled).length;
       if (!machine.enabled && enabledCount >= MAX_ENABLED_CONNECTIONS) {
-        throw new Error(`Cockpit supports at most ${MAX_ENABLED_CONNECTIONS} enabled Devices.`);
+        throw new Error(`Client supports at most ${MAX_ENABLED_CONNECTIONS} enabled Devices.`);
       }
     }
     this.machines.set(id, { ...machine, enabled });

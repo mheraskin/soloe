@@ -66,18 +66,13 @@ import { BrowserIpc } from './ipc/browser.ipc.js';
 import { BrowserSessionStore } from './browser/BrowserSessionStore.js';
 import { BrowserSessionsIpc } from './ipc/browser-sessions.ipc.js';
 import { ConnectionsIpc } from './ipc/connections.ipc.js';
-import { CockpitIpc } from './ipc/cockpit.ipc.js';
+import { MultiDeviceSessionsIpc } from './ipc/multi-device-sessions.ipc.js';
 import { ConnectionRegistry } from './connections/ConnectionRegistry.js';
 import { TailscaleDiscovery } from './connections/TailscaleDiscovery.js';
 import {
   describeSoloeEndpoint,
   probeSoloeEndpoint
 } from './connections/SoloeEndpointProbe.js';
-import { CockpitCoordinator } from './cockpit/CockpitCoordinator.js';
-import { CockpitPreferenceStore } from './cockpit/CockpitPreferenceStore.js';
-import { CockpitCatalogStore } from './cockpit/CockpitCatalogStore.js';
-import { CockpitMigration } from './cockpit/CockpitMigration.js';
-import { CockpitOperationStore } from './cockpit/CockpitOperationStore.js';
 import {
   DeviceOperationStore,
   GhCliGitHubAdapter,
@@ -85,13 +80,17 @@ import {
   WorkspaceDeviceService,
   WorkspaceDeviceStore
 } from '@soloe/domain';
-import type { DevicePort } from './cockpit/DevicePort.js';
+import {
+  MultiDeviceSessions,
+  type SessionDevice
+} from './sessions/MultiDeviceSessions.js';
 import type { ConnectionSnapshot } from '@shared/types/connections.js';
-import { LocalDeviceClient } from './cockpit/LocalDeviceClient.js';
-import { RemoteDeviceClient } from './cockpit/RemoteDeviceClient.js';
-import { loadLegacyLocalDeviceDescriptor } from './cockpit/LegacyLocalDeviceIdentity.js';
+import { LocalSessionDevice } from './devices/LocalSessionDevice.js';
+import { RemoteSessionDevice } from './devices/RemoteSessionDevice.js';
+import { loadLocalDeviceDescriptor } from './devices/LocalDeviceIdentity.js';
 import {
   legacyExclusiveConnectionEnabled,
+  resolveDeviceServerEndpoint,
   resolveDesktopServerSelection
 } from './connections/DesktopServerSelection.js';
 import {
@@ -178,13 +177,14 @@ async function initializeConnections(): Promise<void> {
     process.env.SOLOE_LOCAL_SERVER_URL?.trim()
     || process.env.SOLOE_CLIENT_SERVER_URL?.trim()
     || null;
-  if (!process.env.SOLOE_LOCAL_SERVER_URL && inheritedLocalServerUrl) {
-    process.env.SOLOE_LOCAL_SERVER_URL = inheritedLocalServerUrl;
+  const localDeviceServerEndpoint = resolveDeviceServerEndpoint(inheritedLocalServerUrl);
+  if (localDeviceServerEndpoint) {
+    process.env.SOLOE_LOCAL_SERVER_URL = localDeviceServerEndpoint;
   }
-  if (inheritedLocalServerUrl) {
+  if (localDeviceServerEndpoint) {
     try {
       const described = await describeSoloeEndpoint(
-        inheritedLocalServerUrl,
+        localDeviceServerEndpoint,
         (input, init) => net.fetch(String(input), init),
         {
           ...(process.env.SOLOE_SERVER_TOKEN
@@ -224,110 +224,48 @@ let remoteBrowserIpc: BrowserIpc | null = null;
 let remoteVaultIpc: VaultIpc | null = null;
 let connectionsIpc: ConnectionsIpc | null = null;
 let connectionRegistry: ConnectionRegistry | null = null;
-let cockpitCoordinator: CockpitCoordinator | null = null;
-let cockpitIpc: CockpitIpc | null = null;
-let cockpitRegistryDetach: (() => void) | null = null;
-let cockpitReconcileQueue: Promise<void> = Promise.resolve();
-let cockpitPortRecords = new Map<string, { key: string; port: DevicePort }>();
+let multiDeviceSessions: MultiDeviceSessions | null = null;
+let multiDeviceSessionsIpc: MultiDeviceSessionsIpc | null = null;
+let sessionDeviceRegistryDetach: (() => void) | null = null;
+let sessionDeviceReconcileQueue: Promise<void> = Promise.resolve();
+let sessionDeviceRecords = new Map<string, { key: string; device: SessionDevice }>();
 let localWorkspaceDevice: WorkspaceDeviceStore | null = null;
 let localWorkspaceOperations: DeviceOperationStore | null = null;
 let localWorkspaceService: WorkspaceDeviceService | null = null;
 let localGitHubProvider: GitHubProviderService | null = null;
-let cockpitOperationStore: CockpitOperationStore | null = null;
 let remoteServerUrl: string | null = null;
 let selectedRemoteWebHost = false;
 
-async function setupCockpit(): Promise<void> {
+async function setupMultiDeviceSessions(): Promise<void> {
   if (!connectionRegistry) return;
   const connectionSnapshot = await connectionRegistry.refresh().catch(() =>
     connectionRegistry!.get()
   );
-  const catalog = new CockpitCatalogStore(
-    path.join(app.getPath('userData'), 'cockpit-catalog.json')
-  );
-  await catalog.init();
-  cockpitOperationStore = new CockpitOperationStore(
-    path.join(app.getPath('userData'), 'cockpit-operations.json')
-  );
-  await cockpitOperationStore.init();
-  const ports = await resolveCockpitPorts(connectionSnapshot);
-  if (services && localWorkspaceDevice) {
-    const migration = new CockpitMigration({
-      catalog,
-      deviceStore: localWorkspaceDevice,
-      sessions: services.store,
-      resolveWorkspaceSource: async (checkout) => {
-        const status = await services!.git.getStatus(checkout.path, true, {
-          runMode: checkout.runMode,
-          ...(checkout.wslDistro ? { wslDistro: checkout.wslDistro } : {})
-        });
-        if (!status.isRepo || !status.head) return null;
-        if (!status.detached && status.branch) {
-          return {
-            kind: 'branch' as const,
-            localRef: `refs/heads/${status.branch}`,
-            lastResolved: {
-              oid: status.head,
-              observedAt: new Date().toISOString()
-            }
-          };
-        }
-        return {
-          kind: 'revision' as const,
-          oid: status.head,
-          label: status.branch ?? undefined
-        };
-      }
-    });
-    const projects = await services.projects.list();
-    const sessionCount = (await services.store.list()).length
-      + (await services.store.listArchived()).length;
-    if (projects.length > 0 || sessionCount > 0) {
-      await migration.migrateLegacyDevice({
-        migrationKey: 'electron-local-projects-sessions-v1',
-        projects
-      });
-    }
-  }
-
-  const activeDeviceId = connectionSnapshot.machines.find(
-    (machine) => machine.id === connectionSnapshot.activeId
-  )?.deviceId;
-  const preferenceStore = new CockpitPreferenceStore(
-    path.join(app.getPath('userData'), 'cockpit-preferences.json')
-  );
-  await preferenceStore.init();
-  if (!preferenceStore.get().defaultPlacementDeviceId && activeDeviceId) {
-    await preferenceStore.update({ defaultPlacementDeviceId: activeDeviceId });
-  }
-  cockpitCoordinator = new CockpitCoordinator({
-    devices: ports,
-    preferenceStore,
-    catalog,
-    operationStore: cockpitOperationStore
-  });
-  cockpitIpc = new CockpitIpc({
-    coordinator: cockpitCoordinator,
+  const devices = await resolveSessionDevices(connectionSnapshot);
+  multiDeviceSessions = new MultiDeviceSessions({ devices });
+  multiDeviceSessionsIpc = new MultiDeviceSessionsIpc({
+    sessions: multiDeviceSessions,
     getWindows: () => BrowserWindow.getAllWindows()
   });
-  cockpitIpc.register();
-  cockpitRegistryDetach = connectionRegistry.onChange((snapshot) => {
-    cockpitReconcileQueue = cockpitReconcileQueue
+  multiDeviceSessionsIpc.register();
+  sessionDeviceRegistryDetach = connectionRegistry.onChange((snapshot) => {
+    sessionDeviceReconcileQueue = sessionDeviceReconcileQueue
       .catch(() => undefined)
       .then(async () => {
-        if (!cockpitCoordinator) return;
-        const nextPorts = await resolveCockpitPorts(snapshot);
-        await cockpitCoordinator.reconcileDevices(nextPorts);
+        if (!multiDeviceSessions) return;
+        const nextDevices = await resolveSessionDevices(snapshot);
+        await multiDeviceSessions.reconcileDevices(nextDevices);
       })
       .catch((error) => {
         console.warn('[desktop] failed to reconcile enabled Devices', error);
       });
   });
+  await multiDeviceSessions.refresh();
 }
 
-async function resolveCockpitPorts(snapshot: ConnectionSnapshot): Promise<DevicePort[]> {
+async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<SessionDevice[]> {
   if (!connectionRegistry) return [];
-  const nextRecords = new Map<string, { key: string; port: DevicePort }>();
+  const nextRecords = new Map<string, { key: string; device: SessionDevice }>();
   const localConnection = snapshot.machines.find((machine) => machine.id === 'local');
   const localServerUrl = process.env.SOLOE_LOCAL_SERVER_URL?.trim();
 
@@ -335,11 +273,12 @@ async function resolveCockpitPorts(snapshot: ConnectionSnapshot): Promise<Device
     const key = `local-server:${localServerUrl}`;
     nextRecords.set(localConnection.deviceId, {
       key,
-      port: cockpitPortRecords.get(localConnection.deviceId)?.key === key
-        ? cockpitPortRecords.get(localConnection.deviceId)!.port
-        : new RemoteDeviceClient({
+      device: sessionDeviceRecords.get(localConnection.deviceId)?.key === key
+        ? sessionDeviceRecords.get(localConnection.deviceId)!.device
+        : new RemoteSessionDevice({
             deviceId: localConnection.deviceId,
             endpoint: localServerUrl,
+            local: true,
             fetchImpl: (input, init) => net.fetch(String(input), init),
             ...(process.env.SOLOE_SERVER_TOKEN
               ? { token: process.env.SOLOE_SERVER_TOKEN }
@@ -348,7 +287,7 @@ async function resolveCockpitPorts(snapshot: ConnectionSnapshot): Promise<Device
     });
   } else if (services) {
     const localSessionStore = services.store;
-    const descriptor = await loadLegacyLocalDeviceDescriptor({
+    const descriptor = await loadLocalDeviceDescriptor({
       dataDirectory: app.getPath('userData'),
       name: hostname().trim() || 'This device',
       platform: hostPlatform(),
@@ -389,12 +328,13 @@ async function resolveCockpitPorts(snapshot: ConnectionSnapshot): Promise<Device
     const key = 'local-direct';
     nextRecords.set(descriptor.deviceId, {
       key,
-      port: cockpitPortRecords.get(descriptor.deviceId)?.key === key
-        ? cockpitPortRecords.get(descriptor.deviceId)!.port
-        : new LocalDeviceClient({
+      device: sessionDeviceRecords.get(descriptor.deviceId)?.key === key
+        ? sessionDeviceRecords.get(descriptor.deviceId)!.device
+        : new LocalSessionDevice({
             descriptor,
             sessions: services.store,
             projects: services.projects,
+            git: services.git,
             workspaceDevice: localWorkspaceDevice,
             ...(localWorkspaceService ? { workspaceService: localWorkspaceService } : {}),
             ...(localGitHubProvider ? { githubProvider: localGitHubProvider } : {}),
@@ -418,9 +358,9 @@ async function resolveCockpitPorts(snapshot: ConnectionSnapshot): Promise<Device
     const key = `remote:${machine.endpoint}`;
     nextRecords.set(machine.deviceId, {
       key,
-      port: cockpitPortRecords.get(machine.deviceId)?.key === key
-        ? cockpitPortRecords.get(machine.deviceId)!.port
-        : new RemoteDeviceClient({
+      device: sessionDeviceRecords.get(machine.deviceId)?.key === key
+        ? sessionDeviceRecords.get(machine.deviceId)!.device
+        : new RemoteSessionDevice({
             deviceId: machine.deviceId,
             endpoint: machine.endpoint,
             fetchImpl: (input, init) => net.fetch(String(input), init),
@@ -428,8 +368,8 @@ async function resolveCockpitPorts(snapshot: ConnectionSnapshot): Promise<Device
           })
     });
   }
-  cockpitPortRecords = nextRecords;
-  return [...nextRecords.values()].map(({ port }) => port);
+  sessionDeviceRecords = nextRecords;
+  return [...nextRecords.values()].map(({ device }) => device);
 }
 
 interface DiffIntent {
@@ -589,7 +529,10 @@ async function setupServices(): Promise<AppServices> {
     observer,
     bridgeInfo: getBridgeInfo,
     getBinaries,
-    getWindows: () => BrowserWindow.getAllWindows()
+    getWindows: () => BrowserWindow.getAllWindows(),
+    onInventoryChanged: () => {
+      void multiDeviceSessions?.refresh().catch(() => undefined);
+    }
   });
 
   const backgroundAgentExecution = new BackgroundAgentExecution();
@@ -701,7 +644,10 @@ async function setupServices(): Promise<AppServices> {
   });
   const projectsIpc = new ProjectsIpc({
     store: projects,
-    getWindows: () => BrowserWindow.getAllWindows()
+    getWindows: () => BrowserWindow.getAllWindows(),
+    onInventoryChanged: () => {
+      void multiDeviceSessions?.refresh().catch(() => undefined);
+    }
   });
   const notesIpc = new NotesIpc({
     store: notes,
@@ -709,7 +655,10 @@ async function setupServices(): Promise<AppServices> {
   });
   const gitIpc = new GitIpc({
     service: git,
-    getWindows: () => BrowserWindow.getAllWindows()
+    getWindows: () => BrowserWindow.getAllWindows(),
+    onWorkspaceInventoryChanged: () => {
+      void multiDeviceSessions?.refresh().catch(() => undefined);
+    }
   });
   const files = new WorktreeFileIndex({ getBinaries });
   const releaseFileIndexGitChanges = git.onChange((event) => {
@@ -1034,18 +983,17 @@ async function toggleFocusedDevTools(win: BrowserWindow): Promise<void> {
 async function cleanup(): Promise<void> {
   if (cleanedUp) return;
   cleanedUp = true;
-  cockpitRegistryDetach?.();
-  cockpitRegistryDetach = null;
-  cockpitIpc?.dispose();
-  cockpitIpc = null;
-  await cockpitCoordinator?.dispose();
-  cockpitCoordinator = null;
-  cockpitPortRecords.clear();
+  sessionDeviceRegistryDetach?.();
+  sessionDeviceRegistryDetach = null;
+  multiDeviceSessionsIpc?.dispose();
+  multiDeviceSessionsIpc = null;
+  await multiDeviceSessions?.dispose();
+  multiDeviceSessions = null;
+  sessionDeviceRecords.clear();
   localWorkspaceDevice = null;
   localWorkspaceOperations = null;
   localWorkspaceService = null;
   localGitHubProvider = null;
-  cockpitOperationStore = null;
   if (services) {
     services.sessionsIpc.dispose();
     services.terminalIpc.dispose();
@@ -1178,8 +1126,8 @@ if (ensureSingleInstance()) {
         console.error('[desktop] local backend is unavailable; connection switching remains available', error);
       }
     }
-    await setupCockpit().catch((error) => {
-      console.error('[desktop] multi-device cockpit is unavailable', error);
+    await setupMultiDeviceSessions().catch((error) => {
+      console.error('[desktop] multi-device Sessions are unavailable', error);
     });
     mainWindow = await createWindow();
     if (pendingDiffIntent) {

@@ -2,13 +2,16 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import {
   IpcChannels,
   type BrowserApi,
-  type CockpitApi,
   type ConnectionsApi,
   type VaultApi,
   type WindowApi
 } from '@shared/types/ipc.js';
-import type { CockpitEvent } from '@shared/types/cockpit.js';
 import type { ConnectionSnapshot } from '@shared/types/connections.js';
+import type {
+  CreateMultiDeviceSessionRequest,
+  MultiDeviceSessionState
+} from '@shared/types/multi-device-sessions.js';
+import type { DeviceEventEnvelope, SessionRef, TerminalRef } from '@shared/types/devices.js';
 import type { VaultChangeEvent } from '@shared/types/vault.js';
 import type {
   CloseDevToolsRequest,
@@ -67,58 +70,6 @@ const connectionsApi: ConnectionsApi = {
   onChange: (cb) => subscribe<ConnectionSnapshot>(IpcChannels.connections.change, cb)
 };
 
-const cockpitApi: CockpitApi = {
-  snapshot: () => ipcRenderer.invoke(IpcChannels.cockpit.snapshot),
-  refresh: () => ipcRenderer.invoke(IpcChannels.cockpit.refresh),
-  setDemand: (demand) => ipcRenderer.invoke(IpcChannels.cockpit.demand, demand),
-  setFilter: (deviceIds) => ipcRenderer.invoke(IpcChannels.cockpit.filter, deviceIds),
-  setDefaultPlacement: (deviceId) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.defaultPlacement, deviceId),
-  transactCatalog: (transaction) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.transactCatalog, transaction),
-  exportCatalog: () => ipcRenderer.invoke(IpcChannels.cockpit.exportCatalog),
-  importCatalog: (request) => ipcRenderer.invoke(IpcChannels.cockpit.importCatalog, request),
-  workspacePlan: (deviceId, intent) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.workspacePlan, deviceId, intent),
-  workspaceExecute: (command) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.workspaceExecute, command),
-  workspaceGetCommand: (deviceId, cockpitId, commandId) =>
-    ipcRenderer.invoke(
-      IpcChannels.cockpit.workspaceGetCommand,
-      deviceId,
-      cockpitId,
-      commandId
-    ),
-  placementPlan: (intent) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.placementPlan, intent),
-  placementExecute: (planId, acknowledgements) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.placementExecute, planId, acknowledgements),
-  alignmentPlan: (intent) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.alignmentPlan, intent),
-  alignmentExecute: (planId, acknowledgements) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.alignmentExecute, planId, acknowledgements),
-  publicationPlan: (intent) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.publicationPlan, intent),
-  publicationExecute: (planId, acknowledgements) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.publicationExecute, planId, acknowledgements),
-  sourceLifecyclePlan: (intent) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.sourceLifecyclePlan, intent),
-  sourceLifecycleExecute: (planId, acknowledgements) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.sourceLifecycleExecute, planId, acknowledgements),
-  operationGet: (operationId) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.operationGet, operationId),
-  operationListRecoverable: () =>
-    ipcRenderer.invoke(IpcChannels.cockpit.operationListRecoverable),
-  terminalInput: (request) => ipcRenderer.invoke(IpcChannels.cockpit.terminalInput, request),
-  terminalInputLease: (request) =>
-    ipcRenderer.invoke(IpcChannels.cockpit.terminalInputLease, request),
-  terminalResize: (request) => ipcRenderer.invoke(IpcChannels.cockpit.terminalResize, request),
-  terminalReplay: (request) => ipcRenderer.invoke(IpcChannels.cockpit.terminalReplay, request),
-  terminalStop: (request) => ipcRenderer.invoke(IpcChannels.cockpit.terminalStop, request),
-  onEvent: (cb: (event: CockpitEvent) => void) =>
-    subscribe<CockpitEvent>(IpcChannels.cockpit.event, cb)
-};
-
 function subscribe<T>(channel: string, cb: (event: T) => void): () => void {
   const handler = (_event: IpcRendererEvent, payload: T) => cb(payload);
   ipcRenderer.on(channel, handler);
@@ -138,7 +89,32 @@ api.window = windowApi;
 api.browser = browserApi;
 if (!tailscaleSession) api.vault = vaultApi;
 api.connections = connectionsApi;
-api.cockpit = cockpitApi;
+api.sessions.deviceState = () => ipcRenderer.invoke(IpcChannels.sessions.deviceState);
+api.sessions.refreshDevices = () => ipcRenderer.invoke(IpcChannels.sessions.refreshDevices);
+api.sessions.createOnDevice = (request: CreateMultiDeviceSessionRequest) =>
+  ipcRenderer.invoke(IpcChannels.sessions.createOnDevice, request);
+api.sessions.planCreateOnDevice = (request: CreateMultiDeviceSessionRequest) =>
+  ipcRenderer.invoke(IpcChannels.sessions.planCreateOnDevice, request);
+api.sessions.executeCreateOnDevice = (planId: string) =>
+  ipcRenderer.invoke(IpcChannels.sessions.executeCreateOnDevice, planId);
+api.sessions.startOnDevice = (ref: SessionRef) =>
+  ipcRenderer.invoke(IpcChannels.sessions.startOnDevice, ref);
+api.sessions.setDeviceTerminalDemand = (refs: TerminalRef[]) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalDemand, refs);
+api.sessions.deviceTerminalInput = (request: { ref: TerminalRef; data: string }) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInput, request);
+api.sessions.deviceTerminalInputLease = (request: { ref: TerminalRef; takeover?: boolean }) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInputLease, request);
+api.sessions.deviceTerminalResize = (request: { ref: TerminalRef; cols: number; rows: number }) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalResize, request);
+api.sessions.deviceTerminalReplay = (ref: TerminalRef, afterSeq?: number) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReplay, ref, afterSeq);
+api.sessions.deviceTerminalStop = (ref: TerminalRef) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalStop, ref);
+api.sessions.onDeviceStateChange = (cb: (state: MultiDeviceSessionState) => void) =>
+  subscribe<MultiDeviceSessionState>(IpcChannels.sessions.deviceStateChanged, cb);
+api.sessions.onDeviceEvent = (cb: (event: DeviceEventEnvelope) => void) =>
+  subscribe<DeviceEventEnvelope>(IpcChannels.sessions.deviceEvent, cb);
 contextBridge.exposeInMainWorld('soloe', api);
 
 ipcRenderer.on(

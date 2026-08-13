@@ -26,24 +26,13 @@ See the [security policy](../SECURITY.md) for private vulnerability reporting.
 ## Multi-Device isolation
 
 MCP and agent hooks are installed and authenticated on the Device that owns the
-agent CLI and Session. A Cockpit connection to several Devices does not create
+agent CLI and Session. A desktop connection to several Devices does not create
 one shared MCP bridge: each Device keeps its own bearer/cookie context, Vault,
 Git credentials, provider login, and integration files. Device authentication
-material is never persisted in the cockpit catalog or connection-registry
+material is never persisted in Device inventory or connection-registry
 records and is never forwarded to another Device.
 
 The desktop pins the durable Device ID learned through the authenticated
 descriptor. A later endpoint that reports a different identity is blocked
 before event or command routing. Every physical command names its target Device
-and cannot fall back to the current filter or default-placement preference.
-
-Catalog exports contain logical names, source refs, Device identifiers,
-Repository/Checkout associations, and Session references. They exclude bearer
-tokens, cookies, Vault secrets, provider credentials, terminal input, and
-source files, but can still reveal private development metadata and should be
-handled as sensitive files.
-
-Recovery reports copied from the UI are deliberately redacted to operation and
-plan IDs, kind/state/phase/progress, child Device/command IDs, and timestamps.
-Do not replace them with raw operation objects: those may contain paths,
-command arguments, provider details, or error output.
+and cannot fall back to a UI filter or globally selected Device.

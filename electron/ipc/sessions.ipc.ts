@@ -20,10 +20,12 @@ export interface SessionsIpcOptions {
   bridgeInfo?: () => { url: string; token: string } | null;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
   getWindows?: () => BrowserWindow[];
+  onInventoryChanged?: () => void;
 }
 
 export class SessionsIpc {
   private registered = false;
+  private inventoryChangeQueued = false;
 
   constructor(private readonly opts: SessionsIpcOptions) {}
 
@@ -34,6 +36,7 @@ export class SessionsIpc {
         win.webContents.send(IpcChannels.sessions.changed, session);
       }
     }
+    this.notifyInventoryChanged();
   }
 
   broadcastDelete(sessionId: SessionId): void {
@@ -43,6 +46,16 @@ export class SessionsIpc {
         win.webContents.send(IpcChannels.sessions.deleted, sessionId);
       }
     }
+    this.notifyInventoryChanged();
+  }
+
+  private notifyInventoryChanged(): void {
+    if (!this.opts.onInventoryChanged || this.inventoryChangeQueued) return;
+    this.inventoryChangeQueued = true;
+    queueMicrotask(() => {
+      this.inventoryChangeQueued = false;
+      this.opts.onInventoryChanged?.();
+    });
   }
 
   register(): void {

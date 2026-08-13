@@ -1,0 +1,331 @@
+import type { DeviceEventEnvelope, DeviceId, TerminalRef } from '@shared/types/devices.js';
+import type {
+  CreateMultiDeviceSessionRequest,
+  DeviceTerminalReplay,
+  MultiDeviceSessionCreationPlan,
+  MultiDeviceSessionState,
+  MultiDeviceSessionView
+} from '@shared/types/multi-device-sessions.js';
+import type { SessionRuntimeState } from '@shared/types/sessions.js';
+import type {
+  TerminalExitEvent,
+  TerminalInputLeaseEvent,
+  TerminalLocationEvent,
+  TerminalOutputEvent,
+  TerminalStatusEvent
+} from '@shared/types/terminal.js';
+import { ipc } from '../lib/ipc';
+import { sessions as localSessions } from './sessions.svelte';
+
+const EMPTY_STATE: MultiDeviceSessionState = {
+  revision: 0,
+  capturedAt: new Date(0).toISOString(),
+  devices: [],
+  projects: [],
+  unassigned: [],
+  archivedSessions: []
+};
+
+export class DeviceSessionsStore {
+  readonly supported = ipc.sessions.devicesSupported;
+  state = $state<MultiDeviceSessionState>(structuredClone(EMPTY_STATE));
+  loaded = $state(false);
+  refreshing = $state(false);
+  selectedSessionKey = $state<string | null>(null);
+  inputLeaseEvents = $state<Record<string, TerminalInputLeaseEvent>>({});
+  private detachState: (() => void) | null = null;
+  private detachDeviceEvent: (() => void) | null = null;
+  private loadRequest: Promise<void> | null = null;
+  private readonly terminalOutputListeners = new Map<
+    string,
+    { ref: TerminalRef; listeners: Set<(event: TerminalOutputEvent) => void> }
+  >();
+  private demandSync: Promise<void> = Promise.resolve();
+
+  get sessions(): MultiDeviceSessionView[] {
+    return [
+      ...this.state.projects.flatMap((project) =>
+        project.workspaces.flatMap((workspace) => workspace.sessions)
+      ),
+      ...this.state.unassigned
+    ];
+  }
+
+  get selectedProjection(): MultiDeviceSessionView | null {
+    if (!this.selectedSessionKey) return null;
+    return this.sessions.find((session) => session.key === this.selectedSessionKey) ?? null;
+  }
+
+  device(deviceId: DeviceId) {
+    return this.state.devices.find((device) => device.deviceId === deviceId) ?? null;
+  }
+
+  selectSession(key: string): void {
+    const projection = this.sessions.find((candidate) => candidate.key === key);
+    if (!projection?.available) return;
+    const owner = this.device(projection.ref.deviceId);
+    if (!owner?.available) return;
+    if (owner.local) {
+      this.selectedSessionKey = null;
+      localSessions.select(projection.ref.sessionId);
+      return;
+    }
+    this.selectedSessionKey = key;
+  }
+
+  async openSession(key: string): Promise<void> {
+    const projection = this.sessions.find((candidate) => candidate.key === key);
+    if (!projection?.available) return;
+    const owner = this.device(projection.ref.deviceId);
+    if (!owner?.available) return;
+    if (owner.local) {
+      this.selectSession(key);
+      return;
+    }
+    if (!projection.runtime?.terminalId || projection.runtime.status !== 'running') {
+      await ipc.sessions.startOnDevice(projection.ref);
+      await this.refresh();
+    }
+    const refreshed = this.sessions.find((candidate) => candidate.key === key);
+    if (refreshed?.available && refreshed.runtime?.terminalId) {
+      this.selectedSessionKey = key;
+    }
+  }
+
+  clearSelectedSession(): void {
+    this.selectedSessionKey = null;
+  }
+
+  load(): Promise<void> {
+    if (!this.supported) {
+      this.loaded = true;
+      return Promise.resolve();
+    }
+    if (this.loadRequest) return this.loadRequest;
+    this.loadRequest = ipc.sessions.deviceState()
+      .then((state) => {
+        this.state = state;
+        this.loaded = true;
+        this.attach();
+        void this.refresh().catch(() => undefined);
+      })
+      .finally(() => {
+        this.loadRequest = null;
+      });
+    return this.loadRequest;
+  }
+
+  async refresh(): Promise<void> {
+    if (!this.supported || this.refreshing) return;
+    this.refreshing = true;
+    try {
+      this.state = await ipc.sessions.refreshDevices();
+      this.clearUnavailableSelection();
+    } finally {
+      this.refreshing = false;
+    }
+  }
+
+  async create(request: CreateMultiDeviceSessionRequest): Promise<MultiDeviceSessionView> {
+    const created = await ipc.sessions.createOnDevice(structuredClone(request));
+    await this.refresh();
+    this.selectSession(created.key);
+    return created;
+  }
+
+  planCreate(
+    request: CreateMultiDeviceSessionRequest
+  ): Promise<MultiDeviceSessionCreationPlan> {
+    return ipc.sessions.planCreateOnDevice(structuredClone(request));
+  }
+
+  async executeCreate(planId: string): Promise<MultiDeviceSessionView> {
+    const created = await ipc.sessions.executeCreateOnDevice(planId);
+    await this.refresh();
+    this.selectSession(created.key);
+    return created;
+  }
+
+  acquireTerminalOutput(
+    terminalRef: TerminalRef,
+    listener: (event: TerminalOutputEvent) => void
+  ): { ready: Promise<void>; dispose(): void } {
+    const ref = structuredClone(terminalRef);
+    const key = terminalRefKey(ref);
+    const entry = this.terminalOutputListeners.get(key) ?? {
+      ref,
+      listeners: new Set<(event: TerminalOutputEvent) => void>()
+    };
+    entry.listeners.add(listener);
+    this.terminalOutputListeners.set(key, entry);
+    const ready = this.syncTerminalDemand();
+    let active = true;
+    return {
+      ready,
+      dispose: () => {
+        if (!active) return;
+        active = false;
+        const current = this.terminalOutputListeners.get(key);
+        current?.listeners.delete(listener);
+        if (current?.listeners.size === 0) this.terminalOutputListeners.delete(key);
+        void this.syncTerminalDemand().catch(() => undefined);
+      }
+    };
+  }
+
+  terminalInput(terminalRef: TerminalRef, data: string): Promise<void> {
+    return ipc.sessions.deviceTerminalInput(terminalRef, data).then(() => undefined);
+  }
+
+  async takeTerminalInputControl(terminalRef: TerminalRef): Promise<void> {
+    const lease = await ipc.sessions.deviceTerminalInputLease(terminalRef, true);
+    this.inputLeaseEvents = {
+      ...this.inputLeaseEvents,
+      [terminalRefKey(terminalRef)]: {
+        type: 'taken-over',
+        terminalId: terminalRef.terminalId,
+        lease,
+        observedAt: new Date().toISOString()
+      }
+    };
+  }
+
+  terminalInputLeaseEvent(terminalRef: TerminalRef): TerminalInputLeaseEvent | null {
+    return this.inputLeaseEvents[terminalRefKey(terminalRef)] ?? null;
+  }
+
+  terminalResize(terminalRef: TerminalRef, cols: number, rows: number): Promise<void> {
+    return ipc.sessions.deviceTerminalResize(terminalRef, cols, rows).then(() => undefined);
+  }
+
+  terminalReplay(terminalRef: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {
+    return ipc.sessions.deviceTerminalReplay(terminalRef, afterSeq);
+  }
+
+  terminalStop(terminalRef: TerminalRef): Promise<void> {
+    return ipc.sessions.deviceTerminalStop(terminalRef).then(() => undefined);
+  }
+
+  detach(): void {
+    this.detachState?.();
+    this.detachState = null;
+    this.detachDeviceEvent?.();
+    this.detachDeviceEvent = null;
+  }
+
+  private syncTerminalDemand(): Promise<void> {
+    const refs = [...this.terminalOutputListeners.values()].map(({ ref }) => ref);
+    this.demandSync = this.demandSync
+      .catch(() => undefined)
+      .then(() => ipc.sessions.setDeviceTerminalDemand(refs).then(() => undefined));
+    return this.demandSync;
+  }
+
+  private attach(): void {
+    this.detach();
+    this.detachState = ipc.sessions.onDeviceStateChange((state) => {
+      if (state.revision < this.state.revision) return;
+      this.state = state;
+      this.clearUnavailableSelection();
+    });
+    this.detachDeviceEvent = ipc.sessions.onDeviceEvent((event) => this.applyDeviceEvent(event));
+  }
+
+  private applyDeviceEvent(envelope: DeviceEventEnvelope): void {
+    if (envelope.event === 'output') {
+      const event = terminalEvent<TerminalOutputEvent>(envelope.payload);
+      if (!event) return;
+      const entry = this.terminalOutputListeners.get(terminalRefKey({
+        deviceId: envelope.deviceId,
+        terminalId: event.terminalId
+      }));
+      if (!entry) return;
+      for (const listener of entry.listeners) listener(event);
+      return;
+    }
+    if (envelope.event === 'inputLease') {
+      const event = terminalEvent<TerminalInputLeaseEvent>(envelope.payload);
+      if (!event) return;
+      this.inputLeaseEvents = {
+        ...this.inputLeaseEvents,
+        [terminalRefKey({ deviceId: envelope.deviceId, terminalId: event.terminalId })]: event
+      };
+      return;
+    }
+    if (envelope.event === 'status') {
+      const event = terminalStatusEvent(envelope.payload);
+      if (event) this.patchRuntime(envelope.deviceId, event.sessionId, event);
+      return;
+    }
+    if (envelope.event === 'exit') {
+      const event = terminalEvent<TerminalExitEvent>(envelope.payload);
+      if (!event) return;
+      this.patchRuntime(envelope.deviceId, event.sessionId, {
+        sessionId: event.sessionId,
+        terminalId: event.terminalId,
+        status: 'exited',
+        exitCode: event.exitCode,
+        signal: event.signal
+      });
+      return;
+    }
+    if (envelope.event === 'location') {
+      const event = terminalEvent<TerminalLocationEvent>(envelope.payload);
+      if (!event) return;
+      const current = this.sessions.find((session) =>
+        session.ref.deviceId === envelope.deviceId
+        && session.ref.sessionId === event.sessionId
+      )?.runtime;
+      if (current) this.patchRuntime(envelope.deviceId, event.sessionId, { ...current, cwd: event.cwd });
+    }
+  }
+
+  private patchRuntime(deviceId: DeviceId, sessionId: string, runtime: SessionRuntimeState): void {
+    this.state = {
+      ...this.state,
+      revision: this.state.revision + 1,
+      projects: this.state.projects.map((project) => ({
+        ...project,
+        workspaces: project.workspaces.map((workspace) => ({
+          ...workspace,
+          sessions: workspace.sessions.map((projection) =>
+            projection.ref.deviceId === deviceId && projection.ref.sessionId === sessionId
+              ? { ...projection, runtime: structuredClone(runtime) }
+              : projection
+          )
+        }))
+      })),
+      unassigned: this.state.unassigned.map((projection) =>
+        projection.ref.deviceId === deviceId && projection.ref.sessionId === sessionId
+          ? { ...projection, runtime: structuredClone(runtime) }
+          : projection
+      )
+    };
+  }
+
+  private clearUnavailableSelection(): void {
+    if (!this.selectedSessionKey) return;
+    const selected = this.sessions.find((session) => session.key === this.selectedSessionKey);
+    if (!selected?.available) this.selectedSessionKey = null;
+  }
+}
+
+function terminalRefKey(ref: TerminalRef): string {
+  return `${ref.deviceId}/${encodeURIComponent(ref.terminalId)}`;
+}
+
+function terminalEvent<T extends { terminalId: string }>(value: unknown): T | null {
+  if (!value || typeof value !== 'object') return null;
+  const terminalId = (value as { terminalId?: unknown }).terminalId;
+  return typeof terminalId === 'string' && terminalId ? value as T : null;
+}
+
+function terminalStatusEvent(value: unknown): TerminalStatusEvent | null {
+  if (!value || typeof value !== 'object') return null;
+  const event = value as { sessionId?: unknown; terminalId?: unknown };
+  if (typeof event.sessionId !== 'string' || !event.sessionId) return null;
+  if (event.terminalId !== null && typeof event.terminalId !== 'string') return null;
+  return value as TerminalStatusEvent;
+}
+
+export const deviceSessions = new DeviceSessionsStore();

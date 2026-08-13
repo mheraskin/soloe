@@ -11,13 +11,13 @@ import {
   type DeviceId
 } from '@shared/types/devices.js';
 
-interface PersistedLegacyLocalIdentity {
+interface PersistedLocalDeviceIdentity {
   version: 1;
   deviceId: DeviceId;
   createdAt: string;
 }
 
-export async function loadLegacyLocalDeviceDescriptor(options: {
+export async function loadLocalDeviceDescriptor(options: {
   dataDirectory: string;
   name: string;
   platform: SupportedHostPlatform;
@@ -25,7 +25,7 @@ export async function loadLegacyLocalDeviceDescriptor(options: {
 }): Promise<DeviceDescriptor> {
   const identity = await loadOrCreateIdentity(options.dataDirectory);
   const features = [
-    'cockpit.local-adapter.v1',
+    'sessions.multi-device.v1',
     'device.snapshot.v1',
     'events.envelope.v1',
     'runtime.sessions.v1',
@@ -56,7 +56,7 @@ export async function loadLegacyLocalDeviceDescriptor(options: {
   });
 }
 
-async function loadOrCreateIdentity(dataDirectory: string): Promise<PersistedLegacyLocalIdentity> {
+async function loadOrCreateIdentity(dataDirectory: string): Promise<PersistedLocalDeviceIdentity> {
   await fs.mkdir(dataDirectory, { recursive: true });
   const file = path.join(dataDirectory, 'device-identity.json');
   try {
@@ -64,7 +64,7 @@ async function loadOrCreateIdentity(dataDirectory: string): Promise<PersistedLeg
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  const identity: PersistedLegacyLocalIdentity = {
+  const identity: PersistedLocalDeviceIdentity = {
     version: 1,
     deviceId: randomUUID(),
     createdAt: new Date().toISOString()
@@ -82,9 +82,9 @@ async function loadOrCreateIdentity(dataDirectory: string): Promise<PersistedLeg
   }
 }
 
-function parseIdentity(value: unknown): PersistedLegacyLocalIdentity {
+function parseIdentity(value: unknown): PersistedLocalDeviceIdentity {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Legacy local Device identity is corrupt.');
+    throw new Error('Local Device identity is corrupt.');
   }
   const record = value as Record<string, unknown>;
   if (
@@ -93,7 +93,7 @@ function parseIdentity(value: unknown): PersistedLegacyLocalIdentity {
     || typeof record['createdAt'] !== 'string'
     || !Number.isFinite(Date.parse(record['createdAt']))
   ) {
-    throw new Error('Legacy local Device identity is corrupt.');
+    throw new Error('Local Device identity is corrupt.');
   }
   return {
     version: 1,

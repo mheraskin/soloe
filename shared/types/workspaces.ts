@@ -1,18 +1,8 @@
-import type {
-  CheckoutRef,
-  DeviceId,
-  RepositoryRef,
-  SessionRef
-} from './devices.js';
+import type { DeviceId } from './devices.js';
 import type {
   RunMode,
-  Session,
-  SessionColor,
-  SessionDraft,
-  SessionLaunch
+  SessionDraft
 } from './sessions.js';
-import type { CockpitOperation, CockpitPlan } from './commands.js';
-import type { TerminalRef } from './devices.js';
 import type { DeviceOperationReceipt } from './commands.js';
 import type {
   GitCheckoutLossEvidence,
@@ -20,8 +10,6 @@ import type {
   GitStatus
 } from './git.js';
 
-export type LogicalProjectId = string;
-export type WorkspaceId = string;
 export type WorkspaceLocationId = string;
 
 export type RepositoryIdentity =
@@ -35,25 +23,6 @@ export type RepositoryIdentity =
       provider?: 'github';
       providerRepositoryId?: string;
     };
-
-export interface LogicalProject {
-  id: LogicalProjectId;
-  version: number;
-  name: string;
-  canonicalRepository: RepositoryIdentity | null;
-  repositoryAliases: RepositoryIdentity[];
-  order: number;
-  createdAt: string;
-  updatedAt: string;
-  archivedAt?: string;
-}
-
-export interface ProjectPresence {
-  projectId: LogicalProjectId;
-  repository: RepositoryRef;
-  adoptedFromEvidence: RepositoryIdentity | null;
-  linkedAt: string;
-}
 
 export interface BranchWorkspaceSource {
   kind: 'branch';
@@ -92,35 +61,6 @@ export interface ResolvedSourceEvidence {
   oid: string;
   observedAt: string;
   repository?: RepositoryIdentity;
-}
-
-export interface Workspace {
-  id: WorkspaceId;
-  projectId: LogicalProjectId;
-  version: number;
-  name: string;
-  source: WorkspaceSource;
-  order: number;
-  createdAt: string;
-  updatedAt: string;
-  archivedAt?: string;
-}
-
-export interface WorkspaceLocation {
-  id: WorkspaceLocationId;
-  workspaceId: WorkspaceId;
-  checkout: CheckoutRef;
-  desiredRole: 'ordinary';
-  state: 'proposed' | 'preparing' | 'available' | 'drifted' | 'unavailable';
-  version: number;
-  linkedAt: string;
-}
-
-export interface SessionMembership {
-  sessionRef: SessionRef;
-  workspaceId: WorkspaceId;
-  order: number;
-  linkedAt: string;
 }
 
 export type SessionSource =
@@ -179,7 +119,7 @@ export interface DeviceSessionSourceBinding {
 }
 
 export interface DevicePlacedSessionRequest {
-  /** Preallocated by the Cockpit so an ambiguous retry cannot duplicate a Session. */
+  /** Preallocated by the client so an ambiguous retry cannot duplicate a Session. */
   sessionId: string;
   draft: SessionDraft;
 }
@@ -189,126 +129,6 @@ export interface DeviceSessionSourceUpdateRequest {
   expectedVersion: number;
   source: SessionSource;
 }
-
-export interface SessionPlacementDraft {
-  name: string;
-  launch: SessionLaunch;
-  tags?: string[];
-  pinned?: boolean;
-  color?: SessionColor;
-}
-
-export interface CockpitPlaceSessionIntent {
-  kind: 'place-session';
-  workspaceId: WorkspaceId;
-  targetDeviceId: DeviceId;
-  sourceMode: 'shared' | 'isolated';
-  session: SessionPlacementDraft;
-  successorOf?: SessionRef;
-}
-
-export interface CockpitPlaceSessionPreview {
-  action: 'reuse-location' | 'prepare-location' | 'prepare-isolated' | 'clone-presence';
-  deviceName: string;
-  sessionId: string;
-  locationId: WorkspaceLocationId | null;
-  checkoutId: string;
-  targetPath: string;
-  runMode: RunMode;
-  wslDistro?: string;
-  source: WorkspaceSource;
-}
-
-export type CockpitPlaceSessionPlan = CockpitPlan<
-  CockpitPlaceSessionIntent,
-  CockpitPlaceSessionPreview
-> & {
-  kind: 'place-session';
-  catalogRevision: number;
-  devicePlan?: DeviceWorkspacePlan;
-};
-
-export interface CockpitPlaceSessionResult {
-  sessionRef: SessionRef;
-  terminalRef: TerminalRef | null;
-  session: Session;
-  checkout: CheckoutRef;
-  locationId: WorkspaceLocationId | null;
-  started: boolean;
-  startError?: string;
-}
-
-export type CockpitPlaceSessionOperation = CockpitOperation<CockpitPlaceSessionResult>;
-
-export interface CockpitAlignWorkspaceIntent {
-  kind: 'align-workspace';
-  workspaceId: WorkspaceId;
-  sourceDeviceId: DeviceId;
-  targetDeviceId: DeviceId;
-  remote?: string;
-}
-
-export interface CockpitAlignWorkspacePreview {
-  workspaceName: string;
-  branchRef: string;
-  remote: string;
-  sourceDeviceName: string;
-  targetDeviceName: string;
-  sourceOid: string;
-  targetOid: string;
-  remoteOid: string | null;
-}
-
-export type CockpitAlignWorkspacePlan = CockpitPlan<
-  CockpitAlignWorkspaceIntent,
-  CockpitAlignWorkspacePreview
-> & {
-  kind: 'align-workspace';
-  catalogRevision: number;
-  sourceDevicePlan: DeviceWorkspacePlan;
-  targetDevicePlan: DeviceWorkspacePlan;
-};
-
-export interface CockpitAlignWorkspaceResult {
-  sourceReceipt: DeviceOperationReceipt;
-  targetReceipt: DeviceOperationReceipt;
-}
-
-export type CockpitAlignWorkspaceOperation = CockpitOperation<CockpitAlignWorkspaceResult>;
-
-export interface CockpitSessionSourceLifecycleIntent {
-  kind: 'promote-isolated-source' | 'cleanup-isolated-source';
-  sessionRef: SessionRef;
-}
-
-export interface CockpitSessionSourceLifecyclePreview {
-  deviceName: string;
-  sessionName: string;
-  checkoutId: string;
-  checkoutPath: string;
-  workspaceId: WorkspaceId | null;
-  locationId: WorkspaceLocationId | null;
-  sessionVersion: number;
-}
-
-export type CockpitSessionSourceLifecyclePlan = CockpitPlan<
-  CockpitSessionSourceLifecycleIntent,
-  CockpitSessionSourceLifecyclePreview
-> & {
-  kind: 'session-source-lifecycle';
-  catalogRevision: number;
-  devicePlan: DeviceWorkspacePlan;
-};
-
-export interface CockpitSessionSourceLifecycleResult {
-  deviceReceipt: DeviceOperationReceipt;
-  locationId: WorkspaceLocationId | null;
-  session: Session | null;
-}
-
-export type CockpitSessionSourceLifecycleOperation = CockpitOperation<
-  CockpitSessionSourceLifecycleResult
->;
 
 export interface DeviceWorkspaceLegacyMigrationRequest {
   migrationKey: string;
@@ -541,120 +361,3 @@ export type DeviceWorkspaceOperationReceipt = DeviceOperationReceipt<
   | PushedWorkspaceBranchResult
   | FastForwardedWorkspaceBranchResult
 >;
-
-export interface CockpitCatalogSnapshot {
-  schemaVersion: 1;
-  revision: number;
-  projects: LogicalProject[];
-  projectPresences: ProjectPresence[];
-  workspaces: Workspace[];
-  workspaceLocations: WorkspaceLocation[];
-  sessionMemberships: SessionMembership[];
-  migrations: CatalogMigrationRecord[];
-}
-
-export interface CatalogMigrationRecord {
-  key: string;
-  completedAt: string;
-  projectMap: Record<string, LogicalProjectId>;
-  workspaceMap: Record<string, WorkspaceId>;
-}
-
-export type CatalogMutation =
-  | {
-      type: 'project.create';
-      project: {
-        id: LogicalProjectId;
-        name: string;
-        canonicalRepository: RepositoryIdentity | null;
-        repositoryAliases?: RepositoryIdentity[];
-        order?: number;
-      };
-    }
-  | {
-      type: 'project.rename';
-      projectId: LogicalProjectId;
-      expectedVersion: number;
-      name: string;
-    }
-  | {
-      type: 'project.archive';
-      projectId: LogicalProjectId;
-      expectedVersion: number;
-      archived: boolean;
-    }
-  | {
-      type: 'project.repository';
-      projectId: LogicalProjectId;
-      expectedVersion: number;
-      canonicalRepository: RepositoryIdentity;
-      repositoryAliases?: RepositoryIdentity[];
-    }
-  | {
-      type: 'presence.link';
-      projectId: LogicalProjectId;
-      repository: RepositoryRef;
-      adoptedFromEvidence: RepositoryIdentity | null;
-    }
-  | {
-      type: 'workspace.create';
-      workspace: {
-        id: WorkspaceId;
-        projectId: LogicalProjectId;
-        name: string;
-        source: WorkspaceSource;
-        order?: number;
-      };
-    }
-  | {
-      type: 'workspace.update';
-      workspaceId: WorkspaceId;
-      expectedVersion: number;
-      name?: string;
-      source?: WorkspaceSource;
-      archived?: boolean;
-    }
-  | {
-      type: 'location.link';
-      location: {
-        id: WorkspaceLocationId;
-        workspaceId: WorkspaceId;
-        checkout: CheckoutRef;
-        state?: WorkspaceLocation['state'];
-      };
-    }
-  | {
-      type: 'location.update';
-      locationId: WorkspaceLocationId;
-      expectedVersion: number;
-      state: WorkspaceLocation['state'];
-    }
-  | {
-      type: 'session.regroup';
-      sessionRef: SessionRef;
-      workspaceId: WorkspaceId;
-      order?: number;
-    }
-  | {
-      type: 'session.unassign';
-      sessionRef: SessionRef;
-    }
-  | {
-      type: 'session.reorder';
-      workspaceId: WorkspaceId;
-      sessionRefs: SessionRef[];
-    }
-  | {
-      type: 'migration.record';
-      migration: CatalogMigrationRecord;
-    };
-
-export interface CatalogTransaction {
-  expectedRevision: number;
-  mutations: CatalogMutation[];
-}
-
-export interface CatalogTransactionResult {
-  snapshot: CockpitCatalogSnapshot;
-  changedEntityRefs: string[];
-}

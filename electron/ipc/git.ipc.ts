@@ -29,6 +29,7 @@ import { ipcInvoke } from './result.js';
 export interface GitIpcOptions {
   service: GitService;
   getWindows: () => BrowserWindow[];
+  onWorkspaceInventoryChanged?: () => void;
 }
 
 interface ObservationDemandState {
@@ -158,16 +159,18 @@ export class GitIpc {
       }))
     );
     ipcMain.handle(IpcChannels.git.checkout, (_e, request: GitCheckoutRequest) =>
-      ipcInvoke(() =>
-        this.opts.service.checkout(request.repoPath, request.ref, request.force, {
+      ipcInvoke(async () => {
+        const result = await this.opts.service.checkout(request.repoPath, request.ref, request.force, {
           runMode: request.runMode,
           wslDistro: request.wslDistro
-        })
-      )
+        });
+        this.opts.onWorkspaceInventoryChanged?.();
+        return result;
+      })
     );
     ipcMain.handle(IpcChannels.git.createWorktree, (_e, request: GitCreateWorktreeRequest) =>
-      ipcInvoke(() =>
-        this.opts.service.createWorktree(
+      ipcInvoke(async () => {
+        const result = await this.opts.service.createWorktree(
           request.repoPath,
           request.path,
           request.branch,
@@ -176,8 +179,10 @@ export class GitIpc {
             runMode: request.runMode,
             wslDistro: request.wslDistro
           }
-        )
-      )
+        );
+        this.opts.onWorkspaceInventoryChanged?.();
+        return result;
+      })
     );
     ipcMain.handle(IpcChannels.git.workingChanges, (_e, request: WorkingChangesRequest) =>
       ipcInvoke(() =>

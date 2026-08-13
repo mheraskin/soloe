@@ -14,6 +14,7 @@ import { ipcInvoke } from './result.js';
 export interface ProjectsIpcOptions {
   store: ProjectStore;
   getWindows: () => BrowserWindow[];
+  onInventoryChanged?: () => void;
 }
 
 export class ProjectsIpc {
@@ -83,6 +84,7 @@ export class ProjectsIpc {
       for (const win of this.opts.getWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IpcChannels.projects.change, projects);
       }
+      this.opts.onInventoryChanged?.();
     });
   }
 
