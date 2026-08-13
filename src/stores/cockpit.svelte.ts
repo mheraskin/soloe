@@ -74,7 +74,10 @@ export class CockpitStore {
   }
 
   selectSession(key: string): void {
-    if (!this.snapshot.sessions.some((session) => session.key === key)) return;
+    const session = this.snapshot.sessions.find((candidate) => candidate.key === key);
+    if (!session) return;
+    const owner = this.device(session.ref.deviceId);
+    if (!owner || owner.state !== 'ready') return;
     this.selectedSessionKey = key;
   }
 
@@ -121,6 +124,7 @@ export class CockpitStore {
     this.refreshing = true;
     try {
       this.snapshot = await ipc.cockpit.refresh();
+      this.clearUnavailableSelection();
     } finally {
       this.refreshing = false;
     }
@@ -342,10 +346,7 @@ export class CockpitStore {
     if (event.type === 'snapshot') {
       if (event.snapshot.revision >= this.snapshot.revision) {
         this.snapshot = event.snapshot;
-        if (
-          this.selectedSessionKey
-          && !event.snapshot.sessions.some((session) => session.key === this.selectedSessionKey)
-        ) this.selectedSessionKey = null;
+        this.clearUnavailableSelection();
       }
       return;
     }
@@ -359,6 +360,7 @@ export class CockpitStore {
           (device) => device.deviceId
         )
       };
+      this.clearUnavailableSelection();
       return;
     }
     if (event.type === 'session.changed') {
@@ -448,6 +450,15 @@ export class CockpitStore {
         };
       })
     };
+  }
+
+  private clearUnavailableSelection(): void {
+    if (!this.selectedSessionKey) return;
+    const selected = this.snapshot.sessions.find(
+      (session) => session.key === this.selectedSessionKey
+    );
+    const owner = selected ? this.device(selected.ref.deviceId) : null;
+    if (!selected || owner?.state !== 'ready') this.selectedSessionKey = null;
   }
 }
 

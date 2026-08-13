@@ -20,6 +20,7 @@ const CONNECTED: TailscaleDiscoveryResult = {
   tailnet: 'example.com',
   selfDnsName: 'client.tail1234.ts.net',
   message: null,
+  sharing: { state: 'ready', message: null, setupUrl: null },
   devices: [
     {
       name: 'Client',
@@ -71,9 +72,9 @@ describe('ConnectionRegistry', () => {
     expect(snapshot.machines).toEqual([
       expect.objectContaining({ id: 'local', name: 'Test Mac', active: true }),
       expect.objectContaining({
-        id: 'tailscale:alpha.tail1234.ts.net',
+        id: 'tailscale:alpha.tail1234.ts.net:4318',
         name: 'Alpha',
-        endpoint: 'https://alpha.tail1234.ts.net',
+        endpoint: 'https://alpha.tail1234.ts.net:4318',
         source: 'discovered',
         status: 'available'
       })
@@ -101,7 +102,7 @@ describe('ConnectionRegistry', () => {
     }));
   });
 
-  it('persists explicit enablement separately from Device discovery', async () => {
+  it('automatically connects compatible discovered Devices and persists them', async () => {
     const registry = createRegistry({
       probe: async () => true,
       discover: async () => CONNECTED,
@@ -112,9 +113,8 @@ describe('ConnectionRegistry', () => {
     });
     const discovered = await registry.refresh();
     const id = deviceConnectionId(DEVICE_A);
-    expect(discovered.machines.find((machine) => machine.id === id)?.enabled).toBe(false);
+    expect(discovered.machines.find((machine) => machine.id === id)?.enabled).toBe(true);
 
-    await registry.setEnabled(id, true);
     const restarted = createRegistry();
     await restarted.init();
 
@@ -124,14 +124,78 @@ describe('ConnectionRegistry', () => {
     });
   });
 
+  it('does not connect a discovered Device that requires an update', async () => {
+    const registry = createRegistry({
+      probe: async () => true,
+      discover: async () => CONNECTED,
+      describe: async () => ({
+        descriptor: descriptor(DEVICE_A, 'Old Alpha'),
+        compatibility: { status: 'device-upgrade-required', negotiatedVersion: null }
+      })
+    });
+
+    const snapshot = await registry.refresh();
+
+    expect(snapshot.machines).toContainEqual(expect.objectContaining({
+      id: deviceConnectionId(DEVICE_A),
+      enabled: false,
+      compatibility: expect.objectContaining({ status: 'device-upgrade-required' })
+    }));
+  });
+
+  it('reports a Device update instead of exposing missing multi-Device capabilities', async () => {
+    const old = descriptor(DEVICE_A, 'Old Alpha');
+    old.capabilities.features = ['device.describe.v1'];
+    const registry = createRegistry({
+      probe: async () => true,
+      discover: async () => CONNECTED,
+      describe: async () => ({
+        descriptor: old,
+        compatibility: { status: 'compatible', negotiatedVersion: 1 }
+      })
+    });
+
+    const snapshot = await registry.refresh();
+
+    expect(snapshot.machines).toContainEqual(expect.objectContaining({
+      id: deviceConnectionId(DEVICE_A),
+      enabled: false,
+      updateRequired: true
+    }));
+  });
+
+  it('adopts a new backend-owned identity after a discovered machine is reset', async () => {
+    let advertisedDeviceId = DEVICE_A;
+    const registry = createRegistry({
+      probe: async () => true,
+      discover: async () => CONNECTED,
+      describe: async () => ({
+        descriptor: descriptor(advertisedDeviceId, 'Authenticated Alpha'),
+        compatibility: { status: 'compatible', negotiatedVersion: 1 }
+      })
+    });
+    await registry.refresh();
+
+    advertisedDeviceId = DEVICE_B;
+    const reset = await registry.refresh();
+
+    expect(reset.machines).toContainEqual(expect.objectContaining({
+      id: deviceConnectionId(DEVICE_B),
+      deviceId: DEVICE_B,
+      enabled: true,
+      trust: 'pinned'
+    }));
+    expect(reset.machines.some((machine) => machine.deviceId === DEVICE_A)).toBe(false);
+  });
+
   it('persists a selected discovered machine and restores it on restart', async () => {
     const registry = createRegistry({
       discover: async () => CONNECTED,
       probe: async () => true
     });
     await registry.refresh();
-    await expect(registry.select('tailscale:alpha.tail1234.ts.net')).resolves.toEqual({
-      activeId: 'tailscale:alpha.tail1234.ts.net',
+    await expect(registry.select('tailscale:alpha.tail1234.ts.net:4318')).resolves.toEqual({
+      activeId: 'tailscale:alpha.tail1234.ts.net:4318',
       relaunching: true
     });
 
@@ -141,8 +205,8 @@ describe('ConnectionRegistry', () => {
     });
     await restored.init();
 
-    expect(restored.activeEndpoint()).toBe('https://alpha.tail1234.ts.net');
-    expect((await restored.get()).activeId).toBe('tailscale:alpha.tail1234.ts.net');
+    expect(restored.activeEndpoint()).toBe('https://alpha.tail1234.ts.net:4318');
+    expect((await restored.get()).activeId).toBe('tailscale:alpha.tail1234.ts.net:4318');
   });
 
   it('keeps manually added HTTPS roots even when they are temporarily unavailable', async () => {
@@ -311,7 +375,12 @@ describe('ConnectionRegistry', () => {
         tailnet: null,
         selfDnsName: null,
         message: 'not installed',
-        devices: []
+        devices: [],
+        sharing: {
+          state: 'unavailable',
+          message: 'Install Tailscale to connect Devices.',
+          setupUrl: 'https://tailscale.com/download'
+        }
       })),
       probe: overrides.probe ?? (async () => false),
       ...(overrides.describe ? { describe: overrides.describe } : {}),
@@ -330,7 +399,16 @@ describe('ConnectionRegistry', () => {
       protocol: { current: 1, minimum: 1, maximum: 1 },
       capabilities: {
         revision: 'capability-revision-1',
-        features: ['device.describe.v1']
+        features: [
+          'device.describe.v1',
+          'device.snapshot.v1',
+          'events.envelope.v1',
+          'runtime.sessions.v1',
+          'runtime.terminal-input-lease.v1',
+          'runtime.terminal-replay.v1',
+          'workspace-device.v1',
+          'workspace-placement-plan.v1'
+        ]
       }
     };
   }

@@ -23,6 +23,16 @@ import type { TailscaleDiscoveryResult } from './TailscaleDiscovery.js';
 const MAX_CONNECTIONS = 64;
 const MAX_ENABLED_CONNECTIONS = 10;
 const MAX_ENDPOINT_ALIASES = 8;
+const REQUIRED_MULTI_DEVICE_CAPABILITIES = [
+  'device.describe.v1',
+  'device.snapshot.v1',
+  'events.envelope.v1',
+  'runtime.sessions.v1',
+  'runtime.terminal-input-lease.v1',
+  'runtime.terminal-replay.v1',
+  'workspace-device.v1',
+  'workspace-placement-plan.v1'
+] as const;
 
 interface PersistedMachineV1 {
   id: ConnectionId;
@@ -43,6 +53,7 @@ interface PersistedMachineV2 extends PersistedMachineV1 {
   capabilityRevision?: string;
   capabilities?: string[];
   serverEpoch?: string;
+  updateRequired?: boolean;
 }
 
 interface PersistedConnectionsV1 {
@@ -69,13 +80,19 @@ export interface ConnectionRegistryOptions {
     compatibility: DeviceProtocolCompatibility;
   }>;
   now?: () => Date;
+  tailscaleHttpsPort?: number;
 }
 
 const EMPTY_TAILSCALE: TailscaleConnectionInfo = {
   state: 'unavailable',
   tailnet: null,
   selfDnsName: null,
-  message: 'Refresh to discover Soloe machines on this tailnet.'
+  message: 'Refresh to discover Soloe machines on this tailnet.',
+  sharing: {
+    state: 'unavailable',
+    message: 'Install Tailscale to connect this Soloe Device to other machines.',
+    setupUrl: 'https://tailscale.com/download'
+  }
 };
 
 export class ConnectionRegistry {
@@ -88,9 +105,15 @@ export class ConnectionRegistry {
   private persistQueue: Promise<void> = Promise.resolve();
   private initialized = false;
   private readonly now: () => Date;
+  private readonly tailscaleHttpsPort: number;
 
   constructor(private readonly options: ConnectionRegistryOptions) {
     this.now = options.now ?? (() => new Date());
+    this.tailscaleHttpsPort = validTailscalePort(
+      options.tailscaleHttpsPort
+        ?? numericEnvironmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT)
+        ?? 4318
+    );
     this.resetLocalMachine();
   }
 
@@ -192,23 +215,36 @@ export class ConnectionRegistry {
       this.machines.set(id, machine);
       entry = [id, machine];
     }
-    const [currentId, current] = entry;
+    let [currentId, current] = entry;
     if (current.deviceId && current.deviceId !== descriptor.deviceId) {
-      this.machines.set(currentId, {
-        ...current,
-        status: 'available',
-        trust: 'identity-mismatch',
-        observedDeviceId: descriptor.deviceId,
-        serverEpoch: descriptor.serverEpoch,
-        lastSeenAt: this.now().toISOString()
-      });
-      await this.persist();
-      this.publish();
-      throw new ConnectionIdentityMismatchError(
-        endpoint,
-        current.deviceId,
-        descriptor.deviceId
-      );
+      if (current.source === 'discovered') {
+        this.machines.delete(currentId);
+        if (this.activeId === currentId) this.activeId = 'local';
+        currentId = connectionIdForEndpoint(endpoint);
+        current = provisionalMachine(
+          currentId,
+          endpoint,
+          displayNameForEndpoint(endpoint)
+        );
+        this.machines.set(currentId, current);
+        this.applyActiveState();
+      } else {
+        this.machines.set(currentId, {
+          ...current,
+          status: 'available',
+          trust: 'identity-mismatch',
+          observedDeviceId: descriptor.deviceId,
+          serverEpoch: descriptor.serverEpoch,
+          lastSeenAt: this.now().toISOString()
+        });
+        await this.persist();
+        this.publish();
+        throw new ConnectionIdentityMismatchError(
+          endpoint,
+          current.deviceId,
+          descriptor.deviceId
+        );
+      }
     }
 
     if (currentId === 'local') {
@@ -296,6 +332,9 @@ export class ConnectionRegistry {
       if (machine.compatibility && machine.compatibility.status !== 'compatible') {
         throw new Error('This Device is not protocol-compatible with the cockpit.');
       }
+      if (machine.updateRequired) {
+        throw new Error('Update Soloe on this Device before connecting it.');
+      }
       const enabledCount = [...this.machines.values()].filter((candidate) => candidate.enabled).length;
       if (!machine.enabled && enabledCount >= MAX_ENABLED_CONNECTIONS) {
         throw new Error(`Cockpit supports at most ${MAX_ENABLED_CONNECTIONS} enabled Devices.`);
@@ -336,7 +375,8 @@ export class ConnectionRegistry {
       state: discovery.state,
       tailnet: discovery.tailnet,
       selfDnsName: discovery.selfDnsName,
-      message: discovery.message
+      message: discovery.message,
+      sharing: { ...discovery.sharing }
     };
 
     const targets = new Map<string, {
@@ -359,7 +399,9 @@ export class ConnectionRegistry {
     if (discovery.state === 'connected') {
       for (const device of discovery.devices) {
         if (device.isSelf || !device.online) continue;
-        const endpoint = normalizeSoloeEndpoint(`https://${device.dnsName}`);
+        const endpoint = normalizeSoloeEndpoint(
+          `https://${device.dnsName}:${this.tailscaleHttpsPort}`
+        );
         const existing = this.findByEndpoint(endpoint);
         targets.set(endpoint, {
           endpoint,
@@ -463,7 +505,10 @@ export class ConnectionRegistry {
     return {
       activeId: this.activeId,
       machines,
-      tailscale: { ...this.tailscale },
+      tailscale: {
+        ...this.tailscale,
+        sharing: { ...this.tailscale.sharing }
+      },
       refreshedAt: this.refreshedAt
     };
   }
@@ -574,6 +619,7 @@ function provisionalMachine(
     status: 'unknown',
     trust: 'provisional',
     enabled: false,
+    updateRequired: true,
     active: false,
     isSelf: false
   };
@@ -584,6 +630,10 @@ function descriptorProjection(
   descriptor: DeviceDescriptor,
   compatibility: DeviceProtocolCompatibility
 ): MachineConnection {
+  const updateRequired = compatibility.status !== 'compatible'
+    || REQUIRED_MULTI_DEVICE_CAPABILITIES.some(
+      (capability) => !descriptor.capabilities.features.includes(capability)
+    );
   return {
     ...machine,
     name: descriptor.name,
@@ -595,8 +645,24 @@ function descriptorProjection(
     capabilityRevision: descriptor.capabilities.revision,
     capabilities: [...descriptor.capabilities.features],
     serverEpoch: descriptor.serverEpoch,
-    observedDeviceId: undefined
+    observedDeviceId: undefined,
+    updateRequired,
+    enabled: machine.id === 'local'
+      || (!updateRequired && (machine.source === 'discovered' || machine.enabled))
   };
+}
+
+function numericEnvironmentPort(raw: string | undefined): number | null {
+  if (!raw?.trim()) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function validTailscalePort(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 65_535) {
+    throw new Error('Tailscale Serve HTTPS port must be a valid TCP port.');
+  }
+  return value;
 }
 
 function persistedMachineProjection(
@@ -614,6 +680,9 @@ function persistedMachineProjection(
     status: 'unknown',
     trust: versionTwo ? machine.trust : 'provisional',
     enabled: versionTwo ? machine.enabled ?? machine.id === activeId : machine.id === activeId,
+    ...(versionTwo && machine.updateRequired !== undefined
+      ? { updateRequired: machine.updateRequired }
+      : {}),
     active: machine.id === activeId,
     isSelf: false,
     ...(versionTwo && machine.deviceId ? { deviceId: machine.deviceId } : {}),
@@ -649,6 +718,7 @@ function persistedMachine(
     source: machine.source === 'manual' ? 'manual' : 'discovered',
     trust: machine.trust === 'local' ? 'provisional' : machine.trust,
     enabled: machine.enabled,
+    updateRequired: machine.updateRequired === true,
     ...(machine.deviceId ? { deviceId: machine.deviceId } : {}),
     ...(machine.observedDeviceId ? { observedDeviceId: machine.observedDeviceId } : {}),
     ...(machine.os ? { os: machine.os } : {}),
@@ -730,6 +800,9 @@ function parsePersistedMachineV2(value: unknown): PersistedMachineV2 | null {
   const trust = parseTrust(value['trust'], Boolean(deviceId));
   if (!trust) return null;
   const enabled = typeof value['enabled'] === 'boolean' ? value['enabled'] : undefined;
+  const updateRequired = typeof value['updateRequired'] === 'boolean'
+    ? value['updateRequired']
+    : undefined;
   const aliases = Array.isArray(value['endpointAliases'])
     ? mergeAliases([common.endpoint], value['endpointAliases'].filter(
         (endpoint): endpoint is string => typeof endpoint === 'string'
@@ -748,6 +821,7 @@ function parsePersistedMachineV2(value: unknown): PersistedMachineV2 | null {
     endpointAliases: aliases,
     trust,
     ...(enabled !== undefined ? { enabled } : {}),
+    ...(updateRequired !== undefined ? { updateRequired } : {}),
     ...(deviceId ? { deviceId } : {}),
     ...(observedDeviceId ? { observedDeviceId } : {}),
     ...(protocol ? { protocol } : {}),

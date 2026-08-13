@@ -34,6 +34,7 @@ export interface MachineConnection {
   capabilities?: string[];
   serverEpoch?: string;
   lastSeenAt?: string;
+  updateRequired?: boolean;
 }
 
 export type TailscaleConnectionState =
@@ -42,11 +43,26 @@ export type TailscaleConnectionState =
   | 'unavailable'
   | 'error';
 
+export type TailscaleSharingState =
+  | 'ready'
+  | 'unavailable'
+  | 'not-running'
+  | 'setup-required'
+  | 'conflict'
+  | 'error';
+
+export interface TailscaleSharingInfo {
+  state: TailscaleSharingState;
+  message: string | null;
+  setupUrl: string | null;
+}
+
 export interface TailscaleConnectionInfo {
   state: TailscaleConnectionState;
   tailnet: string | null;
   selfDnsName: string | null;
   message: string | null;
+  sharing: TailscaleSharingInfo;
 }
 
 export interface ConnectionSnapshot {

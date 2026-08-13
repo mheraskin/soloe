@@ -5,6 +5,8 @@ import type {
 } from '@shared/types/connections.js';
 import { ipc, supportsBackendOperation } from '../lib/ipc';
 
+const DISCOVERY_INTERVAL_MS = 30_000;
+
 const EMPTY_SNAPSHOT: ConnectionSnapshot = {
   activeId: 'local',
   machines: [],
@@ -12,7 +14,12 @@ const EMPTY_SNAPSHOT: ConnectionSnapshot = {
     state: 'unavailable',
     tailnet: null,
     selfDnsName: null,
-    message: null
+    message: null,
+    sharing: {
+      state: 'unavailable',
+      message: 'Install Tailscale to connect this Soloe Device to other machines.',
+      setupUrl: 'https://tailscale.com/download'
+    }
   },
   refreshedAt: null
 };
@@ -25,6 +32,7 @@ export class ConnectionsStore {
   switchingId = $state<ConnectionId | null>(null);
 
   private detachChange: (() => void) | null = null;
+  private discoveryTimer: ReturnType<typeof setInterval> | null = null;
   private loadRequest: Promise<void> | null = null;
   private refreshRequest: Promise<void> | null = null;
 
@@ -95,11 +103,16 @@ export class ConnectionsStore {
     this.detachChange = ipc.connections.onChange((snapshot) => {
       this.snapshot = snapshot;
     });
+    this.discoveryTimer = setInterval(() => {
+      void this.refresh().catch(() => undefined);
+    }, DISCOVERY_INTERVAL_MS);
   }
 
   detach(): void {
     this.detachChange?.();
     this.detachChange = null;
+    if (this.discoveryTimer) clearInterval(this.discoveryTimer);
+    this.discoveryTimer = null;
   }
 }
 

@@ -2,9 +2,12 @@
   "name": "@soloe/web",
   "version": "0.1.0",
   "private": true,
+  "dependencies": {
+    "@soloe/domain": "workspace:*"
+  },
   "scripts": {
-    "dev": "node scripts/host.mjs",
+    "dev": "tsx scripts/host.mjs",
     "build": "vite build --config vite.config.ts",
-    "preview": "node scripts/host.mjs --preview"
+    "preview": "tsx scripts/host.mjs --preview"
   }
 }

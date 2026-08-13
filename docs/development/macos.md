@@ -32,35 +32,24 @@ The native tray is independently runnable with `pnpm dev:tray`. In a packaged bu
 
 ## Tailscale device connections
 
-To make one machine available to other tailnet devices, enable Tailscale Serve
-for the active Soloe web endpoint. Source development uses the web host on
-4318; the packaged application serves the production PWA from its Application
-Server on 4317:
+Soloe works locally without Tailscale. To connect Devices, install Tailscale and
+sign in from its macOS app, then open **Settings > Connections**. Soloe
+automatically configures its dedicated HTTPS Serve listener on port 4318 and
+discovers compatible Soloe backends at their exact MagicDNS names. If Tailscale
+requires one-time HTTPS approval, Connections opens the approval page and a
+refresh completes setup without restarting Soloe.
 
-```bash
-# Source checkout
-tailscale serve --bg 4318
+No `tailscale serve` command, endpoint URL, or per-Device enable switch is part
+of the normal workflow. Soloe never resets Tailscale Serve and refuses to
+overwrite another service already using its dedicated port. Identified,
+compatible Devices connect concurrently while Electron is open. The title-bar
+control filters which Sessions are shown; it does not switch backends, move a
+Session, relaunch Electron, or stop a Runtime.
 
-# Packaged Soloe.app
-tailscale serve --bg 4317
-```
-
-Electron's **Settings > Connections** page reads `tailscale status --json`,
-probes online peers at their exact MagicDNS HTTPS names, and lists only peers
-whose `/__soloe/ready` endpoint identifies a running Soloe host. The same
-Devices appear in the Workspace navigation filter. Enabled compatible Devices
-stay connected concurrently; choosing one filters the projection, while
-default placement independently suggests where the next Session should be
-created. Neither action relaunches Electron, changes an existing Session's
-owner, nor stops a Runtime. The legacy exclusive/relaunch behavior is available
-only for migration testing with `SOLOE_LEGACY_EXCLUSIVE_CONNECTION=1`.
-
-A trusted `https://` MagicDNS or Tailscale Serve URL can also be saved manually.
-The registry stores endpoint metadata, not backend bearer tokens. Remote access
-uses the Secure, HttpOnly session issued from Tailscale identity headers. The
-Tailscale executable can be overridden with `SOLOE_TAILSCALE_CLI`; a host that
-cannot run the CLI can provide its exact `.ts.net` name with
-`SOLOE_TAILSCALE_HOSTNAME`.
+The registry stores discovered endpoint and backend-owned Device identity
+metadata, not backend bearer tokens. Remote access uses the Secure, HttpOnly
+session issued from Tailscale identity headers. The Tailscale executable can be
+overridden with `SOLOE_TAILSCALE_CLI` for development and tests.
 
 ## Packages
 

@@ -1,0 +1,245 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const DEFAULT_HTTPS_PORT = 4318;
+const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+
+export type TailscaleServeState =
+  | "ready"
+  | "unavailable"
+  | "not-running"
+  | "setup-required"
+  | "conflict"
+  | "error";
+
+export interface TailscaleServeStatus {
+  state: TailscaleServeState;
+  message: string | null;
+  setupUrl: string | null;
+}
+
+export type TailscaleCommandRunner = (
+  args: readonly string[],
+) => Promise<string>;
+
+export interface TailscaleServeManagerOptions {
+  targetUrl: string;
+  httpsPort?: number;
+  run?: TailscaleCommandRunner;
+}
+
+/**
+ * Owns only Soloe's dedicated Tailscale Serve listener. It never resets Serve
+ * or overwrites another route on the machine.
+ */
+export class TailscaleServeManager {
+  private readonly targetUrl: string;
+  private readonly httpsPort: number;
+  private readonly run: TailscaleCommandRunner;
+
+  constructor(options: TailscaleServeManagerOptions) {
+    this.targetUrl = normalizeLoopbackTarget(options.targetUrl);
+    this.httpsPort = validPort(options.httpsPort ?? DEFAULT_HTTPS_PORT);
+    this.run = options.run ?? runTailscaleCommand;
+  }
+
+  async ensure(): Promise<TailscaleServeStatus> {
+    let status: unknown;
+    try {
+      status = parseServeStatus(
+        await this.run(["serve", "status", "--json"]),
+      );
+    } catch (error) {
+      return commandFailure(error);
+    }
+
+    const route = inspectPort(status, this.httpsPort, this.targetUrl);
+    if (route === "owned") return ready();
+    if (route === "occupied") {
+      return {
+        state: "conflict",
+        message: `Tailscale Serve port ${this.httpsPort} is already used by another service.`,
+        setupUrl: null,
+      };
+    }
+
+    try {
+      await this.run([
+        "serve",
+        "--bg",
+        "--yes",
+        `--https=${this.httpsPort}`,
+        this.targetUrl,
+      ]);
+      return ready();
+    } catch (error) {
+      return commandFailure(error);
+    }
+  }
+}
+
+export async function runTailscaleCommand(args: readonly string[]): Promise<string> {
+  let missing: unknown = null;
+  for (const executable of tailscaleExecutableCandidates(process.platform, process.env)) {
+    try {
+      const { stdout } = await execFileAsync(executable, [...args], {
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        windowsHide: true,
+      });
+      return stdout;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      missing = error;
+    }
+  }
+  throw missing ?? Object.assign(new Error("Tailscale CLI was not found."), { code: "ENOENT" });
+}
+
+export function tailscaleExecutableCandidates(
+  platform: NodeJS.Platform,
+  environment: Readonly<Record<string, string | undefined>>,
+): string[] {
+  const override = environment.SOLOE_TAILSCALE_CLI?.trim();
+  if (override) return [override];
+  const candidates: string[] = [];
+  if (platform === "darwin") {
+    candidates.push("/Applications/Tailscale.app/Contents/MacOS/Tailscale");
+    const home = environment.HOME?.trim();
+    if (home) candidates.push(`${home.replace(/\/$/u, "")}/Applications/Tailscale.app/Contents/MacOS/Tailscale`);
+  } else if (platform === "win32") {
+    const programFiles = environment.ProgramFiles?.trim()
+      || environment.ProgramW6432?.trim()
+      || "C:\\Program Files";
+    candidates.push(`${programFiles.replace(/[\\/]$/u, "")}\\Tailscale\\tailscale.exe`);
+    const localAppData = environment.LOCALAPPDATA?.trim();
+    if (localAppData) {
+      candidates.push(`${localAppData.replace(/[\\/]$/u, "")}\\Tailscale\\tailscale.exe`);
+    }
+  }
+  candidates.push("tailscale");
+  return [...new Set(candidates)];
+}
+
+function inspectPort(
+  raw: unknown,
+  httpsPort: number,
+  targetUrl: string,
+): "free" | "owned" | "occupied" {
+  if (!isRecord(raw)) return "free";
+  const port = String(httpsPort);
+  const tcp = isRecord(raw.TCP) ? raw.TCP : {};
+  const web = isRecord(raw.Web) ? raw.Web : {};
+  let exactProxy = false;
+  let matchingWebEntry = false;
+
+  for (const [authority, value] of Object.entries(web)) {
+    if (!authority.endsWith(`:${port}`) || !isRecord(value)) continue;
+    matchingWebEntry = true;
+    const handlers = isRecord(value.Handlers) ? value.Handlers : {};
+    const root = isRecord(handlers["/"]) ? handlers["/"] : null;
+    if (root && normalizeComparableUrl(root.Proxy) === targetUrl) {
+      exactProxy = true;
+    }
+  }
+
+  const tcpEntry = tcp[port];
+  const httpsEnabled = isRecord(tcpEntry) && tcpEntry.HTTPS === true;
+  if (httpsEnabled && exactProxy) return "owned";
+  if (tcpEntry !== undefined || matchingWebEntry) return "occupied";
+  return "free";
+}
+
+function parseServeStatus(raw: string): unknown {
+  if (!raw.trim()) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Invalid Tailscale Serve status JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function commandFailure(error: unknown): TailscaleServeStatus {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    return {
+      state: "unavailable",
+      message: "Install Tailscale to connect this Soloe Device to other machines.",
+      setupUrl: "https://tailscale.com/download",
+    };
+  }
+  const detail = error instanceof Error ? error.message : String(error);
+  const setupUrl = extractConsentUrl(detail);
+  if (setupUrl) {
+    return {
+      state: "setup-required",
+      message: "Tailscale needs one-time approval before Soloe can connect devices.",
+      setupUrl,
+    };
+  }
+  if (/needslogin|not logged in|not running|backend.*stopped/iu.test(detail)) {
+    return {
+      state: "not-running",
+      message: "Open Tailscale and sign in to connect Soloe Devices.",
+      setupUrl: null,
+    };
+  }
+  return {
+    state: "error",
+    message: detail,
+    setupUrl: null,
+  };
+}
+
+function extractConsentUrl(detail: string): string | null {
+  const match = detail.match(/https:\/\/login\.tailscale\.com\/[^\s)]+/iu);
+  return match?.[0].replace(/[.,;:]$/u, "") ?? null;
+}
+
+function normalizeLoopbackTarget(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Tailscale Serve target must be a loopback HTTP URL.");
+  }
+  if (
+    url.protocol !== "http:"
+    || (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname !== "[::1]")
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+    || (url.pathname !== "/" && url.pathname !== "")
+  ) {
+    throw new Error("Tailscale Serve target must be a loopback HTTP URL.");
+  }
+  return url.origin;
+}
+
+function normalizeComparableUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function validPort(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 65_535) {
+    throw new Error("Tailscale Serve HTTPS port must be a valid TCP port.");
+  }
+  return value;
+}
+
+function ready(): TailscaleServeStatus {
+  return { state: "ready", message: null, setupUrl: null };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

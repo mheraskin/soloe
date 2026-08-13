@@ -411,6 +411,7 @@ async function resolveCockpitPorts(snapshot: ConnectionSnapshot): Promise<Device
       || !machine.enabled
       || machine.trust !== 'pinned'
       || machine.compatibility?.status !== 'compatible'
+      || machine.updateRequired
       || nextRecords.has(machine.deviceId)
       || nextRecords.size >= 10
     ) continue;

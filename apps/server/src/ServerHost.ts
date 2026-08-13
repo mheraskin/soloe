@@ -1,4 +1,7 @@
 import {
+  TailscaleServeManager,
+} from "@soloe/domain";
+import {
   RuntimeClient,
   loadOrCreateServerToken,
   removeServiceInfo,
@@ -31,6 +34,7 @@ export async function startServerHost(): Promise<RunningServerHost> {
   const runtimeEndpoint =
     process.env.SOLOE_RUNTIME_ENDPOINT ??
     resolveRuntimeEndpoint({ dataDirectory });
+  const webRoot = process.env.SOLOE_WEB_ROOT ?? "";
   const domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
   const domain = new SoloeDomain({
     dataDirectory,
@@ -44,7 +48,7 @@ export async function startServerHost(): Promise<RunningServerHost> {
     port: Number(process.env.SOLOE_SERVER_PORT ?? "4317"),
     token,
     deviceDescriptor: descriptor,
-    webRoot: process.env.SOLOE_WEB_ROOT ?? "",
+    webRoot,
     ...(process.env.SOLOE_TAILSCALE_ALLOWED_USERS !== undefined
       ? { allowedTailscaleUsers: process.env.SOLOE_TAILSCALE_ALLOWED_USERS }
       : {}),
@@ -78,6 +82,9 @@ export async function startServerHost(): Promise<RunningServerHost> {
         ready: true,
       })}\n`,
     );
+    if (webRoot && process.env.SOLOE_TAILSCALE_AUTO_SERVE !== "0") {
+      void ensureTailscaleSharing(address);
+    }
 
     let closed = false;
     return {
@@ -102,4 +109,21 @@ export async function startServerHost(): Promise<RunningServerHost> {
     domainRuntime.disconnect();
     throw error;
   }
+}
+
+async function ensureTailscaleSharing(targetUrl: string): Promise<void> {
+  const result = await new TailscaleServeManager({
+    targetUrl,
+    httpsPort: environmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318),
+  }).ensure();
+  if (result.state === "ready") {
+    process.stdout.write("[server] Soloe Device sharing is ready on Tailscale\n");
+  } else if (result.state !== "unavailable" && result.state !== "not-running") {
+    process.stderr.write(`[server] Tailscale sharing: ${result.message ?? result.state}\n`);
+  }
+}
+
+function environmentPort(raw: string | undefined, fallback: number): number {
+  const value = raw?.trim() ? Number(raw) : fallback;
+  return Number.isSafeInteger(value) && value >= 1 && value <= 65_535 ? value : fallback;
 }

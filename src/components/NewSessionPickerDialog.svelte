@@ -14,6 +14,7 @@
   import { sessions } from '../stores/sessions.svelte';
   import { cockpit } from '../stores/cockpit.svelte';
   import { reportError } from '../stores/toast.svelte';
+  import { devicePresentation } from '../lib/device-presentation.js';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import KindIcon from './KindIcon.svelte';
@@ -38,6 +39,7 @@
       .sort((left, right) => left.order - right.order)
   );
   let devices = $derived(cockpit.snapshot.devices);
+  let readyDevices = $derived(devices.filter((device) => devicePresentation(device).actionable));
   let placementAvailable = $derived(cockpit.supported && workspaces.length > 0);
   let selectedWorkspace = $derived(
     workspaces.find((workspace) => workspace.id === workspaceId) ?? null
@@ -87,10 +89,11 @@
     workspaceId = workspaces.find((workspace) => workspace.projectId === mappedProjectId)?.id
       ?? workspaces[0]?.id
       ?? '';
-    deviceId = cockpit.snapshot.defaultPlacementDeviceId
-      ?? devices.find((device) => device.state === 'ready')?.deviceId
-      ?? devices[0]?.deviceId
-      ?? '';
+    const preferred = devices.find((device) =>
+      device.deviceId === cockpit.snapshot.defaultPlacementDeviceId
+      && devicePresentation(device).actionable
+    );
+    deviceId = preferred?.deviceId ?? readyDevices[0]?.deviceId ?? '';
     sourceMode = 'shared';
     resetPlan();
   }
@@ -258,8 +261,9 @@
             onchange={resetPlan}
           >
             {#each devices as device (device.deviceId)}
-              <option value={device.deviceId}>
-                {device.name} · {device.state}
+              {@const presentation = devicePresentation(device)}
+              <option value={device.deviceId} disabled={!presentation.actionable}>
+                {presentation.label}
               </option>
             {/each}
           </select>
@@ -351,7 +355,7 @@
               {busy ? 'Creating…' : 'Create session'}
             </Button>
           {:else}
-            <Button onclick={() => void preflight()} disabled={busy || !workspaceId || !deviceId}>
+            <Button onclick={() => void preflight()} disabled={busy || !workspaceId || !deviceId || readyDevices.length === 0}>
               {busy ? 'Checking…' : 'Review placement'}
             </Button>
           {/if}

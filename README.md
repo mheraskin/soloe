@@ -32,7 +32,7 @@ The name **Soloe** describes that operating model. It is not an argument against
 - **Routes review comments back to agents.** An authenticated MCP bridge lets running agents read and resolve line comments.
 - **Supports repository-native planning.** Experimental Feature Lab reads plans, coverage maps, and issue artifacts stored as Markdown alongside the code.
 - **Keeps working context together.** Files, persistent notes, worktree overviews, browser tooling, agent notifications, and process diagnostics live beside the sessions.
-- **Runs on infrastructure you control.** There is no Soloe cloud or telemetry. Browser/PWA access is served locally and can optionally be exposed through infrastructure you configure, such as Tailscale Serve.
+- **Runs on infrastructure you control.** There is no Soloe cloud or telemetry. Browser/PWA access is served locally; after you install and sign in to Tailscale, Soloe can configure its own Serve route for Device connections.
 
 ## Feature Lab (experimental)
 

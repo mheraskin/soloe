@@ -2,6 +2,7 @@ import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises
 import path from "node:path";
 import process from "node:process";
 import { build, createServer, preview } from "vite";
+import { TailscaleServeManager } from "@soloe/domain";
 
 const mode = process.argv.includes("--preview") ? "preview" : "dev";
 const dataDirectory = required("SOLOE_DATA_DIR");
@@ -35,6 +36,9 @@ await writeServiceRecord({
   token,
 });
 process.stdout.write(`${JSON.stringify({ service: "web", address, ready: true })}\n`);
+if (process.env.SOLOE_TAILSCALE_AUTO_SERVE !== "0") {
+  void ensureTailscaleSharing(address);
+}
 
 let shuttingDown = false;
 async function shutdown() {
@@ -83,4 +87,21 @@ function required(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+async function ensureTailscaleSharing(targetUrl) {
+  const result = await new TailscaleServeManager({
+    targetUrl,
+    httpsPort: environmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318),
+  }).ensure();
+  if (result.state === "ready") {
+    process.stdout.write("[web-host] Soloe Device sharing is ready on Tailscale\n");
+  } else if (result.state !== "unavailable" && result.state !== "not-running") {
+    process.stderr.write(`[web-host] Tailscale sharing: ${result.message ?? result.state}\n`);
+  }
+}
+
+function environmentPort(raw, fallback) {
+  const value = raw?.trim() ? Number(raw) : fallback;
+  return Number.isSafeInteger(value) && value >= 1 && value <= 65_535 ? value : fallback;
 }

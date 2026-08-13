@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   normalizeTailscaleDnsName,
   parseTailscaleStatus,
@@ -94,6 +94,45 @@ describe('TailscaleDiscovery', () => {
       state: 'error',
       message: expect.stringContaining('Invalid Tailscale status JSON')
     });
+  });
+
+  it('automatically prepares Soloe sharing after Tailscale is connected', async () => {
+    const ensureSharing = vi.fn(async () => ({
+      state: 'ready' as const,
+      message: null,
+      setupUrl: null
+    }));
+    const discovery = new TailscaleDiscovery(async () => JSON.stringify({
+      BackendState: 'Running',
+      CurrentTailnet: { Name: 'example.com' },
+      Self: {
+        HostName: 'Client Mac',
+        DNSName: 'client-mac.tail1234.ts.net.'
+      },
+      Peer: {}
+    }), ensureSharing);
+
+    await expect(discovery.discover()).resolves.toMatchObject({
+      state: 'connected',
+      sharing: { state: 'ready', message: null, setupUrl: null }
+    });
+    expect(ensureSharing).toHaveBeenCalledOnce();
+  });
+
+  it('does not attempt Serve setup before the user signs in to Tailscale', async () => {
+    const ensureSharing = vi.fn();
+    const discovery = new TailscaleDiscovery(async () => JSON.stringify({
+      BackendState: 'NeedsLogin'
+    }), ensureSharing);
+
+    await expect(discovery.discover()).resolves.toMatchObject({
+      state: 'not-running',
+      sharing: {
+        state: 'not-running',
+        message: expect.stringContaining('sign in')
+      }
+    });
+    expect(ensureSharing).not.toHaveBeenCalled();
   });
 
   it('rejects wildcard, incomplete, and malformed MagicDNS hostnames', () => {

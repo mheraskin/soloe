@@ -1,7 +1,8 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import {
+  runTailscaleCommand,
+  TailscaleServeManager,
+  type TailscaleServeStatus
+} from '@soloe/domain';
 
 export interface TailscaleDevice {
   name: string;
@@ -11,7 +12,7 @@ export interface TailscaleDevice {
   os?: string;
 }
 
-export interface TailscaleDiscoveryResult {
+export interface TailscaleNetworkResult {
   state: 'connected' | 'not-running' | 'unavailable' | 'error';
   tailnet: string | null;
   selfDnsName: string | null;
@@ -19,14 +20,28 @@ export interface TailscaleDiscoveryResult {
   devices: TailscaleDevice[];
 }
 
+export interface TailscaleDiscoveryResult extends TailscaleNetworkResult {
+  sharing: TailscaleServeStatus;
+}
+
 type StatusRunner = () => Promise<string>;
+type SharingRunner = () => Promise<TailscaleServeStatus>;
 
 export class TailscaleDiscovery {
-  constructor(private readonly runStatus: StatusRunner = runTailscaleStatus) {}
+  constructor(
+    private readonly runStatus: StatusRunner = runTailscaleStatus,
+    private readonly ensureSharing: SharingRunner = () => createServeManager().ensure()
+  ) {}
 
   async discover(): Promise<TailscaleDiscoveryResult> {
     try {
-      return parseTailscaleStatus(await this.runStatus());
+      const network = parseTailscaleStatus(await this.runStatus());
+      return {
+        ...network,
+        sharing: network.state === 'connected'
+          ? await this.ensureSharing()
+          : sharingForNetwork(network)
+      };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
@@ -35,7 +50,12 @@ export class TailscaleDiscovery {
           tailnet: null,
           selfDnsName: null,
           message: 'Tailscale CLI was not found. Install Tailscale or set SOLOE_TAILSCALE_CLI.',
-          devices: []
+          devices: [],
+          sharing: {
+            state: 'unavailable',
+            message: 'Install Tailscale to connect this Soloe Device to other machines.',
+            setupUrl: 'https://tailscale.com/download'
+          }
         };
       }
       return {
@@ -43,13 +63,18 @@ export class TailscaleDiscovery {
         tailnet: null,
         selfDnsName: null,
         message: error instanceof Error ? error.message : String(error),
-        devices: []
+        devices: [],
+        sharing: {
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
+          setupUrl: null
+        }
       };
     }
   }
 }
 
-export function parseTailscaleStatus(raw: string): TailscaleDiscoveryResult {
+export function parseTailscaleStatus(raw: string): TailscaleNetworkResult {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -85,6 +110,42 @@ export function parseTailscaleStatus(raw: string): TailscaleDiscoveryResult {
   };
 }
 
+function createServeManager(): TailscaleServeManager {
+  const localPort = validEnvironmentPort(process.env.SOLOE_WEB_PORT, 4318);
+  const httpsPort = validEnvironmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318);
+  return new TailscaleServeManager({
+    targetUrl: `http://127.0.0.1:${localPort}`,
+    httpsPort
+  });
+}
+
+function sharingForNetwork(network: TailscaleNetworkResult): TailscaleServeStatus {
+  if (network.state === 'unavailable') {
+    return {
+      state: 'unavailable',
+      message: 'Install Tailscale to connect this Soloe Device to other machines.',
+      setupUrl: 'https://tailscale.com/download'
+    };
+  }
+  if (network.state === 'not-running') {
+    return {
+      state: 'not-running',
+      message: 'Open Tailscale and sign in to connect Soloe Devices.',
+      setupUrl: null
+    };
+  }
+  return {
+    state: 'error',
+    message: network.message,
+    setupUrl: null
+  };
+}
+
+function validEnvironmentPort(raw: string | undefined, fallback: number): number {
+  const value = raw?.trim() ? Number(raw) : fallback;
+  return Number.isSafeInteger(value) && value >= 1 && value <= 65_535 ? value : fallback;
+}
+
 export function normalizeTailscaleDnsName(value: string): string | null {
   const hostname = value.trim().replace(/\.$/u, '').toLowerCase();
   if (
@@ -110,14 +171,7 @@ export function normalizeTailscaleDnsName(value: string): string | null {
 }
 
 async function runTailscaleStatus(): Promise<string> {
-  const executable = process.env.SOLOE_TAILSCALE_CLI?.trim() || 'tailscale';
-  const { stdout } = await execFileAsync(executable, ['status', '--json'], {
-    encoding: 'utf8',
-    timeout: 5_000,
-    maxBuffer: 4 * 1_024 * 1_024,
-    windowsHide: true
-  });
-  return stdout;
+  return runTailscaleCommand(['status', '--json']);
 }
 
 function deviceFromStatus(value: unknown, isSelf: boolean): TailscaleDevice | null {

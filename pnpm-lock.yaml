@@ -223,7 +223,11 @@ importers:
 
   apps/tray: {}
 
-  apps/web: {}
+  apps/web:
+    dependencies:
+      '@soloe/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
 
   packages/domain:
     dependencies:

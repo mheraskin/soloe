@@ -20,20 +20,22 @@ Developer-built applications may be unsigned or development-signed and are not e
 
 Confirm the path exists in the same host where the session runs and that Git recognizes it as a repository or worktree. For Windows + WSL path behavior, see the [backend guide](./development/windows-backends.md). Include spaces and non-ASCII characters in bug reports when they are relevant to the failure.
 
-## A Device is offline, incompatible, or has the wrong identity
+## A Device is offline or needs an update
 
-Refresh **Settings > Connections** and inspect the reported Device state. An
-offline Device can leave its logical Workspaces visible, but physical actions
-remain unavailable until it reconnects. An incompatible Device requires a
-client or Device upgrade matching the protocol message.
+Refresh **Settings > Connections**. If Tailscale is not installed or signed in,
+finish that setup and refresh; Soloe does not need to restart. Soloe configures
+its own Serve route and discovers Devices automatically, so do not add an
+endpoint URL or run a separate routine `tailscale serve` command. A Serve port
+conflict is left untouched and reported in Connections.
 
-If an endpoint reports a different durable Device ID than the one previously
-pinned, Soloe blocks it. Verify the endpoint and Tailscale identity before
-removing/re-adding the connection; do not bypass the mismatch merely because
-the hostname looks familiar. Renames and endpoint changes should retain the
-same Device ID.
+An offline Device can leave cached logical Workspaces and Sessions visible, but
+its Session rows and physical actions remain disabled until it reconnects. A
+Device labeled **Update Soloe** must run a compatible Soloe version. Reinstalling
+or resetting a backend creates a new backend-owned Device identity that is
+discovered automatically; old logical references remain offline until regrouped
+or recovered.
 
-The Device filter only changes what is shown. If a Session seems absent, clear
+The **Sessions from** filter only changes what is shown. If a Session seems absent, clear
 the filter and check its owning Device. Default placement applies only to new
 Sessions and cannot reroute an existing one.
 

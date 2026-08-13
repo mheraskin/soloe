@@ -8,7 +8,7 @@ Soloe is pre-release software. The first public alpha should not be published un
 - Early Windows builds will be unsigned and may trigger SmartScreen.
 - The legacy Electron MCP path uses a broader bind for WSL reachability; its effective interface and firewall exposure still need validation.
 - Electron uses an unsandboxed preload and a browser webview. Context isolation is enabled, but the combined boundary needs continued review.
-- Optional Tailscale Serve access is not strictly local-only and must be configured and secured by the user.
+- Optional Tailscale Serve access is not strictly local-only. Soloe configures its dedicated route after Tailscale sign-in, while tailnet membership and policy remain the user's security boundary.
 - Workspace organization is cockpit-local. Two desktop Cockpits can connect to
   the same Devices but do not automatically converge Project/Workspace names,
   ordering, or Session Membership; use checksummed export/import deliberately.

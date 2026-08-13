@@ -21,6 +21,10 @@
   import { cockpit } from '../stores/cockpit.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { confirmStore } from '../stores/confirm.svelte';
+  import {
+    devicePresentation,
+    sessionDevicePresentation
+  } from '../lib/device-presentation.js';
 
   let { filter = '' }: { filter?: string } = $props();
   let dragged = $state<SessionRef | null>(null);
@@ -461,24 +465,30 @@
             {/if}
             <div class="flex flex-col gap-px">
               {#each workspaceSessions(workspace) as member (member.projection.key)}
+                {@const presentation = sessionDevicePresentation(member.projection.ref.deviceId, cockpit.snapshot.devices)}
                 <div
                   role="listitem"
-                  class="group flex items-center gap-1 rounded px-1.5 py-1 hover:bg-muted"
-                  draggable="true"
-                  ondragstart={(event) => startDrag(event, member.projection.ref)}
+                  class={`group flex items-center gap-1 rounded px-1.5 py-1 ${presentation.actionable ? 'hover:bg-muted' : 'cursor-not-allowed opacity-45'}`}
+                  draggable={presentation.actionable}
+                  ondragstart={(event) => {
+                    if (presentation.actionable) startDrag(event, member.projection.ref);
+                  }}
                   ondragend={() => { dragged = null; }}
                 >
                   <button
                     type="button"
                     class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     aria-label={`Open ${member.projection.session.name} on ${member.projection.deviceName}`}
+                    disabled={!presentation.actionable}
                     onclick={() => cockpit.selectSession(member.projection.key)}
                   >
                     <Monitor class="size-3 shrink-0 text-muted-foreground" />
                     <span class="min-w-0 flex-1 truncate text-[11px]">{member.projection.session.name}</span>
-                    <span class="rounded-full bg-muted-foreground/10 px-1 py-0.5 text-[8px] text-muted-foreground">
-                      {member.projection.deviceName} · {member.projection.runtime?.state.status ?? 'stopped'}
+                    <span class={`inline-flex items-center gap-1 rounded-full px-1 py-0.5 text-[8px] ${presentation.tone === 'update' ? 'bg-warning/10 text-warning' : 'bg-muted-foreground/10 text-muted-foreground'}`}>
+                      {#if presentation.dot}<span class="size-1 rounded-full bg-success" aria-hidden="true"></span>{/if}
+                      {presentation.label}
                     </span>
+                    <span class="text-[8px] text-muted-foreground">{member.projection.runtime?.state.status ?? 'stopped'}</span>
                     {#if member.sourceConformance === 'mismatch'}
                       <TriangleAlert class="size-3 shrink-0 text-warning" aria-label="Session source differs from Workspace" />
                     {/if}
@@ -489,6 +499,7 @@
                       class="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8px] text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-focus-within:opacity-100 group-hover:opacity-100"
                       aria-label={`Promote isolated source for ${member.projection.session.name}`}
                       title="Promote isolated source"
+                      disabled={!presentation.actionable}
                       onclick={() => void promote(member.projection).catch(reportError)}
                     >
                       <ArrowUpFromLine class="size-2.5" /> Promote
@@ -497,6 +508,7 @@
                   <select
                     class="max-w-20 bg-transparent text-[9px] text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
                     aria-label={`Move ${member.projection.session.name} to Workspace`}
+                    disabled={!presentation.actionable}
                     value={workspace.workspace.id}
                     onchange={(event) => {
                       const target = event.currentTarget.value;
@@ -521,26 +533,33 @@
 
     {#each navigation.unassigned as group (group.device?.deviceId ?? group.sessions[0]?.ref.deviceId)}
       {@const visibleSessions = group.sessions.filter(visible)}
+      {@const groupPresentation = group.device ? devicePresentation(group.device) : null}
       {#if visibleSessions.length > 0}
         <section class="mt-1 rounded-md border border-dashed border-border p-1" aria-label={`Unassigned Sessions on ${group.device?.name ?? 'unknown Device'}`}>
           <h2 class="m-0 px-1 py-1 text-[10px] font-medium text-muted-foreground">
-            Unassigned · {group.device?.name ?? visibleSessions[0]?.deviceName ?? 'Unknown Device'}
-            {#if group.device} · {group.device.state}{/if}
+            Unassigned · {groupPresentation?.label ?? `${visibleSessions[0]?.deviceName ?? 'Unknown Device'} · Offline`}
           </h2>
           {#each visibleSessions as projection (projection.key)}
-            <div class="group flex items-center gap-1 rounded px-1.5 py-1 hover:bg-muted">
+            {@const presentation = sessionDevicePresentation(projection.ref.deviceId, cockpit.snapshot.devices)}
+            <div class={`group flex items-center gap-1 rounded px-1.5 py-1 ${presentation.actionable ? 'hover:bg-muted' : 'cursor-not-allowed opacity-45'}`} aria-disabled={!presentation.actionable}>
               <button
                 type="button"
                 class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                disabled={!presentation.actionable}
                 onclick={() => cockpit.selectSession(projection.key)}
               >
                 <Monitor class="size-3 shrink-0 text-muted-foreground" />
                 <span class="min-w-0 flex-1 truncate text-[11px]">{projection.session.name}</span>
+                <span class={`inline-flex items-center gap-1 rounded-full px-1 py-0.5 text-[8px] ${presentation.tone === 'update' ? 'bg-warning/10 text-warning' : 'bg-muted-foreground/10 text-muted-foreground'}`}>
+                  {#if presentation.dot}<span class="size-1 rounded-full bg-success" aria-hidden="true"></span>{/if}
+                  {presentation.label}
+                </span>
               </button>
               {#if workspaces.length > 0}
                 <select
                   class="max-w-24 bg-transparent text-[9px] text-muted-foreground"
                   aria-label={`Assign ${projection.session.name} to Workspace`}
+                  disabled={!presentation.actionable}
                   value=""
                   onchange={(event) => {
                     if (event.currentTarget.value) {
@@ -568,14 +587,19 @@
           Archived isolated sources
         </h2>
         {#each archivedIsolated as session (session.key)}
-          <div class="flex items-center gap-1 rounded px-1.5 py-1 hover:bg-muted">
+          {@const presentation = sessionDevicePresentation(session.ref.deviceId, cockpit.snapshot.devices)}
+          <div class={`flex items-center gap-1 rounded px-1.5 py-1 ${presentation.actionable ? 'hover:bg-muted' : 'cursor-not-allowed opacity-45'}`} aria-disabled={!presentation.actionable}>
             <Monitor class="size-3 shrink-0 text-muted-foreground" />
             <span class="min-w-0 flex-1 truncate text-[10px]">{session.session.name}</span>
-            <span class="text-[8px] text-muted-foreground">{session.deviceName}</span>
+            <span class={`inline-flex items-center gap-1 rounded-full px-1 py-0.5 text-[8px] ${presentation.tone === 'update' ? 'bg-warning/10 text-warning' : 'bg-muted-foreground/10 text-muted-foreground'}`}>
+              {#if presentation.dot}<span class="size-1 rounded-full bg-success" aria-hidden="true"></span>{/if}
+              {presentation.label}
+            </span>
             <button
               type="button"
               class="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[8px] text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               aria-label={`Clean up isolated source for ${session.session.name}`}
+              disabled={!presentation.actionable}
               onclick={() => void cleanup(session).catch(reportError)}
             >
               <Trash2 class="size-2.5" /> Check cleanup
