@@ -27,7 +27,8 @@ impl TrayInstanceGuard {
             .open(&path)
             .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
         file.try_lock_exclusive().map_err(|_| {
-            "another Soloe tray instance is already supervising this backend".to_string()
+            "another live Soloe Tray Host is already running; open or quit that instance before starting Soloe again"
+                .to_string()
         })?;
         Ok(Self { _file: file })
     }
@@ -61,7 +62,7 @@ impl OwnershipLease {
             .spawn(move || {
                 while thread_running.load(Ordering::Acquire) {
                     if let Err(error) = write_lease(&thread_path, &thread_owner, tray_pid) {
-                        eprintln!("[tray] failed to refresh backend ownership lease: {error}");
+                        eprintln!("[tray] failed to refresh Tray Host ownership lease: {error}");
                     }
                     thread::sleep(HEARTBEAT_INTERVAL);
                 }
@@ -410,7 +411,12 @@ mod tests {
         let first = TrayInstanceGuard::acquire(&directory).unwrap();
         let second = TrayInstanceGuard::acquire(&directory);
 
-        assert!(second.is_err());
+        assert_eq!(
+            second.err().as_deref(),
+            Some(
+                "another live Soloe Tray Host is already running; open or quit that instance before starting Soloe again"
+            )
+        );
 
         drop(first);
         let _ = fs::remove_dir_all(directory);

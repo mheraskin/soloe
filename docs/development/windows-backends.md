@@ -100,8 +100,8 @@ pnpm configure:backend -- --placement windows
 ```
 
 The setting is stored at `%LOCALAPPDATA%\Soloe\settings.json`. To change
-placement, choose **Stop agent runtime** first. Then start the Runtime and Soloe
-Server in the newly selected placement.
+placement, choose **Stop Environment Runtime** first. Then start the Runtime and
+Soloe Server in the newly selected placement.
 
 ## Everyday startup
 
@@ -175,7 +175,8 @@ Left- or right-click the Soloe tray icon and choose:
 
 - **Start/Stop Soloe server (WSL/Windows)** for the replaceable Application
   Server and Windows Web Host;
-- **Start/Stop agent runtime (WSL/Windows)** for the agent lifetime boundary;
+- **Start/Stop Environment Runtime (WSL/Windows)** for the agent lifetime
+  boundary;
 - **Open in browser** for the Windows PWA;
 - **Open Electron client** for the disposable Windows desktop client;
 - **Open Soloe logs** for diagnostics.
@@ -206,12 +207,12 @@ restart the Runtime or its terminals.
 ## Service controls versus Quit Soloe
 
 The tray exposes separate dynamic lifecycle actions for the replaceable server
-and the long-lived agent runtime. **Stop Soloe server (WSL/Windows)** stops the
+and the long-lived Environment Runtime. **Stop Soloe server (WSL/Windows)** stops the
 Windows Web Host and Application Server but preserves the Environment Runtime,
 its PTYs, and its agents. The matching start action reconnects a fresh Server
 to that Runtime and starts the Web Host again.
 
-**Stop agent runtime (WSL/Windows)** first stops the Web Host and Server, then
+**Stop Environment Runtime (WSL/Windows)** first stops the Web Host and Server, then
 stops the Runtime and all runtime-owned PTYs and agents. It requires a second
 confirmation when the runtime may own active agents. Its matching start action
 starts only the Runtime; use **Start Soloe server** when the Server should be
@@ -283,7 +284,7 @@ Then smoke-test both Backend Placements. Do not substitute the WSL run for the
 native Windows run; path, process, and filesystem behavior differ.
 
 1. Run `pnpm dev` and confirm the tray exposes independent dynamic actions for
-   the Soloe Server and agent Runtime.
+   the Soloe Server and Environment Runtime.
 2. Open the authenticated PWA and remote Electron. Confirm Electron reports the
    remote transport, not local IPC.
 3. Create and reopen a project/session. Exercise Files, Working Diff, Feature
@@ -313,7 +314,7 @@ native Windows run; path, process, and filesystem behavior differ.
     terminal marker remains replayable.
 14. In Electron, confirm the embedded Browser pane still mounts its native
     `<webview>`. Confirm the pane is absent—not inert—in the PWA.
-15. Choose **Stop agent runtime (WSL/Windows)**, confirm the warning, and verify
+15. Choose **Stop Environment Runtime (WSL/Windows)**, confirm the warning, and verify
     the Runtime and terminal stop while the tray remains running.
 16. Restart, choose **Quit Soloe**, and confirm every managed process stops.
 17. Restart, kill the tray process, and confirm no managed Windows/WSL process

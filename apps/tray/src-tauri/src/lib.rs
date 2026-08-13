@@ -126,10 +126,10 @@ impl MenuServicePhase {
         let label = match (self, service) {
             (Self::Startable, MenuService::Server) => "Starting Soloe server…",
             (Self::Stoppable, MenuService::Server) => "Stopping Soloe server…",
-            (Self::Startable, MenuService::Runtime) => "Starting agent runtime…",
-            (Self::Stoppable, MenuService::Runtime) => "Stopping agent runtime…",
+            (Self::Startable, MenuService::Runtime) => "Starting Environment Runtime…",
+            (Self::Stoppable, MenuService::Runtime) => "Stopping Environment Runtime…",
             (Self::Unknown, MenuService::Server) => "Updating Soloe server…",
-            (Self::Unknown, MenuService::Runtime) => "Updating agent runtime…",
+            (Self::Unknown, MenuService::Runtime) => "Updating Environment Runtime…",
             _ => return None,
         };
         let phase = match self {
@@ -298,8 +298,9 @@ pub fn run() {
                                 }
                             };
                             if intent == ConfirmationIntent::Confirm {
-                                let _ = runtime_action
-                                    .set_text("Confirm stop agent runtime — end active agents");
+                                let _ = runtime_action.set_text(
+                                    "Confirm stop Environment Runtime — end active agents",
+                                );
                                 return;
                             }
                             if intent == ConfirmationIntent::Ignore {
@@ -364,7 +365,7 @@ pub fn run() {
                                 let _ = quit.set_text("Quitting…");
                                 let _ = quit.set_enabled(false);
                                 let _ = server_action.set_text("Stopping Soloe server…");
-                                let _ = runtime_action.set_text("Stopping agent runtime…");
+                                let _ = runtime_action.set_text("Stopping Environment Runtime…");
                                 let _ = server_action.set_enabled(false);
                                 let _ = runtime_action.set_enabled(false);
                                 let result = supervisor.shutdown_all();
@@ -451,7 +452,7 @@ pub fn run() {
             let startup_lifecycle_state = Arc::clone(&menu_action_state);
             thread::spawn(move || {
                 if let Err(error) = startup_supervisor.start() {
-                    eprintln!("[tray] failed to start backend: {error}");
+                    eprintln!("[tray] Soloe startup stopped: {error}");
                 }
                 let server_label = startup_supervisor.server_action_label();
                 let runtime_label = startup_supervisor.runtime_action_label();
@@ -653,6 +654,11 @@ mod tests {
         assert_eq!(
             state.begin(MenuService::Server),
             Some("Starting Soloe server…".to_string())
+        );
+
+        assert_eq!(
+            state.begin(MenuService::Runtime),
+            Some("Stopping Environment Runtime…".to_string())
         );
     }
 }
