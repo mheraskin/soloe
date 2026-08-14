@@ -1926,6 +1926,7 @@ impl BundledMacosLayout {
     }
 }
 
+#[cfg(any(target_os = "macos", all(test, not(target_os = "windows"))))]
 fn bundled_macos_layout_from_executable(executable: &Path) -> Option<BundledMacosLayout> {
     let contents = executable.parent()?.parent()?;
     if contents.file_name()?.to_str()? != "Contents" {
@@ -2326,10 +2327,18 @@ mod tests {
             supervisor.configured_backend().unwrap().placement,
             BackendPlacement::Macos
         );
-        assert_eq!(supervisor.server_action_label(), "Start Soloe server");
+        let suffix = if cfg!(target_os = "windows") {
+            " (macOS)"
+        } else {
+            ""
+        };
+        assert_eq!(
+            supervisor.server_action_label(),
+            format!("Start Soloe server{suffix}")
+        );
         assert_eq!(
             supervisor.runtime_action_label(),
-            "Start Environment Runtime"
+            format!("Start Environment Runtime{suffix}")
         );
         let _ = fs::remove_dir_all(directory);
     }
@@ -2411,6 +2420,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
     fn installed_macos_product_resolves_its_private_runtime_server_web_and_ui() {
         let layout = bundled_macos_layout_from_executable(Path::new(
             "/Applications/Soloe.app/Contents/MacOS/soloe-tray",
