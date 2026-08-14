@@ -144,7 +144,7 @@ export class SessionCommandBuilder {
       return { executable: launch.command, args: launch.args ?? [], env: bridgeEnv };
     }
     if (launch.command) {
-      const resolved = this.shellDetector.resolve(launch.shell, s.runMode);
+      const resolved = this.shellDetector.resolve(launch.shell, s.runMode, ctx.baseEnv);
       const cmdLine = [launch.command, ...(launch.args ?? [])].join(' ');
       return {
         executable: resolved.executable,
@@ -152,7 +152,7 @@ export class SessionCommandBuilder {
         env: bridgeEnv
       };
     }
-    const resolved = this.shellDetector.resolve(launch.shell, s.runMode);
+    const resolved = this.shellDetector.resolve(launch.shell, s.runMode, ctx.baseEnv);
     if (s.runMode === 'wsl' && isBash(resolved.executable)) {
       return {
         executable: resolved.executable,
