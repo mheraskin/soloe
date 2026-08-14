@@ -57,7 +57,8 @@ describe('WorkspaceDeviceService', () => {
       state: 'succeeded',
       result: { checkout: { id: CHECKOUT_ID, lifecycle: 'ready', role: 'workspace' } }
     });
-    expect(git(fixture.repository, ['worktree', 'list', '--porcelain'])).toContain(targetPath);
+    expect(gitPath(git(fixture.repository, ['worktree', 'list', '--porcelain'])))
+      .toContain(gitPath(targetPath));
   });
 
   it('blocks a Branch already checked out elsewhere and paths outside managed roots', async () => {
@@ -234,8 +235,8 @@ describe('WorkspaceDeviceService', () => {
       state: 'succeeded',
       result: { checkout: { id: checkoutId, lifecycle: 'removed' } }
     });
-    expect(git(fixture.repository, ['worktree', 'list', '--porcelain']))
-      .not.toContain(isolatedPlan.preview.targetPath);
+    expect(gitPath(git(fixture.repository, ['worktree', 'list', '--porcelain'])))
+      .not.toContain(gitPath(isolatedPlan.preview.targetPath));
   });
 
   it('promotes an isolated Checkout without deleting useful dirty or unpublished work', async () => {
@@ -450,6 +451,10 @@ function command(
     planExpiresAt: plan.expiresAt,
     intent
   };
+}
+
+function gitPath(value: string): string {
+  return value.replaceAll('\\', '/');
 }
 
 function session(input: Pick<Session, 'id' | 'cwd' | 'source'> & { archivedAt?: string }): Session {
