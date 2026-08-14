@@ -14,9 +14,9 @@ The default data directory is:
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\\Soloe` |
 | Linux | `$XDG_STATE_HOME/soloe` or `~/.local/state/soloe` |
-| macOS | `~/Library/Application Support/Soloe` (not currently supported) |
+| macOS | `~/Library/Application Support/Soloe` |
 
-Set `SOLOE_DATA_DIR` to use another location. Common entries include `sessions.json`, `settings.json`, `projects.json`, `browser-sessions.json`, `notes/`, `vault/`, logs, and `crashes/`.
+Set `SOLOE_DATA_DIR` to use another location. Common entries include `sessions.json`, `settings.json`, `projects.json`, `browser-sessions.json`, `device-identity.json`, `device-workspaces.json`, `notes/`, `vault/`, logs, and `crashes/`.
 
 Vault values use AES-256-GCM in the current cross-platform implementation. A local `.vault-key` is stored alongside the vault with restrictive filesystem permissions where the platform supports them. Encryption at rest does not protect data from other software already running as the same user.
 
