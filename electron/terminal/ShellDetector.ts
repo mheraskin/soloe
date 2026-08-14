@@ -24,12 +24,15 @@ export class ShellDetector {
     environment: Readonly<Record<string, string | undefined>> = process.env
   ): ResolvedShell {
     if (runMode === 'wsl') return { executable: 'bash', args: ['-l'] };
-    if (process.platform === 'win32') {
+    if (runMode === 'windows') {
       return { executable: 'pwsh.exe', args: ['-NoLogo'] };
     }
     const userShell = environment['SHELL'];
     if (userShell) return { executable: userShell, args: ['-l'] };
-    return { executable: 'bash', args: ['-l'] };
+    return {
+      executable: runMode === 'macos' ? '/bin/zsh' : 'bash',
+      args: ['-l']
+    };
   }
 
   named(shell: Exclude<ShellKind, 'auto' | 'custom'>, runMode: RunMode): ResolvedShell {
