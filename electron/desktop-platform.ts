@@ -1,5 +1,21 @@
 import type { BrowserWindowConstructorOptions, MenuItemConstructorOptions } from 'electron';
 
+export interface DesktopApplicationIdentity {
+  name: 'Soloe';
+  desktopName?: 'com.soloe.app.desktop';
+  setDockIcon: boolean;
+}
+
+export function desktopApplicationIdentity(
+  platform: NodeJS.Platform = process.platform
+): DesktopApplicationIdentity {
+  return {
+    name: 'Soloe',
+    ...(platform === 'linux' ? { desktopName: 'com.soloe.app.desktop' as const } : {}),
+    setDockIcon: platform === 'darwin'
+  };
+}
+
 export type DesktopWindowPolicy = Pick<
   BrowserWindowConstructorOptions,
   'autoHideMenuBar' | 'frame' | 'titleBarStyle' | 'trafficLightPosition'

@@ -1,11 +1,46 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   applicationMenuTemplate,
+  desktopApplicationIdentity,
   desktopWindowPolicy,
   shouldPreventWindowCloseShortcut,
   shouldQuitAfterLastWindow,
   shouldShowCustomWindowControls
 } from './desktop-platform.js';
+
+describe('desktopApplicationIdentity', () => {
+  it('provides native development metadata before Electron starts', () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../apps/desktop-electron/package.json', import.meta.url), 'utf8')
+    ) as { productName?: string; desktopName?: string };
+
+    expect(packageJson.productName).toBe('Soloe');
+    expect(packageJson.desktopName).toBe('com.soloe.app.desktop');
+  });
+
+  it('brands the macOS development application and its Dock icon as Soloe', () => {
+    expect(desktopApplicationIdentity('darwin')).toEqual({
+      name: 'Soloe',
+      setDockIcon: true
+    });
+  });
+
+  it('uses the packaged desktop ID for Linux launchers and window grouping', () => {
+    expect(desktopApplicationIdentity('linux')).toEqual({
+      name: 'Soloe',
+      desktopName: 'com.soloe.app.desktop',
+      setDockIcon: false
+    });
+  });
+
+  it('keeps the Soloe application name on Windows', () => {
+    expect(desktopApplicationIdentity('win32')).toEqual({
+      name: 'Soloe',
+      setDockIcon: false
+    });
+  });
+});
 
 describe('desktopWindowPolicy', () => {
   it('uses native inset traffic lights on macOS', () => {

@@ -101,10 +101,33 @@ import { ModelCatalogService } from './agents/ModelCatalogService.js';
 import { assertSafeExternalUrl } from './security/external-url.js';
 import {
   applicationMenuTemplate,
+  desktopApplicationIdentity,
   desktopWindowPolicy,
   shouldPreventWindowCloseShortcut,
   shouldQuitAfterLastWindow
 } from './desktop-platform.js';
+
+const desktopIdentity = desktopApplicationIdentity();
+
+// Changing the development package's productName gives the operating system a
+// real Soloe identity, but Electron also derives userData from that name. Keep
+// the established development location so existing settings and Sessions do
+// not appear to disappear after this branding change.
+if (!app.isPackaged) {
+  const developmentUserDataPath = path.join(
+    app.getPath('appData'),
+    '@soloe',
+    'desktop-electron'
+  );
+  mkdirSync(developmentUserDataPath, { recursive: true });
+  app.setPath('userData', developmentUserDataPath);
+}
+
+app.setName(desktopIdentity.name);
+process.title = desktopIdentity.name;
+if (desktopIdentity.desktopName) {
+  app.setDesktopName(desktopIdentity.desktopName);
+}
 
 interface AppServices {
   store: SessionStore;
@@ -1108,6 +1131,9 @@ app.on('web-contents-created', (_event, contents) => {
 if (ensureSingleInstance()) {
   pendingDiffIntent = parseDiffArgv(process.argv);
   app.whenReady().then(async () => {
+    if (desktopIdentity.setDockIcon) {
+      app.dock?.setIcon(resolveAppIcon());
+    }
     const menuTemplate = applicationMenuTemplate();
     Menu.setApplicationMenu(menuTemplate.length > 0 ? Menu.buildFromTemplate(menuTemplate) : null);
     ensureWindowsDevShellShortcut(resolveAppIcon());
