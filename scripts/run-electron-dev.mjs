@@ -12,12 +12,24 @@ const require = createRequire(import.meta.url);
 
 export const DEVELOPMENT_APP_NAME = 'Soloe';
 export const DEVELOPMENT_APP_ID = 'com.soloe.app.dev';
-export const DEVELOPMENT_BUNDLE_FORMAT_VERSION = 4;
+export const DEVELOPMENT_BUNDLE_FORMAT_VERSION = 5;
 export const DEVELOPMENT_HELPER_BUNDLES = [
   ['Electron Helper.app', 'Soloe Helper.app', 'Soloe Helper'],
   ['Electron Helper (GPU).app', 'Soloe Helper (GPU).app', 'Soloe Helper (GPU)'],
   ['Electron Helper (Plugin).app', 'Soloe Helper (Plugin).app', 'Soloe Helper (Plugin)'],
   ['Electron Helper (Renderer).app', 'Soloe Helper (Renderer).app', 'Soloe Helper (Renderer)']
+];
+export const DEVELOPMENT_NESTED_SIGNABLES = [
+  'Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler',
+  'Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libEGL.dylib',
+  'Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libGLESv2.dylib',
+  'Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib',
+  'Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libvk_swiftshader.dylib',
+  'Contents/Frameworks/Mantle.framework/Versions/A/Mantle',
+  'Contents/Frameworks/ReactiveObjC.framework/Versions/A/ReactiveObjC',
+  'Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt',
+  'Contents/Frameworks/Squirrel.framework/Versions/A/Squirrel',
+  'Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework'
 ];
 
 function run(command, args) {
@@ -80,6 +92,10 @@ export async function prepareMacosDevelopmentElectron() {
     join(destinationApp, 'Contents', 'MacOS', 'Electron'),
     join(destinationApp, 'Contents', 'MacOS', DEVELOPMENT_APP_NAME)
   );
+
+  for (const relativePath of DEVELOPMENT_NESTED_SIGNABLES) {
+    run('codesign', ['--force', '--sign', '-', join(destinationApp, relativePath)]);
+  }
 
   const frameworksDirectory = join(destinationApp, 'Contents', 'Frameworks');
   for (const [sourceName, destinationName, bundleName] of DEVELOPMENT_HELPER_BUNDLES) {

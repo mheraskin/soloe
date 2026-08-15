@@ -29,6 +29,7 @@ describe('desktopApplicationIdentity', () => {
       DEVELOPMENT_APP_NAME: string;
       DEVELOPMENT_APP_ID: string;
       DEVELOPMENT_HELPER_BUNDLES: Array<[string, string, string]>;
+      DEVELOPMENT_NESTED_SIGNABLES: string[];
     };
 
     expect(launcher.DEVELOPMENT_APP_NAME).toBe('Soloe');
@@ -39,6 +40,12 @@ describe('desktopApplicationIdentity', () => {
       'Soloe Helper (Plugin).app',
       'Soloe Helper (Renderer).app'
     ]);
+    expect(launcher.DEVELOPMENT_NESTED_SIGNABLES).toContain(
+      'Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework'
+    );
+    expect(launcher.DEVELOPMENT_NESTED_SIGNABLES).toContain(
+      'Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt'
+    );
   });
 
   it('brands the macOS development application and its Dock icon as Soloe', () => {
