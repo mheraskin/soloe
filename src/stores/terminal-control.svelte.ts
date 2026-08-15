@@ -18,12 +18,12 @@ class TerminalControlStore {
       acquire: (terminalId, identity, takeover) =>
         ipc.terminal.acquireInputLease(terminalId, identity, takeover),
       current: (terminalId) => ipc.terminal.currentInputLease(terminalId),
-      release: (terminalId, leaseId) => ipc.terminal.releaseInputLease(terminalId, leaseId),
-      input: async (terminalId, data, generation) => {
-        await ipc.terminal.input(terminalId, data, generation);
+      release: (terminalId, control) => ipc.terminal.releaseInputLease(terminalId, control),
+      input: async (terminalId, data, control) => {
+        await ipc.terminal.input(terminalId, data, control);
       },
-      resize: async (terminalId, cols, rows, generation) => {
-        await ipc.terminal.resize(terminalId, cols, rows, generation);
+      resize: async (terminalId, cols, rows, control) => {
+        await ipc.terminal.resize(terminalId, cols, rows, control);
       },
       onLease: (listener) => ipc.terminal.onInputLease(listener)
     };

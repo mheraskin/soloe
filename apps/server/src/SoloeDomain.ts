@@ -158,7 +158,10 @@ import type {
   DeviceWorkspaceIntent,
 } from "../../../shared/types/workspaces.js";
 import type { CreateGitHubRepositoryIntent } from "../../../shared/types/providers.js";
-import type { TerminalInputLease } from "../../../shared/types/terminal.js";
+import type {
+  TerminalControlProof,
+  TerminalInputLease,
+} from "../../../shared/types/terminal.js";
 
 export interface RuntimeControl {
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
@@ -169,25 +172,24 @@ export interface RuntimeControl {
     terminalId: string,
     ownerId: string,
     takeover?: boolean,
-    controller?: { deviceId: string; deviceName: string },
+    controller?: { deviceId: string; deviceName: string; ownerDeviceId: string },
   ): Promise<TerminalInputLease>;
   currentInputLease?(terminalId: string): Promise<TerminalInputLease | null>;
   releaseInputLease?(
     terminalId: string,
-    ownerId: string,
-    leaseId: string,
+    control: TerminalControlProof,
   ): Promise<boolean>;
   releaseInputLeases?(ownerId: string): Promise<number>;
   write(
     terminalId: string,
     data: string,
-    control: { ownerId: string; generation: number },
+    control: TerminalControlProof,
   ): Promise<unknown>;
   resize(
     terminalId: string,
     cols: number,
     rows: number,
-    control: { ownerId: string; generation: number },
+    control: TerminalControlProof,
   ): Promise<unknown>;
   stop(terminalId: string): Promise<unknown>;
   usage?(): Promise<RuntimeUsageSnapshot>;
@@ -360,7 +362,7 @@ export class SoloeDomain extends EventEmitter {
         useWslHostBridge: process.platform === "win32",
       }),
       // File-paste calls without an explicit Terminal Control Lease are rejected by
-      // RuntimeControl; the renderer terminal path supplies generation-qualified input.
+      // RuntimeControl; the renderer terminal path supplies identity-qualified Session Control.
       runtime: options.runtime,
       getSession: (sessionId) => this.sessions.get(sessionId),
       authorizeScope: (scope) => this.isAuthorizedWorktree(scope),
@@ -1564,15 +1566,11 @@ export class SoloeDomain extends EventEmitter {
         requireArgumentCount("files.openInEditor", args, 1);
         return this.files.openInEditor(validateFileOpenRequest(args[0]));
       case "pasteIntoTerminal":
-        return this.files.pasteIntoTerminal({
-          ...(args[0] as FilePasteRequest),
-          controllerClientId: requireTerminalClientId(clientId),
-        });
+        requireTerminalClientId(clientId);
+        return this.files.pasteIntoTerminal(args[0] as FilePasteRequest);
       case "pasteImagesIntoTerminal":
-        return this.files.pasteImagesIntoTerminal({
-          ...(args[0] as ImagePasteRequest),
-          controllerClientId: requireTerminalClientId(clientId),
-        });
+        requireTerminalClientId(clientId);
+        return this.files.pasteImagesIntoTerminal(args[0] as ImagePasteRequest);
       case "listTree":
         return this.files.listTree(args[0] as FileTreeRequest);
       case "readFile":
@@ -1950,12 +1948,16 @@ export class SoloeDomain extends EventEmitter {
         const ownerId = requireTerminalClientId(clientId);
         const acquire = this.options.runtime.acquireInputLease;
         if (!acquire) throw terminalInputLeaseUnavailable();
+        const controller = terminalController(args[2], ownerId);
         return acquire.call(
           this.options.runtime,
           requireTerminalId(args[0]),
           ownerId,
           args[1] === true,
-          terminalController(args[2], ownerId),
+          {
+            ...controller,
+            ownerDeviceId: this.options.deviceId ?? controller.deviceId,
+          },
         );
       }
       case "currentInputLease": {
@@ -1964,24 +1966,20 @@ export class SoloeDomain extends EventEmitter {
         return current.call(this.options.runtime, requireTerminalId(args[0]));
       }
       case "releaseInputLease": {
-        const ownerId = requireTerminalClientId(clientId);
+        requireTerminalClientId(clientId);
         const release = this.options.runtime.releaseInputLease;
         if (!release) throw terminalInputLeaseUnavailable();
         return release.call(
           this.options.runtime,
           requireTerminalId(args[0]),
-          ownerId,
-          requireTerminalLeaseId(args[1]),
+          requireTerminalControlProof(args[1]),
         );
       }
       case "input": {
         const terminalId = requireTerminalId(args[0]);
         const data = args[1] as string;
-        const ownerId = requireTerminalClientId(clientId);
-        const control = {
-          ownerId,
-          generation: requireTerminalGeneration(args[2]),
-        };
+        requireTerminalClientId(clientId);
+        const control = requireTerminalControlProof(args[2]);
         const interruptedSessionId = await this.interruptedAgentSessionId(
           terminalId,
           data,
@@ -2000,12 +1998,12 @@ export class SoloeDomain extends EventEmitter {
         return true;
       }
       case "resize": {
-        const ownerId = requireTerminalClientId(clientId);
+        requireTerminalClientId(clientId);
         await this.options.runtime.resize(
           requireTerminalId(args[0]),
           args[1] as number,
           args[2] as number,
-          { ownerId, generation: requireTerminalGeneration(args[3]) },
+          requireTerminalControlProof(args[3]),
         );
         return true;
       }
@@ -2184,14 +2182,23 @@ function requireTerminalLeaseId(value: unknown): string {
   return requireTerminalIdentity(value, "Terminal input lease ID");
 }
 
-function requireTerminalGeneration(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+function requireTerminalControlProof(value: unknown): TerminalControlProof {
+  if (!value || typeof value !== "object") {
     throw new RpcError(
-      "terminal_control_generation_required",
-      "Terminal control lease generation is required.",
+      "terminal_control_proof_required",
+      "Session Control identity is required.",
     );
   }
-  return value as number;
+  const proof = value as Partial<TerminalControlProof>;
+  return {
+    sessionId: requireTerminalIdentity(proof.sessionId, "Session ID"),
+    ownerDeviceId: requireTerminalIdentity(proof.ownerDeviceId, "Session owner Device ID"),
+    controllerDeviceId: requireTerminalIdentity(
+      proof.controllerDeviceId,
+      "Controller Device ID",
+    ),
+    leaseId: requireTerminalLeaseId(proof.leaseId),
+  };
 }
 
 function terminalController(

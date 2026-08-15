@@ -14,6 +14,7 @@ import {
   TerminalInputLeaseManager
 } from './TerminalInputLeaseManager.js';
 import { TerminalLocationParser } from '../../../shared/terminal-location.js';
+import type { TerminalControlProof } from '../../../shared/types/terminal.js';
 
 export interface RuntimeHostOptions {
   endpoint: string;
@@ -96,7 +97,7 @@ export class RuntimeHost {
       released = true;
       this.sockets.delete(socket);
       for (const ownerId of this.socketOwners.get(socket) ?? []) {
-        this.inputLeases.releaseOwner(ownerId);
+        this.inputLeases.releaseTransportClient(ownerId);
       }
       this.socketOwners.delete(socket);
     };
@@ -151,12 +152,14 @@ export class RuntimeHost {
           takeover?: boolean;
           deviceId?: string;
           deviceName?: string;
+          ownerDeviceId?: string;
         };
         const terminal = this.requireTerminal(input.terminalId);
         this.socketOwners.get(socket)?.add(input.ownerId);
         return this.inputLeases.acquire(input.terminalId, input.ownerId, {
           takeover: input.takeover === true,
           sessionId: terminal.state.sessionId,
+          ownerDeviceId: input.ownerDeviceId,
           controllerDeviceId: input.deviceId,
           controllerDeviceName: input.deviceName,
           cols: terminal.state.cols,
@@ -169,25 +172,26 @@ export class RuntimeHost {
         return this.inputLeases.current(input.terminalId);
       }
       case 'releaseInputLease': {
-        const input = params as { terminalId: string; ownerId: string; leaseId: string };
-        return this.inputLeases.release(input.terminalId, input.ownerId, input.leaseId);
+        const input = params as { terminalId: string } & TerminalControlProof;
+        return this.inputLeases.release(input.terminalId, runtimeControlProof(input));
       }
       case 'releaseInputLeases': {
         const input = params as { ownerId: string };
-        return this.inputLeases.releaseOwner(input.ownerId);
+        return this.inputLeases.releaseTransportClient(input.ownerId);
       }
       case 'write': {
         const input = params as {
           terminalId: string;
           data: string;
-          ownerId: string;
-          generation: number;
+          sessionId: string;
+          ownerDeviceId: string;
+          controllerDeviceId: string;
+          leaseId: string;
         };
         const terminal = this.requireTerminal(input.terminalId);
         this.inputLeases.authorizeControl(
           input.terminalId,
-          input.ownerId,
-          input.generation,
+          runtimeControlProof(input),
           'input'
         );
         terminal.process.write(input.data);
@@ -198,14 +202,15 @@ export class RuntimeHost {
           terminalId: string;
           cols: number;
           rows: number;
-          ownerId: string;
-          generation: number;
+          sessionId: string;
+          ownerDeviceId: string;
+          controllerDeviceId: string;
+          leaseId: string;
         };
         const terminal = this.requireTerminal(input.terminalId);
         const lease = this.inputLeases.resize(
           input.terminalId,
-          input.ownerId,
-          input.generation,
+          runtimeControlProof(input),
           input.cols,
           input.rows
         );
@@ -308,4 +313,13 @@ export class RuntimeHost {
       if (socket.writable) socket.write(line);
     }
   }
+}
+
+function runtimeControlProof(input: TerminalControlProof): TerminalControlProof {
+  return {
+    sessionId: input.sessionId,
+    ownerDeviceId: input.ownerDeviceId,
+    controllerDeviceId: input.controllerDeviceId,
+    leaseId: input.leaseId
+  };
 }

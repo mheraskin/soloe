@@ -8,7 +8,11 @@ import type {
 import type { GitWorktree } from '@shared/types/git.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { Session, SessionDraft, SessionId, SessionRuntimeState } from '@shared/types/sessions.js';
-import type { TerminalInputLease, TerminalStartResult } from '@shared/types/terminal.js';
+import type {
+  TerminalControlProof,
+  TerminalInputLease,
+  TerminalStartResult
+} from '@shared/types/terminal.js';
 import type {
   DevicePlacedSessionRequest,
   DeviceWorkspaceIntent,
@@ -59,15 +63,20 @@ export interface SessionDevice {
   readInventory(): Promise<DeviceSessionInventory>;
   reorderSessions(orderedIds: SessionId[]): Promise<Session[]>;
   setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void>;
-  terminalInput(terminalId: string, data: string, generation: number): Promise<void>;
+  terminalInput(terminalId: string, data: string, control: TerminalControlProof): Promise<void>;
   terminalAcquireInputLease?(
     terminalId: string,
     takeover?: boolean,
     controller?: { deviceId: string; deviceName: string }
   ): Promise<TerminalInputLease>;
   terminalCurrentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
-  terminalReleaseInputLease(terminalId: string, leaseId: string): Promise<boolean>;
-  terminalResize(terminalId: string, cols: number, rows: number, generation: number): Promise<void>;
+  terminalReleaseInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean>;
+  terminalResize(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    control: TerminalControlProof
+  ): Promise<void>;
   terminalReplay(terminalId: string, afterSeq?: number): Promise<DeviceTerminalReplay>;
   terminalStop(terminalId: string): Promise<void>;
   createSession?(request: DevicePlacedSessionRequest): Promise<Session>;
@@ -490,8 +499,9 @@ export class MultiDeviceSessions {
     return this.refresh();
   }
 
-  async terminalInput(ref: TerminalRef, data: string, generation: number): Promise<void> {
-    await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data, generation);
+  async terminalInput(ref: TerminalRef, data: string, control: TerminalControlProof): Promise<void> {
+    assertControlTargetsDevice(ref, control);
+    await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data, control);
   }
 
   async terminalAcquireInputLease(
@@ -503,9 +513,12 @@ export class MultiDeviceSessions {
       throw new Error('The selected Device does not support terminal input control.');
     }
     const controller = this.currentState.devices.find((candidate) => candidate.local);
+    if (!controller) {
+      throw new Error('The controlling Soloe Device identity is unavailable.');
+    }
     return device.terminalAcquireInputLease(ref.terminalId, takeover, {
-      deviceId: controller?.deviceId ?? this.clientId,
-      deviceName: controller?.name ?? 'Soloe client'
+      deviceId: controller.deviceId,
+      deviceName: controller.name
     });
   }
 
@@ -513,21 +526,29 @@ export class MultiDeviceSessions {
     return this.requireReadyDevice(ref.deviceId).terminalCurrentInputLease(ref.terminalId);
   }
 
-  async terminalReleaseInputLease(ref: TerminalRef, leaseId: string): Promise<boolean> {
-    return this.requireReadyDevice(ref.deviceId).terminalReleaseInputLease(ref.terminalId, leaseId);
+  async terminalReleaseInputLease(
+    ref: TerminalRef,
+    control: TerminalControlProof
+  ): Promise<boolean> {
+    assertControlTargetsDevice(ref, control);
+    return this.requireReadyDevice(ref.deviceId).terminalReleaseInputLease(
+      ref.terminalId,
+      control
+    );
   }
 
   async terminalResize(
     ref: TerminalRef,
     cols: number,
     rows: number,
-    generation: number
+    control: TerminalControlProof
   ): Promise<void> {
+    assertControlTargetsDevice(ref, control);
     await this.requireReadyDevice(ref.deviceId).terminalResize(
       ref.terminalId,
       cols,
       rows,
-      generation
+      control
     );
   }
 
@@ -799,6 +820,12 @@ function compareSessions(left: MultiDeviceSessionView, right: MultiDeviceSession
   return (left.session.sortIndex ?? Number.MAX_SAFE_INTEGER)
     - (right.session.sortIndex ?? Number.MAX_SAFE_INTEGER)
     || left.session.name.localeCompare(right.session.name);
+}
+
+function assertControlTargetsDevice(ref: TerminalRef, control: TerminalControlProof): void {
+  if (control.ownerDeviceId !== ref.deviceId) {
+    throw new Error('Session Control owner Device does not match the terminal Device.');
+  }
 }
 
 function branchRef(branch: string): string {

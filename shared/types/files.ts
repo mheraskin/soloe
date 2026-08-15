@@ -1,5 +1,5 @@
 import type { RunMode } from './sessions.js';
-import type { TerminalId } from './terminal.js';
+import type { TerminalControlProof, TerminalId } from './terminal.js';
 
 export interface FileSearchRequest {
   cwd: string;
@@ -25,9 +25,7 @@ export interface FileOpenRequest {
 export interface FilePasteRequest {
   terminalId: TerminalId;
   path: string;
-  generation: number;
-  /** Bound to the authenticated caller by the backend adapter. */
-  controllerClientId?: string;
+  control: TerminalControlProof;
 }
 
 export interface ClipboardImagePayload {
@@ -40,9 +38,7 @@ export interface ImagePasteRequest {
   terminalId: TerminalId;
   sessionId: string;
   images: ClipboardImagePayload[];
-  generation: number;
-  /** Bound to the authenticated caller by the backend adapter. */
-  controllerClientId?: string;
+  control: TerminalControlProof;
 }
 
 export interface ImagePasteResult {

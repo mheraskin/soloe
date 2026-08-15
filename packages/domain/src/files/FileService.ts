@@ -15,6 +15,7 @@ import type {
   ImagePasteRequest,
   ImagePasteResult,
 } from "../../../../shared/types/files.js";
+import type { TerminalControlProof } from "../../../../shared/types/terminal.js";
 import { effectiveAgentProvider, type Session } from "../../../../shared/types/sessions.js";
 import {
   joinHostPath,
@@ -45,7 +46,7 @@ export interface FilesRuntime {
   write(
     terminalId: string,
     data: string,
-    control: { ownerId: string; generation: number }
+    control: TerminalControlProof
   ): Promise<unknown>;
 }
 
@@ -653,16 +654,19 @@ function extensionForMime(mimeType: string): string {
   return "png";
 }
 
-function terminalControl(request: {
-  controllerClientId?: string;
-  generation: number;
-}): { ownerId: string; generation: number } {
-  const ownerId = request.controllerClientId?.trim();
-  if (!ownerId || !Number.isSafeInteger(request.generation) || request.generation < 1) {
+function terminalControl(request: { control: TerminalControlProof }): TerminalControlProof {
+  const control = request.control;
+  if (
+    !control
+    || !control.sessionId?.trim()
+    || !control.ownerDeviceId?.trim()
+    || !control.controllerDeviceId?.trim()
+    || !control.leaseId?.trim()
+  ) {
     throw new DomainError(
       "terminal_control_lease_required",
-      "Terminal file paste requires the current control lease generation",
+      "Terminal file paste requires current Session Control",
     );
   }
-  return { ownerId, generation: request.generation };
+  return structuredClone(control);
 }

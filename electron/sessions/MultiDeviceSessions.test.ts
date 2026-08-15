@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { terminalControlProof } from '@shared/types/terminal.js';
 import type { DeviceDescriptor, DeviceEventEnvelope } from '@shared/types/devices.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type { Project } from '@shared/types/projects.js';
@@ -264,7 +265,8 @@ describe('MultiDeviceSessions', () => {
       projectPath: '/Users/me/soloe',
       workspacePath: '/Users/me/soloe',
       branch: 'main',
-      sessions: []
+      sessions: [],
+      local: true
     });
     const laptop = fakeDevice({
       deviceId: LAPTOP_ID,
@@ -281,7 +283,12 @@ describe('MultiDeviceSessions', () => {
     await sessions.terminalInput(
       { deviceId: LAPTOP_ID, terminalId: 'terminal-remote-session' },
       'git status\r',
-      3
+      {
+        sessionId: 'remote-session',
+        ownerDeviceId: LAPTOP_ID,
+        controllerDeviceId: MAC_ID,
+        leaseId: 'lease-remote-session'
+      }
     );
 
     expect(mac.terminalInputs).toEqual([]);
@@ -291,8 +298,15 @@ describe('MultiDeviceSessions', () => {
 
     const ref = { deviceId: LAPTOP_ID, terminalId: 'terminal-remote-session' };
     const lease = await sessions.terminalAcquireInputLease(ref);
+    expect(lease).toMatchObject({
+      ownerDeviceId: LAPTOP_ID,
+      controllerDeviceId: MAC_ID,
+      controllerDeviceName: 'MacBook'
+    });
     await expect(sessions.terminalCurrentInputLease(ref)).resolves.toEqual(lease);
-    await expect(sessions.terminalReleaseInputLease(ref, lease.leaseId)).resolves.toBe(true);
+    await expect(
+      sessions.terminalReleaseInputLease(ref, terminalControlProof(lease))
+    ).resolves.toBe(true);
     await expect(sessions.terminalCurrentInputLease(ref)).resolves.toBeNull();
   });
 
@@ -511,15 +525,18 @@ function fakeDevice(input: {
     terminalInput: async (terminalId, data) => {
       terminalInputs.push({ terminalId, data });
     },
-    terminalAcquireInputLease: async (terminalId) => {
+    terminalAcquireInputLease: async (
+      terminalId,
+      _takeover,
+      controller = { deviceId: input.deviceId, deviceName: input.name }
+    ) => {
       const lease = {
         terminalId,
         sessionId: `session-${terminalId}`,
+        ownerDeviceId: input.deviceId,
         leaseId: `lease-${terminalId}`,
-        ownerId: `owner-${input.deviceId}`,
-        controllerClientId: `owner-${input.deviceId}`,
-        controllerDeviceId: input.deviceId,
-        controllerDeviceName: input.name,
+        controllerDeviceId: controller.deviceId,
+        controllerDeviceName: controller.deviceName,
         generation: 1,
         cols: 120,
         rows: 30,
@@ -530,8 +547,8 @@ function fakeDevice(input: {
       return lease;
     },
     terminalCurrentInputLease: async (terminalId) => terminalLeases.get(terminalId) ?? null,
-    terminalReleaseInputLease: async (terminalId, leaseId) => {
-      if (terminalLeases.get(terminalId)?.leaseId !== leaseId) return false;
+    terminalReleaseInputLease: async (terminalId, control) => {
+      if (terminalLeases.get(terminalId)?.leaseId !== control.leaseId) return false;
       terminalLeases.delete(terminalId);
       return true;
     },

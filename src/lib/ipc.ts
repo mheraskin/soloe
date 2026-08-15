@@ -76,6 +76,7 @@ import type {
   TerminalId,
   TerminalLocationEvent,
   TerminalInputLeaseEvent,
+  TerminalControlProof,
   TerminalControllerIdentity,
   TerminalOutputEvent,
   TerminalStartOptions,
@@ -223,11 +224,11 @@ export const backend = {
       }
       return unwrap(await c.sessions.setDeviceTerminalDemand(toIpcPayload(refs)));
     },
-    deviceTerminalInput: async (ref: TerminalRef, data: string, generation: number) => {
+    deviceTerminalInput: async (ref: TerminalRef, data: string, control: TerminalControlProof) => {
       if (!c.sessions.deviceTerminalInput) {
         throw new Error('Multi-Device terminal input is unavailable.');
       }
-      return unwrap(await c.sessions.deviceTerminalInput(toIpcPayload({ ref, data, generation })));
+      return unwrap(await c.sessions.deviceTerminalInput(toIpcPayload({ ref, data, control })));
     },
     deviceTerminalInputLease: async (ref: TerminalRef, takeover = false) => {
       if (!c.sessions.deviceTerminalInputLease) {
@@ -241,25 +242,25 @@ export const backend = {
       }
       return unwrap(await c.sessions.deviceTerminalCurrentInputLease(toIpcPayload(ref)));
     },
-    deviceTerminalReleaseInputLease: async (ref: TerminalRef, leaseId: string) => {
+    deviceTerminalReleaseInputLease: async (ref: TerminalRef, control: TerminalControlProof) => {
       if (!c.sessions.deviceTerminalReleaseInputLease) {
         throw new Error('Multi-Device terminal input control is unavailable.');
       }
       return unwrap(await c.sessions.deviceTerminalReleaseInputLease(
-        toIpcPayload({ ref, leaseId })
+        toIpcPayload({ ref, control })
       ));
     },
     deviceTerminalResize: async (
       ref: TerminalRef,
       cols: number,
       rows: number,
-      generation: number
+      control: TerminalControlProof
     ) => {
       if (!c.sessions.deviceTerminalResize) {
         throw new Error('Multi-Device terminal resize is unavailable.');
       }
       return unwrap(await c.sessions.deviceTerminalResize(
-        toIpcPayload({ ref, cols, rows, generation })
+        toIpcPayload({ ref, cols, rows, control })
       ));
     },
     deviceTerminalReplay: async (ref: TerminalRef, afterSeq = 0) => {
@@ -297,19 +298,19 @@ export const backend = {
     )),
     currentInputLease: async (terminalId: TerminalId) =>
       unwrap(await c.terminal.currentInputLease(terminalId)),
-    releaseInputLease: async (terminalId: TerminalId, leaseId: string) =>
-      unwrap(await c.terminal.releaseInputLease(terminalId, leaseId)),
-    input: async (terminalId: TerminalId, data: string, generation: number) =>
-      unwrap(await c.terminal.input(toIpcPayload({ terminalId, data, generation }))),
+    releaseInputLease: async (terminalId: TerminalId, control: TerminalControlProof) =>
+      unwrap(await c.terminal.releaseInputLease(terminalId, toIpcPayload(control))),
+    input: async (terminalId: TerminalId, data: string, control: TerminalControlProof) =>
+      unwrap(await c.terminal.input(toIpcPayload({ terminalId, data, control }))),
     resize: async (
       terminalId: TerminalId,
       cols: number,
       rows: number,
-      generation: number
+      control: TerminalControlProof
     ) => unwrap(await c.terminal.resize(toIpcPayload({
       terminalId,
       dimensions: { cols, rows },
-      generation
+      control
     }))),
     listRunning: async () => unwrap(await c.terminal.listRunning()),
     replay: async (terminalId: TerminalId, afterSeq = 0) =>

@@ -6,6 +6,7 @@ import type {
   TerminalOutputEvent,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
+import { terminalControlProof, type TerminalInputLease } from '@shared/types/terminal.js';
 
 const electronMocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => unknown>(),
@@ -177,18 +178,23 @@ describe('TerminalIpc control lease', () => {
       't-1',
       { deviceId: 'device-a', deviceName: 'MacBook Pro' },
       false
-    ) as { ok: true; value: { generation: number } };
+    ) as { ok: true; value: TerminalInputLease };
     expect(acquired.ok).toBe(true);
+
+    const spectatorControl = {
+      ...terminalControlProof(acquired.value),
+      controllerDeviceId: 'device-b'
+    };
 
     await expect(input({ sender: spectator.webContents }, {
       terminalId: 't-1',
       data: 'spectator',
-      generation: acquired.value.generation
+      control: spectatorControl
     })).resolves.toMatchObject({ ok: false });
     await expect(resize({ sender: spectator.webContents }, {
       terminalId: 't-1',
       dimensions: { cols: 80, rows: 24 },
-      generation: acquired.value.generation
+      control: spectatorControl
     })).resolves.toMatchObject({ ok: false });
     expect(pty.write).not.toHaveBeenCalled();
     expect(pty.resize).not.toHaveBeenCalled();

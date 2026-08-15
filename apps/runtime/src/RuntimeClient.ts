@@ -7,7 +7,10 @@ import type {
 } from './RuntimeProcess.js';
 import type { RuntimeUsageSnapshot } from "@soloe/protocol";
 import type { TerminalReplaySnapshot } from './TerminalReplayBuffer.js';
-import type { TerminalInputLease } from '../../../shared/types/terminal.js';
+import type {
+  TerminalControlProof,
+  TerminalInputLease
+} from '../../../shared/types/terminal.js';
 
 interface RuntimeResponse {
   id: number;
@@ -70,9 +73,10 @@ export class RuntimeClient extends EventEmitter {
     terminalId: string,
     ownerId: string,
     takeover = false,
-    controller: { deviceId: string; deviceName: string } = {
+    controller: { deviceId: string; deviceName: string; ownerDeviceId: string } = {
       deviceId: ownerId,
-      deviceName: ownerId
+      deviceName: ownerId,
+      ownerDeviceId: ownerId
     }
   ): Promise<TerminalInputLease> {
     return this.request('acquireInputLease', { terminalId, ownerId, takeover, ...controller });
@@ -82,8 +86,8 @@ export class RuntimeClient extends EventEmitter {
     return this.request('currentInputLease', { terminalId });
   }
 
-  releaseInputLease(terminalId: string, ownerId: string, leaseId: string): Promise<boolean> {
-    return this.request('releaseInputLease', { terminalId, ownerId, leaseId });
+  releaseInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean> {
+    return this.request('releaseInputLease', { terminalId, ...control });
   }
 
   releaseInputLeases(ownerId: string): Promise<number> {
@@ -93,7 +97,7 @@ export class RuntimeClient extends EventEmitter {
   write(
     terminalId: string,
     data: string,
-    control: { ownerId: string; generation: number }
+    control: TerminalControlProof
   ): Promise<true> {
     return this.request('write', { terminalId, data, ...control });
   }
@@ -102,7 +106,7 @@ export class RuntimeClient extends EventEmitter {
     terminalId: string,
     cols: number,
     rows: number,
-    control: { ownerId: string; generation: number }
+    control: TerminalControlProof
   ): Promise<TerminalInputLease> {
     return this.request('resize', { terminalId, cols, rows, ...control });
   }

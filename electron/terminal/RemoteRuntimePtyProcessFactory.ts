@@ -10,6 +10,7 @@ import type {
   TerminalInputLease,
   TerminalInputLeaseEvent,
 } from "../../shared/types/terminal.js";
+import { terminalControlProof } from "../../shared/types/terminal.js";
 import type {
   PtyProcess,
   PtyProcessDisposable,
@@ -22,10 +23,10 @@ export interface RuntimeTerminalInputControl {
   acquireInputLease(
     terminalId: string,
     takeover?: boolean,
-    controller?: { deviceId: string; deviceName: string }
+    controller?: { deviceId: string; deviceName: string; ownerDeviceId: string }
   ): Promise<TerminalInputLease>;
   currentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
-  releaseInputLease(terminalId: string, leaseId: string): Promise<boolean>;
+  releaseInputLease(terminalId: string, control: import('../../shared/types/terminal.js').TerminalControlProof): Promise<boolean>;
   onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
   writeInput(terminalId: string, data: string, lease?: TerminalInputLease): Promise<void>;
   resizeTerminal(
@@ -144,7 +145,11 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
   acquireInputLease(
     terminalId: string,
     takeover = false,
-    controller = { deviceId: this.inputOwnerId, deviceName: 'Soloe desktop' }
+    controller = {
+      deviceId: this.inputOwnerId,
+      deviceName: 'Soloe desktop',
+      ownerDeviceId: this.inputOwnerId
+    }
   ): Promise<TerminalInputLease> {
     return this.client.acquireInputLease(
       terminalId,
@@ -158,8 +163,11 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     return this.client.currentInputLease(terminalId);
   }
 
-  releaseInputLease(terminalId: string, leaseId: string): Promise<boolean> {
-    return this.client.releaseInputLease(terminalId, this.inputOwnerId, leaseId);
+  releaseInputLease(
+    terminalId: string,
+    control: import('../../shared/types/terminal.js').TerminalControlProof
+  ): Promise<boolean> {
+    return this.client.releaseInputLease(terminalId, control);
   }
 
   onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void {
@@ -173,10 +181,7 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     existingLease?: TerminalInputLease,
   ): Promise<void> {
     const lease = existingLease ?? await this.acquireInputLease(terminalId);
-    await this.client.write(terminalId, data, {
-      ownerId: lease.ownerId,
-      generation: lease.generation,
-    });
+    await this.client.write(terminalId, data, terminalControlProof(lease));
   }
 
   async resizeTerminal(
@@ -186,10 +191,7 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     existingLease?: TerminalInputLease
   ): Promise<void> {
     const lease = existingLease ?? await this.acquireInputLease(terminalId);
-    await this.client.resize(terminalId, cols, rows, {
-      ownerId: lease.ownerId,
-      generation: lease.generation
-    });
+    await this.client.resize(terminalId, cols, rows, terminalControlProof(lease));
   }
 
   resize(terminalId: string, cols: number, rows: number): Promise<void> {

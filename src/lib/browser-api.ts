@@ -152,12 +152,12 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     acquireInputLease: (terminalId, controller, takeover = false) =>
       rpc("terminal", "acquireInputLease", [terminalId, takeover, controller]),
     currentInputLease: (terminalId) => rpc("terminal", "currentInputLease", [terminalId]),
-    releaseInputLease: (terminalId, leaseId) =>
-      rpc("terminal", "releaseInputLease", [terminalId, leaseId]),
-    input: ({ terminalId, data, generation }) =>
-      rpc("terminal", "input", [terminalId, data, generation]),
-    resize: ({ terminalId, dimensions, generation }) =>
-      rpc("terminal", "resize", [terminalId, dimensions.cols, dimensions.rows, generation]),
+    releaseInputLease: (terminalId, control) =>
+      rpc("terminal", "releaseInputLease", [terminalId, control]),
+    input: ({ terminalId, data, control }) =>
+      rpc("terminal", "input", [terminalId, data, control]),
+    resize: ({ terminalId, dimensions, control }) =>
+      rpc("terminal", "resize", [terminalId, dimensions.cols, dimensions.rows, control]),
     listRunning: () => rpc("terminal", "listRunning", []),
     replay: (terminalId, afterSeq) =>
       rpc("terminal", "replay", [terminalId, afterSeq]),

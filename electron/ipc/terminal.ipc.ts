@@ -18,6 +18,7 @@ import type { PtyManager } from '../terminal/PtyManager.js';
 import { ipcInvoke } from './result.js';
 import { TerminalInputLeaseManager } from '@soloe/runtime';
 import type { TerminalControllerIdentity } from '@shared/types/terminal.js';
+import type { TerminalControlProof } from '@shared/types/terminal.js';
 
 export interface TerminalIpcOptions {
   pty: PtyManager;
@@ -71,6 +72,7 @@ export class TerminalIpc {
           return this.controlLeases.acquire(terminalId, controlOwnerId(event.sender), {
             takeover,
             sessionId: running.sessionId,
+            ownerDeviceId: controller.deviceId,
             controllerDeviceId: controller.deviceId,
             controllerDeviceName: controller.deviceName
           });
@@ -81,17 +83,16 @@ export class TerminalIpc {
     );
     ipcMain.handle(
       IpcChannels.terminal.releaseInputLease,
-      (event, terminalId: TerminalId, leaseId: string) => ipcInvoke(() =>
-        this.controlLeases.release(terminalId, controlOwnerId(event.sender), leaseId)
+      (_event, terminalId: TerminalId, control: TerminalControlProof) => ipcInvoke(() =>
+        this.controlLeases.release(terminalId, control)
       )
     );
 
-    ipcMain.handle(IpcChannels.terminal.input, (event, payload: TerminalInputPayload) =>
+    ipcMain.handle(IpcChannels.terminal.input, (_event, payload: TerminalInputPayload) =>
       ipcInvoke(() => {
         this.controlLeases.authorizeControl(
           payload.terminalId,
-          controlOwnerId(event.sender),
-          payload.generation,
+          payload.control,
           'input'
         );
         this.opts.pty.write(payload.terminalId, payload.data);
@@ -99,12 +100,11 @@ export class TerminalIpc {
       })
     );
 
-    ipcMain.handle(IpcChannels.terminal.resize, (event, payload: TerminalResizePayload) =>
+    ipcMain.handle(IpcChannels.terminal.resize, (_event, payload: TerminalResizePayload) =>
       ipcInvoke(() => {
         this.controlLeases.resize(
           payload.terminalId,
-          controlOwnerId(event.sender),
-          payload.generation,
+          payload.control,
           payload.dimensions.cols,
           payload.dimensions.rows
         );
@@ -198,7 +198,7 @@ export class TerminalIpc {
     if (this.observedControlOwners.has(sender)) return;
     this.observedControlOwners.add(sender);
     sender.once('destroyed', () => {
-      this.controlLeases.releaseOwner(controlOwnerId(sender));
+      this.controlLeases.releaseTransportClient(controlOwnerId(sender));
     });
   }
 

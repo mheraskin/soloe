@@ -14,6 +14,7 @@ import type { Session, SessionId, SessionRuntimeState } from '@shared/types/sess
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type {
+  TerminalControlProof,
   TerminalInputLease,
   TerminalReplaySnapshot,
   TerminalStartResult
@@ -248,11 +249,11 @@ export class RemoteSessionDevice implements SessionDevice {
     this.demandedTerminals = desired;
   }
 
-  async terminalInput(terminalId: string, data: string, generation: number): Promise<void> {
+  async terminalInput(terminalId: string, data: string, control: TerminalControlProof): Promise<void> {
     await this.rpc('terminal', 'input', [
       requiredId(terminalId, 'Terminal'),
       data,
-      positiveInteger(generation, 'control lease generation')
+      structuredClone(control)
     ]);
   }
 
@@ -274,10 +275,10 @@ export class RemoteSessionDevice implements SessionDevice {
     ]);
   }
 
-  terminalReleaseInputLease(terminalId: string, leaseId: string): Promise<boolean> {
+  terminalReleaseInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean> {
     return this.rpc('terminal', 'releaseInputLease', [
       requiredId(terminalId, 'Terminal'),
-      requiredId(leaseId, 'Terminal input lease')
+      structuredClone(control)
     ]);
   }
 
@@ -285,13 +286,13 @@ export class RemoteSessionDevice implements SessionDevice {
     terminalId: string,
     cols: number,
     rows: number,
-    generation: number
+    control: TerminalControlProof
   ): Promise<void> {
     await this.rpc('terminal', 'resize', [
       requiredId(terminalId, 'Terminal'),
       positiveInteger(cols, 'columns'),
       positiveInteger(rows, 'rows'),
-      positiveInteger(generation, 'control lease generation')
+      structuredClone(control)
     ]);
   }
 

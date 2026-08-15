@@ -12,6 +12,7 @@ import type {
   MultiDeviceSessionState
 } from '@shared/types/multi-device-sessions.js';
 import type { DeviceEventEnvelope, SessionRef, TerminalRef } from '@shared/types/devices.js';
+import type { TerminalControlProof } from '@shared/types/terminal.js';
 import type { VaultChangeEvent } from '@shared/types/vault.js';
 import type {
   CloseDevToolsRequest,
@@ -110,15 +111,27 @@ api.sessions.startOnDevice = (ref: SessionRef) =>
   ipcRenderer.invoke(IpcChannels.sessions.startOnDevice, ref);
 api.sessions.setDeviceTerminalDemand = (refs: TerminalRef[]) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalDemand, refs);
-api.sessions.deviceTerminalInput = (request: { ref: TerminalRef; data: string }) =>
+api.sessions.deviceTerminalInput = (request: {
+  ref: TerminalRef;
+  data: string;
+  control: TerminalControlProof;
+}) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInput, request);
 api.sessions.deviceTerminalInputLease = (request: { ref: TerminalRef; takeover?: boolean }) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInputLease, request);
 api.sessions.deviceTerminalCurrentInputLease = (ref: TerminalRef) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalCurrentInputLease, ref);
-api.sessions.deviceTerminalReleaseInputLease = (request: { ref: TerminalRef; leaseId: string }) =>
+api.sessions.deviceTerminalReleaseInputLease = (request: {
+  ref: TerminalRef;
+  control: TerminalControlProof;
+}) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReleaseInputLease, request);
-api.sessions.deviceTerminalResize = (request: { ref: TerminalRef; cols: number; rows: number }) =>
+api.sessions.deviceTerminalResize = (request: {
+  ref: TerminalRef;
+  cols: number;
+  rows: number;
+  control: TerminalControlProof;
+}) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalResize, request);
 api.sessions.deviceTerminalReplay = (ref: TerminalRef, afterSeq?: number) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReplay, ref, afterSeq);

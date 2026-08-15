@@ -11,9 +11,8 @@ function lease(terminalId: string, ownerId: string, generation: number): Termina
   return {
     terminalId,
     sessionId: `session-${terminalId}`,
+    ownerDeviceId: 'execution-device',
     leaseId: `lease-${generation}`,
-    ownerId,
-    controllerClientId: ownerId,
     controllerDeviceId: `device-${ownerId}`,
     controllerDeviceName: ownerId,
     generation,
@@ -94,7 +93,7 @@ describe('TerminalControlCoordinator', () => {
       type: 'taken-over',
       terminalId: 'terminal-a',
       lease: lease('terminal-a', 'iPad', 2),
-      previousOwnerId: 'MacBook Pro',
+      previousControllerDeviceId: 'device-MacBook Pro',
       observedAt: '2026-08-15T08:01:00.000Z'
     });
 

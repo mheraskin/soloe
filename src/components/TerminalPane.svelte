@@ -11,7 +11,7 @@
   import '@xterm/xterm/css/xterm.css';
   import { ipc } from '../lib/ipc';
   import type { TerminalPresentation } from '../lib/terminal-output-router';
-  import type { TerminalId } from '@shared/types/terminal.js';
+  import { terminalControlProof, type TerminalId } from '@shared/types/terminal.js';
   import type { SessionId } from '@shared/types/sessions.js';
   import { effectiveAgentProvider, launchKind } from '@shared/types/sessions.js';
   import { settings } from '../stores/settings.svelte';
@@ -378,7 +378,7 @@
             terminalId,
             sessionId,
             images,
-            generation: inputLease!.generation
+            control: terminalControlProof(inputLease!)
           });
           return;
         }

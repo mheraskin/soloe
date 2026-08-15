@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { terminalControlProof } from "../../shared/types/terminal.js";
 import type {
   RuntimeProcess,
   RuntimeProcessFactory,
@@ -71,11 +72,11 @@ describe("RemoteRuntimePtyProcessFactory", () => {
       const inputLease = await remoteFactory.currentInputLease("electron-terminal");
       expect(inputLease).toEqual(expect.objectContaining({
         terminalId: "electron-terminal",
-        ownerId: expect.stringMatching(/^desktop-/),
+        controllerDeviceId: expect.stringMatching(/^desktop-/),
       }));
       await expect(remoteFactory.releaseInputLease(
         "electron-terminal",
-        inputLease!.leaseId,
+        terminalControlProof(inputLease!),
       )).resolves.toBe(true);
       await expect(remoteFactory.currentInputLease("electron-terminal")).resolves.toBeNull();
 

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type {
-  TerminalInputLease,
-  TerminalInputLeaseEvent
+import {
+  terminalControlProof,
+  type TerminalControlProof,
+  type TerminalInputLease,
+  type TerminalInputLeaseEvent
 } from '../../../shared/types/terminal.js';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../shared/types/terminal.js';
 
@@ -36,6 +38,7 @@ export class TerminalInputLeaseError extends Error {
 
 export class TerminalInputLeaseManager {
   private readonly leases = new Map<string, TerminalInputLease>();
+  private readonly transportOwners = new Map<string, string>();
   private readonly generations = new Map<string, number>();
   private readonly ttlMs: number;
   private readonly now: () => number;
@@ -49,10 +52,11 @@ export class TerminalInputLeaseManager {
 
   acquire(
     terminalId: string,
-    ownerId: string,
+    transportClientId: string,
     options: {
       takeover?: boolean;
       sessionId?: string;
+      ownerDeviceId?: string;
       controllerDeviceId?: string;
       controllerDeviceName?: string;
       cols?: number;
@@ -60,9 +64,29 @@ export class TerminalInputLeaseManager {
     } = {}
   ): TerminalInputLease {
     const terminal = requiredIdentity(terminalId, 'Terminal');
-    const owner = requiredIdentity(ownerId, 'Terminal input owner');
+    const transportClient = requiredIdentity(transportClientId, 'Terminal transport client');
+    const sessionId = requiredIdentity(options.sessionId ?? terminal, 'Session');
+    const ownerDeviceId = requiredIdentity(
+      options.ownerDeviceId ?? options.controllerDeviceId ?? transportClient,
+      'Session owner device'
+    );
+    const controllerDeviceId = requiredIdentity(
+      options.controllerDeviceId ?? transportClient,
+      'Controller device'
+    );
     const current = this.active(terminal);
-    if (current?.ownerId === owner) return this.renewLease(current);
+    if (
+      current?.sessionId === sessionId
+      && current.ownerDeviceId === ownerDeviceId
+      && current.controllerDeviceId === controllerDeviceId
+    ) {
+      this.transportOwners.set(terminal, transportClient);
+      current.controllerDeviceName = requiredIdentity(
+        options.controllerDeviceName ?? controllerDeviceId,
+        'Controller device name'
+      );
+      return this.renewLease(current);
+    }
     if (current && !options.takeover) throw ownedError(current);
 
     const timestamp = this.now();
@@ -70,16 +94,12 @@ export class TerminalInputLeaseManager {
     this.generations.set(terminal, generation);
     const lease: TerminalInputLease = {
       terminalId: terminal,
-      sessionId: requiredIdentity(options.sessionId ?? terminal, 'Session'),
+      sessionId,
+      ownerDeviceId,
       leaseId: requiredIdentity(this.nextLeaseId(), 'Terminal input lease'),
-      ownerId: owner,
-      controllerClientId: owner,
-      controllerDeviceId: requiredIdentity(
-        options.controllerDeviceId ?? owner,
-        'Controller device'
-      ),
+      controllerDeviceId,
       controllerDeviceName: requiredIdentity(
-        options.controllerDeviceName ?? options.controllerDeviceId ?? owner,
+        options.controllerDeviceName ?? options.controllerDeviceId ?? transportClient,
         'Controller device name'
       ),
       generation,
@@ -89,48 +109,24 @@ export class TerminalInputLeaseManager {
       expiresAt: new Date(timestamp + this.ttlMs).toISOString()
     };
     this.leases.set(terminal, lease);
+    this.transportOwners.set(terminal, transportClient);
     this.publish({
       type: current ? 'taken-over' : 'acquired',
       terminalId: terminal,
       lease: cloneLease(lease),
       generation: lease.generation,
-      ...(current ? { previousOwnerId: current.ownerId } : {}),
+      ...(current ? { previousControllerDeviceId: current.controllerDeviceId } : {}),
       observedAt: new Date(timestamp).toISOString()
     });
     return cloneLease(lease);
   }
 
-  authorizeInput(terminalId: string, ownerId: string, leaseId: string): TerminalInputLease {
-    const terminal = requiredIdentity(terminalId, 'Terminal');
-    const owner = requiredIdentity(ownerId, 'Terminal input owner');
-    const requestedLease = requiredIdentity(leaseId, 'Terminal input lease');
-    const current = this.active(terminal);
-    if (!current) {
-      throw new TerminalInputLeaseError(
-        'terminal_input_lease_required',
-        `Terminal ${terminal} has no active input lease.`,
-        null
-      );
-    }
-    if (current.ownerId !== owner) throw ownedError(current);
-    if (current.leaseId !== requestedLease) {
-      throw new TerminalInputLeaseError(
-        'terminal_input_lease_required',
-        `Terminal ${terminal} input lease is stale.`,
-        current
-      );
-    }
-    return this.renewLease(current);
-  }
-
   authorizeControl(
     terminalId: string,
-    ownerId: string,
-    generation: number,
+    proof: TerminalControlProof,
     operation: 'input' | 'resize'
   ): TerminalInputLease {
     const terminal = requiredIdentity(terminalId, 'Terminal');
-    const owner = requiredIdentity(ownerId, 'Terminal controller');
     const current = this.active(terminal);
     if (!current) {
       throw new TerminalInputLeaseError(
@@ -139,10 +135,18 @@ export class TerminalInputLeaseManager {
         null
       );
     }
-    if (current.ownerId !== owner || current.generation !== generation) {
+    if (
+      current.sessionId !== requiredIdentity(proof.sessionId, 'Session')
+      || current.ownerDeviceId !== requiredIdentity(proof.ownerDeviceId, 'Session owner device')
+      || current.controllerDeviceId !== requiredIdentity(
+        proof.controllerDeviceId,
+        'Controller device'
+      )
+      || current.leaseId !== requiredIdentity(proof.leaseId, 'Terminal input lease')
+    ) {
       throw new TerminalInputLeaseError(
         'terminal_control_lease_stale',
-        `Terminal ${terminal} ${operation} used a stale control lease generation.`,
+        `Terminal ${terminal} ${operation} used stale Session Control.`,
         current
       );
     }
@@ -151,12 +155,11 @@ export class TerminalInputLeaseManager {
 
   resize(
     terminalId: string,
-    ownerId: string,
-    generation: number,
+    proof: TerminalControlProof,
     cols: number,
     rows: number
   ): TerminalInputLease {
-    const current = this.authorizeControl(terminalId, ownerId, generation, 'resize');
+    const current = this.authorizeControl(terminalId, proof, 'resize');
     const nextCols = terminalDimension(cols, current.cols, 'columns');
     const nextRows = terminalDimension(rows, current.rows, 'rows');
     const stored = this.leases.get(current.terminalId);
@@ -179,27 +182,28 @@ export class TerminalInputLeaseManager {
     return current ? cloneLease(current) : null;
   }
 
-  release(terminalId: string, ownerId: string, leaseId: string): boolean {
+  release(terminalId: string, proof: TerminalControlProof): boolean {
     const terminal = requiredIdentity(terminalId, 'Terminal');
     const current = this.active(terminal);
-    if (!current || current.ownerId !== ownerId || current.leaseId !== leaseId) return false;
+    if (!current || !sameControl(current, proof)) return false;
     this.leases.delete(terminal);
+    this.transportOwners.delete(terminal);
     this.publish({
       type: 'released',
       terminalId: terminal,
       lease: null,
       generation: current.generation,
-      previousOwnerId: current.ownerId,
+      previousControllerDeviceId: current.controllerDeviceId,
       observedAt: new Date(this.now()).toISOString()
     });
     return true;
   }
 
-  releaseOwner(ownerId: string): number {
+  releaseTransportClient(transportClientId: string): number {
     let released = 0;
     for (const lease of [...this.leases.values()]) {
-      if (lease.ownerId !== ownerId) continue;
-      if (this.release(lease.terminalId, lease.ownerId, lease.leaseId)) released += 1;
+      if (this.transportOwners.get(lease.terminalId) !== transportClientId) continue;
+      if (this.release(lease.terminalId, terminalControlProof(lease))) released += 1;
     }
     return released;
   }
@@ -209,12 +213,13 @@ export class TerminalInputLeaseManager {
     const current = this.leases.get(terminal);
     if (!current) return false;
     this.leases.delete(terminal);
+    this.transportOwners.delete(terminal);
     this.publish({
       type: 'released',
       terminalId: terminal,
       lease: null,
       generation: current.generation,
-      previousOwnerId: current.ownerId,
+      previousControllerDeviceId: current.controllerDeviceId,
       observedAt: new Date(this.now()).toISOString()
     });
     return true;
@@ -230,12 +235,13 @@ export class TerminalInputLeaseManager {
     const timestamp = this.now();
     if (Date.parse(current.expiresAt) > timestamp) return current;
     this.leases.delete(terminalId);
+    this.transportOwners.delete(terminalId);
     this.publish({
       type: 'expired',
       terminalId,
       lease: null,
       generation: current.generation,
-      previousOwnerId: current.ownerId,
+      previousControllerDeviceId: current.controllerDeviceId,
       observedAt: new Date(timestamp).toISOString()
     });
     return null;
@@ -267,10 +273,17 @@ function cloneLease(lease: TerminalInputLease): TerminalInputLease {
   return structuredClone(lease);
 }
 
+function sameControl(lease: TerminalInputLease, proof: TerminalControlProof): boolean {
+  return lease.sessionId === proof.sessionId
+    && lease.ownerDeviceId === proof.ownerDeviceId
+    && lease.controllerDeviceId === proof.controllerDeviceId
+    && lease.leaseId === proof.leaseId;
+}
+
 function ownedError(lease: TerminalInputLease): TerminalInputLeaseError {
   return new TerminalInputLeaseError(
     'terminal_input_owned',
-    `Terminal input is controlled by ${lease.ownerId} until ${lease.expiresAt}.`,
+    `Terminal input is controlled by ${lease.controllerDeviceName} until ${lease.expiresAt}.`,
     lease
   );
 }

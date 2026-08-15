@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import type { DeviceDescriptor } from '@shared/types/devices.js';
+import { terminalControlProof, type TerminalInputLease } from '@shared/types/terminal.js';
 import type {
   RuntimeProcess,
   RuntimeProcessFactory,
@@ -249,7 +250,11 @@ describe('Soloe Server lifecycle', () => {
         terminal.terminalId,
         'browser-http-client',
         false,
-        { deviceId: 'browser-device', deviceName: 'Browser' }
+        {
+          deviceId: 'browser-device',
+          deviceName: 'Browser',
+          ownerDeviceId: TEST_DEVICE_DESCRIPTOR.deviceId
+        }
       );
 
       const inputResponse = await request(
@@ -259,8 +264,7 @@ describe('Soloe Server lifecycle', () => {
           method: 'POST',
           body: {
             data: 'browser input',
-            ownerId: 'browser-http-client',
-            generation: lease.generation
+            control: terminalControlProof(lease)
           }
         }
       );
@@ -275,8 +279,7 @@ describe('Soloe Server lifecycle', () => {
           body: {
             cols: 120,
             rows: 40,
-            ownerId: 'browser-http-client',
-            generation: lease.generation
+            control: terminalControlProof(lease)
           }
         }
       );
@@ -1392,9 +1395,7 @@ describe('Soloe Server lifecycle', () => {
         ])
       );
 
-      const terminalLease = await rpc<{
-        generation: number;
-      }>(
+      const terminalLease = await rpc<TerminalInputLease>(
         baseUrl,
         'terminal',
         'acquireInputLease',
@@ -1411,7 +1412,7 @@ describe('Soloe Server lifecycle', () => {
           baseUrl,
           'terminal',
           'input',
-          [started.terminalId, '\x03', terminalLease.generation],
+          [started.terminalId, '\x03', terminalControlProof(terminalLease)],
           'vault-client-one'
         )
       ).resolves.toBe(true);

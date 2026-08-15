@@ -12,6 +12,13 @@ export interface TerminalControllerIdentity {
   deviceName: string;
 }
 
+export interface TerminalControlProof {
+  sessionId: SessionId;
+  ownerDeviceId: string;
+  controllerDeviceId: string;
+  leaseId: string;
+}
+
 export interface SpawnSpec {
   file: string;
   args: string[];
@@ -73,10 +80,8 @@ export interface TerminalStartOptions {
 export interface TerminalInputLease {
   terminalId: TerminalId;
   sessionId: SessionId;
+  ownerDeviceId: string;
   leaseId: string;
-  /** @deprecated Use controllerClientId. */
-  ownerId: string;
-  controllerClientId: string;
   controllerDeviceId: string;
   controllerDeviceName: string;
   generation: number;
@@ -88,12 +93,21 @@ export interface TerminalInputLease {
 
 export type TerminalControlLease = TerminalInputLease;
 
+export function terminalControlProof(lease: TerminalInputLease): TerminalControlProof {
+  return {
+    sessionId: lease.sessionId,
+    ownerDeviceId: lease.ownerDeviceId,
+    controllerDeviceId: lease.controllerDeviceId,
+    leaseId: lease.leaseId
+  };
+}
+
 export interface TerminalInputLeaseEvent {
   type: 'acquired' | 'renewed' | 'released' | 'expired' | 'taken-over' | 'resized';
   terminalId: TerminalId;
   lease: TerminalInputLease | null;
   generation?: number;
-  previousOwnerId?: string;
+  previousControllerDeviceId?: string;
   observedAt: string;
 }
 

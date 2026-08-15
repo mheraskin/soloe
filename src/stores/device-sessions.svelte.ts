@@ -16,6 +16,7 @@ import type {
   TerminalOutputEvent,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
+import { terminalControlProof } from '@shared/types/terminal.js';
 import { ipc } from '../lib/ipc';
 import { sessions as localSessions } from './sessions.svelte';
 
@@ -242,7 +243,7 @@ export class DeviceSessionsStore {
     return ipc.sessions.deviceTerminalInput(
       terminalRef,
       data,
-      lease.generation
+      terminalControlProof(lease)
     ).then(() => undefined);
   }
 
@@ -258,10 +259,12 @@ export class DeviceSessionsStore {
       this.inputLeaseEvents = {
         ...this.inputLeaseEvents,
         [key]: {
-          type: takeover && previous?.ownerId !== lease.ownerId ? 'taken-over' : 'acquired',
+          type: takeover && previous?.controllerDeviceId !== lease.controllerDeviceId
+            ? 'taken-over'
+            : 'acquired',
           terminalId: terminalRef.terminalId,
           lease,
-          previousOwnerId: previous?.ownerId,
+          previousControllerDeviceId: previous?.controllerDeviceId,
           observedAt: new Date().toISOString()
         }
       };
@@ -316,11 +319,14 @@ export class DeviceSessionsStore {
         type: 'released',
         terminalId: terminalRef.terminalId,
         lease: null,
-        previousOwnerId: lease.ownerId,
+        previousControllerDeviceId: lease.controllerDeviceId,
         observedAt: new Date().toISOString()
       }
     };
-    await ipc.sessions.deviceTerminalReleaseInputLease(terminalRef, lease.leaseId);
+    await ipc.sessions.deviceTerminalReleaseInputLease(
+      terminalRef,
+      terminalControlProof(lease)
+    );
   }
 
   terminalInputLeaseEvent(terminalRef: TerminalRef): TerminalInputLeaseEvent | null {
@@ -334,7 +340,7 @@ export class DeviceSessionsStore {
       terminalRef,
       cols,
       rows,
-      lease.generation
+      terminalControlProof(lease)
     ).then(() => undefined);
   }
 

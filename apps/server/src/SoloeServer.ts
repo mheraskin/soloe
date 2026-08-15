@@ -5,6 +5,7 @@ import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 
 import { RuntimeClient } from "@soloe/runtime";
+import type { TerminalControlProof } from "@shared/types/terminal.js";
 import {
   SOLOE_EVENT_FORMAT_V1,
   parseDeviceDescriptor,
@@ -506,13 +507,9 @@ export class SoloeServer {
       if (request.method === "POST" && operation === "input") {
         const body = await this.readJson<{
           data: string;
-          ownerId: string;
-          generation: number;
+          control: TerminalControlProof;
         }>(request);
-        await runtimeClient.write(terminalId, body.data, {
-          ownerId: body.ownerId,
-          generation: body.generation,
-        });
+        await runtimeClient.write(terminalId, body.data, body.control);
         response.writeHead(204).end();
         return;
       }
@@ -520,13 +517,9 @@ export class SoloeServer {
         const body = await this.readJson<{
           cols: number;
           rows: number;
-          ownerId: string;
-          generation: number;
+          control: TerminalControlProof;
         }>(request);
-        await runtimeClient.resize(terminalId, body.cols, body.rows, {
-          ownerId: body.ownerId,
-          generation: body.generation,
-        });
+        await runtimeClient.resize(terminalId, body.cols, body.rows, body.control);
         response.writeHead(204).end();
         return;
       }

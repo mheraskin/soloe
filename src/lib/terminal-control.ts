@@ -1,7 +1,9 @@
-import type {
-  TerminalControllerIdentity,
-  TerminalInputLease,
-  TerminalInputLeaseEvent
+import {
+  terminalControlProof,
+  type TerminalControllerIdentity,
+  type TerminalControlProof,
+  type TerminalInputLease,
+  type TerminalInputLeaseEvent
 } from '@shared/types/terminal.js';
 
 export interface TerminalControlBackend {
@@ -11,9 +13,9 @@ export interface TerminalControlBackend {
     takeover: boolean
   ): Promise<TerminalInputLease>;
   current(terminalId: string): Promise<TerminalInputLease | null>;
-  release(terminalId: string, leaseId: string): Promise<boolean>;
-  input(terminalId: string, data: string, generation: number): Promise<void>;
-  resize(terminalId: string, cols: number, rows: number, generation: number): Promise<void>;
+  release(terminalId: string, control: TerminalControlProof): Promise<boolean>;
+  input(terminalId: string, data: string, control: TerminalControlProof): Promise<void>;
+  resize(terminalId: string, cols: number, rows: number, control: TerminalControlProof): Promise<void>;
   onLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
 }
 
@@ -50,7 +52,9 @@ export class TerminalControlCoordinator {
       owned
       && observed
       && owned.leaseId === observed.leaseId
-      && owned.generation === observed.generation
+      && owned.sessionId === observed.sessionId
+      && owned.ownerDeviceId === observed.ownerDeviceId
+      && owned.controllerDeviceId === observed.controllerDeviceId
     );
   }
 
@@ -98,7 +102,7 @@ export class TerminalControlCoordinator {
     const lease = await this.backend.current(terminalId);
     this.leases.set(terminalId, lease);
     const owned = this.owned.get(terminalId);
-    if (owned && owned.generation !== lease?.generation) this.owned.delete(terminalId);
+    if (owned && !sameControl(owned, lease)) this.owned.delete(terminalId);
     this.notify();
     return lease;
   }
@@ -108,13 +112,13 @@ export class TerminalControlCoordinator {
     this.owned.delete(terminalId);
     if (!lease) return;
     this.notify();
-    await this.backend.release(terminalId, lease.leaseId).catch(() => false);
+    await this.backend.release(terminalId, terminalControlProof(lease)).catch(() => false);
   }
 
   async input(terminalId: string, data: string): Promise<void> {
     const lease = this.requiredLease(terminalId);
     try {
-      await this.backend.input(terminalId, data, lease.generation);
+      await this.backend.input(terminalId, data, terminalControlProof(lease));
     } catch (error) {
       await this.refresh(terminalId).catch(() => null);
       throw error;
@@ -125,7 +129,7 @@ export class TerminalControlCoordinator {
     const lease = this.requiredLease(terminalId);
     if (lease.cols === cols && lease.rows === rows) return;
     try {
-      await this.backend.resize(terminalId, cols, rows, lease.generation);
+      await this.backend.resize(terminalId, cols, rows, terminalControlProof(lease));
     } catch (error) {
       await this.refresh(terminalId).catch(() => null);
       throw error;
@@ -153,7 +157,7 @@ export class TerminalControlCoordinator {
         || this.selectedTerminalId !== terminalId
         || selectionEpoch !== this.selectionEpoch
       )) {
-        await this.backend.release(terminalId, lease.leaseId).catch(() => false);
+        await this.backend.release(terminalId, terminalControlProof(lease)).catch(() => false);
         return false;
       }
       this.leases.set(terminalId, lease);
@@ -180,8 +184,7 @@ export class TerminalControlCoordinator {
     if (
       owned
       && (
-        owned.leaseId !== event.lease?.leaseId
-        || owned.generation !== event.lease?.generation
+        !sameControl(owned, event.lease)
       )
     ) {
       this.owned.delete(event.terminalId);
@@ -192,4 +195,17 @@ export class TerminalControlCoordinator {
   private notify(): void {
     for (const listener of this.listeners) listener();
   }
+}
+
+function sameControl(
+  owned: TerminalInputLease,
+  observed: TerminalInputLease | null | undefined
+): boolean {
+  return Boolean(
+    observed
+    && owned.leaseId === observed.leaseId
+    && owned.sessionId === observed.sessionId
+    && owned.ownerDeviceId === observed.ownerDeviceId
+    && owned.controllerDeviceId === observed.controllerDeviceId
+  );
 }

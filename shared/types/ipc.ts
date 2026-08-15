@@ -111,6 +111,7 @@ import type {
   TerminalLocationEvent,
   TerminalInputLease,
   TerminalInputLeaseEvent,
+  TerminalControlProof,
   TerminalControllerIdentity,
   TerminalOutputEvent,
   TerminalStartOptions,
@@ -429,17 +430,17 @@ export interface SessionsApi {
   startOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionView>>;
   setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
   deviceTerminalInput?(
-    request: { ref: TerminalRef; data: string; generation: number }
+    request: { ref: TerminalRef; data: string; control: TerminalControlProof }
   ): Promise<IpcResult<true>>;
   deviceTerminalInputLease?(
     request: { ref: TerminalRef; takeover?: boolean }
   ): Promise<IpcResult<TerminalInputLease>>;
   deviceTerminalCurrentInputLease?(ref: TerminalRef): Promise<IpcResult<TerminalInputLease | null>>;
   deviceTerminalReleaseInputLease?(
-    request: { ref: TerminalRef; leaseId: string }
+    request: { ref: TerminalRef; control: TerminalControlProof }
   ): Promise<IpcResult<boolean>>;
   deviceTerminalResize?(
-    request: { ref: TerminalRef; cols: number; rows: number; generation: number }
+    request: { ref: TerminalRef; cols: number; rows: number; control: TerminalControlProof }
   ): Promise<IpcResult<true>>;
   deviceTerminalReplay?(
     ref: TerminalRef,
@@ -458,13 +459,13 @@ export interface SessionsApi {
 export interface TerminalInputPayload {
   terminalId: TerminalId;
   data: string;
-  generation: number;
+  control: TerminalControlProof;
 }
 
 export interface TerminalResizePayload {
   terminalId: TerminalId;
   dimensions: TerminalDimensions;
-  generation: number;
+  control: TerminalControlProof;
 }
 
 export interface TerminalOutputDemandPayload {
@@ -482,7 +483,10 @@ export interface TerminalApi {
     takeover?: boolean
   ): Promise<IpcResult<TerminalInputLease>>;
   currentInputLease(terminalId: TerminalId): Promise<IpcResult<TerminalInputLease | null>>;
-  releaseInputLease(terminalId: TerminalId, leaseId: string): Promise<IpcResult<boolean>>;
+  releaseInputLease(
+    terminalId: TerminalId,
+    control: TerminalControlProof
+  ): Promise<IpcResult<boolean>>;
   input(payload: TerminalInputPayload): Promise<IpcResult<true>>;
   resize(payload: TerminalResizePayload): Promise<IpcResult<true>>;
   listRunning(): Promise<IpcResult<SessionRuntimeState[]>>;

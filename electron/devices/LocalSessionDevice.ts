@@ -30,7 +30,12 @@ import type {
 } from '@shared/types/workspaces.js';
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
 import type { Session, SessionId } from '@shared/types/sessions.js';
-import type { TerminalInputLease, TerminalStartResult } from '@shared/types/terminal.js';
+import {
+  terminalControlProof,
+  type TerminalControlProof,
+  type TerminalInputLease,
+  type TerminalStartResult
+} from '@shared/types/terminal.js';
 import type {
   CreateGitHubRepositoryIntent,
   GitHubOwner,
@@ -212,18 +217,18 @@ export class LocalSessionDevice implements SessionDevice {
     }
   }
 
-  async terminalInput(terminalId: string, data: string, generation: number): Promise<void> {
+  async terminalInput(terminalId: string, data: string, control: TerminalControlProof): Promise<void> {
     this.assertActive();
     const id = requiredId(terminalId);
     if (this.options.terminalInputControl) {
       const lease = this.ownedInputLeases.get(id);
-      if (!lease || lease.generation !== generation) {
-        throw new Error('Terminal control lease generation is stale.');
+      if (!lease || !sameControlProof(control, terminalControlProof(lease))) {
+        throw new Error('Session Control is stale.');
       }
       await this.options.terminalInputControl.writeInput(id, data, lease);
       return;
     }
-    this.inputLeases.authorizeControl(id, this.clientId, generation, 'input');
+    this.inputLeases.authorizeControl(id, control, 'input');
     this.options.pty.write(id, data);
   }
 
@@ -237,7 +242,7 @@ export class LocalSessionDevice implements SessionDevice {
       return this.options.terminalInputControl.acquireInputLease(
         requiredId(terminalId),
         takeover,
-        controller
+        { ...controller, ownerDeviceId: this.deviceId }
       )
         .then((lease) => {
           this.ownedInputLeases.set(lease.terminalId, lease);
@@ -246,6 +251,7 @@ export class LocalSessionDevice implements SessionDevice {
     }
     return Promise.resolve(this.inputLeases.acquire(requiredId(terminalId), this.clientId, {
       takeover,
+      ownerDeviceId: this.deviceId,
       controllerDeviceId: controller.deviceId,
       controllerDeviceName: controller.deviceName
     }));
@@ -260,36 +266,36 @@ export class LocalSessionDevice implements SessionDevice {
     return Promise.resolve(this.inputLeases.current(id));
   }
 
-  terminalReleaseInputLease(terminalId: string, leaseId: string): Promise<boolean> {
+  terminalReleaseInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean> {
     this.assertActive();
     const id = requiredId(terminalId);
     if (this.options.terminalInputControl) {
-      return this.options.terminalInputControl.releaseInputLease(id, requiredId(leaseId))
+      return this.options.terminalInputControl.releaseInputLease(id, control)
         .then((released) => {
           if (released) this.ownedInputLeases.delete(id);
           return released;
         });
     }
-    return Promise.resolve(this.inputLeases.release(id, this.clientId, requiredId(leaseId)));
+    return Promise.resolve(this.inputLeases.release(id, control));
   }
 
   async terminalResize(
     terminalId: string,
     cols: number,
     rows: number,
-    generation: number
+    control: TerminalControlProof
   ): Promise<void> {
     this.assertActive();
     const id = requiredId(terminalId);
     if (this.options.terminalInputControl) {
       const lease = this.ownedInputLeases.get(id);
-      if (!lease || lease.generation !== generation) {
-        throw new Error('Terminal control lease generation is stale.');
+      if (!lease || !sameControlProof(control, terminalControlProof(lease))) {
+        throw new Error('Session Control is stale.');
       }
       await this.options.terminalInputControl.resizeTerminal(id, cols, rows, lease);
       return;
     }
-    this.inputLeases.resize(id, this.clientId, generation, cols, rows);
+    this.inputLeases.resize(id, control, cols, rows);
     this.options.pty.resize(id, { cols, rows });
   }
 
@@ -422,11 +428,14 @@ export class LocalSessionDevice implements SessionDevice {
     this.inputControlDetach = null;
     if (this.options.terminalInputControl) {
       for (const lease of this.ownedInputLeases.values()) {
-        void this.options.terminalInputControl.releaseInputLease(lease.terminalId, lease.leaseId);
+        void this.options.terminalInputControl.releaseInputLease(
+          lease.terminalId,
+          terminalControlProof(lease)
+        );
       }
       this.ownedInputLeases.clear();
     }
-    this.inputLeases.releaseOwner(this.clientId);
+    this.inputLeases.releaseTransportClient(this.clientId);
     for (const detach of this.ptyDetachers.splice(0)) detach();
     this.currentStatus = {
       deviceId: this.deviceId,
@@ -489,6 +498,13 @@ export class LocalSessionDevice implements SessionDevice {
   private assertActive(): void {
     if (this.disposed) throw new Error('Local Device client is disposed.');
   }
+}
+
+function sameControlProof(left: TerminalControlProof, right: TerminalControlProof): boolean {
+  return left.sessionId === right.sessionId
+    && left.ownerDeviceId === right.ownerDeviceId
+    && left.controllerDeviceId === right.controllerDeviceId
+    && left.leaseId === right.leaseId;
 }
 
 function requiredId(value: string): string {

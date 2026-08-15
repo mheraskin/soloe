@@ -79,7 +79,7 @@ uses the following typed server capabilities:
 | Sessions inventory | Projects, canonical Git remote, Worktrees, Sessions, and running terminals | Application Server and Environment Runtime |
 | Workspace device state | `workspaceDevice.snapshot`, `plan`, `execute`, `getCommand` | Application Server and Device operation journal |
 | Placed Sessions | preallocated create and optimistic Session Source binding | Application Server Session store |
-| Terminal control | acquire/current/release the generation-qualified Terminal Control Lease plus lease-authorized input/resize and ordinary replay/stop | Environment Runtime |
+| Terminal control | acquire/current/release identity-qualified Session Control plus lease-authorized input/resize and ordinary replay/stop | Environment Runtime |
 | GitHub publication | provider status/owners, repository plan/execute/getCommand | Device-local provider adapter and journal |
 
 `DeviceCommandEnvelope` binds a UUID command to client, actor client, target

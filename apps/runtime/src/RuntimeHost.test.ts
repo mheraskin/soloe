@@ -11,6 +11,7 @@ import { RuntimeClient } from './RuntimeClient.js';
 import { RuntimeHost } from './RuntimeHost.js';
 import { NodePtyRuntimeProcessFactory } from './NodePtyRuntimeProcessFactory.js';
 import { resolveRuntimeEndpoint } from './RuntimeEndpoint.js';
+import { terminalControlProof } from '../../../shared/types/terminal.js';
 
 let endpointSequence = 0;
 
@@ -292,10 +293,7 @@ describe('Environment Runtime lifecycle', () => {
       });
 
       const lease = await client.acquireInputLease(started.terminalId, 'client-a');
-      await client.write(started.terminalId, 'answer\n', {
-        ownerId: 'client-a',
-        generation: lease.generation
-      });
+      await client.write(started.terminalId, 'answer\n', terminalControlProof(lease));
 
       expect(process.writes).toEqual(['answer\n']);
       client.disconnect();
@@ -333,24 +331,21 @@ describe('Environment Runtime lifecycle', () => {
         started.terminalId,
         'client-a',
         false,
-        { deviceId: 'device-a', deviceName: 'MacBook Pro' }
+        { deviceId: 'device-a', deviceName: 'MacBook Pro', ownerDeviceId: 'execution-device' }
       );
 
-      await firstClient.write(started.terminalId, 'first', {
-        ownerId: 'client-a',
-        generation: firstLease.generation
-      });
+      await firstClient.write(started.terminalId, 'first', terminalControlProof(firstLease));
       await expect(secondClient.write(started.terminalId, 'spectator', {
-        ownerId: 'client-b',
-        generation: firstLease.generation
+        ...terminalControlProof(firstLease),
+        controllerDeviceId: 'device-b'
       })).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
       await expect(secondClient.resize(started.terminalId, 80, 24, {
-        ownerId: 'client-b',
-        generation: firstLease.generation
+        ...terminalControlProof(firstLease),
+        controllerDeviceId: 'device-b'
       })).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
       await expect(
         secondClient.acquireInputLease(started.terminalId, 'client-b')
-      ).rejects.toThrow(/controlled by client-a/u);
+      ).rejects.toThrow(/controlled by MacBook Pro/u);
 
       const visibleTakeover = new Promise((resolve) =>
         firstClient.once('inputLease', resolve)
@@ -359,32 +354,30 @@ describe('Environment Runtime lifecycle', () => {
         started.terminalId,
         'client-b',
         true,
-        { deviceId: 'device-b', deviceName: 'iPad' }
+        { deviceId: 'device-b', deviceName: 'iPad', ownerDeviceId: 'execution-device' }
       );
       await expect(visibleTakeover).resolves.toMatchObject({
         type: 'taken-over',
         terminalId: started.terminalId,
-        previousOwnerId: 'client-a',
-        lease: { ownerId: 'client-b' }
+        previousControllerDeviceId: 'device-a',
+        lease: { controllerDeviceId: 'device-b' }
       });
       await expect(
-        firstClient.write(started.terminalId, 'stale', {
-          ownerId: 'client-a',
-          generation: firstLease.generation
-        })
+        firstClient.write(started.terminalId, 'stale', terminalControlProof(firstLease))
       ).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
-      await expect(firstClient.resize(started.terminalId, 81, 25, {
-        ownerId: 'client-a',
-        generation: firstLease.generation
-      })).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
-      await secondClient.write(started.terminalId, 'second', {
-        ownerId: 'client-b',
-        generation: secondLease.generation
-      });
-      const resized = await secondClient.resize(started.terminalId, 90, 28, {
-        ownerId: 'client-b',
-        generation: secondLease.generation
-      });
+      await expect(firstClient.resize(
+        started.terminalId,
+        81,
+        25,
+        terminalControlProof(firstLease)
+      )).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
+      await secondClient.write(started.terminalId, 'second', terminalControlProof(secondLease));
+      const resized = await secondClient.resize(
+        started.terminalId,
+        90,
+        28,
+        terminalControlProof(secondLease)
+      );
 
       expect(process.writes).toEqual(['first', 'second']);
       expect(process.resizes).toEqual([{ cols: 90, rows: 28 }]);
@@ -430,7 +423,7 @@ describe('Environment Runtime lifecycle', () => {
       await expect(released).resolves.toMatchObject({
         type: 'released',
         terminalId: started.terminalId,
-        previousOwnerId: 'client-a'
+        previousControllerDeviceId: 'client-a'
       });
       await expect(spectator.currentInputLease(started.terminalId)).resolves.toBeNull();
       spectator.disconnect();
@@ -512,10 +505,11 @@ describe('Environment Runtime lifecycle', () => {
       });
 
       const lease = await client.acquireInputLease(started.terminalId, 'client-a');
-      await client.write(started.terminalId, process.platform === 'win32' ? 'ready\r' : 'ready\n', {
-        ownerId: 'client-a',
-        generation: lease.generation
-      });
+      await client.write(
+        started.terminalId,
+        process.platform === 'win32' ? 'ready\r' : 'ready\n',
+        terminalControlProof(lease)
+      );
 
       await expect(output).resolves.toContain('echo:ready');
       client.disconnect();

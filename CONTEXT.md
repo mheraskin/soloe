@@ -125,11 +125,15 @@ Ref-counted intent from a visible Terminal Presentation to publish one PTY's liv
 _Avoid_: Terminal listener, running terminal
 
 **Terminal Control Lease**:
-The Environment Runtime-owned, generation-qualified right of one active Client to send input to and set the canonical size of one terminal.
+The Environment Runtime-owned capability binding one Session to one controlling Soloe Device. Commands prove control with the Session ID, its owner Device ID, the controlling Device ID, and the granted Lease ID.
 _Avoid_: Terminal Input Lease, focused terminal, permanent lock
 
+**Session Control**:
+The current binding between one Session and the Soloe Device controlling it, independent of the Device that owns and executes the Session.
+_Avoid_: Controller Session, selected tab, transport connection
+
 **Controller**:
-The Client that currently holds a Session's Terminal Control Lease.
+The Soloe Device that currently holds a Session's Terminal Control Lease.
 _Avoid_: Owner, focused client, active terminal
 
 **Spectator**:
@@ -275,7 +279,7 @@ _Avoid_: Sync state, source of truth
 - A **Terminal Replay Tail** is capped at 4 MiB and 4,096 live events per Session, plus 32 MiB and 32,768 live events globally; its chronologies contain only retained chunks, and snapshot overlap is removed before ordered live output is admitted
 - A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
 - The first visible **Terminal Presentation** acquires **Terminal Output Demand** for its PTY; the final hidden owner releases cross-process publication without stopping replay retention or agent observation
-- Terminal input and PTY resize require the current generation of a **Terminal Control Lease**; a **Spectator** may explicitly take over, and neither lease loss nor takeover stops the PTY
+- Terminal input and PTY resize require the exact Session ID, owner Device ID, Controller Device ID, and Lease ID of the current **Terminal Control Lease**; generations may order observations but never establish ownership, a **Spectator** may explicitly take over, and neither lease loss nor takeover stops the PTY
 - Each output batch receives one **Terminal Semantic Observation** before replay publication; usage-limit state outranks approval redraws and hidden presentations remain observable
 - One **Review Surface** owns one text-selection action; resident file bodies contribute exact review-entry identity without adding global listeners
 - A **Review Surface** auto-loads ordinary resident untracked text through two shared admissions; dependency, cache, generated-output, binary, and oversized paths remain explicit-load only

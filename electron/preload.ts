@@ -106,6 +106,7 @@ import type {
   TerminalId,
   TerminalLocationEvent,
   TerminalInputLeaseEvent,
+  TerminalControlProof,
   TerminalControllerIdentity,
   TerminalOutputEvent,
   TerminalStartOptions,
@@ -164,15 +165,23 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.startOnDevice, ref),
     setDeviceTerminalDemand: (refs: TerminalRef[]) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalDemand, refs),
-    deviceTerminalInput: (request: { ref: TerminalRef; data: string }) =>
+    deviceTerminalInput: (request: { ref: TerminalRef; data: string; control: TerminalControlProof }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInput, request),
     deviceTerminalInputLease: (request: { ref: TerminalRef; takeover?: boolean }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInputLease, request),
     deviceTerminalCurrentInputLease: (ref: TerminalRef) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalCurrentInputLease, ref),
-    deviceTerminalReleaseInputLease: (request: { ref: TerminalRef; leaseId: string }) =>
+    deviceTerminalReleaseInputLease: (request: {
+      ref: TerminalRef;
+      control: TerminalControlProof;
+    }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReleaseInputLease, request),
-    deviceTerminalResize: (request: { ref: TerminalRef; cols: number; rows: number }) =>
+    deviceTerminalResize: (request: {
+      ref: TerminalRef;
+      cols: number;
+      rows: number;
+      control: TerminalControlProof;
+    }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalResize, request),
     deviceTerminalReplay: (ref: TerminalRef, afterSeq?: number) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReplay, ref, afterSeq),
@@ -204,8 +213,8 @@ const soloe: SoloeApi = {
     ),
     currentInputLease: (terminalId: TerminalId) =>
       ipcRenderer.invoke(IpcChannels.terminal.currentInputLease, terminalId),
-    releaseInputLease: (terminalId: TerminalId, leaseId: string) =>
-      ipcRenderer.invoke(IpcChannels.terminal.releaseInputLease, terminalId, leaseId),
+    releaseInputLease: (terminalId: TerminalId, control: TerminalControlProof) =>
+      ipcRenderer.invoke(IpcChannels.terminal.releaseInputLease, terminalId, control),
     input: (payload: TerminalInputPayload) => ipcRenderer.invoke(IpcChannels.terminal.input, payload),
     resize: (payload: TerminalResizePayload) =>
       ipcRenderer.invoke(IpcChannels.terminal.resize, payload),

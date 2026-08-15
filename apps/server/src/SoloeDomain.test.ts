@@ -16,6 +16,7 @@ import { FeatureArtifactObservation, HookInstaller } from "@soloe/domain";
 import { TerminalInputLeaseManager } from "@soloe/runtime";
 import { hostPlatform } from "../../../shared/platform.js";
 import { SERVER_RPC_METHODS } from "../../../shared/api-contract.js";
+import { terminalControlProof, type TerminalInputLease } from "../../../shared/types/terminal.js";
 import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
@@ -35,36 +36,48 @@ describe("SoloeDomain", () => {
         terminalId: string,
         ownerId: string,
         takeover = false,
-        controller = { deviceId: ownerId, deviceName: ownerId },
+        controller: { deviceId: string; deviceName: string; ownerDeviceId: string } = {
+          deviceId: ownerId,
+          deviceName: ownerId,
+          ownerDeviceId: ownerId,
+        },
       ) => leases.acquire(terminalId, ownerId, {
         takeover,
         sessionId: "session-1",
+        ownerDeviceId: controller.ownerDeviceId,
         controllerDeviceId: controller.deviceId,
         controllerDeviceName: controller.deviceName,
         cols: 100,
         rows: 30,
       })),
       currentInputLease: vi.fn(async (terminalId: string) => leases.current(terminalId)),
-      releaseInputLease: vi.fn(async (terminalId: string, ownerId: string, leaseId: string) =>
-        leases.release(terminalId, ownerId, leaseId)),
-      releaseInputLeases: vi.fn(async (ownerId: string) => leases.releaseOwner(ownerId)),
+      releaseInputLease: vi.fn(async (
+        terminalId: string,
+        control: import("../../../shared/types/terminal.js").TerminalControlProof,
+      ) => leases.release(terminalId, control)),
+      releaseInputLeases: vi.fn(async (ownerId: string) =>
+        leases.releaseTransportClient(ownerId)),
       write: vi.fn(async (
         terminalId: string,
         data: string,
-        control: { ownerId: string; generation: number },
+        control: import("../../../shared/types/terminal.js").TerminalControlProof,
       ) => {
-        leases.authorizeControl(terminalId, control.ownerId, control.generation, "input");
+        leases.authorizeControl(terminalId, control, "input");
         acceptedInput.push(data);
       }),
       resize: vi.fn(async (
         terminalId: string,
         cols: number,
         rows: number,
-        control: { ownerId: string; generation: number },
-      ) => leases.resize(terminalId, control.ownerId, control.generation, cols, rows)),
+        control: import("../../../shared/types/terminal.js").TerminalControlProof,
+      ) => leases.resize(terminalId, control, cols, rows)),
       stop: vi.fn(),
     };
-    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      deviceId: "11111111-1111-4111-8111-111111111111",
+    });
 
     try {
       await domain.init();
@@ -73,23 +86,29 @@ describe("SoloeDomain", () => {
         method: "acquireInputLease",
         args: ["terminal-1", false, { deviceId: "device-a", deviceName: "MacBook Pro" }],
         clientId: "client-a",
-      }) as { generation: number };
+      }) as TerminalInputLease;
       await expect(domain.invoke({
         namespace: "terminal",
         method: "input",
-        args: ["terminal-1", "first", firstLease.generation],
+        args: ["terminal-1", "first", terminalControlProof(firstLease)],
         clientId: "client-a",
       })).resolves.toBe(true);
       await expect(domain.invoke({
         namespace: "terminal",
         method: "input",
-        args: ["terminal-1", "racing", firstLease.generation],
+        args: ["terminal-1", "racing", {
+          ...terminalControlProof(firstLease),
+          controllerDeviceId: "device-b",
+        }],
         clientId: "client-b",
       })).rejects.toMatchObject({ code: "terminal_control_lease_stale" });
       await expect(domain.invoke({
         namespace: "terminal",
         method: "resize",
-        args: ["terminal-1", 80, 24, firstLease.generation],
+        args: ["terminal-1", 80, 24, {
+          ...terminalControlProof(firstLease),
+          controllerDeviceId: "device-b",
+        }],
         clientId: "client-b",
       })).rejects.toMatchObject({ code: "terminal_control_lease_stale" });
 
@@ -98,25 +117,25 @@ describe("SoloeDomain", () => {
         method: "acquireInputLease",
         args: ["terminal-1", true, { deviceId: "device-b", deviceName: "iPad" }],
         clientId: "client-b",
-      }) as { generation: number; ownerId: string };
-      expect(secondLease).toMatchObject({ ownerId: "client-b" });
+      }) as TerminalInputLease;
+      expect(secondLease).toMatchObject({ controllerDeviceId: "device-b" });
       await expect(domain.invoke({
         namespace: "terminal",
         method: "input",
-        args: ["terminal-1", "second", secondLease.generation],
+        args: ["terminal-1", "second", terminalControlProof(secondLease)],
         clientId: "client-b",
       })).resolves.toBe(true);
       await expect(domain.invoke({
         namespace: "terminal",
         method: "resize",
-        args: ["terminal-1", 90, 28, secondLease.generation],
+        args: ["terminal-1", 90, 28, terminalControlProof(secondLease)],
         clientId: "client-b",
       })).resolves.toBe(true);
       await expect(domain.invoke({
         namespace: "terminal",
         method: "currentInputLease",
         args: ["terminal-1"],
-      })).resolves.toMatchObject({ ownerId: "client-b" });
+      })).resolves.toMatchObject({ controllerDeviceId: "device-b" });
 
       domain.releaseClient("client-b");
       expect(leases.current("terminal-1")).toBeNull();
@@ -1510,13 +1529,24 @@ describe("SoloeDomain", () => {
         domain.invoke({
           namespace: "files",
           method: "pasteIntoTerminal",
-          args: [{ terminalId: "files-terminal", path: "src/app.ts", generation: 3 }],
+          args: [{
+            terminalId: "files-terminal",
+            path: "src/app.ts",
+            control: {
+              sessionId: "files-session",
+              ownerDeviceId: "execution-device",
+              controllerDeviceId: "controller-device",
+              leaseId: "files-lease",
+            },
+          }],
           clientId: "files-client",
         }),
       ).resolves.toBe(true);
       expect(runtime.write).toHaveBeenCalledWith("files-terminal", "src/app.ts", {
-        ownerId: "files-client",
-        generation: 3,
+        sessionId: "files-session",
+        ownerDeviceId: "execution-device",
+        controllerDeviceId: "controller-device",
+        leaseId: "files-lease",
       });
     } finally {
       await domain.dispose();

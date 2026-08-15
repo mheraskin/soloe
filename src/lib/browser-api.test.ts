@@ -48,22 +48,28 @@ describe("browser API", () => {
       clientId: "browser-test",
     });
 
-    await api.terminal.input({ terminalId: "terminal-1", data: "hello", generation: 7 });
+    const control = {
+      sessionId: "session-1",
+      ownerDeviceId: "device-owner",
+      controllerDeviceId: "browser-test",
+      leaseId: "lease-1",
+    };
+    await api.terminal.input({ terminalId: "terminal-1", data: "hello", control });
     expect(JSON.parse(String(fetchImpl.mock.calls[2]?.[1]?.body))).toEqual({
       namespace: "terminal",
       method: "input",
-      args: ["terminal-1", "hello", 7],
+      args: ["terminal-1", "hello", control],
       clientId: "browser-test",
     });
     await api.terminal.resize({
       terminalId: "terminal-1",
       dimensions: { cols: 90, rows: 28 },
-      generation: 7,
+      control,
     });
     expect(JSON.parse(String(fetchImpl.mock.calls[3]?.[1]?.body))).toEqual({
       namespace: "terminal",
       method: "resize",
-      args: ["terminal-1", 90, 28, 7],
+      args: ["terminal-1", 90, 28, control],
       clientId: "browser-test",
     });
   });

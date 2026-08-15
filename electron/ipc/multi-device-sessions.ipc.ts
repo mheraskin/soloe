@@ -3,6 +3,7 @@ import { IpcChannels } from '@shared/types/ipc.js';
 import type { CreateMultiDeviceSessionRequest } from '@shared/types/multi-device-sessions.js';
 import type { MultiDeviceSessions } from '../sessions/MultiDeviceSessions.js';
 import type { SessionRef, TerminalRef } from '@shared/types/devices.js';
+import type { TerminalControlProof } from '@shared/types/terminal.js';
 import { ipcInvoke } from './result.js';
 
 export interface MultiDeviceSessionsIpcOptions {
@@ -97,14 +98,14 @@ export class MultiDeviceSessionsIpc {
     );
     ipcMain.handle(
       IpcChannels.sessions.deviceTerminalInput,
-      (_event, request: { ref: TerminalRef; data: string; generation: number }) => ipcInvoke(async () => {
+      (_event, request: { ref: TerminalRef; data: string; control: TerminalControlProof }) => ipcInvoke(async () => {
         if (typeof request?.data !== 'string' || Buffer.byteLength(request.data) > 1024 * 1024) {
           throw new Error('Terminal input is invalid.');
         }
         await this.options.sessions.terminalInput(
           structuredClone(request.ref),
           request.data,
-          request.generation
+          structuredClone(request.control)
         );
         return true as const;
       })
@@ -124,20 +125,20 @@ export class MultiDeviceSessionsIpc {
     );
     ipcMain.handle(
       IpcChannels.sessions.deviceTerminalReleaseInputLease,
-      (_event, request: { ref: TerminalRef; leaseId: string }) =>
+      (_event, request: { ref: TerminalRef; control: TerminalControlProof }) =>
         ipcInvoke(() => this.options.sessions.terminalReleaseInputLease(
           structuredClone(request.ref),
-          request.leaseId
+          structuredClone(request.control)
         ))
     );
     ipcMain.handle(
       IpcChannels.sessions.deviceTerminalResize,
-      (_event, request: { ref: TerminalRef; cols: number; rows: number; generation: number }) => ipcInvoke(async () => {
+      (_event, request: { ref: TerminalRef; cols: number; rows: number; control: TerminalControlProof }) => ipcInvoke(async () => {
         await this.options.sessions.terminalResize(
           structuredClone(request.ref),
           request.cols,
           request.rows,
-          request.generation
+          structuredClone(request.control)
         );
         return true as const;
       })

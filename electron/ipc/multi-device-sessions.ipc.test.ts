@@ -90,10 +90,23 @@ describe('MultiDeviceSessionsIpc', () => {
     )).resolves.toEqual({ ok: true, value: null });
     await expect(invoke(
       IpcChannels.sessions.deviceTerminalReleaseInputLease,
-      { ref, leaseId: 'lease-1' }
+      {
+        ref,
+        control: {
+          sessionId: 'session-1',
+          ownerDeviceId: 'device-1',
+          controllerDeviceId: 'controller-device',
+          leaseId: 'lease-1'
+        }
+      }
     )).resolves.toEqual({ ok: true, value: true });
     expect(sessions.terminalCurrentInputLease).toHaveBeenCalledWith(ref);
-    expect(sessions.terminalReleaseInputLease).toHaveBeenCalledWith(ref, 'lease-1');
+    expect(sessions.terminalReleaseInputLease).toHaveBeenCalledWith(ref, {
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-1',
+      controllerDeviceId: 'controller-device',
+      leaseId: 'lease-1'
+    });
   });
 
   it('publishes changed Device state to every live window', () => {

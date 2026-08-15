@@ -10,6 +10,7 @@
   import { ipc, supportsBackendOperation } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
   import { terminalControl } from '../stores/terminal-control.svelte';
+  import { terminalControlProof } from '@shared/types/terminal.js';
   import * as Command from '$lib/components/ui/command';
 
   let query = $state('');
@@ -90,7 +91,7 @@
     await ipc.files.pasteIntoTerminal({
       terminalId,
       path: result.path,
-      generation: lease.generation
+      control: terminalControlProof(lease)
     });
   }
 
