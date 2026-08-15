@@ -82,7 +82,7 @@ export async function startServerHost(): Promise<RunningServerHost> {
         ready: true,
       })}\n`,
     );
-    if (webRoot && process.env.SOLOE_TAILSCALE_AUTO_SERVE !== "0") {
+    if (shouldEnsureTailscaleSharing(process.env)) {
       void ensureTailscaleSharing(address);
     }
 
@@ -109,6 +109,12 @@ export async function startServerHost(): Promise<RunningServerHost> {
     domainRuntime.disconnect();
     throw error;
   }
+}
+
+export function shouldEnsureTailscaleSharing(
+  environment: NodeJS.ProcessEnv,
+): boolean {
+  return environment.SOLOE_TAILSCALE_AUTO_SERVE !== "0";
 }
 
 async function ensureTailscaleSharing(targetUrl: string): Promise<void> {
