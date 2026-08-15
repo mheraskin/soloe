@@ -44,6 +44,7 @@
     "benchmark:rust": "pnpm build:rust && pnpm build && node scripts/benchmark-electron.mjs --terminal-backend=rust",
     "benchmark:tauri": "pnpm build:tauri && node scripts/benchmark-tauri.mjs",
     "build:icon:pwa": "node scripts/generate-pwa-icons.mjs",
+    "build:icon:macos": "node scripts/generate-macos-icon.mjs",
     "build:icon:win": "node scripts/generate-windows-icon.mjs",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",

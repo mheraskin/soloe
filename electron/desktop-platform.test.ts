@@ -17,6 +17,27 @@ describe('desktopApplicationIdentity', () => {
 
     expect(packageJson.productName).toBe('Soloe');
     expect(packageJson.desktopName).toBe('com.soloe.app.desktop');
+    expect(
+      (packageJson as { scripts?: { dev?: string } }).scripts?.dev
+    ).toBe('node ../../scripts/run-electron-dev.mjs');
+  });
+
+  it('brands the macOS development bundle before the OS sees it', async () => {
+    // @ts-expect-error The launcher is intentionally plain Node ESM.
+    const launcher = await import('../scripts/run-electron-dev.mjs') as {
+      DEVELOPMENT_APP_NAME: string;
+      DEVELOPMENT_APP_ID: string;
+      DEVELOPMENT_HELPER_BUNDLES: Array<[string, string, string]>;
+    };
+
+    expect(launcher.DEVELOPMENT_APP_NAME).toBe('Soloe');
+    expect(launcher.DEVELOPMENT_APP_ID).toBe('com.soloe.app.dev');
+    expect(launcher.DEVELOPMENT_HELPER_BUNDLES.map(([, destination]) => destination)).toEqual([
+      'Soloe Helper.app',
+      'Soloe Helper (GPU).app',
+      'Soloe Helper (Plugin).app',
+      'Soloe Helper (Renderer).app'
+    ]);
   });
 
   it('brands the macOS development application and its Dock icon as Soloe', () => {

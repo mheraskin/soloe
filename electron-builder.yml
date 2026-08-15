@@ -40,7 +40,7 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 mac:
-  icon: build/icon.icns
+  icon: build/icon-macos.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist

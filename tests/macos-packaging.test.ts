@@ -80,9 +80,10 @@ describe('macOS package contract', () => {
   it('keeps the embedded Electron UI signed-ready with macOS entitlements', () => {
     const config = readFileSync(new URL('electron-builder.yml', root), 'utf8');
 
-    expect(config).toMatch(/mac:\n(?:.|\n)*?icon: build\/icon\.icns/);
+    expect(config).toMatch(/mac:\n(?:.|\n)*?icon: build\/icon-macos\.icns/);
     expect(config).toMatch(/hardenedRuntime: true/);
     expect(config).toMatch(/entitlements: build\/entitlements\.mac\.plist/);
-    expect(existsSync(new URL('build/icon.icns', root))).toBe(true);
+    expect(existsSync(new URL('build/icon-macos.icns', root))).toBe(true);
+    expect(existsSync(new URL('build/icon-macos.png', root))).toBe(true);
   });
 });

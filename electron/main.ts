@@ -433,6 +433,7 @@ function resolveIconPath(iconFilenames: string[]): string {
 }
 
 function resolveAppIcon(): string {
+  if (process.platform === 'darwin') return resolveIconPath(['icon-macos.png', 'icon.png']);
   return resolveIconPath(process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png', 'icon.ico']);
 }
 
@@ -1134,7 +1135,7 @@ app.on('web-contents-created', (_event, contents) => {
 if (ensureSingleInstance()) {
   pendingDiffIntent = parseDiffArgv(process.argv);
   app.whenReady().then(async () => {
-    if (desktopIdentity.setDockIcon) {
+    if (desktopIdentity.setDockIcon && !app.isPackaged) {
       app.dock?.setIcon(resolveAppIcon());
     }
     const menuTemplate = applicationMenuTemplate();
