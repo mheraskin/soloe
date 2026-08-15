@@ -45,16 +45,26 @@ export class TailscaleServeManager {
   }
 
   async ensure(): Promise<TailscaleServeStatus> {
-    let status: unknown;
+    let selfDnsName: string;
+    let serveStatus: unknown;
     try {
-      status = parseServeStatus(
+      selfDnsName = parseSelfDnsName(
+        parseJsonStatus(await this.run(["status", "--json"]), "status"),
+      );
+      serveStatus = parseJsonStatus(
         await this.run(["serve", "status", "--json"]),
+        "Serve status",
       );
     } catch (error) {
       return commandFailure(error);
     }
 
-    const route = inspectPort(status, this.httpsPort, this.targetUrl);
+    const route = inspectPort(
+      serveStatus,
+      selfDnsName,
+      this.httpsPort,
+      this.targetUrl,
+    );
     if (route === "owned") return ready();
     if (route === "occupied") {
       return {
@@ -125,6 +135,7 @@ export function tailscaleExecutableCandidates(
 
 function inspectPort(
   raw: unknown,
+  selfDnsName: string,
   httpsPort: number,
   targetUrl: string,
 ): "free" | "owned" | "occupied" {
@@ -132,35 +143,55 @@ function inspectPort(
   const port = String(httpsPort);
   const tcp = isRecord(raw.TCP) ? raw.TCP : {};
   const web = isRecord(raw.Web) ? raw.Web : {};
-  let exactProxy = false;
-  let matchingWebEntry = false;
+  const expectedAuthority = `${selfDnsName}:${port}`;
+  let currentWebEntry: Record<string, unknown> | null = null;
 
   for (const [authority, value] of Object.entries(web)) {
-    if (!authority.endsWith(`:${port}`) || !isRecord(value)) continue;
-    matchingWebEntry = true;
-    const handlers = isRecord(value.Handlers) ? value.Handlers : {};
-    const root = isRecord(handlers["/"]) ? handlers["/"] : null;
-    if (root && normalizeComparableUrl(root.Proxy) === targetUrl) {
-      exactProxy = true;
-    }
+    if (authority.toLowerCase() !== expectedAuthority || !isRecord(value)) continue;
+    currentWebEntry = value;
+    break;
   }
 
   const tcpEntry = tcp[port];
   const httpsEnabled = isRecord(tcpEntry) && tcpEntry.HTTPS === true;
-  if (httpsEnabled && exactProxy) return "owned";
-  if (tcpEntry !== undefined || matchingWebEntry) return "occupied";
-  return "free";
+  if (currentWebEntry) {
+    const handlers = isRecord(currentWebEntry.Handlers)
+      ? currentWebEntry.Handlers
+      : {};
+    const root = isRecord(handlers["/"]) ? handlers["/"] : null;
+    if (httpsEnabled && root && normalizeComparableUrl(root.Proxy) === targetUrl) {
+      return "owned";
+    }
+    return "occupied";
+  }
+
+  // Tailscale keys Web routes by the device DNS name. After a device rename,
+  // TCP can still contain the HTTPS listener while Web only contains obsolete
+  // authorities. Re-declaring our dedicated port creates the current route.
+  if (tcpEntry === undefined || httpsEnabled) return "free";
+  return "occupied";
 }
 
-function parseServeStatus(raw: string): unknown {
+function parseJsonStatus(raw: string, label: string): unknown {
   if (!raw.trim()) return {};
   try {
     return JSON.parse(raw);
   } catch (error) {
     throw new Error(
-      `Invalid Tailscale Serve status JSON: ${error instanceof Error ? error.message : String(error)}`,
+      `Invalid Tailscale ${label} JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+function parseSelfDnsName(raw: unknown): string {
+  const self = isRecord(raw) && isRecord(raw.Self) ? raw.Self : null;
+  const dnsName = self && typeof self.DNSName === "string"
+    ? self.DNSName.trim().replace(/\.+$/u, "").toLowerCase()
+    : "";
+  if (!dnsName) {
+    throw new Error("Tailscale status did not report this device's DNS name.");
+  }
+  return dnsName;
 }
 
 function commandFailure(error: unknown): TailscaleServeStatus {

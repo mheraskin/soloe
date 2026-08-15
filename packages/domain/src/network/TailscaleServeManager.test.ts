@@ -5,11 +5,17 @@ import {
   tailscaleExecutableCandidates,
 } from "./TailscaleServeManager.js";
 
-const TARGET = "http://127.0.0.1:4318";
+const TARGET = "http://127.0.0.1:4317";
+const SELF_DNS_NAME = "workstation.tail1234.ts.net.";
+
+function selfStatus(): string {
+  return JSON.stringify({ Self: { DNSName: SELF_DNS_NAME } });
+}
 
 describe("TailscaleServeManager", () => {
   it("keeps an exact Soloe route without reconfiguring Tailscale Serve", async () => {
     const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
       expect(args).toEqual(["serve", "status", "--json"]);
       return JSON.stringify({
         TCP: { "4318": { HTTPS: true } },
@@ -27,11 +33,44 @@ describe("TailscaleServeManager", () => {
         message: null,
         setupUrl: null,
       });
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes Soloe's route after the Tailscale device hostname changes", async () => {
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      if (args[1] === "status") {
+        return JSON.stringify({
+          TCP: { "4318": { HTTPS: true } },
+          Web: {
+            "old-name.tail1234.ts.net:4318": {
+              Handlers: { "/": { Proxy: "http://127.0.0.1:4318" } },
+            },
+          },
+        });
+      }
+      expect(args).toEqual([
+        "serve",
+        "--bg",
+        "--yes",
+        "--https=4318",
+        TARGET,
+      ]);
+      return "Available within your tailnet";
+    });
+
+    await expect(new TailscaleServeManager({ run, targetUrl: TARGET }).ensure())
+      .resolves.toEqual({
+        state: "ready",
+        message: null,
+        setupUrl: null,
+      });
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it("configures a free dedicated HTTPS port in the background", async () => {
     const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
       if (args[0] === "serve" && args[1] === "status") return "{}";
       expect(args).toEqual([
         "serve",
@@ -49,29 +88,33 @@ describe("TailscaleServeManager", () => {
         message: null,
         setupUrl: null,
       });
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it("never overwrites another service using Soloe's dedicated port", async () => {
-    const run = vi.fn(async () => JSON.stringify({
-      TCP: { "4318": { HTTPS: true } },
-      Web: {
-        "workstation.tail1234.ts.net:4318": {
-          Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } },
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      return JSON.stringify({
+        TCP: { "4318": { HTTPS: true } },
+        Web: {
+          "workstation.tail1234.ts.net:4318": {
+            Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } },
+          },
         },
-      },
-    }));
+      });
+    });
 
     await expect(new TailscaleServeManager({ run, targetUrl: TARGET }).ensure())
       .resolves.toMatchObject({
         state: "conflict",
         message: expect.stringContaining("4318"),
       });
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
   it("surfaces Tailscale's one-time HTTPS consent link", async () => {
     const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
       if (args[1] === "status") return "{}";
       throw new Error(
         "To enable HTTPS, visit: https://login.tailscale.com/admin/machines/abc/serve",
