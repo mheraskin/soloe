@@ -212,34 +212,42 @@ export class LocalSessionDevice implements SessionDevice {
     }
   }
 
-  async terminalInput(terminalId: string, data: string): Promise<void> {
+  async terminalInput(terminalId: string, data: string, generation: number): Promise<void> {
     this.assertActive();
     const id = requiredId(terminalId);
     if (this.options.terminalInputControl) {
-      const lease = await this.options.terminalInputControl.acquireInputLease(id);
-      this.ownedInputLeases.set(id, lease);
+      const lease = this.ownedInputLeases.get(id);
+      if (!lease || lease.generation !== generation) {
+        throw new Error('Terminal control lease generation is stale.');
+      }
       await this.options.terminalInputControl.writeInput(id, data, lease);
       return;
     }
-    const lease = this.inputLeases.acquire(id, this.clientId);
-    this.inputLeases.authorizeInput(id, this.clientId, lease.leaseId);
+    this.inputLeases.authorizeControl(id, this.clientId, generation, 'input');
     this.options.pty.write(id, data);
   }
 
   terminalAcquireInputLease(
     terminalId: string,
-    takeover = false
+    takeover = false,
+    controller = { deviceId: this.deviceId, deviceName: this.status.descriptor?.name ?? this.deviceId }
   ): Promise<TerminalInputLease> {
     this.assertActive();
     if (this.options.terminalInputControl) {
-      return this.options.terminalInputControl.acquireInputLease(requiredId(terminalId), takeover)
+      return this.options.terminalInputControl.acquireInputLease(
+        requiredId(terminalId),
+        takeover,
+        controller
+      )
         .then((lease) => {
           this.ownedInputLeases.set(lease.terminalId, lease);
           return lease;
         });
     }
     return Promise.resolve(this.inputLeases.acquire(requiredId(terminalId), this.clientId, {
-      takeover
+      takeover,
+      controllerDeviceId: controller.deviceId,
+      controllerDeviceName: controller.deviceName
     }));
   }
 
@@ -265,9 +273,24 @@ export class LocalSessionDevice implements SessionDevice {
     return Promise.resolve(this.inputLeases.release(id, this.clientId, requiredId(leaseId)));
   }
 
-  async terminalResize(terminalId: string, cols: number, rows: number): Promise<void> {
+  async terminalResize(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    generation: number
+  ): Promise<void> {
     this.assertActive();
-    this.options.pty.resize(requiredId(terminalId), { cols, rows });
+    const id = requiredId(terminalId);
+    if (this.options.terminalInputControl) {
+      const lease = this.ownedInputLeases.get(id);
+      if (!lease || lease.generation !== generation) {
+        throw new Error('Terminal control lease generation is stale.');
+      }
+      await this.options.terminalInputControl.resizeTerminal(id, cols, rows, lease);
+      return;
+    }
+    this.inputLeases.resize(id, this.clientId, generation, cols, rows);
+    this.options.pty.resize(id, { cols, rows });
   }
 
   async terminalReplay(terminalId: string, afterSeq = 0): Promise<DeviceTerminalReplay> {

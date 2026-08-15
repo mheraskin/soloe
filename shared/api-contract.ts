@@ -17,6 +17,9 @@ export const SOLOE_API_METHODS = {
     "start",
     "stop",
     "restart",
+    "acquireInputLease",
+    "currentInputLease",
+    "releaseInputLease",
     "input",
     "resize",
     "listRunning",
@@ -26,6 +29,7 @@ export const SOLOE_API_METHODS = {
     "onExit",
     "onStatus",
     "onLocation",
+    "onInputLease",
   ],
   observer: [
     "list",
@@ -206,9 +210,6 @@ export const DEVICE_RPC_METHODS = new Set<string>([
   "workspaceDevice.getCommand",
   "sessions.createPlaced",
   "sessions.bindSource",
-  "terminal.acquireInputLease",
-  "terminal.currentInputLease",
-  "terminal.releaseInputLease",
 ]);
 
 export const SERVER_RPC_METHODS = new Set<string>([
@@ -224,6 +225,9 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "terminal.start",
   "terminal.stop",
   "terminal.restart",
+  "terminal.acquireInputLease",
+  "terminal.currentInputLease",
+  "terminal.releaseInputLease",
   "terminal.input",
   "terminal.resize",
   "terminal.listRunning",
@@ -352,6 +356,7 @@ export const SERVER_EVENT_METHODS = new Set<string>([
   "terminal.onExit",
   "terminal.onStatus",
   "terminal.onLocation",
+  "terminal.onInputLease",
   "observer.onSnapshot",
   "observer.onEvent",
   "settings.onChange",

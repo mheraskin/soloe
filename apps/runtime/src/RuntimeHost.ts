@@ -36,6 +36,7 @@ interface RuntimeRequest {
 export class RuntimeHost {
   private server: Server | null = null;
   private readonly sockets = new Set<Socket>();
+  private readonly socketOwners = new Map<Socket, Set<string>>();
   private readonly terminals = new Map<string, RunningTerminal>();
   private readonly terminalBySession = new Map<string, string>();
   private readonly outputSequence = new Map<string, number>();
@@ -88,7 +89,19 @@ export class RuntimeHost {
 
   private accept(socket: Socket): void {
     this.sockets.add(socket);
-    socket.once('close', () => this.sockets.delete(socket));
+    this.socketOwners.set(socket, new Set());
+    let released = false;
+    const releaseSocket = () => {
+      if (released) return;
+      released = true;
+      this.sockets.delete(socket);
+      for (const ownerId of this.socketOwners.get(socket) ?? []) {
+        this.inputLeases.releaseOwner(ownerId);
+      }
+      this.socketOwners.delete(socket);
+    };
+    socket.once('end', releaseSocket);
+    socket.once('close', releaseSocket);
     const lines = createInterface({ input: socket, crlfDelay: Infinity });
     lines.on('line', (line) => {
       void this.handleLine(socket, line);
@@ -99,7 +112,7 @@ export class RuntimeHost {
     let request: RuntimeRequest;
     try {
       request = JSON.parse(line) as RuntimeRequest;
-      const value = await this.dispatch(request.method, request.params);
+      const value = await this.dispatch(socket, request.method, request.params);
       socket.write(`${JSON.stringify({ id: request.id, ok: true, value })}\n`);
     } catch (error) {
       socket.write(`${JSON.stringify({
@@ -111,7 +124,7 @@ export class RuntimeHost {
     }
   }
 
-  private async dispatch(method: string, params: unknown): Promise<unknown> {
+  private async dispatch(socket: Socket, method: string, params: unknown): Promise<unknown> {
     switch (method) {
       case 'start':
         return this.start(params as RuntimeTerminalStart);
@@ -132,10 +145,22 @@ export class RuntimeHost {
         return true;
       }
       case 'acquireInputLease': {
-        const input = params as { terminalId: string; ownerId: string; takeover?: boolean };
-        this.requireTerminal(input.terminalId);
+        const input = params as {
+          terminalId: string;
+          ownerId: string;
+          takeover?: boolean;
+          deviceId?: string;
+          deviceName?: string;
+        };
+        const terminal = this.requireTerminal(input.terminalId);
+        this.socketOwners.get(socket)?.add(input.ownerId);
         return this.inputLeases.acquire(input.terminalId, input.ownerId, {
-          takeover: input.takeover === true
+          takeover: input.takeover === true,
+          sessionId: terminal.state.sessionId,
+          controllerDeviceId: input.deviceId,
+          controllerDeviceName: input.deviceName,
+          cols: terminal.state.cols,
+          rows: terminal.state.rows
         });
       }
       case 'currentInputLease': {
@@ -155,27 +180,39 @@ export class RuntimeHost {
         const input = params as {
           terminalId: string;
           data: string;
-          ownerId?: string;
-          leaseId?: string;
+          ownerId: string;
+          generation: number;
         };
         const terminal = this.requireTerminal(input.terminalId);
-        if (input.ownerId && input.leaseId) {
-          this.inputLeases.authorizeInput(input.terminalId, input.ownerId, input.leaseId);
-        } else {
-          const legacy = this.inputLeases.acquire(input.terminalId, 'legacy-runtime-control');
-          this.inputLeases.authorizeInput(input.terminalId, legacy.ownerId, legacy.leaseId);
-        }
+        this.inputLeases.authorizeControl(
+          input.terminalId,
+          input.ownerId,
+          input.generation,
+          'input'
+        );
         terminal.process.write(input.data);
         return true;
       }
       case 'resize': {
-        const input = params as { terminalId: string; cols: number; rows: number };
-        const terminal = this.terminals.get(input.terminalId);
-        if (!terminal) throw new Error(`Terminal not found: ${input.terminalId}`);
+        const input = params as {
+          terminalId: string;
+          cols: number;
+          rows: number;
+          ownerId: string;
+          generation: number;
+        };
+        const terminal = this.requireTerminal(input.terminalId);
+        const lease = this.inputLeases.resize(
+          input.terminalId,
+          input.ownerId,
+          input.generation,
+          input.cols,
+          input.rows
+        );
         terminal.process.resize(input.cols, input.rows);
         terminal.state.cols = input.cols;
         terminal.state.rows = input.rows;
-        return true;
+        return lease;
       }
       case 'stop': {
         const input = params as { terminalId: string };

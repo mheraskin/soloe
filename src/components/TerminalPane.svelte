@@ -38,8 +38,9 @@
   import { deferTerminalDispose, TerminalFitController } from '../lib/terminal-fit';
   import { usesMacosOverlayScrollbars } from '../lib/platform-ui';
   import type { ClipboardImagePayload } from '@shared/types/files.js';
-  import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { terminalControl } from '../stores/terminal-control.svelte';
   import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
+  import TerminalTranscript from './TerminalTranscript.svelte';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
   // a split simultaneously; `focused` drives keyboard concerns (xterm focus,
@@ -62,14 +63,9 @@
   );
   let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   let terminalFontSize = $derived(fontSize);
-  let terminalRef = $derived(deviceSessions.localTerminalRef(terminalId));
-  let inputLease = $derived(
-    terminalRef ? deviceSessions.terminalInputLeaseEvent(terminalRef) : null
-  );
-  let ownsInput = $derived(
-    terminalRef ? deviceSessions.ownsTerminalInput(terminalRef) : true
-  );
-  let readOnly = $derived(Boolean(focused && terminalRef && inputLease?.lease && !ownsInput));
+  let inputLease = $derived(terminalControl.lease(terminalId));
+  let ownsInput = $derived(terminalControl.owns(terminalId));
+  let readOnly = $derived(Boolean(visible && inputLease && !ownsInput));
   const macosOverlayScrollbars = usesMacosOverlayScrollbars();
 
   let host: HTMLDivElement | undefined = $state();
@@ -77,8 +73,15 @@
   let findOpen = $state(false);
   let findQuery = $state('');
   let ready = $state(false);
+  let transitioningControl = $state(false);
+  let preparedGeneration: number | null = null;
+  let lastAuthoritativeSize: { cols: number; rows: number } | null = null;
   let loadingLabel = $derived(
-    sessions.runtime[sessionId]?.status === 'starting' ? 'Starting' : 'Restoring terminal'
+    transitioningControl || (!inputLease && focused && visible)
+      ? 'Taking control and preparing terminal…'
+      : sessions.runtime[sessionId]?.status === 'starting'
+        ? 'Starting'
+        : 'Restoring terminal'
   );
   // Floating "Ask Agent" chip state. We snapshot the selected text into
   // `chipText` at mouseup time and keep the chip visible from that snapshot
@@ -131,20 +134,53 @@
   }
 
   async function takeInputControl(): Promise<void> {
-    const ref = terminalRef;
-    if (!ref) return;
-    const claimed = await deviceSessions.claimTerminalInputControl(ref, true);
-    if (claimed) requestAnimationFrame(() => term?.focus());
+    if (transitioningControl || terminalControl.takingOver(terminalId)) return;
+    transitioningControl = true;
+    ready = false;
+    try {
+      const claimed = await terminalControl.takeover(terminalId);
+      if (claimed) await prepareInteractiveTerminal(true);
+    } finally {
+      transitioningControl = false;
+    }
   }
 
   function sendTerminalInput(data: string): void {
-    const ref = terminalRef;
-    if (ref) {
-      if (!deviceSessions.ownsTerminalInput(ref)) return;
-      void deviceSessions.terminalInput(ref, data).catch(() => {});
+    if (!ownsInput) return;
+    void terminalControl.input(terminalId, data).catch(() => {});
+  }
+
+  async function sendAuthoritativeResize(
+    cols: number,
+    rows: number,
+    force = false
+  ): Promise<void> {
+    if (!ownsInput || !Number.isSafeInteger(cols) || !Number.isSafeInteger(rows)) return;
+    if (cols < 1 || rows < 1) return;
+    if (!force && lastAuthoritativeSize?.cols === cols && lastAuthoritativeSize.rows === rows) {
       return;
     }
-    void ipc.terminal.input(terminalId, data).catch(() => {});
+    lastAuthoritativeSize = { cols, rows };
+    try {
+      await terminalControl.resize(terminalId, cols, rows);
+    } catch {
+      lastAuthoritativeSize = null;
+    }
+  }
+
+  async function prepareInteractiveTerminal(force = false): Promise<void> {
+    const generation = inputLease?.generation;
+    if (!ownsInput || !generation || !visible || !term || !fit || !host) return;
+    if (!force && preparedGeneration === generation) return;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const rect = host.getBoundingClientRect();
+    if (!host.isConnected || rect.width < 4 || rect.height < 4) return;
+    terminalFit.fit(term, fit, () => ownsInput && visible && Boolean(host?.isConnected));
+    await sendAuthoritativeResize(term.cols, term.rows, true);
+    if (!ownsInput || inputLease?.generation !== generation) return;
+    preparedGeneration = generation;
+    if (capTimer === null) capTimer = setTimeout(markReady, READY_QUIET_MS);
+    if (focused && shouldAutofocusTerminal()) term.focus();
   }
 
   function clearReadyTimers(): void {
@@ -332,7 +368,7 @@
   }
 
   async function pasteFromClipboard(t: Terminal): Promise<void> {
-    if (terminalRef && !deviceSessions.ownsTerminalInput(terminalRef)) return;
+    if (!ownsInput) return;
     const session = sessions.sessions.find((item) => item.id === sessionId);
     if (session && effectiveAgentProvider(session)) {
       const images = await clipboardImages().catch(() => []);
@@ -341,7 +377,8 @@
           await ipc.files.pasteImagesIntoTerminal({
             terminalId,
             sessionId,
-            images
+            images,
+            generation: inputLease!.generation
           });
           return;
         }
@@ -597,8 +634,8 @@
         terminalFit.fit(t, f, () => visible && term === t && fit === f);
         // Sync PTY immediately so the first output isn't wrapped at the
         // default 80x24 and replayed at the actual geometry.
-        if (Number.isFinite(t.cols) && Number.isFinite(t.rows)) {
-          void ipc.terminal.resize(terminalId, t.cols, t.rows).catch(() => {});
+        if (Number.isFinite(t.cols) && Number.isFinite(t.rows) && ownsInput) {
+          void sendAuthoritativeResize(t.cols, t.rows, true);
         }
       } catch (err) {
         console.warn('[DEBUG-xterm] initial fit failed', { terminalId, sessionId, err });
@@ -611,7 +648,7 @@
       terminalId,
       sessionId,
       { write: writeOutput, replace: replaceOutput },
-      untrack(() => visible)
+      untrack(() => visible && ownsInput)
     );
     outputPresentation = presentation;
 
@@ -673,7 +710,7 @@
   // resident presentations stop parsing output; reveal catches up from the
   // last sequence xterm applied through the bounded Terminal Replay Tail.
   $effect(() => {
-    const nextVisible = visible;
+    const nextVisible = visible && ownsInput;
     untrack(() => outputPresentation?.setVisible(nextVisible));
   });
 
@@ -730,22 +767,29 @@
   });
 
   $effect(() => {
-    const ref = terminalRef;
-    if (!focused || !ref || !deviceSessions.supported) return;
-    void deviceSessions.claimTerminalInputControl(ref);
+    if (!focused || !visible) return;
+    ready = false;
+    void terminalControl.select(terminalId);
     const renewal = setInterval(() => {
-      if (deviceSessions.ownsTerminalInput(ref)) {
-        void deviceSessions.claimTerminalInputControl(ref);
-      }
+      if (terminalControl.owns(terminalId)) void terminalControl.select(terminalId);
     }, 5_000);
     return () => {
       clearInterval(renewal);
-      void deviceSessions.releaseTerminalInputControl(ref).catch(() => undefined);
+      void terminalControl.release(terminalId).catch(() => undefined);
     };
   });
 
   $effect(() => {
-    if (!visible || !term || !fit || !host) return;
+    if (!ownsInput) {
+      preparedGeneration = null;
+      lastAuthoritativeSize = null;
+      return;
+    }
+    if (visible) void prepareInteractiveTerminal();
+  });
+
+  $effect(() => {
+    if (!visible || !ownsInput || !term || !fit || !host) return;
     const currentTerm = term;
     const currentFit = fit;
     const currentHost = host;
@@ -769,12 +813,13 @@
           currentFit,
           () =>
             visible &&
+            ownsInput &&
             term === currentTerm &&
             fit === currentFit &&
             host === currentHost &&
             currentHost.isConnected
         );
-        void ipc.terminal.resize(terminalId, currentTerm.cols, currentTerm.rows).catch(() => {});
+        void sendAuthoritativeResize(currentTerm.cols, currentTerm.rows);
       } catch (err) {
         console.warn('[DEBUG-xterm] font-size fit failed', { terminalId, sessionId, err });
       }
@@ -788,7 +833,7 @@
   // split, so it deliberately does not touch focus — that is the focused
   // effect's job.
   $effect(() => {
-    if (!visible || !term || !fit || !host) return;
+    if (!visible || !ownsInput || !term || !fit || !host) return;
     const currentTerm = term;
     const currentFit = fit;
     const currentHost = host;
@@ -806,15 +851,19 @@
     const mobileKeyboardOpen = () =>
       compactViewport
       && document.documentElement.hasAttribute('data-mobile-keyboard-open');
-    const scheduleFit = (scrollToBottom = false) => {
+    const scheduleFit = (
+      scrollToBottom = false,
+      measurement: { width: number; height: number } = currentHost.getBoundingClientRect()
+    ) => {
       if (mobileKeyboardOpen()) return;
       scrollAfterFit ||= scrollToBottom;
-      terminalFit.scheduleFit(
+      terminalFit.scheduleMeasuredFit(
         currentTerm,
         currentFit,
+        measurement,
         canFit,
         ({ cols, rows }) => {
-          void ipc.terminal.resize(terminalId, cols, rows).catch(() => {});
+          void sendAuthoritativeResize(cols, rows);
           if (scrollAfterFit) {
             scrollAfterFit = false;
             currentTerm.scrollToBottom();
@@ -833,8 +882,7 @@
       const entry = entries[0];
       if (!entry || !visible || term !== currentTerm || mobileKeyboardOpen()) return;
       const { width, height } = entry.contentRect;
-      if (width < 4 || height < 4) return;
-      scheduleFit();
+      scheduleFit(false, { width, height });
     });
     const onRailLayout = (event: Event) => {
       const detail = (event as CustomEvent<{
@@ -878,7 +926,7 @@
   // visible effect's fit settle first when a pane becomes visible and focused
   // in the same tick.
   $effect(() => {
-    if (!focused || !term) return;
+    if (!focused || !ownsInput || !term) return;
     if (!shouldAutofocusTerminal()) return;
     requestAnimationFrame(() => term?.focus());
   });
@@ -888,7 +936,7 @@
   class="terminal-pane-shell relative h-full w-full bg-[#0f0f10]"
   data-overlay-scrollbars={macosOverlayScrollbars ? 'macos' : undefined}
 >
-  {#if !ready}
+  {#if (!ready && !readOnly) || transitioningControl}
     <div
       class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
     >
@@ -906,12 +954,24 @@
     </div>
   {/if}
   {#if readOnly}
-    <div class="absolute right-3 bottom-3 z-30 flex items-center gap-2 rounded-md border border-border bg-popover px-2 py-1.5 text-[10px] text-popover-foreground shadow-lg">
-      <span>Read-only · another device is controlling input</span>
-      <Button variant="outline" size="xs" onclick={() => void takeInputControl()}>Take control</Button>
+    <div class="absolute inset-0 z-10 flex min-h-0 flex-col bg-[#0f0f10]">
+      <div class="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-2 text-xs text-foreground">
+        <span class="min-w-0 flex-1 truncate">
+          Read-only — controlled by {inputLease?.controllerDeviceName ?? 'another client'}
+        </span>
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={transitioningControl || terminalControl.takingOver(terminalId)}
+          onclick={() => void takeInputControl()}
+        >Take Over</Button>
+      </div>
+      <div class="min-h-0 flex-1">
+        <TerminalTranscript {terminalId} {sessionId} {visible} />
+      </div>
     </div>
   {/if}
-  {#if findOpen && focused}
+  {#if findOpen && focused && ownsInput}
     <div class="terminal-find absolute top-2.5 right-4 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover p-1 shadow-lg">
       <Input
         bind:ref={findInput}
@@ -932,6 +992,7 @@
       </Button>
     </div>
   {/if}
+  <div class:invisible={readOnly} class:pointer-events-none={readOnly} class="h-full w-full">
   <ContextMenu.Root onOpenChange={onMenuOpenChange}>
     <ContextMenu.Trigger>
       {#snippet child({ props })}
@@ -949,6 +1010,7 @@
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
+  </div>
 </div>
 
 {#if chipText || askOpen}

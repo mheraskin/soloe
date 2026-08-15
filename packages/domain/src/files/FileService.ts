@@ -42,7 +42,11 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
 
 export interface FilesRuntime {
   listRunning(): Promise<Array<{ terminalId: string; sessionId: string }>>;
-  write(terminalId: string, data: string): Promise<unknown>;
+  write(
+    terminalId: string,
+    data: string,
+    control: { ownerId: string; generation: number }
+  ): Promise<unknown>;
 }
 
 export interface FileServiceOptions {
@@ -288,7 +292,7 @@ export class FileService {
       );
     }
     await this.requireRunningTerminal(request.terminalId);
-    await this.options.runtime.write(request.terminalId, pastedPath);
+    await this.options.runtime.write(request.terminalId, pastedPath, terminalControl(request));
     return true;
   }
 
@@ -371,7 +375,7 @@ export class FileService {
     }
 
     const insertedText = `${paths.join(" ")} `;
-    await this.options.runtime.write(request.terminalId, insertedText);
+    await this.options.runtime.write(request.terminalId, insertedText, terminalControl(request));
     return { paths, insertedText };
   }
 
@@ -647,4 +651,18 @@ function extensionForMime(mimeType: string): string {
   if (mimeType === "image/gif") return "gif";
   if (mimeType === "image/webp") return "webp";
   return "png";
+}
+
+function terminalControl(request: {
+  controllerClientId?: string;
+  generation: number;
+}): { ownerId: string; generation: number } {
+  const ownerId = request.controllerClientId?.trim();
+  if (!ownerId || !Number.isSafeInteger(request.generation) || request.generation < 1) {
+    throw new DomainError(
+      "terminal_control_lease_required",
+      "Terminal file paste requires the current control lease generation",
+    );
+  }
+  return { ownerId, generation: request.generation };
 }

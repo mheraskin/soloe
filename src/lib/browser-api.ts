@@ -7,6 +7,7 @@ import type {
 import type {
   TerminalExitEvent,
   TerminalLocationEvent,
+  TerminalInputLeaseEvent,
   TerminalOutputEvent,
   TerminalStatusEvent,
 } from "@shared/types/terminal.js";
@@ -148,9 +149,15 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     start: (input) => rpc("terminal", "start", [input]),
     stop: (terminalId) => rpc("terminal", "stop", [terminalId]),
     restart: (sessionId, resize) => rpc("terminal", "restart", [sessionId, resize]),
-    input: ({ terminalId, data }) => rpc("terminal", "input", [terminalId, data]),
-    resize: ({ terminalId, dimensions }) =>
-      rpc("terminal", "resize", [terminalId, dimensions.cols, dimensions.rows]),
+    acquireInputLease: (terminalId, controller, takeover = false) =>
+      rpc("terminal", "acquireInputLease", [terminalId, takeover, controller]),
+    currentInputLease: (terminalId) => rpc("terminal", "currentInputLease", [terminalId]),
+    releaseInputLease: (terminalId, leaseId) =>
+      rpc("terminal", "releaseInputLease", [terminalId, leaseId]),
+    input: ({ terminalId, data, generation }) =>
+      rpc("terminal", "input", [terminalId, data, generation]),
+    resize: ({ terminalId, dimensions, generation }) =>
+      rpc("terminal", "resize", [terminalId, dimensions.cols, dimensions.rows, generation]),
     listRunning: () => rpc("terminal", "listRunning", []),
     replay: (terminalId, afterSeq) =>
       rpc("terminal", "replay", [terminalId, afterSeq]),
@@ -163,6 +170,8 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
       subscribe("status", listener),
     onLocation: (listener: (event: TerminalLocationEvent) => void) =>
       subscribe("location", listener),
+    onInputLease: (listener: (event: TerminalInputLeaseEvent) => void) =>
+      subscribe("inputLease", listener),
     onReconnect: (listener) => subscribe("reconnect", listener),
   };
   const clientResult = async (

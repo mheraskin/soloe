@@ -110,6 +110,8 @@ import type {
   TerminalId,
   TerminalLocationEvent,
   TerminalInputLease,
+  TerminalInputLeaseEvent,
+  TerminalControllerIdentity,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStartResult,
@@ -190,6 +192,9 @@ export const IpcChannels = {
     start: 'terminal:start',
     stop: 'terminal:stop',
     restart: 'terminal:restart',
+    acquireInputLease: 'terminal:acquire-input-lease',
+    currentInputLease: 'terminal:current-input-lease',
+    releaseInputLease: 'terminal:release-input-lease',
     input: 'terminal:input',
     resize: 'terminal:resize',
     listRunning: 'terminal:list-running',
@@ -198,7 +203,8 @@ export const IpcChannels = {
     output: 'terminal:output',
     exit: 'terminal:exit',
     status: 'terminal:status',
-    location: 'terminal:location'
+    location: 'terminal:location',
+    inputLease: 'terminal:input-lease'
   },
   observer: {
     list: 'observer:list',
@@ -422,7 +428,9 @@ export interface SessionsApi {
   executeDevicePreparation?(planId: string): Promise<IpcResult<MultiDeviceSessionState>>;
   startOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionView>>;
   setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
-  deviceTerminalInput?(request: { ref: TerminalRef; data: string }): Promise<IpcResult<true>>;
+  deviceTerminalInput?(
+    request: { ref: TerminalRef; data: string; generation: number }
+  ): Promise<IpcResult<true>>;
   deviceTerminalInputLease?(
     request: { ref: TerminalRef; takeover?: boolean }
   ): Promise<IpcResult<TerminalInputLease>>;
@@ -431,7 +439,7 @@ export interface SessionsApi {
     request: { ref: TerminalRef; leaseId: string }
   ): Promise<IpcResult<boolean>>;
   deviceTerminalResize?(
-    request: { ref: TerminalRef; cols: number; rows: number }
+    request: { ref: TerminalRef; cols: number; rows: number; generation: number }
   ): Promise<IpcResult<true>>;
   deviceTerminalReplay?(
     ref: TerminalRef,
@@ -450,11 +458,13 @@ export interface SessionsApi {
 export interface TerminalInputPayload {
   terminalId: TerminalId;
   data: string;
+  generation: number;
 }
 
 export interface TerminalResizePayload {
   terminalId: TerminalId;
   dimensions: TerminalDimensions;
+  generation: number;
 }
 
 export interface TerminalOutputDemandPayload {
@@ -466,6 +476,13 @@ export interface TerminalApi {
   start(opts: TerminalStartOptions): Promise<IpcResult<TerminalStartResult>>;
   stop(terminalId: TerminalId): Promise<IpcResult<true>>;
   restart(sessionId: SessionId, opts?: { cols?: number; rows?: number }): Promise<IpcResult<TerminalStartResult>>;
+  acquireInputLease(
+    terminalId: TerminalId,
+    controller: TerminalControllerIdentity,
+    takeover?: boolean
+  ): Promise<IpcResult<TerminalInputLease>>;
+  currentInputLease(terminalId: TerminalId): Promise<IpcResult<TerminalInputLease | null>>;
+  releaseInputLease(terminalId: TerminalId, leaseId: string): Promise<IpcResult<boolean>>;
   input(payload: TerminalInputPayload): Promise<IpcResult<true>>;
   resize(payload: TerminalResizePayload): Promise<IpcResult<true>>;
   listRunning(): Promise<IpcResult<SessionRuntimeState[]>>;
@@ -476,6 +493,7 @@ export interface TerminalApi {
   onExit(listener: (event: TerminalExitEvent) => void): () => void;
   onStatus(listener: (event: TerminalStatusEvent) => void): () => void;
   onLocation(listener: (event: TerminalLocationEvent) => void): () => void;
+  onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
 }
 
 export interface ObserverApi {

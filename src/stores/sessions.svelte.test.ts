@@ -103,6 +103,7 @@ vi.mock('../lib/ipc', () => ({
         terminalLocationListeners.push(callback);
         return off;
       }),
+      onInputLease: vi.fn(() => off),
       listRunning: terminalListRunning
     },
     observer: {

@@ -19,11 +19,21 @@ import type {
 } from "./PtyProcess.js";
 
 export interface RuntimeTerminalInputControl {
-  acquireInputLease(terminalId: string, takeover?: boolean): Promise<TerminalInputLease>;
+  acquireInputLease(
+    terminalId: string,
+    takeover?: boolean,
+    controller?: { deviceId: string; deviceName: string }
+  ): Promise<TerminalInputLease>;
   currentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
   releaseInputLease(terminalId: string, leaseId: string): Promise<boolean>;
   onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
   writeInput(terminalId: string, data: string, lease?: TerminalInputLease): Promise<void>;
+  resizeTerminal(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    lease?: TerminalInputLease
+  ): Promise<void>;
 }
 
 class RemotePtyProcess extends EventEmitter implements PtyProcess {
@@ -131,8 +141,17 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     return this.client.setReplayUnbounded(unbounded);
   }
 
-  acquireInputLease(terminalId: string, takeover = false): Promise<TerminalInputLease> {
-    return this.client.acquireInputLease(terminalId, this.inputOwnerId, takeover);
+  acquireInputLease(
+    terminalId: string,
+    takeover = false,
+    controller = { deviceId: this.inputOwnerId, deviceName: 'Soloe desktop' }
+  ): Promise<TerminalInputLease> {
+    return this.client.acquireInputLease(
+      terminalId,
+      this.inputOwnerId,
+      takeover,
+      controller
+    );
   }
 
   currentInputLease(terminalId: string): Promise<TerminalInputLease | null> {
@@ -156,12 +175,25 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     const lease = existingLease ?? await this.acquireInputLease(terminalId);
     await this.client.write(terminalId, data, {
       ownerId: lease.ownerId,
-      leaseId: lease.leaseId,
+      generation: lease.generation,
     });
   }
 
-  resize(terminalId: string, cols: number, rows: number): Promise<true> {
-    return this.client.resize(terminalId, cols, rows);
+  async resizeTerminal(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    existingLease?: TerminalInputLease
+  ): Promise<void> {
+    const lease = existingLease ?? await this.acquireInputLease(terminalId);
+    await this.client.resize(terminalId, cols, rows, {
+      ownerId: lease.ownerId,
+      generation: lease.generation
+    });
+  }
+
+  resize(terminalId: string, cols: number, rows: number): Promise<void> {
+    return this.resizeTerminal(terminalId, cols, rows);
   }
 
   stop(terminalId: string): Promise<true> {

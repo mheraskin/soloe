@@ -59,14 +59,15 @@ export interface SessionDevice {
   readInventory(): Promise<DeviceSessionInventory>;
   reorderSessions(orderedIds: SessionId[]): Promise<Session[]>;
   setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void>;
-  terminalInput(terminalId: string, data: string): Promise<void>;
+  terminalInput(terminalId: string, data: string, generation: number): Promise<void>;
   terminalAcquireInputLease?(
     terminalId: string,
-    takeover?: boolean
+    takeover?: boolean,
+    controller?: { deviceId: string; deviceName: string }
   ): Promise<TerminalInputLease>;
   terminalCurrentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
   terminalReleaseInputLease(terminalId: string, leaseId: string): Promise<boolean>;
-  terminalResize(terminalId: string, cols: number, rows: number): Promise<void>;
+  terminalResize(terminalId: string, cols: number, rows: number, generation: number): Promise<void>;
   terminalReplay(terminalId: string, afterSeq?: number): Promise<DeviceTerminalReplay>;
   terminalStop(terminalId: string): Promise<void>;
   createSession?(request: DevicePlacedSessionRequest): Promise<Session>;
@@ -489,8 +490,8 @@ export class MultiDeviceSessions {
     return this.refresh();
   }
 
-  async terminalInput(ref: TerminalRef, data: string): Promise<void> {
-    await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data);
+  async terminalInput(ref: TerminalRef, data: string, generation: number): Promise<void> {
+    await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data, generation);
   }
 
   async terminalAcquireInputLease(
@@ -501,7 +502,11 @@ export class MultiDeviceSessions {
     if (!device.terminalAcquireInputLease) {
       throw new Error('The selected Device does not support terminal input control.');
     }
-    return device.terminalAcquireInputLease(ref.terminalId, takeover);
+    const controller = this.currentState.devices.find((candidate) => candidate.local);
+    return device.terminalAcquireInputLease(ref.terminalId, takeover, {
+      deviceId: controller?.deviceId ?? this.clientId,
+      deviceName: controller?.name ?? 'Soloe client'
+    });
   }
 
   async terminalCurrentInputLease(ref: TerminalRef): Promise<TerminalInputLease | null> {
@@ -512,8 +517,18 @@ export class MultiDeviceSessions {
     return this.requireReadyDevice(ref.deviceId).terminalReleaseInputLease(ref.terminalId, leaseId);
   }
 
-  async terminalResize(ref: TerminalRef, cols: number, rows: number): Promise<void> {
-    await this.requireReadyDevice(ref.deviceId).terminalResize(ref.terminalId, cols, rows);
+  async terminalResize(
+    ref: TerminalRef,
+    cols: number,
+    rows: number,
+    generation: number
+  ): Promise<void> {
+    await this.requireReadyDevice(ref.deviceId).terminalResize(
+      ref.terminalId,
+      cols,
+      rows,
+      generation
+    );
   }
 
   terminalReplay(ref: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {

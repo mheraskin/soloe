@@ -59,6 +59,18 @@ export class TerminalFitController {
     });
   }
 
+  scheduleMeasuredFit(
+    terminal: TerminalFitTarget,
+    fitAddon: FitAddonTarget,
+    measurement: { width: number; height: number },
+    canFit: () => boolean = () => true,
+    onFit: (size: { cols: number; rows: number }) => void = () => {},
+    onError: (error: unknown) => void = () => {}
+  ): void {
+    if (measurement.width < 4 || measurement.height < 4 || !canFit()) return;
+    this.scheduleFit(terminal, fitAddon, canFit, onFit, onError);
+  }
+
   cancel(): void {
     this.generation += 1;
     if (this.scheduledFitFrame !== null) {

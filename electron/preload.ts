@@ -105,6 +105,8 @@ import type {
   TerminalExitEvent,
   TerminalId,
   TerminalLocationEvent,
+  TerminalInputLeaseEvent,
+  TerminalControllerIdentity,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStatusEvent
@@ -190,6 +192,20 @@ const soloe: SoloeApi = {
     stop: (terminalId: TerminalId) => ipcRenderer.invoke(IpcChannels.terminal.stop, terminalId),
     restart: (sessionId: SessionId, opts) =>
       ipcRenderer.invoke(IpcChannels.terminal.restart, sessionId, opts),
+    acquireInputLease: (
+      terminalId: TerminalId,
+      controller: TerminalControllerIdentity,
+      takeover = false
+    ) => ipcRenderer.invoke(
+      IpcChannels.terminal.acquireInputLease,
+      terminalId,
+      controller,
+      takeover
+    ),
+    currentInputLease: (terminalId: TerminalId) =>
+      ipcRenderer.invoke(IpcChannels.terminal.currentInputLease, terminalId),
+    releaseInputLease: (terminalId: TerminalId, leaseId: string) =>
+      ipcRenderer.invoke(IpcChannels.terminal.releaseInputLease, terminalId, leaseId),
     input: (payload: TerminalInputPayload) => ipcRenderer.invoke(IpcChannels.terminal.input, payload),
     resize: (payload: TerminalResizePayload) =>
       ipcRenderer.invoke(IpcChannels.terminal.resize, payload),
@@ -205,7 +221,9 @@ const soloe: SoloeApi = {
     onStatus: (cb: (event: TerminalStatusEvent) => void) =>
       subscribe<TerminalStatusEvent>(IpcChannels.terminal.status, cb),
     onLocation: (cb: (event: TerminalLocationEvent) => void) =>
-      subscribe<TerminalLocationEvent>(IpcChannels.terminal.location, cb)
+      subscribe<TerminalLocationEvent>(IpcChannels.terminal.location, cb),
+    onInputLease: (cb: (event: TerminalInputLeaseEvent) => void) =>
+      subscribe<TerminalInputLeaseEvent>(IpcChannels.terminal.inputLease, cb)
   },
   observer: {
     list: () => ipcRenderer.invoke(IpcChannels.observer.list),

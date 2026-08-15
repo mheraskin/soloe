@@ -89,12 +89,18 @@ export class FilesIpc {
       ipcInvoke(() => this.service.openInEditor(request))
     );
 
-    ipcMain.handle(IpcChannels.files.pasteIntoTerminal, (_e, request: FilePasteRequest) =>
-      ipcInvoke(() => this.service.pasteIntoTerminal(request))
+    ipcMain.handle(IpcChannels.files.pasteIntoTerminal, (event, request: FilePasteRequest) =>
+      ipcInvoke(() => this.service.pasteIntoTerminal({
+        ...request,
+        controllerClientId: `electron-webcontents-${event.sender.id}`
+      }))
     );
 
-    ipcMain.handle(IpcChannels.files.pasteImagesIntoTerminal, (_e, request: ImagePasteRequest) =>
-      ipcInvoke(() => this.service.pasteImagesIntoTerminal(request))
+    ipcMain.handle(IpcChannels.files.pasteImagesIntoTerminal, (event, request: ImagePasteRequest) =>
+      ipcInvoke(() => this.service.pasteImagesIntoTerminal({
+        ...request,
+        controllerClientId: `electron-webcontents-${event.sender.id}`
+      }))
     );
 
     ipcMain.handle(IpcChannels.files.listTree, (_e, request: FileTreeRequest) =>

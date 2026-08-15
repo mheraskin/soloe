@@ -26,51 +26,90 @@ describe("SoloeDomain", () => {
     const leases = new TerminalInputLeaseManager({
       leaseId: () => `lease-${++leaseSequence}`,
     });
+    const acceptedInput: string[] = [];
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
       replay: vi.fn(),
-      acquireInputLease: vi.fn(async (terminalId: string, ownerId: string, takeover = false) =>
-        leases.acquire(terminalId, ownerId, { takeover })),
+      acquireInputLease: vi.fn(async (
+        terminalId: string,
+        ownerId: string,
+        takeover = false,
+        controller = { deviceId: ownerId, deviceName: ownerId },
+      ) => leases.acquire(terminalId, ownerId, {
+        takeover,
+        sessionId: "session-1",
+        controllerDeviceId: controller.deviceId,
+        controllerDeviceName: controller.deviceName,
+        cols: 100,
+        rows: 30,
+      })),
       currentInputLease: vi.fn(async (terminalId: string) => leases.current(terminalId)),
       releaseInputLease: vi.fn(async (terminalId: string, ownerId: string, leaseId: string) =>
         leases.release(terminalId, ownerId, leaseId)),
       releaseInputLeases: vi.fn(async (ownerId: string) => leases.releaseOwner(ownerId)),
       write: vi.fn(async (
         terminalId: string,
-        _data: string,
-        control: { ownerId: string; leaseId: string },
-      ) => leases.authorizeInput(terminalId, control.ownerId, control.leaseId)),
-      resize: vi.fn(),
+        data: string,
+        control: { ownerId: string; generation: number },
+      ) => {
+        leases.authorizeControl(terminalId, control.ownerId, control.generation, "input");
+        acceptedInput.push(data);
+      }),
+      resize: vi.fn(async (
+        terminalId: string,
+        cols: number,
+        rows: number,
+        control: { ownerId: string; generation: number },
+      ) => leases.resize(terminalId, control.ownerId, control.generation, cols, rows)),
       stop: vi.fn(),
     };
     const domain = new SoloeDomain({ dataDirectory: directory, runtime });
 
     try {
       await domain.init();
+      const firstLease = await domain.invoke({
+        namespace: "terminal",
+        method: "acquireInputLease",
+        args: ["terminal-1", false, { deviceId: "device-a", deviceName: "MacBook Pro" }],
+        clientId: "client-a",
+      }) as { generation: number };
       await expect(domain.invoke({
         namespace: "terminal",
         method: "input",
-        args: ["terminal-1", "first"],
+        args: ["terminal-1", "first", firstLease.generation],
         clientId: "client-a",
       })).resolves.toBe(true);
       await expect(domain.invoke({
         namespace: "terminal",
         method: "input",
-        args: ["terminal-1", "racing"],
+        args: ["terminal-1", "racing", firstLease.generation],
         clientId: "client-b",
-      })).rejects.toMatchObject({ code: "terminal_input_owned" });
-
+      })).rejects.toMatchObject({ code: "terminal_control_lease_stale" });
       await expect(domain.invoke({
         namespace: "terminal",
-        method: "acquireInputLease",
-        args: ["terminal-1", true],
+        method: "resize",
+        args: ["terminal-1", 80, 24, firstLease.generation],
         clientId: "client-b",
-      })).resolves.toMatchObject({ ownerId: "client-b" });
+      })).rejects.toMatchObject({ code: "terminal_control_lease_stale" });
+
+      const secondLease = await domain.invoke({
+        namespace: "terminal",
+        method: "acquireInputLease",
+        args: ["terminal-1", true, { deviceId: "device-b", deviceName: "iPad" }],
+        clientId: "client-b",
+      }) as { generation: number; ownerId: string };
+      expect(secondLease).toMatchObject({ ownerId: "client-b" });
       await expect(domain.invoke({
         namespace: "terminal",
         method: "input",
-        args: ["terminal-1", "second"],
+        args: ["terminal-1", "second", secondLease.generation],
+        clientId: "client-b",
+      })).resolves.toBe(true);
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "resize",
+        args: ["terminal-1", 90, 28, secondLease.generation],
         clientId: "client-b",
       })).resolves.toBe(true);
       await expect(domain.invoke({
@@ -81,7 +120,7 @@ describe("SoloeDomain", () => {
 
       domain.releaseClient("client-b");
       expect(leases.current("terminal-1")).toBeNull();
-      expect(runtime.write).toHaveBeenCalledTimes(2);
+      expect(acceptedInput).toEqual(["first", "second"]);
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });
@@ -1471,10 +1510,14 @@ describe("SoloeDomain", () => {
         domain.invoke({
           namespace: "files",
           method: "pasteIntoTerminal",
-          args: [{ terminalId: "files-terminal", path: "src/app.ts" }],
+          args: [{ terminalId: "files-terminal", path: "src/app.ts", generation: 3 }],
+          clientId: "files-client",
         }),
       ).resolves.toBe(true);
-      expect(runtime.write).toHaveBeenCalledWith("files-terminal", "src/app.ts");
+      expect(runtime.write).toHaveBeenCalledWith("files-terminal", "src/app.ts", {
+        ownerId: "files-client",
+        generation: 3,
+      });
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

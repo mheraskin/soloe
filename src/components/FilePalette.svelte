@@ -9,6 +9,7 @@
   import { rightRail } from '../stores/right-rail.svelte';
   import { ipc, supportsBackendOperation } from '../lib/ipc';
   import { reportError } from '../stores/toast.svelte';
+  import { terminalControl } from '../stores/terminal-control.svelte';
   import * as Command from '$lib/components/ui/command';
 
   let query = $state('');
@@ -79,13 +80,18 @@
   async function pasteResult(result: FileSearchResult): Promise<void> {
     const selected = sessions.selected;
     const terminalId = selected ? sessions.terminalIdFor(selected.id) : null;
-    if (!terminalId) {
+    const lease = terminalId ? terminalControl.lease(terminalId) : null;
+    if (!terminalId || !terminalControl.owns(terminalId) || !lease) {
       await navigator.clipboard.writeText(result.path);
       filePalette.close();
       return;
     }
     filePalette.close();
-    await ipc.files.pasteIntoTerminal({ terminalId, path: result.path });
+    await ipc.files.pasteIntoTerminal({
+      terminalId,
+      path: result.path,
+      generation: lease.generation
+    });
   }
 
   function onOpenChange(next: boolean) {

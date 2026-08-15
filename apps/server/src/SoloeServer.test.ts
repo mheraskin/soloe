@@ -209,6 +209,7 @@ describe('Soloe Server lifecycle', () => {
       processFactory: { spawn: () => process }
     });
     const server = testServer(runtimeEndpoint);
+    let controlClient: RuntimeClient | undefined;
 
     try {
       await runtime.listen();
@@ -243,10 +244,25 @@ describe('Soloe Server lifecycle', () => {
         })
       );
 
+      controlClient = await RuntimeClient.connect(runtimeEndpoint);
+      const lease = await controlClient.acquireInputLease(
+        terminal.terminalId,
+        'browser-http-client',
+        false,
+        { deviceId: 'browser-device', deviceName: 'Browser' }
+      );
+
       const inputResponse = await request(
         baseUrl,
         `/api/runtime/terminals/${terminal.terminalId}/input`,
-        { method: 'POST', body: { data: 'browser input' } }
+        {
+          method: 'POST',
+          body: {
+            data: 'browser input',
+            ownerId: 'browser-http-client',
+            generation: lease.generation
+          }
+        }
       );
       expect(inputResponse.status).toBe(204);
       expect(process.writes).toEqual(['browser input']);
@@ -254,7 +270,15 @@ describe('Soloe Server lifecycle', () => {
       const resizeResponse = await request(
         baseUrl,
         `/api/runtime/terminals/${terminal.terminalId}/resize`,
-        { method: 'POST', body: { cols: 120, rows: 40 } }
+        {
+          method: 'POST',
+          body: {
+            cols: 120,
+            rows: 40,
+            ownerId: 'browser-http-client',
+            generation: lease.generation
+          }
+        }
       );
       expect(resizeResponse.status).toBe(204);
       expect(process.resizes).toEqual([{ cols: 120, rows: 40 }]);
@@ -267,6 +291,7 @@ describe('Soloe Server lifecycle', () => {
       expect(stopResponse.status).toBe(204);
       expect(process.killed).toBe(true);
     } finally {
+      controlClient?.disconnect();
       await server.close();
       await runtime.shutdown();
       await rm(directory, { recursive: true, force: true });
@@ -1367,8 +1392,28 @@ describe('Soloe Server lifecycle', () => {
         ])
       );
 
+      const terminalLease = await rpc<{
+        generation: number;
+      }>(
+        baseUrl,
+        'terminal',
+        'acquireInputLease',
+        [
+          started.terminalId,
+          false,
+          { deviceId: 'browser-device-one', deviceName: 'Browser One' }
+        ],
+        'vault-client-one'
+      );
+
       await expect(
-        rpc(baseUrl, 'terminal', 'input', [started.terminalId, '\x03'])
+        rpc(
+          baseUrl,
+          'terminal',
+          'input',
+          [started.terminalId, '\x03', terminalLease.generation],
+          'vault-client-one'
+        )
       ).resolves.toBe(true);
       expect(process.writes).toContain('\x03');
       expect(await rpc(baseUrl, 'observer', 'list')).toEqual([
@@ -1445,11 +1490,12 @@ async function rpc<T = unknown>(
   baseUrl: string,
   namespace: string,
   method: string,
-  args: unknown[] = []
+  args: unknown[] = [],
+  clientId?: string
 ): Promise<T> {
   const response = await request(baseUrl, '/api/rpc', {
     method: 'POST',
-    body: { namespace, method, args }
+    body: { namespace, method, args, ...(clientId ? { clientId } : {}) }
   });
   const result = await response.json() as
     | { ok: true; value: T }

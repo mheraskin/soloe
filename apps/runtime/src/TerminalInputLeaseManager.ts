@@ -4,6 +4,7 @@ import type {
   TerminalInputLease,
   TerminalInputLeaseEvent
 } from '../../../shared/types/terminal.js';
+import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../shared/types/terminal.js';
 
 const DEFAULT_TERMINAL_INPUT_LEASE_TTL_MS = 15_000;
 
@@ -15,7 +16,10 @@ export interface TerminalInputLeaseManagerOptions {
 }
 
 export class TerminalInputLeaseError extends Error {
-  readonly code: 'terminal_input_owned' | 'terminal_input_lease_required';
+  readonly code:
+    | 'terminal_input_owned'
+    | 'terminal_input_lease_required'
+    | 'terminal_control_lease_stale';
   readonly lease: TerminalInputLease | null;
 
   constructor(
@@ -32,6 +36,7 @@ export class TerminalInputLeaseError extends Error {
 
 export class TerminalInputLeaseManager {
   private readonly leases = new Map<string, TerminalInputLease>();
+  private readonly generations = new Map<string, number>();
   private readonly ttlMs: number;
   private readonly now: () => number;
   private readonly nextLeaseId: () => string;
@@ -45,7 +50,14 @@ export class TerminalInputLeaseManager {
   acquire(
     terminalId: string,
     ownerId: string,
-    options: { takeover?: boolean } = {}
+    options: {
+      takeover?: boolean;
+      sessionId?: string;
+      controllerDeviceId?: string;
+      controllerDeviceName?: string;
+      cols?: number;
+      rows?: number;
+    } = {}
   ): TerminalInputLease {
     const terminal = requiredIdentity(terminalId, 'Terminal');
     const owner = requiredIdentity(ownerId, 'Terminal input owner');
@@ -54,10 +66,25 @@ export class TerminalInputLeaseManager {
     if (current && !options.takeover) throw ownedError(current);
 
     const timestamp = this.now();
+    const generation = (this.generations.get(terminal) ?? 0) + 1;
+    this.generations.set(terminal, generation);
     const lease: TerminalInputLease = {
       terminalId: terminal,
+      sessionId: requiredIdentity(options.sessionId ?? terminal, 'Session'),
       leaseId: requiredIdentity(this.nextLeaseId(), 'Terminal input lease'),
       ownerId: owner,
+      controllerClientId: owner,
+      controllerDeviceId: requiredIdentity(
+        options.controllerDeviceId ?? owner,
+        'Controller device'
+      ),
+      controllerDeviceName: requiredIdentity(
+        options.controllerDeviceName ?? options.controllerDeviceId ?? owner,
+        'Controller device name'
+      ),
+      generation,
+      cols: terminalDimension(options.cols, DEFAULT_COLS, 'columns'),
+      rows: terminalDimension(options.rows, DEFAULT_ROWS, 'rows'),
       acquiredAt: new Date(timestamp).toISOString(),
       expiresAt: new Date(timestamp + this.ttlMs).toISOString()
     };
@@ -66,6 +93,7 @@ export class TerminalInputLeaseManager {
       type: current ? 'taken-over' : 'acquired',
       terminalId: terminal,
       lease: cloneLease(lease),
+      generation: lease.generation,
       ...(current ? { previousOwnerId: current.ownerId } : {}),
       observedAt: new Date(timestamp).toISOString()
     });
@@ -95,6 +123,57 @@ export class TerminalInputLeaseManager {
     return this.renewLease(current);
   }
 
+  authorizeControl(
+    terminalId: string,
+    ownerId: string,
+    generation: number,
+    operation: 'input' | 'resize'
+  ): TerminalInputLease {
+    const terminal = requiredIdentity(terminalId, 'Terminal');
+    const owner = requiredIdentity(ownerId, 'Terminal controller');
+    const current = this.active(terminal);
+    if (!current) {
+      throw new TerminalInputLeaseError(
+        'terminal_input_lease_required',
+        `Terminal ${terminal} has no active control lease.`,
+        null
+      );
+    }
+    if (current.ownerId !== owner || current.generation !== generation) {
+      throw new TerminalInputLeaseError(
+        'terminal_control_lease_stale',
+        `Terminal ${terminal} ${operation} used a stale control lease generation.`,
+        current
+      );
+    }
+    return this.renewLease(current);
+  }
+
+  resize(
+    terminalId: string,
+    ownerId: string,
+    generation: number,
+    cols: number,
+    rows: number
+  ): TerminalInputLease {
+    const current = this.authorizeControl(terminalId, ownerId, generation, 'resize');
+    const nextCols = terminalDimension(cols, current.cols, 'columns');
+    const nextRows = terminalDimension(rows, current.rows, 'rows');
+    const stored = this.leases.get(current.terminalId);
+    if (!stored) return current;
+    if (stored.cols === nextCols && stored.rows === nextRows) return cloneLease(stored);
+    stored.cols = nextCols;
+    stored.rows = nextRows;
+    this.publish({
+      type: 'resized',
+      terminalId: stored.terminalId,
+      lease: cloneLease(stored),
+      generation: stored.generation,
+      observedAt: new Date(this.now()).toISOString()
+    });
+    return cloneLease(stored);
+  }
+
   current(terminalId: string): TerminalInputLease | null {
     const current = this.active(requiredIdentity(terminalId, 'Terminal'));
     return current ? cloneLease(current) : null;
@@ -109,6 +188,7 @@ export class TerminalInputLeaseManager {
       type: 'released',
       terminalId: terminal,
       lease: null,
+      generation: current.generation,
       previousOwnerId: current.ownerId,
       observedAt: new Date(this.now()).toISOString()
     });
@@ -133,6 +213,7 @@ export class TerminalInputLeaseManager {
       type: 'released',
       terminalId: terminal,
       lease: null,
+      generation: current.generation,
       previousOwnerId: current.ownerId,
       observedAt: new Date(this.now()).toISOString()
     });
@@ -153,6 +234,7 @@ export class TerminalInputLeaseManager {
       type: 'expired',
       terminalId,
       lease: null,
+      generation: current.generation,
       previousOwnerId: current.ownerId,
       observedAt: new Date(timestamp).toISOString()
     });
@@ -166,6 +248,7 @@ export class TerminalInputLeaseManager {
       type: 'renewed',
       terminalId: current.terminalId,
       lease: cloneLease(current),
+      generation: current.generation,
       observedAt: new Date(timestamp).toISOString()
     });
     return cloneLease(current);
@@ -206,4 +289,12 @@ function positiveTtl(value: number | undefined): number {
     throw new Error('Terminal input lease TTL must be between 1 and 300 seconds.');
   }
   return value;
+}
+
+function terminalDimension(value: number | undefined, fallback: number, label: string): number {
+  const result = value ?? fallback;
+  if (!Number.isSafeInteger(result) || result < 1 || result > 10_000) {
+    throw new Error(`Terminal ${label} must be an integer between 1 and 10000.`);
+  }
+  return result;
 }

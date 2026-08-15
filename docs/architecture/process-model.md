@@ -65,11 +65,12 @@ client reconnects. Stopping the Environment Runtime or exiting the tray is
 different: the tray is the top-level owner and intentionally shuts down the
 runtime and its PTYs.
 
-Terminal input is arbitrated by a Runtime-owned expiring lease. The first
-authenticated client to write acquires and renews control; another client is
-rejected until the lease expires or it performs an explicit visible takeover.
-Resize, replay, and observation do not require input ownership. Client
-disconnect, terminal exit, and Runtime shutdown release the relevant leases.
+Terminal input and PTY resize are arbitrated by one Runtime-owned Terminal
+Control Lease. An active client explicitly claims an unclaimed terminal; every
+input and resize carries the current generation, so takeover immediately makes
+older requests stale. Replay and observation remain lease-free. Leaving the
+Session view, client disconnect, terminal exit, and Runtime shutdown release
+the relevant leases.
 
 ## Server and clients
 

@@ -75,6 +75,8 @@ import type {
   TerminalExitEvent,
   TerminalId,
   TerminalLocationEvent,
+  TerminalInputLeaseEvent,
+  TerminalControllerIdentity,
   TerminalOutputEvent,
   TerminalStartOptions,
   TerminalStatusEvent
@@ -221,11 +223,11 @@ export const backend = {
       }
       return unwrap(await c.sessions.setDeviceTerminalDemand(toIpcPayload(refs)));
     },
-    deviceTerminalInput: async (ref: TerminalRef, data: string) => {
+    deviceTerminalInput: async (ref: TerminalRef, data: string, generation: number) => {
       if (!c.sessions.deviceTerminalInput) {
         throw new Error('Multi-Device terminal input is unavailable.');
       }
-      return unwrap(await c.sessions.deviceTerminalInput(toIpcPayload({ ref, data })));
+      return unwrap(await c.sessions.deviceTerminalInput(toIpcPayload({ ref, data, generation })));
     },
     deviceTerminalInputLease: async (ref: TerminalRef, takeover = false) => {
       if (!c.sessions.deviceTerminalInputLease) {
@@ -247,11 +249,18 @@ export const backend = {
         toIpcPayload({ ref, leaseId })
       ));
     },
-    deviceTerminalResize: async (ref: TerminalRef, cols: number, rows: number) => {
+    deviceTerminalResize: async (
+      ref: TerminalRef,
+      cols: number,
+      rows: number,
+      generation: number
+    ) => {
       if (!c.sessions.deviceTerminalResize) {
         throw new Error('Multi-Device terminal resize is unavailable.');
       }
-      return unwrap(await c.sessions.deviceTerminalResize(toIpcPayload({ ref, cols, rows })));
+      return unwrap(await c.sessions.deviceTerminalResize(
+        toIpcPayload({ ref, cols, rows, generation })
+      ));
     },
     deviceTerminalReplay: async (ref: TerminalRef, afterSeq = 0) => {
       if (!c.sessions.deviceTerminalReplay) {
@@ -277,10 +286,31 @@ export const backend = {
     stop: async (terminalId: TerminalId) => unwrap(await c.terminal.stop(terminalId)),
     restart: async (sessionId: SessionId, opts?: { cols?: number; rows?: number }) =>
       unwrap(await c.terminal.restart(sessionId, opts ? toIpcPayload(opts) : undefined)),
-    input: async (terminalId: TerminalId, data: string) =>
-      unwrap(await c.terminal.input(toIpcPayload({ terminalId, data }))),
-    resize: async (terminalId: TerminalId, cols: number, rows: number) =>
-      unwrap(await c.terminal.resize(toIpcPayload({ terminalId, dimensions: { cols, rows } }))),
+    acquireInputLease: async (
+      terminalId: TerminalId,
+      controller: TerminalControllerIdentity,
+      takeover = false
+    ) => unwrap(await c.terminal.acquireInputLease(
+      terminalId,
+      toIpcPayload(controller),
+      takeover
+    )),
+    currentInputLease: async (terminalId: TerminalId) =>
+      unwrap(await c.terminal.currentInputLease(terminalId)),
+    releaseInputLease: async (terminalId: TerminalId, leaseId: string) =>
+      unwrap(await c.terminal.releaseInputLease(terminalId, leaseId)),
+    input: async (terminalId: TerminalId, data: string, generation: number) =>
+      unwrap(await c.terminal.input(toIpcPayload({ terminalId, data, generation }))),
+    resize: async (
+      terminalId: TerminalId,
+      cols: number,
+      rows: number,
+      generation: number
+    ) => unwrap(await c.terminal.resize(toIpcPayload({
+      terminalId,
+      dimensions: { cols, rows },
+      generation
+    }))),
     listRunning: async () => unwrap(await c.terminal.listRunning()),
     replay: async (terminalId: TerminalId, afterSeq = 0) =>
       unwrap(await c.terminal.replay(terminalId, afterSeq)),
@@ -292,7 +322,9 @@ export const backend = {
     ) => terminalOutputRouter.attach(terminalId, sessionId, sink, initiallyVisible),
     onExit: (cb: (event: TerminalExitEvent) => void) => c.terminal.onExit(cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) => c.terminal.onStatus(cb),
-    onLocation: (cb: (event: TerminalLocationEvent) => void) => c.terminal.onLocation(cb)
+    onLocation: (cb: (event: TerminalLocationEvent) => void) => c.terminal.onLocation(cb),
+    onInputLease: (cb: (event: TerminalInputLeaseEvent) => void) =>
+      c.terminal.onInputLease(cb)
   },
   observer: {
     list: async () => unwrap(await c.observer.list()),

@@ -16,6 +16,8 @@ import type {
 } from '@shared/types/terminal.js';
 import type { PtyManager } from '../terminal/PtyManager.js';
 import { ipcInvoke } from './result.js';
+import { TerminalInputLeaseManager } from '@soloe/runtime';
+import type { TerminalControllerIdentity } from '@shared/types/terminal.js';
 
 export interface TerminalIpcOptions {
   pty: PtyManager;
@@ -27,8 +29,14 @@ export class TerminalIpc {
   private listeners: Array<() => void> = [];
   private outputDemandByWebContents = new Map<number, Set<TerminalId>>();
   private observedDemandOwners = new WeakSet<WebContents>();
+  private observedControlOwners = new WeakSet<WebContents>();
+  private readonly controlLeases: TerminalInputLeaseManager;
 
-  constructor(private readonly opts: TerminalIpcOptions) {}
+  constructor(private readonly opts: TerminalIpcOptions) {
+    this.controlLeases = new TerminalInputLeaseManager({
+      onChange: (event) => this.broadcast(IpcChannels.terminal.inputLease, event)
+    });
+  }
 
   register(): void {
     if (this.registered) return;
@@ -51,15 +59,55 @@ export class TerminalIpc {
         ipcInvoke(() => this.opts.pty.restart(sessionId, dims))
     );
 
-    ipcMain.handle(IpcChannels.terminal.input, (_e, payload: TerminalInputPayload) =>
+    ipcMain.handle(
+      IpcChannels.terminal.acquireInputLease,
+      (event, terminalId: TerminalId, controller: TerminalControllerIdentity, takeover = false) =>
+        ipcInvoke(async () => {
+          const running = this.opts.pty.listRunning().find(
+            (candidate) => candidate.terminalId === terminalId
+          );
+          if (!running) throw new Error(`Terminal not found: ${terminalId}`);
+          this.observeControlOwner(event.sender);
+          return this.controlLeases.acquire(terminalId, controlOwnerId(event.sender), {
+            takeover,
+            sessionId: running.sessionId,
+            controllerDeviceId: controller.deviceId,
+            controllerDeviceName: controller.deviceName
+          });
+        })
+    );
+    ipcMain.handle(IpcChannels.terminal.currentInputLease, (_event, terminalId: TerminalId) =>
+      ipcInvoke(() => this.controlLeases.current(terminalId))
+    );
+    ipcMain.handle(
+      IpcChannels.terminal.releaseInputLease,
+      (event, terminalId: TerminalId, leaseId: string) => ipcInvoke(() =>
+        this.controlLeases.release(terminalId, controlOwnerId(event.sender), leaseId)
+      )
+    );
+
+    ipcMain.handle(IpcChannels.terminal.input, (event, payload: TerminalInputPayload) =>
       ipcInvoke(() => {
+        this.controlLeases.authorizeControl(
+          payload.terminalId,
+          controlOwnerId(event.sender),
+          payload.generation,
+          'input'
+        );
         this.opts.pty.write(payload.terminalId, payload.data);
         return true as const;
       })
     );
 
-    ipcMain.handle(IpcChannels.terminal.resize, (_e, payload: TerminalResizePayload) =>
+    ipcMain.handle(IpcChannels.terminal.resize, (event, payload: TerminalResizePayload) =>
       ipcInvoke(() => {
+        this.controlLeases.resize(
+          payload.terminalId,
+          controlOwnerId(event.sender),
+          payload.generation,
+          payload.dimensions.cols,
+          payload.dimensions.rows
+        );
         this.opts.pty.resize(payload.terminalId, payload.dimensions);
         return true as const;
       })
@@ -84,6 +132,7 @@ export class TerminalIpc {
 
     const onOutput = (event: TerminalOutputEvent) => this.publishOutput(event);
     const onExit = (event: TerminalExitEvent) => {
+      this.controlLeases.clearTerminal(event.terminalId);
       this.broadcast(IpcChannels.terminal.exit, event);
       this.releaseTerminalDemand(event.terminalId);
     };
@@ -112,12 +161,16 @@ export class TerminalIpc {
     ipcMain.removeHandler(IpcChannels.terminal.start);
     ipcMain.removeHandler(IpcChannels.terminal.stop);
     ipcMain.removeHandler(IpcChannels.terminal.restart);
+    ipcMain.removeHandler(IpcChannels.terminal.acquireInputLease);
+    ipcMain.removeHandler(IpcChannels.terminal.currentInputLease);
+    ipcMain.removeHandler(IpcChannels.terminal.releaseInputLease);
     ipcMain.removeHandler(IpcChannels.terminal.input);
     ipcMain.removeHandler(IpcChannels.terminal.resize);
     ipcMain.removeHandler(IpcChannels.terminal.listRunning);
     ipcMain.removeHandler(IpcChannels.terminal.replay);
     ipcMain.removeHandler(IpcChannels.terminal.outputDemand);
     this.outputDemandByWebContents.clear();
+    this.controlLeases.clear();
     this.registered = false;
   }
 
@@ -139,6 +192,14 @@ export class TerminalIpc {
     else current.delete(terminalId);
     if (current.size > 0) this.outputDemandByWebContents.set(ownerId, current);
     else this.outputDemandByWebContents.delete(ownerId);
+  }
+
+  private observeControlOwner(sender: WebContents): void {
+    if (this.observedControlOwners.has(sender)) return;
+    this.observedControlOwners.add(sender);
+    sender.once('destroyed', () => {
+      this.controlLeases.releaseOwner(controlOwnerId(sender));
+    });
   }
 
   private publishOutput(event: TerminalOutputEvent): void {
@@ -165,4 +226,8 @@ export class TerminalIpc {
       win.webContents.send(channel, payload);
     }
   }
+}
+
+function controlOwnerId(sender: WebContents): string {
+  return `electron-webcontents-${sender.id}`;
 }

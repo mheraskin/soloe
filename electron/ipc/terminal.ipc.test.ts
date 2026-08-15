@@ -150,6 +150,58 @@ describe('TerminalIpc output demand', () => {
   });
 });
 
+describe('TerminalIpc control lease', () => {
+  it('rejects spectator input and resize and releases control on renderer destruction', async () => {
+    const pty = createPty();
+    vi.mocked(pty.listRunning).mockReturnValue([{
+      sessionId: 's-1',
+      terminalId: 't-1',
+      status: 'running',
+      runtimeMode: 'tui',
+      startedAt: '2026-08-15T08:00:00.000Z'
+    }]);
+    const controller = createWindow(1);
+    const spectator = createWindow(2);
+    const ipc = new TerminalIpc({
+      pty,
+      getWindows: () => [controller, spectator] as never
+    });
+    ipc.register();
+    const acquire = electronMocks.handlers.get(IpcChannels.terminal.acquireInputLease)!;
+    const input = electronMocks.handlers.get(IpcChannels.terminal.input)!;
+    const resize = electronMocks.handlers.get(IpcChannels.terminal.resize)!;
+    const current = electronMocks.handlers.get(IpcChannels.terminal.currentInputLease)!;
+
+    const acquired = await acquire(
+      { sender: controller.webContents },
+      't-1',
+      { deviceId: 'device-a', deviceName: 'MacBook Pro' },
+      false
+    ) as { ok: true; value: { generation: number } };
+    expect(acquired.ok).toBe(true);
+
+    await expect(input({ sender: spectator.webContents }, {
+      terminalId: 't-1',
+      data: 'spectator',
+      generation: acquired.value.generation
+    })).resolves.toMatchObject({ ok: false });
+    await expect(resize({ sender: spectator.webContents }, {
+      terminalId: 't-1',
+      dimensions: { cols: 80, rows: 24 },
+      generation: acquired.value.generation
+    })).resolves.toMatchObject({ ok: false });
+    expect(pty.write).not.toHaveBeenCalled();
+    expect(pty.resize).not.toHaveBeenCalled();
+
+    controller.webContents.emit('destroyed');
+    await expect(current({ sender: spectator.webContents }, 't-1')).resolves.toEqual({
+      ok: true,
+      value: null
+    });
+    ipc.dispose();
+  });
+});
+
 async function demand(
   sender: FakeWebContents,
   terminalId: string,

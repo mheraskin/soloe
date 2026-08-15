@@ -32,11 +32,38 @@ describe("browser API", () => {
       clientId: "browser-test",
     });
 
-    await api.terminal.input({ terminalId: "terminal-1", data: "hello" });
+    await api.terminal.acquireInputLease(
+      "terminal-1",
+      { deviceId: "browser-test", deviceName: "MacBook Pro" },
+      false,
+    );
     expect(JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body))).toEqual({
       namespace: "terminal",
+      method: "acquireInputLease",
+      args: [
+        "terminal-1",
+        false,
+        { deviceId: "browser-test", deviceName: "MacBook Pro" },
+      ],
+      clientId: "browser-test",
+    });
+
+    await api.terminal.input({ terminalId: "terminal-1", data: "hello", generation: 7 });
+    expect(JSON.parse(String(fetchImpl.mock.calls[2]?.[1]?.body))).toEqual({
+      namespace: "terminal",
       method: "input",
-      args: ["terminal-1", "hello"],
+      args: ["terminal-1", "hello", 7],
+      clientId: "browser-test",
+    });
+    await api.terminal.resize({
+      terminalId: "terminal-1",
+      dimensions: { cols: 90, rows: 28 },
+      generation: 7,
+    });
+    expect(JSON.parse(String(fetchImpl.mock.calls[3]?.[1]?.body))).toEqual({
+      namespace: "terminal",
+      method: "resize",
+      args: ["terminal-1", 90, 28, 7],
       clientId: "browser-test",
     });
   });

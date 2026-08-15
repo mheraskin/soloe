@@ -237,7 +237,13 @@ export class DeviceSessionsStore {
   }
 
   terminalInput(terminalRef: TerminalRef, data: string): Promise<void> {
-    return ipc.sessions.deviceTerminalInput(terminalRef, data).then(() => undefined);
+    const lease = this.ownedInputLeases[terminalRefKey(terminalRef)];
+    if (!lease) return Promise.reject(new Error('Terminal control lease is required.'));
+    return ipc.sessions.deviceTerminalInput(
+      terminalRef,
+      data,
+      lease.generation
+    ).then(() => undefined);
   }
 
   async claimTerminalInputControl(
@@ -322,7 +328,14 @@ export class DeviceSessionsStore {
   }
 
   terminalResize(terminalRef: TerminalRef, cols: number, rows: number): Promise<void> {
-    return ipc.sessions.deviceTerminalResize(terminalRef, cols, rows).then(() => undefined);
+    const lease = this.ownedInputLeases[terminalRefKey(terminalRef)];
+    if (!lease) return Promise.reject(new Error('Terminal control lease is required.'));
+    return ipc.sessions.deviceTerminalResize(
+      terminalRef,
+      cols,
+      rows,
+      lease.generation
+    ).then(() => undefined);
   }
 
   terminalReplay(terminalRef: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {

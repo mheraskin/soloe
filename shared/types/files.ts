@@ -25,6 +25,9 @@ export interface FileOpenRequest {
 export interface FilePasteRequest {
   terminalId: TerminalId;
   path: string;
+  generation: number;
+  /** Bound to the authenticated caller by the backend adapter. */
+  controllerClientId?: string;
 }
 
 export interface ClipboardImagePayload {
@@ -37,6 +40,9 @@ export interface ImagePasteRequest {
   terminalId: TerminalId;
   sessionId: string;
   images: ClipboardImagePayload[];
+  generation: number;
+  /** Bound to the authenticated caller by the backend adapter. */
+  controllerClientId?: string;
 }
 
 export interface ImagePasteResult {

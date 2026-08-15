@@ -280,7 +280,8 @@ describe('MultiDeviceSessions', () => {
 
     await sessions.terminalInput(
       { deviceId: LAPTOP_ID, terminalId: 'terminal-remote-session' },
-      'git status\r'
+      'git status\r',
+      3
     );
 
     expect(mac.terminalInputs).toEqual([]);
@@ -513,8 +514,15 @@ function fakeDevice(input: {
     terminalAcquireInputLease: async (terminalId) => {
       const lease = {
         terminalId,
+        sessionId: `session-${terminalId}`,
         leaseId: `lease-${terminalId}`,
         ownerId: `owner-${input.deviceId}`,
+        controllerClientId: `owner-${input.deviceId}`,
+        controllerDeviceId: input.deviceId,
+        controllerDeviceName: input.name,
+        generation: 1,
+        cols: 120,
+        rows: 30,
         acquiredAt: '2026-08-13T10:00:00.000Z',
         expiresAt: '2026-08-13T10:00:15.000Z'
       };

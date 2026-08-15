@@ -25,13 +25,16 @@ function testRuntimeEndpoint(directory: string): string {
 class FakeRuntimeProcess extends EventEmitter implements RuntimeProcess {
   readonly pid = 4242;
   readonly writes: string[] = [];
+  readonly resizes: Array<{ cols: number; rows: number }> = [];
   killed = false;
 
   write(data: string): void {
     this.writes.push(data);
   }
 
-  resize(): void {}
+  resize(cols: number, rows: number): void {
+    this.resizes.push({ cols, rows });
+  }
 
   kill(): void {
     this.killed = true;
@@ -288,7 +291,11 @@ describe('Environment Runtime lifecycle', () => {
         rows: 30
       });
 
-      await client.write(started.terminalId, 'answer\n');
+      const lease = await client.acquireInputLease(started.terminalId, 'client-a');
+      await client.write(started.terminalId, 'answer\n', {
+        ownerId: 'client-a',
+        generation: lease.generation
+      });
 
       expect(process.writes).toEqual(['answer\n']);
       client.disconnect();
@@ -324,13 +331,23 @@ describe('Environment Runtime lifecycle', () => {
       });
       const firstLease = await firstClient.acquireInputLease(
         started.terminalId,
-        'client-a'
+        'client-a',
+        false,
+        { deviceId: 'device-a', deviceName: 'MacBook Pro' }
       );
 
       await firstClient.write(started.terminalId, 'first', {
         ownerId: 'client-a',
-        leaseId: firstLease.leaseId
+        generation: firstLease.generation
       });
+      await expect(secondClient.write(started.terminalId, 'spectator', {
+        ownerId: 'client-b',
+        generation: firstLease.generation
+      })).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
+      await expect(secondClient.resize(started.terminalId, 80, 24, {
+        ownerId: 'client-b',
+        generation: firstLease.generation
+      })).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
       await expect(
         secondClient.acquireInputLease(started.terminalId, 'client-b')
       ).rejects.toThrow(/controlled by client-a/u);
@@ -341,7 +358,8 @@ describe('Environment Runtime lifecycle', () => {
       const secondLease = await secondClient.acquireInputLease(
         started.terminalId,
         'client-b',
-        true
+        true,
+        { deviceId: 'device-b', deviceName: 'iPad' }
       );
       await expect(visibleTakeover).resolves.toMatchObject({
         type: 'taken-over',
@@ -352,17 +370,70 @@ describe('Environment Runtime lifecycle', () => {
       await expect(
         firstClient.write(started.terminalId, 'stale', {
           ownerId: 'client-a',
-          leaseId: firstLease.leaseId
+          generation: firstLease.generation
         })
-      ).rejects.toThrow(/controlled by client-b/u);
+      ).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
+      await expect(firstClient.resize(started.terminalId, 81, 25, {
+        ownerId: 'client-a',
+        generation: firstLease.generation
+      })).rejects.toMatchObject({ code: 'terminal_control_lease_stale' });
       await secondClient.write(started.terminalId, 'second', {
         ownerId: 'client-b',
-        leaseId: secondLease.leaseId
+        generation: secondLease.generation
+      });
+      const resized = await secondClient.resize(started.terminalId, 90, 28, {
+        ownerId: 'client-b',
+        generation: secondLease.generation
       });
 
       expect(process.writes).toEqual(['first', 'second']);
+      expect(process.resizes).toEqual([{ cols: 90, rows: 28 }]);
+      expect(resized).toMatchObject({ cols: 90, rows: 28, generation: secondLease.generation });
       firstClient.disconnect();
       secondClient.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('releases the terminal control lease when its Runtime client disconnects', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => new FakeRuntimeProcess() }
+    });
+
+    try {
+      await host.listen();
+      const controller = await RuntimeClient.connect(endpoint);
+      const spectator = await RuntimeClient.connect(endpoint);
+      const started = await controller.start({
+        sessionId: 'session-1',
+        spec: { file: 'test-shell', args: [], cwd: directory, env: {} },
+        cols: 100,
+        rows: 30
+      });
+      await controller.acquireInputLease(started.terminalId, 'client-a');
+      const released = new Promise((resolve) => {
+        const observe = (event: unknown) => {
+          if ((event as { type?: string }).type !== 'released') return;
+          spectator.off('inputLease', observe);
+          resolve(event);
+        };
+        spectator.on('inputLease', observe);
+      });
+
+      controller.disconnect();
+
+      await expect(released).resolves.toMatchObject({
+        type: 'released',
+        terminalId: started.terminalId,
+        previousOwnerId: 'client-a'
+      });
+      await expect(spectator.currentInputLease(started.terminalId)).resolves.toBeNull();
+      spectator.disconnect();
     } finally {
       await host.shutdown();
       await rm(directory, { recursive: true, force: true });
@@ -440,7 +511,11 @@ describe('Environment Runtime lifecycle', () => {
         rows: 30
       });
 
-      await client.write(started.terminalId, process.platform === 'win32' ? 'ready\r' : 'ready\n');
+      const lease = await client.acquireInputLease(started.terminalId, 'client-a');
+      await client.write(started.terminalId, process.platform === 'win32' ? 'ready\r' : 'ready\n', {
+        ownerId: 'client-a',
+        generation: lease.generation
+      });
 
       await expect(output).resolves.toContain('echo:ready');
       client.disconnect();

@@ -1,5 +1,5 @@
-import { ipc } from './ipc';
 import type { AgentRuntimeProvider } from '@shared/types/sessions.js';
+import { terminalControl } from '../stores/terminal-control.svelte';
 
 // Claude Code and Codex both ship a bracketed-paste handler that buffers the
 // entire `\x1b[200~ … \x1b[201~` body as one input event. If a trailing `\r`
@@ -31,8 +31,8 @@ export async function sendBracketedPaste(
   // Strip embedded ESC chars — an `\x1b[201~` inside the body would close
   // paste mode early and let the rest of the text execute as keystrokes.
   const sanitized = text.replace(/\x1b/g, '');
-  await ipc.terminal.input(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+  await terminalControl.input(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
   if (!submit) return;
   await new Promise<void>((resolve) => setTimeout(resolve, submitYieldFor(provider)));
-  await ipc.terminal.input(terminalId, '\r');
+  await terminalControl.input(terminalId, '\r');
 }

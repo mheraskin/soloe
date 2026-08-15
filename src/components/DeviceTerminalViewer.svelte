@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { X } from '@lucide/svelte';
@@ -10,6 +10,12 @@
   import type { TerminalOutputEvent } from '@shared/types/terminal.js';
   import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
   import { deviceSessions } from '../stores/device-sessions.svelte';
+  import {
+    TerminalTranscriptFollowController,
+    TerminalTranscriptProjector,
+    type TranscriptRecord,
+    type TranscriptSpan
+  } from '../lib/terminal-transcript';
 
   let {
     projection,
@@ -23,6 +29,12 @@
   let error = $state<string | null>(null);
   let restoring = $state(true);
   let takingControl = $state(false);
+  let transcriptScroller: HTMLDivElement | undefined = $state();
+  let transcriptRecords = $state.raw<TranscriptRecord[]>([]);
+  const transcriptFollow = new TerminalTranscriptFollowController();
+  let pageVisible = $state(document.visibilityState === 'visible');
+  let prepareInteractive = async (): Promise<void> => undefined;
+  let resizeTranscript = (_cols: number, _rows: number): void => undefined;
   let terminalRef = $derived<TerminalRef | null>(
     projection.runtime?.terminalId
       ? { deviceId: projection.ref.deviceId, terminalId: projection.runtime.terminalId }
@@ -42,6 +54,7 @@
     try {
       const claimed = await deviceSessions.claimTerminalInputControl(terminalRef, true);
       if (!claimed) throw new Error('Input control is still held by another device.');
+      await prepareInteractive();
       error = null;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -81,10 +94,34 @@
     let restoringOutput = true;
     const pending = new Map<number, TerminalOutputEvent>();
     let outputQueue = Promise.resolve();
-
-    const write = (data: string): Promise<void> => new Promise((resolve) => {
-      terminal.write(data, resolve);
+    let projectionFrame = 0;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastSize: { cols: number; rows: number } | null = null;
+    const transcript = new TerminalTranscriptProjector({
+      cols: inputLease?.lease?.cols ?? 120,
+      rows: inputLease?.lease?.rows ?? 30,
+      scrollback: 5_000
     });
+    resizeTranscript = (cols, rows) => transcript.resize(cols, rows);
+
+    const projectTranscript = (): void => {
+      if (projectionFrame) return;
+      const shouldFollow = transcriptFollow.shouldFollowNewOutput();
+      projectionFrame = requestAnimationFrame(async () => {
+        projectionFrame = 0;
+        transcriptRecords = transcript.records();
+        await tick();
+        if (shouldFollow && transcriptScroller) {
+          transcriptScroller.scrollTop = transcriptScroller.scrollHeight;
+        }
+      });
+    };
+
+    const write = async (data: string): Promise<void> => {
+      await new Promise<void>((resolve) => terminal.write(data, resolve));
+      await transcript.write(data);
+      projectTranscript();
+    };
     const recover = async (): Promise<void> => {
       if (restoringOutput || !active) return;
       restoringOutput = true;
@@ -148,22 +185,34 @@
         if (active) restoring = false;
       });
 
-    const resize = (): void => {
-      if (!active || !host?.isConnected) return;
+    const resize = async (force = false): Promise<void> => {
+      if (!active || !host?.isConnected || !deviceSessions.ownsTerminalInput(ref)) return;
+      const rect = host.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) return;
       try {
         fit.fit();
-        void deviceSessions.terminalResize(ref, terminal.cols, terminal.rows).catch((cause) => {
-          if (active) error = cause instanceof Error ? cause.message : String(cause);
-        });
+        if (!force && lastSize?.cols === terminal.cols && lastSize.rows === terminal.rows) return;
+        lastSize = { cols: terminal.cols, rows: terminal.rows };
+        await deviceSessions.terminalResize(ref, terminal.cols, terminal.rows);
+        restoring = false;
+        terminal.focus();
       } catch {
         // A zero-sized panel will be fitted on the next observation.
       }
     };
-    const resizeObserver = new ResizeObserver(resize);
+    const scheduleResize = (): void => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => void resize(), 50);
+    };
+    prepareInteractive = () => resize(true);
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || entry.contentRect.width < 4 || entry.contentRect.height < 4) return;
+      scheduleResize();
+    });
     resizeObserver.observe(host);
     requestAnimationFrame(() => {
-      resize();
-      terminal.focus();
+      void resize(true);
     });
     const input = terminal.onData((data) => {
       if (!deviceSessions.ownsTerminalInput(ref)) return;
@@ -177,14 +226,20 @@
       attachment.dispose();
       input.dispose();
       resizeObserver.disconnect();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      if (projectionFrame) cancelAnimationFrame(projectionFrame);
+      transcript.dispose();
+      resizeTranscript = () => undefined;
       terminal.dispose();
     };
   });
 
   $effect(() => {
     const ref = terminalRef;
-    if (!ref) return;
-    void deviceSessions.claimTerminalInputControl(ref);
+    if (!ref || !pageVisible) return;
+    void deviceSessions.claimTerminalInputControl(ref).then((claimed) => {
+      if (claimed) void prepareInteractive();
+    });
     const leaseRenewal = setInterval(() => {
       if (deviceSessions.ownsTerminalInput(ref)) {
         void deviceSessions.claimTerminalInputControl(ref);
@@ -195,6 +250,37 @@
       void deviceSessions.releaseTerminalInputControl(ref).catch(() => undefined);
     };
   });
+
+  onMount(() => {
+    const onVisibility = () => {
+      pageVisible = document.visibilityState === 'visible';
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  });
+
+  $effect(() => {
+    const lease = inputLease?.lease;
+    if (!lease) return;
+    // The transcript parser uses canonical geometry internally; CSS controls visible reflow.
+    resizeTranscript(lease.cols, lease.rows);
+  });
+
+  function observeTranscriptScroll(): void {
+    if (!transcriptScroller) return;
+    transcriptFollow.observe(transcriptScroller);
+  }
+
+  function spanStyle(span: TranscriptSpan): string {
+    return [
+      span.foreground ? `color:${span.foreground}` : '',
+      span.background ? `background-color:${span.background}` : '',
+      span.bold ? 'font-weight:700' : '',
+      span.italic ? 'font-style:italic' : '',
+      span.underline ? 'text-decoration:underline' : '',
+      span.dim ? 'opacity:.65' : ''
+    ].filter(Boolean).join(';');
+  }
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden bg-[#0f0f10]">
@@ -216,29 +302,52 @@
     </button>
   </header>
   <div class="relative min-h-72 flex-1">
-    <div class="absolute inset-0" bind:this={host}></div>
-    {#if restoring}
+    <div class="absolute inset-0" class:invisible={readOnly} bind:this={host}></div>
+    {#if readOnly}
+      <div class="absolute inset-0 flex min-h-0 flex-col bg-[#0f0f10]">
+        <div class="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-2 text-xs text-foreground">
+          <span class="min-w-0 flex-1 truncate">
+            Read-only — controlled by {inputLease?.lease?.controllerDeviceName ?? 'another client'}
+          </span>
+          <button
+            type="button"
+            class="rounded border border-border px-2 py-1 font-medium hover:bg-accent disabled:opacity-50"
+            disabled={takingControl || !terminalRef}
+            onclick={takeInputControl}
+          >Take Over</button>
+        </div>
+        <div
+          bind:this={transcriptScroller}
+          class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 font-mono text-xs leading-5 text-[#e5e5e5] select-text"
+          onscroll={observeTranscriptScroll}
+        >
+          {#each transcriptRecords as record (record.id)}
+            <div class="transcript-line min-h-5" class:opacity-90={record.transient}>
+              {#each record.spans as span}
+                <span style={spanStyle(span)}>{span.text}</span>
+              {/each}
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    {#if (restoring && !readOnly) || takingControl}
       <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 text-xs text-muted-foreground">
-        Restoring terminal…
+        {takingControl ? 'Taking control and preparing terminal…' : 'Restoring terminal…'}
       </div>
     {/if}
   </div>
-  {#if readOnly}
-    <div class="flex items-center gap-2 border-t border-border bg-warning/10 px-3 py-1.5 text-[10px] text-foreground">
-      <p class="m-0 min-w-0 flex-1">Read-only · another device is controlling input</p>
-      <button
-        type="button"
-        class="rounded border border-border px-2 py-1 font-medium hover:bg-accent disabled:opacity-50"
-        disabled={takingControl || !terminalRef}
-        onclick={takeInputControl}
-      >
-        {takingControl ? 'Taking control…' : 'Take control'}
-      </button>
-    </div>
-  {/if}
   {#if error}
     <div class="flex items-center gap-2 border-t border-border bg-destructive/10 px-3 py-1.5 text-[10px] text-destructive">
       <p class="m-0 min-w-0 flex-1">{error}</p>
     </div>
   {/if}
 </section>
+
+<style>
+  .transcript-line {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+</style>

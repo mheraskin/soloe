@@ -89,6 +89,36 @@ describe('TerminalFitController', () => {
     expect(onFit).toHaveBeenCalledWith({ cols: 132, rows: 46 });
   });
 
+  it('never fits or reports a resize for hidden and zero-sized measurements', () => {
+    const frames: FrameRequestCallback[] = [];
+    const terminal = { cols: 80, rows: 24, refresh: vi.fn() };
+    const fit = { fit: vi.fn() };
+    const onFit = vi.fn();
+    const controller = new TerminalFitController((callback) => {
+      frames.push(callback);
+      return frames.length;
+    }, vi.fn());
+
+    controller.scheduleMeasuredFit(
+      terminal,
+      fit,
+      { width: 0, height: 400 },
+      () => true,
+      onFit
+    );
+    controller.scheduleMeasuredFit(
+      terminal,
+      fit,
+      { width: 800, height: 400 },
+      () => false,
+      onFit
+    );
+
+    expect(frames).toHaveLength(0);
+    expect(fit.fit).not.toHaveBeenCalled();
+    expect(onFit).not.toHaveBeenCalled();
+  });
+
   it('does not starve redraws while layout fits continue every frame', () => {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;

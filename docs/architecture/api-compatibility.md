@@ -35,7 +35,7 @@ In the table below:
 | Namespace | Methods | Local Electron | Remote Electron | Browser/PWA | Backend owner |
 | --- | --- | --- | --- | --- | --- |
 | `sessions` | `list`, `listArchived`, `get`, `create`, `update`, `delete`, `reorder`, `previewCommand`, `onChange`, `onDelete` | IPC | Server | Server | Application Server |
-| `terminal` | `start`, `stop`, `restart`, `input`, `resize`, `listRunning`, `replay`, `setOutputDemand`, `onOutput`, `onExit`, `onStatus`, `onLocation` | IPC/Runtime | Server/Runtime | Server/Runtime | Environment Runtime |
+| `terminal` | `start`, `stop`, `restart`, control-lease acquire/current/release, `input`, `resize`, `listRunning`, `replay`, `setOutputDemand`, and terminal events | IPC/Runtime | Server/Runtime | Server/Runtime | Environment Runtime |
 | `observer` | `list`, `listEvents`, `createWorkerSession`, `sendWorkerPrompt`, `getWorkerStatus`, `stopWorkerSession`, `onSnapshot`, `onEvent` | IPC/Runtime | Server/Runtime | Server/Runtime | Environment Runtime with Server projection |
 | `system` | `platform`, `openPath`, `listWslDistros`, `usage` | IPC | Server | Server | Application Server |
 | `system` | `saveText`, `openExternal` | Native | Native | Native | Current client |
@@ -79,7 +79,7 @@ uses the following typed server capabilities:
 | Sessions inventory | Projects, canonical Git remote, Worktrees, Sessions, and running terminals | Application Server and Environment Runtime |
 | Workspace device state | `workspaceDevice.snapshot`, `plan`, `execute`, `getCommand` | Application Server and Device operation journal |
 | Placed Sessions | preallocated create and optimistic Session Source binding | Application Server Session store |
-| Terminal control | acquire/current/release input lease plus ordinary input/replay/resize/stop | Environment Runtime |
+| Terminal control | acquire/current/release the generation-qualified Terminal Control Lease plus lease-authorized input/resize and ordinary replay/stop | Environment Runtime |
 | GitHub publication | provider status/owners, repository plan/execute/getCommand | Device-local provider adapter and journal |
 
 `DeviceCommandEnvelope` binds a UUID command to client, actor client, target
@@ -118,7 +118,7 @@ The Server publishes:
 - project and settings snapshots;
 - observer snapshots/events;
 - terminal output, status, exit, and location;
-- terminal input-lease acquisition, renewal, expiry, release, and takeover;
+- Terminal Control Lease acquisition, renewal, canonical resize, expiry, release, and takeover;
 - Notes, Git, Feature Lab, and Vault changes;
 - Worktree Overview chunks;
 - agent-integration changes;
@@ -186,8 +186,9 @@ transport/method pair. Check, in order:
 For multi-Device failures, also compare the descriptor protocol range and required
 feature names. An incompatible or partially capable Device remains visible but
 is not offered unsupported mutation plans. `terminal_input_owned` means another
-authenticated client currently owns terminal input; the UI may explicitly
-take over rather than silently stealing control.
+authenticated client currently controls the terminal;
+`terminal_control_lease_stale` means a newer generation has already won. The UI
+may explicitly take over rather than silently stealing control.
 
 Do not add a UI-only stub or a second handwritten support list. Add the real
 handler and update the central contract so compatibility tests can detect

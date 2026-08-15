@@ -97,11 +97,15 @@ export class MultiDeviceSessionsIpc {
     );
     ipcMain.handle(
       IpcChannels.sessions.deviceTerminalInput,
-      (_event, request: { ref: TerminalRef; data: string }) => ipcInvoke(async () => {
+      (_event, request: { ref: TerminalRef; data: string; generation: number }) => ipcInvoke(async () => {
         if (typeof request?.data !== 'string' || Buffer.byteLength(request.data) > 1024 * 1024) {
           throw new Error('Terminal input is invalid.');
         }
-        await this.options.sessions.terminalInput(structuredClone(request.ref), request.data);
+        await this.options.sessions.terminalInput(
+          structuredClone(request.ref),
+          request.data,
+          request.generation
+        );
         return true as const;
       })
     );
@@ -128,11 +132,12 @@ export class MultiDeviceSessionsIpc {
     );
     ipcMain.handle(
       IpcChannels.sessions.deviceTerminalResize,
-      (_event, request: { ref: TerminalRef; cols: number; rows: number }) => ipcInvoke(async () => {
+      (_event, request: { ref: TerminalRef; cols: number; rows: number; generation: number }) => ipcInvoke(async () => {
         await this.options.sessions.terminalResize(
           structuredClone(request.ref),
           request.cols,
-          request.rows
+          request.rows,
+          request.generation
         );
         return true as const;
       })

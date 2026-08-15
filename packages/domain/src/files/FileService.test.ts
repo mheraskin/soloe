@@ -169,13 +169,20 @@ describe("FileService", () => {
       service.pasteIntoTerminal({
         terminalId: "terminal-1",
         path: "src/app.ts",
+        generation: 4,
+        controllerClientId: "client-a",
       }),
     ).resolves.toBe(true);
-    expect(write).toHaveBeenCalledWith("terminal-1", "src/app.ts");
+    expect(write).toHaveBeenCalledWith("terminal-1", "src/app.ts", {
+      ownerId: "client-a",
+      generation: 4,
+    });
     await expect(
       service.pasteIntoTerminal({
         terminalId: "missing",
         path: "src/app.ts",
+        generation: 4,
+        controllerClientId: "client-a",
       }),
     ).rejects.toMatchObject({ code: "terminal_not_found" });
     service.dispose();

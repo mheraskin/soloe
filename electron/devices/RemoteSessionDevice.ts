@@ -248,17 +248,23 @@ export class RemoteSessionDevice implements SessionDevice {
     this.demandedTerminals = desired;
   }
 
-  async terminalInput(terminalId: string, data: string): Promise<void> {
-    await this.rpc('terminal', 'input', [requiredId(terminalId, 'Terminal'), data]);
+  async terminalInput(terminalId: string, data: string, generation: number): Promise<void> {
+    await this.rpc('terminal', 'input', [
+      requiredId(terminalId, 'Terminal'),
+      data,
+      positiveInteger(generation, 'control lease generation')
+    ]);
   }
 
   terminalAcquireInputLease(
     terminalId: string,
-    takeover = false
+    takeover = false,
+    controller = { deviceId: this.deviceId, deviceName: this.deviceId }
   ): Promise<TerminalInputLease> {
     return this.rpc('terminal', 'acquireInputLease', [
       requiredId(terminalId, 'Terminal'),
-      takeover
+      takeover,
+      controller
     ]);
   }
 
@@ -275,11 +281,17 @@ export class RemoteSessionDevice implements SessionDevice {
     ]);
   }
 
-  async terminalResize(terminalId: string, cols: number, rows: number): Promise<void> {
+  async terminalResize(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    generation: number
+  ): Promise<void> {
     await this.rpc('terminal', 'resize', [
       requiredId(terminalId, 'Terminal'),
       positiveInteger(cols, 'columns'),
-      positiveInteger(rows, 'rows')
+      positiveInteger(rows, 'rows'),
+      positiveInteger(generation, 'control lease generation')
     ]);
   }
 

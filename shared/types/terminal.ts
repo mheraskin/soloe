@@ -7,6 +7,11 @@ export interface TerminalDimensions {
   rows: number;
 }
 
+export interface TerminalControllerIdentity {
+  deviceId: string;
+  deviceName: string;
+}
+
 export interface SpawnSpec {
   file: string;
   args: string[];
@@ -67,19 +72,32 @@ export interface TerminalStartOptions {
 
 export interface TerminalInputLease {
   terminalId: TerminalId;
+  sessionId: SessionId;
   leaseId: string;
+  /** @deprecated Use controllerClientId. */
   ownerId: string;
+  controllerClientId: string;
+  controllerDeviceId: string;
+  controllerDeviceName: string;
+  generation: number;
+  cols: number;
+  rows: number;
   acquiredAt: string;
   expiresAt: string;
 }
 
+export type TerminalControlLease = TerminalInputLease;
+
 export interface TerminalInputLeaseEvent {
-  type: 'acquired' | 'renewed' | 'released' | 'expired' | 'taken-over';
+  type: 'acquired' | 'renewed' | 'released' | 'expired' | 'taken-over' | 'resized';
   terminalId: TerminalId;
   lease: TerminalInputLease | null;
+  generation?: number;
   previousOwnerId?: string;
   observedAt: string;
 }
+
+export type TerminalControlLeaseEvent = TerminalInputLeaseEvent;
 
 export const DEFAULT_COLS = 120;
 export const DEFAULT_ROWS = 30;

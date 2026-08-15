@@ -69,9 +69,13 @@ export class RuntimeClient extends EventEmitter {
   acquireInputLease(
     terminalId: string,
     ownerId: string,
-    takeover = false
+    takeover = false,
+    controller: { deviceId: string; deviceName: string } = {
+      deviceId: ownerId,
+      deviceName: ownerId
+    }
   ): Promise<TerminalInputLease> {
-    return this.request('acquireInputLease', { terminalId, ownerId, takeover });
+    return this.request('acquireInputLease', { terminalId, ownerId, takeover, ...controller });
   }
 
   currentInputLease(terminalId: string): Promise<TerminalInputLease | null> {
@@ -89,13 +93,18 @@ export class RuntimeClient extends EventEmitter {
   write(
     terminalId: string,
     data: string,
-    control?: { ownerId: string; leaseId: string }
+    control: { ownerId: string; generation: number }
   ): Promise<true> {
     return this.request('write', { terminalId, data, ...control });
   }
 
-  resize(terminalId: string, cols: number, rows: number): Promise<true> {
-    return this.request('resize', { terminalId, cols, rows });
+  resize(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    control: { ownerId: string; generation: number }
+  ): Promise<TerminalInputLease> {
+    return this.request('resize', { terminalId, cols, rows, ...control });
   }
 
   stop(terminalId: string): Promise<true> {

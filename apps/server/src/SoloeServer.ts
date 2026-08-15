@@ -504,21 +504,29 @@ export class SoloeServer {
         return;
       }
       if (request.method === "POST" && operation === "input") {
-        const body = await this.readJson<{ data: string }>(request);
-        const lease = await runtimeClient.acquireInputLease(
-          terminalId,
-          "legacy-http-client",
-        );
+        const body = await this.readJson<{
+          data: string;
+          ownerId: string;
+          generation: number;
+        }>(request);
         await runtimeClient.write(terminalId, body.data, {
-          ownerId: lease.ownerId,
-          leaseId: lease.leaseId,
+          ownerId: body.ownerId,
+          generation: body.generation,
         });
         response.writeHead(204).end();
         return;
       }
       if (request.method === "POST" && operation === "resize") {
-        const body = await this.readJson<{ cols: number; rows: number }>(request);
-        await runtimeClient.resize(terminalId, body.cols, body.rows);
+        const body = await this.readJson<{
+          cols: number;
+          rows: number;
+          ownerId: string;
+          generation: number;
+        }>(request);
+        await runtimeClient.resize(terminalId, body.cols, body.rows, {
+          ownerId: body.ownerId,
+          generation: body.generation,
+        });
         response.writeHead(204).end();
         return;
       }
