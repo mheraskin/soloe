@@ -44,6 +44,12 @@ export function shouldQuitAfterLastWindow(
   return platform !== 'darwin' || supervised;
 }
 
+export function shouldRecreateWindowForReopen(
+  window: { isDestroyed(): boolean } | null
+): boolean {
+  return window === null || window.isDestroyed();
+}
+
 export function shouldPreventWindowCloseShortcut(
   platform: NodeJS.Platform = process.platform
 ): boolean {

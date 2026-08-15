@@ -215,6 +215,12 @@ export class DeviceTransport {
       if (this.socket !== socket || this.state !== 'connected') return;
       this.receiveEvent(rawEvent as MessageEvent);
     });
+    socket.addEventListener('error', () => {
+      if (this.socket !== socket || this.state === 'disposed') return;
+      this.socket = null;
+      this.state = 'disconnected';
+      this.publishStatus();
+    });
     socket.addEventListener('close', () => {
       if (this.socket !== socket || this.state === 'disposed') return;
       this.socket = null;

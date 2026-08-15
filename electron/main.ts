@@ -60,7 +60,7 @@ import { OverviewIpc } from './ipc/overview.ipc.js';
 import { FeatureService } from './features/FeatureService.js';
 import { FeatureArtifactObservation } from './features/FeatureArtifactObservation.js';
 import { FeaturesIpc } from './ipc/features.ipc.js';
-import { VaultStore } from './vault/VaultStore.js';
+import type { VaultStore } from './vault/VaultStore.js';
 import { VaultIpc } from './ipc/vault.ipc.js';
 import { BrowserIpc } from './ipc/browser.ipc.js';
 import { BrowserSessionStore } from './browser/BrowserSessionStore.js';
@@ -104,7 +104,8 @@ import {
   desktopApplicationIdentity,
   desktopWindowPolicy,
   shouldPreventWindowCloseShortcut,
-  shouldQuitAfterLastWindow
+  shouldQuitAfterLastWindow,
+  shouldRecreateWindowForReopen
 } from './desktop-platform.js';
 
 const desktopIdentity = desktopApplicationIdentity();
@@ -765,6 +766,7 @@ async function setupServices(): Promise<AppServices> {
     observation: featureArtifacts
   });
 
+  const { VaultStore } = await import('./vault/VaultStore.js');
   const vault = new VaultStore(vaultDir);
   const vaultIpc = new VaultIpc({
     store: vault,
@@ -1078,11 +1080,19 @@ function ensureSingleInstance(): boolean {
     return false;
   }
   app.on('second-instance', (_event, argv) => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-    const intent = parseDiffArgv(argv);
-    if (intent) void applyDiffIntent(intent);
+    void (async () => {
+      if (shouldRecreateWindowForReopen(mainWindow)) {
+        mainWindow = await createWindow();
+      } else {
+        const existingWindow = mainWindow;
+        if (!existingWindow) return;
+        if (existingWindow.isMinimized()) existingWindow.restore();
+        if (!existingWindow.isVisible()) existingWindow.show();
+        existingWindow.focus();
+      }
+      const intent = parseDiffArgv(argv);
+      if (intent) await applyDiffIntent(intent);
+    })().catch((error) => console.error('[desktop] failed to reopen the main window', error));
   });
   return true;
 }
@@ -1146,7 +1156,10 @@ if (ensureSingleInstance()) {
       remoteWindowIpc = new WindowIpc();
       remoteBrowserIpc = new BrowserIpc();
       remoteVaultIpc = new VaultIpc({
-        store: new VaultStore(path.join(app.getPath('userData'), 'vault')),
+        createStore: async () => {
+          const { VaultStore } = await import('./vault/VaultStore.js');
+          return new VaultStore(path.join(app.getPath('userData'), 'vault'));
+        },
         getWindows: () => BrowserWindow.getAllWindows()
       });
       remoteWindowIpc.register();

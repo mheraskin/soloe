@@ -947,15 +947,10 @@ impl BackendSupervisor {
             .ok_or_else(|| "Soloe server did not publish an access token".to_string())?;
         let client_url = format!("{address}/?token={token}");
 
-        let mut command = Command::new(pnpm_executable());
+        let mut command = development_ui_spec(&client_url, &token).command();
         command
-            .args(["--filter", "@soloe/desktop-electron", "dev"])
             .current_dir(&self.repository_root)
-            .env("SOLOE_CLIENT_SERVER_URL", client_url)
-            .env("SOLOE_SERVER_TOKEN", token)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdin(Stdio::null());
         self.spawn_owned(command, true)
             .map_err(|error| format!("failed to open Soloe: {error}"))
     }
@@ -1903,6 +1898,25 @@ impl PackagedProcessSpec {
     }
 }
 
+fn development_ui_spec(client_url: &str, token: &str) -> PackagedProcessSpec {
+    PackagedProcessSpec {
+        executable: PathBuf::from(pnpm_executable()),
+        args: vec![
+            PathBuf::from("--filter"),
+            PathBuf::from("@soloe/desktop-electron"),
+            PathBuf::from("dev"),
+        ],
+        env: vec![
+            (
+                "SOLOE_CLIENT_SERVER_URL".to_string(),
+                client_url.to_string(),
+            ),
+            ("SOLOE_SERVER_TOKEN".to_string(), token.to_string()),
+            ("SOLOE_SUPERVISED_UI".to_string(), "1".to_string()),
+        ],
+    }
+}
+
 impl BundledMacosLayout {
     fn runtime_spec(
         &self,
@@ -2413,6 +2427,16 @@ mod tests {
         .unwrap();
         assert!(!supervisor.configured_startup().unwrap().launch_soloe_client);
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn development_soloe_client_is_tray_supervised() {
+        let spec = development_ui_spec("http://127.0.0.1:4317/?token=secret-token", "secret-token");
+
+        assert!(
+            spec.env
+                .contains(&("SOLOE_SUPERVISED_UI".to_string(), "1".to_string(),))
+        );
     }
 
     #[cfg(target_os = "macos")]

@@ -6,6 +6,7 @@ import {
   desktopWindowPolicy,
   shouldPreventWindowCloseShortcut,
   shouldQuitAfterLastWindow,
+  shouldRecreateWindowForReopen,
   shouldShowCustomWindowControls
 } from './desktop-platform.js';
 
@@ -100,6 +101,14 @@ describe('shouldQuitAfterLastWindow', () => {
     expect(shouldQuitAfterLastWindow('darwin', false)).toBe(false);
     expect(shouldQuitAfterLastWindow('win32', false)).toBe(true);
     expect(shouldQuitAfterLastWindow('linux', false)).toBe(true);
+  });
+});
+
+describe('shouldRecreateWindowForReopen', () => {
+  it('recreates a missing or destroyed window for a second-instance request', () => {
+    expect(shouldRecreateWindowForReopen(null)).toBe(true);
+    expect(shouldRecreateWindowForReopen({ isDestroyed: () => true })).toBe(true);
+    expect(shouldRecreateWindowForReopen({ isDestroyed: () => false })).toBe(false);
   });
 });
 

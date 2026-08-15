@@ -124,7 +124,38 @@ describe('DeviceTransport', () => {
     expect(transport.status.state).toBe('disposed');
     await expect(transport.connect()).rejects.toThrow('disposed');
   });
+
+  it('handles a socket error raised while closing a connecting event stream', async () => {
+    const socket = new ErroringCloseSocket();
+    const transport = new DeviceTransport({
+      endpoint: 'https://alpha.tail1234.ts.net',
+      fetchImpl: descriptorFetch(DESCRIPTOR),
+      socketFactory: () => socket
+    });
+    await transport.connect();
+
+    expect(() => transport.dispose()).not.toThrow();
+    expect(transport.status.state).toBe('disposed');
+  });
 });
+
+class ErroringCloseSocket {
+  private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+
+  addEventListener(event: string, listener: (event: Event) => void): void {
+    const listeners = this.listeners.get(event) ?? [];
+    listeners.push(listener);
+    this.listeners.set(event, listeners);
+  }
+
+  close(): void {
+    const errorListeners = this.listeners.get('error') ?? [];
+    if (errorListeners.length === 0) {
+      throw new Error('WebSocket was closed before the connection was established');
+    }
+    for (const listener of errorListeners) listener({} as Event);
+  }
+}
 
 class FakeSocket {
   private readonly listeners = new Map<string, Array<(event: Event) => void>>();
