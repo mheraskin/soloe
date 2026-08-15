@@ -74,6 +74,7 @@
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
   import { attachMobileViewport } from './lib/mobile-viewport';
   import { changePageZoom } from './lib/page-zoom';
+  import { scrollHorizontalWheel } from './lib/horizontal-wheel-scroll';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -1308,7 +1309,7 @@
       </div>
       {#if collapsedNav}
         <div
-          class="collapsed-nav ml-1 flex min-w-0 shrink items-center gap-0.5"
+          class="collapsed-nav ml-1 flex min-w-0 shrink-0 items-center gap-0.5"
           style="-webkit-app-region: no-drag"
         >
           <DropdownMenu.Root>
@@ -1485,6 +1486,7 @@
             style="-webkit-app-region: no-drag"
             role="tablist"
             aria-label="Sessions in this worktree"
+            onwheel={(event) => scrollHorizontalWheel(event.currentTarget, event)}
           >
             {#each collapsedNav.sessions as s (s.id)}
               <SessionContextMenu session={s.session}>

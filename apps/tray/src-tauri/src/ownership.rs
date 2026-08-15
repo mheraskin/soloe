@@ -11,8 +11,10 @@ use std::process::ChildStdin;
 #[cfg(all(unix, not(test)))]
 use std::process::Stdio;
 use std::process::{Child, Command};
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

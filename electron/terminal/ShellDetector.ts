@@ -7,22 +7,32 @@ export interface ResolvedShell {
 }
 
 export class ShellDetector {
-  resolve(shell: ShellKind, runMode: RunMode): ResolvedShell {
-    if (shell === 'auto') return this.autoFor(runMode);
+  resolve(
+    shell: ShellKind,
+    runMode: RunMode,
+    environment: Readonly<Record<string, string | undefined>> = process.env
+  ): ResolvedShell {
+    if (shell === 'auto') return this.autoFor(runMode, environment);
     if (shell === 'custom') {
       throw new Error('Custom shell must be resolved by SessionCommandBuilder');
     }
     return this.named(shell, runMode);
   }
 
-  autoFor(runMode: RunMode): ResolvedShell {
+  autoFor(
+    runMode: RunMode,
+    environment: Readonly<Record<string, string | undefined>> = process.env
+  ): ResolvedShell {
     if (runMode === 'wsl') return { executable: 'bash', args: ['-l'] };
-    if (process.platform === 'win32') {
+    if (runMode === 'windows') {
       return { executable: 'pwsh.exe', args: ['-NoLogo'] };
     }
-    const userShell = process.env['SHELL'];
+    const userShell = environment['SHELL'];
     if (userShell) return { executable: userShell, args: ['-l'] };
-    return { executable: 'bash', args: ['-l'] };
+    return {
+      executable: runMode === 'macos' ? '/bin/zsh' : 'bash',
+      args: ['-l']
+    };
   }
 
   named(shell: Exclude<ShellKind, 'auto' | 'custom'>, runMode: RunMode): ResolvedShell {
