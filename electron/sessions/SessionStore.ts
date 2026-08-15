@@ -201,10 +201,11 @@ export class SessionStore {
     let nextIndex = 0;
     for (const id of orderedIds) {
       if (seen.has(id)) continue;
-      const existing = this.cache!.get(id);
-      if (!existing) continue;
       seen.add(id);
-      this.cache!.set(id, { ...existing, sortIndex: nextIndex } as Session);
+      const existing = this.cache!.get(id);
+      if (existing) {
+        this.cache!.set(id, { ...existing, sortIndex: nextIndex } as Session);
+      }
       nextIndex += 1;
     }
     for (const session of [...this.cache!.values()].sort(compareSessions)) {

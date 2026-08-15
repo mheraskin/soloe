@@ -3,12 +3,14 @@
   import {
     Loader2,
     Trash2,
-    GitBranch
+    GitBranch,
+    Monitor
   } from '@lucide/svelte';
   import type {
     Session,
     SessionId
   } from '@shared/types/sessions.js';
+  import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { nav } from '../stores/nav.svelte';
@@ -26,6 +28,7 @@
   import KbdHint from './KbdHint.svelte';
   import AgentStateBadge from './AgentStateBadge.svelte';
   import SessionContextMenu from './SessionContextMenu.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
 
   type StatusTone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger';
 
@@ -38,10 +41,14 @@
   let {
     session,
     branch = null,
+    projection = null,
+    showDevice = false,
     onSessionDrop = null
   }: {
     session: Session;
     branch?: string | null;
+    projection?: MultiDeviceSessionView | null;
+    showDevice?: boolean;
     onSessionDrop?:
       | ((args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) => void)
       | null;
@@ -51,24 +58,31 @@
   let editValue = $state('');
   let nameInput: HTMLInputElement | null = $state(null);
 
-  let isSelected = $derived(sessions.selectedId === session.id);
-  let status = $derived(sessions.statusFor(session.id));
-  let observed = $derived(sessions.observationFor(session.id));
+  let managedLocally = $derived(
+    !projection || deviceSessions.device(projection.ref.deviceId)?.local === true
+  );
+  let isSelected = $derived(
+    projection ? deviceSessions.isSelected(projection) : sessions.selectedId === session.id
+  );
+  let status = $derived(projection?.runtime?.status ?? sessions.statusFor(session.id));
+  let observed = $derived(managedLocally ? sessions.observationFor(session.id) : null);
   let displayKind = $derived(displaySessionKind(session, observed));
-  let latestEvent = $derived(sessions.eventsFor(session.id)[0] ?? null);
+  let latestEvent = $derived(managedLocally ? sessions.eventsFor(session.id)[0] ?? null : null);
   let observedSummary = $derived(
     latestEvent?.state === observed?.state
       ? latestEvent?.summary ?? null
       : observed?.resultSummary ?? observed?.promptSummary ?? null
   );
-  let marker = $derived(agentNotifications.markerFor(session.id));
-  let markerPulses = $derived(agentNotifications.pulsingSessionId === session.id);
-  let workerCount = $derived(sessions.childWorkersFor(session.id).length);
-  let kbdIndex = $derived(nav.sessionIndexHints[session.id] ?? null);
+  let marker = $derived(managedLocally ? agentNotifications.markerFor(session.id) : null);
+  let markerPulses = $derived(managedLocally && agentNotifications.pulsingSessionId === session.id);
+  let workerCount = $derived(managedLocally ? sessions.childWorkersFor(session.id).length : 0);
+  let kbdIndex = $derived(managedLocally ? nav.sessionIndexHints[session.id] ?? null : null);
   // hasRuntime distinguishes "user has launched this at least once in this app
   // session" from the cold pre-spawn state, where we want neither pill nor
   // spinner.
-  let hasRuntime = $derived(sessions.runtime[session.id] !== undefined);
+  let hasRuntime = $derived(
+    projection ? projection.runtime !== null : sessions.runtime[session.id] !== undefined
+  );
   let isAgent = $derived(displayKind === 'claude_code' || displayKind === 'codex');
   let displayedAgentState = $derived(
     resolveDisplayedAgentState({
@@ -87,13 +101,21 @@
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
-    if (isSelected) sessions.select(null);
-    else sessions.select(session.id);
+    if (projection) {
+      if (isSelected) {
+        if (managedLocally) sessions.select(null);
+        else deviceSessions.clearSelectedSession();
+      } else {
+        void deviceSessions.openSession(projection.key).catch(reportError);
+      }
+      return;
+    }
+    if (isSelected) sessions.select(null); else sessions.select(session.id);
   }
 
   async function startEditing(e?: Event) {
     e?.stopPropagation();
-    if (editing) return;
+    if (editing || !managedLocally) return;
     editValue = session.name;
     editing = true;
     await tick();
@@ -136,8 +158,7 @@
     if (editing) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      if (isSelected) sessions.select(null);
-      else sessions.select(session.id);
+      onClick(new MouseEvent('click'));
     } else if (e.key === 'F2') {
       e.preventDefault();
       void startEditing();
@@ -178,22 +199,23 @@
   }
 
   let rowEl: HTMLElement | null = $state(null);
+  let dragId = $derived(projection?.key ?? session.id);
   let dropPosition = $derived.by<DropPosition | null>(() => {
     if (!onSessionDrop) return null;
     const t = dnd.target;
-    if (!t || t.kind !== 'session' || t.id !== session.id) return null;
-    if (dnd.drag?.id === session.id) return null;
+    if (!t || t.kind !== 'session' || t.id !== dragId) return null;
+    if (dnd.drag?.id === dragId) return null;
     return t.position;
   });
-  let isDraggingSelf = $derived(dnd.drag?.kind === 'session' && dnd.drag.id === session.id);
+  let isDraggingSelf = $derived(dnd.drag?.kind === 'session' && dnd.drag.id === dragId);
 
   function onDragStart(e: DragEvent) {
     if (!onSessionDrop || !e.dataTransfer) return;
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData(DND_MIME.session, session.id);
+    e.dataTransfer.setData(DND_MIME.session, dragId);
     dnd.begin({
       kind: 'session',
-      id: session.id,
+      id: dragId,
       projectId: session.projectId ?? null,
       worktreeCwd: session.cwd
     });
@@ -207,10 +229,10 @@
     const position = dropPositionFromEvent(e, rowEl);
     if (
       dnd.target?.kind !== 'session'
-      || dnd.target.id !== session.id
+      || dnd.target.id !== dragId
       || dnd.target.position !== position
     ) {
-      dnd.setTarget({ kind: 'session', id: session.id, position });
+      dnd.setTarget({ kind: 'session', id: dragId, position });
     }
   }
 
@@ -218,12 +240,12 @@
     if (!onSessionDrop) return;
     if (dnd.drag?.kind !== 'session') return;
     const draggedId = dnd.drag.id;
-    if (draggedId === session.id) return;
+    if (draggedId === dragId) return;
     e.preventDefault();
-    const position = dnd.target?.kind === 'session' && dnd.target.id === session.id
+    const position = dnd.target?.kind === 'session' && dnd.target.id === dragId
       ? dnd.target.position
       : 'after';
-    onSessionDrop({ draggedId, targetId: session.id, position });
+    onSessionDrop({ draggedId, targetId: dragId, position });
     dnd.end();
   }
 
@@ -243,12 +265,12 @@
   {#if dropPosition === 'after'}
     <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
   {/if}
-  <SessionContextMenu {session} onRename={() => void startEditing()}>
+  <SessionContextMenu {session} disabled={!managedLocally} onRename={() => void startEditing()}>
     {#snippet trigger({ props })}
       <div
         {...props}
         bind:this={rowEl}
-        data-session-id={session.id}
+        data-session-id={projection?.key ?? session.id}
         data-row-color={session.color ?? undefined}
         data-row-selected={isSelected ? 'true' : undefined}
         class={cn(
@@ -265,11 +287,11 @@
         ondrop={onDrop}
         ondragend={onDragEnd}
         onclick={onClick}
-        ondblclick={startEditing}
+        ondblclick={managedLocally ? startEditing : undefined}
         onkeydown={onRowKey}
         role="button"
         tabindex="0"
-        title={session.cwd}
+        title={projection ? `${session.cwd} · ${projection.deviceName}` : session.cwd}
       >
         {#if session.color}
           <span
@@ -350,6 +372,13 @@
                 <span class="max-w-[90px] truncate">{branch}</span>
               </span>
             {/if}
+            {#if projection && showDevice}
+              <span class="inline-flex min-w-0 shrink-0 items-center gap-0.5">
+                <span class="text-muted-foreground/55">·</span>
+                <Monitor class="size-2.5" />
+                <span class="max-w-[90px] truncate">{projection.deviceName}</span>
+              </span>
+            {/if}
           </span>
         </span>
         {#if workerCount > 0}
@@ -363,7 +392,7 @@
         {#if kbdIndex !== null}
           <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
         {/if}
-        <div class="flex shrink-0 items-center gap-0.5">
+        {#if managedLocally}<div class="flex shrink-0 items-center gap-0.5">
           <span class="relative flex size-7 shrink-0 items-center justify-center">
             <Button
               variant="ghost"
@@ -377,7 +406,7 @@
             </Button>
             <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
           </span>
-        </div>
+        </div>{/if}
       </div>
     {/snippet}
   </SessionContextMenu>

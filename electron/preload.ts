@@ -144,12 +144,20 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.previewCommand, id),
     deviceState: () => ipcRenderer.invoke(IpcChannels.sessions.deviceState),
     refreshDevices: () => ipcRenderer.invoke(IpcChannels.sessions.refreshDevices),
+    reorderOnDevices: (refs: SessionRef[]) =>
+      ipcRenderer.invoke(IpcChannels.sessions.reorderOnDevices, refs),
     createOnDevice: (request: CreateMultiDeviceSessionRequest) =>
       ipcRenderer.invoke(IpcChannels.sessions.createOnDevice, request),
     planCreateOnDevice: (request: CreateMultiDeviceSessionRequest) =>
       ipcRenderer.invoke(IpcChannels.sessions.planCreateOnDevice, request),
     executeCreateOnDevice: (planId: string) =>
       ipcRenderer.invoke(IpcChannels.sessions.executeCreateOnDevice, planId),
+    browseDeviceWorkspaceDirectories: (request) =>
+      ipcRenderer.invoke(IpcChannels.sessions.browseDeviceWorkspaceDirectories, request),
+    openProjectOnDevice: (request) =>
+      ipcRenderer.invoke(IpcChannels.sessions.openProjectOnDevice, request),
+    executeDevicePreparation: (planId) =>
+      ipcRenderer.invoke(IpcChannels.sessions.executeDevicePreparation, planId),
     startOnDevice: (ref: SessionRef) =>
       ipcRenderer.invoke(IpcChannels.sessions.startOnDevice, ref),
     setDeviceTerminalDemand: (refs: TerminalRef[]) =>
@@ -158,6 +166,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInput, request),
     deviceTerminalInputLease: (request: { ref: TerminalRef; takeover?: boolean }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInputLease, request),
+    deviceTerminalCurrentInputLease: (ref: TerminalRef) =>
+      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalCurrentInputLease, ref),
+    deviceTerminalReleaseInputLease: (request: { ref: TerminalRef; leaseId: string }) =>
+      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReleaseInputLease, request),
     deviceTerminalResize: (request: { ref: TerminalRef; cols: number; rows: number }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalResize, request),
     deviceTerminalReplay: (ref: TerminalRef, afterSeq?: number) =>
@@ -231,6 +243,7 @@ const soloe: SoloeApi = {
   connections: {
     get: () => ipcRenderer.invoke(IpcChannels.connections.get),
     refresh: () => ipcRenderer.invoke(IpcChannels.connections.refresh),
+    configure: (patch) => ipcRenderer.invoke(IpcChannels.connections.configure, patch),
     add: (request: AddMachineConnectionRequest) =>
       ipcRenderer.invoke(IpcChannels.connections.add, request),
     remove: (id: ConnectionId) => ipcRenderer.invoke(IpcChannels.connections.remove, id),

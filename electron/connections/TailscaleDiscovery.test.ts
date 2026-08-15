@@ -112,11 +112,12 @@ describe('TailscaleDiscovery', () => {
       Peer: {}
     }), ensureSharing);
 
-    await expect(discovery.discover()).resolves.toMatchObject({
+    await expect(discovery.discover(4319)).resolves.toMatchObject({
       state: 'connected',
       sharing: { state: 'ready', message: null, setupUrl: null }
     });
     expect(ensureSharing).toHaveBeenCalledOnce();
+    expect(ensureSharing).toHaveBeenCalledWith(4319);
   });
 
   it('does not attempt Serve setup before the user signs in to Tailscale', async () => {

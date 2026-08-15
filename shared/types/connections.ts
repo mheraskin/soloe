@@ -38,6 +38,7 @@ export interface MachineConnection {
 }
 
 export type TailscaleConnectionState =
+  | 'disabled'
   | 'connected'
   | 'not-running'
   | 'unavailable'
@@ -68,9 +69,17 @@ export interface TailscaleConnectionInfo {
 export interface ConnectionSnapshot {
   activeId: ConnectionId;
   machines: MachineConnection[];
+  preferences: ConnectionPreferences;
   tailscale: TailscaleConnectionInfo;
   refreshedAt: string | null;
 }
+
+export interface ConnectionPreferences {
+  tailscaleEnabled: boolean;
+  tailscaleHttpsPort: number;
+}
+
+export type ConnectionPreferencesUpdate = Partial<ConnectionPreferences>;
 
 export interface AddMachineConnectionRequest {
   endpoint: string;

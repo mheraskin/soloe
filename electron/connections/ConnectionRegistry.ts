@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type {
   ConnectionId,
+  ConnectionPreferencesUpdate,
   ConnectionSelectionResult,
   ConnectionSnapshot,
   MachineConnection,
@@ -69,12 +70,22 @@ interface PersistedConnectionsV2 {
   machines: PersistedMachineV2[];
 }
 
-type ParsedConnections = PersistedConnectionsV1 | PersistedConnectionsV2;
+interface PersistedConnectionsV3 {
+  version: 3;
+  activeId: ConnectionId;
+  preferences: {
+    tailscaleEnabled: boolean;
+    tailscaleHttpsPort: number;
+  };
+  machines: PersistedMachineV2[];
+}
+
+type ParsedConnections = PersistedConnectionsV1 | PersistedConnectionsV2 | PersistedConnectionsV3;
 
 export interface ConnectionRegistryOptions {
   filePath: string;
   localName: string;
-  discover: () => Promise<TailscaleDiscoveryResult>;
+  discover: (tailscaleHttpsPort: number) => Promise<TailscaleDiscoveryResult>;
   probe: (endpoint: string) => Promise<boolean>;
   describe?: (endpoint: string) => Promise<{
     descriptor: DeviceDescriptor;
@@ -96,6 +107,18 @@ const EMPTY_TAILSCALE: TailscaleConnectionInfo = {
   }
 };
 
+const DISABLED_TAILSCALE: TailscaleConnectionInfo = {
+  state: 'disabled',
+  tailnet: null,
+  selfDnsName: null,
+  message: 'Tailscale connections are turned off in Settings.',
+  sharing: {
+    state: 'unavailable',
+    message: 'Enable Tailscale connections to discover other Soloe devices.',
+    setupUrl: null
+  }
+};
+
 export class ConnectionRegistry {
   private activeId: ConnectionId = 'local';
   private machines = new Map<ConnectionId, MachineConnection>();
@@ -106,7 +129,8 @@ export class ConnectionRegistry {
   private persistQueue: Promise<void> = Promise.resolve();
   private initialized = false;
   private readonly now: () => Date;
-  private readonly tailscaleHttpsPort: number;
+  private tailscaleEnabled = true;
+  private tailscaleHttpsPort: number;
 
   constructor(private readonly options: ConnectionRegistryOptions) {
     this.now = options.now ?? (() => new Date());
@@ -133,6 +157,11 @@ export class ConnectionRegistry {
     }
     if (!parsed) return;
     this.activeId = parsed.activeId;
+    if (parsed.version === 3) {
+      this.tailscaleEnabled = parsed.preferences.tailscaleEnabled;
+      this.tailscaleHttpsPort = validTailscalePort(parsed.preferences.tailscaleHttpsPort);
+      if (!this.tailscaleEnabled) this.tailscale = { ...DISABLED_TAILSCALE };
+    }
     for (const persisted of parsed.machines) {
       const machine = persistedMachineProjection(persisted, this.activeId);
       this.machines.set(machine.id, machine);
@@ -141,7 +170,7 @@ export class ConnectionRegistry {
       this.activeId = 'local';
     }
     this.applyActiveState();
-    if (parsed.version === 1) {
+    if (parsed.version !== 3) {
       await this.backupV1AndPersist(source);
     }
   }
@@ -161,6 +190,27 @@ export class ConnectionRegistry {
       this.refreshPromise = null;
     });
     return this.refreshPromise;
+  }
+
+  async configureTailscale(
+    patch: ConnectionPreferencesUpdate
+  ): Promise<ConnectionSnapshot> {
+    await this.init();
+    if (patch.tailscaleEnabled !== undefined) {
+      this.tailscaleEnabled = patch.tailscaleEnabled;
+    }
+    if (patch.tailscaleHttpsPort !== undefined) {
+      this.tailscaleHttpsPort = validTailscalePort(patch.tailscaleHttpsPort);
+    }
+    if (!this.tailscaleEnabled) {
+      this.tailscale = { ...DISABLED_TAILSCALE, sharing: { ...DISABLED_TAILSCALE.sharing } };
+      for (const [id, machine] of this.machines) {
+        if (id !== 'local') this.machines.set(id, { ...machine, status: 'unavailable' });
+      }
+    }
+    await this.persist();
+    this.publish();
+    return this.refresh();
   }
 
   async add(rawEndpoint: string): Promise<ConnectionSnapshot> {
@@ -371,7 +421,12 @@ export class ConnectionRegistry {
 
   private async refreshNow(): Promise<ConnectionSnapshot> {
     await this.init();
-    const discovery = await this.options.discover();
+    if (!this.tailscaleEnabled) {
+      this.tailscale = { ...DISABLED_TAILSCALE, sharing: { ...DISABLED_TAILSCALE.sharing } };
+      this.refreshedAt = this.now().toISOString();
+      return this.publish();
+    }
+    const discovery = await this.options.discover(this.tailscaleHttpsPort);
     this.tailscale = {
       state: discovery.state,
       tailnet: discovery.tailnet,
@@ -506,6 +561,10 @@ export class ConnectionRegistry {
     return {
       activeId: this.activeId,
       machines,
+      preferences: {
+        tailscaleEnabled: this.tailscaleEnabled,
+        tailscaleHttpsPort: this.tailscaleHttpsPort
+      },
       tailscale: {
         ...this.tailscale,
         sharing: { ...this.tailscale.sharing }
@@ -527,9 +586,13 @@ export class ConnectionRegistry {
   }
 
   private persist(): Promise<void> {
-    const persisted: PersistedConnectionsV2 = {
-      version: 2,
+    const persisted: PersistedConnectionsV3 = {
+      version: 3,
       activeId: this.activeId,
+      preferences: {
+        tailscaleEnabled: this.tailscaleEnabled,
+        tailscaleHttpsPort: this.tailscaleHttpsPort
+      },
       machines: [...this.machines.values()]
         .filter((machine): machine is MachineConnection & { endpoint: string } =>
           machine.id !== 'local' && machine.endpoint !== null
@@ -782,6 +845,24 @@ function parsePersisted(value: unknown): ParsedConnections | null {
       .filter((machine): machine is PersistedMachineV2 => machine !== null)
       .slice(0, MAX_CONNECTIONS);
     return { version: 2, activeId, machines };
+  }
+  if (value['version'] === 3 && isRecord(value['preferences'])) {
+    const activeId = parseConnectionId(value['activeId']) ?? 'local';
+    const machines = value['machines']
+      .map(parsePersistedMachineV2)
+      .filter((machine): machine is PersistedMachineV2 => machine !== null)
+      .slice(0, MAX_CONNECTIONS);
+    const port = Number(value['preferences']['tailscaleHttpsPort']);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return null;
+    return {
+      version: 3,
+      activeId,
+      preferences: {
+        tailscaleEnabled: value['preferences']['tailscaleEnabled'] !== false,
+        tailscaleHttpsPort: port
+      },
+      machines
+    };
   }
   return null;
 }

@@ -315,6 +315,36 @@ describe('ConnectionRegistry', () => {
     ]);
   });
 
+  it('persists Tailscale enablement and uses the configured Serve port', async () => {
+    const discover = vi.fn(async () => CONNECTED);
+    const probe = vi.fn(async () => true);
+    const registry = createRegistry({ discover, probe });
+
+    const configured = await registry.configureTailscale({ tailscaleHttpsPort: 4319 });
+
+    expect(configured.preferences).toEqual({
+      tailscaleEnabled: true,
+      tailscaleHttpsPort: 4319
+    });
+    expect(probe).toHaveBeenCalledWith('https://alpha.tail1234.ts.net:4319');
+
+    discover.mockClear();
+    probe.mockClear();
+    const disabled = await registry.configureTailscale({ tailscaleEnabled: false });
+
+    expect(disabled.preferences.tailscaleEnabled).toBe(false);
+    expect(disabled.tailscale.state).toBe('disabled');
+    expect(discover).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+
+    const restored = createRegistry({ discover, probe });
+    await restored.init();
+    expect((await restored.get()).preferences).toEqual({
+      tailscaleEnabled: false,
+      tailscaleHttpsPort: 4319
+    });
+  });
+
   it('blocks an endpoint that changes its pinned Device identity', async () => {
     const registry = createRegistry({ probe: async () => true });
     await registry.add('https://alpha.tail1234.ts.net');
@@ -364,8 +394,12 @@ describe('ConnectionRegistry', () => {
       machines: Array<Record<string, unknown>>;
     };
     expect(migrated).toMatchObject({
-      version: 2,
+      version: 3,
       activeId: 'tailscale:alpha.tail1234.ts.net',
+      preferences: {
+        tailscaleEnabled: true,
+        tailscaleHttpsPort: 4318
+      },
       machines: [{
         trust: 'provisional',
         endpointAliases: ['https://alpha.tail1234.ts.net']

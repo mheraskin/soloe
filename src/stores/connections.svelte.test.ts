@@ -30,6 +30,7 @@ import { ConnectionsStore } from './connections.svelte.js';
 const SNAPSHOT: ConnectionSnapshot = {
   activeId: 'local',
   machines: [],
+  preferences: { tailscaleEnabled: true, tailscaleHttpsPort: 4318 },
   tailscale: {
     state: 'connected',
     tailnet: 'example.com',

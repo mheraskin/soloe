@@ -113,6 +113,19 @@ export interface DeviceWorkspaceSnapshot {
   checkouts: CheckoutRecord[];
 }
 
+export interface WorkspaceDirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface WorkspaceDirectoryListing {
+  path: string;
+  parentPath: string | null;
+  separator: '/' | '\\';
+  roots: WorkspaceDirectoryEntry[];
+  directories: WorkspaceDirectoryEntry[];
+}
+
 export interface DeviceSessionSourceBinding {
   sessionId: string;
   source: SessionSource;

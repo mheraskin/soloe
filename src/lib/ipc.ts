@@ -99,7 +99,7 @@ import type {
 } from '@shared/types/browser-sessions.js';
 import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
-import type { DeviceEventEnvelope, SessionRef, TerminalRef } from '@shared/types/devices.js';
+import type { DeviceEventEnvelope, DeviceId, SessionRef, TerminalRef } from '@shared/types/devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
   MultiDeviceSessionState
@@ -175,6 +175,10 @@ export const backend = {
       if (!c.sessions.refreshDevices) throw new Error('Multi-Device Sessions are unavailable.');
       return unwrap(await c.sessions.refreshDevices());
     },
+    reorderOnDevices: async (refs: SessionRef[]): Promise<MultiDeviceSessionState> => {
+      if (!c.sessions.reorderOnDevices) throw new Error('Multi-Device Session ordering is unavailable.');
+      return unwrap(await c.sessions.reorderOnDevices(toIpcPayload(refs)));
+    },
     createOnDevice: async (request: CreateMultiDeviceSessionRequest) => {
       if (!c.sessions.createOnDevice) throw new Error('Multi-Device Sessions are unavailable.');
       return unwrap(await c.sessions.createOnDevice(toIpcPayload(request)));
@@ -186,6 +190,26 @@ export const backend = {
     executeCreateOnDevice: async (planId: string) => {
       if (!c.sessions.executeCreateOnDevice) throw new Error('Multi-Device Session creation is unavailable.');
       return unwrap(await c.sessions.executeCreateOnDevice(planId));
+    },
+    browseDeviceWorkspaceDirectories: async (
+      request: import('@shared/types/multi-device-sessions.js').BrowseDeviceWorkspaceDirectoriesRequest
+    ) => {
+      if (!c.sessions.browseDeviceWorkspaceDirectories) {
+        throw new Error('Device workspace browsing is unavailable.');
+      }
+      return unwrap(await c.sessions.browseDeviceWorkspaceDirectories(toIpcPayload(request)));
+    },
+    openProjectOnDevice: async (
+      request: { deviceId: DeviceId; project: import('@shared/types/projects.js').ProjectOpenRequest }
+    ) => {
+      if (!c.sessions.openProjectOnDevice) throw new Error('Opening Projects on Devices is unavailable.');
+      return unwrap(await c.sessions.openProjectOnDevice(toIpcPayload(request)));
+    },
+    executeDevicePreparation: async (planId: string) => {
+      if (!c.sessions.executeDevicePreparation) {
+        throw new Error('Device Project preparation is unavailable.');
+      }
+      return unwrap(await c.sessions.executeDevicePreparation(planId));
     },
     startOnDevice: async (ref: SessionRef) => {
       if (!c.sessions.startOnDevice) throw new Error('Multi-Device Session start is unavailable.');
@@ -208,6 +232,20 @@ export const backend = {
         throw new Error('Multi-Device terminal input control is unavailable.');
       }
       return unwrap(await c.sessions.deviceTerminalInputLease(toIpcPayload({ ref, takeover })));
+    },
+    deviceTerminalCurrentInputLease: async (ref: TerminalRef) => {
+      if (!c.sessions.deviceTerminalCurrentInputLease) {
+        throw new Error('Multi-Device terminal input control is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalCurrentInputLease(toIpcPayload(ref)));
+    },
+    deviceTerminalReleaseInputLease: async (ref: TerminalRef, leaseId: string) => {
+      if (!c.sessions.deviceTerminalReleaseInputLease) {
+        throw new Error('Multi-Device terminal input control is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalReleaseInputLease(
+        toIpcPayload({ ref, leaseId })
+      ));
     },
     deviceTerminalResize: async (ref: TerminalRef, cols: number, rows: number) => {
       if (!c.sessions.deviceTerminalResize) {
@@ -309,6 +347,8 @@ export const backend = {
   connections: {
     get: async () => unwrap(await c.connections.get()),
     refresh: async () => unwrap(await c.connections.refresh()),
+    configure: async (patch: import('@shared/types/connections.js').ConnectionPreferencesUpdate) =>
+      unwrap(await c.connections.configure(toIpcPayload(patch))),
     add: async (request: Parameters<typeof c.connections.add>[0]) =>
       unwrap(await c.connections.add(toIpcPayload(request))),
     remove: async (id: Parameters<typeof c.connections.remove>[0]) =>

@@ -25,21 +25,24 @@ export interface TailscaleDiscoveryResult extends TailscaleNetworkResult {
 }
 
 type StatusRunner = () => Promise<string>;
-type SharingRunner = () => Promise<TailscaleServeStatus>;
+type SharingRunner = (httpsPort: number) => Promise<TailscaleServeStatus>;
 
 export class TailscaleDiscovery {
   constructor(
     private readonly runStatus: StatusRunner = runTailscaleStatus,
-    private readonly ensureSharing: SharingRunner = () => createServeManager().ensure()
+    private readonly ensureSharing: SharingRunner = (httpsPort) =>
+      createServeManager(httpsPort).ensure()
   ) {}
 
-  async discover(): Promise<TailscaleDiscoveryResult> {
+  async discover(
+    httpsPort = validEnvironmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318)
+  ): Promise<TailscaleDiscoveryResult> {
     try {
       const network = parseTailscaleStatus(await this.runStatus());
       return {
         ...network,
         sharing: network.state === 'connected'
-          ? await this.ensureSharing()
+          ? await this.ensureSharing(validPort(httpsPort))
           : sharingForNetwork(network)
       };
     } catch (error) {
@@ -110,9 +113,8 @@ export function parseTailscaleStatus(raw: string): TailscaleNetworkResult {
   };
 }
 
-function createServeManager(): TailscaleServeManager {
+function createServeManager(httpsPort: number): TailscaleServeManager {
   const localPort = validEnvironmentPort(process.env.SOLOE_WEB_PORT, 4318);
-  const httpsPort = validEnvironmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318);
   return new TailscaleServeManager({
     targetUrl: `http://127.0.0.1:${localPort}`,
     httpsPort
@@ -144,6 +146,13 @@ function sharingForNetwork(network: TailscaleNetworkResult): TailscaleServeStatu
 function validEnvironmentPort(raw: string | undefined, fallback: number): number {
   const value = raw?.trim() ? Number(raw) : fallback;
   return Number.isSafeInteger(value) && value >= 1 && value <= 65_535 ? value : fallback;
+}
+
+function validPort(port: number): number {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('Tailscale Serve port must be between 1 and 65535.');
+  }
+  return port;
 }
 
 export function normalizeTailscaleDnsName(value: string): string | null {

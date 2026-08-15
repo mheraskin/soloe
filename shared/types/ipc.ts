@@ -165,13 +165,19 @@ export const IpcChannels = {
     previewCommand: 'sessions:preview-command',
     deviceState: 'sessions:device-state',
     refreshDevices: 'sessions:refresh-devices',
+    reorderOnDevices: 'sessions:reorder-on-devices',
     createOnDevice: 'sessions:create-on-device',
     planCreateOnDevice: 'sessions:plan-create-on-device',
     executeCreateOnDevice: 'sessions:execute-create-on-device',
+    browseDeviceWorkspaceDirectories: 'sessions:browse-device-workspace-directories',
+    openProjectOnDevice: 'sessions:open-project-on-device',
+    executeDevicePreparation: 'sessions:execute-device-preparation',
     startOnDevice: 'sessions:start-on-device',
     deviceTerminalDemand: 'sessions:device-terminal-demand',
     deviceTerminalInput: 'sessions:device-terminal-input',
     deviceTerminalInputLease: 'sessions:device-terminal-input-lease',
+    deviceTerminalCurrentInputLease: 'sessions:device-terminal-current-input-lease',
+    deviceTerminalReleaseInputLease: 'sessions:device-terminal-release-input-lease',
     deviceTerminalResize: 'sessions:device-terminal-resize',
     deviceTerminalReplay: 'sessions:device-terminal-replay',
     deviceTerminalStop: 'sessions:device-terminal-stop',
@@ -221,6 +227,7 @@ export const IpcChannels = {
   connections: {
     get: 'connections:get',
     refresh: 'connections:refresh',
+    configure: 'connections:configure',
     add: 'connections:add',
     remove: 'connections:remove',
     enable: 'connections:enable',
@@ -398,6 +405,7 @@ export interface SessionsApi {
   previewCommand(id: SessionId): Promise<IpcResult<SpawnSpec>>;
   deviceState?(): Promise<IpcResult<MultiDeviceSessionState>>;
   refreshDevices?(): Promise<IpcResult<MultiDeviceSessionState>>;
+  reorderOnDevices?(orderedRefs: SessionRef[]): Promise<IpcResult<MultiDeviceSessionState>>;
   createOnDevice?(
     request: CreateMultiDeviceSessionRequest
   ): Promise<IpcResult<MultiDeviceSessionView>>;
@@ -405,12 +413,23 @@ export interface SessionsApi {
     request: CreateMultiDeviceSessionRequest
   ): Promise<IpcResult<MultiDeviceSessionCreationPlan>>;
   executeCreateOnDevice?(planId: string): Promise<IpcResult<MultiDeviceSessionView>>;
+  browseDeviceWorkspaceDirectories?(
+    request: import('./multi-device-sessions.js').BrowseDeviceWorkspaceDirectoriesRequest
+  ): Promise<IpcResult<import('./workspaces.js').WorkspaceDirectoryListing>>;
+  openProjectOnDevice?(
+    request: { deviceId: import('./devices.js').DeviceId; project: ProjectOpenRequest }
+  ): Promise<IpcResult<MultiDeviceSessionState>>;
+  executeDevicePreparation?(planId: string): Promise<IpcResult<MultiDeviceSessionState>>;
   startOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionView>>;
   setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
   deviceTerminalInput?(request: { ref: TerminalRef; data: string }): Promise<IpcResult<true>>;
   deviceTerminalInputLease?(
     request: { ref: TerminalRef; takeover?: boolean }
   ): Promise<IpcResult<TerminalInputLease>>;
+  deviceTerminalCurrentInputLease?(ref: TerminalRef): Promise<IpcResult<TerminalInputLease | null>>;
+  deviceTerminalReleaseInputLease?(
+    request: { ref: TerminalRef; leaseId: string }
+  ): Promise<IpcResult<boolean>>;
   deviceTerminalResize?(
     request: { ref: TerminalRef; cols: number; rows: number }
   ): Promise<IpcResult<true>>;
@@ -490,6 +509,7 @@ export interface SettingsApi {
 export interface ConnectionsApi {
   get(): Promise<IpcResult<ConnectionSnapshot>>;
   refresh(): Promise<IpcResult<ConnectionSnapshot>>;
+  configure(patch: import('./connections.js').ConnectionPreferencesUpdate): Promise<IpcResult<ConnectionSnapshot>>;
   add(request: AddMachineConnectionRequest): Promise<IpcResult<ConnectionSnapshot>>;
   remove(id: ConnectionId): Promise<IpcResult<ConnectionSnapshot>>;
   setEnabled(id: ConnectionId, enabled: boolean): Promise<IpcResult<ConnectionSnapshot>>;

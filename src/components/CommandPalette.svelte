@@ -6,7 +6,9 @@
     FolderOpen,
     Folder,
     Trash2,
-    Pencil
+    Pencil,
+    Monitor,
+    Download
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import type {
@@ -16,6 +18,7 @@
   import { runModeLabel } from '@shared/platform.js';
   import { commandPalette } from '../stores/command-palette.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { projectModal } from '../stores/project-modal.svelte';
   import { settings } from '../stores/settings.svelte';
@@ -24,6 +27,7 @@
   import { reportError } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
   import * as Command from '$lib/components/ui/command';
+  import * as Select from '$lib/components/ui/select';
   import { Badge } from '$lib/components/ui/badge';
   import { cn } from '$lib/utils';
 
@@ -43,11 +47,34 @@
   let highlight = $state('');
   let suggestRequest = 0;
   let debounceHandle = 0;
+  let projectDeviceId = $state<string | null>(null);
+  let remoteDirectory = $state<import('@shared/types/workspaces.js').WorkspaceDirectoryListing | null>(null);
+  let remoteBrowseError = $state<string | null>(null);
+  let remoteBrowsing = $state(false);
+  let remoteBrowseRequest = 0;
+  let projectDevice = $derived(
+    projectDeviceId ? deviceSessions.device(projectDeviceId) : deviceSessions.localDevice
+  );
+  let usingLocalProjectDevice = $derived(projectDevice?.local !== false);
+  let cloneCandidates = $derived.by(() => {
+    if (!projectDeviceId || projectDevice?.local) return [];
+    return deviceSessions.state.projects.filter((project) =>
+      project.repository?.kind === 'git'
+      && !project.workspaces.some((workspace) =>
+        workspace.locations.some((location) => location.deviceId === projectDeviceId)
+      )
+    );
+  });
 
   function resetScopeFromSettings() {
     const defaults = settings.current.defaults;
     scope = defaults.runMode;
     wslDistro = defaults.wslDistro?.trim() || 'Ubuntu';
+    projectDeviceId = deviceSessions.selectedDeviceId
+      ?? deviceSessions.localDevice?.deviceId
+      ?? null;
+    remoteDirectory = null;
+    remoteBrowseError = null;
   }
 
   $effect(() => {
@@ -66,6 +93,7 @@
   $effect(() => {
     if (!commandPalette.isOpen) return;
     if (commandPalette.mode !== 'open-project') return;
+    if (!usingLocalProjectDevice) return;
     const q = query;
     const requestScope = scope;
     const requestDistro = wslDistro;
@@ -96,6 +124,13 @@
         debounceHandle = 0;
       }
     };
+  });
+
+  $effect(() => {
+    if (!commandPalette.isOpen || commandPalette.mode !== 'open-project') return;
+    if (usingLocalProjectDevice || !projectDeviceId) return;
+    const deviceId = projectDeviceId;
+    void browseRemoteDevice(deviceId, undefined);
   });
 
   let commands = $derived.by<Cmd[]>(() => {
@@ -130,15 +165,45 @@
       icon: SettingsIcon,
       run: () => settings.openDialog()
     });
-    for (const session of sessions.sessions) {
+    if (deviceSessions.supported && deviceSessions.loaded) {
       list.push({
-        id: `session.switch.${session.id}`,
-        title: `Switch to ${session.name || '(unnamed)'}`,
-        hint: session.cwd,
-        section: 'Sessions',
-        icon: Terminal,
-        run: () => sessions.select(session.id)
+        id: 'device.show-all',
+        title: 'Show sessions on all devices',
+        section: 'Devices',
+        icon: Monitor,
+        run: () => deviceSessions.setDeviceFilter(null)
       });
+      for (const device of deviceSessions.state.devices) {
+        list.push({
+          id: `device.show.${device.deviceId}`,
+          title: `Show sessions on ${device.name}`,
+          hint: device.available ? (device.local ? 'this device' : 'online') : device.state,
+          section: 'Devices',
+          icon: Monitor,
+          run: () => deviceSessions.setDeviceFilter(device.deviceId)
+        });
+      }
+      for (const projection of deviceSessions.sessions) {
+        list.push({
+          id: `session.switch.${projection.key}`,
+          title: `Switch to ${projection.session.name || '(unnamed)'}`,
+          hint: `${projection.deviceName} · ${projection.session.cwd}`,
+          section: 'Sessions',
+          icon: Terminal,
+          run: () => void deviceSessions.openSession(projection.key).catch(reportError)
+        });
+      }
+    } else {
+      for (const session of sessions.sessions) {
+        list.push({
+          id: `session.switch.${session.id}`,
+          title: `Switch to ${session.name || '(unnamed)'}`,
+          hint: session.cwd,
+          section: 'Sessions',
+          icon: Terminal,
+          run: () => sessions.select(session.id)
+        });
+      }
     }
 
     for (const project of projects.recents) {
@@ -221,11 +286,79 @@
     }
   }
 
+  async function browseRemoteDevice(deviceId: string, path?: string): Promise<void> {
+    const requestId = ++remoteBrowseRequest;
+    remoteBrowsing = true;
+    remoteBrowseError = null;
+    try {
+      const listing = await deviceSessions.browseWorkspaceDirectories(deviceId, path);
+      if (requestId !== remoteBrowseRequest) return;
+      remoteDirectory = listing;
+      query = listing.path;
+    } catch (error) {
+      if (requestId !== remoteBrowseRequest) return;
+      remoteBrowseError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (requestId === remoteBrowseRequest) remoteBrowsing = false;
+    }
+  }
+
+  async function openRemoteProject(path: string): Promise<void> {
+    if (!projectDeviceId || !projectDevice) return;
+    try {
+      await deviceSessions.openProjectOnDevice(projectDeviceId, {
+        path,
+        ...(projectDevice.platform ? { defaultRunMode: projectDevice.platform } : {})
+      });
+      commandPalette.close();
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function cloneProjectOnSelectedDevice(
+    project: import('@shared/types/multi-device-sessions.js').ProjectView
+  ): Promise<void> {
+    if (!projectDeviceId) return;
+    const workspace = project.workspaces[0];
+    if (!workspace) return;
+    const targetPath = remoteDirectory
+      ? `${remoteDirectory.path}${remoteDirectory.path.endsWith(remoteDirectory.separator) ? '' : remoteDirectory.separator}${safeFolderName(project.name)}`
+      : undefined;
+    try {
+      const plan = await deviceSessions.planCreate({
+        workspaceKey: workspace.key,
+        targetDeviceId: projectDeviceId,
+        ...(targetPath ? { targetPath } : {}),
+        session: {
+          name: `${project.name} terminal`,
+          launch: { type: 'terminal', shell: settings.current.defaults.shell }
+        }
+      });
+      if (plan.action !== 'use-existing-location') {
+        await deviceSessions.executePreparation(plan.planId);
+      }
+      commandPalette.close();
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  function safeFolderName(value: string): string {
+    return value.trim().replace(/[\\/:*?"<>|]+/gu, '-').replace(/^\.+|\.+$/gu, '') || 'project';
+  }
+
   function onOpenChange(next: boolean) {
     if (!next) commandPalette.close();
   }
 
   function drillIntoHighlighted() {
+    if (!usingLocalProjectDevice && remoteDirectory) {
+      const target = remoteDirectory.directories.find((directory) => directory.path === highlight)
+        ?? remoteDirectory.directories[0];
+      if (target && projectDeviceId) void browseRemoteDevice(projectDeviceId, target.path);
+      return;
+    }
     const target = pathSuggestions.find((s) => s.path === highlight) ?? pathSuggestions[0];
     if (!target) return;
     const sep = target.scope === 'windows' ? '\\' : '/';
@@ -247,7 +380,7 @@
       commandPalette.open('commands');
       return;
     }
-    if ((e.key === 'Tab' || e.key === 'ArrowRight') && pathSuggestions.length > 0) {
+    if ((e.key === 'Tab' || e.key === 'ArrowRight') && (pathSuggestions.length > 0 || remoteDirectory?.directories.length)) {
       if (e.key === 'ArrowRight') {
         const input = e.target as HTMLInputElement | null;
         if (input && input.selectionStart !== null && input.selectionStart < query.length) {
@@ -277,6 +410,37 @@
   />
   {#if commandPalette.mode === 'open-project'}
     <div class="mobile-command-scope flex items-center gap-1.5 border-b border-border px-3 py-1.5">
+      {#if deviceSessions.supported && deviceSessions.state.devices.length > 0}
+        <Select.Root
+          type="single"
+          value={projectDeviceId ?? undefined}
+          onValueChange={(value) => {
+            projectDeviceId = value;
+            pathSuggestions = [];
+            remoteDirectory = null;
+            query = '';
+          }}
+        >
+          <Select.Trigger class="h-7 min-w-36 max-w-52 text-[11px]">
+            <span class="flex min-w-0 items-center gap-1.5">
+              <Monitor class="size-3" />
+              <span class="truncate">{projectDevice?.name ?? 'Choose device'}</span>
+            </span>
+          </Select.Trigger>
+          <Select.Content>
+            {#each deviceSessions.state.devices as device (device.deviceId)}
+              <Select.Item value={device.deviceId} label={device.name} disabled={!device.available}>
+                <span class="flex items-center gap-2">
+                  <span class={`size-2 rounded-full ${device.available ? 'bg-success' : 'bg-muted-foreground/50'}`}></span>
+                  <span>{device.name}</span>
+                  <span class="text-[10px] text-muted-foreground">{device.local ? 'this device' : device.state}</span>
+                </span>
+              </Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      {/if}
+      {#if usingLocalProjectDevice}
       <span class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Search</span>
       <div class="flex items-center gap-1 rounded-md border border-border bg-muted/30 p-0.5">
         <button
@@ -306,6 +470,16 @@
         </button>
         {/if}
       </div>
+      {:else if remoteDirectory}
+        <button
+          type="button"
+          class="max-w-56 truncate rounded px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+          disabled={!remoteDirectory.parentPath || remoteBrowsing}
+          onclick={() => projectDeviceId && void browseRemoteDevice(projectDeviceId, remoteDirectory?.parentPath ?? undefined)}
+        >
+          {remoteDirectory.parentPath ? '← Parent folder' : 'Workspace root'}
+        </button>
+      {/if}
       <span class="mobile-desktop-hint ml-auto text-[10px] text-muted-foreground">
         <kbd class="rounded border border-border bg-muted px-1 font-mono">Tab</kbd>
         <span class="mx-0.5">enter folder</span>
@@ -317,7 +491,36 @@
   {/if}
   <Command.List class="max-h-[60vh]">
     {#if commandPalette.mode === 'open-project'}
-      {#if pathSuggestions.length === 0}
+      {#if !usingLocalProjectDevice}
+        {#if remoteBrowsing}
+          <Command.Empty>Loading folders on {projectDevice?.name ?? 'device'}…</Command.Empty>
+        {:else if remoteBrowseError}
+          <Command.Empty>{remoteBrowseError}</Command.Empty>
+        {:else if remoteDirectory}
+          <Command.Group heading={`Open on ${projectDevice?.name ?? 'device'}`}>
+            <Command.Item value={`${remoteDirectory.path} open current folder`} onSelect={() => openRemoteProject(remoteDirectory!.path)}>
+              <FolderOpen />
+              <span class="flex-1 truncate">Open this folder as a project</span>
+            </Command.Item>
+            {#each remoteDirectory.directories as directory (directory.path)}
+              <Command.Item value={directory.path} onSelect={() => openRemoteProject(directory.path)}>
+                <Folder />
+                <span class="block min-w-0 flex-1 truncate font-mono text-sm" title={directory.path}>{directory.name}</span>
+              </Command.Item>
+            {/each}
+          </Command.Group>
+          {#if cloneCandidates.length > 0}
+            <Command.Group heading="Clone from another device">
+              {#each cloneCandidates as project (project.key)}
+                <Command.Item value={`clone ${project.name}`} onSelect={() => cloneProjectOnSelectedDevice(project)}>
+                  <Download />
+                  <span class="flex-1 truncate">Clone {project.name} here</span>
+                </Command.Item>
+              {/each}
+            </Command.Group>
+          {/if}
+        {/if}
+      {:else if pathSuggestions.length === 0}
         <Command.Empty>{query.trim() ? 'No matches' : 'Start typing a path…'}</Command.Empty>
       {:else}
         <Command.Group heading="Open project">

@@ -11,7 +11,8 @@ import type {
   TerminalExitEvent,
   TerminalLocationEvent,
   TerminalOutputEvent,
-  TerminalStatusEvent
+  TerminalStatusEvent,
+  TerminalInputLeaseEvent
 } from '@shared/types/terminal.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { WorkspaceDeviceStore } from '@soloe/domain';
@@ -24,10 +25,11 @@ import type {
   DevicePlacedSessionRequest,
   DeviceSessionSourceUpdateRequest,
   DeviceWorkspaceIntent,
+  WorkspaceDirectoryListing,
   DeviceWorkspacePlan
 } from '@shared/types/workspaces.js';
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
-import type { Session } from '@shared/types/sessions.js';
+import type { Session, SessionId } from '@shared/types/sessions.js';
 import type { TerminalInputLease, TerminalStartResult } from '@shared/types/terminal.js';
 import type {
   CreateGitHubRepositoryIntent,
@@ -37,6 +39,7 @@ import type {
   GitHubRepositoryPlan
 } from '@shared/types/providers.js';
 import type { PtyManager } from '../terminal/PtyManager.js';
+import type { RuntimeTerminalInputControl } from '../terminal/RemoteRuntimePtyProcessFactory.js';
 import { TerminalInputLeaseManager } from '@soloe/runtime';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -51,9 +54,13 @@ export interface LocalSessionDeviceOptions {
   projects?: Pick<ProjectStore, 'list' | 'open'>;
   git?: Pick<GitService, 'listWorktrees' | 'getRemoteUrl'>;
   workspaceDevice?: Pick<WorkspaceDeviceStore, 'snapshot' | 'reconcileLegacy'>;
-  workspaceService?: Pick<WorkspaceDeviceService, 'plan' | 'execute' | 'getCommand'>;
+  workspaceService?: Pick<
+    WorkspaceDeviceService,
+    'plan' | 'execute' | 'getCommand' | 'browseDirectories'
+  >;
   githubProvider?: Pick<GitHubProviderService, 'status' | 'listOwners' | 'plan' | 'execute' | 'getCommand'>;
   pty: PtyManager;
+  terminalInputControl?: RuntimeTerminalInputControl;
   clientId?: string;
 }
 
@@ -70,6 +77,8 @@ export class LocalSessionDevice implements SessionDevice {
   private readonly ptyDetachers: Array<() => void> = [];
   private readonly clientId: string;
   private readonly inputLeases: TerminalInputLeaseManager;
+  private readonly ownedInputLeases = new Map<string, TerminalInputLease>();
+  private inputControlDetach: (() => void) | null = null;
 
   constructor(private readonly options: LocalSessionDeviceOptions) {
     this.deviceId = options.descriptor.deviceId;
@@ -77,6 +86,12 @@ export class LocalSessionDevice implements SessionDevice {
     this.inputLeases = new TerminalInputLeaseManager({
       onChange: (event) => this.publishEvent('inputLease', event)
     });
+    if (options.terminalInputControl) {
+      this.inputControlDetach = options.terminalInputControl.onInputLease((event) => {
+        this.observeInputLease(event);
+        this.publishEvent('inputLease', event);
+      });
+    }
     this.currentStatus = {
       deviceId: this.deviceId,
       state: 'idle',
@@ -184,6 +199,11 @@ export class LocalSessionDevice implements SessionDevice {
     };
   }
 
+  reorderSessions(orderedIds: SessionId[]): Promise<Session[]> {
+    this.assertActive();
+    return this.options.sessions.reorder([...orderedIds]);
+  }
+
   async setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void> {
     this.assertActive();
     this.demandedTerminals.clear();
@@ -195,6 +215,12 @@ export class LocalSessionDevice implements SessionDevice {
   async terminalInput(terminalId: string, data: string): Promise<void> {
     this.assertActive();
     const id = requiredId(terminalId);
+    if (this.options.terminalInputControl) {
+      const lease = await this.options.terminalInputControl.acquireInputLease(id);
+      this.ownedInputLeases.set(id, lease);
+      await this.options.terminalInputControl.writeInput(id, data, lease);
+      return;
+    }
     const lease = this.inputLeases.acquire(id, this.clientId);
     this.inputLeases.authorizeInput(id, this.clientId, lease.leaseId);
     this.options.pty.write(id, data);
@@ -205,9 +231,38 @@ export class LocalSessionDevice implements SessionDevice {
     takeover = false
   ): Promise<TerminalInputLease> {
     this.assertActive();
+    if (this.options.terminalInputControl) {
+      return this.options.terminalInputControl.acquireInputLease(requiredId(terminalId), takeover)
+        .then((lease) => {
+          this.ownedInputLeases.set(lease.terminalId, lease);
+          return lease;
+        });
+    }
     return Promise.resolve(this.inputLeases.acquire(requiredId(terminalId), this.clientId, {
       takeover
     }));
+  }
+
+  terminalCurrentInputLease(terminalId: string): Promise<TerminalInputLease | null> {
+    this.assertActive();
+    const id = requiredId(terminalId);
+    if (this.options.terminalInputControl) {
+      return this.options.terminalInputControl.currentInputLease(id);
+    }
+    return Promise.resolve(this.inputLeases.current(id));
+  }
+
+  terminalReleaseInputLease(terminalId: string, leaseId: string): Promise<boolean> {
+    this.assertActive();
+    const id = requiredId(terminalId);
+    if (this.options.terminalInputControl) {
+      return this.options.terminalInputControl.releaseInputLease(id, requiredId(leaseId))
+        .then((released) => {
+          if (released) this.ownedInputLeases.delete(id);
+          return released;
+        });
+    }
+    return Promise.resolve(this.inputLeases.release(id, this.clientId, requiredId(leaseId)));
   }
 
   async terminalResize(terminalId: string, cols: number, rows: number): Promise<void> {
@@ -247,6 +302,12 @@ export class LocalSessionDevice implements SessionDevice {
     this.assertActive();
     if (!this.options.workspaceService) throw new Error('Local Workspace placement is unavailable.');
     return this.options.workspaceService.execute(structuredClone(command));
+  }
+
+  browseWorkspaceDirectories(path?: string): Promise<WorkspaceDirectoryListing> {
+    this.assertActive();
+    if (!this.options.workspaceService) throw new Error('Local Workspace placement is unavailable.');
+    return this.options.workspaceService.browseDirectories(path);
   }
 
   workspaceGetCommand(
@@ -334,6 +395,14 @@ export class LocalSessionDevice implements SessionDevice {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.inputControlDetach?.();
+    this.inputControlDetach = null;
+    if (this.options.terminalInputControl) {
+      for (const lease of this.ownedInputLeases.values()) {
+        void this.options.terminalInputControl.releaseInputLease(lease.terminalId, lease.leaseId);
+      }
+      this.ownedInputLeases.clear();
+    }
     this.inputLeases.releaseOwner(this.clientId);
     for (const detach of this.ptyDetachers.splice(0)) detach();
     this.currentStatus = {
@@ -384,6 +453,14 @@ export class LocalSessionDevice implements SessionDevice {
   private publishStatus(): void {
     const status = this.status;
     for (const listener of this.statusListeners) listener(status);
+  }
+
+  private observeInputLease(event: TerminalInputLeaseEvent): void {
+    const owned = this.ownedInputLeases.get(event.terminalId);
+    if (!owned) return;
+    if (!event.lease || event.lease.leaseId !== owned.leaseId) {
+      this.ownedInputLeases.delete(event.terminalId);
+    }
   }
 
   private assertActive(): void {

@@ -112,6 +112,7 @@ interface AppServices {
   projects: ProjectStore;
   notes: NotesStore;
   pty: PtyManager;
+  terminalInputControl: RemoteRuntimePtyProcessFactory;
   observer: AgentObserverManager;
   observerStore: AgentObserverStore;
   runtime: AgentRuntimeManager;
@@ -154,7 +155,7 @@ async function initializeConnections(): Promise<void> {
   connectionRegistry = new ConnectionRegistry({
     filePath: path.join(userDataPath, 'connections.json'),
     localName: hostname().trim() || 'This device',
-    discover: () => tailscale.discover(),
+    discover: (tailscaleHttpsPort) => tailscale.discover(tailscaleHttpsPort),
     probe: (endpoint) => probeSoloeEndpoint(
       endpoint,
       (input, init) => net.fetch(String(input), init)
@@ -338,7 +339,8 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
             workspaceDevice: localWorkspaceDevice,
             ...(localWorkspaceService ? { workspaceService: localWorkspaceService } : {}),
             ...(localGitHubProvider ? { githubProvider: localGitHubProvider } : {}),
-            pty: services.pty
+            pty: services.pty,
+            terminalInputControl: services.terminalInputControl
           })
     });
   }
@@ -349,6 +351,7 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
       || !machine.deviceId
       || !machine.endpoint
       || !machine.enabled
+      || machine.status !== 'available'
       || machine.trust !== 'pinned'
       || machine.compatibility?.status !== 'compatible'
       || machine.updateRequired
@@ -772,6 +775,7 @@ async function setupServices(): Promise<AppServices> {
     projects,
     notes,
     pty: manager,
+    terminalInputControl: runtimeProcessFactory,
     observer,
     observerStore,
     runtime,

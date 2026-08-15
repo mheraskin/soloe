@@ -1636,8 +1636,8 @@
                 onOpenNavigation={() => navigateMobile('navigation')}
               />
             </div>
-            {#if deviceSessions.selectedProjection}
-              <div class="h-full p-2">
+            {#if deviceSessions.selectedProjection && mobilePage === 'workspace' && mobileMode === 'terminal'}
+              <div class="h-full">
                 {#key deviceSessions.selectedProjection.key}
                   <DeviceTerminalViewer
                     projection={deviceSessions.selectedProjection}
@@ -1677,8 +1677,8 @@
         <div class={deviceSessions.selectedProjection ? 'hidden' : 'contents'}>
           <TerminalArea />
         </div>
-        {#if deviceSessions.selectedProjection}
-          <div class="min-w-0 flex-1 p-3">
+        {#if deviceSessions.selectedProjection && !railFullscreen}
+          <div class="min-w-0 flex-1">
             {#key deviceSessions.selectedProjection.key}
               <DeviceTerminalViewer
                 projection={deviceSessions.selectedProjection}

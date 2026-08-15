@@ -233,12 +233,18 @@ _Avoid_: Sync state, source of truth
 - **Notes Draft Durability** keys Worktree-owned state by **Worktree Identity**, keeps the latest in-memory text immediate, coalesces durable writes by immutable note address, flushes on shutdown, and cancels pending writes before discard
 - **Saved Note Recovery** remains restart-safe until the authoritative note write succeeds; navigation never replaces a dirty saved-note buffer after a failed flush
 - A running Session may outlive its **Terminal Presentation**; visible Sessions and a small recent set own the resident presentations
+- **Session Order** is shared presentation metadata, independent from Runtime
+  Placement; reordering a merged local/remote list preserves global slots and
+  propagates the same order to every represented Device
 - A running Session may outlive every **Application Server** and client; only
   explicit stop intent sent to the **Environment Runtime** ends its PTY
 - Replacing or rebuilding an **Application Server** disconnects transports but
   never shuts down the **Environment Runtime**
 - Exiting a browser or Electron client releases only its presentations and
   connections; **Tray Host** quit is the explicit whole-backend stop boundary
+- The **Tray Host** owns every native backend and client process group through
+  an OS-enforced lifetime boundary; a Tray Host crash stops those groups, and a
+  later Tray Host reclaims any verified residue left by an older build
 - One **Backend Placement** owns both the **Application Server** and
   **Environment Runtime**; changing it never moves or adopts running PTYs and
   therefore requires an explicit Tray Host stop followed by start

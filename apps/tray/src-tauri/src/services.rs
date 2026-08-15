@@ -658,19 +658,37 @@ impl BackendSupervisor {
         let foreign_services = live_services
             .iter()
             .filter(|(_, info)| info.owner_id.as_deref() != Some(self.owner_id.as_str()))
-            .map(|(service, _)| service_label(service))
+            .map(|(service, info)| (*service, info.clone()))
             .collect::<Vec<_>>();
         if !foreign_services.is_empty() {
-            let names = foreign_services.join(" and ");
-            let (verb, possessive, target) = if foreign_services.len() == 1 {
-                ("is", "its", "this orphaned service")
-            } else {
-                ("are", "their", "these orphaned services")
-            };
-            return Err(format!(
-                "{names} {verb} still running without {possessive} owning Tray Host; stop {target} before starting Soloe again"
-            ));
+            let names = foreign_services
+                .iter()
+                .map(|(service, _)| service_label(service))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            eprintln!("[tray] reclaiming {names} left behind by a previous Tray Host");
+            for (service, info) in foreign_services.iter().rev() {
+                let mut recorded_owner = existing_location.clone();
+                recorded_owner.owner_id = info
+                    .owner_id
+                    .clone()
+                    .ok_or_else(|| format!("{names} has no recorded owner"))?;
+                self.stop_service(service, &recorded_owner)
+                    .map_err(|error| {
+                        format!(
+                            "failed to reclaim {} after its Tray Host exited: {error}",
+                            service_label(service)
+                        )
+                    })?;
+            }
         }
+        let live_services = ["runtime", "server"]
+            .into_iter()
+            .filter_map(|service| {
+                self.live_service_info_for_location(service, existing_location)
+                    .map(|info| (service, info))
+            })
+            .collect::<Vec<_>>();
         if let Some(active) = active
             && !live_services.is_empty()
             && !active.same_location(&configured)
@@ -2872,7 +2890,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_live_services_without_their_owning_tray_as_orphaned() {
+    fn reclaims_live_services_after_their_owning_tray_exits() {
         let directory = env::temp_dir().join(format!(
             "soloe-tray-previous-owner-test-{}",
             std::process::id()
@@ -2880,7 +2898,7 @@ mod tests {
         let _ = fs::create_dir_all(&directory);
         let _instance_guard = TrayInstanceGuard::acquire(&directory).unwrap();
         let processes = Arc::new(FakeProcessOperations::with_running([30453, 30508]));
-        let supervisor = test_supervisor(directory.clone(), processes);
+        let supervisor = test_supervisor(directory.clone(), processes.clone());
         let previous_backend =
             ActiveBackend::from_settings(BackendSettings::default(), "previous-tray-owner");
         let runtime = ServiceInfo {
@@ -2928,10 +2946,18 @@ mod tests {
         )
         .unwrap();
 
+        let error = supervisor.prepare_backend().unwrap_err();
+
         assert_eq!(
-            supervisor.start().unwrap_err(),
-            "Environment Runtime and Soloe Server are still running without their owning Tray Host; stop these orphaned services before starting Soloe again"
+            error,
+            "Soloe source is incomplete at /repo; expected package.json"
         );
+        assert_eq!(
+            processes.calls.lock().unwrap().as_slice(),
+            &[(30508, false), (30453, false)]
+        );
+        assert!(!directory.join("runtime.json").exists());
+        assert!(!directory.join("server.json").exists());
 
         let _ = fs::remove_dir_all(directory);
     }

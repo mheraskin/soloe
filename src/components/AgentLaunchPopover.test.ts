@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const sessionMocks = vi.hoisted(() => ({
   createAgentWithDefaults: vi.fn(async () => undefined),
   createPreferredWithDefaults: vi.fn(async () => undefined),
-  createWithDefaults: vi.fn(async () => undefined)
+  createWithDefaults: vi.fn(async () => undefined),
+  reorder: vi.fn(async () => undefined)
+}));
+
+const deviceSessionMocks = vi.hoisted(() => ({
+  reorder: vi.fn(async () => undefined)
 }));
 
 vi.mock('../stores/sessions.svelte', () => ({
@@ -15,7 +20,26 @@ vi.mock('../stores/sessions.svelte', () => ({
     ...sessionMocks,
     selectedId: null,
     sessions: [],
-    reorder: vi.fn(async () => undefined)
+    runtime: {},
+    statusFor: vi.fn(() => 'idle'),
+    observationFor: vi.fn(() => null),
+    eventsFor: vi.fn(() => []),
+    childWorkersFor: vi.fn(() => [])
+  }
+}));
+
+vi.mock('../stores/device-sessions.svelte', () => ({
+  deviceSessions: {
+    ...deviceSessionMocks,
+    device: vi.fn(() => ({ local: false, available: true })),
+    isSelected: vi.fn(() => false)
+  }
+}));
+
+vi.mock('../stores/agent-notifications.svelte', () => ({
+  agentNotifications: {
+    markerFor: vi.fn(() => null),
+    pulsingSessionId: null
   }
 }));
 
@@ -29,7 +53,7 @@ vi.mock('../stores/settings.svelte', () => ({
 }));
 
 vi.mock('../stores/nav.svelte', () => ({
-  nav: { worktreeIndexHints: {} }
+  nav: { worktreeIndexHints: {}, sessionIndexHints: {} }
 }));
 
 vi.mock('../stores/git.svelte', () => ({
@@ -98,6 +122,7 @@ describe('AgentLaunchPopover touch gestures', () => {
     vi.useFakeTimers();
     document.body.innerHTML = '';
     for (const mock of Object.values(sessionMocks)) mock.mockClear();
+    for (const mock of Object.values(deviceSessionMocks)) mock.mockClear();
   });
 
   afterEach(async () => {
@@ -196,5 +221,65 @@ describe('AgentLaunchPopover touch gestures', () => {
 
     expect(dnd.drag).toBeNull();
     expect(onWorktreeDrop).not.toHaveBeenCalled();
+  });
+
+  it('keeps a remote Session projection draggable through the existing Session row', () => {
+    const remoteSession = {
+      id: 'remote-session',
+      name: 'Remote agent',
+      cwd: '/repo-mobile',
+      runMode: 'macos',
+      launch: { type: 'terminal', shell: 'auto' },
+      createdAt: '2026-08-14T20:00:00.000Z',
+      lastUsedAt: '2026-08-14T20:00:00.000Z'
+    } as const;
+    const secondSession = {
+      ...remoteSession,
+      id: 'second-remote-session',
+      name: 'Second remote agent'
+    };
+    const projection = {
+      ref: { deviceId: 'remote-device', sessionId: remoteSession.id },
+      key: 'remote-device/remote-session',
+      deviceName: 'Remote Mac',
+      available: true,
+      session: remoteSession,
+      runtime: null
+    };
+    const secondProjection = {
+      ...projection,
+      ref: { deviceId: 'remote-device', sessionId: secondSession.id },
+      key: 'remote-device/second-remote-session',
+      session: secondSession
+    };
+    const target = mountComponent(WorktreeGroup, {
+      title: 'feature/mobile',
+      cwd: '/repo-mobile',
+      projectId: null,
+      items: [remoteSession, secondSession],
+      projections: [projection, secondProjection],
+      allowLocalActions: false
+    });
+    const row = target.querySelector<HTMLElement>(`[data-session-id="${projection.key}"]`);
+
+    expect(row?.draggable).toBe(true);
+    row!.dispatchEvent(dragEvent('dragstart'));
+
+    expect(dnd.drag).toMatchObject({
+      kind: 'session',
+      id: projection.key,
+      projectId: null,
+      worktreeCwd: '/repo-mobile'
+    });
+
+    const secondRow = target.querySelector<HTMLElement>(
+      `[data-session-id="${secondProjection.key}"]`
+    );
+    secondRow!.dispatchEvent(dragEvent('drop'));
+
+    expect(deviceSessionMocks.reorder).toHaveBeenCalledWith([
+      secondProjection,
+      projection
+    ]);
   });
 });

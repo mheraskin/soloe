@@ -1,7 +1,15 @@
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::process::ChildStdin;
+#[cfg(all(unix, not(test)))]
+use std::process::Stdio;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,6 +17,20 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+
+pub const PROCESS_WATCHDOG_ARGUMENT: &str = "--soloe-process-watchdog";
+
+pub fn run_process_watchdog_if_requested() -> bool {
+    if std::env::args_os().nth(1).as_deref() != Some(PROCESS_WATCHDOG_ARGUMENT.as_ref()) {
+        return false;
+    }
+    #[cfg(unix)]
+    if let Err(error) = run_unix_process_watchdog(BufReader::new(std::io::stdin())) {
+        eprintln!("[tray-watchdog] {error}");
+        std::process::exit(1);
+    }
+    true
+}
 
 pub struct TrayInstanceGuard {
     _file: File,
@@ -150,6 +172,52 @@ impl NativeProcessOwner {
 #[cfg(unix)]
 struct NativeProcessOwnerInner {
     process_groups: Mutex<Vec<u32>>,
+    watchdog: Option<UnixProcessWatchdog>,
+}
+
+#[cfg(unix)]
+struct UnixProcessWatchdog {
+    input: Mutex<ChildStdin>,
+    _child: Mutex<Child>,
+}
+
+#[cfg(unix)]
+impl UnixProcessWatchdog {
+    #[cfg(not(test))]
+    fn spawn() -> Result<Self, String> {
+        use std::os::unix::process::CommandExt;
+
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("failed to locate the Tray Host executable: {error}"))?;
+        let mut command = Command::new(executable);
+        command
+            .arg(PROCESS_WATCHDOG_ARGUMENT)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .process_group(0);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("failed to start the process watchdog: {error}"))?;
+        let input = child
+            .stdin
+            .take()
+            .ok_or_else(|| "process watchdog input was not available".to_string())?;
+        Ok(Self {
+            input: Mutex::new(input),
+            _child: Mutex::new(child),
+        })
+    }
+
+    fn update(&self, process_group: u32, owned: bool) -> Result<(), String> {
+        let mut input = self
+            .input
+            .lock()
+            .map_err(|_| "process watchdog input lock poisoned".to_string())?;
+        writeln!(input, "{}{process_group}", if owned { '+' } else { '-' })
+            .and_then(|_| input.flush())
+            .map_err(|error| format!("process watchdog communication failed: {error}"))
+    }
 }
 
 #[cfg(unix)]
@@ -157,6 +225,10 @@ impl NativeProcessOwnerInner {
     fn new() -> Result<Self, String> {
         Ok(Self {
             process_groups: Mutex::new(Vec::new()),
+            #[cfg(not(test))]
+            watchdog: Some(UnixProcessWatchdog::spawn()?),
+            #[cfg(test)]
+            watchdog: None,
         })
     }
 
@@ -177,8 +249,23 @@ impl NativeProcessOwnerInner {
             .process_groups
             .lock()
             .map_err(|_| "native process-group lock poisoned".to_string())?;
-        if !groups.contains(&pid) {
+        let inserted = if !groups.contains(&pid) {
             groups.push(pid);
+            true
+        } else {
+            false
+        };
+        drop(groups);
+        if inserted
+            && let Some(watchdog) = &self.watchdog
+            && let Err(error) = watchdog.update(pid, true)
+        {
+            let mut groups = self
+                .process_groups
+                .lock()
+                .map_err(|_| "native process-group lock poisoned".to_string())?;
+            groups.retain(|group| *group != pid);
+            return Err(error);
         }
         Ok(())
     }
@@ -198,7 +285,12 @@ impl NativeProcessOwnerInner {
             .process_groups
             .lock()
             .map_err(|_| "native process-group lock poisoned".to_string())?;
+        let removed = groups.contains(&pid);
         groups.retain(|group| *group != pid);
+        drop(groups);
+        if removed && let Some(watchdog) = &self.watchdog {
+            watchdog.update(pid, false)?;
+        }
         Ok(())
     }
 
@@ -225,10 +317,61 @@ impl NativeProcessOwnerInner {
             }
         }
         if failures.is_empty() {
+            for group in groups {
+                if !unix_process_group_has_live_process(group) {
+                    self.release(group)?;
+                }
+            }
             Ok(())
         } else {
             Err(failures.join("; "))
         }
+    }
+}
+
+#[cfg(unix)]
+fn run_unix_process_watchdog(reader: impl BufRead) -> Result<(), String> {
+    let mut process_groups = HashSet::new();
+    for line in reader.lines() {
+        let line = line.map_err(|error| format!("failed to read owner updates: {error}"))?;
+        let (owned, value) = if let Some(value) = line.strip_prefix('+') {
+            (true, value)
+        } else if let Some(value) = line.strip_prefix('-') {
+            (false, value)
+        } else {
+            continue;
+        };
+        let Ok(process_group) = value.parse::<u32>() else {
+            continue;
+        };
+        if process_group == 0 {
+            continue;
+        }
+        if owned {
+            process_groups.insert(process_group);
+        } else {
+            process_groups.remove(&process_group);
+        }
+    }
+
+    let groups = process_groups.into_iter().collect::<Vec<_>>();
+    for group in &groups {
+        let _ = unix_signal_process_group(*group, libc::SIGTERM);
+    }
+    thread::sleep(Duration::from_millis(150));
+    let mut failures = Vec::new();
+    for group in groups {
+        if unix_process_group_has_live_process(group)
+            && !unix_signal_process_group(group, libc::SIGKILL)
+            && unix_process_group_has_live_process(group)
+        {
+            failures.push(format!("failed to kill orphaned process group {group}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }
 
@@ -398,6 +541,9 @@ mod tests {
     use std::process::{Command, Stdio};
 
     #[cfg(unix)]
+    use std::io::Cursor;
+
+    #[cfg(unix)]
     use std::thread;
 
     #[cfg(unix)]
@@ -460,6 +606,26 @@ mod tests {
             thread::sleep(Duration::from_millis(25));
         }
         assert!(!owner.owns_pid(child.id()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watchdog_ends_owned_process_groups_when_the_owner_pipe_closes() {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30 & wait"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+        let mut child = command.spawn().unwrap();
+        let process_group = child.id();
+
+        run_unix_process_watchdog(Cursor::new(format!("+{process_group}\n"))).unwrap();
+
+        let _ = child.wait();
+        assert!(!unix_process_group_has_live_process(process_group));
     }
 
     #[cfg(unix)]

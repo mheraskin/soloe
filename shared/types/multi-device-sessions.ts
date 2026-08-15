@@ -100,8 +100,15 @@ export interface MultiDeviceSessionState {
 export interface CreateMultiDeviceSessionRequest {
   workspaceKey: string;
   targetDeviceId: DeviceId;
+  /** Optional absolute Device path selected from its bounded workspace browser. */
+  targetPath?: string;
   session: Pick<SessionDraft, 'name' | 'launch'>
     & Partial<Pick<SessionDraft, 'tags' | 'pinned' | 'color'>>;
+}
+
+export interface BrowseDeviceWorkspaceDirectoriesRequest {
+  deviceId: DeviceId;
+  path?: string;
 }
 
 export interface MultiDeviceSessionCreationPlan {

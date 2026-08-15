@@ -10,6 +10,10 @@ const DISCOVERY_INTERVAL_MS = 30_000;
 const EMPTY_SNAPSHOT: ConnectionSnapshot = {
   activeId: 'local',
   machines: [],
+  preferences: {
+    tailscaleEnabled: true,
+    tailscaleHttpsPort: 4318
+  },
   tailscale: {
     state: 'unavailable',
     tailnet: null,
@@ -75,6 +79,13 @@ export class ConnectionsStore {
 
   async add(endpoint: string): Promise<void> {
     this.snapshot = await ipc.connections.add({ endpoint });
+  }
+
+  async configureTailscale(patch: {
+    tailscaleEnabled?: boolean;
+    tailscaleHttpsPort?: number;
+  }): Promise<void> {
+    this.snapshot = await ipc.connections.configure(patch);
   }
 
   async remove(id: ConnectionId): Promise<void> {

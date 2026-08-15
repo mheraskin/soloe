@@ -37,10 +37,13 @@ describe('MultiDeviceSessionsIpc', () => {
       refresh: vi.fn(async () => {
         throw new Error('Device is offline');
       }),
+      reorderSessions: vi.fn(async () => structuredClone(state)),
       create: vi.fn(),
       planCreate: vi.fn(),
       executeCreate: vi.fn(),
       startSession: vi.fn(),
+      terminalCurrentInputLease: vi.fn(async () => null),
+      terminalReleaseInputLease: vi.fn(async () => true),
       onState: vi.fn(() => () => undefined),
       onDeviceEvent: vi.fn(() => () => undefined)
     };
@@ -53,15 +56,44 @@ describe('MultiDeviceSessionsIpc', () => {
 
     expect(electronMocks.handlers.has(IpcChannels.sessions.deviceState)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.refreshDevices)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.reorderOnDevices)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.createOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.planCreateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.executeCreateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.startOnDevice)).toBe(true);
+    expect(electronMocks.handlers.has(
+      IpcChannels.sessions.deviceTerminalCurrentInputLease
+    )).toBe(true);
+    expect(electronMocks.handlers.has(
+      IpcChannels.sessions.deviceTerminalReleaseInputLease
+    )).toBe(true);
     await expect(invoke(IpcChannels.sessions.deviceState)).resolves.toEqual({
       ok: true,
       value: state
     });
     expect(sessions.refresh).not.toHaveBeenCalled();
+
+    const orderedRefs = [
+      { deviceId: 'device-1', sessionId: 'remote-session' },
+      { deviceId: 'device-2', sessionId: 'local-session' }
+    ];
+    await expect(invoke(IpcChannels.sessions.reorderOnDevices, orderedRefs)).resolves.toEqual({
+      ok: true,
+      value: state
+    });
+    expect(sessions.reorderSessions).toHaveBeenCalledWith(orderedRefs);
+
+    const ref = { deviceId: 'device-1', terminalId: 'terminal-1' };
+    await expect(invoke(
+      IpcChannels.sessions.deviceTerminalCurrentInputLease,
+      ref
+    )).resolves.toEqual({ ok: true, value: null });
+    await expect(invoke(
+      IpcChannels.sessions.deviceTerminalReleaseInputLease,
+      { ref, leaseId: 'lease-1' }
+    )).resolves.toEqual({ ok: true, value: true });
+    expect(sessions.terminalCurrentInputLease).toHaveBeenCalledWith(ref);
+    expect(sessions.terminalReleaseInputLease).toHaveBeenCalledWith(ref, 'lease-1');
   });
 
   it('publishes changed Device state to every live window', () => {
@@ -79,6 +111,7 @@ describe('MultiDeviceSessionsIpc', () => {
     const sessions = {
       state: vi.fn(() => structuredClone(state)),
       refresh: vi.fn(async () => structuredClone(state)),
+      reorderSessions: vi.fn(async () => structuredClone(state)),
       create: vi.fn(),
       planCreate: vi.fn(),
       executeCreate: vi.fn(),

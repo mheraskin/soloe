@@ -1,12 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Monitor, RefreshCw, Settings2 } from '@lucide/svelte';
+  import { Check, Monitor, RefreshCw, Settings2 } from '@lucide/svelte';
   import { connections } from '../stores/connections.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
-  import {
-    connectionDevicePresentation,
-    connectionDevices
-  } from '../lib/device-presentation.js';
   import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -19,13 +15,18 @@
     if (!deviceSessions.loaded) void deviceSessions.load().catch(reportError);
   });
 
-  let visibleMachines = $derived(connectionDevices(connections.snapshot.machines));
-  let localMachine = $derived(visibleMachines.find((machine) => machine.isSelf) ?? null);
+  let devices = $derived(deviceSessions.state.devices);
+  let selectedDevice = $derived(
+    deviceSessions.selectedDeviceId
+      ? devices.find((device) => device.deviceId === deviceSessions.selectedDeviceId) ?? null
+      : null
+  );
+  let triggerLabel = $derived(
+    selectedDevice?.name ?? (devices.length > 1 ? 'All devices' : devices[0]?.name ?? 'This device')
+  );
 
-  function dotClass(tone: 'online' | 'offline' | 'update'): string {
-    if (tone === 'online') return 'bg-success';
-    if (tone === 'update') return 'bg-warning';
-    return 'bg-muted-foreground/35';
+  function dotClass(available: boolean): string {
+    return available ? 'bg-success' : 'bg-muted-foreground/35';
   }
 
   async function refresh(): Promise<void> {
@@ -34,7 +35,7 @@
   }
 </script>
 
-{#if connections.supported}
+{#if deviceSessions.supported}
   <DropdownMenu.Root>
     <DropdownMenu.Trigger>
       {#snippet child({ props })}
@@ -43,32 +44,38 @@
           variant="ghost"
           size="xs"
           class="ml-1 min-w-0 max-w-64 gap-1.5 px-2 text-muted-foreground/80"
-          title={localMachine?.name ?? 'This device'}
-          aria-label={'Devices: ' + (localMachine?.name ?? 'This device')}
+          title={'Show devices: ' + triggerLabel}
+          aria-label={'Show devices: ' + triggerLabel}
         >
           <Monitor class="size-3" />
-          <span class="truncate">{localMachine?.name ?? 'This device'}</span>
+          <span class="truncate">{triggerLabel}</span>
         </Button>
       {/snippet}
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="start" class="w-80">
       <DropdownMenu.Label>Devices</DropdownMenu.Label>
-      {#each visibleMachines as machine (machine.id)}
-        {@const presentation = connectionDevicePresentation(machine)}
-        <div
-          class={'flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm '
-            + (presentation.isLocal ? 'bg-primary/10 text-primary ' : '')
-            + (presentation.tone !== 'online' && !presentation.isLocal ? 'opacity-60' : '')}
-          role="status"
+      {#if devices.length > 1}
+        <DropdownMenu.Item onSelect={() => deviceSessions.setDeviceFilter(null)}>
+          <Monitor />
+          <span class="min-w-0 flex-1 truncate">All devices</span>
+          {#if deviceSessions.selectedDeviceId === null}<Check class="size-4" />{/if}
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+      {/if}
+      {#each devices as device (device.deviceId)}
+        <DropdownMenu.Item
+          class={!device.available ? 'opacity-60' : undefined}
+          onSelect={() => deviceSessions.setDeviceFilter(device.deviceId)}
         >
-          <span class={'size-2 shrink-0 rounded-full ' + dotClass(presentation.tone)} aria-hidden="true"></span>
-          <span class="min-w-0 flex-1 truncate">{presentation.name}</span>
+          <span class={'size-2 shrink-0 rounded-full ' + dotClass(device.available)} aria-hidden="true"></span>
+          <span class="min-w-0 flex-1 truncate">{device.name}</span>
           <span class="shrink-0 text-xs text-muted-foreground">
-            {presentation.isLocal ? 'This device' : presentation.status}
+            {device.local ? 'This device' : device.state}
           </span>
-        </div>
+          {#if deviceSessions.selectedDeviceId === device.deviceId}<Check class="size-4" />{/if}
+        </DropdownMenu.Item>
       {:else}
-        <div class="px-2 py-2 text-sm text-muted-foreground">Loading this device…</div>
+        <div class="px-2 py-2 text-sm text-muted-foreground">Loading devices…</div>
       {/each}
       <DropdownMenu.Separator />
       <DropdownMenu.Item

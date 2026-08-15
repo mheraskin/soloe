@@ -7,8 +7,10 @@ import type {
   MultiDeviceSessionView
 } from '@shared/types/multi-device-sessions.js';
 import type { SessionRuntimeState } from '@shared/types/sessions.js';
+import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
 import type {
   TerminalExitEvent,
+  TerminalInputLease,
   TerminalInputLeaseEvent,
   TerminalLocationEvent,
   TerminalOutputEvent,
@@ -32,7 +34,9 @@ export class DeviceSessionsStore {
   loaded = $state(false);
   refreshing = $state(false);
   selectedSessionKey = $state<string | null>(null);
+  selectedDeviceId = $state<DeviceId | null>(null);
   inputLeaseEvents = $state<Record<string, TerminalInputLeaseEvent>>({});
+  ownedInputLeases = $state<Record<string, TerminalInputLease>>({});
   private detachState: (() => void) | null = null;
   private detachDeviceEvent: (() => void) | null = null;
   private loadRequest: Promise<void> | null = null;
@@ -56,8 +60,38 @@ export class DeviceSessionsStore {
     return this.sessions.find((session) => session.key === this.selectedSessionKey) ?? null;
   }
 
+  get localDevice() {
+    return this.state.devices.find((device) => device.local) ?? null;
+  }
+
   device(deviceId: DeviceId) {
     return this.state.devices.find((device) => device.deviceId === deviceId) ?? null;
+  }
+
+  setDeviceFilter(deviceId: DeviceId | null): void {
+    if (deviceId && !this.device(deviceId)) return;
+    this.selectedDeviceId = deviceId;
+    const selected = this.selectedProjection;
+    if (selected && !this.includesDevice(selected.ref.deviceId)) this.clearSelectedSession();
+    if (localSessions.selected && !this.includesDevice(this.localDevice?.deviceId ?? null)) {
+      localSessions.select(null);
+    }
+  }
+
+  includesDevice(deviceId: DeviceId | null): boolean {
+    return this.selectedDeviceId === null || this.selectedDeviceId === deviceId;
+  }
+
+  isSelected(projection: MultiDeviceSessionView): boolean {
+    const owner = this.device(projection.ref.deviceId);
+    return owner?.local
+      ? localSessions.selectedId === projection.ref.sessionId
+      : this.selectedSessionKey === projection.key;
+  }
+
+  localTerminalRef(terminalId: string): TerminalRef | null {
+    const deviceId = this.localDevice?.deviceId;
+    return deviceId ? { deviceId, terminalId } : null;
   }
 
   selectSession(key: string): void {
@@ -70,6 +104,7 @@ export class DeviceSessionsStore {
       localSessions.select(projection.ref.sessionId);
       return;
     }
+    localSessions.select(null);
     this.selectedSessionKey = key;
   }
 
@@ -126,6 +161,13 @@ export class DeviceSessionsStore {
     }
   }
 
+  async reorder(ordered: MultiDeviceSessionView[]): Promise<void> {
+    this.state = await ipc.sessions.reorderOnDevices(
+      ordered.map((projection) => structuredClone(projection.ref))
+    );
+    this.clearUnavailableSelection();
+  }
+
   async create(request: CreateMultiDeviceSessionRequest): Promise<MultiDeviceSessionView> {
     const created = await ipc.sessions.createOnDevice(structuredClone(request));
     await this.refresh();
@@ -144,6 +186,27 @@ export class DeviceSessionsStore {
     await this.refresh();
     this.selectSession(created.key);
     return created;
+  }
+
+  browseWorkspaceDirectories(
+    deviceId: DeviceId,
+    path?: string
+  ): Promise<WorkspaceDirectoryListing> {
+    return ipc.sessions.browseDeviceWorkspaceDirectories({
+      deviceId,
+      ...(path ? { path } : {})
+    });
+  }
+
+  async openProjectOnDevice(
+    deviceId: DeviceId,
+    project: import('@shared/types/projects.js').ProjectOpenRequest
+  ): Promise<void> {
+    this.state = await ipc.sessions.openProjectOnDevice({ deviceId, project });
+  }
+
+  async executePreparation(planId: string): Promise<void> {
+    this.state = await ipc.sessions.executeDevicePreparation(planId);
   }
 
   acquireTerminalOutput(
@@ -177,17 +240,81 @@ export class DeviceSessionsStore {
     return ipc.sessions.deviceTerminalInput(terminalRef, data).then(() => undefined);
   }
 
+  async claimTerminalInputControl(
+    terminalRef: TerminalRef,
+    takeover = false
+  ): Promise<boolean> {
+    try {
+      const lease = await ipc.sessions.deviceTerminalInputLease(terminalRef, takeover);
+      const key = terminalRefKey(terminalRef);
+      const previous = this.inputLeaseEvents[key]?.lease;
+      this.ownedInputLeases = { ...this.ownedInputLeases, [key]: lease };
+      this.inputLeaseEvents = {
+        ...this.inputLeaseEvents,
+        [key]: {
+          type: takeover && previous?.ownerId !== lease.ownerId ? 'taken-over' : 'acquired',
+          terminalId: terminalRef.terminalId,
+          lease,
+          previousOwnerId: previous?.ownerId,
+          observedAt: new Date().toISOString()
+        }
+      };
+      return true;
+    } catch {
+      await this.refreshTerminalInputLease(terminalRef).catch(() => null);
+      return false;
+    }
+  }
+
   async takeTerminalInputControl(terminalRef: TerminalRef): Promise<void> {
-    const lease = await ipc.sessions.deviceTerminalInputLease(terminalRef, true);
+    await this.claimTerminalInputControl(terminalRef, true);
+  }
+
+  async refreshTerminalInputLease(terminalRef: TerminalRef): Promise<TerminalInputLease | null> {
+    const lease = await ipc.sessions.deviceTerminalCurrentInputLease(terminalRef);
+    const key = terminalRefKey(terminalRef);
     this.inputLeaseEvents = {
       ...this.inputLeaseEvents,
-      [terminalRefKey(terminalRef)]: {
-        type: 'taken-over',
+      [key]: {
+        type: lease ? 'acquired' : 'released',
         terminalId: terminalRef.terminalId,
         lease,
         observedAt: new Date().toISOString()
       }
     };
+    if (this.ownedInputLeases[key]?.leaseId !== lease?.leaseId) {
+      const remaining = { ...this.ownedInputLeases };
+      delete remaining[key];
+      this.ownedInputLeases = remaining;
+    }
+    return lease;
+  }
+
+  ownsTerminalInput(terminalRef: TerminalRef): boolean {
+    const key = terminalRefKey(terminalRef);
+    const owned = this.ownedInputLeases[key];
+    const observed = this.inputLeaseEvents[key]?.lease;
+    return Boolean(owned && observed?.leaseId === owned.leaseId);
+  }
+
+  async releaseTerminalInputControl(terminalRef: TerminalRef): Promise<void> {
+    const key = terminalRefKey(terminalRef);
+    const lease = this.ownedInputLeases[key];
+    if (!lease) return;
+    const remaining = { ...this.ownedInputLeases };
+    delete remaining[key];
+    this.ownedInputLeases = remaining;
+    this.inputLeaseEvents = {
+      ...this.inputLeaseEvents,
+      [key]: {
+        type: 'released',
+        terminalId: terminalRef.terminalId,
+        lease: null,
+        previousOwnerId: lease.ownerId,
+        observedAt: new Date().toISOString()
+      }
+    };
+    await ipc.sessions.deviceTerminalReleaseInputLease(terminalRef, lease.leaseId);
   }
 
   terminalInputLeaseEvent(terminalRef: TerminalRef): TerminalInputLeaseEvent | null {
@@ -246,10 +373,16 @@ export class DeviceSessionsStore {
     if (envelope.event === 'inputLease') {
       const event = terminalEvent<TerminalInputLeaseEvent>(envelope.payload);
       if (!event) return;
+      const key = terminalRefKey({ deviceId: envelope.deviceId, terminalId: event.terminalId });
       this.inputLeaseEvents = {
         ...this.inputLeaseEvents,
-        [terminalRefKey({ deviceId: envelope.deviceId, terminalId: event.terminalId })]: event
+        [key]: event
       };
+      if (this.ownedInputLeases[key]?.leaseId !== event.lease?.leaseId) {
+        const remaining = { ...this.ownedInputLeases };
+        delete remaining[key];
+        this.ownedInputLeases = remaining;
+      }
       return;
     }
     if (envelope.event === 'status') {
@@ -304,6 +437,9 @@ export class DeviceSessionsStore {
   }
 
   private clearUnavailableSelection(): void {
+    if (this.selectedDeviceId && !this.device(this.selectedDeviceId)) {
+      this.selectedDeviceId = null;
+    }
     if (!this.selectedSessionKey) return;
     const selected = this.sessions.find((session) => session.key === this.selectedSessionKey);
     if (!selected?.available) this.selectedSessionKey = null;

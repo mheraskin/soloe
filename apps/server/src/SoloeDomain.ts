@@ -714,6 +714,15 @@ export class SoloeDomain extends EventEmitter {
         }
         return this.workspaceDevice.snapshot();
       }
+      if (call.method === "browseDirectories") {
+        requireArgumentCount("workspaceDevice.browseDirectories", call.args, 1);
+        if (!this.workspaceService) throw workspaceDeviceUnavailable();
+        const request = call.args[0] as { path?: unknown } | undefined;
+        if (request?.path !== undefined && typeof request.path !== "string") {
+          throw new RpcError("invalid_workspace_path", "Workspace directory path is invalid.");
+        }
+        return this.workspaceService.browseDirectories(request?.path);
+      }
       if (call.method === "plan") {
         requireArgumentCount("workspaceDevice.plan", call.args, 1);
         if (!this.workspaceService) throw workspaceDeviceUnavailable();

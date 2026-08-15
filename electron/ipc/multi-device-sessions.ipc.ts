@@ -10,15 +10,21 @@ export interface MultiDeviceSessionsIpcOptions {
     MultiDeviceSessions,
     | 'state'
     | 'refresh'
+    | 'reorderSessions'
     | 'create'
     | 'planCreate'
     | 'executeCreate'
+    | 'browseWorkspaceDirectories'
+    | 'openProjectOnDevice'
+    | 'executePreparation'
     | 'startSession'
     | 'onState'
     | 'onDeviceEvent'
     | 'setTerminalOutputDemand'
     | 'terminalInput'
     | 'terminalAcquireInputLease'
+    | 'terminalCurrentInputLease'
+    | 'terminalReleaseInputLease'
     | 'terminalResize'
     | 'terminalReplay'
     | 'terminalStop'
@@ -42,6 +48,9 @@ export class MultiDeviceSessionsIpc {
     ipcMain.handle(IpcChannels.sessions.refreshDevices, () =>
       ipcInvoke(() => this.options.sessions.refresh())
     );
+    ipcMain.handle(IpcChannels.sessions.reorderOnDevices, (_event, refs: SessionRef[]) =>
+      ipcInvoke(() => this.options.sessions.reorderSessions(structuredClone(refs)))
+    );
     ipcMain.handle(
       IpcChannels.sessions.createOnDevice,
       (_event, request: CreateMultiDeviceSessionRequest) =>
@@ -56,6 +65,26 @@ export class MultiDeviceSessionsIpc {
       IpcChannels.sessions.executeCreateOnDevice,
       (_event, planId: string) =>
         ipcInvoke(() => this.options.sessions.executeCreate(planId))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.browseDeviceWorkspaceDirectories,
+      (_event, request: { deviceId: string; path?: string }) =>
+        ipcInvoke(() => this.options.sessions.browseWorkspaceDirectories(
+          request.deviceId,
+          request.path
+        ))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.openProjectOnDevice,
+      (_event, request: { deviceId: string; project: import('@shared/types/projects.js').ProjectOpenRequest }) =>
+        ipcInvoke(() => this.options.sessions.openProjectOnDevice(
+          request.deviceId,
+          request.project
+        ))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.executeDevicePreparation,
+      (_event, planId: string) => ipcInvoke(() => this.options.sessions.executePreparation(planId))
     );
     ipcMain.handle(IpcChannels.sessions.startOnDevice, (_event, ref: SessionRef) =>
       ipcInvoke(() => this.options.sessions.startSession(structuredClone(ref)))
@@ -82,6 +111,19 @@ export class MultiDeviceSessionsIpc {
         ipcInvoke(() => this.options.sessions.terminalAcquireInputLease(
           structuredClone(request.ref),
           request.takeover ?? false
+        ))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.deviceTerminalCurrentInputLease,
+      (_event, ref: TerminalRef) =>
+        ipcInvoke(() => this.options.sessions.terminalCurrentInputLease(structuredClone(ref)))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.deviceTerminalReleaseInputLease,
+      (_event, request: { ref: TerminalRef; leaseId: string }) =>
+        ipcInvoke(() => this.options.sessions.terminalReleaseInputLease(
+          structuredClone(request.ref),
+          request.leaseId
         ))
     );
     ipcMain.handle(
@@ -129,13 +171,19 @@ export class MultiDeviceSessionsIpc {
     this.detachDeviceEvent = null;
     ipcMain.removeHandler(IpcChannels.sessions.deviceState);
     ipcMain.removeHandler(IpcChannels.sessions.refreshDevices);
+    ipcMain.removeHandler(IpcChannels.sessions.reorderOnDevices);
     ipcMain.removeHandler(IpcChannels.sessions.createOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.planCreateOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.executeCreateOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.browseDeviceWorkspaceDirectories);
+    ipcMain.removeHandler(IpcChannels.sessions.openProjectOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.executeDevicePreparation);
     ipcMain.removeHandler(IpcChannels.sessions.startOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalDemand);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInput);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInputLease);
+    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalCurrentInputLease);
+    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalReleaseInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalResize);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalReplay);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalStop);

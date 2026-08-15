@@ -2,6 +2,8 @@
   import { BookOpen, ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
   import type { RunMode, Session, SessionId } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
+  import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
+  import type { DeviceId } from '@shared/types/devices.js';
   import { sessions } from '../stores/sessions.svelte';
   import { nav } from '../stores/nav.svelte';
   import { settings } from '../stores/settings.svelte';
@@ -17,12 +19,18 @@
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
   import WorktreeOverviewDialog from './WorktreeOverviewDialog.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
 
   let {
     title,
     cwd,
     projectId,
     items,
+    projections = null,
+    workspaceKey,
+    defaultDeviceId = null,
+    showDevice = false,
+    allowLocalActions = true,
     runMode,
     wslDistro,
     isMain = false,
@@ -34,6 +42,11 @@
     cwd: string;
     projectId: ProjectId | null;
     items: Session[];
+    projections?: MultiDeviceSessionView[] | null;
+    workspaceKey?: string;
+    defaultDeviceId?: DeviceId | null;
+    showDevice?: boolean;
+    allowLocalActions?: boolean;
     runMode?: RunMode;
     wslDistro?: string;
     isMain?: boolean;
@@ -57,14 +70,28 @@
     if (forceShow || labelMatches) return items;
     return rankMulti(trimmedFilter, items, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
   });
+  let visibleProjections = $derived.by(() => {
+    if (!projections) return null;
+    if (!trimmedFilter || forceShow || labelMatches) return projections;
+    return rankMulti(trimmedFilter, projections, (projection) => [
+      projection.session.name,
+      projection.session.cwd,
+      projection.deviceName,
+      ...(projection.session.tags ?? [])
+    ]).map((result) => result.item);
+  });
   let hidden = $derived(
-    trimmedFilter.length > 0 && !forceShow && !labelMatches && visible.length === 0
+    trimmedFilter.length > 0
+      && !forceShow
+      && !labelMatches
+      && (visibleProjections?.length ?? visible.length) === 0
   );
   let isFiltering = $derived(trimmedFilter.length > 0);
   // While filtering we force the group open so matches stay reachable; the
   // user's saved `expanded` is preserved and restored once the filter clears.
   let effectiveExpanded = $derived(isFiltering ? true : expanded);
   let containsSelected = $derived.by(() => {
+    if (projections) return projections.some((projection) => deviceSessions.isSelected(projection));
     const selId = sessions.selectedId;
     if (!selId) return false;
     return items.some((s) => s.id === selId);
@@ -73,15 +100,15 @@
   // header takes on the selected look so the user keeps a visual anchor.
   let highlightWhenCollapsed = $derived(containsSelected && !effectiveExpanded);
 
-  let shortstat = $derived(git.shortstatFor(cwd, {
+  let shortstat = $derived(allowLocalActions ? git.shortstatFor(cwd, {
     ...(runMode ? { runMode } : {}),
     ...(wslDistro ? { wslDistro } : {})
-  }));
+  }) : null);
   let hasDiff = $derived(
     !!shortstat && shortstat.isRepo && (shortstat.insertions > 0 || shortstat.deletions > 0)
   );
   let kbdIndex = $derived(
-    settings.current.shortcuts.shiftNumberNavigation === 'worktree'
+    allowLocalActions && settings.current.shortcuts.shiftNumberNavigation === 'worktree'
       ? nav.worktreeIndexHints[cwd] ?? null
       : null
   );
@@ -101,7 +128,9 @@
     // Reorder is constrained to siblings inside this worktree group only.
     // Sessions from other worktrees keep their relative position; only the
     // members of this group get a new linear order.
-    const ids = items.map((s) => s.id);
+    const ids = projections
+      ? projections.map((projection) => projection.key)
+      : items.map((session) => session.id);
     if (!ids.includes(draggedId) || !ids.includes(targetId)) return;
     const without = ids.filter((id) => id !== draggedId);
     let insertAt = without.indexOf(targetId);
@@ -109,6 +138,15 @@
     if (position === 'after') insertAt += 1;
     const newSubset = [...without.slice(0, insertAt), draggedId, ...without.slice(insertAt)];
     if (sameOrder(ids, newSubset)) return;
+
+    if (projections) {
+      const byKey = new Map(projections.map((projection) => [projection.key, projection]));
+      const ordered = newSubset
+        .map((key) => byKey.get(key))
+        .filter((projection): projection is MultiDeviceSessionView => projection !== undefined);
+      void deviceSessions.reorder(ordered).catch(reportError);
+      return;
+    }
 
     const subsetSet = new Set(ids);
     const queue = [...newSubset];
@@ -244,10 +282,10 @@
           <Badge variant="outline" class="h-4 rounded-full px-1.5 text-[9px] font-medium tracking-wider uppercase">main</Badge>
         {/if}
         <Badge variant="secondary" class="h-4 rounded-full bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-          {items.length}
+          {projections?.length ?? items.length}
         </Badge>
       </Collapsible.Trigger>
-      <Button
+      {#if allowLocalActions}<Button
         variant="ghost"
         size="icon-sm"
         class="shrink-0"
@@ -257,20 +295,35 @@
       >
         <BookOpen />
       </Button>
+      {/if}
       <AgentLaunchPopover
         {projectId}
         {cwd}
         branch={title}
+        {workspaceKey}
+        {defaultDeviceId}
         title="New session in this worktree"
         ariaLabel="New session in this worktree"
       />
     </div>
     <Collapsible.Content class="flex flex-col gap-px pl-4">
-      {#each visible as session (session.id)}
-        <SessionItem {session} branch={title} {onSessionDrop} />
-      {/each}
+      {#if visibleProjections}
+        {#each visibleProjections as projection (projection.key)}
+          <SessionItem
+            session={projection.session}
+            branch={title}
+            {projection}
+            {showDevice}
+            {onSessionDrop}
+          />
+        {/each}
+      {:else}
+        {#each visible as session (session.id)}
+          <SessionItem {session} branch={title} {onSessionDrop} />
+        {/each}
+      {/if}
     </Collapsible.Content>
   </Collapsible.Root>
   </div>
-  <WorktreeOverviewDialog bind:open={overviewOpen} {cwd} branch={title} />
+  {#if allowLocalActions}<WorktreeOverviewDialog bind:open={overviewOpen} {cwd} branch={title} />{/if}
 {/if}

@@ -41,10 +41,12 @@
   let {
     session,
     onRename = null,
+    disabled = false,
     trigger
   }: {
     session: Session;
     onRename?: (() => void | Promise<void>) | null;
+    disabled?: boolean;
     trigger: Snippet<[{ props: Record<string, unknown> }]>;
   } = $props();
 
@@ -134,6 +136,9 @@
   }
 </script>
 
+{#if disabled}
+  {@render trigger({ props: {} })}
+{:else}
 <ContextMenu.Root
   open={menuOpen}
   onOpenChange={(v) => {
@@ -247,3 +252,4 @@
     </ContextMenu.Item>
   </ContextMenu.Content>
 </ContextMenu.Root>
+{/if}

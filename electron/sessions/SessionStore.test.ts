@@ -119,6 +119,17 @@ describe('SessionStore — validation', () => {
 });
 
 describe('SessionStore — update/delete', () => {
+  it('preserves global order slots that belong to sessions on other devices', async () => {
+    const store = new SessionStore(storePath);
+    const first = await store.create(standardDraft({ name: 'First' }));
+    const second = await store.create(standardDraft({ name: 'Second' }));
+
+    await store.reorder([second.id, 'session-on-another-device', first.id]);
+
+    expect(await store.get(second.id)).toMatchObject({ sortIndex: 0 });
+    expect(await store.get(first.id)).toMatchObject({ sortIndex: 2 });
+  });
+
   it('updates a session and re-validates the merged result', async () => {
     const store = new SessionStore(storePath);
     const created = await store.create(standardDraft());

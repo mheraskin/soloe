@@ -495,7 +495,12 @@ function buildSoloeEnv(
   provider: 'claude_code' | 'codex' | undefined,
   ctx: SessionBuildContext
 ): Record<string, string> {
-  const env: Record<string, string> = { SOLOE_SESSION_ID: sessionId };
+  const inheritedTerm = ctx.baseEnv['TERM']?.trim();
+  const env: Record<string, string> = {
+    SOLOE_SESSION_ID: sessionId,
+    TERM: inheritedTerm && inheritedTerm !== 'dumb' ? inheritedTerm : 'xterm-256color',
+    COLORTERM: ctx.baseEnv['COLORTERM']?.trim() || 'truecolor'
+  };
   if (provider) env['SOLOE_AGENT_PROVIDER'] = provider;
   if (ctx.bridge) {
     env['SOLOE_BRIDGE_URL'] =

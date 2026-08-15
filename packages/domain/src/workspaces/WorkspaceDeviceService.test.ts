@@ -20,10 +20,9 @@ const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 const CLIENT_ID = '22222222-2222-4222-8222-222222222222';
 const COMMAND_ID = '33333333-3333-4333-8333-333333333333';
 const CHECKOUT_ID = '44444444-4444-4444-8444-444444444444';
+const directories: string[] = [];
 
 describe('WorkspaceDeviceService', () => {
-  const directories: string[] = [];
-
   afterEach(async () => {
     await Promise.all(directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true })
@@ -58,6 +57,35 @@ describe('WorkspaceDeviceService', () => {
       result: { checkout: { id: CHECKOUT_ID, lifecycle: 'ready', role: 'workspace' } }
     });
     expect(git(fixture.repository, ['worktree', 'list', '--porcelain'])).toContain(targetPath);
+  });
+
+  it('browses directories only inside configured Workspace roots', async () => {
+    const fixture = await createFixture();
+    const alpha = path.join(fixture.managedRoot, 'alpha');
+    const beta = path.join(fixture.managedRoot, 'beta');
+    await Promise.all([
+      mkdir(path.join(alpha, 'nested'), { recursive: true }),
+      mkdir(beta, { recursive: true })
+    ]);
+
+    const root = await fixture.service.browseDirectories();
+    expect(root).toMatchObject({
+      path: fixture.managedRoot,
+      parentPath: null,
+      roots: [{ name: 'managed', path: fixture.managedRoot }]
+    });
+    expect(root.directories.map((entry) => entry.name)).toEqual(['alpha', 'beta']);
+
+    const child = await fixture.service.browseDirectories(alpha);
+    expect(child).toMatchObject({
+      path: alpha,
+      parentPath: fixture.managedRoot,
+      directories: [{ name: 'nested', path: path.join(alpha, 'nested') }]
+    });
+
+    await expect(fixture.service.browseDirectories(fixture.directory)).rejects.toThrow(
+      'configured workspace root'
+    );
   });
 
   it('blocks a Branch already checked out elsewhere and paths outside managed roots', async () => {
@@ -388,6 +416,7 @@ describe('WorkspaceDeviceService', () => {
 
 async function createFixture() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'soloe-workspace-service-'));
+  directories.push(directory);
   const repository = path.join(directory, 'repository');
   const managedRoot = path.join(directory, 'managed');
   await mkdir(managedRoot, { recursive: true });

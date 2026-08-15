@@ -10,7 +10,7 @@ import type {
   DeviceEventEnvelope,
   DeviceId
 } from '@shared/types/devices.js';
-import type { Session, SessionRuntimeState } from '@shared/types/sessions.js';
+import type { Session, SessionId, SessionRuntimeState } from '@shared/types/sessions.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type {
@@ -23,7 +23,11 @@ import type {
   DeviceSessionSourceUpdateRequest,
   DeviceWorkspaceSnapshot
 } from '@shared/types/workspaces.js';
-import type { DeviceWorkspaceIntent, DeviceWorkspacePlan } from '@shared/types/workspaces.js';
+import type {
+  DeviceWorkspaceIntent,
+  DeviceWorkspacePlan,
+  WorkspaceDirectoryListing
+} from '@shared/types/workspaces.js';
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
 import type {
   CreateGitHubRepositoryIntent,
@@ -227,6 +231,10 @@ export class RemoteSessionDevice implements SessionDevice {
     };
   }
 
+  reorderSessions(orderedIds: SessionId[]): Promise<Session[]> {
+    return this.rpc('sessions', 'reorder', [[...orderedIds]]);
+  }
+
   async setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void> {
     const desired = new Set(terminalIds);
     const removals = [...this.demandedTerminals].filter((id) => !desired.has(id));
@@ -251,6 +259,19 @@ export class RemoteSessionDevice implements SessionDevice {
     return this.rpc('terminal', 'acquireInputLease', [
       requiredId(terminalId, 'Terminal'),
       takeover
+    ]);
+  }
+
+  terminalCurrentInputLease(terminalId: string): Promise<TerminalInputLease | null> {
+    return this.rpc('terminal', 'currentInputLease', [
+      requiredId(terminalId, 'Terminal')
+    ]);
+  }
+
+  terminalReleaseInputLease(terminalId: string, leaseId: string): Promise<boolean> {
+    return this.rpc('terminal', 'releaseInputLease', [
+      requiredId(terminalId, 'Terminal'),
+      requiredId(leaseId, 'Terminal input lease')
     ]);
   }
 
@@ -293,6 +314,10 @@ export class RemoteSessionDevice implements SessionDevice {
     command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
   ): Promise<DeviceOperationReceipt> {
     return this.rpc('workspaceDevice', 'execute', [structuredClone(command)]);
+  }
+
+  browseWorkspaceDirectories(path?: string): Promise<WorkspaceDirectoryListing> {
+    return this.rpc('workspaceDevice', 'browseDirectories', [{ ...(path ? { path } : {}) }]);
   }
 
   workspaceGetCommand(

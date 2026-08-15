@@ -63,6 +63,7 @@ const browserApi: BrowserApi = {
 const connectionsApi: ConnectionsApi = {
   get: () => ipcRenderer.invoke(IpcChannels.connections.get),
   refresh: () => ipcRenderer.invoke(IpcChannels.connections.refresh),
+  configure: (patch) => ipcRenderer.invoke(IpcChannels.connections.configure, patch),
   add: (request) => ipcRenderer.invoke(IpcChannels.connections.add, request),
   remove: (id) => ipcRenderer.invoke(IpcChannels.connections.remove, id),
   setEnabled: (id, enabled) => ipcRenderer.invoke(IpcChannels.connections.enable, id, enabled),
@@ -91,12 +92,20 @@ if (!tailscaleSession) api.vault = vaultApi;
 api.connections = connectionsApi;
 api.sessions.deviceState = () => ipcRenderer.invoke(IpcChannels.sessions.deviceState);
 api.sessions.refreshDevices = () => ipcRenderer.invoke(IpcChannels.sessions.refreshDevices);
+api.sessions.reorderOnDevices = (refs: SessionRef[]) =>
+  ipcRenderer.invoke(IpcChannels.sessions.reorderOnDevices, refs);
 api.sessions.createOnDevice = (request: CreateMultiDeviceSessionRequest) =>
   ipcRenderer.invoke(IpcChannels.sessions.createOnDevice, request);
 api.sessions.planCreateOnDevice = (request: CreateMultiDeviceSessionRequest) =>
   ipcRenderer.invoke(IpcChannels.sessions.planCreateOnDevice, request);
 api.sessions.executeCreateOnDevice = (planId: string) =>
   ipcRenderer.invoke(IpcChannels.sessions.executeCreateOnDevice, planId);
+api.sessions.browseDeviceWorkspaceDirectories = (request) =>
+  ipcRenderer.invoke(IpcChannels.sessions.browseDeviceWorkspaceDirectories, request);
+api.sessions.openProjectOnDevice = (request) =>
+  ipcRenderer.invoke(IpcChannels.sessions.openProjectOnDevice, request);
+api.sessions.executeDevicePreparation = (planId) =>
+  ipcRenderer.invoke(IpcChannels.sessions.executeDevicePreparation, planId);
 api.sessions.startOnDevice = (ref: SessionRef) =>
   ipcRenderer.invoke(IpcChannels.sessions.startOnDevice, ref);
 api.sessions.setDeviceTerminalDemand = (refs: TerminalRef[]) =>
@@ -105,6 +114,10 @@ api.sessions.deviceTerminalInput = (request: { ref: TerminalRef; data: string })
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInput, request);
 api.sessions.deviceTerminalInputLease = (request: { ref: TerminalRef; takeover?: boolean }) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInputLease, request);
+api.sessions.deviceTerminalCurrentInputLease = (ref: TerminalRef) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalCurrentInputLease, ref);
+api.sessions.deviceTerminalReleaseInputLease = (request: { ref: TerminalRef; leaseId: string }) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReleaseInputLease, request);
 api.sessions.deviceTerminalResize = (request: { ref: TerminalRef; cols: number; rows: number }) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalResize, request);
 api.sessions.deviceTerminalReplay = (ref: TerminalRef, afterSeq?: number) =>

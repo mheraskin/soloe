@@ -179,6 +179,7 @@ describe('MultiDeviceSessions', () => {
     const request = {
       workspaceKey: state.projects[0]!.workspaces[0]!.key,
       targetDeviceId: LAPTOP_ID,
+      targetPath: 'C:\\managed\\custom-soloe',
       session: {
         name: 'Codex',
         launch: { type: 'agent' as const, provider: 'codex' as const, resumeMode: 'new' as const }
@@ -190,7 +191,7 @@ describe('MultiDeviceSessions', () => {
     expect(plan).toMatchObject({
       action: 'clone-project',
       deviceName: 'LAPTOPLORES',
-      targetPath: 'C:\\managed\\soloe-feature',
+      targetPath: 'C:\\managed\\custom-soloe',
       executable: true
     });
     expect(laptop.plannedIntents).toEqual([
@@ -203,14 +204,56 @@ describe('MultiDeviceSessions', () => {
 
     const created = await sessions.executeCreate(plan.planId);
 
-    expect(laptop.openedProjectPaths).toEqual(['C:\\managed\\soloe-feature']);
+    expect(laptop.openedProjectPaths).toEqual(['C:\\managed\\custom-soloe']);
     expect(created).toMatchObject({
       ref: { deviceId: LAPTOP_ID },
       session: {
-        cwd: 'C:\\managed\\soloe-feature',
+        cwd: 'C:\\managed\\custom-soloe',
         projectId: 'windows-soloe'
       }
     });
+  });
+
+  it('prepares a missing Project on another Device without creating a Session', async () => {
+    const mac = fakeDevice({
+      deviceId: MAC_ID,
+      name: 'MacBook',
+      projectId: 'mac-soloe',
+      projectPath: '/Users/me/soloe',
+      workspacePath: '/Users/me/soloe',
+      branch: 'main',
+      sessions: [],
+      local: true
+    });
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\managed\\soloe',
+      branch: 'main',
+      sessions: [],
+      hasProject: false
+    });
+    const sessions = new MultiDeviceSessions({ devices: [mac, laptop] });
+    const state = await sessions.refresh();
+    const plan = await sessions.planCreate({
+      workspaceKey: state.projects[0]!.workspaces[0]!.key,
+      targetDeviceId: LAPTOP_ID,
+      targetPath: 'C:\\managed\\prepared-soloe',
+      session: {
+        name: 'Placement preview',
+        launch: { type: 'terminal', shell: 'auto' }
+      }
+    });
+
+    const prepared = await sessions.executePreparation(plan.planId);
+
+    expect(laptop.openedProjectPaths).toEqual(['C:\\managed\\prepared-soloe']);
+    expect(laptop.startedSessionIds).toEqual([]);
+    expect(prepared.projects.flatMap((project) =>
+      project.workspaces.flatMap((workspace) => workspace.sessions)
+    )).toHaveLength(0);
   });
 
   it('routes terminal control to the Device that owns the Session', async () => {
@@ -244,6 +287,12 @@ describe('MultiDeviceSessions', () => {
     expect(laptop.terminalInputs).toEqual([
       { terminalId: 'terminal-remote-session', data: 'git status\r' }
     ]);
+
+    const ref = { deviceId: LAPTOP_ID, terminalId: 'terminal-remote-session' };
+    const lease = await sessions.terminalAcquireInputLease(ref);
+    await expect(sessions.terminalCurrentInputLease(ref)).resolves.toEqual(lease);
+    await expect(sessions.terminalReleaseInputLease(ref, lease.leaseId)).resolves.toBe(true);
+    await expect(sessions.terminalCurrentInputLease(ref)).resolves.toBeNull();
   });
 
   it('starts a stopped Session on its owning Device before opening it', async () => {
@@ -326,6 +375,52 @@ describe('MultiDeviceSessions', () => {
     expect(first).toEqual(second);
     expect(laptop.readInventoryCalls).toBe(1);
   });
+
+  it('propagates one merged Session order to every owning Device', async () => {
+    const mac = fakeDevice({
+      deviceId: MAC_ID,
+      name: 'MacBook',
+      projectId: 'mac-soloe',
+      projectPath: '/Users/me/soloe',
+      workspacePath: '/Users/me/soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: [{
+        ...session({ id: 'mac-session', projectId: 'mac-soloe', cwd: '/Users/me/soloe-feature' }),
+        sortIndex: 1
+      }],
+      local: true
+    });
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: [{
+        ...session({
+          id: 'remote-session',
+          projectId: 'windows-soloe',
+          cwd: 'C:\\src\\soloe-feature'
+        }),
+        sortIndex: 0
+      }]
+    });
+    const multiDevice = new MultiDeviceSessions({ devices: [mac, laptop] });
+    await multiDevice.refresh();
+
+    const state = await multiDevice.reorderSessions([
+      { deviceId: MAC_ID, sessionId: 'mac-session' },
+      { deviceId: LAPTOP_ID, sessionId: 'remote-session' }
+    ]);
+
+    expect(mac.reorderRequests).toEqual([['mac-session', 'remote-session']]);
+    expect(laptop.reorderRequests).toEqual([['mac-session', 'remote-session']]);
+    expect(state.projects[0]?.workspaces[0]?.sessions.map((item) => item.ref)).toEqual([
+      { deviceId: MAC_ID, sessionId: 'mac-session' },
+      { deviceId: LAPTOP_ID, sessionId: 'remote-session' }
+    ]);
+  });
 });
 
 function fakeDevice(input: {
@@ -347,6 +442,7 @@ function fakeDevice(input: {
   plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[];
   openedProjectPaths: string[];
   readonly readInventoryCalls: number;
+  reorderRequests: string[][];
 } {
   const descriptor = deviceDescriptor(input.deviceId, input.name);
   const status: SessionDeviceStatus = {
@@ -385,8 +481,10 @@ function fakeDevice(input: {
   };
   const startedSessionIds: string[] = [];
   const terminalInputs: Array<{ terminalId: string; data: string }> = [];
+  const terminalLeases = new Map<string, import('@shared/types/terminal.js').TerminalInputLease>();
   const plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[] = [];
   const openedProjectPaths: string[] = [];
+  const reorderRequests: string[][] = [];
   let pendingClone: import('@shared/types/workspaces.js').CloneProjectPresenceIntent | null = null;
   let disposed = false;
   let readInventoryCalls = 0;
@@ -399,9 +497,35 @@ function fakeDevice(input: {
       readInventoryCalls += 1;
       return structuredClone(inventory);
     },
+    reorderSessions: async (orderedIds) => {
+      reorderRequests.push([...orderedIds]);
+      const positions = new Map(orderedIds.map((id, index) => [id, index]));
+      inventory.sessions = inventory.sessions.map((item) => {
+        const sortIndex = positions.get(item.id);
+        return sortIndex === undefined ? item : { ...item, sortIndex };
+      });
+      return structuredClone(inventory.sessions);
+    },
     setTerminalOutputDemand: async () => undefined,
     terminalInput: async (terminalId, data) => {
       terminalInputs.push({ terminalId, data });
+    },
+    terminalAcquireInputLease: async (terminalId) => {
+      const lease = {
+        terminalId,
+        leaseId: `lease-${terminalId}`,
+        ownerId: `owner-${input.deviceId}`,
+        acquiredAt: '2026-08-13T10:00:00.000Z',
+        expiresAt: '2026-08-13T10:00:15.000Z'
+      };
+      terminalLeases.set(terminalId, lease);
+      return lease;
+    },
+    terminalCurrentInputLease: async (terminalId) => terminalLeases.get(terminalId) ?? null,
+    terminalReleaseInputLease: async (terminalId, leaseId) => {
+      if (terminalLeases.get(terminalId)?.leaseId !== leaseId) return false;
+      terminalLeases.delete(terminalId);
+      return true;
     },
     terminalResize: async () => undefined,
     terminalReplay: async () => ({ terminalRef: null, sessionRef: null, snapshot: null }),
@@ -421,7 +545,7 @@ function fakeDevice(input: {
         warnings: ['This Project will be cloned on LAPTOPLORES.'],
         preview: {
           repositoryPath: null,
-          targetPath: input.workspacePath,
+          targetPath: 'path' in intent && intent.path ? intent.path : input.workspacePath,
           sourceLabel: input.branch
         },
         createdAt: '2026-08-13T10:00:00.000Z',
@@ -451,7 +575,9 @@ function fakeDevice(input: {
           checkout: {
             id: command.intent.kind === 'clone-project-presence' ? command.intent.checkoutId : '',
             repositoryId: command.intent.kind === 'clone-project-presence' ? command.intent.repositoryId : '',
-            path: input.workspacePath,
+            path: 'path' in command.intent && command.intent.path
+              ? command.intent.path
+              : input.workspacePath,
             runMode: descriptor.platform,
             role: 'main',
             lifecycle: 'ready',
@@ -520,6 +646,7 @@ function fakeDevice(input: {
     plannedIntents,
     openedProjectPaths,
     terminalInputs,
+    reorderRequests,
     get disposed() {
       return disposed;
     },

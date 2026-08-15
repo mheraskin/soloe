@@ -7,12 +7,13 @@ import type {
 } from '@shared/types/devices.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
-import type { Session, SessionDraft, SessionRuntimeState } from '@shared/types/sessions.js';
+import type { Session, SessionDraft, SessionId, SessionRuntimeState } from '@shared/types/sessions.js';
 import type { TerminalInputLease, TerminalStartResult } from '@shared/types/terminal.js';
 import type {
   DevicePlacedSessionRequest,
   DeviceWorkspaceIntent,
   DeviceWorkspacePlan,
+  WorkspaceDirectoryListing,
   RepositoryIdentity
 } from '@shared/types/workspaces.js';
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
@@ -56,12 +57,15 @@ export interface SessionDevice {
   readonly status: SessionDeviceStatus;
   connect(): Promise<SessionDeviceStatus>;
   readInventory(): Promise<DeviceSessionInventory>;
+  reorderSessions(orderedIds: SessionId[]): Promise<Session[]>;
   setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void>;
   terminalInput(terminalId: string, data: string): Promise<void>;
   terminalAcquireInputLease?(
     terminalId: string,
     takeover?: boolean
   ): Promise<TerminalInputLease>;
+  terminalCurrentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
+  terminalReleaseInputLease(terminalId: string, leaseId: string): Promise<boolean>;
   terminalResize(terminalId: string, cols: number, rows: number): Promise<void>;
   terminalReplay(terminalId: string, afterSeq?: number): Promise<DeviceTerminalReplay>;
   terminalStop(terminalId: string): Promise<void>;
@@ -71,6 +75,7 @@ export interface SessionDevice {
   workspaceExecute?(
     command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
   ): Promise<DeviceOperationReceipt>;
+  browseWorkspaceDirectories?(path?: string): Promise<WorkspaceDirectoryListing>;
   openProject?(request: ProjectOpenRequest): Promise<Project>;
   onEvent(listener: (event: DeviceEventEnvelope) => void): () => void;
   onStatus(listener: (status: SessionDeviceStatus) => void): () => void;
@@ -281,6 +286,7 @@ export class MultiDeviceSessions {
         ...(targetProject.project.defaultWslDistro
           ? { wslDistro: targetProject.project.defaultWslDistro }
           : {}),
+        ...(request.targetPath ? { path: request.targetPath } : {}),
         source: {
           kind: 'branch',
           localRef: branchRef(workspace.branch)
@@ -294,7 +300,8 @@ export class MultiDeviceSessions {
         sourceUrl: gitRepository!.canonicalUrl,
         runMode,
         ...(workspace.branch ? { branchRef: branchRef(workspace.branch) } : {}),
-        identity: structuredClone(gitRepository!)
+        identity: structuredClone(gitRepository!),
+        ...(request.targetPath ? { path: request.targetPath } : {})
       };
     }
     const devicePlan = await device.workspacePlan!(intent);
@@ -321,7 +328,40 @@ export class MultiDeviceSessions {
     return structuredClone(plan);
   }
 
+  browseWorkspaceDirectories(
+    deviceId: DeviceId,
+    path?: string
+  ): Promise<WorkspaceDirectoryListing> {
+    const device = this.requireReadyDevice(deviceId);
+    if (!device.browseWorkspaceDirectories) {
+      throw new Error('Update Soloe on this Device to browse workspace locations.');
+    }
+    return device.browseWorkspaceDirectories(path);
+  }
+
+  async openProjectOnDevice(
+    deviceId: DeviceId,
+    request: ProjectOpenRequest
+  ): Promise<MultiDeviceSessionState> {
+    const device = this.requireReadyDevice(deviceId);
+    if (!device.openProject) throw new Error('The selected Device cannot open Projects.');
+    await device.openProject(structuredClone(request));
+    return this.refresh();
+  }
+
+  async executePreparation(planId: string): Promise<MultiDeviceSessionState> {
+    const stored = this.takeCreationPlan(planId);
+    await this.prepareStoredPlan(stored);
+    return this.currentState.revision > 0 ? this.state() : this.refresh();
+  }
+
   async executeCreate(planId: string): Promise<MultiDeviceSessionView> {
+    const stored = this.takeCreationPlan(planId);
+    await this.prepareStoredPlan(stored);
+    return this.createAtLocation(stored.request);
+  }
+
+  private takeCreationPlan(planId: string): StoredSessionCreationPlan {
     const stored = this.creationPlans.get(planId);
     if (!stored) throw new Error('Session creation plan is unavailable.');
     this.creationPlans.delete(planId);
@@ -331,6 +371,10 @@ export class MultiDeviceSessions {
     if (Date.parse(stored.public.expiresAt) <= Date.now()) {
       throw new Error('Session creation plan expired. Review it again.');
     }
+    return stored;
+  }
+
+  private async prepareStoredPlan(stored: StoredSessionCreationPlan): Promise<void> {
     const device = this.requireReadyDevice(stored.public.targetDeviceId);
     if (stored.devicePlan) {
       if (!device.workspaceExecute) throw new Error('The selected Device cannot prepare Workspaces.');
@@ -364,7 +408,6 @@ export class MultiDeviceSessions {
       }
       await this.refresh();
     }
-    return this.createAtLocation(stored.request);
   }
 
   private async createAtLocation(
@@ -428,6 +471,24 @@ export class MultiDeviceSessions {
     return structuredClone(started);
   }
 
+  async reorderSessions(orderedRefs: SessionRef[]): Promise<MultiDeviceSessionState> {
+    const refs = orderedRefs.map((ref) => structuredClone(ref));
+    const seen = new Set<string>();
+    for (const ref of refs) {
+      const key = `${ref.deviceId}\u0000${ref.sessionId}`;
+      if (seen.has(key)) throw new Error('Session order contains a duplicate Session.');
+      seen.add(key);
+      if (!findSession(this.currentState, ref)) {
+        throw new Error(`Session ${ref.sessionId} is not present on Device ${ref.deviceId}.`);
+      }
+    }
+    const orderedIds = refs.map((ref) => ref.sessionId);
+    const devices = [...new Set(refs.map((ref) => ref.deviceId))]
+      .map((deviceId) => this.requireReadyDevice(deviceId));
+    await Promise.all(devices.map((device) => device.reorderSessions(orderedIds)));
+    return this.refresh();
+  }
+
   async terminalInput(ref: TerminalRef, data: string): Promise<void> {
     await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data);
   }
@@ -441,6 +502,14 @@ export class MultiDeviceSessions {
       throw new Error('The selected Device does not support terminal input control.');
     }
     return device.terminalAcquireInputLease(ref.terminalId, takeover);
+  }
+
+  async terminalCurrentInputLease(ref: TerminalRef): Promise<TerminalInputLease | null> {
+    return this.requireReadyDevice(ref.deviceId).terminalCurrentInputLease(ref.terminalId);
+  }
+
+  async terminalReleaseInputLease(ref: TerminalRef, leaseId: string): Promise<boolean> {
+    return this.requireReadyDevice(ref.deviceId).terminalReleaseInputLease(ref.terminalId, leaseId);
   }
 
   async terminalResize(ref: TerminalRef, cols: number, rows: number): Promise<void> {

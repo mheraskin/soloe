@@ -68,6 +68,16 @@ describe("RemoteRuntimePtyProcessFactory", () => {
       await remoteFactory.flush();
       expect(hostedProcess.writes).toEqual(["electron input"]);
       expect(hostedProcess.resizes).toEqual([{ cols: 100, rows: 40 }]);
+      const inputLease = await remoteFactory.currentInputLease("electron-terminal");
+      expect(inputLease).toEqual(expect.objectContaining({
+        terminalId: "electron-terminal",
+        ownerId: expect.stringMatching(/^desktop-/),
+      }));
+      await expect(remoteFactory.releaseInputLease(
+        "electron-terminal",
+        inputLease!.leaseId,
+      )).resolves.toBe(true);
+      await expect(remoteFactory.currentInputLease("electron-terminal")).resolves.toBeNull();
 
       await remoteFactory.dispose();
       remoteFactory = undefined;

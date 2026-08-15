@@ -22,8 +22,9 @@
   import ProjectSection from './ProjectSection.svelte';
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
-  import WorkspaceNavigation from './WorkspaceNavigation.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
+  import type { Project } from '@shared/types/projects.js';
+  import type { ProjectView } from '@shared/types/multi-device-sessions.js';
 
   onMount(() => {
     if (!deviceSessions.loaded) void deviceSessions.load().catch(reportError);
@@ -117,6 +118,17 @@
     });
   });
 
+  $effect(() => {
+    const key = deviceSessions.selectedProjection?.key;
+    if (!key || !asideEl || key === lastScrolledId) return;
+    lastScrolledId = key;
+    void tick().then(() => {
+      requestAnimationFrame(() => {
+        scrollAndSettle(`[data-session-id="${CSS.escape(key)}"]`);
+      });
+    });
+  });
+
   // Scroll a freshly added project to the centre so the user immediately sees
   // where it landed at the bottom of the list.
   $effect(() => {
@@ -192,6 +204,51 @@
     void projects.reorder(next).catch(reportError);
   }
 
+  function onStandaloneSessionDrop(args: {
+    draggedId: string;
+    targetId: string;
+    position: DropPosition;
+  }) {
+    const ids = sessions.standalone.map((session) => session.id);
+    const next = reorderedIds(ids, args);
+    if (!next) return;
+    const subset = new Set(ids);
+    const queue = [...next];
+    const allIds = sessions.sessions.map((session) =>
+      subset.has(session.id) ? queue.shift() ?? session.id : session.id
+    );
+    void sessions.reorder(allIds).catch(reportError);
+  }
+
+  function onDeviceStandaloneSessionDrop(args: {
+    draggedId: string;
+    targetId: string;
+    position: DropPosition;
+  }) {
+    const ids = deviceStandaloneItems.map((projection) => projection.key);
+    const next = reorderedIds(ids, args);
+    if (!next) return;
+    const byKey = new Map(deviceStandaloneItems.map((projection) => [projection.key, projection]));
+    const ordered = next
+      .map((key) => byKey.get(key))
+      .filter((projection) => projection !== undefined);
+    void deviceSessions.reorder(ordered).catch(reportError);
+  }
+
+  function reorderedIds(
+    ids: string[],
+    args: { draggedId: string; targetId: string; position: DropPosition }
+  ): string[] | null {
+    const { draggedId, targetId, position } = args;
+    if (!ids.includes(draggedId) || !ids.includes(targetId)) return null;
+    const without = ids.filter((id) => id !== draggedId);
+    let insertAt = without.indexOf(targetId);
+    if (insertAt < 0) insertAt = without.length;
+    if (position === 'after') insertAt += 1;
+    const next = [...without.slice(0, insertAt), draggedId, ...without.slice(insertAt)];
+    return sameOrder(ids, next) ? null : next;
+  }
+
   function sameOrder(a: string[], b: string[]): boolean {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
@@ -226,6 +283,69 @@
     if (!q) return list;
     return rankMulti(q, list, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
   });
+  let showDeviceLabels = $derived(
+    deviceSessions.selectedDeviceId === null && deviceSessions.state.devices.length > 1
+  );
+  let deviceProjects = $derived.by(() => {
+    const visible = deviceSessions.state.projects.filter((project) => project.workspaces.some((workspace) =>
+      workspace.locations.some((location) => deviceSessions.includesDevice(location.deviceId))
+      || workspace.sessions.some((projection) =>
+        deviceSessions.includesDevice(projection.ref.deviceId)
+      )
+    ));
+    return [...visible].sort((left, right) => {
+      const leftId = localProjectFor(left)?.id;
+      const rightId = localProjectFor(right)?.id;
+      const leftIndex = leftId ? orderedProjectIds.indexOf(leftId) : -1;
+      const rightIndex = rightId ? orderedProjectIds.indexOf(rightId) : -1;
+      if (leftIndex < 0 && rightIndex < 0) return 0;
+      if (leftIndex < 0) return 1;
+      if (rightIndex < 0) return -1;
+      return leftIndex - rightIndex;
+    });
+  });
+  let deviceStandaloneItems = $derived.by(() =>
+    deviceSessions.state.unassigned.filter((projection) =>
+      deviceSessions.includesDevice(projection.ref.deviceId)
+    )
+  );
+  let deviceStandaloneVisible = $derived.by(() => {
+    const list = deviceStandaloneItems;
+    const q = query.trim();
+    if (!q) return list;
+    return rankMulti(q, list, (projection) => [
+      projection.session.name,
+      projection.session.cwd,
+      projection.deviceName,
+      ...(projection.session.tags ?? [])
+    ]).map((result) => result.item);
+  });
+
+  function localProjectFor(deviceProject: ProjectView): Project | null {
+    for (const workspace of deviceProject.workspaces) {
+      for (const location of workspace.locations) {
+        if (!deviceSessions.device(location.deviceId)?.local || !location.projectId) continue;
+        const project = projects.get(location.projectId);
+        if (project) return project;
+      }
+    }
+    return null;
+  }
+
+  function sidebarProject(deviceProject: ProjectView): Project {
+    const local = localProjectFor(deviceProject);
+    if (local) return local;
+    const location = deviceProject.workspaces
+      .flatMap((workspace) => workspace.locations)
+      .find((candidate) => deviceSessions.includesDevice(candidate.deviceId));
+    return {
+      id: `device:${deviceProject.key}`,
+      name: deviceProject.name,
+      path: location?.path ?? deviceProject.name,
+      createdAt: deviceSessions.state.capturedAt,
+      lastOpenedAt: deviceSessions.state.capturedAt
+    };
+  }
 
   function startResize(event: PointerEvent) {
     if (event.button !== 0) return;
@@ -346,12 +466,42 @@
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
     <div class="flex flex-col gap-1 p-1.5">
       {#if deviceSessions.supported && deviceSessions.loaded}
-        <WorkspaceNavigation filter={query} />
+        {#if deviceStandaloneVisible.length > 0}
+          <div class="flex flex-col gap-px">
+            {#each deviceStandaloneVisible as projection (projection.key)}
+              <SessionItem
+                session={projection.session}
+                branch={projection.session.lastBranch ?? null}
+                {projection}
+                showDevice={showDeviceLabels}
+                onSessionDrop={onDeviceStandaloneSessionDrop}
+              />
+            {/each}
+          </div>
+        {/if}
+        {#each deviceProjects as deviceProject (deviceProject.key)}
+          {@const project = sidebarProject(deviceProject)}
+          {@const localProject = localProjectFor(deviceProject)}
+          <ProjectSection
+            {project}
+            sessions={localProject ? sessions.byProject[localProject.id] ?? [] : []}
+            filter={query}
+            {deviceProject}
+            deviceFilter={deviceSessions.selectedDeviceId}
+            showDevice={showDeviceLabels}
+            allowLocalActions={localProject !== null}
+            onProjectDrop={localProject ? onProjectDrop : null}
+          />
+        {/each}
       {:else}
       {#if standaloneVisible.length > 0}
         <div class="flex flex-col gap-px">
           {#each standaloneVisible as session (session.id)}
-            <SessionItem {session} branch={session.lastBranch ?? null} />
+            <SessionItem
+              {session}
+              branch={session.lastBranch ?? null}
+              onSessionDrop={onStandaloneSessionDrop}
+            />
           {/each}
         </div>
       {/if}

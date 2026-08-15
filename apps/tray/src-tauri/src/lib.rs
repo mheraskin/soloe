@@ -1,6 +1,7 @@
 mod ownership;
 mod services;
 
+pub use ownership::run_process_watchdog_if_requested;
 use services::BackendSupervisor;
 use std::sync::{Arc, Mutex};
 use std::thread;

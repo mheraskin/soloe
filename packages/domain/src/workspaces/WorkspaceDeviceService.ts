@@ -16,6 +16,7 @@ import type {
   CloneProjectPresenceIntent,
   ClonedProjectPresenceResult,
   DeviceWorkspaceIntent,
+  WorkspaceDirectoryListing,
   DeviceWorkspacePlan,
   FastForwardedWorkspaceBranchResult,
   FetchFastForwardWorkspaceBranchIntent,
@@ -95,6 +96,48 @@ export class WorkspaceDeviceService {
 
   async init(): Promise<void> {
     await Promise.all(this.managedRoots.map((root) => fs.mkdir(root, { recursive: true })));
+  }
+
+  async browseDirectories(requestedPath?: string): Promise<WorkspaceDirectoryListing> {
+    const requested = path.resolve(requestedPath?.trim() || this.managedRoots[0]!);
+    const root = this.managedRoots.find((candidate) => containsPath(candidate, requested));
+    if (!root) {
+      throw new WorkspacePlanError(
+        'path_outside_managed_root',
+        'Directory is outside every configured workspace root.'
+      );
+    }
+    const [realRoot, realRequested] = await Promise.all([
+      fs.realpath(root).catch(() => root),
+      fs.realpath(requested).catch(() => requested)
+    ]);
+    if (!containsPath(realRoot, realRequested)) {
+      throw new WorkspacePlanError(
+        'path_symlink_escape',
+        'Directory escapes its workspace root through a symlink.'
+      );
+    }
+    const stat = await fs.stat(realRequested);
+    if (!stat.isDirectory()) {
+      throw new WorkspacePlanError('not_a_directory', 'Workspace location is not a directory.');
+    }
+    const entries = await fs.readdir(realRequested, { withFileTypes: true });
+    const directories = entries
+      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+      .slice(0, 200)
+      .map((entry) => ({ name: entry.name, path: path.join(requested, entry.name) }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const parent = path.dirname(requested);
+    return {
+      path: requested,
+      parentPath: requested === root || !containsPath(root, parent) ? null : parent,
+      separator: path.sep === '\\' ? '\\' : '/',
+      roots: this.managedRoots.map((managedRoot) => ({
+        name: path.basename(managedRoot) || managedRoot,
+        path: managedRoot
+      })),
+      directories
+    };
   }
 
   async plan(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan> {

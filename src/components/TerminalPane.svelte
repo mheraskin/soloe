@@ -38,6 +38,8 @@
   import { deferTerminalDispose, TerminalFitController } from '../lib/terminal-fit';
   import { usesMacosOverlayScrollbars } from '../lib/platform-ui';
   import type { ClipboardImagePayload } from '@shared/types/files.js';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
   // a split simultaneously; `focused` drives keyboard concerns (xterm focus,
@@ -60,6 +62,14 @@
   );
   let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   let terminalFontSize = $derived(fontSize);
+  let terminalRef = $derived(deviceSessions.localTerminalRef(terminalId));
+  let inputLease = $derived(
+    terminalRef ? deviceSessions.terminalInputLeaseEvent(terminalRef) : null
+  );
+  let ownsInput = $derived(
+    terminalRef ? deviceSessions.ownsTerminalInput(terminalRef) : true
+  );
+  let readOnly = $derived(Boolean(focused && terminalRef && inputLease?.lease && !ownsInput));
   const macosOverlayScrollbars = usesMacosOverlayScrollbars();
 
   let host: HTMLDivElement | undefined = $state();
@@ -118,6 +128,23 @@
 
   function shouldAutofocusTerminal(): boolean {
     return !compactViewport || !window.matchMedia('(pointer: coarse)').matches;
+  }
+
+  async function takeInputControl(): Promise<void> {
+    const ref = terminalRef;
+    if (!ref) return;
+    const claimed = await deviceSessions.claimTerminalInputControl(ref, true);
+    if (claimed) requestAnimationFrame(() => term?.focus());
+  }
+
+  function sendTerminalInput(data: string): void {
+    const ref = terminalRef;
+    if (ref) {
+      if (!deviceSessions.ownsTerminalInput(ref)) return;
+      void deviceSessions.terminalInput(ref, data).catch(() => {});
+      return;
+    }
+    void ipc.terminal.input(terminalId, data).catch(() => {});
   }
 
   function clearReadyTimers(): void {
@@ -305,6 +332,7 @@
   }
 
   async function pasteFromClipboard(t: Terminal): Promise<void> {
+    if (terminalRef && !deviceSessions.ownsTerminalInput(terminalRef)) return;
     const session = sessions.sessions.find((item) => item.id === sessionId);
     if (session && effectiveAgentProvider(session)) {
       const images = await clipboardImages().catch(() => []);
@@ -317,7 +345,7 @@
           });
           return;
         }
-        await ipc.terminal.input(terminalId, AGENT_IMAGE_PASTE_SEQUENCE);
+        sendTerminalInput(AGENT_IMAGE_PASTE_SEQUENCE);
         return;
       }
     }
@@ -437,7 +465,7 @@
     const initFontSize = untrack(() => terminalFontSize);
     const initScrollback = untrack(() => terminalScrollback);
     const t = new Terminal({
-      fontFamily: 'JetBrains Mono, Cascadia Code, ui-monospace, monospace',
+      fontFamily: terminalFontFamily,
       fontSize: initFontSize,
       fontWeight: 400,
       fontWeightBold: 700,
@@ -459,30 +487,7 @@
       // timer each even though they have no renderer.
       cursorBlink: false,
       // Tokyo Night palette tuned to the #0f0f10 app shell.
-      theme: {
-        background: '#0f0f10',
-        foreground: '#e6e6e6',
-        cursor: '#e6e6e6',
-        cursorAccent: '#0f0f10',
-        selectionBackground: '#283457',
-        selectionForeground: '#e6e6e6',
-        black: '#15161e',
-        red: '#f7768e',
-        green: '#9ece6a',
-        yellow: '#e0af68',
-        blue: '#7aa2f7',
-        magenta: '#bb9af7',
-        cyan: '#7dcfff',
-        white: '#a9b1d6',
-        brightBlack: '#414868',
-        brightRed: '#ff899d',
-        brightGreen: '#9fe044',
-        brightYellow: '#faba4a',
-        brightBlue: '#8db0ff',
-        brightMagenta: '#c7a9ff',
-        brightCyan: '#a4daff',
-        brightWhite: '#e6e6e6'
-      },
+      theme: terminalTheme,
       allowProposedApi: true,
       scrollback: initScrollback,
       convertEol: false
@@ -505,7 +510,7 @@
       const ctrlSlash = ctrlSlashSequence(e);
       if (ctrlSlash !== null) {
         e.preventDefault();
-        void ipc.terminal.input(terminalId, ctrlSlash).catch(() => {});
+        sendTerminalInput(ctrlSlash);
         return false;
       }
 
@@ -564,7 +569,7 @@
       }
       if (shouldSendShiftEnterSequence(e)) {
         e.preventDefault();
-        void ipc.terminal.input(terminalId, SHIFT_ENTER_SEQUENCE).catch(() => {});
+        sendTerminalInput(SHIFT_ENTER_SEQUENCE);
         return false;
       }
 
@@ -611,9 +616,7 @@
     outputPresentation = presentation;
 
     const onInput = t.onData((data) => {
-      void ipc.terminal.input(terminalId, data).catch(() => {
-        // silent — terminal probably exited
-      });
+      sendTerminalInput(data);
     });
 
     // Selection chip lifecycle: snapshot the selected text into `chipText`
@@ -723,6 +726,21 @@
       window.removeEventListener('soloe:terminal-copy-buffer', onCopy);
       window.removeEventListener('soloe:terminal-copy-markdown', onCopyMarkdown);
       window.removeEventListener('soloe:refocus-terminal', onRefocus);
+    };
+  });
+
+  $effect(() => {
+    const ref = terminalRef;
+    if (!focused || !ref || !deviceSessions.supported) return;
+    void deviceSessions.claimTerminalInputControl(ref);
+    const renewal = setInterval(() => {
+      if (deviceSessions.ownsTerminalInput(ref)) {
+        void deviceSessions.claimTerminalInputControl(ref);
+      }
+    }, 5_000);
+    return () => {
+      clearInterval(renewal);
+      void deviceSessions.releaseTerminalInputControl(ref).catch(() => undefined);
     };
   });
 
@@ -885,6 +903,12 @@
           {loadingLabel}
         </span>
       </div>
+    </div>
+  {/if}
+  {#if readOnly}
+    <div class="absolute right-3 bottom-3 z-30 flex items-center gap-2 rounded-md border border-border bg-popover px-2 py-1.5 text-[10px] text-popover-foreground shadow-lg">
+      <span>Read-only · another device is controlling input</span>
+      <Button variant="outline" size="xs" onclick={() => void takeInputControl()}>Take control</Button>
     </div>
   {/if}
   {#if findOpen && focused}

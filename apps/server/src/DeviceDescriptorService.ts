@@ -21,6 +21,7 @@ const BASE_CAPABILITIES = [
   'runtime.terminal-replay.v1',
   'workspace-device.v1',
   'workspace-placement-plan.v1',
+  'workspace-directory-browse.v1',
   'workspace-alignment-plan.v1',
   'workspace-isolated-source-lifecycle.v1',
   'workspace-operation-receipts.v1',

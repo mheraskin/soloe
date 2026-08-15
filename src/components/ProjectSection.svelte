@@ -13,7 +13,13 @@
   import type { GitWorktree } from '@shared/types/git.js';
   import type { Session } from '@shared/types/sessions.js';
   import type { Project, ProjectFavicon } from '@shared/types/projects.js';
+  import type {
+    MultiDeviceSessionView,
+    ProjectView
+  } from '@shared/types/multi-device-sessions.js';
+  import type { DeviceId } from '@shared/types/devices.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { git } from '../stores/git.svelte';
   import { nav } from '../stores/nav.svelte';
@@ -40,11 +46,19 @@
     project,
     sessions: items,
     filter = '',
+    deviceProject = null,
+    deviceFilter = null,
+    showDevice = false,
+    allowLocalActions = true,
     onProjectDrop = null
   }: {
     project: Project;
     sessions: Session[];
     filter?: string;
+    deviceProject?: ProjectView | null;
+    deviceFilter?: DeviceId | null;
+    showDevice?: boolean;
+    allowLocalActions?: boolean;
     onProjectDrop?:
       | ((args: { draggedId: string; targetId: string; position: DropPosition }) => void)
       | null;
@@ -55,6 +69,23 @@
   let faviconsRequested = $state(false);
   let favicons = $state<ProjectFavicon[] | null>(null);
   let selectedFavicon = $state<ProjectFavicon | null>(null);
+  let deviceWorkspaces = $derived.by(() => {
+    if (!deviceProject) return [];
+    return deviceProject.workspaces
+      .map((workspace) => ({
+        ...workspace,
+        locations: workspace.locations.filter((location) =>
+          deviceFilter === null || location.deviceId === deviceFilter
+        ),
+        sessions: workspace.sessions.filter((projection) =>
+          deviceFilter === null || projection.ref.deviceId === deviceFilter
+        )
+      }))
+      .filter((workspace) => workspace.locations.length > 0 || workspace.sessions.length > 0);
+  });
+  let deviceItems = $derived<MultiDeviceSessionView[]>(
+    deviceWorkspaces.flatMap((workspace) => workspace.sessions)
+  );
   let gitContext = $derived({
     ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
     ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
@@ -71,6 +102,10 @@
   }
 
   $effect(() => {
+    if (!allowLocalActions) {
+      selectedFavicon = null;
+      return;
+    }
     const projectId = project.id;
     const selectedPath = project.selectedFaviconPath;
     if (!selectedPath) {
@@ -115,6 +150,9 @@
       .map(gitWorktreeLabel)
   );
   let containsSelectedSession = $derived.by(() => {
+    if (deviceProject) {
+      return deviceItems.some((projection) => deviceSessions.isSelected(projection));
+    }
     const selId = sessions.selectedId;
     if (!selId) return false;
     return items.some((s) => s.id === selId);
@@ -153,6 +191,13 @@
   });
   let anySessionMatches = $derived.by(() => {
     if (!trimmedFilter) return false;
+    if (deviceProject) {
+      return deviceItems.some((projection) =>
+        [projection.session.name, projection.session.cwd, projection.deviceName,
+          ...(projection.session.tags ?? [])]
+          .some((value) => score(trimmedFilter, value) !== null)
+      );
+    }
     return items.some((s) =>
       [s.name, s.cwd, ...(s.tags ?? [])].some((k) => score(trimmedFilter, k) !== null)
     );
@@ -168,11 +213,12 @@
   });
 
   function edit() {
+    if (!allowLocalActions) return;
     projectModal.openEdit(project);
   }
 
   async function refreshFavicons() {
-    if (faviconsLoading) return;
+    if (!allowLocalActions || faviconsLoading) return;
     faviconsRequested = true;
     faviconsLoading = true;
     try {
@@ -198,6 +244,7 @@
   }
 
   async function removeProject() {
+    if (!allowLocalActions) return;
     const ok = await confirmStore.ask({
       title: 'Delete project',
       message: `Delete project "${project.name}" and its ${items.length} session${items.length === 1 ? '' : 's'} from Soloe? Files on disk will not be touched.`,
@@ -392,6 +439,7 @@
                   <button
                     {...props}
                     type="button"
+                    disabled={!allowLocalActions}
                     class="absolute top-1/2 left-[30px] z-10 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm bg-transparent text-transparent outline-none transition-colors hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring/50"
                     title="Project icon"
                     aria-label={`Choose icon for ${project.name}`}
@@ -435,10 +483,16 @@
               </DropdownMenu.Content>
             </DropdownMenu.Root>
           </span>
-          {#if !showWorktreeGroups}
+          {#if !showWorktreeGroups && (allowLocalActions || deviceProject)}
+            {@const primaryWorkspace = deviceProject?.workspaces[0]}
+            {@const primaryLocation = primaryWorkspace?.locations.find((candidate) => candidate.deviceId === deviceFilter)
+              ?? primaryWorkspace?.locations.find((candidate) => deviceSessions.device(candidate.deviceId)?.local)
+              ?? primaryWorkspace?.locations[0]}
             <AgentLaunchPopover
-              projectId={project.id}
-              cwd={project.path}
+              projectId={allowLocalActions ? project.id : null}
+              cwd={primaryLocation?.path ?? project.path}
+              workspaceKey={primaryWorkspace?.key}
+              defaultDeviceId={primaryLocation?.deviceId ?? null}
               title="New session"
               ariaLabel="New session"
             />
@@ -447,17 +501,46 @@
       {/snippet}
     </ContextMenu.Trigger>
     <ContextMenu.Content class="w-56">
-      <ContextMenu.Item onSelect={edit}>
+      <ContextMenu.Item disabled={!allowLocalActions} onSelect={edit}>
         <Pencil /> <span>Edit project</span>
       </ContextMenu.Item>
       <ContextMenu.Separator />
-      <ContextMenu.Item variant="destructive" onSelect={removeProject}>
+      <ContextMenu.Item disabled={!allowLocalActions} variant="destructive" onSelect={removeProject}>
         <Trash2 /> <span>Delete project</span>
       </ContextMenu.Item>
     </ContextMenu.Content>
   </ContextMenu.Root>
 
   <Collapsible.Content class="ml-3 flex flex-col gap-1.5 border-l border-border pl-2">
+    {#if deviceProject}
+      {#each deviceWorkspaces as workspace (workspace.key)}
+        {@const location = workspace.locations.find((candidate) => candidate.deviceId === deviceFilter)
+          ?? workspace.locations.find((candidate) => deviceSessions.device(candidate.deviceId)?.local)
+          ?? workspace.locations.find((candidate) => candidate.isMain)
+          ?? workspace.locations[0]}
+        {#if location}
+          <WorktreeGroup
+            title={workspace.branch ?? workspace.name}
+            cwd={location.path}
+            projectId={allowLocalActions ? project.id : null}
+            items={workspace.sessions.map((projection) => projection.session)}
+            projections={workspace.sessions}
+            workspaceKey={workspace.key}
+            defaultDeviceId={location.deviceId}
+            isMain={location.isMain}
+            {filter}
+            forceShow={projectNameMatches}
+            {showDevice}
+            allowLocalActions={allowLocalActions && deviceSessions.device(location.deviceId)?.local === true}
+            onWorktreeDrop={allowLocalActions && deviceSessions.device(location.deviceId)?.local
+              ? onWorktreeDrop
+              : null}
+          />
+        {/if}
+      {:else}
+        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No sessions</p>
+      {/each}
+    {:else}
     <button
       type="button"
       class="flex h-6 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -528,6 +611,7 @@
       {:else}
         <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No sessions</p>
       {/if}
+    {/if}
     {/if}
   </Collapsible.Content>
 </Collapsible.Root>

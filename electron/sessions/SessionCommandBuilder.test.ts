@@ -52,6 +52,8 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(rc).toContain('633;P;Cwd=%s');
     expect(rc).toContain('"$PWD" "$PWD"');
     expect(rc).toContain('eval "$PROMPT_COMMAND"');
+    expect(rc).toContain('export TERM=xterm-256color');
+    expect(rc).toContain('export COLORTERM=truecolor');
     expect(rc).not.toContain('mkdir');
     expect(rc).not.toContain('.soloe');
     expect(rc).not.toContain('TMPDIR');
@@ -630,7 +632,7 @@ describe('SessionCommandBuilder — codex kind', () => {
     expect(script).toContain('export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"');
     expect(script).toContain('__soloe_agent_bin="$(command -v codex 2>/dev/null)"');
     expect(script).toContain('NVM_DIR');
-    expect(script).toContain('SOLOE_SESSION_ID=test SOLOE_AGENT_PROVIDER=codex exec "$__soloe_agent_bin"');
+    expect(script).toContain('SOLOE_SESSION_ID=test TERM=xterm-256color COLORTERM=truecolor SOLOE_AGENT_PROVIDER=codex exec "$__soloe_agent_bin"');
     expect(script).not.toContain('exec SOLOE_SESSION_ID=');
     expect(script).not.toContain('exec codex');
     expect(script).not.toContain('exec bash -ic');
@@ -702,6 +704,8 @@ describe('SessionCommandBuilder — native Linux runMode', () => {
     expect(spec.args).toEqual(['-l']);
     expect(spec.cwd).toBe('/home/me/proj');
     expect(spec.env['PROMPT_COMMAND']).toContain('633;P;Cwd=%s');
+    expect(spec.env['TERM']).toBe('xterm-256color');
+    expect(spec.env['COLORTERM']).toBe('truecolor');
   });
 
   it('resolves and execs native Linux agents through the local login shell', () => {

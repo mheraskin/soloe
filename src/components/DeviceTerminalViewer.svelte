@@ -8,6 +8,7 @@
   import type { TerminalRef } from '@shared/types/devices.js';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import type { TerminalOutputEvent } from '@shared/types/terminal.js';
+  import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
   import { deviceSessions } from '../stores/device-sessions.svelte';
 
   let {
@@ -30,12 +31,17 @@
   let inputLease = $derived(
     terminalRef ? deviceSessions.terminalInputLeaseEvent(terminalRef) : null
   );
+  let ownsInput = $derived(
+    terminalRef ? deviceSessions.ownsTerminalInput(terminalRef) : false
+  );
+  let readOnly = $derived(Boolean(inputLease?.lease && !ownsInput));
 
   async function takeInputControl(): Promise<void> {
     if (!terminalRef || takingControl) return;
     takingControl = true;
     try {
-      await deviceSessions.takeTerminalInputControl(terminalRef);
+      const claimed = await deviceSessions.claimTerminalInputControl(terminalRef, true);
+      if (!claimed) throw new Error('Input control is still held by another device.');
       error = null;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -53,34 +59,18 @@
     }
 
     const terminal = new Terminal({
-      fontFamily: 'JetBrains Mono, Cascadia Code, ui-monospace, monospace',
+      fontFamily: terminalFontFamily,
       fontSize: 12,
+      fontWeight: 400,
+      fontWeightBold: 700,
+      minimumContrastRatio: 4.5,
+      drawBoldTextInBrightColors: false,
       cursorStyle: 'bar',
       cursorBlink: true,
       scrollback: 5_000,
       convertEol: false,
-      theme: {
-        background: '#0f0f10',
-        foreground: '#e6e6e6',
-        cursor: '#e6e6e6',
-        selectionBackground: '#283457',
-        black: '#15161e',
-        red: '#f7768e',
-        green: '#9ece6a',
-        yellow: '#e0af68',
-        blue: '#7aa2f7',
-        magenta: '#bb9af7',
-        cyan: '#7dcfff',
-        white: '#a9b1d6',
-        brightBlack: '#414868',
-        brightRed: '#ff899d',
-        brightGreen: '#9fe044',
-        brightYellow: '#faba4a',
-        brightBlue: '#8db0ff',
-        brightMagenta: '#c7a9ff',
-        brightCyan: '#a4daff',
-        brightWhite: '#e6e6e6'
-      }
+      theme: terminalTheme,
+      allowProposedApi: true
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -176,6 +166,7 @@
       terminal.focus();
     });
     const input = terminal.onData((data) => {
+      if (!deviceSessions.ownsTerminalInput(ref)) return;
       void deviceSessions.terminalInput(ref, data).catch((cause) => {
         if (active) error = cause instanceof Error ? cause.message : String(cause);
       });
@@ -189,20 +180,30 @@
       terminal.dispose();
     };
   });
+
+  $effect(() => {
+    const ref = terminalRef;
+    if (!ref) return;
+    void deviceSessions.claimTerminalInputControl(ref);
+    const leaseRenewal = setInterval(() => {
+      if (deviceSessions.ownsTerminalInput(ref)) {
+        void deviceSessions.claimTerminalInputControl(ref);
+      }
+    }, 5_000);
+    return () => {
+      clearInterval(leaseRenewal);
+      void deviceSessions.releaseTerminalInputControl(ref).catch(() => undefined);
+    };
+  });
 </script>
 
-<section class="flex min-h-80 flex-col overflow-hidden rounded-md border border-border bg-[#0f0f10]">
+<section class="flex h-full min-h-0 flex-col overflow-hidden bg-[#0f0f10]">
   <header class="flex items-center gap-2 border-b border-border bg-background px-3 py-2">
     <div class="min-w-0 flex-1">
       <p class="m-0 truncate text-xs font-medium">{projection.session.name}</p>
       <p class="m-0 truncate text-[10px] text-muted-foreground">
         {projection.deviceName} · {projection.runtime?.status ?? 'stopped'}
       </p>
-      {#if inputLease?.lease}
-        <p class="m-0 truncate text-[10px] text-muted-foreground">
-          Input: {inputLease.lease.ownerId} · until {new Date(inputLease.lease.expiresAt).toLocaleTimeString()}
-        </p>
-      {/if}
     </div>
     <button
       type="button"
@@ -215,24 +216,29 @@
     </button>
   </header>
   <div class="relative min-h-72 flex-1">
-    <div class="absolute inset-0 p-1" bind:this={host}></div>
+    <div class="absolute inset-0" bind:this={host}></div>
     {#if restoring}
       <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 text-xs text-muted-foreground">
         Restoring terminal…
       </div>
     {/if}
   </div>
-  {#if error}
-    <div class="flex items-center gap-2 border-t border-border bg-destructive/10 px-3 py-1.5 text-[10px] text-destructive">
-      <p class="m-0 min-w-0 flex-1">{error}</p>
+  {#if readOnly}
+    <div class="flex items-center gap-2 border-t border-border bg-warning/10 px-3 py-1.5 text-[10px] text-foreground">
+      <p class="m-0 min-w-0 flex-1">Read-only · another device is controlling input</p>
       <button
         type="button"
-        class="rounded border border-destructive/40 px-2 py-1 font-medium hover:bg-destructive/10 disabled:opacity-50"
+        class="rounded border border-border px-2 py-1 font-medium hover:bg-accent disabled:opacity-50"
         disabled={takingControl || !terminalRef}
         onclick={takeInputControl}
       >
-        {takingControl ? 'Taking control…' : 'Take input control'}
+        {takingControl ? 'Taking control…' : 'Take control'}
       </button>
+    </div>
+  {/if}
+  {#if error}
+    <div class="flex items-center gap-2 border-t border-border bg-destructive/10 px-3 py-1.5 text-[10px] text-destructive">
+      <p class="m-0 min-w-0 flex-1">{error}</p>
     </div>
   {/if}
 </section>

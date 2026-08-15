@@ -10,6 +10,8 @@
     connectionDevices
   } from '../../lib/device-presentation.js';
   import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Switch } from '$lib/components/ui/switch';
 
   onMount(() => {
     if (!connections.loaded) void connections.load().catch(reportError);
@@ -19,6 +21,14 @@
     connections.snapshot.tailscale.state === 'connected'
       && connections.snapshot.tailscale.sharing.state === 'ready'
   );
+  let portDraft = $state('4318');
+  let savingPreferences = $state(false);
+
+  $effect(() => {
+    if (!savingPreferences) {
+      portDraft = String(connections.snapshot.preferences.tailscaleHttpsPort);
+    }
+  });
   let visibleMachines = $derived.by(() => {
     if (connections.snapshot.tailscale.state !== 'connected') return [];
     return connectionDevices(connections.snapshot.machines);
@@ -56,6 +66,30 @@
     if (!url) return;
     await ipc.system.openExternal(url);
   }
+
+  async function setTailscaleEnabled(enabled: boolean): Promise<void> {
+    savingPreferences = true;
+    try {
+      await connections.configureTailscale({ tailscaleEnabled: enabled });
+    } finally {
+      savingPreferences = false;
+    }
+  }
+
+  async function savePort(): Promise<void> {
+    const port = Number(portDraft);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+      portDraft = String(connections.snapshot.preferences.tailscaleHttpsPort);
+      throw new Error('Tailscale Serve port must be between 1 and 65535.');
+    }
+    if (port === connections.snapshot.preferences.tailscaleHttpsPort) return;
+    savingPreferences = true;
+    try {
+      await connections.configureTailscale({ tailscaleHttpsPort: port });
+    } finally {
+      savingPreferences = false;
+    }
+  }
 </script>
 
 {#if !connections.supported}
@@ -64,6 +98,45 @@
   </div>
 {:else}
   <section class="flex flex-col gap-4" aria-label="Device connections">
+    <div class="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-end">
+      <label class="flex min-w-0 items-center justify-between gap-3 sm:col-span-2">
+        <span class="min-w-0">
+          <span class="block text-xs font-medium">Use Tailscale connections</span>
+          <span class="mt-0.5 block text-[11px] text-muted-foreground">
+            Discover and connect to Soloe backends on this tailnet.
+          </span>
+        </span>
+        <Switch
+          checked={connections.snapshot.preferences.tailscaleEnabled}
+          disabled={savingPreferences}
+          onCheckedChange={(value) => void setTailscaleEnabled(value === true).catch(reportError)}
+          aria-label="Use Tailscale connections"
+        />
+      </label>
+      <label class="flex min-w-0 flex-col gap-1 sm:col-start-2">
+        <span class="text-[11px] font-medium">Soloe tailnet port</span>
+        <Input
+          type="number"
+          min="1"
+          max="65535"
+          step="1"
+          bind:value={portDraft}
+          disabled={!connections.snapshot.preferences.tailscaleEnabled || savingPreferences}
+          onblur={() => void savePort().catch(reportError)}
+          onkeydown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              void savePort().catch(reportError);
+            }
+          }}
+          aria-label="Soloe tailnet port"
+        />
+      </label>
+      <p class="m-0 text-[10px] text-muted-foreground sm:col-start-1 sm:row-start-2 sm:self-end">
+        Other devices must expose Soloe on the same Tailscale Serve port. Restart their backend after changing it.
+      </p>
+    </div>
+
     <div class="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/20 p-3">
       <div class="flex min-w-0 gap-2.5">
         {#if tailscaleReady}
@@ -83,7 +156,7 @@
         </div>
       </div>
       <div class="flex shrink-0 gap-2">
-        {#if connections.snapshot.tailscale.sharing.setupUrl}
+        {#if connections.snapshot.preferences.tailscaleEnabled && connections.snapshot.tailscale.sharing.setupUrl}
           <Button variant="outline" size="sm" class="gap-1.5" onclick={() => void openSetup().catch(reportError)}>
             <ExternalLink class="size-3.5" />
             {connections.snapshot.tailscale.state === 'unavailable' ? 'Install Tailscale' : 'Open approval'}
@@ -93,7 +166,7 @@
           variant="outline"
           size="sm"
           class="gap-1.5"
-          disabled={connections.refreshing}
+          disabled={connections.refreshing || !connections.snapshot.preferences.tailscaleEnabled}
           onclick={() => void connections.refresh().catch(reportError)}
         >
           <RefreshCw class={`size-3.5 ${connections.refreshing ? 'motion-safe:animate-spin' : ''}`} />

@@ -3,6 +3,7 @@ import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   AddMachineConnectionRequest,
   ConnectionId,
+  ConnectionPreferencesUpdate,
   ConnectionSnapshot
 } from '@shared/types/connections.js';
 import { ConnectionRegistry } from '../connections/ConnectionRegistry.js';
@@ -29,6 +30,11 @@ export class ConnectionsIpc {
     );
     ipcMain.handle(IpcChannels.connections.refresh, () =>
       ipcInvoke(() => this.options.registry.refresh())
+    );
+    ipcMain.handle(
+      IpcChannels.connections.configure,
+      (_event, patch: ConnectionPreferencesUpdate) =>
+        ipcInvoke(() => this.options.registry.configureTailscale(patch))
     );
     ipcMain.handle(
       IpcChannels.connections.add,
@@ -62,6 +68,7 @@ export class ConnectionsIpc {
     if (!this.registered) return;
     ipcMain.removeHandler(IpcChannels.connections.get);
     ipcMain.removeHandler(IpcChannels.connections.refresh);
+    ipcMain.removeHandler(IpcChannels.connections.configure);
     ipcMain.removeHandler(IpcChannels.connections.add);
     ipcMain.removeHandler(IpcChannels.connections.remove);
     ipcMain.removeHandler(IpcChannels.connections.enable);
