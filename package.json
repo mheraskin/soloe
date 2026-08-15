@@ -32,6 +32,7 @@
     "dev:desktop": "pnpm --filter @soloe/desktop-electron dev",
     "dev:tray": "pnpm --filter @soloe/tray dev",
     "configure:backend": "node scripts/configure-backend.mjs",
+    "setup:linux": "node scripts/setup-linux-electron-sandbox.mjs",
     "dev:tauri-ui": "vite --config vite.tauri.config.ts",
     "dev:tauri": "tauri dev",
     "build": "electron-vite build",

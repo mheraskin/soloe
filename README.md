@@ -119,6 +119,14 @@ corepack enable
 pnpm install
 ```
 
+On an Ubuntu development host, configure Electron's Chromium sandbox after
+installing or updating dependencies. The command is idempotent and uses `sudo`
+to give the installed helper its required owner and mode:
+
+```bash
+pnpm setup:linux
+```
+
 One command starts the tray, the selected native or Windows/WSL backend, and the locally hosted PWA development server:
 
 ```bash
