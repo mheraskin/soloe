@@ -44,6 +44,10 @@ export interface SettingsBackend {
   wslRepositoryRoot: string;
 }
 
+export interface SettingsStartup {
+  launchSoloeClient: boolean;
+}
+
 export interface SettingsDefaults {
   runMode: RunMode;
   wslDistro?: string;
@@ -144,6 +148,7 @@ export interface SettingsShortcuts {
 export interface Settings {
   version: 2;
   backend: SettingsBackend;
+  startup: SettingsStartup;
   appearance: SettingsAppearance;
   terminal: SettingsTerminal;
   diff: SettingsDiff;
@@ -160,6 +165,7 @@ export interface Settings {
 
 export type SettingsUpdate = {
   backend?: Partial<SettingsBackend>;
+  startup?: Partial<SettingsStartup>;
   appearance?: Partial<SettingsAppearance>;
   terminal?: Partial<SettingsTerminal>;
   diff?: Partial<SettingsDiff>;
@@ -181,6 +187,7 @@ export const DEFAULT_SETTINGS: Settings = {
     wslDistro: 'Ubuntu',
     wslRepositoryRoot: ''
   },
+  startup: { launchSoloeClient: true },
   appearance: { theme: 'dark' },
   terminal: { fontSize: 13, confirmDeleteTabs: true, keepFullHistory: false },
   diff: { fontSize: 13 },

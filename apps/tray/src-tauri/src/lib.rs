@@ -13,17 +13,21 @@ use tauri::tray::TrayIconBuilder;
 const TRAY_ID: &str = "soloe";
 const DEFAULT_TOOLTIP: &str = "Soloe";
 
+#[cfg(target_os = "macos")]
+const MACOS_TRAY_ICON: tauri::image::Image<'_> =
+    tauri::include_image!("../../../build/tray-icon-macos.png");
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LaunchTarget {
     Browser,
-    Electron,
+    Soloe,
 }
 
 impl LaunchTarget {
     fn from_menu_id(id: &str) -> Option<Self> {
         match id {
             "open_browser" => Some(Self::Browser),
-            "open_soloe" => Some(Self::Electron),
+            "open_soloe" => Some(Self::Soloe),
             _ => None,
         }
     }
@@ -31,14 +35,14 @@ impl LaunchTarget {
     fn progress_label(self) -> &'static str {
         match self {
             Self::Browser => "Opening browser…",
-            Self::Electron => "Opening Soloe…",
+            Self::Soloe => "Opening Soloe…",
         }
     }
 
     fn minimum_feedback(self) -> Duration {
         match self {
             Self::Browser => Duration::from_millis(900),
-            Self::Electron => Duration::from_millis(2_500),
+            Self::Soloe => Duration::from_millis(2_500),
         }
     }
 }
@@ -176,10 +180,19 @@ impl MenuActionState {
 }
 
 pub fn run() {
+    let (discovered, instance_guard) = match BackendSupervisor::discover() {
+        Ok(startup) => startup,
+        Err(error) => {
+            eprintln!("[tray] {error}");
+            return;
+        }
+    };
+
     tauri::Builder::default()
-        .setup(|app| {
-            let (discovered, instance_guard) =
-                BackendSupervisor::discover().map_err(std::io::Error::other)?;
+        .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             let supervisor = Arc::new(discovered);
             let initial_server_action = supervisor.server_transition_label();
             let server_action = MenuItem::with_id(
@@ -199,7 +212,7 @@ pub fn run() {
             )?;
             let open_browser =
                 MenuItem::with_id(app, "open_browser", "Open in browser", false, None::<&str>)?;
-            let open_electron =
+            let open_soloe =
                 MenuItem::with_id(app, "open_soloe", "Open Soloe", false, None::<&str>)?;
             let open_logs =
                 MenuItem::with_id(app, "open_logs", "Open Soloe logs", true, None::<&str>)?;
@@ -212,7 +225,7 @@ pub fn run() {
                     &runtime_action,
                     &separator,
                     &open_browser,
-                    &open_electron,
+                    &open_soloe,
                     &open_logs,
                     &separator,
                     &quit,
@@ -223,7 +236,7 @@ pub fn run() {
             let menu_server_action = server_action.clone();
             let menu_runtime_action = runtime_action.clone();
             let menu_open_browser = open_browser.clone();
-            let menu_open_electron = open_electron.clone();
+            let menu_open_soloe = open_soloe.clone();
             let menu_quit = quit.clone();
             let menu_action_state = Arc::new(Mutex::new(MenuActionState {
                 server: MenuServicePhase::Starting,
@@ -252,10 +265,10 @@ pub fn run() {
                         }
                         *launching = Some(target);
                         let _ = menu_open_browser.set_enabled(false);
-                        let _ = menu_open_electron.set_enabled(false);
+                        let _ = menu_open_soloe.set_enabled(false);
                         let progress_item = match target {
                             LaunchTarget::Browser => &menu_open_browser,
-                            LaunchTarget::Electron => &menu_open_electron,
+                            LaunchTarget::Soloe => &menu_open_soloe,
                         };
                         let _ = progress_item.set_text(target.progress_label());
                         if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -270,7 +283,7 @@ pub fn run() {
                     let server_action = menu_server_action.clone();
                     let runtime_action = menu_runtime_action.clone();
                     let open_browser = menu_open_browser.clone();
-                    let open_electron = menu_open_electron.clone();
+                    let open_soloe = menu_open_soloe.clone();
                     let quit = menu_quit.clone();
                     let runtime_action_state = Arc::clone(&menu_runtime_action_state);
                     let quit_state = Arc::clone(&menu_quit_state);
@@ -327,7 +340,7 @@ pub fn run() {
                             let _ = server_action.set_enabled(false);
                             let _ = runtime_action.set_enabled(false);
                             let _ = open_browser.set_enabled(false);
-                            let _ = open_electron.set_enabled(false);
+                            let _ = open_soloe.set_enabled(false);
                             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                                 let _ = tray.set_tooltip(Some(transition.as_str()));
                             }
@@ -336,7 +349,7 @@ pub fn run() {
                             "toggle_server" => supervisor.toggle_server(),
                             "toggle_runtime" => supervisor.toggle_runtime(),
                             "open_browser" => supervisor.open_browser(),
-                            "open_soloe" => supervisor.open_electron(),
+                            "open_soloe" => supervisor.open_soloe(),
                             "open_logs" => supervisor.open_logs(),
                             "quit" => {
                                 let requires_confirmation =
@@ -400,9 +413,9 @@ pub fn run() {
                                 let _ = runtime_action.set_text(runtime_label);
                                 let _ = runtime_action.set_enabled(runtime_enabled);
                                 let browser_ready = supervisor.browser_address().is_some();
-                                let electron_ready = supervisor.electron_available();
+                                let soloe_ready = supervisor.soloe_available();
                                 let _ = open_browser.set_enabled(browser_ready);
-                                let _ = open_electron.set_enabled(electron_ready);
+                                let _ = open_soloe.set_enabled(soloe_ready);
                                 if let Some(tray) = app.tray_by_id(TRAY_ID) {
                                     let _ = tray.set_tooltip(Some(DEFAULT_TOOLTIP));
                                 }
@@ -421,7 +434,7 @@ pub fn run() {
                                 *launching = None;
                             }
                             let _ = open_browser.set_text("Open in browser");
-                            let _ = open_electron.set_text("Open Soloe");
+                            let _ = open_soloe.set_text("Open Soloe");
                             let lifecycle_busy = lifecycle_state
                                 .lock()
                                 .map(|state| {
@@ -432,7 +445,7 @@ pub fn run() {
                             let browser_ready =
                                 !lifecycle_busy && supervisor.browser_address().is_some();
                             let _ = open_browser.set_enabled(browser_ready);
-                            let _ = open_electron.set_enabled(supervisor.electron_available());
+                            let _ = open_soloe.set_enabled(supervisor.soloe_available());
                             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                                 let _ = tray.set_tooltip(Some(DEFAULT_TOOLTIP));
                             }
@@ -440,6 +453,11 @@ pub fn run() {
                         let _ = quit.set_text("Quit Soloe");
                     });
                 });
+            #[cfg(target_os = "macos")]
+            {
+                tray = tray.icon(MACOS_TRAY_ICON.clone()).icon_as_template(true);
+            }
+            #[cfg(not(target_os = "macos"))]
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
@@ -449,18 +467,23 @@ pub fn run() {
             let startup_server_action = server_action.clone();
             let startup_runtime_action = runtime_action.clone();
             let startup_open_browser = open_browser.clone();
-            let startup_open_electron = open_electron.clone();
+            let startup_open_soloe = open_soloe.clone();
             let startup_lifecycle_state = Arc::clone(&menu_action_state);
             thread::spawn(move || {
-                if let Err(error) = startup_supervisor.start() {
-                    eprintln!("[tray] Soloe startup stopped: {error}");
+                match startup_supervisor.start() {
+                    Ok(()) => {
+                        if let Err(error) = startup_supervisor.launch_soloe_client_on_startup() {
+                            eprintln!("[tray] failed to launch Soloe Client on startup: {error}");
+                        }
+                    }
+                    Err(error) => eprintln!("[tray] Soloe startup stopped: {error}"),
                 }
                 let server_label = startup_supervisor.server_action_label();
                 let runtime_label = startup_supervisor.runtime_action_label();
                 let server_enabled = startup_supervisor.server_action_enabled();
                 let runtime_enabled = startup_supervisor.runtime_action_enabled();
                 let browser_ready = startup_supervisor.browser_address().is_some();
-                let electron_ready = startup_supervisor.electron_available();
+                let soloe_ready = startup_supervisor.soloe_available();
                 if let Ok(mut state) = startup_lifecycle_state.lock() {
                     state.update_from_label(MenuService::Server, &server_label);
                     state.update_from_label(MenuService::Runtime, &runtime_label);
@@ -469,7 +492,7 @@ pub fn run() {
                     let _ = startup_runtime_action.set_text(runtime_label);
                     let _ = startup_runtime_action.set_enabled(runtime_enabled);
                     let _ = startup_open_browser.set_enabled(browser_ready);
-                    let _ = startup_open_electron.set_enabled(electron_ready);
+                    let _ = startup_open_soloe.set_enabled(soloe_ready);
                 }
             });
 
@@ -479,7 +502,7 @@ pub fn run() {
             let polling_runtime_action_state = Arc::clone(&runtime_action_state);
             let polling_lifecycle_state = Arc::clone(&menu_action_state);
             let polling_browser = open_browser.clone();
-            let polling_electron = open_electron.clone();
+            let polling_soloe = open_soloe.clone();
             let polling_launch_state = Arc::clone(&launch_state);
             thread::spawn(move || {
                 loop {
@@ -524,9 +547,9 @@ pub fn run() {
                         .unwrap_or(true);
                     if !launching {
                         let browser_ready = polling_supervisor.browser_address().is_some();
-                        let electron_ready = polling_supervisor.electron_available();
+                        let soloe_ready = polling_supervisor.soloe_available();
                         let _ = polling_browser.set_enabled(browser_ready);
-                        let _ = polling_electron.set_enabled(electron_ready);
+                        let _ = polling_soloe.set_enabled(soloe_ready);
                     }
                 }
             });
@@ -545,6 +568,20 @@ mod tests {
         MenuServicePhase,
     };
     use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_tray_icon_has_retina_status_item_dimensions() {
+        assert_eq!(super::MACOS_TRAY_ICON.width(), 36);
+        assert_eq!(super::MACOS_TRAY_ICON.height(), 36);
+        assert_eq!(&super::MACOS_TRAY_ICON.rgba()[0..4], &[0, 0, 0, 0]);
+        assert!(
+            super::MACOS_TRAY_ICON
+                .rgba()
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > 0)
+        );
+    }
 
     #[test]
     fn quit_requires_confirmation_then_enters_quitting_once() {
@@ -597,6 +634,15 @@ mod tests {
     }
 
     #[test]
+    fn tray_instance_lock_is_acquired_before_the_tauri_event_loop() {
+        let source = include_str!("lib.rs");
+        let discovery = source.find("BackendSupervisor::discover()").unwrap();
+        let event_loop = source.find("tauri::Builder::default()").unwrap();
+
+        assert!(discovery < event_loop);
+    }
+
+    #[test]
     fn service_confirmation_can_be_reused_after_an_action_finishes() {
         let now = Instant::now();
         let mut state = ConfirmationState::default();
@@ -622,15 +668,13 @@ mod tests {
         );
         assert_eq!(
             LaunchTarget::from_menu_id("open_soloe"),
-            Some(LaunchTarget::Electron)
+            Some(LaunchTarget::Soloe)
         );
         assert_eq!(LaunchTarget::from_menu_id("open_electron"), None);
         assert_eq!(LaunchTarget::from_menu_id("open_logs"), None);
         assert_eq!(LaunchTarget::Browser.progress_label(), "Opening browser…");
-        assert_eq!(LaunchTarget::Electron.progress_label(), "Opening Soloe…");
-        assert!(
-            LaunchTarget::Electron.minimum_feedback() > LaunchTarget::Browser.minimum_feedback()
-        );
+        assert_eq!(LaunchTarget::Soloe.progress_label(), "Opening Soloe…");
+        assert!(LaunchTarget::Soloe.minimum_feedback() > LaunchTarget::Browser.minimum_feedback());
     }
 
     #[test]

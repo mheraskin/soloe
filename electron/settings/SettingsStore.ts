@@ -54,6 +54,7 @@ export class SettingsStore {
     const next: Settings = {
       version: 2,
       backend: { ...this.cache!.backend, ...(patch.backend ?? {}) },
+      startup: { ...this.cache!.startup, ...(patch.startup ?? {}) },
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
       terminal: { ...this.cache!.terminal, ...(patch.terminal ?? {}) },
       diff: { ...this.cache!.diff, ...(patch.diff ?? {}) },
@@ -200,6 +201,7 @@ function parseSettings(
   if (!isObject(raw)) return clone(defaultsForHost);
   const appearance = isObject(raw['appearance']) ? raw['appearance'] : {};
   const backend = isObject(raw['backend']) ? raw['backend'] : {};
+  const startup = isObject(raw['startup']) ? raw['startup'] : {};
   const terminal = isObject(raw['terminal']) ? raw['terminal'] : {};
   const diff = isObject(raw['diff']) ? raw['diff'] : {};
   const browser = isObject(raw['browser']) ? raw['browser'] : {};
@@ -230,6 +232,12 @@ function parseSettings(
       wslRepositoryRoot: pickString(
         backend['wslRepositoryRoot'],
         DEFAULT_SETTINGS.backend.wslRepositoryRoot
+      )
+    },
+    startup: {
+      launchSoloeClient: pickBoolean(
+        startup['launchSoloeClient'],
+        DEFAULT_SETTINGS.startup.launchSoloeClient
       )
     },
     appearance: {
@@ -418,6 +426,9 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   if (s.version !== 2) throw new Error(`Unsupported settings version: ${s.version}`);
   if (!VALID_BACKEND_PLACEMENTS.has(s.backend.placement)) {
     throw new Error(`Invalid backend.placement: ${s.backend.placement}`);
+  }
+  if (typeof s.startup.launchSoloeClient !== 'boolean') {
+    throw new Error('Invalid startup.launchSoloeClient');
   }
   if (typeof s.backend.wslDistro !== 'string' || !s.backend.wslDistro.trim()) {
     throw new Error('backend.wslDistro must be a non-empty string');

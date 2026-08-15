@@ -37,6 +37,11 @@ describe('SettingsStore — defaults', () => {
     expect(settings.shortcuts.elementSourceInspector).toEqual(['Ctrl', 'Alt', 'Shift', 'S']);
   });
 
+  it('launches the Soloe Client on startup by default', async () => {
+    const settings = await new SettingsStore(path.join(tmpDir, 'default.json')).get();
+    expect(settings.startup.launchSoloeClient).toBe(true);
+  });
+
   it('selects native Linux defaults for the Linux build', async () => {
     const store = new SettingsStore(path.join(tmpDir, 'linux.json'), 'linux');
     const s = await store.get();
@@ -75,6 +80,15 @@ describe('SettingsStore — defaults', () => {
 });
 
 describe('SettingsStore — update', () => {
+  it('persists the Soloe Client startup preference', async () => {
+    const store = new SettingsStore(storePath);
+    await store.update({ startup: { launchSoloeClient: false } });
+
+    await expect(new SettingsStore(storePath).get()).resolves.toMatchObject({
+      startup: { launchSoloeClient: false }
+    });
+  });
+
   it('persists the inspector setting and customized shortcut', async () => {
     const store = new SettingsStore(storePath);
     await store.update({
@@ -261,6 +275,7 @@ describe('SettingsStore — migration', () => {
     expect(s.defaults.newSessionKind).toBe('terminal');
     expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
     expect(s.backend).toEqual(DEFAULT_SETTINGS.backend);
+    expect(s.startup.launchSoloeClient).toBe(true);
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

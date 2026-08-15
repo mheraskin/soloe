@@ -176,6 +176,23 @@ pub struct ServiceInfo {
 struct StoredSettings {
     #[serde(default)]
     backend: BackendSettings,
+    #[serde(default)]
+    startup: StartupSettings,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct StartupSettings {
+    #[serde(default = "default_true")]
+    launch_soloe_client: bool,
+}
+
+impl Default for StartupSettings {
+    fn default() -> Self {
+        Self {
+            launch_soloe_client: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -894,7 +911,7 @@ impl BackendSupervisor {
         open_target(&address)
     }
 
-    pub fn open_electron(&self) -> Result<(), String> {
+    pub fn open_soloe(&self) -> Result<(), String> {
         if let Some(layout) = bundled_macos_layout() {
             let backend = self.backend_for_existing_services();
             let server = self
@@ -940,10 +957,10 @@ impl BackendSupervisor {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         self.spawn_owned(command, true)
-            .map_err(|error| format!("failed to open Electron client: {error}"))
+            .map_err(|error| format!("failed to open Soloe: {error}"))
     }
 
-    pub fn electron_available(&self) -> bool {
+    pub fn soloe_available(&self) -> bool {
         if let Err(error) = self.reap_clients() {
             eprintln!("[tray] failed to reap a closed Soloe UI: {error}");
         }
@@ -954,29 +971,39 @@ impl BackendSupervisor {
         self.browser_address().is_some()
     }
 
-    fn configured_backend(&self) -> Result<BackendSettings, String> {
+    pub fn launch_soloe_client_on_startup(&self) -> Result<(), String> {
+        if self.configured_startup()?.launch_soloe_client {
+            self.open_soloe()?;
+        }
+        Ok(())
+    }
+
+    fn read_stored_settings(&self) -> Result<StoredSettings, String> {
         let settings_path = self.data_directory.join("settings.json");
-        let mut backend = match fs::read(&settings_path) {
+        match fs::read(&settings_path) {
             Ok(data) => {
                 let json = data
                     .strip_prefix(&[0xEF, 0xBB, 0xBF])
                     .unwrap_or(data.as_slice());
                 serde_json::from_slice::<StoredSettings>(json)
-                    .map_err(|error| {
-                        format!("failed to read {}: {error}", settings_path.display())
-                    })?
-                    .backend
+                    .map_err(|error| format!("failed to read {}: {error}", settings_path.display()))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                BackendSettings::default()
+                Ok(StoredSettings::default())
             }
-            Err(error) => {
-                return Err(format!(
-                    "failed to read {}: {error}",
-                    settings_path.display()
-                ));
-            }
-        };
+            Err(error) => Err(format!(
+                "failed to read {}: {error}",
+                settings_path.display()
+            )),
+        }
+    }
+
+    fn configured_startup(&self) -> Result<StartupSettings, String> {
+        Ok(self.read_stored_settings()?.startup)
+    }
+
+    fn configured_backend(&self) -> Result<BackendSettings, String> {
+        let mut backend = self.read_stored_settings()?.backend;
         if let Some(value) = env::var_os("SOLOE_BACKEND_PLACEMENT") {
             backend.placement = match value.to_string_lossy().to_ascii_lowercase().as_str() {
                 "windows" => BackendPlacement::Windows,
@@ -1779,6 +1806,10 @@ fn default_wsl_distro() -> String {
     "Ubuntu".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn wsl_supervisor_script(
     repository_root: &str,
     data_directory: &str,
@@ -2358,6 +2389,29 @@ mod tests {
             supervisor.runtime_action_label(),
             format!("Start Environment Runtime{suffix}")
         );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn launches_the_soloe_client_on_startup_by_default_and_honors_opt_out() {
+        let directory = env::temp_dir().join(format!(
+            "soloe-tray-startup-settings-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&directory);
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
+
+        assert!(supervisor.configured_startup().unwrap().launch_soloe_client);
+
+        fs::write(
+            directory.join("settings.json"),
+            r#"{"startup":{"launchSoloeClient":false}}"#,
+        )
+        .unwrap();
+        assert!(!supervisor.configured_startup().unwrap().launch_soloe_client);
         let _ = fs::remove_dir_all(directory);
     }
 

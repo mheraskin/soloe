@@ -222,6 +222,12 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setLaunchSoloeClient(value: boolean) {
+    try {
+      await settings.update({ startup: { launchSoloeClient: value } });
+    } catch (e) { reportError(e); }
+  }
+
   async function enableNotifications(): Promise<void> {
     notificationPermission = await requestAgentNotificationPermission();
   }
@@ -463,6 +469,21 @@
 
   <ScrollArea class="settings-content min-h-0 flex-1">
     <Tabs.Content value="backend" class={contentClass}>
+      <div class="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/20 p-3">
+        <div class="flex flex-col gap-1">
+          <Label for="pref-launch-soloe-client" class="text-sm font-medium">
+            Launch Soloe Client
+          </Label>
+          <p class="m-0 text-[11px] text-muted-foreground">
+            Open Soloe automatically after the environment starts with the Tray Host.
+          </p>
+        </div>
+        <Switch
+          id="pref-launch-soloe-client"
+          checked={settings.current.startup.launchSoloeClient}
+          onCheckedChange={setLaunchSoloeClient}
+        />
+      </div>
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground">Run terminals and agents in</Label>
         <Select.Root
@@ -481,10 +502,14 @@
         </Select.Root>
         <span class="text-[11px] text-muted-foreground">
           {#if platform.current.platform === 'macos'}
-            Terminals, agents, project commands, the tray, and Electron run natively on macOS.
+            Terminals, agents, project commands, the Tray Host, and Soloe Client run natively on
+            macOS.
+          {:else if platform.current.platform === 'linux'}
+            Terminals, agents, project commands, the Tray Host, and Soloe Client run natively on
+            Linux.
           {:else}
-            Choose the environment that runs terminals, agents, and project commands. The tray and
-            Electron app stay on Windows.
+            Choose the environment that runs terminals, agents, and project commands. The Tray Host
+            and Soloe Client stay on Windows.
           {/if}
         </span>
       </div>

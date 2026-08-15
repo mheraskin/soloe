@@ -123,7 +123,7 @@
     error
       ? 'Usage unavailable'
       : usage
-        ? `${usage.scope === 'backend' ? 'Soloe backend' : 'Soloe Electron client'}${usage.availability === 'available' ? '' : ` (${usage.availability})`}: CPU ${appCpuLabel} · Memory ${appMemoryLabel}${usage.wslActive ? ` · WSL VM-wide: CPU ${wslCpuLabel} · Memory ${wslMemoryTitle}. ${wslDetailTitle}` : ''}${usage.message ? `. ${usage.message}` : ''}`
+        ? `${usage.scope === 'backend' ? 'Soloe environment' : 'Soloe Client'}${usage.availability === 'available' ? '' : ` (${usage.availability})`}: CPU ${appCpuLabel} · Memory ${appMemoryLabel}${usage.wslActive ? ` · WSL VM-wide: CPU ${wslCpuLabel} · Memory ${wslMemoryTitle}. ${wslDetailTitle}` : ''}${usage.message ? `. ${usage.message}` : ''}`
         : 'Gathering usage…'
   );
 

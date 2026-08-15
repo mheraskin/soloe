@@ -100,10 +100,19 @@ HTTP, RPC, and WebSocket transports to browser and desktop clients without
 owning agent PTY lifetime.
 _Avoid_: Environment Runtime, tray backend
 
+**Soloe Environment**:
+The Application Server and Environment Runtime running together on one Device.
+_Avoid_: Backend, Soloe Server, Soloe Client
+
 **Tray Host**:
 The windowless native supervisor that reports service state and explicitly
 starts or stops the Environment Runtime and Application Server.
 _Avoid_: Desktop client, background Electron window
+
+**Soloe Client**:
+The user-facing desktop application that connects to an Application Server
+without owning the Environment Runtime or agent process lifetime.
+_Avoid_: Electron app, Tray Host, Soloe application (when the lifecycle distinction matters)
 
 **Backend Placement**:
 The restart-applied setting that places the Application Server and Environment
@@ -252,7 +261,7 @@ _Avoid_: Sync state, source of truth
   explicit stop intent sent to the **Environment Runtime** ends its PTY
 - Replacing or rebuilding an **Application Server** disconnects transports but
   never shuts down the **Environment Runtime**
-- Exiting a browser or Electron client releases only its presentations and
+- Exiting a browser or Soloe Client releases only its presentations and
   connections; **Tray Host** quit is the explicit whole-backend stop boundary
 - The **Tray Host** owns every native backend and client process group through
   an OS-enforced lifetime boundary; a Tray Host crash stops those groups, and a
