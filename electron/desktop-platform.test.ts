@@ -22,7 +22,8 @@ describe('desktopApplicationIdentity', () => {
   it('brands the macOS development application and its Dock icon as Soloe', () => {
     expect(desktopApplicationIdentity('darwin')).toEqual({
       name: 'Soloe',
-      setDockIcon: true
+      setDockIcon: true,
+      setWindowIcon: false
     });
   });
 
@@ -30,14 +31,16 @@ describe('desktopApplicationIdentity', () => {
     expect(desktopApplicationIdentity('linux')).toEqual({
       name: 'Soloe',
       desktopName: 'com.soloe.app.desktop',
-      setDockIcon: false
+      setDockIcon: false,
+      setWindowIcon: true
     });
   });
 
   it('keeps the Soloe application name on Windows', () => {
     expect(desktopApplicationIdentity('win32')).toEqual({
       name: 'Soloe',
-      setDockIcon: false
+      setDockIcon: false,
+      setWindowIcon: true
     });
   });
 });

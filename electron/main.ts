@@ -920,8 +920,11 @@ async function createWindow(): Promise<BrowserWindow> {
     }
   });
 
-  if (process.platform === 'win32') {
+  if (desktopIdentity.setWindowIcon) {
     win.setIcon(appIcon);
+  }
+
+  if (process.platform === 'win32') {
     win.setAppDetails({
       appId,
       appIconPath: appIcon,

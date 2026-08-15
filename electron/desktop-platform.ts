@@ -4,6 +4,7 @@ export interface DesktopApplicationIdentity {
   name: 'Soloe';
   desktopName?: 'com.soloe.app.desktop';
   setDockIcon: boolean;
+  setWindowIcon: boolean;
 }
 
 export function desktopApplicationIdentity(
@@ -12,7 +13,8 @@ export function desktopApplicationIdentity(
   return {
     name: 'Soloe',
     ...(platform === 'linux' ? { desktopName: 'com.soloe.app.desktop' as const } : {}),
-    setDockIcon: platform === 'darwin'
+    setDockIcon: platform === 'darwin',
+    setWindowIcon: platform === 'linux' || platform === 'win32'
   };
 }
 
