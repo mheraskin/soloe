@@ -12,6 +12,7 @@
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
+  import { terminalLinkHandlers } from '../lib/terminal-links';
   import {
     TerminalTranscriptFollowController,
     TerminalTranscriptProjector,
@@ -74,6 +75,11 @@
       return;
     }
 
+    const terminalLinks = terminalLinkHandlers((uri) => {
+      void openDeviceBrowserUrl(uri, projection.ref.deviceId).catch((cause) => {
+        error = cause instanceof Error ? cause.message : String(cause);
+      });
+    });
     const terminal = new Terminal({
       fontFamily: terminalFontFamily,
       fontSize: 12,
@@ -86,14 +92,11 @@
       scrollback: FULL_TERMINAL_SCROLLBACK,
       convertEol: false,
       theme: terminalTheme,
-      allowProposedApi: true
+      allowProposedApi: true,
+      linkHandler: terminalLinks.osc
     });
     const fit = new FitAddon();
-    const links = new WebLinksAddon((_event, uri) => {
-      void openDeviceBrowserUrl(uri, projection.ref.deviceId).catch((cause) => {
-        error = cause instanceof Error ? cause.message : String(cause);
-      });
-    });
+    const links = new WebLinksAddon(terminalLinks.web);
     terminal.loadAddon(fit);
     terminal.loadAddon(links);
     terminal.open(host);

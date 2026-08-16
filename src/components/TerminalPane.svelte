@@ -42,6 +42,7 @@
   import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
+  import { terminalLinkHandlers } from '../lib/terminal-links';
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import TerminalTranscript from './TerminalTranscript.svelte';
 
@@ -503,6 +504,14 @@
     if (!host) return;
     const initFontSize = untrack(() => terminalFontSize);
     const initScrollback = untrack(() => terminalScrollback);
+    const terminalLinks = terminalLinkHandlers((uri) => {
+      const deviceId = deviceSessions.localDevice?.deviceId;
+      if (!deviceId) {
+        reportError(new Error('The local Device identity is unavailable.'));
+        return;
+      }
+      void openDeviceBrowserUrl(uri, deviceId).catch(reportError);
+    });
     const t = new Terminal({
       fontFamily: terminalFontFamily,
       fontSize: initFontSize,
@@ -529,17 +538,11 @@
       theme: terminalTheme,
       allowProposedApi: true,
       scrollback: initScrollback,
-      convertEol: false
+      convertEol: false,
+      linkHandler: terminalLinks.osc
     });
     const f = new FitAddon();
-    const links = new WebLinksAddon((_event, uri) => {
-      const deviceId = deviceSessions.localDevice?.deviceId;
-      if (!deviceId) {
-        reportError(new Error('The local Device identity is unavailable.'));
-        return;
-      }
-      void openDeviceBrowserUrl(uri, deviceId).catch(reportError);
-    });
+    const links = new WebLinksAddon(terminalLinks.web);
     const unicode11 = new Unicode11Addon();
     const clipboard = new ClipboardAddon();
     t.loadAddon(f);
