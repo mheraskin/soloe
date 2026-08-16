@@ -37,6 +37,12 @@ export interface RuntimeTerminalInputControl {
   ): Promise<void>;
 }
 
+export interface RuntimeConnectionOptions {
+  /** How long to wait for a supervised Runtime that is still starting. */
+  timeoutMs?: number;
+  retryDelayMs?: number;
+}
+
 class RemotePtyProcess extends EventEmitter implements PtyProcess {
   private operations: Promise<void> = Promise.resolve();
 
@@ -108,8 +114,22 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     });
   }
 
-  static async connect(endpoint: string): Promise<RemoteRuntimePtyProcessFactory> {
-    return new RemoteRuntimePtyProcessFactory(await RuntimeClient.connect(endpoint));
+  static async connect(
+    endpoint: string,
+    options: RuntimeConnectionOptions = {}
+  ): Promise<RemoteRuntimePtyProcessFactory> {
+    const timeoutMs = Math.max(0, options.timeoutMs ?? 0);
+    const retryDelayMs = Math.max(1, options.retryDelayMs ?? 100);
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      try {
+        return new RemoteRuntimePtyProcessFactory(await RuntimeClient.connect(endpoint));
+      } catch (error) {
+        const remainingMs = deadline - Date.now();
+        if (!isTransientRuntimeConnectionError(error) || remainingMs <= 0) throw error;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(retryDelayMs, remainingMs)));
+      }
+    }
   }
 
   async spawn(options: PtyProcessSpawnOptions): Promise<PtyProcess> {
@@ -221,4 +241,9 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     this.inputLeaseListeners.clear();
     this.client.disconnect();
   }
+}
+
+function isTransientRuntimeConnectionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ECONNREFUSED';
 }

@@ -32,6 +32,36 @@ class HostedProcess extends EventEmitter implements RuntimeProcess {
 }
 
 describe("RemoteRuntimePtyProcessFactory", () => {
+  it("waits for a supervised Environment Runtime that is still starting", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-runtime-startup-"));
+    const endpoint = resolveRuntimeEndpoint({
+      dataDirectory: directory,
+      userIdentity: `runtime-startup-test-${process.pid}`,
+    });
+    const runtime = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => new HostedProcess() },
+    });
+    let remoteFactory: RemoteRuntimePtyProcessFactory | undefined;
+
+    try {
+      const connection = RemoteRuntimePtyProcessFactory.connect(endpoint, {
+        timeoutMs: 1_000,
+        retryDelayMs: 10,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await runtime.listen();
+
+      remoteFactory = await connection;
+
+      await expect(remoteFactory.listRunning()).resolves.toEqual([]);
+    } finally {
+      await remoteFactory?.dispose();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("disconnects without terminating runtime-owned PTYs", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-remote-pty-"));
     const endpoint = resolveRuntimeEndpoint({

@@ -625,7 +625,10 @@ async function setupServices(): Promise<AppServices> {
   mcpInfo = startedInfo;
 
   const runtimeEndpoint = process.env.SOLOE_RUNTIME_ENDPOINT ?? resolveRuntimeEndpoint();
-  const runtimeProcessFactory = await RemoteRuntimePtyProcessFactory.connect(runtimeEndpoint);
+  const runtimeProcessFactory = await RemoteRuntimePtyProcessFactory.connect(runtimeEndpoint, {
+    timeoutMs: 15_000,
+    retryDelayMs: 100
+  });
   console.info(`[terminal] connected to Environment Runtime at ${runtimeEndpoint}`);
   const batcher = new TerminalOutputBatcher(OUTPUT_BATCH_INTERVAL_MS, (events) => {
     manager?.forwardBatchedOutput(events);
