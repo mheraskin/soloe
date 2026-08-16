@@ -124,7 +124,7 @@ export async function prepareMacosDevelopmentElectron() {
 
 export async function runElectronDevelopment() {
   const electronVite = join(repositoryRoot, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js');
-  const environment = { ...process.env };
+  const environment = { ...process.env, SOLOE_DESKTOP_DEVELOPMENT: '1' };
   if (process.platform === 'darwin') {
     environment.ELECTRON_EXEC_PATH = await prepareMacosDevelopmentElectron();
   }

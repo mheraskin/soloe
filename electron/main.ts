@@ -102,6 +102,7 @@ import { assertSafeExternalUrl } from './security/external-url.js';
 import {
   applicationMenuTemplate,
   desktopApplicationIdentity,
+  desktopRendererTarget,
   desktopWindowPolicy,
   shouldPreventWindowCloseShortcut,
   shouldQuitAfterLastWindow,
@@ -983,9 +984,15 @@ async function createWindow(): Promise<BrowserWindow> {
     return { action: 'deny' };
   });
 
-  const devUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (!app.isPackaged && devUrl) {
-    await win.loadURL(devUrl);
+  const rendererTarget = desktopRendererTarget({
+    appIsPackaged: app.isPackaged,
+    development: process.env['SOLOE_DESKTOP_DEVELOPMENT'] === '1',
+    ...(process.env['ELECTRON_RENDERER_URL']
+      ? { developmentUrl: process.env['ELECTRON_RENDERER_URL'] }
+      : {})
+  });
+  if (rendererTarget.kind === 'url') {
+    await win.loadURL(rendererTarget.value);
   } else {
     await win.loadFile(path.join(__dirname, '../renderer/index.html'));
   }

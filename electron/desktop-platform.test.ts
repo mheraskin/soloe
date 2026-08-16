@@ -3,12 +3,39 @@ import { readFileSync } from 'node:fs';
 import {
   applicationMenuTemplate,
   desktopApplicationIdentity,
+  desktopRendererTarget,
   desktopWindowPolicy,
   shouldPreventWindowCloseShortcut,
   shouldQuitAfterLastWindow,
   shouldRecreateWindowForReopen,
   shouldShowCustomWindowControls
 } from './desktop-platform.js';
+
+describe('desktopRendererTarget', () => {
+  it('uses the live renderer for an explicitly marked branded development app', () => {
+    expect(desktopRendererTarget({
+      appIsPackaged: true,
+      development: true,
+      developmentUrl: 'http://localhost:5173/'
+    })).toEqual({ kind: 'url', value: 'http://localhost:5173/' });
+  });
+
+  it('does not let a packaged release trust a development URL from its environment', () => {
+    expect(desktopRendererTarget({
+      appIsPackaged: true,
+      development: false,
+      developmentUrl: 'http://localhost:5173/'
+    })).toEqual({ kind: 'file' });
+  });
+
+  it('preserves the normal unbranded electron-vite development path', () => {
+    expect(desktopRendererTarget({
+      appIsPackaged: false,
+      development: false,
+      developmentUrl: 'http://localhost:5173/'
+    })).toEqual({ kind: 'url', value: 'http://localhost:5173/' });
+  });
+});
 
 describe('desktopApplicationIdentity', () => {
   it('provides native development metadata before Electron starts', () => {

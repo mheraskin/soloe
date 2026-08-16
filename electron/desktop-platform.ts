@@ -7,6 +7,21 @@ export interface DesktopApplicationIdentity {
   setWindowIcon: boolean;
 }
 
+export type DesktopRendererTarget =
+  | { kind: 'url'; value: string }
+  | { kind: 'file' };
+
+export function desktopRendererTarget(input: {
+  appIsPackaged: boolean;
+  development: boolean;
+  developmentUrl?: string;
+}): DesktopRendererTarget {
+  if (input.developmentUrl && (input.development || !input.appIsPackaged)) {
+    return { kind: 'url', value: input.developmentUrl };
+  }
+  return { kind: 'file' };
+}
+
 export function desktopApplicationIdentity(
   platform: NodeJS.Platform = process.platform
 ): DesktopApplicationIdentity {
