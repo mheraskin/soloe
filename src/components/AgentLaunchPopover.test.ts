@@ -15,7 +15,10 @@ const deviceSessionMocks = vi.hoisted(() => ({
   reorder: vi.fn(async () => undefined),
   openSession: vi.fn(async () => undefined),
   stopSession: vi.fn(async () => undefined),
-  restartSession: vi.fn(async () => undefined)
+  restartSession: vi.fn(async () => undefined),
+  updateSession: vi.fn(async () => undefined),
+  clearSelectedSession: vi.fn(),
+  isSelected: vi.fn(() => false)
 }));
 
 vi.mock('../stores/sessions.svelte', () => ({
@@ -34,8 +37,7 @@ vi.mock('../stores/sessions.svelte', () => ({
 vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
     ...deviceSessionMocks,
-    device: vi.fn(() => ({ local: false, available: true })),
-    isSelected: vi.fn(() => false)
+    device: vi.fn(() => ({ local: false, available: true }))
   }
 }));
 
@@ -126,6 +128,7 @@ describe('AgentLaunchPopover touch gestures', () => {
     document.body.innerHTML = '';
     for (const mock of Object.values(sessionMocks)) mock.mockClear();
     for (const mock of Object.values(deviceSessionMocks)) mock.mockClear();
+    deviceSessionMocks.isSelected.mockReturnValue(false);
   });
 
   afterEach(async () => {
@@ -315,5 +318,60 @@ describe('AgentLaunchPopover touch gestures', () => {
     const row = target.querySelector<HTMLElement>(`[data-session-id="${projection.key}"]`);
 
     expect(row?.outerHTML).toContain('data-context-menu-trigger');
+  });
+
+  it('keeps a selected remote Session open when Enter commits an inline rename', async () => {
+    deviceSessionMocks.isSelected.mockReturnValue(true);
+    const remoteSession = {
+      id: 'remote-session',
+      name: 'Remote agent',
+      cwd: '/repo-mobile',
+      runMode: 'linux',
+      launch: { type: 'terminal', shell: 'auto' },
+      createdAt: '2026-08-14T20:00:00.000Z',
+      lastUsedAt: '2026-08-14T20:00:00.000Z'
+    } as const;
+    const projection = {
+      ref: { deviceId: 'remote-device', sessionId: remoteSession.id },
+      key: 'remote-device/remote-session',
+      deviceName: 'Remote Linux',
+      available: true,
+      session: remoteSession,
+      runtime: {
+        sessionId: remoteSession.id,
+        terminalId: 'terminal-remote-session',
+        status: 'running' as const
+      }
+    };
+    const target = mountComponent(WorktreeGroup, {
+      title: 'feature/mobile',
+      cwd: '/repo-mobile',
+      projectId: null,
+      items: [remoteSession],
+      projections: [projection],
+      allowLocalActions: false
+    });
+    const row = target.querySelector<HTMLElement>(`[data-session-id="${projection.key}"]`);
+
+    row!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, button: 0 }));
+    await Promise.resolve();
+    flushSync();
+    const input = row!.querySelector<HTMLInputElement>('input');
+    expect(input).not.toBeNull();
+    input!.value = 'Renamed remote agent';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    input!.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
+    }));
+    await Promise.resolve();
+    flushSync();
+
+    expect(deviceSessionMocks.updateSession).toHaveBeenCalledWith(projection.key, {
+      name: 'Renamed remote agent',
+      autoNamed: false
+    });
+    expect(deviceSessionMocks.clearSelectedSession).not.toHaveBeenCalled();
   });
 });

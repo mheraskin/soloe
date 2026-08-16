@@ -166,6 +166,7 @@
   }
 
   function onNameKey(e: KeyboardEvent) {
+    e.stopPropagation();
     if (e.key === 'Enter') {
       e.preventDefault();
       void commitEditing();
