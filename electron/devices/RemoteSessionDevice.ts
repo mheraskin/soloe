@@ -114,6 +114,7 @@ export class RemoteSessionDevice implements SessionDevice {
 
   async connect(): Promise<SessionDeviceStatus> {
     if (this.disposed) throw new Error(`Device ${this.deviceId} client is disposed.`);
+    if (this.currentStatus.state === 'ready') return this.status;
     if (this.connectRequest) return this.connectRequest;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

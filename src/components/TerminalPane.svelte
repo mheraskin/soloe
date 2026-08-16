@@ -40,6 +40,7 @@
   import type { ClipboardImagePayload } from '@shared/types/files.js';
   import { terminalControl } from '../stores/terminal-control.svelte';
   import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
+  import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import TerminalTranscript from './TerminalTranscript.svelte';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
@@ -58,9 +59,7 @@
   } = $props();
 
   let fontSize = $derived(settings.current.terminal.fontSize);
-  let terminalScrollback = $derived(
-    settings.current.terminal.keepFullHistory ? 4_294_967_295 : 5000
-  );
+  const terminalScrollback = FULL_TERMINAL_SCROLLBACK;
   let compactViewport = $state(window.matchMedia('(max-width: 767px)').matches);
   let terminalFontSize = $derived(fontSize);
   let inputLease = $derived(terminalControl.lease(terminalId));
@@ -400,22 +399,23 @@
   function writeOutput(data: string): Promise<void> {
     const current = term;
     if (!current) return Promise.resolve();
-    return new Promise((resolve) => {
-      try {
-        current.write(data, resolve);
-        noteOutput(data.length);
-      } catch (err) {
-        console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
-        resolve();
-      }
-    });
+    try {
+      return writeTerminalData(current, data, { onSettled: noteOutput });
+    } catch (err) {
+      console.warn('[DEBUG-xterm] write failed', { terminalId, sessionId, err });
+      return Promise.resolve();
+    }
   }
 
   function replaceOutput(data: string): Promise<void> {
     const current = term;
     if (!current) return Promise.resolve();
-    current.reset();
-    return writeOutput(data);
+    try {
+      return writeTerminalData(current, data, { replace: true, onSettled: noteOutput });
+    } catch (err) {
+      console.warn('[DEBUG-xterm] replay failed', { terminalId, sessionId, err });
+      return Promise.resolve();
+    }
   }
 
   // A WebGL context is scarce — Chromium force-loses the oldest once a page
@@ -708,17 +708,10 @@
 
   // Terminal construction is intentionally independent of visibility. Hidden
   // resident presentations stop parsing output; reveal catches up from the
-  // last sequence xterm applied through the bounded Terminal Replay Tail.
+  // last sequence xterm applied through the Terminal Replay history.
   $effect(() => {
     const nextVisible = visible && ownsInput;
     untrack(() => outputPresentation?.setVisible(nextVisible));
-  });
-
-  $effect(() => {
-    const scrollback = terminalScrollback;
-    untrack(() => {
-      if (term) term.options.scrollback = scrollback;
-    });
   });
 
   // Only the focused pane owns app-wide terminal commands and document input
@@ -938,7 +931,7 @@
 >
   {#if (!ready && !readOnly) || transitioningControl}
     <div
-      class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]/75 backdrop-blur-sm transition-opacity duration-500 ease-out"
+      class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]"
     >
       <div class="flex flex-col items-center gap-3">
         <span class="relative flex size-9 items-center justify-center">

@@ -52,9 +52,9 @@ export class ConnectionsStore {
     if (this.loadRequest) return this.loadRequest;
     this.loadRequest = ipc.connections.get()
       .then((snapshot) => {
-        this.snapshot = snapshot;
+        this.updateSnapshot(snapshot);
         this.loaded = true;
-        void this.refresh().catch(() => undefined);
+        void this.refresh({ visible: false }).catch(() => undefined);
       })
       .finally(() => {
         this.loadRequest = null;
@@ -62,16 +62,17 @@ export class ConnectionsStore {
     return this.loadRequest;
   }
 
-  refresh(): Promise<void> {
+  refresh(options: { visible?: boolean } = {}): Promise<void> {
     if (!this.supported) return Promise.resolve();
     if (this.refreshRequest) return this.refreshRequest;
-    this.refreshing = true;
+    const visible = options.visible ?? true;
+    if (visible) this.refreshing = true;
     this.refreshRequest = ipc.connections.refresh()
       .then((snapshot) => {
-        this.snapshot = snapshot;
+        this.updateSnapshot(snapshot);
       })
       .finally(() => {
-        this.refreshing = false;
+        if (visible) this.refreshing = false;
         this.refreshRequest = null;
       });
     return this.refreshRequest;
@@ -112,11 +113,16 @@ export class ConnectionsStore {
     this.detach();
     if (!this.supported) return;
     this.detachChange = ipc.connections.onChange((snapshot) => {
-      this.snapshot = snapshot;
+      this.updateSnapshot(snapshot);
     });
     this.discoveryTimer = setInterval(() => {
-      void this.refresh().catch(() => undefined);
+      void this.refresh({ visible: false }).catch(() => undefined);
     }, DISCOVERY_INTERVAL_MS);
+  }
+
+  private updateSnapshot(snapshot: ConnectionSnapshot): void {
+    if (sameConnectionSnapshot(this.snapshot, snapshot)) return;
+    this.snapshot = snapshot;
   }
 
   detach(): void {
@@ -125,6 +131,18 @@ export class ConnectionsStore {
     if (this.discoveryTimer) clearInterval(this.discoveryTimer);
     this.discoveryTimer = null;
   }
+}
+
+function sameConnectionSnapshot(left: ConnectionSnapshot, right: ConnectionSnapshot): boolean {
+  const { refreshedAt: _leftRefreshedAt, ...leftContent } = left;
+  const { refreshedAt: _rightRefreshedAt, ...rightContent } = right;
+  return JSON.stringify({
+    ...leftContent,
+    machines: leftContent.machines.map(({ lastSeenAt: _lastSeenAt, ...machine }) => machine)
+  }) === JSON.stringify({
+    ...rightContent,
+    machines: rightContent.machines.map(({ lastSeenAt: _lastSeenAt, ...machine }) => machine)
+  });
 }
 
 export const connections = new ConnectionsStore();

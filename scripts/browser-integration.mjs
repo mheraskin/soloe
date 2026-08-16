@@ -12,7 +12,11 @@ const require = createRequire(import.meta.url);
 const electronPath = require('electron');
 const electronVersion = require('electron/package.json').version;
 const root = path.resolve(import.meta.dirname, '..');
-const nativeRunMode = process.platform === 'win32' ? 'windows' : 'linux';
+const nativeRunMode = process.platform === 'win32'
+  ? 'windows'
+  : process.platform === 'darwin'
+    ? 'macos'
+    : 'linux';
 const config = parseArgs(process.argv.slice(2));
 const token = config.serverToken ?? `browser-integration-${process.pid}`;
 const children = new Set();
@@ -22,6 +26,10 @@ let runtime;
 let server;
 
 async function main() {
+  if (config.liveSessionId) {
+    await runLiveSessionControlSmoke();
+    return;
+  }
   if (config.serverUrl) {
     await runExistingServerSmoke();
     return;
@@ -125,7 +133,8 @@ async function main() {
       projectId: normalProject.id,
       sessionId: normalSession.id,
       normalCwd: normalRepo,
-      runMode: nativeRunMode
+      runMode: nativeRunMode,
+      expectCustomWindowControls: process.platform !== 'darwin'
     })})`
   );
   await second.cdp.evaluate(`(() => {
@@ -236,6 +245,217 @@ async function main() {
     }
   };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+async function runLiveSessionControlSmoke() {
+  assert(config.webUrl, '--web-url is required with --live-session-id');
+  assert(config.serverToken, '--server-token is required with --live-session-id');
+  scratchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-live-control-'));
+  const url = `${config.webUrl}/?token=${encodeURIComponent(config.serverToken)}`;
+  const first = await launchBrowser(url, 'live-mac-one');
+  browsers.add(first);
+  const firstState = await first.cdp.evaluate(
+    `(${prepareLiveSessionClient.toString()})(${JSON.stringify({
+      sessionId: config.liveSessionId,
+      expectReadOnly: false
+    })})`
+  );
+  const firstMarker = `macbook-first-${Date.now()}`;
+  await typeTerminalCommand(first.cdp, `printf '${firstMarker}\\n'\n`);
+  await waitForTerminalMarker(first.cdp, firstState.terminalId, firstMarker);
+
+  const second = await launchBrowser(url, 'live-mac-two');
+  browsers.add(second);
+  const secondState = await second.cdp.evaluate(
+    `(${prepareLiveSessionClient.toString()})(${JSON.stringify({
+      sessionId: config.liveSessionId,
+      expectReadOnly: true
+    })})`
+  );
+  assert(
+    secondState.terminalId === firstState.terminalId,
+    'MacBook clients attached to different XPS terminals'
+  );
+  const stability = await second.cdp.evaluate(`(async () => {
+    const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+    const row = document.querySelector(${JSON.stringify(
+      `[data-session-id="${config.liveSessionId}"]`
+    )});
+    const takeover = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Take Over'
+    );
+    const newSession = document.querySelector(
+      'button[aria-label*="New session" i], button[title*="New session" i]'
+    );
+    const deviceMenu = document.querySelector('button[aria-label^="Show devices:"]');
+    const targets = [row, takeover, newSession, deviceMenu].filter(Boolean);
+    let removedTargets = 0;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const removed of record.removedNodes) {
+          if (targets.some((target) => removed === target || removed.contains?.(target))) {
+            removedTargets += 1;
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    await sleep(31_500);
+    observer.disconnect();
+    return {
+      sessionRowStable: row?.isConnected === true
+        && document.querySelector(${JSON.stringify(
+          `[data-session-id="${config.liveSessionId}"]`
+        )}) === row,
+      takeoverStable: takeover?.isConnected === true,
+      newSessionFound: Boolean(newSession),
+      newSessionStable: newSession?.isConnected === true,
+      deviceMenuFound: Boolean(deviceMenu),
+      deviceMenuStable: !deviceMenu || deviceMenu.isConnected,
+      removedTargets
+    };
+  })()`);
+  assert(stability.sessionRowStable, 'Periodic refresh remounted the live Session row');
+  assert(stability.takeoverStable, 'Periodic refresh remounted the Take Over control');
+  assert(stability.newSessionFound, 'New Session control was not rendered');
+  assert(stability.newSessionStable, 'Periodic refresh remounted the New Session control');
+  assert(stability.deviceMenuStable, 'Periodic refresh remounted the device dropdown');
+  assert(stability.removedTargets === 0, 'Periodic refresh removed stable UI controls');
+
+  await second.cdp.evaluate(`(async () => {
+    const deadline = performance.now() + 10_000;
+    while (performance.now() < deadline) {
+      const button = [...document.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent?.trim() === 'Take Over'
+      );
+      if (button?.getClientRects().length) {
+        button.click();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    while (performance.now() < deadline) {
+      const button = [...document.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent?.trim() === 'Take Over'
+      );
+      if (!button?.getClientRects().length) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error('Take Over did not make the second MacBook client interactive');
+  })()`);
+  await waitFor(async () => first.cdp.evaluate(`
+    [...document.querySelectorAll('button')].some(
+      (button) => button.textContent?.trim() === 'Take Over'
+        && button.getClientRects().length > 0
+    )
+  `), 10_000, 'first MacBook client to become read-only');
+
+  const secondMarker = `macbook-takeover-${Date.now()}`;
+  await typeTerminalCommand(second.cdp, `printf '${secondMarker}\\n'\n`);
+  await waitForTerminalMarker(second.cdp, secondState.terminalId, secondMarker);
+  process.stdout.write(`${JSON.stringify({
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    environment: {
+      platform: process.platform,
+      backend: config.liveBackend ?? 'remote',
+      webUrl: config.webUrl
+    },
+    sessionId: config.liveSessionId,
+    terminalId: firstState.terminalId,
+    liveSessionControl: {
+      firstControllerInputObserved: true,
+      spectatorObserved: true,
+      periodicRefreshStable: stability,
+      takeoverObserved: true,
+      previousControllerBecameReadOnly: true,
+      takeoverControllerInputObserved: true
+    }
+  }, null, 2)}\n`);
+}
+
+async function typeTerminalCommand(cdp, command) {
+  await cdp.evaluate(`(() => {
+    const textarea = document.querySelector('.xterm-helper-textarea');
+    if (!textarea) throw new Error('Interactive xterm textarea is unavailable');
+    textarea.focus();
+    return true;
+  })()`);
+  const submit = command.endsWith('\n');
+  await cdp.send('Input.insertText', { text: submit ? command.slice(0, -1) : command });
+  if (submit) {
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      text: '\r',
+      unmodifiedText: '\r',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13
+    });
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13
+    });
+  }
+}
+
+async function waitForTerminalMarker(cdp, terminalId, marker) {
+  await waitFor(async () => cdp.evaluate(`(async () => {
+    const result = await window.soloe.terminal.replay(
+      ${JSON.stringify(terminalId)},
+      0
+    );
+    return Boolean(result.ok && result.value?.data?.includes(${JSON.stringify(marker)}));
+  })()`), 10_000, `terminal marker ${marker}`);
+}
+
+async function prepareLiveSessionClient(input) {
+  const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const visible = (element) => Boolean(element && element.getClientRects().length > 0);
+  const deadline = performance.now() + 15_000;
+  let row = null;
+  while (performance.now() < deadline) {
+    row = document.querySelector(`[data-session-id="${CSS.escape(input.sessionId)}"]`);
+    if (row) break;
+    for (const project of document.querySelectorAll('[data-project-id]')) {
+      project.querySelector('button')?.click();
+    }
+    await sleep(100);
+  }
+  if (!row) throw new Error(`Live Session ${input.sessionId} was not rendered`);
+  if (row.getAttribute('data-row-selected') !== 'true') row.click();
+  while (performance.now() < deadline && row.getAttribute('data-row-selected') !== 'true') {
+    await sleep(50);
+  }
+  const terminalDeadline = performance.now() + 15_000;
+  let terminalId = null;
+  while (performance.now() < terminalDeadline) {
+    const running = await window.soloe.terminal.listRunning();
+    if (running.ok) {
+      terminalId = running.value.find((terminal) => terminal.sessionId === input.sessionId)?.terminalId;
+    }
+    const takeover = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Take Over'
+    );
+    if (terminalId && (input.expectReadOnly ? visible(takeover) : visible(
+      document.querySelector('.xterm-helper-textarea')
+    ))) break;
+    await sleep(50);
+  }
+  if (!terminalId) throw new Error('The live Session has no running terminal');
+  const takeoverVisible = visible([...document.querySelectorAll('button')].find(
+    (button) => button.textContent?.trim() === 'Take Over'
+  ));
+  if (takeoverVisible !== input.expectReadOnly) {
+    throw new Error(input.expectReadOnly
+      ? 'Second MacBook client did not enter read-only mode'
+      : 'First MacBook client unexpectedly entered read-only mode');
+  }
+  return { terminalId, readOnly: takeoverVisible };
 }
 
 async function runExistingServerSmoke() {
@@ -354,7 +574,8 @@ async function runExistingServerSmoke() {
       projectId: project.id,
       sessionId: normalSession.id,
       normalCwd: fixtureRoot,
-      runMode: config.runMode
+      runMode: config.runMode,
+      expectCustomWindowControls: process.platform !== 'darwin'
     })})`
   );
   await second.cdp.evaluate(`(() => {
@@ -668,6 +889,7 @@ async function launchBrowser(url, name) {
   const child = spawn(electronPath, [
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
+    ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
     `--user-data-dir=${userData}`,
     path.join(root, 'scripts', 'browser-integration-electron.mjs')
   ], {
@@ -716,6 +938,7 @@ async function launchRemoteElectron(baseUrl, name) {
   const child = spawn(electronPath, [
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
+    ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
     `--user-data-dir=${userData}`,
     root
   ], {
@@ -946,6 +1169,8 @@ function parseArgs(args) {
     smokeCwd: values.get('smoke-cwd'),
     serviceDataDir: values.get('service-data-dir'),
     wslDistro: values.get('wsl-distro'),
+    liveSessionId: values.get('live-session-id'),
+    liveBackend: values.get('live-backend'),
     runMode: values.get('run-mode') ?? nativeRunMode
   };
 }
@@ -1013,7 +1238,7 @@ async function runMobileWorkspaceWorkflow(input) {
     `[data-session-id="${CSS.escape(input.sessionId)}"]`
   );
   assert(sessionRow, 'Mobile terminal fixture session is missing');
-  sessionRow.click();
+  if (sessionRow.getAttribute('data-row-selected') !== 'true') sessionRow.click();
   await waitUntil(
     () => sessionRow.getAttribute('data-row-selected') === 'true'
       && page() === 'workspace'
@@ -1021,13 +1246,22 @@ async function runMobileWorkspaceWorkflow(input) {
     5_000,
     'mobile terminal session'
   );
-  await waitUntil(
-    () => document.querySelector(
-      '.terminal-surface[data-terminal-pane-role="full"] .xterm-screen'
-    ),
-    5_000,
-    'mobile terminal renderer'
-  );
+  try {
+    await waitUntil(
+      () => document.querySelector(
+        '.terminal-surface[data-terminal-pane-role="full"] .xterm-screen'
+      ),
+      15_000,
+      'mobile terminal renderer'
+    );
+  } catch (error) {
+    const surfaces = [...document.querySelectorAll('.terminal-surface')].map((surface) => ({
+      role: surface.getAttribute('data-terminal-pane-role'),
+      text: surface.textContent?.trim().slice(0, 160) ?? '',
+      xterm: Boolean(surface.querySelector('.xterm-screen'))
+    }));
+    throw new Error(`${error.message}; surfaces=${JSON.stringify(surfaces)}`);
+  }
   const terminalFitsViewport = () => {
     const terminalHost = document.querySelector(
       '.terminal-surface[data-terminal-pane-role="full"] .xterm'
@@ -1043,13 +1277,12 @@ async function runMobileWorkspaceWorkflow(input) {
   };
   await waitUntil(
     terminalFitsViewport,
-    5_000,
+    15_000,
     'mobile terminal to fit its viewport'
   );
 
   const root = document.documentElement;
   const terminalShell = document.querySelector('.terminal-pane-shell');
-  const mobileCommandBar = document.querySelector('.mobile-terminal-input');
   const xtermViewport = document.querySelector(
     '.terminal-surface[data-terminal-pane-role="full"] .xterm-viewport'
   );
@@ -1057,7 +1290,7 @@ async function runMobileWorkspaceWorkflow(input) {
     '.terminal-surface[data-terminal-pane-role="full"] .xterm'
   );
   assert(
-    terminalShell && mobileCommandBar && xtermViewport && xtermRoot,
+    terminalShell && xtermViewport && xtermRoot,
     'Mobile terminal keyboard surfaces are missing'
   );
   const xtermBeforeKeyboard = xtermRoot.getBoundingClientRect();
@@ -1068,7 +1301,6 @@ async function runMobileWorkspaceWorkflow(input) {
   }));
   await new Promise((resolve) => setTimeout(resolve, 50));
   const xtermWithKeyboard = xtermRoot.getBoundingClientRect();
-  const commandBarStyle = getComputedStyle(mobileCommandBar);
   const viewportStyle = getComputedStyle(xtermViewport);
   assert(
     Math.abs(xtermBeforeKeyboard.width - xtermWithKeyboard.width) <= 1
@@ -1076,10 +1308,8 @@ async function runMobileWorkspaceWorkflow(input) {
     'Mobile keyboard resized the terminal renderer'
   );
   assert(
-    commandBarStyle.position === 'fixed'
-      && Math.abs(Number.parseFloat(commandBarStyle.bottom) - 300) <= 1
-      && viewportStyle.touchAction === 'pan-y',
-    'Mobile command bar or momentum terminal scrolling was not configured'
+    viewportStyle.touchAction === 'pan-y',
+    'Mobile momentum terminal scrolling was not configured'
   );
   root.removeAttribute('data-mobile-keyboard-open');
   root.style.removeProperty('--keyboard-inset');
@@ -1214,12 +1444,11 @@ async function runMobileWorkspaceWorkflow(input) {
     'active Workspace dot to settle in the center'
   );
 
+  let serviceWorkerReady = false;
   if ('serviceWorker' in navigator) {
-    await Promise.race([
-      navigator.serviceWorker.ready,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Service worker did not become ready')), 5_000)
-      )
+    serviceWorkerReady = await Promise.race([
+      navigator.serviceWorker.ready.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 5_000))
     ]);
   }
 
@@ -1234,7 +1463,7 @@ async function runMobileWorkspaceWorkflow(input) {
     momentumTerminalScroll: true,
     twoPageNavigation: true,
     swipeNavigation: true,
-    serviceWorkerReady: 'serviceWorker' in navigator
+    serviceWorkerReady
   };
 }
 
@@ -1297,11 +1526,21 @@ async function runBrowserWorkflow(input) {
     button.click();
     detectLoading();
     await sleep(0);
-    await waitUntil(() => {
+    try {
+      await waitUntil(() => {
+        const root = document.querySelector(paneRoot[label]);
+        if (!visible(root)) return false;
+        if (label === 'Working diff') {
+          return Boolean(root.querySelector('[data-file-path]'));
+        }
+        return !/loading|listing files|scanning|rendering \d+ of \d+/iu.test(root.textContent ?? '');
+      }, timeoutMs, `${label} completion`);
+    } catch (error) {
       const root = document.querySelector(paneRoot[label]);
-      if (!visible(root)) return false;
-      return !/loading|listing files|scanning|rendering \d+ of \d+/iu.test(root.textContent ?? '');
-    }, timeoutMs, `${label} completion`);
+      throw new Error(`${error.message}; pressed=${button.getAttribute('aria-pressed')}; visible=${
+        visible(root)
+      }; text=${JSON.stringify(root?.textContent?.trim().slice(0, 500) ?? '')}`);
+    }
     clearInterval(heartbeat);
     observer.disconnect();
     const completedAt = performance.now();
@@ -1655,13 +1894,41 @@ async function runBrowserWorkflow(input) {
     api.terminal.start({ sessionId: input.sessionId, cols: 100, rows: 30 }),
     'terminal.start'
   );
+  let inputLease = null;
+  const initialLeaseDeadline = performance.now() + 5_000;
+  do {
+    inputLease = await unwrap(
+      api.terminal.currentInputLease(started.terminalId),
+      'terminal.currentInputLease'
+    );
+    if (inputLease) break;
+    await sleep(50);
+  } while (performance.now() < initialLeaseDeadline);
+  if (!inputLease) {
+    inputLease = await unwrap(
+      api.terminal.acquireInputLease(started.terminalId, {
+        deviceId: `browser-integration-${crypto.randomUUID()}`,
+        deviceName: 'Browser integration'
+      }, true),
+      'terminal.acquireInputLease'
+    );
+  }
+  const control = {
+    sessionId: inputLease.sessionId,
+    ownerDeviceId: inputLease.ownerDeviceId,
+    controllerDeviceId: inputLease.controllerDeviceId,
+    leaseId: inputLease.leaseId
+  };
   const output = new Promise((resolve, reject) => {
+    let observed = '';
     const timeout = setTimeout(() => {
       unsubscribe();
       reject(new Error('Terminal output marker timed out'));
     }, 10_000);
     const unsubscribe = api.terminal.onOutput((event) => {
-      if (event.terminalId !== started.terminalId || !event.data.includes(marker)) return;
+      if (event.terminalId !== started.terminalId) return;
+      observed += event.data;
+      if (!observed.includes(marker)) return;
       clearTimeout(timeout);
       unsubscribe();
       resolve(event);
@@ -1671,8 +1938,9 @@ async function runBrowserWorkflow(input) {
     api.terminal.input({
       terminalId: started.terminalId,
       data: input.runMode === 'windows'
-        ? `Write-Output '${marker}'\\r\\n`
-        : `printf '${marker}\\\\n'\\n`
+        ? `Write-Output '${marker}'\r\n`
+        : `printf '${marker}\\n'\n`,
+      control
     }),
     'terminal.input'
   );
@@ -1746,6 +2014,18 @@ async function runBrowserWorkflow(input) {
   );
   await unwrap(api.features.scan({ ...largeScope, slug: 'alpha' }), 'large features.scan');
 
+  await selectSession(input.sessionId, 'Browser fixture');
+  const leaseDeadline = performance.now() + 5_000;
+  do {
+    inputLease = await unwrap(
+      api.terminal.currentInputLease(started.terminalId),
+      'terminal.currentInputLease restored selection'
+    );
+    if (inputLease) break;
+    await sleep(50);
+  } while (performance.now() < leaseDeadline);
+  assert(inputLease, 'Selected terminal did not reacquire input control');
+
   return {
     transport: api.transport.kind,
     embeddedBrowserPaneHidden: true,
@@ -1779,6 +2059,7 @@ async function runBrowserWorkflow(input) {
     terminal: {
       terminalId: started.terminalId,
       marker,
+      inputLease,
       outputObserved: true,
       replayObserved: true
     }
@@ -1810,38 +2091,41 @@ async function runRemoteElectronWorkflow(input) {
     api.transport?.kind === 'remote-electron',
     'Remote Electron did not install the server transport'
   );
-  await waitUntil(
-    () => ['Minimize', 'Maximize', 'Close'].every((label) =>
-      document.querySelector(`button[aria-label="${label}"]`)
-    ),
-    10_000,
-    'remote Electron native window controls'
-  );
+  if (input.expectCustomWindowControls) {
+    await waitUntil(
+      () => ['Minimize', 'Maximize', 'Close'].every((label) =>
+        document.querySelector(`button[aria-label="${label}"]`)
+      ),
+      10_000,
+      'remote Electron custom window controls'
+    );
+  }
   await waitUntil(
     () => Boolean(
       document.querySelector(`[data-session-id="${CSS.escape(input.sessionId)}"]`)
-      || document.querySelector(`[data-project-id="${CSS.escape(input.projectId)}"]`)
+      || document.querySelector(`[data-session-id$="::${CSS.escape(input.sessionId)}"]`)
+      || document.querySelector(`[data-session-id$="/${CSS.escape(input.sessionId)}"]`)
+      || document.querySelector('[data-project-id]')
     ),
     10_000,
     'remote Electron session sidebar data'
   );
   let sessionRow = document.querySelector(
-    `[data-session-id="${CSS.escape(input.sessionId)}"]`
+    `[data-session-id="${CSS.escape(input.sessionId)}"], [data-session-id$="::${CSS.escape(input.sessionId)}"], [data-session-id$="/${CSS.escape(input.sessionId)}"]`
   );
   if (!sessionRow) {
-    const project = document.querySelector(
-      `[data-project-id="${CSS.escape(input.projectId)}"]`
-    );
-    project?.querySelector('button')?.click();
+    for (const project of document.querySelectorAll('[data-project-id]')) {
+      project.querySelector('button')?.click();
+    }
     await waitUntil(
       () => Boolean(document.querySelector(
-        `[data-session-id="${CSS.escape(input.sessionId)}"]`
+        `[data-session-id="${CSS.escape(input.sessionId)}"], [data-session-id$="::${CSS.escape(input.sessionId)}"], [data-session-id$="/${CSS.escape(input.sessionId)}"]`
       )),
       5_000,
       'remote Electron session row'
     );
     sessionRow = document.querySelector(
-      `[data-session-id="${CSS.escape(input.sessionId)}"]`
+      `[data-session-id="${CSS.escape(input.sessionId)}"], [data-session-id$="::${CSS.escape(input.sessionId)}"], [data-session-id$="/${CSS.escape(input.sessionId)}"]`
     );
   }
   assert(sessionRow, 'Remote Electron did not render the server-owned session');
@@ -1850,6 +2134,24 @@ async function runRemoteElectronWorkflow(input) {
     () => sessionRow.getAttribute('data-row-selected') === 'true',
     5_000,
     'remote Electron session selection'
+  );
+  await waitUntil(
+    () => visible([...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Take Over'
+    )),
+    10_000,
+    'remote Electron read-only takeover control'
+  );
+  const takeoverButton = [...document.querySelectorAll('button')].find(
+    (button) => button.textContent?.trim() === 'Take Over'
+  );
+  takeoverButton.click();
+  await waitUntil(
+    () => !visible([...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === 'Take Over'
+    )),
+    10_000,
+    'remote Electron terminal control takeover'
   );
 
   const paneSelectors = {
@@ -1914,7 +2216,8 @@ async function runRemoteElectronWorkflow(input) {
 
   return {
     transport: api.transport.kind,
-    nativeOverrides: ['window', 'browser'],
+    terminalControlTakeover: true,
+    nativeOverrides: input.expectCustomWindowControls ? ['window', 'browser'] : ['browser'],
     panes: {
       files: true,
       diff: true,

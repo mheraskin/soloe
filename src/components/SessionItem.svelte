@@ -98,6 +98,15 @@
   let showSpawnSpinner = $derived(hasRuntime && status === 'starting');
   let showAgentBadge = $derived(isAgent && displayedAgentState !== null);
   let statusPill = $derived(buildStatusPill());
+  let remoteLifecycle = $derived(
+    projection && !managedLocally
+      ? {
+          start: () => deviceSessions.openSession(projection!.key),
+          stop: () => deviceSessions.stopSession(projection!.key),
+          restart: () => deviceSessions.restartSession(projection!.key)
+        }
+      : null
+  );
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
@@ -265,7 +274,12 @@
   {#if dropPosition === 'after'}
     <div class="pointer-events-none absolute -bottom-px right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
   {/if}
-  <SessionContextMenu {session} disabled={!managedLocally} onRename={() => void startEditing()}>
+  <SessionContextMenu
+    {session}
+    statusOverride={projection ? status : null}
+    lifecycle={remoteLifecycle}
+    onRename={managedLocally ? () => void startEditing() : null}
+  >
     {#snippet trigger({ props })}
       <div
         {...props}

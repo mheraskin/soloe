@@ -471,7 +471,7 @@ export class SoloeDomain extends EventEmitter {
     this.settings.onChange((settings) => {
       this.emit("event", "settings.change", settings);
       void this.options.runtime
-        .setReplayUnbounded?.(settings.terminal.keepFullHistory)
+        .setReplayUnbounded?.(true)
         .catch((error) => {
           console.warn("[terminal] failed to update Runtime history retention", error);
         });
@@ -516,9 +516,7 @@ export class SoloeDomain extends EventEmitter {
         adapter: new GhCliGitHubAdapter({ binary: initialSettings.binaries.gh ?? "gh" }),
       });
     }
-    await this.options.runtime.setReplayUnbounded?.(
-      initialSettings.terminal.keepFullHistory,
-    );
+    await this.options.runtime.setReplayUnbounded?.(true);
     for (const session of await this.sessions.list()) {
       this.observer.registerTuiSession(session);
     }

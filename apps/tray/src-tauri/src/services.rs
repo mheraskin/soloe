@@ -183,14 +183,14 @@ struct StoredSettings {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct StartupSettings {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     launch_soloe_client: bool,
 }
 
 impl Default for StartupSettings {
     fn default() -> Self {
         Self {
-            launch_soloe_client: true,
+            launch_soloe_client: false,
         }
     }
 }
@@ -1801,10 +1801,6 @@ fn default_wsl_distro() -> String {
     "Ubuntu".to_string()
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn wsl_supervisor_script(
     repository_root: &str,
     data_directory: &str,
@@ -2407,7 +2403,7 @@ mod tests {
     }
 
     #[test]
-    fn launches_the_soloe_client_on_startup_by_default_and_honors_opt_out() {
+    fn leaves_the_soloe_client_closed_by_default_and_honors_opt_in() {
         let directory = env::temp_dir().join(format!(
             "soloe-tray-startup-settings-test-{}",
             std::process::id()
@@ -2418,14 +2414,14 @@ mod tests {
             Arc::new(FakeProcessOperations::default()),
         );
 
-        assert!(supervisor.configured_startup().unwrap().launch_soloe_client);
+        assert!(!supervisor.configured_startup().unwrap().launch_soloe_client);
 
         fs::write(
             directory.join("settings.json"),
-            r#"{"startup":{"launchSoloeClient":false}}"#,
+            r#"{"startup":{"launchSoloeClient":true}}"#,
         )
         .unwrap();
-        assert!(!supervisor.configured_startup().unwrap().launch_soloe_client);
+        assert!(supervisor.configured_startup().unwrap().launch_soloe_client);
         let _ = fs::remove_dir_all(directory);
     }
 

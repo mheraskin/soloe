@@ -272,7 +272,50 @@ describe('RemoteSessionDevice', () => {
 
     client.dispose();
   });
+
+  it('keeps the established event stream when inventory refresh reconnects a ready Device', async () => {
+    const sockets: CloseBeforeEstablishedSocket[] = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async () => jsonResponse(descriptor(FIRST_EPOCH)),
+      socketFactory: () => {
+        const socket = new CloseBeforeEstablishedSocket();
+        sockets.push(socket);
+        return socket;
+      }
+    });
+
+    await expect(client.connect()).resolves.toMatchObject({ state: 'ready' });
+    await expect(Promise.all([client.connect(), client.connect()])).resolves.toEqual([
+      expect.objectContaining({ state: 'ready' }),
+      expect.objectContaining({ state: 'ready' })
+    ]);
+
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]?.closeAttempts).toBe(0);
+    sockets[0]?.establish();
+    client.dispose();
+  });
 });
+
+class CloseBeforeEstablishedSocket {
+  closeAttempts = 0;
+  private established = false;
+
+  addEventListener(): void {}
+
+  establish(): void {
+    this.established = true;
+  }
+
+  close(): void {
+    this.closeAttempts += 1;
+    if (!this.established) {
+      throw new Error('WebSocket was closed before the connection was established');
+    }
+  }
+}
 
 class FakeSocket {
   private readonly listeners = new Map<string, Array<(event: Event) => void>>();

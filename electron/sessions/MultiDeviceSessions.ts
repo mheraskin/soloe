@@ -22,6 +22,7 @@ import type {
 } from '@shared/types/workspaces.js';
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   CreateMultiDeviceSessionRequest,
   DeviceProjectInventory,
@@ -160,14 +161,9 @@ export class MultiDeviceSessions {
       const inventory = this.inventories.get(device.deviceId);
       return inventory ? { device, inventory: structuredClone(inventory) } : null;
     }));
-    this.revision += 1;
-    const state = projectState(
+    const state = this.updateProjectedState(
       inventories.filter((entry): entry is NonNullable<typeof entry> => entry !== null),
-      this.devices,
-      this.revision
     );
-    this.currentState = state;
-    for (const listener of this.stateListeners) listener(structuredClone(state));
     return structuredClone(state);
   }
 
@@ -614,13 +610,22 @@ export class MultiDeviceSessions {
   }
 
   private publishCachedState(): void {
-    this.revision += 1;
     const inventories = this.devices.flatMap((device) => {
       const inventory = this.inventories.get(device.deviceId);
       return inventory ? [{ device, inventory: structuredClone(inventory) }] : [];
     });
-    this.currentState = projectState(inventories, this.devices, this.revision);
-    for (const listener of this.stateListeners) listener(structuredClone(this.currentState));
+    this.updateProjectedState(inventories);
+  }
+
+  private updateProjectedState(
+    inventories: Array<{ device: SessionDevice; inventory: DeviceSessionInventory }>
+  ): MultiDeviceSessionState {
+    const candidate = projectState(inventories, this.devices, this.revision);
+    if (sameProjectedState(candidate, this.currentState)) return this.currentState;
+    candidate.revision = ++this.revision;
+    this.currentState = candidate;
+    for (const listener of this.stateListeners) listener(structuredClone(candidate));
+    return candidate;
   }
 
   private requireReadyDevice(deviceId: DeviceId): SessionDevice {
@@ -631,6 +636,15 @@ export class MultiDeviceSessions {
     }
     return device;
   }
+}
+
+function sameProjectedState(
+  left: MultiDeviceSessionState,
+  right: MultiDeviceSessionState
+): boolean {
+  const { revision: _leftRevision, capturedAt: _leftCapturedAt, ...leftContent } = left;
+  const { revision: _rightRevision, capturedAt: _rightCapturedAt, ...rightContent } = right;
+  return isDeepStrictEqual(leftContent, rightContent);
 }
 
 function findSession(

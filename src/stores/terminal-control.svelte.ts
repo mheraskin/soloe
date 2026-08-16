@@ -4,9 +4,11 @@ import type {
 } from '@shared/types/terminal.js';
 import { ipc } from '../lib/ipc';
 import {
+  resolveTerminalControllerIdentity,
   TerminalControlCoordinator,
   type TerminalControlBackend
 } from '../lib/terminal-control';
+import { deviceSessions } from './device-sessions.svelte';
 
 class TerminalControlStore {
   private version = $state(0);
@@ -27,7 +29,7 @@ class TerminalControlStore {
       },
       onLease: (listener) => ipc.terminal.onInputLease(listener)
     };
-    const coordinator = new TerminalControlCoordinator(backend, controllerIdentity());
+    const coordinator = new TerminalControlCoordinator(backend, controllerIdentity);
     this.coordinator = coordinator;
     coordinator.subscribe(() => {
       this.version += 1;
@@ -84,7 +86,10 @@ class TerminalControlStore {
 
 function controllerIdentity(): TerminalControllerIdentity {
   if (typeof window === 'undefined') {
-    return { deviceId: 'server-renderer', deviceName: 'Soloe client' };
+    return resolveTerminalControllerIdentity(deviceSessions.localDevice, {
+      deviceId: 'server-renderer',
+      deviceName: 'Soloe client'
+    });
   }
   const storageKey = 'soloe-terminal-controller-device-id';
   let deviceId: string | null = null;
@@ -102,7 +107,7 @@ function controllerIdentity(): TerminalControllerIdentity {
     }
   }
   const deviceName = navigator.platform || 'Soloe client';
-  return { deviceId, deviceName };
+  return resolveTerminalControllerIdentity(deviceSessions.localDevice, { deviceId, deviceName });
 }
 
 export const terminalControl = new TerminalControlStore();

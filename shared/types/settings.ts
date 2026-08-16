@@ -11,8 +11,8 @@ export interface SettingsAppearance {
 export interface SettingsTerminal {
   fontSize: TerminalFontSizePref;
   confirmDeleteTabs: boolean;
-  // Opt-in because both the Runtime replay buffer and xterm scrollback may
-  // grow for as long as a terminal remains alive.
+  // Retained in the settings schema for compatibility. Terminal history is
+  // complete by default and clients no longer expose a truncation control.
   keepFullHistory: boolean;
 }
 
@@ -187,9 +187,9 @@ export const DEFAULT_SETTINGS: Settings = {
     wslDistro: 'Ubuntu',
     wslRepositoryRoot: ''
   },
-  startup: { launchSoloeClient: true },
+  startup: { launchSoloeClient: false },
   appearance: { theme: 'dark' },
-  terminal: { fontSize: 13, confirmDeleteTabs: true, keepFullHistory: false },
+  terminal: { fontSize: 13, confirmDeleteTabs: true, keepFullHistory: true },
   diff: { fontSize: 13 },
   browser: {
     maxResidentTabs: 2,

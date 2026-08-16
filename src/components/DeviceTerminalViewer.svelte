@@ -2,13 +2,13 @@
   import { onMount, tick } from 'svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
-  import { X } from '@lucide/svelte';
   import '@xterm/xterm/css/xterm.css';
 
   import type { TerminalRef } from '@shared/types/devices.js';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import type { TerminalOutputEvent } from '@shared/types/terminal.js';
   import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
+  import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import {
     TerminalTranscriptFollowController,
@@ -16,6 +16,7 @@
     type TranscriptRecord,
     type TranscriptSpan
   } from '../lib/terminal-transcript';
+  import SessionToolbar from './SessionToolbar.svelte';
 
   let {
     projection,
@@ -80,7 +81,7 @@
       drawBoldTextInBrightColors: false,
       cursorStyle: 'bar',
       cursorBlink: true,
-      scrollback: 5_000,
+      scrollback: FULL_TERMINAL_SCROLLBACK,
       convertEol: false,
       theme: terminalTheme,
       allowProposedApi: true
@@ -100,7 +101,7 @@
     const transcript = new TerminalTranscriptProjector({
       cols: inputLease?.lease?.cols ?? 120,
       rows: inputLease?.lease?.rows ?? 30,
-      scrollback: 5_000
+      scrollback: FULL_TERMINAL_SCROLLBACK
     });
     resizeTranscript = (cols, rows) => transcript.resize(cols, rows);
 
@@ -118,7 +119,7 @@
     };
 
     const write = async (data: string): Promise<void> => {
-      await new Promise<void>((resolve) => terminal.write(data, resolve));
+      await writeTerminalData(terminal, data);
       await transcript.write(data);
       projectTranscript();
     };
@@ -139,6 +140,7 @@
           await write(event.data);
           appliedSeq = event.seq;
         }
+        terminal.scrollToBottom();
       } catch (cause) {
         if (active) error = cause instanceof Error ? cause.message : String(cause);
       } finally {
@@ -177,6 +179,7 @@
           pending.delete(event.seq);
           queueOutput(event);
         }
+        terminal.scrollToBottom();
       })
       .catch((cause) => {
         if (active) error = cause instanceof Error ? cause.message : String(cause);
@@ -284,23 +287,7 @@
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden bg-[#0f0f10]">
-  <header class="flex items-center gap-2 border-b border-border bg-background px-3 py-2">
-    <div class="min-w-0 flex-1">
-      <p class="m-0 truncate text-xs font-medium">{projection.session.name}</p>
-      <p class="m-0 truncate text-[10px] text-muted-foreground">
-        {projection.deviceName} · {projection.runtime?.status ?? 'stopped'}
-      </p>
-    </div>
-    <button
-      type="button"
-      class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-      aria-label="Close remote terminal"
-      title="Close remote terminal"
-      onclick={onClose}
-    >
-      <X class="size-4" />
-    </button>
-  </header>
+  <SessionToolbar {projection} {onClose} />
   <div class="relative min-h-72 flex-1">
     <div class="absolute inset-0" class:invisible={readOnly} bind:this={host}></div>
     {#if readOnly}
@@ -332,7 +319,7 @@
       </div>
     {/if}
     {#if (restoring && !readOnly) || takingControl}
-      <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 text-xs text-muted-foreground">
+      <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#0f0f10] text-xs text-muted-foreground">
         {takingControl ? 'Taking control and preparing terminal…' : 'Restoring terminal…'}
       </div>
     {/if}

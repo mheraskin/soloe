@@ -29,7 +29,19 @@ import { ConnectionsStore } from './connections.svelte.js';
 
 const SNAPSHOT: ConnectionSnapshot = {
   activeId: 'local',
-  machines: [],
+  machines: [{
+    id: 'local',
+    name: 'mbp.local',
+    endpoint: null,
+    endpointAliases: [],
+    source: 'local',
+    status: 'available',
+    trust: 'local',
+    enabled: true,
+    active: true,
+    isSelf: true,
+    lastSeenAt: '2026-08-13T10:00:00.000Z'
+  }],
   preferences: { tailscaleEnabled: true, tailscaleHttpsPort: 4318 },
   tailscale: {
     state: 'connected',
@@ -64,5 +76,36 @@ describe('ConnectionsStore discovery lifecycle', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(refresh).toHaveBeenCalledOnce();
     expect(off).toHaveBeenCalledOnce();
+  });
+
+  it('keeps background discovery silent in the connection controls', async () => {
+    let finishRefresh!: (snapshot: ConnectionSnapshot) => void;
+    refresh.mockReturnValue(new Promise((resolve) => {
+      finishRefresh = resolve;
+    }));
+    const store = new ConnectionsStore();
+    store.attachListeners();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(store.refreshing).toBe(false);
+    finishRefresh(SNAPSHOT);
+    await Promise.resolve();
+  });
+
+  it('preserves the rendered snapshot when only refresh metadata changes', () => {
+    const store = new ConnectionsStore();
+    store.snapshot = structuredClone(SNAPSHOT);
+    store.attachListeners();
+    const renderedSnapshot = store.snapshot;
+    const publish = onChange.mock.calls[0]?.[0];
+
+    const refreshed = structuredClone(SNAPSHOT);
+    refreshed.refreshedAt = '2026-08-13T10:00:30.000Z';
+    refreshed.machines[0]!.lastSeenAt = '2026-08-13T10:00:30.000Z';
+    publish?.(refreshed);
+
+    expect(store.snapshot).toBe(renderedSnapshot);
   });
 });

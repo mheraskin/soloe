@@ -11,7 +11,7 @@
     Pencil,
     Trash2
   } from '@lucide/svelte';
-  import type { Session, SessionColor } from '@shared/types/sessions.js';
+  import type { Session, SessionColor, SessionStatus } from '@shared/types/sessions.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { sessionContextMenus } from '../stores/session-context-menus.svelte';
@@ -41,11 +41,19 @@
   let {
     session,
     onRename = null,
+    statusOverride = null,
+    lifecycle = null,
     disabled = false,
     trigger
   }: {
     session: Session;
     onRename?: (() => void | Promise<void>) | null;
+    statusOverride?: SessionStatus | null;
+    lifecycle?: {
+      start?: () => void | Promise<void>;
+      stop?: () => void | Promise<void>;
+      restart?: () => void | Promise<void>;
+    } | null;
     disabled?: boolean;
     trigger: Snippet<[{ props: Record<string, unknown> }]>;
   } = $props();
@@ -53,7 +61,7 @@
   let menuOpen = $state(false);
   let paletteExpanded = $state(false);
 
-  let status = $derived(sessions.statusFor(session.id));
+  let status = $derived(statusOverride ?? sessions.statusFor(session.id));
   let canStart = $derived(status === 'stopped' || status === 'exited' || status === 'error');
   let isRunning = $derived(status === 'running' || status === 'starting');
   let visibleColors = $derived(
@@ -68,14 +76,26 @@
   }));
 
   async function start() {
+    if (lifecycle?.start) {
+      try { await lifecycle.start(); } catch (err) { reportError(err); }
+      return;
+    }
     try { await sessions.start(session.id); } catch (err) { reportError(err); }
   }
 
   async function stop() {
+    if (lifecycle?.stop) {
+      try { await lifecycle.stop(); } catch (err) { reportError(err); }
+      return;
+    }
     try { await sessions.stop(session.id); } catch (err) { reportError(err); }
   }
 
   async function restart() {
+    if (lifecycle?.restart) {
+      try { await lifecycle.restart(); } catch (err) { reportError(err); }
+      return;
+    }
     try { await sessions.restart(session.id); } catch (err) { reportError(err); }
   }
 
@@ -161,6 +181,7 @@
     {#if status === 'running'}
       <ContextMenu.Item onSelect={restart}>Restart</ContextMenu.Item>
     {/if}
+    {#if !lifecycle}
     <ContextMenu.Separator />
     <ContextMenu.Item onSelect={() => void rename()}>
       <Pencil /> <span>Rename</span>
@@ -250,6 +271,7 @@
       <Trash2 /> <span>Delete</span>
       <ContextMenu.Shortcut>Ctrl+Del</ContextMenu.Shortcut>
     </ContextMenu.Item>
+    {/if}
   </ContextMenu.Content>
 </ContextMenu.Root>
 {/if}

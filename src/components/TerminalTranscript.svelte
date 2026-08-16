@@ -11,6 +11,7 @@
     type TranscriptSpan
   } from '../lib/terminal-transcript';
   import { terminalControl } from '../stores/terminal-control.svelte';
+  import { FULL_TERMINAL_SCROLLBACK } from '../lib/terminal-write';
 
   let {
     terminalId,
@@ -63,7 +64,7 @@
     projector = new TerminalTranscriptProjector({
       cols: canonicalCols,
       rows: canonicalRows,
-      scrollback: 5_000
+      scrollback: FULL_TERMINAL_SCROLLBACK
     });
     const presentation = ipc.terminal.attachPresentation(
       terminalId,
