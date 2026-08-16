@@ -44,6 +44,12 @@ describe('platform UI', () => {
     ]);
   });
 
+  it('offers only native Linux backend placement on Linux', () => {
+    expect(platformBackendOptions('linux')).toEqual([
+      { value: 'linux', label: 'Linux' }
+    ]);
+  });
+
   it('detects native macOS Electron window controls before backend state loads', () => {
     expect(usesMacosNativeWindowControls(
       'Mozilla/5.0 Electron/41.10.3',

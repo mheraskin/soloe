@@ -31,7 +31,7 @@ export interface SettingsBrowser {
   elementSourceInspectorEnabled: boolean;
 }
 
-export type BackendPlacement = 'windows' | 'macos' | 'wsl';
+export type BackendPlacement = 'windows' | 'linux' | 'macos' | 'wsl';
 
 export interface SettingsBackend {
   // The Application Server and Environment Runtime always move together.
@@ -219,6 +219,6 @@ export function defaultSettingsForRunMode(runMode: Exclude<RunMode, 'wsl'> | 'ws
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.defaults.runMode = runMode;
   if (runMode !== 'wsl') delete settings.defaults.wslDistro;
-  if (runMode === 'macos') settings.backend.placement = 'macos';
+  if (runMode === 'linux' || runMode === 'macos') settings.backend.placement = runMode;
   return settings;
 }

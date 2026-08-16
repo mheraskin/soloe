@@ -20,7 +20,7 @@ const VALID_RUN_MODES = new Set(['windows', 'linux', 'macos', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
 const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
 const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
-const VALID_BACKEND_PLACEMENTS = new Set(['windows', 'macos', 'wsl']);
+const VALID_BACKEND_PLACEMENTS = new Set(['windows', 'linux', 'macos', 'wsl']);
 const VALID_SHIFT_NUMBER_NAVIGATION_TARGETS = new Set(['worktree', 'project']);
 const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration', 'worktreeOverview'];
 
@@ -222,7 +222,7 @@ function parseSettings(
     backend: {
       placement: pickEnum(
         backend['placement'],
-        VALID_BACKEND_PLACEMENTS,
+        supportedBackendPlacements(platform),
         defaultsForHost.backend.placement
       ) as Settings['backend']['placement'],
       wslDistro: pickNonEmptyString(
@@ -427,6 +427,9 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   if (!VALID_BACKEND_PLACEMENTS.has(s.backend.placement)) {
     throw new Error(`Invalid backend.placement: ${s.backend.placement}`);
   }
+  if (!supportedBackendPlacements(platform).has(s.backend.placement)) {
+    throw new Error(`Backend placement ${s.backend.placement} is not available on ${platform}`);
+  }
   if (typeof s.startup.launchSoloeClient !== 'boolean') {
     throw new Error('Invalid startup.launchSoloeClient');
   }
@@ -523,6 +526,12 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
     || s.shortcuts.elementSourceInspector.some((key) => typeof key !== 'string' || !key.trim())) {
     throw new Error('Invalid shortcuts.elementSourceInspector');
   }
+}
+
+function supportedBackendPlacements(platform: SupportedHostPlatform): Set<unknown> {
+  if (platform === 'macos') return new Set(['macos']);
+  if (platform === 'linux') return new Set(['linux']);
+  return new Set(['windows', 'wsl']);
 }
 
 async function atomicWrite(filePath: string, content: string): Promise<void> {

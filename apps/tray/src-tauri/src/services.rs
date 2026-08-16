@@ -199,6 +199,7 @@ impl Default for StartupSettings {
 #[serde(rename_all = "lowercase")]
 enum BackendPlacement {
     Windows,
+    Linux,
     Macos,
     Wsl,
 }
@@ -212,6 +213,8 @@ impl Default for BackendPlacement {
 fn native_backend_placement() -> BackendPlacement {
     if cfg!(target_os = "macos") {
         BackendPlacement::Macos
+    } else if cfg!(target_os = "linux") {
+        BackendPlacement::Linux
     } else {
         BackendPlacement::Windows
     }
@@ -221,6 +224,7 @@ impl BackendPlacement {
     fn host_label(&self) -> &'static str {
         match self {
             Self::Windows => "Windows",
+            Self::Linux => "Linux",
             Self::Macos => "macOS",
             Self::Wsl => "WSL",
         }
@@ -1002,6 +1006,7 @@ impl BackendSupervisor {
         if let Some(value) = env::var_os("SOLOE_BACKEND_PLACEMENT") {
             backend.placement = match value.to_string_lossy().to_ascii_lowercase().as_str() {
                 "windows" => BackendPlacement::Windows,
+                "linux" => BackendPlacement::Linux,
                 "macos" => BackendPlacement::Macos,
                 "wsl" => BackendPlacement::Wsl,
                 other => return Err(format!("invalid SOLOE_BACKEND_PLACEMENT: {other}")),
@@ -1056,7 +1061,7 @@ impl BackendSupervisor {
         }
         self.preflight_native_client()?;
         match backend.placement {
-            BackendPlacement::Windows | BackendPlacement::Macos => {
+            BackendPlacement::Windows | BackendPlacement::Linux | BackendPlacement::Macos => {
                 let host = backend.host_label();
                 check_command(
                     Command::new("node").arg("--version"),
@@ -1146,7 +1151,7 @@ impl BackendSupervisor {
             .map_err(|error| format!("failed to clone {service} log: {error}"))?;
 
         let mut command = match backend.placement {
-            BackendPlacement::Windows | BackendPlacement::Macos => {
+            BackendPlacement::Windows | BackendPlacement::Linux | BackendPlacement::Macos => {
                 let mut command = Command::new(pnpm_executable());
                 command
                     .args(["--filter", workspace, "start"])
@@ -2398,6 +2403,30 @@ mod tests {
         assert_eq!(
             supervisor.runtime_action_label(),
             format!("Start Environment Runtime{suffix}")
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn reads_linux_backend_placement_from_shared_settings() {
+        let directory = env::temp_dir().join(format!(
+            "soloe-tray-linux-settings-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::create_dir_all(&directory);
+        fs::write(
+            directory.join("settings.json"),
+            r#"{"backend":{"placement":"linux"}}"#,
+        )
+        .unwrap();
+        let supervisor = test_supervisor(
+            directory.clone(),
+            Arc::new(FakeProcessOperations::default()),
+        );
+
+        assert_eq!(
+            supervisor.configured_backend().unwrap().placement,
+            BackendPlacement::Linux
         );
         let _ = fs::remove_dir_all(directory);
     }

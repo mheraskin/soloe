@@ -52,6 +52,7 @@ describe('SettingsStore — defaults', () => {
     const s = await store.get();
     expect(s.defaults.runMode).toBe('linux');
     expect(s.defaults.wslDistro).toBeUndefined();
+    expect(s.backend.placement).toBe('linux');
     await expect(store.update({ defaults: { runMode: 'wsl' } })).rejects.toThrow(
       /not available on linux/
     );
@@ -79,12 +80,31 @@ describe('SettingsStore — defaults', () => {
   it('migrates a copied Windows default to native Linux', async () => {
     await fs.writeFile(storePath, JSON.stringify(DEFAULT_SETTINGS), 'utf8');
     const store = new SettingsStore(storePath, 'linux');
-    expect((await store.get()).defaults.runMode).toBe('linux');
+    const migrated = await store.get();
+    expect(migrated.defaults.runMode).toBe('linux');
+    expect(migrated.backend.placement).toBe('linux');
   });
 
 });
 
 describe('SettingsStore — update', () => {
+  it('can disable client startup after migrating copied Windows settings on Linux', async () => {
+    await fs.writeFile(storePath, JSON.stringify({
+      ...DEFAULT_SETTINGS,
+      startup: { launchSoloeClient: true }
+    }), 'utf8');
+    const store = new SettingsStore(storePath, 'linux');
+
+    const updated = await store.update({ startup: { launchSoloeClient: false } });
+
+    expect(updated.backend.placement).toBe('linux');
+    expect(updated.startup.launchSoloeClient).toBe(false);
+    await expect(new SettingsStore(storePath, 'linux').get()).resolves.toMatchObject({
+      backend: { placement: 'linux' },
+      startup: { launchSoloeClient: false }
+    });
+  });
+
   it('persists an explicit Soloe Client startup opt-in', async () => {
     const store = new SettingsStore(storePath);
     await store.update({ startup: { launchSoloeClient: true } });

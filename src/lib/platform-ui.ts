@@ -56,6 +56,7 @@ export function platformBackendOptions(
   platform: HostPlatform
 ): Array<{ value: BackendPlacement; label: string }> {
   if (platform === 'macos') return [{ value: 'macos', label: 'macOS' }];
+  if (platform === 'linux') return [{ value: 'linux', label: 'Linux' }];
   return [
     { value: 'windows', label: 'Windows' },
     { value: 'wsl', label: 'WSL (Linux)' }
