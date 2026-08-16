@@ -4,7 +4,7 @@
 
 A local-first Agent Development Environment (ADE) for solo developers using the CLI agents they already trust.
 
-Soloe helps one developer plan features, run long-lived agent sessions, manage serious worktrees, and review changes across many commits without giving up the terminal workflow. It drives installed **Claude Code** and **Codex CLI** binaries in interactive mode, then adds the planning, memory, review, and project-management surfaces that the CLIs do not provide by themselves.
+Soloe helps one developer plan features, run long-lived agent sessions, manage serious worktrees, and review changes across many commits without giving up the terminal workflow. It drives installed **Claude Code**, **Codex CLI**, and **Cursor Agent CLI** binaries in interactive mode, then adds the planning, memory, review, and project-management surfaces that the CLIs do not provide by themselves.
 
 [![CI](https://github.com/mheraskin/soloe/actions/workflows/ci.yml/badge.svg)](https://github.com/mheraskin/soloe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -19,14 +19,14 @@ _A clean public demo is being prepared. The previous development screenshot was 
 
 Soloe started on a Windows machine running WSL, before the current wave of tools such as [T3 Code](https://github.com/pingdotgg/t3code) and [Orca](https://github.com/stablyai/orca) was publicly available. At the time, the agent-development environments I could find were Mac-focused, while Windows + WSL support felt incidental or required too much glue. I wanted the development environment itself to work the way I worked, so I built my own.
 
-I usually have a few long-lived feature worktrees, each with Claude Code or Codex running in a real terminal. I need one place to see what is active, plan a feature, review the feature across a stack of commits, leave line comments for an agent, and return days later without reconstructing the whole story.
+I usually have a few long-lived feature worktrees, each with Claude Code, Codex, or Cursor running in a real terminal. I need one place to see what is active, plan a feature, review the feature across a stack of commits, leave line comments for an agent, and return days later without reconstructing the whole story.
 
 The name **Soloe** describes that operating model. It is not an argument against teams or collaboration. It is an environment optimized around the solo developer as the decision-maker and review bottleneck: agents extend what one person can plan and deliver, while that person keeps control of the work.
 
 ## What Soloe does today
 
-- **Drives the CLIs you already use.** Runs installed `claude` and `codex` binaries in interactive mode—natively on macOS, Linux, and Windows, or inside WSL on Windows.
-- **Organizes project → worktree → session.** Keeps terminal, Claude Code, and Codex sessions attached to the worktree where the work belongs.
+- **Drives the CLIs you already use.** Runs installed `claude`, `codex`, and Cursor's `agent` binaries in interactive mode—natively on macOS, Linux, and Windows, or inside WSL on Windows.
+- **Organizes project → worktree → session.** Keeps terminal, Claude Code, Codex, and Cursor sessions attached to the worktree where the work belongs.
 - **Keeps agents alive outside the UI.** The Environment Runtime owns PTYs independently from the replaceable server, browser, and Electron clients.
 - **Reviews whole features.** Select a commit range, inspect a multi-commit diff, and see line-level commit attribution instead of reviewing only uncommitted changes.
 - **Routes review comments back to agents.** An authenticated MCP bridge lets running agents read and resolve line comments.

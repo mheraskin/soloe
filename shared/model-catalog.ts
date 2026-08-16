@@ -20,6 +20,12 @@ export const CLI_DEFAULT_MODEL_CATALOG: ModelCatalogEntry[] = [
     id: CLI_DEFAULT_MODEL_ID,
     label: 'Claude default',
     isDefault: true
+  },
+  {
+    provider: 'cursor',
+    id: CLI_DEFAULT_MODEL_ID,
+    label: 'Cursor default',
+    isDefault: true
   }
 ];
 
@@ -66,8 +72,8 @@ export function modelCandidatesForTask(
 
   const providerOrder: ModelProvider[] =
     settings.binaries.claude && !settings.binaries.codex
-      ? ['claude', 'codex']
-      : ['codex', 'claude'];
+      ? ['claude', 'codex', 'cursor']
+      : ['codex', 'claude', 'cursor'];
   for (const provider of providerOrder) {
     const first = allowed.find((model) => model.provider === provider);
     if (first) add({ provider: first.provider, id: first.id });

@@ -236,7 +236,7 @@ export class WorktreeOverviewService {
         sources: built.sources,
         facts,
         errorMessage: result.reason === 'unavailable'
-          ? 'No Claude or Codex executable is available. Connect one in Settings → Agent integration.'
+          ? 'No Claude, Codex, or Cursor executable is available. Connect one in Settings → Agent integration.'
           : `Overview generation failed: ${result.error}`
       };
     }
@@ -366,5 +366,5 @@ function emptySources(
 }
 
 function toAgentProvider(p: ModelProvider): OverviewProvider {
-  return p === 'claude' ? 'claude_code' : 'codex';
+  return p === 'claude' ? 'claude_code' : p;
 }

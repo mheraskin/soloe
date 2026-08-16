@@ -258,6 +258,28 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(document.body.textContent).toContain('No project');
   });
 
+  it('creates a Cursor Agent session through the shared device placement surface', async () => {
+    const target = mountComponent(AgentLaunchPopover, {});
+    const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
+    trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+    const cursor = document.body.querySelector<HTMLButtonElement>('[aria-label="New Cursor session"]');
+    expect(cursor).not.toBeNull();
+    cursor!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => expect(deviceSessionMocks.planCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetDeviceId: 'local-device',
+        session: expect.objectContaining({
+          name: 'Cursor',
+          launch: {
+            type: 'agent', provider: 'cursor', resumeMode: 'new', cursorMode: 'agent'
+          }
+        })
+      })
+    ));
+  });
+
   it('does not let the worktree drag handler claim a gesture that starts on plus', () => {
     const onWorktreeDrop = vi.fn();
     const target = mountComponent(WorktreeGroup, {

@@ -11,7 +11,7 @@ const MAX_TURN_CHARS = 4_000;
 
 export const OVERVIEW_SYSTEM_PROMPT = [
   'You are summarizing the agent activity inside a single git worktree of a software project.',
-  'You will receive: (a) the transcripts of every Claude Code and Codex session currently open as a tab in this worktree, each labeled with the user-visible tab name, (b) the current git facts (branch, ahead/behind, dirty files, merged status), and (c) the working diff vs HEAD.',
+  'You will receive: (a) the transcripts of every Claude Code, Codex, and Cursor session currently open as a tab in this worktree, each labeled with the user-visible tab name, (b) the current git facts (branch, ahead/behind, dirty files, merged status), and (c) the working diff vs HEAD.',
   '',
   'Goal: let the user get up to speed on what each open session is responsible for without having to open each tab. Organize the output AROUND THE SESSIONS, not across them.',
   '',
@@ -23,7 +23,7 @@ export const OVERVIEW_SYSTEM_PROMPT = [
   '',
   '`### <tab name> · <provider>`',
   '',
-  'where `<tab name>` is the user-visible tab name from the input (do NOT use the .jsonl filename) and `<provider>` is `Claude Code` or `Codex`. Inside each subsection produce:',
+  'where `<tab name>` is the user-visible tab name from the input (do NOT use the .jsonl filename) and `<provider>` is `Claude Code`, `Codex`, or `Cursor`. Inside each subsection produce:',
   '',
   '- **Focus** — one sentence: what this session is responsible for / working on.',
   '- **Most recent** — the last concrete thing happening in this session: what the agent just did or is mid-way through, what the user last asked, any pending question or error. 1-3 bullets, specific (name files, commits, decisions).',
@@ -178,7 +178,7 @@ function renderWorkingDiff(facts: WorktreeFacts): string {
 }
 
 function renderTranscripts(transcripts: SessionTranscript[]): string {
-  if (transcripts.length === 0) return '# Sessions\n(no Claude or Codex sessions found in this worktree)';
+  if (transcripts.length === 0) return '# Sessions\n(no Claude Code, Codex, or Cursor sessions found in this worktree)';
   const blocks: string[] = ['# Sessions'];
   for (const t of transcripts) {
     blocks.push(renderTranscript(t));

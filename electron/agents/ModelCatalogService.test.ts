@@ -3,7 +3,8 @@ import { DEFAULT_SETTINGS } from '@shared/types/settings.js';
 import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
 import {
   buildModelCatalogCommand,
-  ModelCatalogService
+  ModelCatalogService,
+  parseCursorModels
 } from './ModelCatalogService.js';
 
 describe('ModelCatalogService', () => {
@@ -51,6 +52,11 @@ describe('ModelCatalogService', () => {
           ].join('\n')
         };
       }
+      if (executable === 'agent') return {
+        exitCode: 0,
+        stderr: '',
+        stdout: 'auto\nsonnet-4.6-thinking\n'
+      };
       return {
         exitCode: 0,
         stderr: '',
@@ -66,8 +72,14 @@ describe('ModelCatalogService', () => {
       { provider: 'codex', id: CLI_DEFAULT_MODEL_ID, label: 'Codex default', isDefault: true },
       { provider: 'codex', id: 'gpt-current', label: 'GPT Current' },
       { provider: 'claude', id: 'fable', label: 'Claude Fable (latest)' },
-      { provider: 'claude', id: 'claude-fable-5', label: 'Claude Fable 5' }
+      { provider: 'claude', id: 'claude-fable-5', label: 'Claude Fable 5' },
+      { provider: 'cursor', id: CLI_DEFAULT_MODEL_ID, label: 'Cursor default', isDefault: true },
+      { provider: 'cursor', id: 'sonnet-4.6-thinking', label: 'Sonnet 4.6 Thinking' }
     ]));
+  });
+
+  it('does not infer model ids from undocumented decorated Cursor output', () => {
+    expect(parseCursorModels('* auto (current)\nmodel id  label')).toEqual([]);
   });
 
   it('caches discovery until invalidated', async () => {
@@ -79,10 +91,10 @@ describe('ModelCatalogService', () => {
 
     await service.getCatalog();
     await service.getCatalog();
-    expect(runCommand).toHaveBeenCalledTimes(3);
+    expect(runCommand).toHaveBeenCalledTimes(5);
     service.invalidate();
     await service.getCatalog();
-    expect(runCommand).toHaveBeenCalledTimes(6);
+    expect(runCommand).toHaveBeenCalledTimes(10);
   });
 });
 

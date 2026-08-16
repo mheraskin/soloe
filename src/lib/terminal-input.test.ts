@@ -99,10 +99,12 @@ describe('terminal input helpers', () => {
   it('emits xterm-native sequences in agent TUI sessions for Alt+Backspace/Delete', () => {
     const claude = { launch: { type: 'agent', provider: 'claude_code' } };
     const codex = { launch: { type: 'agent', provider: 'codex' } };
+    const cursor = { launch: { type: 'agent', provider: 'cursor' } };
     const promoted = { launch: { type: 'terminal' }, currentAgentRuntime: { provider: 'claude_code' } };
     expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }), claude)).toBe('\x1b\x7f');
     expect(altWordEditSequence(key({ altKey: true, key: 'Delete' }), claude)).toBe('\x1b[3;3~');
     expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }), codex)).toBe('\x1b\x7f');
+    expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }), cursor)).toBe('\x1b\x7f');
     expect(altWordEditSequence(key({ altKey: true, key: 'Backspace' }), promoted)).toBe('\x1b\x7f');
     // Word nav stays the same in either context.
     expect(altWordEditSequence(key({ altKey: true, key: 'ArrowLeft' }), claude)).toBe('\x1b[1;3D');

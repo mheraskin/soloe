@@ -59,6 +59,7 @@ export interface SettingsDefaults {
 export interface SettingsBinaries {
   claude?: string;
   codex?: string;
+  cursor?: string;
   git?: string;
   gh?: string;
   fd?: string;
@@ -66,7 +67,7 @@ export interface SettingsBinaries {
   editor?: string;
 }
 
-export type ModelProvider = 'codex' | 'claude';
+export type ModelProvider = 'codex' | 'claude' | 'cursor';
 
 export type ModelTask = 'textGeneration' | 'gitCommitGeneration' | 'worktreeOverview';
 
@@ -115,6 +116,12 @@ export const DEFAULT_QUICK_LAUNCH_PRESETS: QuickLaunchPreset[] = [
     label: 'Codex YOLO',
     provider: 'codex',
     extraArgs: '--dangerously-bypass-approvals-and-sandbox'
+  },
+  {
+    id: 'cursor-force',
+    label: 'Cursor force',
+    provider: 'cursor',
+    extraArgs: '--force --approve-mcps'
   }
 ];
 

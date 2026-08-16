@@ -19,6 +19,10 @@ export function sessionAutoApprovesPermissions(
       );
   }
 
+  if (launch.provider === 'cursor') {
+    return hasFlag(args, '--force') || hasFlag(args, '-f') || hasFlag(args, '--yolo');
+  }
+
   return hasFlag(args, '--dangerously-skip-permissions')
     || hasOptionValue(args, ['--permission-mode'], 'bypasspermissions');
 }

@@ -434,6 +434,7 @@
         session.launch.type === 'agent'
         || observed?.provider === 'claude_code'
         || observed?.provider === 'codex'
+        || observed?.provider === 'cursor'
       )
     ) {
       return { statusDot: null, working: true };

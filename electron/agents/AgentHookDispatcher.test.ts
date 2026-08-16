@@ -553,6 +553,38 @@ describe('AgentHookDispatcher', () => {
       });
     });
 
+    it('stores Cursor session identity and launch options on takeover', async () => {
+      const created = await sessionStore.create({
+        name: 'shell',
+        cwd: '/tmp',
+        runMode: 'wsl',
+        wslDistro: 'Ubuntu',
+        launch: { type: 'terminal', shell: 'bash' }
+      });
+      await dispatcher.dispatch({
+        provider: 'cursor',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'SessionStart',
+          session_id: 'cursor-chat-123',
+          source: 'shell_launch',
+          argv_b64: argvB64('--model', 'auto', '--mode', 'plan', '--force')
+        }
+      });
+      expect((await sessionStore.get(created.id))?.launch).toMatchObject({
+        type: 'agent',
+        provider: 'cursor',
+        resumeMode: 'new',
+        cursorSessionId: 'cursor-chat-123',
+        cursorMode: 'plan',
+        model: 'auto',
+        extraArgs: ['--force']
+      });
+      expect(observer.getSnapshot(created.id)).toMatchObject({
+        provider: 'cursor', providerThreadId: 'cursor-chat-123', state: 'starting'
+      });
+    });
+
     it('keeps the preassigned Claude id when a hook has no session_id', async () => {
       const created = await sessionStore.create({
         name: 'work',

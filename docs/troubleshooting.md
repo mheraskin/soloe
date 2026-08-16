@@ -6,7 +6,7 @@ Start Soloe through `pnpm dev` so the tray can supervise the runtime and applica
 
 ## WSL is unavailable
 
-Confirm `wsl.exe --status` succeeds, the selected distribution appears in `wsl.exe --list --quiet`, and the distribution can start from a normal terminal. Install Claude Code or Codex CLI inside that distribution if the session uses the WSL backend.
+Confirm `wsl.exe --status` succeeds, the selected distribution appears in `wsl.exe --list --quiet`, and the distribution can start from a normal terminal. Install Claude Code, Codex CLI, or Cursor Agent CLI inside that distribution if the session uses the WSL backend.
 
 ## An agent command is not found
 
@@ -82,7 +82,7 @@ available again.
 
 ## Agent comments are not delivered
 
-Check that the correct Claude Code or Codex integration is installed for the selected host, the MCP status is healthy, and the session is still running. WSL sessions require a Windows-host address reachable from the distribution. See [MCP security](./mcp-security.md) before changing bind or firewall settings.
+Check that the correct Claude Code, Codex, or Cursor integration is installed for the selected host, the MCP status is healthy, and the session is still running. WSL sessions require a Windows-host address reachable from the distribution. See [MCP security](./mcp-security.md) before changing bind or firewall settings.
 
 ## Preparing a bug report
 

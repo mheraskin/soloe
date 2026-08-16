@@ -14,6 +14,7 @@ export function kindLabel(kind: SessionLaunchKind): string {
     case 'terminal': return 'Terminal';
     case 'claude_code': return 'Claude';
     case 'codex': return 'Codex';
+    case 'cursor': return 'Cursor';
   }
 }
 
@@ -22,6 +23,7 @@ export function kindGlyph(kind: SessionLaunchKind): string {
     case 'terminal': return '$_';
     case 'claude_code': return 'C';
     case 'codex': return 'X';
+    case 'cursor': return 'Cu';
   }
 }
 
@@ -49,6 +51,11 @@ export function defaultDraft(kind: SessionLaunchKind, defaults?: SettingsDefault
       };
     case 'codex':
       return { ...base, launch: { type: 'agent', provider: 'codex', resumeMode: 'new' } };
+    case 'cursor':
+      return {
+        ...base,
+        launch: { type: 'agent', provider: 'cursor', resumeMode: 'new', cursorMode: 'agent' }
+      };
   }
 }
 
@@ -92,6 +99,9 @@ export function validateDraft(d: SessionDraft): ValidationError | null {
       }
       if (d.launch.provider === 'codex' && d.launch.resumeMode === 'resume_by_id' && !d.launch.codexSessionId?.trim()) {
         return { field: 'codexSessionId', message: 'Session id required' };
+      }
+      if (d.launch.provider === 'cursor' && d.launch.resumeMode === 'resume_by_id' && !d.launch.cursorSessionId?.trim()) {
+        return { field: 'cursorSessionId', message: 'Chat id required' };
       }
       break;
   }

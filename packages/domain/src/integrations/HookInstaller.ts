@@ -36,6 +36,7 @@ export interface HostInstallStatus {
   host: AgentIntegrationHost;
   claude: AgentIntegrationTargetStatus;
   codex: AgentIntegrationTargetStatus;
+  cursor: AgentIntegrationTargetStatus;
 }
 
 export interface HookInstallStatus {
@@ -198,14 +199,16 @@ export class HookInstaller {
           return {
             host: publicHost(host),
             claude: emptyStatus(),
-            codex: emptyStatus()
+            codex: emptyStatus(),
+            cursor: emptyStatus()
           };
         }
-        const [claude, codex] = await Promise.all([
+        const [claude, codex, cursor] = await Promise.all([
           this.claudeHostSoloeStatus(host),
-          this.codexFileSoloeStatus(this.codexConfigPath(host))
+          this.codexFileSoloeStatus(this.codexConfigPath(host)),
+          this.cursorFileSoloeStatus(this.cursorConfigPath(host))
         ]);
-        return { host: publicHost(host), claude, codex };
+        return { host: publicHost(host), claude, codex, cursor };
       })
     );
     return { hosts };
@@ -293,6 +296,30 @@ export class HookInstaller {
     return this.serializeMutation(() => this.uninstallCodexNow(host));
   }
 
+  async installCursor(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.installCursorNow(host));
+  }
+
+  private async installCursorNow(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    const filePath = this.cursorConfigPath(target);
+    const original = await readJsonOrNull(filePath);
+    if (!this.bridge) throw new Error('bridge identity not configured');
+    const url = await this.resolveMcpUrlForHost(target);
+    const updated = mergeCursorMcp(original ?? {}, { url, token: this.bridge.token });
+    await this.writeAtomic(filePath, JSON.stringify(updated, null, 2) + '\n', original !== null);
+  }
+
+  async uninstallCursor(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(async () => {
+      const target = this.requireHost(host);
+      const filePath = this.cursorConfigPath(target);
+      const original = await readJsonOrNull(filePath);
+      if (!original) return;
+      await this.writeAtomic(filePath, JSON.stringify(removeSoloeFromCursor(original), null, 2) + '\n', false);
+    });
+  }
+
   private async uninstallCodexNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
@@ -328,7 +355,8 @@ export class HookInstaller {
         const url = await this.resolveMcpUrlForHost(host);
         const claudeChanged = await this.refreshClaudeHost(host, key, url);
         const codexChanged = await this.refreshCodexHost(host, key, url);
-        if (claudeChanged || codexChanged) result.rewritten.push(key);
+        const cursorChanged = await this.refreshCursorHost(host, key, url);
+        if (claudeChanged || codexChanged || cursorChanged) result.rewritten.push(key);
       } catch (err) {
         result.errors.push({ host: key, error: errorMessage(err) });
       }
@@ -362,6 +390,22 @@ export class HookInstaller {
       return true;
     }
     return this.refreshCodexMcp(host, url);
+  }
+
+  private async refreshCursorHost(host: HookHost, key: HookHostKey, url: string): Promise<boolean> {
+    if (!this.bridge) return false;
+    const filePath = this.cursorConfigPath(host);
+    const original = await readJsonOrNull(filePath);
+    if (!original || !cursorSoloeStatus(original).installed) return false;
+    if ((cursorSoloeStatus(original).version ?? 0) < SOLOE_HOOK_VERSION) {
+      await this.installCursorNow(key);
+      return true;
+    }
+    const servers = isObject(original['mcpServers']) ? original['mcpServers'] : null;
+    const entry = servers && isObject(servers[SOLOE_MCP_NAME]) ? servers[SOLOE_MCP_NAME] : null;
+    if (entry && entry['url'] === url && this.bearerHeaderMatches(entry, this.bridge.token)) return false;
+    await this.writeAtomic(filePath, JSON.stringify(mergeCursorMcp(original, { url, token: this.bridge.token }), null, 2) + '\n', true);
+    return true;
   }
 
   private async refreshClaudeMcp(host: HookHost, url: string): Promise<boolean> {
@@ -433,6 +477,10 @@ export class HookInstaller {
     return path.join(host.homeDir, '.codex', 'config.toml');
   }
 
+  private cursorConfigPath(host: HookHost): string {
+    return path.join(host.homeDir, '.cursor', 'mcp.json');
+  }
+
   private async claudeHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
     const [settings, claudeJson] = await Promise.all([
       readJsonOrNull(this.claudeUserPath(host)),
@@ -445,6 +493,11 @@ export class HookInstaller {
     const data = await readTomlOrNull(filePath);
     if (!data) return emptyStatus();
     return codexSoloeStatus(data);
+  }
+
+  private async cursorFileSoloeStatus(filePath: string): Promise<AgentIntegrationTargetStatus> {
+    const data = await readJsonOrNull(filePath);
+    return data ? cursorSoloeStatus(data) : emptyStatus();
   }
 
   private async writeAtomic(filePath: string, content: string, backup: boolean): Promise<void> {
@@ -553,6 +606,34 @@ export function mergeClaudeMcp(
     headers: { Authorization: `Bearer ${args.token}` }
   };
   next['mcpServers'] = servers;
+  return next;
+}
+
+export function mergeCursorMcp(
+  original: Record<string, unknown>,
+  args: { url: string; token: string }
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original };
+  const servers = isObject(next['mcpServers']) ? { ...next['mcpServers'] } : {};
+  servers[SOLOE_MCP_NAME] = {
+    [SOLOE_MARKER]: true,
+    [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
+    url: args.url,
+    headers: { Authorization: `Bearer ${args.token}` }
+  };
+  next['mcpServers'] = servers;
+  return next;
+}
+
+export function removeSoloeFromCursor(original: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original };
+  if (!isObject(next['mcpServers'])) return next;
+  const servers: Record<string, unknown> = { ...next['mcpServers'] };
+  for (const [name, entry] of Object.entries(servers)) {
+    if (isObject(entry) && entry[SOLOE_MARKER] === true) delete servers[name];
+  }
+  if (Object.keys(servers).length) next['mcpServers'] = servers;
+  else delete next['mcpServers'];
   return next;
 }
 
@@ -870,6 +951,18 @@ function codexSoloeStatus(data: Record<string, unknown>): AgentIntegrationTarget
     }
   }
   const servers = data['mcp_servers'];
+  if (isObject(servers)) {
+    for (const entry of Object.values(servers)) {
+      const version = soloeMcpEntryVersion(entry);
+      if (version !== null) versions.push(version);
+    }
+  }
+  return statusFromVersions(versions);
+}
+
+function cursorSoloeStatus(data: Record<string, unknown>): AgentIntegrationTargetStatus {
+  const versions: number[] = [];
+  const servers = data['mcpServers'];
   if (isObject(servers)) {
     for (const entry of Object.values(servers)) {
       const version = soloeMcpEntryVersion(entry);

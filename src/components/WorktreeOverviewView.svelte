@@ -15,6 +15,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import * as Select from '$lib/components/ui/select';
   import { type ModelProvider, type ModelSelection } from '@shared/types/settings.js';
+  import type { AgentRuntimeProvider } from '@shared/types/sessions.js';
   import { renderMarkdown } from '../lib/markdown';
   import ChatPanel, { type ChatPanelMessage } from './ChatPanel.svelte';
   import KindIcon from './KindIcon.svelte';
@@ -260,7 +261,9 @@
 
   let providerLabel = $derived.by(() => {
     if (!overview?.generatedBy) return null;
-    const p = overview.generatedBy.provider === 'claude_code' ? 'Claude' : 'Codex';
+    const p = overview.generatedBy.provider === 'claude_code'
+      ? 'Claude'
+      : overview.generatedBy.provider === 'cursor' ? 'Cursor' : 'Codex';
     return `${p} · ${overview.generatedBy.model}`;
   });
 
@@ -300,7 +303,7 @@
     if (idx <= 0) return null;
     const provider = value.slice(0, idx);
     const id = value.slice(idx + 1);
-    if (provider !== 'codex' && provider !== 'claude') return null;
+    if (provider !== 'codex' && provider !== 'claude' && provider !== 'cursor') return null;
     if (!id) return null;
     return { provider, id };
   }
@@ -311,8 +314,8 @@
     );
     return entry?.label ?? `${value.provider}: ${value.id}`;
   }
-  function providerKind(provider: ModelProvider): 'claude_code' | 'codex' {
-    return provider === 'claude' ? 'claude_code' : 'codex';
+  function providerKind(provider: ModelProvider): AgentRuntimeProvider {
+    return provider === 'claude' ? 'claude_code' : provider;
   }
   async function setSelectedModel(value: string) {
     const parsed = parseModelKey(value);
@@ -331,7 +334,7 @@
   let modelChangedSinceLastRun = $derived.by(() => {
     if (!selectedModel || !overview?.generatedBy) return false;
     const generatedProvider: ModelProvider =
-      overview.generatedBy.provider === 'claude_code' ? 'claude' : 'codex';
+      overview.generatedBy.provider === 'claude_code' ? 'claude' : overview.generatedBy.provider;
     return (
       generatedProvider !== selectedModel.provider ||
       overview.generatedBy.model !== selectedModel.id

@@ -34,5 +34,6 @@ describe('agent system notifications', () => {
   it('uses user-facing state and provider labels', () => {
     expect(agentNotificationStateLabel('waiting_for_approval')).toBe('Approval needed');
     expect(agentProviderLabel('claude_code')).toBe('Claude Code');
+    expect(agentProviderLabel('cursor')).toBe('Cursor');
   });
 });

@@ -13,6 +13,8 @@ export function exitedSessionQuickLaunchPresets(
   presets: QuickLaunchPreset[]
 ): QuickLaunchPreset[] {
   return presets.filter((preset) =>
-    preset.id === 'claude-skip-permissions' || preset.id === 'codex-yolo'
+    preset.id === 'claude-skip-permissions'
+    || preset.id === 'codex-yolo'
+    || preset.id === 'cursor-force'
   );
 }

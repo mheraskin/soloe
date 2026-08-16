@@ -23,6 +23,8 @@ export interface WorkerSdkContext {
   provider: AgentProvider;
   cwd?: string;
   signal: AbortSignal;
+  providerThreadId?: string;
+  autoApprovesPermissions: boolean;
   emit(event: WorkerSdkEvent): void;
 }
 
@@ -34,6 +36,7 @@ export interface AgentRuntimeManagerOptions {
   observer: AgentObserverManager;
   sdkLoader?: (provider: AgentProvider) => Promise<WorkerSdkAdapter>;
   autoApprovesPermissions?: (originSessionId: SessionId) => Promise<boolean> | boolean;
+  getCursorBinary?: () => Promise<string | undefined> | string | undefined;
 }
 
 interface WorkerRecord {
@@ -43,6 +46,8 @@ interface WorkerRecord {
   cwd?: string;
   abort?: AbortController;
   running?: Promise<void>;
+  adapter?: WorkerSdkAdapter;
+  providerThreadId?: string;
 }
 
 export class AgentRuntimeManager {
@@ -50,7 +55,7 @@ export class AgentRuntimeManager {
   private readonly sdkLoader: (provider: AgentProvider) => Promise<WorkerSdkAdapter>;
 
   constructor(private readonly opts: AgentRuntimeManagerOptions) {
-    this.sdkLoader = opts.sdkLoader ?? loadDefaultSdkAdapter;
+    this.sdkLoader = opts.sdkLoader ?? ((provider) => loadDefaultSdkAdapter(provider, opts.getCursorBinary));
   }
 
   createWorkerSession(request: CreateWorkerSessionRequest): CreateWorkerSessionResult {
@@ -93,7 +98,7 @@ export class AgentRuntimeManager {
       confidence: 0.6
     }, 'prompt received');
 
-    const runPromise = this.runWorker(record, request.prompt, abort);
+    const runPromise = this.runWorker(record, request.prompt, abort, autoApprovesPermissions);
     record.running = runPromise;
     runPromise.finally(() => {
       if (record.running === runPromise) record.running = undefined;
@@ -128,15 +133,23 @@ export class AgentRuntimeManager {
     this.workers.clear();
   }
 
-  private async runWorker(record: WorkerRecord, prompt: string, abort: AbortController): Promise<void> {
+  private async runWorker(
+    record: WorkerRecord,
+    prompt: string,
+    abort: AbortController,
+    autoApprovesPermissions: boolean
+  ): Promise<void> {
     try {
-      const adapter = await this.sdkLoader(record.provider);
+      const adapter = record.adapter ?? await this.sdkLoader(record.provider);
+      record.adapter = adapter;
       if (abort.signal.aborted) return;
       const result = await adapter.run(prompt, {
         workerId: record.workerId,
         provider: record.provider,
         cwd: record.cwd,
         signal: abort.signal,
+        providerThreadId: record.providerThreadId,
+        autoApprovesPermissions,
         emit: (event) => {
           const state = event.state ?? 'working';
           this.patchWorker(record.workerId, {
@@ -147,6 +160,7 @@ export class AgentRuntimeManager {
         }
       });
       if (abort.signal.aborted) return;
+      record.providerThreadId = result.providerThreadId ?? record.providerThreadId;
       this.patchWorker(record.workerId, {
         state: 'completed',
         resultSummary: result.resultSummary ?? 'worker completed',
@@ -185,7 +199,14 @@ export class AgentRuntimeManager {
   }
 }
 
-async function loadDefaultSdkAdapter(provider: AgentProvider): Promise<WorkerSdkAdapter> {
+async function loadDefaultSdkAdapter(
+  provider: AgentProvider,
+  getCursorBinary?: AgentRuntimeManagerOptions['getCursorBinary']
+): Promise<WorkerSdkAdapter> {
+  if (provider === 'cursor') {
+    const { createCursorWorkerAdapter } = await import('./CursorWorkerAdapter.js');
+    return createCursorWorkerAdapter({ getBinary: getCursorBinary });
+  }
   const packageName = provider === 'claude_code'
     ? '@anthropic-ai/claude-code'
     : '@openai/codex-sdk';
@@ -270,7 +291,9 @@ export function stateFromSdkType(type: string): AgentObservedState {
 }
 
 function newWorkerId(provider: AgentProvider): string {
-  const prefix = provider === 'claude_code' ? 'claude-worker' : 'codex-worker';
+  const prefix = provider === 'claude_code'
+    ? 'claude-worker'
+    : provider === 'codex' ? 'codex-worker' : 'cursor-worker';
   return `${prefix}-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`;
 }
 

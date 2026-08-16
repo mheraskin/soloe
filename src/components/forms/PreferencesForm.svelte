@@ -77,11 +77,13 @@
   const newSessionKinds: { value: SessionLaunchKind; label: string }[] = [
     { value: 'terminal', label: 'Terminal' },
     { value: 'claude_code', label: 'Claude' },
-    { value: 'codex', label: 'Codex' }
+    { value: 'codex', label: 'Codex' },
+    { value: 'cursor', label: 'Cursor' }
   ];
   const binaryKeys: { key: keyof SettingsBinaries; label: string; placeholder: string }[] = [
     { key: 'claude', label: 'Claude binary', placeholder: 'claude' },
     { key: 'codex', label: 'Codex binary', placeholder: 'codex' },
+    { key: 'cursor', label: 'Cursor Agent binary', placeholder: 'agent' },
     { key: 'git', label: 'git', placeholder: 'git' },
     { key: 'gh', label: 'gh', placeholder: 'gh' },
     { key: 'fd', label: 'fd', placeholder: 'fd' },
@@ -187,7 +189,7 @@
     if (idx <= 0) return null;
     const provider = value.slice(0, idx);
     const id = value.slice(idx + 1);
-    if (provider !== 'codex' && provider !== 'claude') return null;
+    if (provider !== 'codex' && provider !== 'claude' && provider !== 'cursor') return null;
     if (!id) return null;
     return { provider, id };
   }
@@ -200,12 +202,12 @@
     return entry?.label ?? `${value.provider}: ${value.id}`;
   }
 
-  function providerKind(provider: ModelProvider): 'claude_code' | 'codex' {
-    return provider === 'claude' ? 'claude_code' : 'codex';
+  function providerKind(provider: ModelProvider): AgentRuntimeProvider {
+    return provider === 'claude' ? 'claude_code' : provider;
   }
 
   function presetProviderToModel(provider: AgentRuntimeProvider): ModelProvider {
-    return provider === 'claude_code' ? 'claude' : 'codex';
+    return provider === 'claude_code' ? 'claude' : provider;
   }
 
   async function setModel(task: ModelTask, value: string) {
@@ -376,7 +378,8 @@
 
   const quickLaunchProviders: { value: AgentRuntimeProvider; label: string }[] = [
     { value: 'claude_code', label: 'Claude' },
-    { value: 'codex', label: 'Codex' }
+    { value: 'codex', label: 'Codex' },
+    { value: 'cursor', label: 'Cursor' }
   ];
 
   function generatePresetId(): string {
@@ -893,7 +896,9 @@
               type="text"
               placeholder={preset.provider === 'claude_code'
                 ? '--verbose --allowedTools bash,computer'
-                : '--full-auto'}
+                : preset.provider === 'cursor'
+                  ? '--force --approve-mcps'
+                  : '--full-auto'}
               value={preset.extraArgs ?? ''}
               onchange={(e) => {
                 const v = (e.currentTarget as HTMLInputElement).value.trim();
@@ -1013,7 +1018,9 @@
               type="text"
               placeholder={draftPreset.provider === 'claude_code'
                 ? '--verbose --allowedTools bash,computer'
-                : '--full-auto'}
+                : draftPreset.provider === 'cursor'
+                  ? '--force --approve-mcps'
+                  : '--full-auto'}
               value={draftPreset.extraArgs ?? ''}
               oninput={(e) =>
                 updateDraftPreset({ extraArgs: (e.currentTarget as HTMLInputElement).value })}

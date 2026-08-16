@@ -11,7 +11,7 @@ import type {
 import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
 import type { GitService } from '../git/GitService.js';
 
-export type HookProvider = 'claude_code' | 'codex';
+export type HookProvider = 'claude_code' | 'codex' | 'cursor';
 
 export interface HookEvent {
   provider: HookProvider;
@@ -64,7 +64,7 @@ const TOOLS: McpTool[] = [
       required: ['originSessionId', 'provider'],
       properties: {
         originSessionId: { type: 'string' },
-        provider: { type: 'string', enum: ['claude_code', 'codex'] },
+        provider: { type: 'string', enum: ['claude_code', 'codex', 'cursor'] },
         cwd: { type: 'string' },
         promptSummary: { type: 'string' }
       }
@@ -201,7 +201,7 @@ export class SoloeMcpServer {
       return;
     }
     const url = req.url ?? '';
-    if (url !== '/mcp' && url !== '/hook/claude' && url !== '/hook/codex') {
+    if (url !== '/mcp' && url !== '/hook/claude' && url !== '/hook/codex' && url !== '/hook/cursor') {
       writeJson(res, 404, { error: 'not found' });
       return;
     }
@@ -209,8 +209,9 @@ export class SoloeMcpServer {
       writeJson(res, 401, { error: 'unauthorized' });
       return;
     }
-    if (url === '/hook/claude' || url === '/hook/codex') {
-      await this.handleHookRequest(req, res, url === '/hook/claude' ? 'claude_code' : 'codex');
+    if (url === '/hook/claude' || url === '/hook/codex' || url === '/hook/cursor') {
+      const provider = url === '/hook/claude' ? 'claude_code' : url === '/hook/cursor' ? 'cursor' : 'codex';
+      await this.handleHookRequest(req, res, provider);
       return;
     }
     let payload: unknown;
@@ -486,10 +487,10 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
   res.end(JSON.stringify(payload));
 }
 
-function requiredProvider(args: Record<PropertyKey, unknown>): 'claude_code' | 'codex' {
+function requiredProvider(args: Record<PropertyKey, unknown>): HookProvider {
   const provider = requiredString(args, 'provider');
-  if (provider !== 'claude_code' && provider !== 'codex') {
-    throw new Error('provider must be claude_code or codex');
+  if (provider !== 'claude_code' && provider !== 'codex' && provider !== 'cursor') {
+    throw new Error('provider must be claude_code, codex, or cursor');
   }
   return provider;
 }

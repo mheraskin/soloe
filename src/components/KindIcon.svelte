@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { TerminalSquare } from '@lucide/svelte';
+  import { MousePointer2, TerminalSquare } from '@lucide/svelte';
   import type { SessionLaunchKind } from '@shared/types/sessions.js';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexUrl from '../lib/icons/codex.svg';
@@ -18,6 +18,8 @@
   <img class="icon" src={entry.src} alt={entry.alt} width={size} height={size} />
 {:else if kind === 'terminal'}
   <TerminalSquare class="icon" size={size} aria-label="Terminal" />
+{:else if kind === 'cursor'}
+  <MousePointer2 class="icon" size={size} aria-label="Cursor" />
 {/if}
 
 <style>

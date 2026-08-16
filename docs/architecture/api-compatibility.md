@@ -46,7 +46,7 @@ In the table below:
 | `files` | `search`, `openInEditor`, `pasteIntoTerminal`, `pasteImagesIntoTerminal`, `listTree`, `readFile`, `writeFile` | IPC | Server | Server | Application Server Files service; paste targets Runtime |
 | `diagnostics` | `list`, `crashLogs` | IPC | Server | Server | Application Server |
 | `window` | `minimize`, `toggleMaximize`, `zoomIn`, `zoomOut`, `close` | Native | Native | Unavailable | Electron |
-| `agentIntegration` | `status`, `installClaude`, `uninstallClaude`, `installCodex`, `uninstallCodex`, `onChange` | IPC | Server | Server | Application Server |
+| `agentIntegration` | `status`, `installClaude`, `uninstallClaude`, `installCodex`, `uninstallCodex`, `installCursor`, `uninstallCursor`, `onChange` | IPC | Server | Server | Application Server |
 | `notify` | `onToast`, `onActivateSession` | IPC event | Unavailable | Unavailable | Local Electron notification integration |
 | `overview` | `get`, `regenerate`, `askStart`, `askCancel`, `onChunk` | IPC | Server | Server | Application Server |
 | `comments` | `onRpcRequest`, `sendRpcResponse` | IPC | Server | Server | Application Server bridge |

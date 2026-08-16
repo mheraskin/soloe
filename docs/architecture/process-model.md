@@ -124,7 +124,7 @@ globals, `BrowserWindow`, `WebContents`, `ipcMain`, or renderer APIs:
 | Overview | worktree evidence, cache, streamed generation, task-scoped cancellation |
 | Diagnostics | known-service metadata and bounded safe log tails |
 | Vault | protected credential storage, metadata events, explicit secret retrieval |
-| Agent integrations | placement-aware Claude/Codex configuration and status |
+| Agent integrations | placement-aware Claude/Codex/Cursor configuration, CLI discovery, and status |
 | System usage | Server, Runtime, agent/PTY, supervisor, and aggregate backend samples |
 
 Backend placement is carried in the request scope. Native Windows operations

@@ -144,6 +144,11 @@ import { BackgroundAgentExecution } from "../../../electron/agents/BackgroundAge
 import { AutoRenameService } from "../../../electron/agents/AutoRenameService.js";
 import { ModelCatalogService } from "../../../electron/agents/ModelCatalogService.js";
 import {
+  CursorCliDiscovery,
+  enrichCursorCliStatus,
+  resolveCursorSessionBinaries,
+} from "../../../electron/agents/CursorCliDiscovery.js";
+import {
   CodexConfigReader,
   codexApprovalsAreAutomatic,
 } from "../../../electron/agents/CodexConfigReader.js";
@@ -223,7 +228,10 @@ export interface SoloeDomainOptions {
     | "uninstallClaude"
     | "installCodex"
     | "uninstallCodex"
+    | "installCursor"
+    | "uninstallCursor"
   >;
+  cursorDiscovery?: Pick<CursorCliDiscovery, "detect">;
   enableAgentBridge?: boolean;
   pathService?: Pick<BackendPathService, "openSessionPath">;
   wslHostDetector?: Pick<WslHostDetector, "detect">;
@@ -267,6 +275,7 @@ export class SoloeDomain extends EventEmitter {
   private integrationInstaller: NonNullable<
     SoloeDomainOptions["integrationInstaller"]
   >;
+  private readonly cursorDiscovery: Pick<CursorCliDiscovery, "detect">;
   private readonly notes: NotesStore;
   private readonly rendererBridge: RendererBridgeService;
   private readonly vault: VaultStore;
@@ -385,6 +394,7 @@ export class SoloeDomain extends EventEmitter {
     });
     this.integrationInstaller =
       options.integrationInstaller ?? new HookInstaller();
+    this.cursorDiscovery = options.cursorDiscovery ?? new CursorCliDiscovery();
     this.pathService =
       options.pathService ??
       new BackendPathService({
@@ -486,6 +496,7 @@ export class SoloeDomain extends EventEmitter {
     });
     this.workerRuntime = new AgentRuntimeManager({
       observer: this.observer,
+      getCursorBinary: async () => (await this.settings.get()).binaries.cursor,
       autoApprovesPermissions: async (sessionId) => {
         const session = await this.sessions.get(sessionId);
         return session ? this.sessionAutoApprovesPermissions(session) : false;
@@ -939,13 +950,15 @@ export class SoloeDomain extends EventEmitter {
   ): Promise<AgentIntegrationStatus> {
     if (method === "status") {
       requireIntegrationArgumentCount(method, args, 0);
-      return this.integrationInstaller.status();
+      return this.integrationStatus();
     }
     if (
       method !== "installClaude" &&
       method !== "uninstallClaude" &&
       method !== "installCodex" &&
-      method !== "uninstallCodex"
+      method !== "uninstallCodex" &&
+      method !== "installCursor" &&
+      method !== "uninstallCursor"
     ) {
       throw unsupportedRpc("agentIntegration", method);
     }
@@ -954,13 +967,19 @@ export class SoloeDomain extends EventEmitter {
     const host = validateIntegrationRequest(args[0]);
     try {
       await this.integrationInstaller[method](host);
-      const status = await this.integrationInstaller.status();
+      const status = await this.integrationStatus();
       this.emit("event", "agentIntegration.change", status);
       return status;
     } catch (error) {
       if (error instanceof RpcError) throw error;
       throw structuredIntegrationError(error);
     }
+  }
+
+  private async integrationStatus(): Promise<AgentIntegrationStatus> {
+    const status = await this.integrationInstaller.status();
+    const configuredBinary = (await this.settings.get()).binaries.cursor;
+    return enrichCursorCliStatus(status, configuredBinary, this.cursorDiscovery);
   }
 
   private async diagnosticsCall(
@@ -2035,9 +2054,14 @@ export class SoloeDomain extends EventEmitter {
   }): Promise<unknown> {
     const session = await this.requireSession(options.sessionId);
     const settings = await this.settings.get();
+    const binaries = await resolveCursorSessionBinaries(
+      session,
+      settings.binaries,
+      this.cursorDiscovery,
+    );
     const spec = this.commandBuilder.build(session, {
       baseEnv: process.env,
-      binaries: settings.binaries,
+      ...(binaries ? { binaries } : {}),
       ...(this.agentBridgeInfo ? { bridge: this.agentBridgeInfo } : {}),
     });
     this.emit("event", "status", {
@@ -2991,8 +3015,8 @@ function validateCreateWorkerSessionRequest(
     "originSessionId",
     256,
   );
-  if (request.provider !== "claude_code" && request.provider !== "codex") {
-    throw invalidObserverRequest("provider must be claude_code or codex");
+  if (request.provider !== "claude_code" && request.provider !== "codex" && request.provider !== "cursor") {
+    throw invalidObserverRequest("provider must be claude_code, codex, or cursor");
   }
   const cwd = request.cwd === undefined
     ? undefined

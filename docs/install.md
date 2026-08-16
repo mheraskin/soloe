@@ -7,7 +7,7 @@ Soloe has not published its first binary alpha yet. This page records the intend
 - macOS, Windows 11, or a current Linux distribution;
 - Git;
 - Node.js 22 or newer when running from source;
-- at least one authenticated CLI agent, currently Claude Code or Codex CLI;
+- at least one authenticated CLI agent: Claude Code, Codex CLI, or Cursor Agent CLI;
 - WSL and a selected distribution when using the Windows + WSL backend;
 - Xcode Command Line Tools and Rust when building the native macOS tray from source.
 

@@ -32,6 +32,10 @@ import {
   codexApprovalsAreAutomatic,
   type CodexEffectiveConfig
 } from '../agents/CodexConfigReader.js';
+import {
+  CursorCliDiscovery,
+  resolveCursorSessionBinaries
+} from '../agents/CursorCliDiscovery.js';
 import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
 import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
 import { detectUsageLimitPlainText, stripAnsi } from '../agents/UsageLimitDetector.js';
@@ -79,6 +83,7 @@ export interface PtyManagerOptions {
   replayBuffer?: TerminalReplayBuffer;
   processFactory?: PtyProcessFactory;
   codexConfigReader?: CodexConfigReader;
+  cursorDiscovery?: Pick<CursorCliDiscovery, 'detect'>;
 }
 
 export declare interface PtyManager {
@@ -98,6 +103,7 @@ export class PtyManager extends EventEmitter {
   private readonly replayBuffer: TerminalReplayBuffer;
   private readonly processFactory: PtyProcessFactory;
   private readonly codexConfigReader: CodexConfigReader;
+  private readonly cursorDiscovery: Pick<CursorCliDiscovery, 'detect'>;
   private disposed = false;
 
   constructor(private readonly opts: PtyManagerOptions) {
@@ -105,6 +111,7 @@ export class PtyManager extends EventEmitter {
     this.baseEnv = opts.baseEnv ?? process.env;
     this.replayBuffer = opts.replayBuffer ?? new TerminalReplayBuffer();
     this.processFactory = opts.processFactory ?? new NodePtyProcessFactory();
+    this.cursorDiscovery = opts.cursorDiscovery ?? new CursorCliDiscovery();
     this.codexConfigReader = opts.codexConfigReader ?? new CodexConfigReader({
       commandBuilder: opts.commandBuilder,
       processFactory: this.processFactory,
@@ -159,7 +166,12 @@ export class PtyManager extends EventEmitter {
 
     this.opts.observer?.registerTuiSession(session);
     const bridge = this.opts.bridgeInfo?.() ?? undefined;
-    const binaries = this.opts.getBinaries ? await this.opts.getBinaries() : undefined;
+    const configuredBinaries = this.opts.getBinaries ? await this.opts.getBinaries() : undefined;
+    const binaries = await resolveCursorSessionBinaries(
+      session,
+      configuredBinaries,
+      this.cursorDiscovery
+    );
     const spec = this.opts.commandBuilder.build(session, {
       baseEnv: this.baseEnv,
       bridge,
@@ -622,7 +634,7 @@ const USAGE_LIMIT_CANDIDATE = /limit|credit/i;
 
 function legacyAgentProvider(session: Session): AgentRuntimeProvider | null {
   const kind = (session as unknown as { kind?: unknown }).kind;
-  if (kind === 'claude_code' || kind === 'codex') return kind;
+  if (kind === 'claude_code' || kind === 'codex' || kind === 'cursor') return kind;
   return null;
 }
 

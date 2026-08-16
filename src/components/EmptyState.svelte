@@ -35,7 +35,7 @@
   let observed = $derived(session ? sessions.observationFor(session.id) : null);
   let displayKind = $derived(session ? displaySessionKind(session, observed) : 'terminal');
   let canContinueAcrossAgents = $derived(
-    session !== null && (displayKind === 'claude_code' || displayKind === 'codex')
+    session !== null && (displayKind === 'claude_code' || displayKind === 'codex' || displayKind === 'cursor')
   );
   let quickLaunchPresets = $derived(
     exitedSessionQuickLaunchPresets(settings.current.quickLaunch)
@@ -68,12 +68,26 @@
         ?? null
       );
     }
+    if (displayKind === 'cursor') {
+      return (
+        (session.currentAgentRuntime?.provider === 'cursor'
+          ? session.currentAgentRuntime.providerThreadId
+          : undefined)
+        ?? session.providerThreadId
+        ?? observed?.providerThreadId
+        ?? (session.launch.type === 'agent' && session.launch.provider === 'cursor'
+          ? session.launch.cursorSessionId
+          : undefined)
+        ?? null
+      );
+    }
     return null;
   });
   let providerResumeCommand = $derived.by(() => {
     if (!providerSessionId) return null;
     if (displayKind === 'claude_code') return `claude --resume ${providerSessionId}`;
     if (displayKind === 'codex') return `codex resume ${providerSessionId}`;
+    if (displayKind === 'cursor') return `agent --resume ${providerSessionId}`;
     return null;
   });
 

@@ -151,13 +151,15 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     );
     const m = inner.match(/printf %s ([A-Za-z0-9+/=]+) \| base64/);
     const rc = Buffer.from(m![1]!, 'base64').toString('utf8');
-    expect(rc).toContain('claude() { __soloe_agent_launch claude "$@"; }');
-    expect(rc).toContain('codex() { __soloe_agent_launch codex "$@"; }');
+    expect(rc).toContain('claude() { __soloe_agent_launch claude claude "$@"; }');
+    expect(rc).toContain('codex() { __soloe_agent_launch codex codex "$@"; }');
+    expect(rc).toContain('agent() { __soloe_agent_launch cursor agent "$@"; }');
+    expect(rc).toContain('cursor-agent() { __soloe_agent_launch cursor cursor-agent "$@"; }');
     expect(rc).toContain('"$__soloe_u/hook/$__soloe_provider"');
     expect(rc).toContain('"hook_event_name":"SessionStart"');
     expect(rc).toContain('"argv_b64":"%s"');
     expect(rc).toContain('"hook_event_name":"SessionEnd"');
-    expect(rc).toContain('command "$__soloe_provider" "$@"');
+    expect(rc).toContain('command "$__soloe_binary" "$@"');
   });
 
   it('resumes an attached Claude runtime instead of reopening the shell', () => {
@@ -638,6 +640,42 @@ describe('SessionCommandBuilder — codex kind', () => {
     expect(script).not.toContain('exec bash -ic');
     expect(script).toContain('\n');
     expect(script).not.toContain('done; fi');
+  });
+});
+
+describe('SessionCommandBuilder — cursor kind', () => {
+  const cursor = (launch: Session['launch']): Session => ({
+    ...baseFields('cursor'),
+    runMode: 'wsl',
+    wslDistro: 'Ubuntu',
+    launch
+  });
+
+  it('launches the configured Cursor binary with model and mode', () => {
+    const session = cursor({
+      type: 'agent', provider: 'cursor', resumeMode: 'new', model: 'auto', cursorMode: 'plan'
+    });
+    const script = innerLine(builder.build(session, {
+      ...ctx, binaries: { cursor: '/opt/cursor/agent' }
+    }).args);
+    expect(script).toContain('exec /opt/cursor/agent');
+    expect(script).toContain('--model auto --mode plan');
+  });
+
+  it('resumes the latest or an exact Cursor chat with documented flags', () => {
+    const latest = cursor({ type: 'agent', provider: 'cursor', resumeMode: 'resume_last' });
+    const exact = cursor({
+      type: 'agent', provider: 'cursor', resumeMode: 'resume_by_id', cursorSessionId: 'chat-123'
+    });
+    expect(decodeAgentScript(innerLine(builder.build(latest, ctx).args))).toContain('--continue');
+    expect(decodeAgentScript(innerLine(builder.build(exact, ctx).args))).toContain('--resume chat-123');
+  });
+
+  it('resumes a persisted Cursor chat after reload', () => {
+    const session = cursor({
+      type: 'agent', provider: 'cursor', resumeMode: 'new', cursorSessionId: 'chat-456'
+    });
+    expect(decodeAgentScript(innerLine(builder.build(session, ctx).args))).toContain('--resume chat-456');
   });
 });
 

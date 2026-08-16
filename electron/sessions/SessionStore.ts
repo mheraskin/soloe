@@ -24,7 +24,7 @@ interface StorageShape {
 
 type LegacySessionDraft = Omit<SessionDraft, 'launch'> & {
   launch?: never;
-  kind: 'standard_terminal' | 'claude_code' | 'codex';
+  kind: 'standard_terminal' | 'claude_code' | 'codex' | 'cursor';
   shell?: ShellKind;
   command?: string;
   args?: string[];
@@ -32,6 +32,7 @@ type LegacySessionDraft = Omit<SessionDraft, 'launch'> & {
   claudeSessionName?: string;
   claudeSessionId?: string;
   codexSessionId?: string;
+  cursorSessionId?: string;
   fullscreenTui?: boolean;
   model?: string;
   reasoningEffort?: AgentLaunch['reasoningEffort'];
@@ -411,7 +412,7 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
   }
   if (s.currentAgentRuntime !== undefined) {
     const runtime = s.currentAgentRuntime;
-    if (runtime.provider !== 'claude_code' && runtime.provider !== 'codex') {
+    if (runtime.provider !== 'claude_code' && runtime.provider !== 'codex' && runtime.provider !== 'cursor') {
       throw new Error('currentAgentRuntime.provider must be a known agent provider');
     }
     if (runtime.status !== 'active' && runtime.status !== 'exited') {
@@ -438,7 +439,7 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
       }
       break;
     case 'agent':
-      if (s.launch.provider !== 'claude_code' && s.launch.provider !== 'codex') {
+      if (s.launch.provider !== 'claude_code' && s.launch.provider !== 'codex' && s.launch.provider !== 'cursor') {
         throw new Error('launch.provider must be a known agent provider');
       }
       if (s.launch.provider === 'claude_code' && !isClaudeResumeMode(s.launch.resumeMode)) {
@@ -446,6 +447,9 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
       }
       if (s.launch.provider === 'codex' && !isCodexResumeMode(s.launch.resumeMode)) {
         throw new Error('resumeMode must be a known Codex resume mode');
+      }
+      if (s.launch.provider === 'cursor' && !isCursorResumeMode(s.launch.resumeMode)) {
+        throw new Error('resumeMode must be a known Cursor resume mode');
       }
       if (s.launch.provider === 'claude_code' && s.launch.resumeMode === 'resume_by_name' && !s.launch.claudeSessionName) {
         throw new Error('claudeSessionName is required for resume_by_name');
@@ -455,6 +459,12 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
       }
       if (s.launch.provider === 'codex' && s.launch.resumeMode === 'resume_by_id' && !s.launch.codexSessionId) {
         throw new Error('codexSessionId is required for resume_by_id');
+      }
+      if (s.launch.provider === 'cursor' && s.launch.resumeMode === 'resume_by_id' && !s.launch.cursorSessionId) {
+        throw new Error('cursorSessionId is required for resume_by_id');
+      }
+      if (s.launch.provider === 'cursor' && s.launch.cursorMode !== undefined && !isCursorMode(s.launch.cursorMode)) {
+        throw new Error('cursorMode must be agent, plan, or ask');
       }
       if (s.launch.extraArgs !== undefined && !isStringArray(s.launch.extraArgs)) {
         throw new Error('extraArgs must be an array of strings when set');
@@ -470,7 +480,9 @@ function initialHasUserInput(draft: SessionDraft): boolean | undefined {
   if (draft.launch.resumeMode !== 'new') return undefined;
   const providerSessionId = draft.launch.provider === 'claude_code'
     ? draft.launch.claudeSessionId
-    : draft.launch.codexSessionId;
+    : draft.launch.provider === 'codex'
+      ? draft.launch.codexSessionId
+      : draft.launch.cursorSessionId;
   if (providerSessionId || draft.providerThreadId) return undefined;
   return false;
 }
@@ -502,6 +514,8 @@ function normalizeSessionDraft(draft: SessionDraft | LegacySessionDraft): Sessio
     claudeSessionName: _claudeSessionName,
     claudeSessionId: _claudeSessionId,
     codexSessionId: _codexSessionId,
+    cursorSessionId: _cursorSessionId,
+    cursorMode: _cursorMode,
     fullscreenTui: _fullscreenTui,
     model: _model,
     reasoningEffort: _reasoningEffort,
@@ -546,6 +560,8 @@ function migrateRawSession(raw: Record<string, unknown>): Session | null {
     claudeSessionName: _claudeSessionName,
     claudeSessionId: _claudeSessionId,
     codexSessionId: _codexSessionId,
+    cursorSessionId: _cursorSessionId,
+    cursorMode: _cursorMode,
     fullscreenTui: _fullscreenTui,
     model: _model,
     reasoningEffort: _reasoningEffort,
@@ -612,7 +628,7 @@ function parseCurrentAgentRuntime(raw: unknown): AgentRuntimeInfo | null {
   if (!isObject(raw)) return null;
   const provider = raw['provider'];
   const status = raw['status'];
-  if (provider !== 'claude_code' && provider !== 'codex') return null;
+  if (provider !== 'claude_code' && provider !== 'codex' && provider !== 'cursor') return null;
   if (status !== 'active' && status !== 'exited') return null;
   return {
     provider,
@@ -641,7 +657,7 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
     }
     if (type === 'agent') {
       const provider = existing['provider'];
-      if (provider !== 'claude_code' && provider !== 'codex') return null;
+      if (provider !== 'claude_code' && provider !== 'codex' && provider !== 'cursor') return null;
       return {
         type: 'agent',
         provider,
@@ -649,6 +665,8 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         ...(typeof existing['claudeSessionName'] === 'string' ? { claudeSessionName: existing['claudeSessionName'] } : {}),
         ...(typeof existing['claudeSessionId'] === 'string' ? { claudeSessionId: existing['claudeSessionId'] } : {}),
         ...(typeof existing['codexSessionId'] === 'string' ? { codexSessionId: existing['codexSessionId'] } : {}),
+        ...(typeof existing['cursorSessionId'] === 'string' ? { cursorSessionId: existing['cursorSessionId'] } : {}),
+        ...(isCursorMode(existing['cursorMode']) ? { cursorMode: existing['cursorMode'] } : {}),
         ...(typeof existing['fullscreenTui'] === 'boolean' ? { fullscreenTui: existing['fullscreenTui'] } : {}),
         ...(typeof existing['model'] === 'string' ? { model: existing['model'] } : {}),
         ...(isCodexReasoningEffort(existing['reasoningEffort']) ? { reasoningEffort: existing['reasoningEffort'] } : {}),
@@ -693,6 +711,16 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         ...(isCodexReasoningEffort(raw['reasoningEffort']) ? { reasoningEffort: raw['reasoningEffort'] } : {}),
         ...(isStringArray(raw['extraArgs']) ? { extraArgs: raw['extraArgs'] } : {})
       };
+    case 'cursor':
+      return {
+        type: 'agent',
+        provider: 'cursor',
+        resumeMode: typeof raw['resumeMode'] === 'string' ? raw['resumeMode'] as AgentLaunch['resumeMode'] : 'new',
+        ...(typeof raw['cursorSessionId'] === 'string' ? { cursorSessionId: raw['cursorSessionId'] } : {}),
+        ...(isCursorMode(raw['cursorMode']) ? { cursorMode: raw['cursorMode'] } : {}),
+        ...(typeof raw['model'] === 'string' ? { model: raw['model'] } : {}),
+        ...(isStringArray(raw['extraArgs']) ? { extraArgs: raw['extraArgs'] } : {})
+      };
     default:
       return null;
   }
@@ -710,6 +738,14 @@ function isClaudeResumeMode(value: unknown): boolean {
 
 function isCodexResumeMode(value: unknown): boolean {
   return value === 'new' || value === 'resume_by_id' || value === 'resume_last';
+}
+
+function isCursorResumeMode(value: unknown): boolean {
+  return value === 'new' || value === 'resume_by_id' || value === 'resume_last';
+}
+
+function isCursorMode(value: unknown): value is 'agent' | 'plan' | 'ask' {
+  return value === 'agent' || value === 'plan' || value === 'ask';
 }
 
 function isCodexReasoningEffort(value: unknown): value is 'low' | 'medium' | 'high' {

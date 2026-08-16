@@ -293,12 +293,13 @@
     if (option === 'terminal') {
       return { type: 'terminal', shell: settings.current.defaults.shell };
     }
-    if (option === 'claude_code' || option === 'codex') {
+    if (option === 'claude_code' || option === 'codex' || option === 'cursor') {
       return {
         type: 'agent',
         provider: option,
         resumeMode: 'new',
-        ...(option === 'claude_code' ? { fullscreenTui: true } : {})
+        ...(option === 'claude_code' ? { fullscreenTui: true } : {}),
+        ...(option === 'cursor' ? { cursorMode: 'agent' as const } : {})
       };
     }
     const preset = presets.find((candidate) => candidate.id === option.slice('preset:'.length));
@@ -318,6 +319,7 @@
     if (option === 'terminal') return branch ? `${branch} terminal` : 'Terminal';
     if (option === 'claude_code') return branch ? `${branch} Claude` : 'Claude';
     if (option === 'codex') return branch ? `${branch} Codex` : 'Codex';
+    if (option === 'cursor') return branch ? `${branch} Cursor` : 'Cursor';
     return presets.find((candidate) => candidate.id === option.slice('preset:'.length))?.label
       ?? 'Session';
   }
@@ -495,7 +497,7 @@
       launchTerminal();
       return;
     }
-    if (option === 'claude_code' || option === 'codex') {
+    if (option === 'claude_code' || option === 'codex' || option === 'cursor') {
       launchAgent(option);
       return;
     }
@@ -706,7 +708,7 @@
           {/if}
         </div>
       {/if}
-      <div class="mobile-session-picker grid grid-cols-3 gap-1">
+      <div class="mobile-session-picker grid grid-cols-4 gap-1">
         <Button
           variant="ghost"
           class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'claude_code' ? 'bg-muted text-foreground' : ''}`}
@@ -718,6 +720,18 @@
         >
           <KindIcon kind="claude_code" size={20} />
           <span class="truncate leading-none">Claude</span>
+        </Button>
+        <Button
+          variant="ghost"
+          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'cursor' ? 'bg-muted text-foreground' : ''}`}
+          title="New Cursor session"
+          aria-label="New Cursor session"
+          data-launch-option="cursor"
+          data-gesture-selected={selectedLaunchOption === 'cursor' ? 'true' : undefined}
+          onclick={(event) => onLaunchOptionClick(event, 'cursor')}
+        >
+          <KindIcon kind="cursor" size={20} />
+          <span class="truncate leading-none">Cursor</span>
         </Button>
         <Button
           variant="ghost"
@@ -758,7 +772,7 @@
               onclick={(event) => onLaunchOptionClick(event, `preset:${preset.id}`)}
             >
               <KindIcon
-                kind={preset.provider === 'claude_code' ? 'claude_code' : 'codex'}
+                kind={preset.provider}
                 size={14}
               />
               <span class="truncate">{preset.label}</span>

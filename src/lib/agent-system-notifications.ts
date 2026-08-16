@@ -24,6 +24,7 @@ export function agentNotificationStateLabel(state: NotifyState): string {
 export function agentProviderLabel(kind: AgentToastNotice['sessionKind']): string {
   if (kind === 'codex') return 'Codex';
   if (kind === 'claude_code') return 'Claude Code';
+  if (kind === 'cursor') return 'Cursor';
   return 'Terminal';
 }
 

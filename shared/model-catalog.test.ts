@@ -9,7 +9,9 @@ const catalog: ModelCatalogEntry[] = [
   { provider: 'codex', id: CLI_DEFAULT_MODEL_ID, label: 'Codex default', isDefault: true },
   { provider: 'codex', id: 'gpt-current', label: 'GPT Current' },
   { provider: 'claude', id: CLI_DEFAULT_MODEL_ID, label: 'Claude default', isDefault: true },
-  { provider: 'claude', id: 'sonnet', label: 'Claude Sonnet' }
+  { provider: 'claude', id: 'sonnet', label: 'Claude Sonnet' },
+  { provider: 'cursor', id: CLI_DEFAULT_MODEL_ID, label: 'Cursor default', isDefault: true },
+  { provider: 'cursor', id: 'auto', label: 'Auto' }
 ];
 
 describe('modelCandidatesForTask', () => {
@@ -18,7 +20,10 @@ describe('modelCandidatesForTask', () => {
     settings.models.textGeneration = { provider: 'codex', id: 'gpt-retired' };
 
     expect(modelCandidatesForTask(settings, catalog, 'textGeneration')).toEqual({
-      candidates: [{ provider: 'codex', id: CLI_DEFAULT_MODEL_ID }]
+      candidates: [
+        { provider: 'codex', id: CLI_DEFAULT_MODEL_ID },
+        { provider: 'cursor', id: CLI_DEFAULT_MODEL_ID }
+      ]
     });
   });
 
@@ -31,7 +36,21 @@ describe('modelCandidatesForTask', () => {
       candidates: [
         { provider: 'codex', id: 'gpt-current' },
         { provider: 'codex', id: CLI_DEFAULT_MODEL_ID },
-        { provider: 'claude', id: CLI_DEFAULT_MODEL_ID }
+        { provider: 'claude', id: CLI_DEFAULT_MODEL_ID },
+        { provider: 'cursor', id: CLI_DEFAULT_MODEL_ID }
+      ]
+    });
+  });
+
+  it('keeps a selected Cursor model and falls back across all providers', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.models.worktreeOverview = { provider: 'cursor', id: 'auto' };
+
+    expect(modelCandidatesForTask(settings, catalog, 'worktreeOverview')).toEqual({
+      candidates: [
+        { provider: 'cursor', id: 'auto' },
+        { provider: 'codex', id: CLI_DEFAULT_MODEL_ID },
+        { provider: 'cursor', id: CLI_DEFAULT_MODEL_ID }
       ]
     });
   });

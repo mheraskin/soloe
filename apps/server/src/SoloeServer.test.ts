@@ -1039,7 +1039,12 @@ describe('Soloe Server lifecycle', () => {
             current: claudeInstalled,
             ...(claudeInstalled ? { version: 14 } : {})
           },
-          codex: { installed: false, current: false }
+          codex: { installed: false, current: false },
+          cursor: {
+            installed: false,
+            current: false,
+            cli: { available: false, reason: 'not installed in test' }
+          }
         }
       ]
     });
@@ -1066,6 +1071,9 @@ describe('Soloe Server lifecycle', () => {
         dataDirectory: directory,
         runtime: domainRuntime,
         integrationInstaller,
+        cursorDiscovery: {
+          detect: vi.fn(async () => ({ available: false, reason: 'not installed in test' }))
+        },
         enableAgentBridge: true,
         codexConfigReader: {
           read: vi.fn(async () => ({
