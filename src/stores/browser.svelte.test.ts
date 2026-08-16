@@ -107,7 +107,14 @@ describe('BrowserStore residency', () => {
 
   it('duplicates a tab beside its source and activates an independent copy', () => {
     const store = new BrowserStore();
-    const source = add(store, 'https://first.test');
+    const targetDevice = {
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      name: 'XPS',
+      tailscaleDnsName: 'xps.tailnet.ts.net',
+      local: false
+    };
+    vi.advanceTimersByTime(1_000);
+    const source = store.addTab('https://first.test', targetDevice);
     store.navigate(source.id, 'https://second.test');
     store.setPageZoom(source.id, 1.25);
 
@@ -118,12 +125,31 @@ describe('BrowserStore residency', () => {
     expect(duplicate).toMatchObject({
       history: ['https://first.test', 'https://second.test'],
       historyIndex: 1,
-      pageZoom: 1.25
+      pageZoom: 1.25,
+      targetDevice
     });
     expect(store.activeTabId).toBe(duplicate!.id);
 
     store.navigate(source.id, 'https://third.test');
     expect(duplicate!.history).toEqual(['https://first.test', 'https://second.test']);
+    expect(duplicate!.targetDevice).toEqual(targetDevice);
+  });
+
+  it('persists the selected navigation Device with the tab', () => {
+    const store = new BrowserStore();
+    const tab = add(store, 'about:blank');
+    const target = {
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      name: 'XPS',
+      tailscaleDnsName: 'xps.tailnet.ts.net',
+      local: false
+    };
+
+    store.setTargetDevice(tab.id, target);
+    vi.advanceTimersByTime(100);
+
+    const restored = new BrowserStore();
+    expect(restored.activeTab?.targetDevice).toEqual(target);
   });
 
   it('restores closed tabs in last-closed-first order and their prior positions', () => {

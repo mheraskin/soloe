@@ -92,6 +92,49 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('asks the owning remote Device to expose a localhost port through Tailscale', async () => {
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') return jsonResponse(descriptor(FIRST_EPOCH));
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+          args: unknown[];
+        };
+        calls.push(request);
+        return jsonResponse({
+          ok: true,
+          value: {
+            deviceId: DEVICE_ID,
+            state: 'ready',
+            dnsName: 'alpha.tailnet.ts.net',
+            port: 3000,
+            forwarded: true
+          }
+        });
+      },
+      socketFactory: () => new FakeSocket()
+    });
+
+    await expect(client.ensureTailscalePort(3000)).resolves.toMatchObject({
+      deviceId: DEVICE_ID,
+      dnsName: 'alpha.tailnet.ts.net',
+      port: 3000
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        namespace: 'network',
+        method: 'ensureTailscalePort',
+        args: [3000]
+      })
+    ]);
+    client.dispose();
+  });
+
   it('routes Session metadata, deletion, and command preview to the owning remote Device', async () => {
     const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
     const client = new RemoteSessionDevice({

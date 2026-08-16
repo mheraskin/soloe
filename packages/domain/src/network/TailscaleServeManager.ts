@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createConnection } from "node:net";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -27,6 +28,100 @@ export interface TailscaleServeManagerOptions {
   targetUrl: string;
   httpsPort?: number;
   run?: TailscaleCommandRunner;
+}
+
+export interface TailscalePortForwardStatus extends TailscaleServeStatus {
+  dnsName: string | null;
+  port: number;
+  forwarded: boolean;
+}
+
+export type TailscalePortProbe = (
+  host: string,
+  port: number,
+) => Promise<boolean>;
+
+export interface TailscalePortForwardManagerOptions {
+  run?: TailscaleCommandRunner;
+  probe?: TailscalePortProbe;
+}
+
+/**
+ * Publishes one loopback TCP listener on the Device's Tailscale address.
+ * Existing direct listeners and unrelated Serve routes are never replaced.
+ */
+export class TailscalePortForwardManager {
+  private readonly run: TailscaleCommandRunner;
+  private readonly probe: TailscalePortProbe;
+
+  constructor(options: TailscalePortForwardManagerOptions = {}) {
+    this.run = options.run ?? runTailscaleCommand;
+    this.probe = options.probe ?? probeTcpPort;
+  }
+
+  async ensure(rawPort: number): Promise<TailscalePortForwardStatus> {
+    const port = validPort(rawPort);
+    let selfDnsName: string;
+    let serveStatus: unknown;
+    try {
+      selfDnsName = parseSelfDnsName(
+        parseJsonStatus(await this.run(["status", "--json"]), "status"),
+      );
+      serveStatus = parseJsonStatus(
+        await this.run(["serve", "status", "--json"]),
+        "Serve status",
+      );
+    } catch (error) {
+      return portForwardFailure(commandFailure(error), port);
+    }
+
+    const existing = inspectTcpForward(serveStatus, port);
+    if (existing === "owned") {
+      return readyPortForward(selfDnsName, port, true);
+    }
+    if (existing === "occupied") {
+      return {
+        state: "conflict",
+        message: `Tailscale Serve port ${port} is already used by another service.`,
+        setupUrl: null,
+        dnsName: selfDnsName,
+        port,
+        forwarded: false,
+      };
+    }
+
+    if (await this.probe(selfDnsName, port)) {
+      return readyPortForward(selfDnsName, port, false);
+    }
+
+    const loopbackHost = await firstListeningLoopback(this.probe, port);
+    if (!loopbackHost) {
+      return {
+        state: "error",
+        message: `Nothing is listening on localhost:${port} on this Device.`,
+        setupUrl: null,
+        dnsName: selfDnsName,
+        port,
+        forwarded: false,
+      };
+    }
+
+    const target = loopbackHost === "::1"
+      ? `tcp://[::1]:${port}`
+      : `tcp://127.0.0.1:${port}`;
+    try {
+      await this.run([
+        "serve",
+        "--bg",
+        "--yes",
+        `--tcp=${port}`,
+        target,
+      ]);
+      return readyPortForward(selfDnsName, port, true);
+    } catch (error) {
+      return portForwardFailure(commandFailure(error), port, selfDnsName);
+    }
+  }
 }
 
 /**
@@ -170,6 +265,79 @@ function inspectPort(
   // authorities. Re-declaring our dedicated port creates the current route.
   if (tcpEntry === undefined || httpsEnabled) return "free";
   return "occupied";
+}
+
+function inspectTcpForward(
+  raw: unknown,
+  port: number,
+): "free" | "owned" | "occupied" {
+  if (!isRecord(raw) || !isRecord(raw.TCP)) return "free";
+  const handler = raw.TCP[String(port)];
+  if (!isRecord(handler)) return "free";
+  const target = typeof handler.TCPForward === "string"
+    ? normalizeTcpTarget(handler.TCPForward)
+    : null;
+  if (target === `127.0.0.1:${port}` || target === `[::1]:${port}`) {
+    return "owned";
+  }
+  return "occupied";
+}
+
+function normalizeTcpTarget(value: string): string {
+  const trimmed = value.trim().replace(/^tcp:\/\//u, "");
+  if (trimmed.startsWith("localhost:")) {
+    return `127.0.0.1:${trimmed.slice("localhost:".length)}`;
+  }
+  return trimmed;
+}
+
+async function firstListeningLoopback(
+  probe: TailscalePortProbe,
+  port: number,
+): Promise<"127.0.0.1" | "::1" | null> {
+  if (await probe("127.0.0.1", port)) return "127.0.0.1";
+  if (await probe("::1", port)) return "::1";
+  return null;
+}
+
+function readyPortForward(
+  dnsName: string,
+  port: number,
+  forwarded: boolean,
+): TailscalePortForwardStatus {
+  return {
+    state: "ready",
+    message: null,
+    setupUrl: null,
+    dnsName,
+    port,
+    forwarded,
+  };
+}
+
+function portForwardFailure(
+  status: TailscaleServeStatus,
+  port: number,
+  dnsName: string | null = null,
+): TailscalePortForwardStatus {
+  return { ...status, dnsName, port, forwarded: false };
+}
+
+function probeTcpPort(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host, port });
+    let settled = false;
+    const finish = (connected: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.setTimeout(750);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
 }
 
 function parseJsonStatus(raw: string, label: string): unknown {

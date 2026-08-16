@@ -8,11 +8,13 @@ import type {
   BrowserSessionSnapshot,
   BrowserSessionTab,
   BrowserSessionUpdateRequest,
-  BrowserTabDevice as SharedBrowserTabDevice
+  BrowserTabDevice as SharedBrowserTabDevice,
+  BrowserTargetDevice as SharedBrowserTargetDevice
 } from '@shared/types/browser-sessions.js';
 import { ipc } from '../lib/ipc';
 
 export type BrowserTabDevice = SharedBrowserTabDevice;
+export type BrowserTargetDevice = SharedBrowserTargetDevice;
 export type BrowserTab = BrowserSessionTab;
 type BrowserCwdState = BrowserSessionScopeState;
 
@@ -62,6 +64,17 @@ function isZoomFactor(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0.25 && value <= 5;
 }
 
+function isTargetDevice(value: unknown): value is BrowserTargetDevice {
+  if (!value || typeof value !== 'object') return false;
+  const target = value as Record<string, unknown>;
+  return (
+    typeof target.deviceId === 'string'
+    && typeof target.name === 'string'
+    && (target.tailscaleDnsName === null || typeof target.tailscaleDnsName === 'string')
+    && typeof target.local === 'boolean'
+  );
+}
+
 function isTab(value: unknown): value is BrowserTab {
   if (!value || typeof value !== 'object') return false;
   const t = value as Record<string, unknown>;
@@ -70,6 +83,7 @@ function isTab(value: unknown): value is BrowserTab {
   if (typeof t.historyIndex !== 'number') return false;
   if (t.historyIndex < 0 || t.historyIndex >= t.history.length) return false;
   if (t.device !== undefined && !isDevice(t.device)) return false;
+  if (t.targetDevice !== undefined && !isTargetDevice(t.targetDevice)) return false;
   if (t.pageZoom !== undefined && !isZoomFactor(t.pageZoom)) return false;
   if (t.canvasZoom !== undefined && !isZoomFactor(t.canvasZoom)) return false;
   if (t.pausedAt !== undefined && (typeof t.pausedAt !== 'number' || !Number.isFinite(t.pausedAt))) {
@@ -93,6 +107,7 @@ function sanitize(value: unknown): BrowserCwdState {
         history,
         historyIndex: Math.max(0, Math.min(history.length - 1, tab.historyIndex - historyStart)),
         ...(tab.device ? { device: { ...tab.device } } : {}),
+        ...(tab.targetDevice ? { targetDevice: { ...tab.targetDevice } } : {}),
         ...(tab.pageZoom !== undefined ? { pageZoom: tab.pageZoom } : {}),
         ...(tab.canvasZoom !== undefined ? { canvasZoom: tab.canvasZoom } : {}),
         ...(tab.pausedAt !== undefined ? { pausedAt: tab.pausedAt } : {})
@@ -413,13 +428,14 @@ export class BrowserStore {
     return tab ? tab.historyIndex < tab.history.length - 1 : false;
   }
 
-  addTab(url: string = DEFAULT_URL): BrowserTab {
+  addTab(url: string = DEFAULT_URL, targetDevice?: BrowserTargetDevice): BrowserTab {
     const id = newId();
     const tab: BrowserTab = {
       id,
       title: url,
       history: [url],
-      historyIndex: 0
+      historyIndex: 0,
+      ...(targetDevice ? { targetDevice: { ...targetDevice } } : {})
     };
     const state = this.current();
     if (state.activeTabId) this.touch(state.activeTabId);
@@ -438,7 +454,8 @@ export class BrowserStore {
       ...resumed,
       id: newId(),
       history: [...source.history],
-      ...(source.device ? { device: { ...source.device } } : {})
+      ...(source.device ? { device: { ...source.device } } : {}),
+      ...(source.targetDevice ? { targetDevice: { ...source.targetDevice } } : {})
     };
     const tabs = state.tabs.slice();
     tabs.splice(idx + 1, 0, tab);
@@ -488,7 +505,8 @@ export class BrowserStore {
       tab: {
         ...closed,
         history: [...closed.history],
-        ...(closed.device ? { device: { ...closed.device } } : {})
+        ...(closed.device ? { device: { ...closed.device } } : {}),
+        ...(closed.targetDevice ? { targetDevice: { ...closed.targetDevice } } : {})
       },
       index: idx
     });
@@ -522,7 +540,10 @@ export class BrowserStore {
       ...resumed,
       id: newId(),
       history: [...closed.tab.history],
-      ...(closed.tab.device ? { device: { ...closed.tab.device } } : {})
+      ...(closed.tab.device ? { device: { ...closed.tab.device } } : {}),
+      ...(closed.tab.targetDevice
+        ? { targetDevice: { ...closed.tab.targetDevice } }
+        : {})
     };
     const tabs = state.tabs.slice();
     tabs.splice(Math.min(closed.index, tabs.length), 0, tab);
@@ -605,6 +626,22 @@ export class BrowserStore {
       tabs[idx] = rest;
     } else {
       tabs[idx] = { ...prev, device };
+    }
+    this.write({ ...state, tabs });
+  }
+
+  setTargetDevice(id: string, targetDevice: BrowserTargetDevice | null): void {
+    const state = this.current();
+    const idx = state.tabs.findIndex((tab) => tab.id === id);
+    if (idx < 0) return;
+    const previous = state.tabs[idx]!;
+    const tabs = state.tabs.slice();
+    if (targetDevice == null) {
+      if (!previous.targetDevice) return;
+      const { targetDevice: _omitted, ...rest } = previous;
+      tabs[idx] = rest;
+    } else {
+      tabs[idx] = { ...previous, targetDevice: { ...targetDevice } };
     }
     this.write({ ...state, tabs });
   }

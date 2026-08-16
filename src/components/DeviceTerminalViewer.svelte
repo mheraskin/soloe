@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
+  import { WebLinksAddon } from '@xterm/addon-web-links';
   import '@xterm/xterm/css/xterm.css';
 
   import type { TerminalRef } from '@shared/types/devices.js';
@@ -10,6 +11,7 @@
   import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import {
     TerminalTranscriptFollowController,
     TerminalTranscriptProjector,
@@ -87,7 +89,13 @@
       allowProposedApi: true
     });
     const fit = new FitAddon();
+    const links = new WebLinksAddon((_event, uri) => {
+      void openDeviceBrowserUrl(uri, projection.ref.deviceId).catch((cause) => {
+        error = cause instanceof Error ? cause.message : String(cause);
+      });
+    });
     terminal.loadAddon(fit);
+    terminal.loadAddon(links);
     terminal.open(host);
 
     let active = true;

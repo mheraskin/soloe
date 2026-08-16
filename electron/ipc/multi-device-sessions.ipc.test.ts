@@ -44,6 +44,13 @@ describe('MultiDeviceSessionsIpc', () => {
       startSession: vi.fn(),
       updateSession: vi.fn(async (_ref, patch) => ({ session: patch })),
       deleteSession: vi.fn(async () => structuredClone(state)),
+      ensureTailscalePort: vi.fn(async (deviceId, port) => ({
+        deviceId,
+        state: 'ready',
+        dnsName: 'alpha.tailnet.ts.net',
+        port,
+        forwarded: true
+      })),
       previewSessionCommand: vi.fn(async () => ({ description: 'pnpm codex' })),
       terminalCurrentInputLease: vi.fn(async () => null),
       terminalReleaseInputLease: vi.fn(async () => true),
@@ -66,6 +73,9 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(electronMocks.handlers.has(IpcChannels.sessions.startOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.updateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.deleteOnDevice)).toBe(true);
+    expect(electronMocks.handlers.has(
+      IpcChannels.sessions.ensureDeviceTailscalePort
+    )).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.previewCommandOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(
       IpcChannels.sessions.deviceTerminalCurrentInputLease
@@ -105,6 +115,21 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(sessions.updateSession).toHaveBeenCalledWith(sessionRef, { name: 'Renamed' });
     expect(sessions.deleteSession).toHaveBeenCalledWith(sessionRef);
     expect(sessions.previewSessionCommand).toHaveBeenCalledWith(sessionRef);
+
+    await expect(invoke(IpcChannels.sessions.ensureDeviceTailscalePort, {
+      deviceId: 'device-1',
+      port: 3000
+    })).resolves.toEqual({
+      ok: true,
+      value: {
+        deviceId: 'device-1',
+        state: 'ready',
+        dnsName: 'alpha.tailnet.ts.net',
+        port: 3000,
+        forwarded: true
+      }
+    });
+    expect(sessions.ensureTailscalePort).toHaveBeenCalledWith('device-1', 3000);
 
     const ref = { deviceId: 'device-1', terminalId: 'terminal-1' };
     await expect(invoke(

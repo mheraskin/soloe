@@ -40,6 +40,8 @@
   import type { ClipboardImagePayload } from '@shared/types/files.js';
   import { terminalControl } from '../stores/terminal-control.svelte';
   import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import TerminalTranscript from './TerminalTranscript.svelte';
 
@@ -531,7 +533,12 @@
     });
     const f = new FitAddon();
     const links = new WebLinksAddon((_event, uri) => {
-      void ipc.system.openExternal(uri).catch(reportError);
+      const deviceId = deviceSessions.localDevice?.deviceId;
+      if (!deviceId) {
+        reportError(new Error('The local Device identity is unavailable.'));
+        return;
+      }
+      void openDeviceBrowserUrl(uri, deviceId).catch(reportError);
     });
     const unicode11 = new Unicode11Addon();
     const clipboard = new ClipboardAddon();

@@ -8,7 +8,8 @@ import type {
 import type {
   DeviceDescriptor,
   DeviceEventEnvelope,
-  DeviceId
+  DeviceId,
+  DevicePortForwardResult
 } from '@shared/types/devices.js';
 import type {
   Session,
@@ -324,6 +325,10 @@ export class RemoteSessionDevice implements SessionDevice {
 
   async terminalStop(terminalId: string): Promise<void> {
     await this.rpc('terminal', 'stop', [requiredId(terminalId, 'Terminal')]);
+  }
+
+  ensureTailscalePort(port: number): Promise<DevicePortForwardResult> {
+    return this.rpc('network', 'ensureTailscalePort', [positiveInteger(port, 'port')]);
   }
 
   workspacePlan(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan> {

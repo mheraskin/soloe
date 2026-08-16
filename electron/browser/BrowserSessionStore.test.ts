@@ -75,4 +75,30 @@ describe('BrowserSessionStore', () => {
     expect(persisted.tabs[0]!.history[0]!.length).toBeLessThanOrEqual(8_192);
     expect(persisted.tabs[0]!.title).toHaveLength(512);
   });
+
+  it('preserves a valid Device-qualified navigation target', async () => {
+    const filePath = await storePath();
+    const store = new BrowserSessionStore(filePath);
+    const targetDevice = {
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      name: 'XPS',
+      tailscaleDnsName: 'xps.tailnet.ts.net',
+      local: false
+    };
+    await store.update({
+      scopeKey: 'worktree-a',
+      state: {
+        tabs: [{
+          id: 'tab-1',
+          title: 'XPS · :3000',
+          history: ['http://xps.tailnet.ts.net:3000/'],
+          historyIndex: 0,
+          targetDevice
+        }],
+        activeTabId: 'tab-1'
+      }
+    });
+
+    expect((await store.get()).scopes['worktree-a']?.tabs[0]?.targetDevice).toEqual(targetDevice);
+  });
 });

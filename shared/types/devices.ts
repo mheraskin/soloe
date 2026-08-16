@@ -15,6 +15,22 @@ export interface TerminalRef extends DeviceRef {
   terminalId: string;
 }
 
+export interface DevicePortForwardResult {
+  deviceId: DeviceId;
+  state:
+    | 'ready'
+    | 'unavailable'
+    | 'not-running'
+    | 'setup-required'
+    | 'conflict'
+    | 'error';
+  dnsName: string | null;
+  port: number;
+  forwarded: boolean;
+  message: string | null;
+  setupUrl: string | null;
+}
+
 export interface RepositoryRef extends DeviceRef {
   repositoryId: string;
 }

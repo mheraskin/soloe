@@ -1,4 +1,9 @@
-import type { DeviceEventEnvelope, DeviceId, TerminalRef } from '@shared/types/devices.js';
+import type {
+  DeviceEventEnvelope,
+  DeviceId,
+  DevicePortForwardResult,
+  TerminalRef
+} from '@shared/types/devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
   DeviceTerminalReplay,
@@ -187,6 +192,17 @@ export class DeviceSessionsStore {
     return owner.local
       ? ipc.sessions.previewCommand(projection.ref.sessionId)
       : ipc.sessions.previewCommandOnDevice(projection.ref);
+  }
+
+  ensureTailscalePort(
+    deviceId: DeviceId,
+    port: number
+  ): Promise<DevicePortForwardResult> {
+    const device = this.device(deviceId);
+    if (!device?.available) {
+      return Promise.reject(new Error('The selected Device is unavailable.'));
+    }
+    return ipc.sessions.ensureDeviceTailscalePort(deviceId, port);
   }
 
   clearSelectedSession(): void {

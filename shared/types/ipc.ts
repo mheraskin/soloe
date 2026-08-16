@@ -147,7 +147,13 @@ import type {
   ConnectionSelectionResult,
   ConnectionSnapshot
 } from './connections.js';
-import type { DeviceEventEnvelope, SessionRef, TerminalRef } from './devices.js';
+import type {
+  DeviceEventEnvelope,
+  DeviceId,
+  DevicePortForwardResult,
+  SessionRef,
+  TerminalRef
+} from './devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
   DeviceTerminalReplay,
@@ -179,6 +185,7 @@ export const IpcChannels = {
     updateOnDevice: 'sessions:update-on-device',
     deleteOnDevice: 'sessions:delete-on-device',
     previewCommandOnDevice: 'sessions:preview-command-on-device',
+    ensureDeviceTailscalePort: 'sessions:ensure-device-tailscale-port',
     deviceTerminalDemand: 'sessions:device-terminal-demand',
     deviceTerminalInput: 'sessions:device-terminal-input',
     deviceTerminalInputLease: 'sessions:device-terminal-input-lease',
@@ -436,6 +443,9 @@ export interface SessionsApi {
   ): Promise<IpcResult<MultiDeviceSessionView>>;
   deleteOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionState>>;
   previewCommandOnDevice?(ref: SessionRef): Promise<IpcResult<SpawnSpec>>;
+  ensureDeviceTailscalePort?(
+    request: { deviceId: DeviceId; port: number }
+  ): Promise<IpcResult<DevicePortForwardResult>>;
   setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
   deviceTerminalInput?(
     request: { ref: TerminalRef; data: string; control: TerminalControlProof }

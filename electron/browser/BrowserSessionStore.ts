@@ -6,7 +6,8 @@ import type {
   BrowserSessionSnapshot,
   BrowserSessionTab,
   BrowserSessionUpdateRequest,
-  BrowserTabDevice
+  BrowserTabDevice,
+  BrowserTargetDevice
 } from '@shared/types/browser-sessions.js';
 
 const STORAGE_VERSION = 1;
@@ -168,6 +169,7 @@ function sanitizeTab(value: unknown): BrowserSessionTab | null {
     .slice(historyStart)
     .map((url) => url.slice(0, MAX_URL_CHARS));
   const device = sanitizeDevice(value['device']);
+  const targetDevice = sanitizeTargetDevice(value['targetDevice']);
   const pageZoom = sanitizeZoom(value['pageZoom']);
   const canvasZoom = sanitizeZoom(value['canvasZoom']);
   const pausedAt = typeof value['pausedAt'] === 'number' && Number.isFinite(value['pausedAt'])
@@ -181,9 +183,33 @@ function sanitizeTab(value: unknown): BrowserSessionTab | null {
     history,
     historyIndex: Math.max(0, Math.min(history.length - 1, rawIndex - historyStart)),
     ...(device ? { device } : {}),
+    ...(targetDevice ? { targetDevice } : {}),
     ...(pageZoom !== undefined ? { pageZoom } : {}),
     ...(canvasZoom !== undefined ? { canvasZoom } : {}),
     ...(pausedAt !== undefined ? { pausedAt } : {})
+  };
+}
+
+function sanitizeTargetDevice(value: unknown): BrowserTargetDevice | null {
+  if (!isObject(value)) return null;
+  if (
+    typeof value['deviceId'] !== 'string'
+    || !value['deviceId']
+    || value['deviceId'].length > 256
+    || typeof value['name'] !== 'string'
+    || !value['name']
+    || value['name'].length > 128
+    || (value['tailscaleDnsName'] !== null && typeof value['tailscaleDnsName'] !== 'string')
+    || typeof value['local'] !== 'boolean'
+  ) return null;
+  const tailscaleDnsName = value['tailscaleDnsName'];
+  return {
+    deviceId: value['deviceId'],
+    name: value['name'].slice(0, 128),
+    tailscaleDnsName: typeof tailscaleDnsName === 'string'
+      ? tailscaleDnsName.slice(0, 253)
+      : null,
+    local: value['local']
   };
 }
 

@@ -22,6 +22,7 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'updateSession'
     | 'deleteSession'
     | 'previewSessionCommand'
+    | 'ensureTailscalePort'
     | 'onState'
     | 'onDeviceEvent'
     | 'setTerminalOutputDemand'
@@ -106,6 +107,11 @@ export class MultiDeviceSessionsIpc {
     );
     ipcMain.handle(IpcChannels.sessions.previewCommandOnDevice, (_event, ref: SessionRef) =>
       ipcInvoke(() => this.options.sessions.previewSessionCommand(structuredClone(ref)))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.ensureDeviceTailscalePort,
+      (_event, request: { deviceId: string; port: number }) =>
+        ipcInvoke(() => this.options.sessions.ensureTailscalePort(request.deviceId, request.port))
     );
     ipcMain.handle(IpcChannels.sessions.deviceTerminalDemand, (_event, refs: TerminalRef[]) =>
       ipcInvoke(async () => {
@@ -205,6 +211,7 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.updateOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.deleteOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.previewCommandOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.ensureDeviceTailscalePort);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalDemand);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInput);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInputLease);

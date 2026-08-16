@@ -2,6 +2,7 @@ import type {
   DeviceDescriptor,
   DeviceEventEnvelope,
   DeviceId,
+  DevicePortForwardResult,
   SessionRef,
   TerminalRef
 } from '@shared/types/devices.js';
@@ -92,6 +93,7 @@ export interface SessionDevice {
   updateSession?(sessionId: string, patch: SessionUpdate): Promise<Session>;
   deleteSession?(sessionId: string): Promise<void>;
   previewSessionCommand?(sessionId: string): Promise<SpawnSpec>;
+  ensureTailscalePort?(port: number): Promise<DevicePortForwardResult>;
   workspacePlan?(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan>;
   workspaceExecute?(
     command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
@@ -528,6 +530,17 @@ export class MultiDeviceSessions {
       throw new Error('The Session did not start on its Device.');
     }
     return structuredClone(started);
+  }
+
+  async ensureTailscalePort(
+    deviceId: DeviceId,
+    port: number
+  ): Promise<DevicePortForwardResult> {
+    const device = this.requireReadyDevice(deviceId);
+    if (!device.ensureTailscalePort) {
+      throw new Error('The selected Device cannot publish Tailscale ports.');
+    }
+    return structuredClone(await device.ensureTailscalePort(port));
   }
 
   async updateSession(ref: SessionRef, patch: SessionUpdate): Promise<MultiDeviceSessionView> {

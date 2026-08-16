@@ -18,9 +18,14 @@
     CircleAlert,
     PowerOff,
     Power,
-    ScanLine
+    ScanLine,
+    ChevronDown
   } from '@lucide/svelte';
-  import { browserStore, type BrowserTabDevice } from '../../stores/browser.svelte';
+  import {
+    browserStore,
+    type BrowserTabDevice,
+    type BrowserTargetDevice
+  } from '../../stores/browser.svelte';
   import { git } from '../../stores/git.svelte';
   import { projects } from '../../stores/projects.svelte';
   import { sessions } from '../../stores/sessions.svelte';
@@ -41,7 +46,11 @@
   import BrowserDeviceMenu from './BrowserDeviceMenu.svelte';
   import { ipc } from '../../lib/ipc';
   import { BrowserDevToolsViewController } from '../../lib/browser-devtools-bounds';
-  import { normalizeBrowserUrl } from '../../lib/browser-navigation';
+  import {
+    browserTargetOptions,
+    defaultBrowserTarget,
+    resolveDeviceBrowserUrl
+  } from '../../lib/browser-device-navigation';
   import {
     browserFailureFromFailedLoad,
     browserFailureFromHttpResponse,
@@ -60,6 +69,18 @@
   let canBack = $derived(activeTab ? browserStore.canGoBack(activeTab.id) : false);
   let canForward = $derived(activeTab ? browserStore.canGoForward(activeTab.id) : false);
   let device = $derived(activeTab?.device);
+  let targetOptions = $derived.by(() => browserTargetOptions());
+  let targetDevice = $derived.by(() => {
+    const stored = activeTab?.targetDevice;
+    if (stored) {
+      return targetOptions.find((option) => option.target.deviceId === stored.deviceId)?.target
+        ?? stored;
+    }
+    return targetOptions.find((option) => option.target.local)?.target
+      ?? defaultBrowserTarget();
+  });
+  let targetMenuOpen = $state(false);
+  let navigationPending = $state(false);
   // Width/height swap when rotated. `rotated` lives on the device so a single
   // toggle can flip portrait↔landscape without rewriting the preset numbers.
   let deviceWidth = $derived(
@@ -670,32 +691,40 @@
     return fn;
   }
 
-  function commitNavigation(rawUrl: string): void {
+  async function commitNavigation(rawUrl: string): Promise<void> {
     const tab = browserStore.activeTab;
-    if (!tab) return;
-    const target = normalizeBrowserUrl(rawUrl);
-    browserStore.navigate(tab.id, target);
-    urlInput = target;
-    lastSyncedUrl = target;
-    suggestionIndex = -1;
-    suppressDropdown = true;
-    urlInputEl?.blur();
+    if (!tab || navigationPending) return;
+    navigationPending = true;
+    try {
+      const resolved = await resolveDeviceBrowserUrl(rawUrl, targetDevice);
+      if (resolved.target) browserStore.setTargetDevice(tab.id, resolved.target);
+      browserStore.navigate(tab.id, resolved.url);
+      urlInput = resolved.url;
+      lastSyncedUrl = resolved.url;
+      suggestionIndex = -1;
+      suppressDropdown = true;
+      urlInputEl?.blur();
+    } catch (error) {
+      reportError(error, 'Could not open Device port');
+    } finally {
+      navigationPending = false;
+    }
   }
 
   function submitUrl(event: SubmitEvent) {
     event.preventDefault();
     if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
-      commitNavigation(suggestions[suggestionIndex]!);
+      void commitNavigation(suggestions[suggestionIndex]!);
       return;
     }
-    commitNavigation(urlInput);
+    void commitNavigation(urlInput);
   }
 
   function tryHttpFallback() {
     const failure = activeFailure;
     if (!failure?.httpFallbackUrl || !activeId) return;
     failureById = { ...failureById, [activeId]: null };
-    commitNavigation(failure.httpFallbackUrl);
+    void commitNavigation(failure.httpFallbackUrl);
   }
 
   function retryFailedPage() {
@@ -1455,16 +1484,37 @@
     browserStore.resumeTab(id);
   }
 
-  function tabLabel(t: { title: string; history: string[]; historyIndex: number }): string {
+  function tabLabel(t: {
+    title: string;
+    history: string[];
+    historyIndex: number;
+    targetDevice?: BrowserTargetDevice;
+  }): string {
     const title = t.title?.trim();
-    if (title && title.length > 0 && title !== 'about:blank') return title;
     const url = t.history[t.historyIndex] ?? '';
+    let label = title && title.length > 0 && title !== 'about:blank' ? title : '';
     try {
       const parsed = new URL(url);
-      return parsed.host || parsed.pathname || url;
+      label ||= parsed.host || parsed.pathname || url;
     } catch {
-      return url || 'New tab';
+      label ||= url || 'New tab';
     }
+    if (!t.targetDevice) return label;
+    let port = '';
+    try {
+      const parsed = new URL(url);
+      port = parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+    } catch {
+      // Keep the Device identity even while the tab is blank or editing.
+    }
+    return `${t.targetDevice.name} · ${port ? `:${port}` : label}`;
+  }
+
+  function selectTargetDevice(target: BrowserTargetDevice): void {
+    const tab = browserStore.activeTab;
+    if (!tab) return;
+    browserStore.setTargetDevice(tab.id, target);
+    targetMenuOpen = false;
   }
 
   function tabInitialUrl(t: { history: string[]; historyIndex: number }): string {
@@ -1560,9 +1610,9 @@
       // handlers may swallow the default submit).
       event.preventDefault();
       if (suggestionIndex >= 0 && suggestionIndex < suggestions.length) {
-        commitNavigation(suggestions[suggestionIndex]!);
+        void commitNavigation(suggestions[suggestionIndex]!);
       } else {
-        commitNavigation(urlInput);
+        void commitNavigation(urlInput);
       }
       return;
     }
@@ -1596,7 +1646,7 @@
     // Prevent the input from losing focus before we commit; otherwise the
     // blur runs first and the click target gets pulled out from under us.
     event.preventDefault();
-    commitNavigation(url);
+    void commitNavigation(url);
   }
 
   function shortLabel(url: string): string {
@@ -1762,6 +1812,62 @@
     >
       <RotateCw class={`size-3.5 ${isLoading ? 'animate-spin' : ''}`} />
     </Button>
+    <Popover.Root bind:open={targetMenuOpen}>
+      <Popover.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            type="button"
+            variant="ghost"
+            class="h-7 max-w-48 shrink-0 gap-1 px-1.5 text-[10px]"
+            aria-label="Choose navigation Device"
+            title={targetDevice
+              ? `${targetDevice.name} · ${targetDevice.tailscaleDnsName ?? 'Tailscale unavailable'}`
+              : 'Choose navigation Device'}
+          >
+            <Monitor class="size-3 shrink-0" />
+            <span class="min-w-0 truncate">
+              {targetDevice
+                ? `${targetDevice.name} · ${targetDevice.tailscaleDnsName ?? 'no Tailscale name'}`
+                : 'Choose Device'}
+            </span>
+            <ChevronDown class="size-3 shrink-0 opacity-60" />
+          </Button>
+        {/snippet}
+      </Popover.Trigger>
+      <Popover.Content
+        align="start"
+        class="w-80 p-1"
+        trapFocus={false}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        data-browser-pane-popover="target-device"
+      >
+        <div class="px-2 py-1 text-[10px] font-medium text-muted-foreground">
+          Resolve localhost on
+        </div>
+        {#each targetOptions as option (option.target.deviceId)}
+          <button
+            type="button"
+            class={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent ${
+              targetDevice?.deviceId === option.target.deviceId ? 'bg-accent/70' : ''
+            } disabled:cursor-not-allowed disabled:opacity-50`}
+            disabled={!option.available}
+            onclick={() => selectTargetDevice(option.target)}
+          >
+            <Monitor class="size-3.5 shrink-0" />
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-xs font-medium">
+                {option.target.name}{option.target.local ? ' (this Device)' : ''}
+              </span>
+              <span class="block truncate font-mono text-[10px] text-muted-foreground">
+                {option.target.tailscaleDnsName ?? `Tailscale ${option.state}`}
+              </span>
+            </span>
+          </button>
+        {/each}
+      </Popover.Content>
+    </Popover.Root>
     <div class="relative min-w-0 flex-1">
       <Input
         bind:ref={urlInputEl}
@@ -1788,6 +1894,7 @@
         onkeydown={onUrlKey}
         placeholder="localhost:3000 or example.com"
         class="h-7 text-[11px]"
+        disabled={navigationPending}
         spellcheck={false}
         autocomplete="off"
       />

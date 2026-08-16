@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeBrowserUrl } from './browser-navigation';
+import {
+  browserUrlPort,
+  isLoopbackBrowserHostname,
+  normalizeBrowserUrl
+} from './browser-navigation';
 
 describe('normalizeBrowserUrl', () => {
   it.each([
@@ -15,6 +19,9 @@ describe('normalizeBrowserUrl', () => {
 
   it('defaults public hosts to HTTPS and plain words to search', () => {
     expect(normalizeBrowserUrl('example.com/docs')).toBe('https://example.com/docs');
+    expect(normalizeBrowserUrl('xps.example.ts.net:3000')).toBe(
+      'http://xps.example.ts.net:3000'
+    );
     expect(normalizeBrowserUrl('svelte runes')).toBe(
       'https://www.google.com/search?q=svelte%20runes'
     );
@@ -23,5 +30,18 @@ describe('normalizeBrowserUrl', () => {
   it('preserves explicit supported browser schemes', () => {
     expect(normalizeBrowserUrl('https://localhost:3000')).toBe('https://localhost:3000');
     expect(normalizeBrowserUrl('about:blank')).toBe('about:blank');
+  });
+});
+
+describe('Device-aware browser navigation helpers', () => {
+  it.each(['localhost', 'app.localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'])(
+    'recognizes %s as loopback',
+    (hostname) => expect(isLoopbackBrowserHostname(hostname)).toBe(true)
+  );
+
+  it('uses explicit and default HTTP ports', () => {
+    expect(browserUrlPort(new URL('http://localhost:3000'))).toBe(3000);
+    expect(browserUrlPort(new URL('http://localhost'))).toBe(80);
+    expect(browserUrlPort(new URL('https://localhost'))).toBe(443);
   });
 });

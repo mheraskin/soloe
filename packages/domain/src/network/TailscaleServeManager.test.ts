@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  TailscalePortForwardManager,
   TailscaleServeManager,
   tailscaleExecutableCandidates,
 } from "./TailscaleServeManager.js";
@@ -158,5 +159,88 @@ describe("TailscaleServeManager", () => {
     expect(tailscaleExecutableCandidates("darwin", {
       SOLOE_TAILSCALE_CLI: "/opt/custom/tailscale",
     })).toEqual(["/opt/custom/tailscale"]);
+  });
+});
+
+describe("TailscalePortForwardManager", () => {
+  it("uses a service that is already reachable on the Device address", async () => {
+    const run = vi.fn(async (args: readonly string[]) =>
+      args[0] === "status" ? selfStatus() : "{}"
+    );
+    const probe = vi.fn(async (host: string) => host === "workstation.tail1234.ts.net");
+
+    await expect(new TailscalePortForwardManager({ run, probe }).ensure(3000))
+      .resolves.toEqual({
+        state: "ready",
+        message: null,
+        setupUrl: null,
+        dnsName: "workstation.tail1234.ts.net",
+        port: 3000,
+        forwarded: false,
+      });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("publishes a loopback-only listener as a raw TCP forward", async () => {
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      if (args[1] === "status") return "{}";
+      expect(args).toEqual([
+        "serve",
+        "--bg",
+        "--yes",
+        "--tcp=3000",
+        "tcp://127.0.0.1:3000",
+      ]);
+      return "Available within your tailnet";
+    });
+    const probe = vi.fn(async (host: string) => host === "127.0.0.1");
+
+    await expect(new TailscalePortForwardManager({ run, probe }).ensure(3000))
+      .resolves.toMatchObject({
+        state: "ready",
+        dnsName: "workstation.tail1234.ts.net",
+        port: 3000,
+        forwarded: true,
+      });
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it("reuses its exact existing forward without overwriting Serve", async () => {
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      return JSON.stringify({ TCP: { "3000": { TCPForward: "127.0.0.1:3000" } } });
+    });
+
+    await expect(new TailscalePortForwardManager({ run }).ensure(3000))
+      .resolves.toMatchObject({ state: "ready", forwarded: true });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not replace another Serve route on the requested port", async () => {
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      return JSON.stringify({ TCP: { "3000": { TCPForward: "127.0.0.1:4000" } } });
+    });
+
+    await expect(new TailscalePortForwardManager({ run }).ensure(3000))
+      .resolves.toMatchObject({ state: "conflict", forwarded: false });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports when no local service owns the requested port", async () => {
+    const run = vi.fn(async (args: readonly string[]) =>
+      args[0] === "status" ? selfStatus() : "{}"
+    );
+
+    await expect(new TailscalePortForwardManager({
+      run,
+      probe: async () => false,
+    }).ensure(3000)).resolves.toMatchObject({
+      state: "error",
+      message: "Nothing is listening on localhost:3000 on this Device.",
+      forwarded: false,
+    });
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });

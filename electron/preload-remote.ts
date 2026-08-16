@@ -115,6 +115,8 @@ api.sessions.deleteOnDevice = (ref: SessionRef) =>
   ipcRenderer.invoke(IpcChannels.sessions.deleteOnDevice, ref);
 api.sessions.previewCommandOnDevice = (ref: SessionRef) =>
   ipcRenderer.invoke(IpcChannels.sessions.previewCommandOnDevice, ref);
+api.sessions.ensureDeviceTailscalePort = (request) =>
+  ipcRenderer.invoke(IpcChannels.sessions.ensureDeviceTailscalePort, request);
 api.sessions.setDeviceTerminalDemand = (refs: TerminalRef[]) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalDemand, refs);
 api.sessions.deviceTerminalInput = (request: {
