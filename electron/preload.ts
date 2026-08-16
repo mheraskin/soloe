@@ -170,6 +170,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.deleteOnDevice, ref),
     previewCommandOnDevice: (ref: SessionRef) =>
       ipcRenderer.invoke(IpcChannels.sessions.previewCommandOnDevice, ref),
+    ensureDeviceTailscalePort: (request) =>
+      ipcRenderer.invoke(IpcChannels.sessions.ensureDeviceTailscalePort, request),
     setDeviceTerminalDemand: (refs: TerminalRef[]) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalDemand, refs),
     deviceTerminalInput: (request: { ref: TerminalRef; data: string; control: TerminalControlProof }) =>

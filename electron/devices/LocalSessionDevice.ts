@@ -5,7 +5,8 @@ import type {
 import type {
   DeviceDescriptor,
   DeviceEventEnvelope,
-  DeviceId
+  DeviceId,
+  DevicePortForwardResult
 } from '@shared/types/devices.js';
 import type {
   TerminalExitEvent,
@@ -15,7 +16,7 @@ import type {
   TerminalInputLeaseEvent
 } from '@shared/types/terminal.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
-import type { WorkspaceDeviceStore } from '@soloe/domain';
+import { TailscalePortForwardManager, type WorkspaceDeviceStore } from '@soloe/domain';
 import type { ProjectStore } from '../projects/ProjectStore.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { GitService } from '../git/GitService.js';
@@ -67,6 +68,7 @@ export interface LocalSessionDeviceOptions {
   pty: PtyManager;
   terminalInputControl?: RuntimeTerminalInputControl;
   clientId?: string;
+  tailscalePorts?: Pick<TailscalePortForwardManager, 'ensure'>;
 }
 
 export class LocalSessionDevice implements SessionDevice {
@@ -84,10 +86,12 @@ export class LocalSessionDevice implements SessionDevice {
   private readonly inputLeases: TerminalInputLeaseManager;
   private readonly ownedInputLeases = new Map<string, TerminalInputLease>();
   private inputControlDetach: (() => void) | null = null;
+  private readonly tailscalePorts: Pick<TailscalePortForwardManager, 'ensure'>;
 
   constructor(private readonly options: LocalSessionDeviceOptions) {
     this.deviceId = options.descriptor.deviceId;
     this.clientId = options.clientId ?? `sessions-${randomUUID()}`;
+    this.tailscalePorts = options.tailscalePorts ?? new TailscalePortForwardManager();
     this.inputLeases = new TerminalInputLeaseManager({
       onChange: (event) => this.publishEvent('inputLease', event)
     });
@@ -317,6 +321,12 @@ export class LocalSessionDevice implements SessionDevice {
     const id = requiredId(terminalId);
     await this.options.pty.stop(id);
     this.inputLeases.clearTerminal(id);
+  }
+
+  async ensureTailscalePort(port: number): Promise<DevicePortForwardResult> {
+    this.assertActive();
+    const status = await this.tailscalePorts.ensure(port);
+    return { deviceId: this.deviceId, ...status };
   }
 
   workspacePlan(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan> {

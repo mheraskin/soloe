@@ -21,6 +21,57 @@ import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 describe("SoloeDomain", () => {
+  it("exposes a Device localhost port through the network RPC", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-network-"));
+    const ensure = vi.fn(async (port: number) => ({
+      state: "ready" as const,
+      message: null,
+      setupUrl: null,
+      dnsName: "xps.tailnet.ts.net",
+      port,
+      forwarded: true,
+    }));
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      deviceId: "11111111-1111-4111-8111-111111111111",
+      runtime: {
+        start: vi.fn(),
+        listRunning: vi.fn(async () => []),
+        replay: vi.fn(),
+        write: vi.fn(),
+        resize: vi.fn(),
+        stop: vi.fn(),
+      },
+      tailscalePorts: { ensure },
+    });
+
+    try {
+      await domain.init();
+      await expect(domain.invoke({
+        namespace: "network",
+        method: "ensureTailscalePort",
+        args: [3000],
+      })).resolves.toEqual({
+        deviceId: "11111111-1111-4111-8111-111111111111",
+        state: "ready",
+        message: null,
+        setupUrl: null,
+        dnsName: "xps.tailnet.ts.net",
+        port: 3000,
+        forwarded: true,
+      });
+      expect(ensure).toHaveBeenCalledWith(3000);
+      await expect(domain.invoke({
+        namespace: "network",
+        method: "ensureTailscalePort",
+        args: [0],
+      })).rejects.toMatchObject({ code: "invalid_network_port" });
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("arbitrates terminal input by authenticated client and supports explicit takeover", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-terminal-lease-"));
     let leaseSequence = 0;

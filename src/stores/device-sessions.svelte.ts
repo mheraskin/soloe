@@ -1,4 +1,9 @@
-import type { DeviceEventEnvelope, DeviceId, TerminalRef } from '@shared/types/devices.js';
+import type {
+  DeviceEventEnvelope,
+  DeviceId,
+  DevicePortForwardResult,
+  TerminalRef
+} from '@shared/types/devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
   DeviceTerminalReplay,
@@ -46,6 +51,7 @@ export class DeviceSessionsStore {
     string,
     { ref: TerminalRef; listeners: Set<(event: TerminalOutputEvent) => void> }
   >();
+  private readonly deviceReconnectListeners = new Map<DeviceId, Set<() => void>>();
   private demandSync: Promise<void> = Promise.resolve();
 
   get sessions(): MultiDeviceSessionView[] {
@@ -189,6 +195,17 @@ export class DeviceSessionsStore {
       : ipc.sessions.previewCommandOnDevice(projection.ref);
   }
 
+  ensureTailscalePort(
+    deviceId: DeviceId,
+    port: number
+  ): Promise<DevicePortForwardResult> {
+    const device = this.device(deviceId);
+    if (!device?.available) {
+      return Promise.reject(new Error('The selected Device is unavailable.'));
+    }
+    return ipc.sessions.ensureDeviceTailscalePort(deviceId, port);
+  }
+
   clearSelectedSession(): void {
     this.selectedSessionKey = null;
   }
@@ -216,18 +233,16 @@ export class DeviceSessionsStore {
     if (!this.supported || this.refreshing) return;
     this.refreshing = true;
     try {
-      this.state = await ipc.sessions.refreshDevices();
-      this.clearUnavailableSelection();
+      this.applyState(await ipc.sessions.refreshDevices());
     } finally {
       this.refreshing = false;
     }
   }
 
   async reorder(ordered: MultiDeviceSessionView[]): Promise<void> {
-    this.state = await ipc.sessions.reorderOnDevices(
+    this.applyState(await ipc.sessions.reorderOnDevices(
       ordered.map((projection) => structuredClone(projection.ref))
-    );
-    this.clearUnavailableSelection();
+    ));
   }
 
   async create(request: CreateMultiDeviceSessionRequest): Promise<MultiDeviceSessionView> {
@@ -295,6 +310,16 @@ export class DeviceSessionsStore {
         if (current?.listeners.size === 0) this.terminalOutputListeners.delete(key);
         void this.syncTerminalDemand().catch(() => undefined);
       }
+    };
+  }
+
+  onDeviceReconnect(deviceId: DeviceId, listener: () => void): () => void {
+    const listeners = this.deviceReconnectListeners.get(deviceId) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.deviceReconnectListeners.set(deviceId, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.deviceReconnectListeners.delete(deviceId);
     };
   }
 
@@ -439,10 +464,25 @@ export class DeviceSessionsStore {
     this.detach();
     this.detachState = ipc.sessions.onDeviceStateChange((state) => {
       if (state.revision < this.state.revision) return;
-      this.state = state;
-      this.clearUnavailableSelection();
+      this.applyState(state);
     });
     this.detachDeviceEvent = ipc.sessions.onDeviceEvent((event) => this.applyDeviceEvent(event));
+  }
+
+  private applyState(state: MultiDeviceSessionState): void {
+    const previousAvailability = new Map(
+      this.state.devices.map((device) => [device.deviceId, device.available] as const)
+    );
+    const reconnected = state.devices
+      .filter((device) => device.available && previousAvailability.get(device.deviceId) === false)
+      .map((device) => device.deviceId);
+    this.state = state;
+    this.clearUnavailableSelection();
+    for (const deviceId of reconnected) {
+      for (const listener of [...(this.deviceReconnectListeners.get(deviceId) ?? [])]) {
+        listener();
+      }
+    }
   }
 
   private applyDeviceEvent(envelope: DeviceEventEnvelope): void {
@@ -539,7 +579,7 @@ export class DeviceSessionsStore {
     }
     if (!this.selectedSessionKey) return;
     const selected = this.sessions.find((session) => session.key === this.selectedSessionKey);
-    if (!selected?.available) this.selectedSessionKey = null;
+    if (!selected) this.selectedSessionKey = null;
   }
 }
 

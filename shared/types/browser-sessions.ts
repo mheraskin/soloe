@@ -1,3 +1,5 @@
+import type { DeviceId } from './devices.js';
+
 export interface BrowserTabDevice {
   presetId: string;
   width: number;
@@ -8,12 +10,20 @@ export interface BrowserTabDevice {
   rotated: boolean;
 }
 
+export interface BrowserTargetDevice {
+  deviceId: DeviceId;
+  name: string;
+  tailscaleDnsName: string | null;
+  local: boolean;
+}
+
 export interface BrowserSessionTab {
   id: string;
   title: string;
   history: string[];
   historyIndex: number;
   device?: BrowserTabDevice;
+  targetDevice?: BrowserTargetDevice;
   pageZoom?: number;
   canvasZoom?: number;
   pausedAt?: number;

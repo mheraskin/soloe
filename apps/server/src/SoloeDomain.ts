@@ -118,6 +118,7 @@ import {
   VaultStore,
   VaultStoreError,
   WslHostDetector,
+  TailscalePortForwardManager,
   type FileIndexScope,
 } from "@soloe/domain";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
@@ -221,6 +222,7 @@ export interface SoloeDomainOptions {
   modelCatalog?: Pick<ModelCatalogService, "getCatalog">;
   codexConfigReader?: Pick<CodexConfigReader, "read" | "clear">;
   autoRename?: Pick<AutoRenameService, "maybeRename">;
+  tailscalePorts?: Pick<TailscalePortForwardManager, "ensure">;
   integrationInstaller?: Pick<
     HookInstaller,
     | "status"
@@ -267,6 +269,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly workspaceService: WorkspaceDeviceService | null;
   private githubProviderService: GitHubProviderService | null = null;
   private readonly browserSessions: BrowserSessionStore;
+  private readonly tailscalePorts: Pick<TailscalePortForwardManager, "ensure">;
   private readonly files: FileService;
   private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
@@ -347,6 +350,7 @@ export class SoloeDomain extends EventEmitter {
     this.browserSessions = new BrowserSessionStore(
       path.join(options.dataDirectory, "browser-sessions.json"),
     );
+    this.tailscalePorts = options.tailscalePorts ?? new TailscalePortForwardManager();
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
@@ -782,6 +786,20 @@ export class SoloeDomain extends EventEmitter {
         requireArgumentCount("browserSessions.update", call.args, 1);
         return this.browserSessions.update(call.args[0] as BrowserSessionUpdateRequest);
       }
+    }
+    if (call.namespace === "network") {
+      if (call.method === "ensureTailscalePort") {
+        requireArgumentCount("network.ensureTailscalePort", call.args, 1);
+        if (!this.options.deviceId) {
+          throw new RpcError(
+            "device_identity_unavailable",
+            "This Soloe server has no Device identity",
+          );
+        }
+        const status = await this.tailscalePorts.ensure(requirePort(call.args[0]));
+        return { deviceId: this.options.deviceId, ...status };
+      }
+      throw unsupportedRpc("network", call.method);
     }
     if (call.namespace === "files") {
       return this.filesCall(call.method, call.args, call.clientId);
@@ -2981,6 +2999,16 @@ function requireArgumentCount(
       `${method} expects ${expected} arguments`,
     );
   }
+}
+
+function requirePort(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 65_535) {
+    throw new RpcError(
+      "invalid_network_port",
+      "Network port must be an integer between 1 and 65535",
+    );
+  }
+  return Number(value);
 }
 
 function validateListObserverEventsRequest(

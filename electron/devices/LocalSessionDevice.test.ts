@@ -103,6 +103,34 @@ describe('LocalSessionDevice', () => {
     expect(sessions.createWithId).toHaveBeenCalledWith(session.id, draft);
     expect(pty.start).toHaveBeenCalledWith({ sessionId: session.id });
   });
+
+  it('exposes a localhost port through the local Device Tailscale manager', async () => {
+    const ensure = vi.fn(async (port: number) => ({
+      state: 'ready' as const,
+      message: null,
+      setupUrl: null,
+      dnsName: 'local.tailnet.ts.net',
+      port,
+      forwarded: true
+    }));
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never,
+      tailscalePorts: { ensure }
+    });
+
+    await expect(client.ensureTailscalePort(3000)).resolves.toEqual({
+      deviceId: DEVICE_ID,
+      state: 'ready',
+      message: null,
+      setupUrl: null,
+      dnsName: 'local.tailnet.ts.net',
+      port: 3000,
+      forwarded: true
+    });
+    expect(ensure).toHaveBeenCalledWith(3000);
+  });
 });
 
 function descriptor(): DeviceDescriptor {

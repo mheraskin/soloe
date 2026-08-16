@@ -103,7 +103,13 @@ import type {
 } from '@shared/types/browser-sessions.js';
 import type { CommentsRpcRequest, CommentsRpcResponse } from '@shared/types/comments-rpc.js';
 import type { DiffRpcRequest, DiffRpcResponse } from '@shared/types/diff-rpc.js';
-import type { DeviceEventEnvelope, DeviceId, SessionRef, TerminalRef } from '@shared/types/devices.js';
+import type {
+  DeviceEventEnvelope,
+  DeviceId,
+  DevicePortForwardResult,
+  SessionRef,
+  TerminalRef
+} from '@shared/types/devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
   MultiDeviceSessionState
@@ -232,6 +238,17 @@ export const backend = {
         throw new Error('Multi-Device Session command preview is unavailable.');
       }
       return unwrap(await c.sessions.previewCommandOnDevice(toIpcPayload(ref)));
+    },
+    ensureDeviceTailscalePort: async (
+      deviceId: DeviceId,
+      port: number
+    ): Promise<DevicePortForwardResult> => {
+      if (!c.sessions.ensureDeviceTailscalePort) {
+        throw new Error('Tailscale port forwarding is unavailable.');
+      }
+      return unwrap(await c.sessions.ensureDeviceTailscalePort(
+        toIpcPayload({ deviceId, port })
+      ));
     },
     setDeviceTerminalDemand: async (refs: TerminalRef[]) => {
       if (!c.sessions.setDeviceTerminalDemand) {

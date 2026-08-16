@@ -8,6 +8,7 @@ const terminalMocks = vi.hoisted(() => ({
   writes: [] as string[],
   releaseLiveWrite: null as null | (() => void),
   outputListener: null as null | ((event: { seq: number; data: string }) => void),
+  reconnectListener: null as null | (() => void),
   replay: vi.fn()
 }));
 
@@ -59,6 +60,14 @@ vi.mock('../stores/device-sessions.svelte', () => ({
     ownsTerminalInput: vi.fn(() => false),
     claimTerminalInputControl: vi.fn(async () => false),
     releaseTerminalInputControl: vi.fn(async () => true),
+    onDeviceReconnect: vi.fn((_deviceId, listener) => {
+      terminalMocks.reconnectListener = listener;
+      return () => {
+        if (terminalMocks.reconnectListener === listener) {
+          terminalMocks.reconnectListener = null;
+        }
+      };
+    }),
     acquireTerminalOutput: vi.fn((_ref, listener) => {
       terminalMocks.outputListener = listener;
       return { ready: Promise.resolve(), dispose: vi.fn() };
@@ -85,6 +94,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     terminalMocks.writes.length = 0;
     terminalMocks.releaseLiveWrite = null;
     terminalMocks.outputListener = null;
+    terminalMocks.reconnectListener = null;
     terminalMocks.replay.mockReset()
       .mockResolvedValueOnce({
         snapshot: { fromSeq: 1, toSeq: 1, data: 'screen', truncated: false }
@@ -150,4 +160,51 @@ describe('DeviceTerminalViewer output sequencing', () => {
     });
     expect(terminalMocks.replay).toHaveBeenCalledTimes(1);
   });
+
+  it('replays output missed while the remote device reconnects', async () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: {
+        projection: remoteProjection(),
+        onClose: vi.fn()
+      }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(terminalMocks.writes).toEqual(['screen']));
+
+    terminalMocks.reconnectListener?.();
+
+    await vi.waitFor(() => {
+      expect(terminalMocks.replay).toHaveBeenNthCalledWith(2, {
+        deviceId: 'device-xps',
+        terminalId: 'terminal-1'
+      }, 1);
+      expect(terminalMocks.writes).toEqual(['screen', 'live-2live-3']);
+    });
+  });
 });
+
+function remoteProjection() {
+  return {
+    ref: { deviceId: 'device-xps', sessionId: 'session-1' },
+    key: 'device-xps/session-1',
+    deviceName: 'xps',
+    available: true,
+    session: {
+      id: 'session-1',
+      name: 'Remote Codex',
+      cwd: '/home/me/project',
+      runMode: 'linux' as const,
+      launch: { type: 'agent' as const, provider: 'codex' as const, resumeMode: 'new' as const },
+      createdAt: '2026-08-16T00:00:00.000Z',
+      lastUsedAt: '2026-08-16T00:00:00.000Z'
+    },
+    runtime: {
+      sessionId: 'session-1',
+      terminalId: 'terminal-1',
+      status: 'running' as const
+    }
+  };
+}

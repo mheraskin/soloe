@@ -98,6 +98,7 @@
   import SettingsDialog from './components/SettingsDialog.svelte';
   import ConnectionMenu from './components/ConnectionMenu.svelte';
   import DeviceTerminalViewer from './components/DeviceTerminalViewer.svelte';
+  import { deviceTerminalPresentationKey } from './lib/device-terminal-presentation';
   import { deviceSessions } from './stores/device-sessions.svelte';
   import appIconUrl from '../build/favicon.svg';
 
@@ -1775,7 +1776,7 @@
             </div>
             {#if deviceSessions.selectedProjection && mobilePage === 'workspace' && mobileMode === 'terminal'}
               <div class="h-full">
-                {#key deviceSessions.selectedProjection.key}
+                {#key deviceTerminalPresentationKey(deviceSessions.selectedProjection)}
                   <DeviceTerminalViewer
                     projection={deviceSessions.selectedProjection}
                     onClose={() => deviceSessions.clearSelectedSession()}
@@ -1816,7 +1817,7 @@
         </div>
         {#if deviceSessions.selectedProjection && !railFullscreen}
           <div class="min-w-0 flex-1">
-            {#key deviceSessions.selectedProjection.key}
+            {#key deviceTerminalPresentationKey(deviceSessions.selectedProjection)}
               <DeviceTerminalViewer
                 projection={deviceSessions.selectedProjection}
                 onClose={() => deviceSessions.clearSelectedSession()}
