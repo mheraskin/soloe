@@ -278,6 +278,8 @@ _Avoid_: Sync state, source of truth
   actually own the running agents
 - A **Terminal Replay Tail** is capped at 4 MiB and 4,096 live events per Session, plus 32 MiB and 32,768 live events globally; its chronologies contain only retained chunks, and snapshot overlap is removed before ordered live output is admitted
 - A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
+- A **Terminal Presentation** is reconstructed when its runtime Terminal identity changes; Session metadata changes such as rename preserve the existing presentation
+- Transient Soloe Device unavailability preserves the selected remote Session; reconnect resumes its visible presentation from the last applied sequence through the owning Device's **Terminal Replay Tail**
 - The first visible **Terminal Presentation** acquires **Terminal Output Demand** for its PTY; the final hidden owner releases cross-process publication without stopping replay retention or agent observation
 - Terminal input and PTY resize require the exact Session ID, owner Device ID, Controller Device ID, and Lease ID of the current **Terminal Control Lease**; generations may order observations but never establish ownership, a **Spectator** may explicitly take over, and neither lease loss nor takeover stops the PTY
 - Each output batch receives one **Terminal Semantic Observation** before replay publication; usage-limit state outranks approval redraws and hidden presentations remain observable

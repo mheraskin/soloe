@@ -184,6 +184,9 @@
       });
     };
 
+    const detachReconnect = deviceSessions.onDeviceReconnect(ref.deviceId, () => {
+      void recover();
+    });
     const attachment = deviceSessions.acquireTerminalOutput(ref, queueOutput);
     void attachment.ready
       .then(async () => {
@@ -249,6 +252,7 @@
 
     return () => {
       active = false;
+      detachReconnect();
       attachment.dispose();
       input.dispose();
       resizeObserver.disconnect();
