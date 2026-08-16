@@ -1821,15 +1821,11 @@
             variant="ghost"
             class="h-7 max-w-48 shrink-0 gap-1 px-1.5 text-[10px]"
             aria-label="Choose navigation Device"
-            title={targetDevice
-              ? `${targetDevice.name} · ${targetDevice.tailscaleDnsName ?? 'Tailscale unavailable'}`
-              : 'Choose navigation Device'}
+            title={targetDevice ? targetDevice.name : 'Choose navigation Device'}
           >
             <Monitor class="size-3 shrink-0" />
             <span class="min-w-0 truncate">
-              {targetDevice
-                ? `${targetDevice.name} · ${targetDevice.tailscaleDnsName ?? 'no Tailscale name'}`
-                : 'Choose Device'}
+              {targetDevice ? targetDevice.name : 'Choose Device'}
             </span>
             <ChevronDown class="size-3 shrink-0 opacity-60" />
           </Button>

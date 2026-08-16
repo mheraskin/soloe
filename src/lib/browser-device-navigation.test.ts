@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deviceSessions } from '../stores/device-sessions.svelte';
+import { connections } from '../stores/connections.svelte';
 import type { BrowserTargetDevice } from '@shared/types/browser-sessions.js';
-import { resolveDeviceBrowserUrl } from './browser-device-navigation';
+import { resolveDeviceBrowserUrl, tailscaleDnsNameForDevice } from './browser-device-navigation';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 const target: BrowserTargetDevice = {
@@ -59,5 +60,31 @@ describe('resolveDeviceBrowserUrl', () => {
 
     await expect(resolveDeviceBrowserUrl('xps.example.ts.net:5173', target))
       .resolves.toMatchObject({ url: 'http://xps.example.ts.net:5173/' });
+  });
+
+  it('resolves the local DNS name and remote endpoint aliases for device labels', () => {
+    const snapshot = connections.snapshot;
+    connections.snapshot = {
+      ...snapshot,
+      tailscale: { ...snapshot.tailscale, selfDnsName: 'MBP.tail1234.ts.net.' },
+      machines: [{
+        id: 'device:xps',
+        name: 'XPS',
+        endpoint: 'https://xps.tail1234.ts.net:4318',
+        endpointAliases: ['xps.local'],
+        source: 'discovered',
+        status: 'available',
+        trust: 'pinned',
+        enabled: true,
+        active: false,
+        isSelf: false,
+        deviceId: DEVICE_ID
+      }]
+    };
+
+    expect(tailscaleDnsNameForDevice('local', true)).toBe('mbp.tail1234.ts.net');
+    expect(tailscaleDnsNameForDevice(DEVICE_ID, false)).toBe('xps.tail1234.ts.net');
+
+    connections.snapshot = snapshot;
   });
 });

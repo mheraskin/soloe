@@ -91,15 +91,23 @@ export async function openDeviceBrowserUrl(rawUrl: string, deviceId: DeviceId): 
   }
 }
 
-function tailscaleDnsNameForDevice(deviceId: DeviceId, local: boolean): string | null {
+export function tailscaleDnsNameForDevice(deviceId: DeviceId, local: boolean): string | null {
   if (local) return normalizeDnsName(connections.snapshot.tailscale.selfDnsName);
   const machine = connections.snapshot.machines.find((candidate) => candidate.deviceId === deviceId);
-  if (!machine?.endpoint) return null;
-  try {
-    return normalizeDnsName(new URL(machine.endpoint).hostname);
-  } catch {
-    return null;
+  if (!machine) return null;
+  for (const endpoint of [machine.endpoint, ...machine.endpointAliases]) {
+    if (!endpoint) continue;
+    try {
+      const hostname = endpoint.includes('://')
+        ? new URL(endpoint).hostname
+        : new URL(`https://${endpoint}`).hostname;
+      const dnsName = normalizeDnsName(hostname);
+      if (dnsName) return dnsName;
+    } catch {
+      // Try the next endpoint alias.
+    }
   }
+  return null;
 }
 
 function normalizeDnsName(value: string | null | undefined): string | null {

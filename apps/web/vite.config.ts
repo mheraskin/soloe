@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 import {
+  addTailscaleWildcardHost,
   createBrowserHostMiddleware,
   resolveBrowserHostAllowedHosts,
 } from "./browser-host";
@@ -11,8 +12,8 @@ import {
 const repositoryRoot = resolve(__dirname, "../..");
 const webPort = Number(process.env.SOLOE_WEB_PORT ?? "4318");
 const backendUrl = process.env.SOLOE_SERVER_URL;
-const allowedHosts = resolveBrowserHostAllowedHosts(
-  process.env.SOLOE_WEB_ALLOWED_HOSTS,
+const allowedHosts = addTailscaleWildcardHost(
+  resolveBrowserHostAllowedHosts(process.env.SOLOE_WEB_ALLOWED_HOSTS),
 );
 
 export default defineConfig({

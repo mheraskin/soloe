@@ -5,6 +5,7 @@
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
+  import { tailscaleDnsNameForDevice } from '../lib/browser-device-navigation';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 
@@ -63,12 +64,18 @@
         <DropdownMenu.Separator />
       {/if}
       {#each devices as device (device.deviceId)}
+        {@const dnsName = tailscaleDnsNameForDevice(device.deviceId, device.local)}
         <DropdownMenu.Item
           class={!device.available ? 'opacity-60' : undefined}
           onSelect={() => deviceSessions.setDeviceFilter(device.deviceId)}
         >
           <span class={'size-2 shrink-0 rounded-full ' + dotClass(device.available)} aria-hidden="true"></span>
-          <span class="min-w-0 flex-1 truncate">{device.name}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block truncate">{device.name}</span>
+            {#if dnsName}
+              <span class="block truncate text-[10px] text-muted-foreground/70">{dnsName}</span>
+            {/if}
+          </span>
           <span class="shrink-0 text-xs text-muted-foreground">
             {device.local ? 'This device' : device.state}
           </span>

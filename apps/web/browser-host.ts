@@ -1,5 +1,7 @@
 import type { Connect } from "vite";
 
+export const TAILSCALE_HOST_WILDCARD = ".ts.net";
+
 export interface BrowserHostMiddlewareOptions {
   backendUrl: string | undefined;
   token: string | undefined;
@@ -25,6 +27,19 @@ export function resolveBrowserHostAllowedHosts(
     if (!allowedHosts.includes(hostname)) allowedHosts.push(hostname);
   }
   return allowedHosts;
+}
+
+/**
+ * Vite checks the Host header before Soloe's Tailscale identity middleware
+ * runs. Keep MagicDNS aliases reachable even when the tray could not pass the
+ * exact local DNS name into the web-host process.
+ */
+export function addTailscaleWildcardHost(
+  allowedHosts: readonly string[],
+): string[] {
+  return allowedHosts.includes(TAILSCALE_HOST_WILDCARD)
+    ? [...allowedHosts]
+    : [...allowedHosts, TAILSCALE_HOST_WILDCARD];
 }
 
 export function createBrowserHostMiddleware(

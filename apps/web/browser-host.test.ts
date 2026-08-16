@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { describe, expect, it } from "vitest";
 import {
   createBrowserHostMiddleware,
+  addTailscaleWildcardHost,
   resolveBrowserHostAllowedHosts,
   trustedTailscaleIdentity,
 } from "./browser-host";
@@ -20,6 +21,13 @@ describe("Soloe browser host authentication", () => {
     expect(() => resolveBrowserHostAllowedHosts(".ts.net")).toThrow(
       "Invalid Soloe browser host",
     );
+  });
+
+  it("keeps Tailscale MagicDNS reachable when tray discovery is unavailable", () => {
+    expect(addTailscaleWildcardHost([])).toEqual([".ts.net"]);
+    expect(
+      addTailscaleWildcardHost(["xps.tail1ab873.ts.net"]),
+    ).toEqual(["xps.tail1ab873.ts.net", ".ts.net"]);
   });
 
   it("creates a native client session from a trusted Tailscale identity", () => {
