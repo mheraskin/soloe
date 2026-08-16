@@ -24,6 +24,7 @@
   const TOUCH_HOLD_OPEN_DELAY_MS = 350;
 
   type LaunchOption = AgentRuntimeProvider | 'terminal' | `preset:${string}`;
+  const NO_PROJECT_VALUE = '__no_project__';
 
   let {
     projectId = null,
@@ -60,6 +61,8 @@
   let selectedLaunchOption = $state<LaunchOption | null>(null);
   let pickerEl: HTMLElement | null = null;
   let selectedDeviceId = $state<DeviceId | null>(null);
+  let selectedWorkspaceKey = $state<string | null>(null);
+  let placementInitialized = false;
   let devicePlan = $state<MultiDeviceSessionCreationPlan | null>(null);
   let devicePlanError = $state<string | null>(null);
   let planningDevice = $state(false);
@@ -71,7 +74,21 @@
   let showLocationBrowser = $state(false);
   let planRequest = 0;
 
-  let usesDevicePlacement = $derived(Boolean(workspaceKey && deviceSessions.supported));
+  let usesDevicePlacement = $derived(deviceSessions.supported);
+  let effectiveWorkspaceKey = $derived(workspaceKey ?? selectedWorkspaceKey);
+  let workspaceChoices = $derived.by(() => deviceSessions.state.projects.flatMap((project) =>
+    project.workspaces.map((workspace) => ({
+      key: workspace.key,
+      label: workspace.branch ?? workspace.name,
+      projectName: project.name,
+      locations: workspace.locations
+    }))
+  ));
+  let selectedWorkspace = $derived(
+    effectiveWorkspaceKey
+      ? workspaceChoices.find((workspace) => workspace.key === effectiveWorkspaceKey) ?? null
+      : null
+  );
   let selectedDevice = $derived(
     selectedDeviceId ? deviceSessions.device(selectedDeviceId) : null
   );
@@ -81,7 +98,17 @@
   });
 
   $effect(() => {
-    if (!open || !usesDevicePlacement || !workspaceKey) return;
+    if (!open || !usesDevicePlacement) return;
+    if (!placementInitialized) {
+      const contextualWorkspace = workspaceKey
+        ? workspaceChoices.find((workspace) => workspace.key === workspaceKey)
+        : workspaceChoices.find((workspace) => workspace.locations.some((location) =>
+            (projectId ? location.projectId === projectId : true)
+            && (cwd ? location.path === cwd : true)
+          ));
+      selectedWorkspaceKey = contextualWorkspace?.key ?? null;
+      placementInitialized = true;
+    }
     const availableIds = new Set(deviceSessions.state.devices.map((device) => device.deviceId));
     const preferred = defaultDeviceId && availableIds.has(defaultDeviceId)
       ? defaultDeviceId
@@ -158,7 +185,7 @@
       return;
     }
     clearTimers();
-    launchPreferred();
+    open = true;
   }
 
   function onTriggerDragStart(event: DragEvent): void {
@@ -255,6 +282,7 @@
   function onOpenChange(next: boolean): void {
     if (!next) clearTimers();
     if (!next) {
+      placementInitialized = false;
       pendingDeviceOption = null;
       showLocationBrowser = false;
       directoryListing = null;
@@ -304,7 +332,7 @@
     targetPath?: string
   ) {
     return {
-      workspaceKey: workspaceKey!,
+      workspaceKey: effectiveWorkspaceKey,
       targetDeviceId: deviceId,
       ...(targetPath ? { targetPath } : {}),
       session: {
@@ -336,18 +364,27 @@
   }
 
   async function launchOnDevice(option: LaunchOption): Promise<void> {
-    if (!workspaceKey || !selectedDeviceId || launchingDevice) return;
+    const availableIds = new Set(deviceSessions.state.devices
+      .filter((device) => device.available)
+      .map((device) => device.deviceId));
+    const targetDeviceId = selectedDeviceId && availableIds.has(selectedDeviceId)
+      ? selectedDeviceId
+      : defaultDeviceId && availableIds.has(defaultDeviceId)
+        ? defaultDeviceId
+        : deviceSessions.localDevice?.deviceId ?? deviceSessions.state.devices[0]?.deviceId ?? null;
+    if (!targetDeviceId || launchingDevice) return;
+    selectedDeviceId = targetDeviceId;
     launchingDevice = true;
     devicePlanError = null;
     try {
       const plan = await deviceSessions.planCreate(deviceRequest(
         option,
-        selectedDeviceId,
+        targetDeviceId,
         customTargetPath
       ));
       devicePlan = plan;
       pendingDeviceOption = option;
-      if (plan.action !== 'use-existing-location') return;
+      if (plan.action !== 'use-existing-location' && plan.action !== 'use-device-directory') return;
       await deviceSessions.executeCreate(plan.planId);
       open = false;
     } catch (error) {
@@ -523,6 +560,47 @@
     <div bind:this={pickerEl}>
       {#if usesDevicePlacement}
         <div class="mb-1.5 flex flex-col gap-1.5 border-b border-border px-1 pb-2">
+          {#if workspaceKey === undefined}
+            <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Worktree</span>
+            <Select.Root
+              type="single"
+              value={effectiveWorkspaceKey ?? NO_PROJECT_VALUE}
+              onValueChange={(value) => {
+                selectedWorkspaceKey = value === NO_PROJECT_VALUE ? null : value;
+                pendingDeviceOption = null;
+                directoryListing = null;
+                showLocationBrowser = false;
+                folderName = '';
+              }}
+            >
+              <Select.Trigger class="h-8 w-full text-xs" aria-label="Choose worktree">
+                <span class="flex min-w-0 items-center gap-2">
+                  <Folder class="size-3.5 shrink-0" />
+                  <span class="truncate">
+                    {selectedWorkspace
+                      ? `${selectedWorkspace.projectName} · ${selectedWorkspace.label}`
+                      : 'No project'}
+                  </span>
+                </span>
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Item value={NO_PROJECT_VALUE} label="No project">
+                  <span class="flex flex-col">
+                    <span>No project</span>
+                    <span class="text-[10px] text-muted-foreground">Open in the Device home folder</span>
+                  </span>
+                </Select.Item>
+                {#each workspaceChoices as workspace (workspace.key)}
+                  <Select.Item value={workspace.key} label={`${workspace.projectName} · ${workspace.label}`}>
+                    <span class="flex min-w-0 flex-col">
+                      <span class="truncate">{workspace.label}</span>
+                      <span class="truncate text-[10px] text-muted-foreground">{workspace.projectName}</span>
+                    </span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          {/if}
           <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Run on device</span>
           <Select.Root
             type="single"
@@ -566,6 +644,8 @@
               <p class="m-0 font-medium">
                 {devicePlan.action === 'use-existing-location'
                   ? 'Workspace ready'
+                  : devicePlan.action === 'use-device-directory'
+                    ? 'No project · Device home folder'
                   : devicePlan.action === 'clone-project'
                     ? 'Project is not initialized on this device'
                     : 'This checkout is not on this device'}
@@ -581,7 +661,7 @@
             <p class="m-0 text-[11px] text-destructive">{devicePlanError}</p>
           {/if}
 
-          {#if devicePlan && devicePlan.action !== 'use-existing-location'}
+          {#if devicePlan && devicePlan.action !== 'use-existing-location' && devicePlan.action !== 'use-device-directory'}
             <Button
               variant="outline"
               size="sm"
@@ -686,7 +766,7 @@
           {/each}
         </div>
       {/if}
-      {#if usesDevicePlacement && devicePlan && devicePlan.action !== 'use-existing-location' && pendingDeviceOption}
+      {#if usesDevicePlacement && devicePlan && devicePlan.action !== 'use-existing-location' && devicePlan.action !== 'use-device-directory' && pendingDeviceOption}
         <div class="mt-1.5 border-t border-border pt-1.5">
           <Button
             size="sm"

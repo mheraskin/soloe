@@ -199,7 +199,7 @@ export class MultiDeviceSessions {
 
   async create(request: CreateMultiDeviceSessionRequest): Promise<MultiDeviceSessionView> {
     const plan = await this.planCreate(request);
-    if (plan.action !== 'use-existing-location') {
+    if (plan.action !== 'use-existing-location' && plan.action !== 'use-device-directory') {
       this.creationPlans.delete(plan.planId);
       throw new Error('Review the Project preparation before creating this Session.');
     }
@@ -210,17 +210,40 @@ export class MultiDeviceSessions {
     request: CreateMultiDeviceSessionRequest
   ): Promise<MultiDeviceSessionCreationPlan> {
     const state = this.currentState.revision > 0 ? this.currentState : await this.refresh();
+    const device = this.requireReadyDevice(request.targetDeviceId);
+    const deviceName = device.status.descriptor?.name ?? request.targetDeviceId;
+    const planId = randomUUID();
+    if (request.workspaceKey === null) {
+      const targetPath = request.targetPath?.trim() || '~';
+      const plan: MultiDeviceSessionCreationPlan = {
+        planId,
+        workspaceKey: null,
+        targetDeviceId: request.targetDeviceId,
+        deviceName,
+        action: 'use-device-directory',
+        targetPath,
+        executable: Boolean(device.createSession && device.startSession),
+        blockers: device.createSession && device.startSession
+          ? []
+          : ['Update Soloe on this Device to create Sessions remotely.'],
+        warnings: [],
+        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString()
+      };
+      this.creationPlans.set(planId, {
+        public: plan,
+        request: { ...structuredClone(request), targetPath },
+        devicePlan: null
+      });
+      return structuredClone(plan);
+    }
     const project = state.projects.find((candidate) =>
       candidate.workspaces.some((workspace) => workspace.key === request.workspaceKey)
     );
     const workspace = project?.workspaces.find((candidate) => candidate.key === request.workspaceKey);
     if (!project || !workspace) throw new Error('Workspace is unavailable.');
-    const device = this.requireReadyDevice(request.targetDeviceId);
-    const deviceName = device.status.descriptor?.name ?? request.targetDeviceId;
     const location = workspace.locations.find((candidate) =>
       candidate.deviceId === request.targetDeviceId && candidate.available
     );
-    const planId = randomUUID();
     if (location) {
       const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
       const plan: MultiDeviceSessionCreationPlan = {
@@ -430,6 +453,31 @@ export class MultiDeviceSessions {
     request: CreateMultiDeviceSessionRequest
   ): Promise<MultiDeviceSessionView> {
     const state = this.currentState.revision > 0 ? this.currentState : await this.refresh();
+    const device = this.requireReadyDevice(request.targetDeviceId);
+    if (!device.createSession || !device.startSession) {
+      throw new Error('The selected Device cannot create Sessions.');
+    }
+    const inventory = this.inventories.get(device.deviceId);
+    if (request.workspaceKey === null) {
+      const runMode = inventory?.descriptor.platform;
+      if (!runMode) throw new Error('The selected Device has no runnable environment.');
+      const sessionId = randomUUID();
+      const draft: SessionDraft = {
+        ...structuredClone(request.session),
+        cwd: request.targetPath?.trim() || '~',
+        runMode,
+        runtimeMode: 'tui'
+      };
+      const created = await device.createSession({ sessionId, draft });
+      await device.startSession(created.id);
+      const refreshed = await this.refresh();
+      const projection = refreshed.unassigned.find((candidate) =>
+        candidate.ref.deviceId === device.deviceId
+        && candidate.ref.sessionId === created.id
+      );
+      if (!projection) throw new Error('The created Session was not returned by its Device.');
+      return projection;
+    }
     const workspace = state.projects
       .flatMap((project) => project.workspaces)
       .find((candidate) => candidate.key === request.workspaceKey);
@@ -437,11 +485,6 @@ export class MultiDeviceSessions {
       candidate.deviceId === request.targetDeviceId && candidate.available
     );
     if (!location) throw new Error('The Workspace Location is unavailable after preparation.');
-    const device = this.requireReadyDevice(request.targetDeviceId);
-    if (!device.createSession || !device.startSession) {
-      throw new Error('The selected Device cannot create Sessions.');
-    }
-    const inventory = this.inventories.get(device.deviceId);
     const physicalProject = inventory?.projects.find((candidate) =>
       candidate.project.id === location.projectId
     )?.project;

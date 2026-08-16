@@ -18,7 +18,20 @@ const deviceSessionMocks = vi.hoisted(() => ({
   restartSession: vi.fn(async () => undefined),
   updateSession: vi.fn(async () => undefined),
   clearSelectedSession: vi.fn(),
-  isSelected: vi.fn(() => false)
+  isSelected: vi.fn(() => false),
+  planCreate: vi.fn(async () => ({
+    planId: 'plan-1',
+    workspaceKey: null,
+    targetDeviceId: 'local-device',
+    deviceName: 'This Mac',
+    action: 'use-device-directory',
+    targetPath: '~',
+    executable: true,
+    blockers: [],
+    warnings: [],
+    expiresAt: '2099-01-01T00:00:00.000Z'
+  })),
+  executeCreate: vi.fn(async () => undefined)
 }));
 
 vi.mock('../stores/sessions.svelte', () => ({
@@ -37,7 +50,39 @@ vi.mock('../stores/sessions.svelte', () => ({
 vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
     ...deviceSessionMocks,
-    device: vi.fn(() => ({ local: false, available: true }))
+    supported: true,
+    state: {
+      devices: [{
+        deviceId: 'local-device',
+        name: 'This Mac',
+        local: true,
+        available: true,
+        state: 'ready'
+      }],
+      projects: []
+    },
+    localDevice: {
+      deviceId: 'local-device',
+      name: 'This Mac',
+      local: true,
+      available: true,
+      state: 'ready'
+    },
+    device: vi.fn((deviceId: string) => deviceId === 'local-device'
+      ? {
+          deviceId: 'local-device',
+          name: 'This Mac',
+          local: true,
+          available: true,
+          state: 'ready'
+        }
+      : {
+          deviceId,
+          name: 'Remote Device',
+          local: false,
+          available: true,
+          state: 'ready'
+        })
   }
 }));
 
@@ -52,6 +97,7 @@ vi.mock('../stores/settings.svelte', () => ({
   settings: {
     current: {
       quickLaunch: [],
+      defaults: { newSessionKind: 'codex', shell: 'auto' },
       shortcuts: { shiftNumberNavigation: 'off' }
     }
   }
@@ -175,11 +221,17 @@ describe('AgentLaunchPopover touch gestures', () => {
       clientY: 90
     }));
     terminal!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    expect(sessionMocks.createWithDefaults).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(deviceSessionMocks.executeCreate).toHaveBeenCalledWith('plan-1'));
+    expect(deviceSessionMocks.planCreate).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceKey: null,
+      targetDeviceId: 'local-device',
+      session: expect.objectContaining({ launch: { type: 'terminal', shell: 'auto' } })
+    }));
+    expect(sessionMocks.createWithDefaults).not.toHaveBeenCalled();
     expect(sessionMocks.createPreferredWithDefaults).not.toHaveBeenCalled();
   });
 
-  it('keeps an ordinary touch tap as the immediate preferred-session action', async () => {
+  it('opens the shared placement setup on an ordinary touch tap', async () => {
     const target = mountComponent(AgentLaunchPopover, {});
     const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
     expect(trigger).not.toBeNull();
@@ -200,8 +252,10 @@ describe('AgentLaunchPopover touch gestures', () => {
     await vi.advanceTimersByTimeAsync(400);
     flushSync();
 
-    expect(sessionMocks.createPreferredWithDefaults).toHaveBeenCalledOnce();
-    expect(document.body.querySelector('[aria-label="New terminal"]')).toBeNull();
+    expect(sessionMocks.createPreferredWithDefaults).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[aria-label="New terminal"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('Run on device');
+    expect(document.body.textContent).toContain('No project');
   });
 
   it('does not let the worktree drag handler claim a gesture that starts on plus', () => {

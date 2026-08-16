@@ -71,6 +71,7 @@
     displayedAgentSummary
   } from './lib/session-display-state';
   import { isCollapsedSessionWorking } from './lib/collapsed-session-activity';
+  import { collapsedSessionTabLabel } from './lib/collapsed-session-label';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
   import { attachMobileViewport } from './lib/mobile-viewport';
@@ -334,6 +335,7 @@
     sessions: Array<{
       id: string;
       name: string;
+      deviceName: string;
       index: number | null;
       kind: SessionLaunchKind;
       statusDot: CollapsedStatusDot | null;
@@ -499,6 +501,7 @@
           return {
             id: projection.key,
             name: projection.session.name,
+            deviceName: projection.deviceName,
             index: index < 9 ? index + 1 : null,
             kind: displaySessionKind(projection.session, null),
             statusDot: tone ? { tone, title: stateLabel(status) } : null,
@@ -537,6 +540,7 @@
       return {
         id: s.id,
         name: s.name,
+        deviceName: deviceSessions.localDevice?.name ?? 'This device',
         index: i < 9 ? i + 1 : null,
         kind: displaySessionKind(s, sessions.observationFor(s.id)),
         statusDot: presentation.statusDot,
@@ -1628,12 +1632,14 @@
                     style={s.session.color
                       ? `--chip-color: var(--session-${s.session.color});`
                       : undefined}
-                    class={`collapsed-session-chip relative inline-flex h-5 max-w-[160px] shrink-0 items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
+                    class={`collapsed-session-chip relative inline-flex h-5 max-w-[220px] shrink-0 items-center gap-1 rounded-sm px-1.5 text-[11px] leading-none transition-colors ${
                       s.active
                         ? 'bg-muted text-foreground'
                         : 'text-muted-foreground/70 hover:bg-muted/60 hover:text-foreground'
                     } ${isDraggingCollapsedSession(s.id) ? 'opacity-40' : ''}`}
-                    title={s.index !== null ? `${s.name} (Ctrl+${s.index})` : s.name}
+                    title={s.index !== null
+                      ? `${collapsedSessionTabLabel(s.name, s.deviceName)} (Ctrl+${s.index})`
+                      : collapsedSessionTabLabel(s.name, s.deviceName)}
                     draggable="true"
                     onclick={() => selectCollapsedSession(s.id)}
                     onpointerdown={onCollapsedSessionPointerDown}
@@ -1676,7 +1682,7 @@
                         ></span>
                       {/if}
                     </span>
-                    <span class="min-w-0 truncate">{s.name}</span>
+                    <span class="min-w-0 truncate">{collapsedSessionTabLabel(s.name, s.deviceName)}</span>
                     {#if s.working}
                       <span
                         class="collapsed-session-runner pointer-events-none absolute right-1.5 bottom-0 left-1.5 h-px"

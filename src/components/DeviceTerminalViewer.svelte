@@ -92,6 +92,7 @@
 
     let active = true;
     let appliedSeq = 0;
+    let coveredSeq = 0;
     let restoringOutput = true;
     const pending = new Map<number, TerminalOutputEvent>();
     let outputQueue = Promise.resolve();
@@ -127,11 +128,16 @@
       if (restoringOutput || !active) return;
       restoringOutput = true;
       try {
+        // A replay cursor is only authoritative after every already-accepted
+        // live write has reached both terminal projections.
+        await outputQueue;
+        if (!active) return;
         const replay = await deviceSessions.terminalReplay(ref, appliedSeq);
         if (!active) return;
         if (replay.snapshot) {
           await write(replay.snapshot.data);
           appliedSeq = Math.max(appliedSeq, replay.snapshot.toSeq);
+          coveredSeq = Math.max(coveredSeq, appliedSeq);
         }
         for (const event of [...pending.values()].sort((left, right) => left.seq - right.seq)) {
           pending.delete(event.seq);
@@ -139,6 +145,7 @@
           if (event.seq !== appliedSeq + 1) break;
           await write(event.data);
           appliedSeq = event.seq;
+          coveredSeq = Math.max(coveredSeq, appliedSeq);
         }
         terminal.scrollToBottom();
       } catch (cause) {
@@ -149,12 +156,16 @@
       }
     };
     const queueOutput = (event: TerminalOutputEvent): void => {
-      if (!active || event.seq <= appliedSeq) return;
-      if (restoringOutput || event.seq !== appliedSeq + 1) {
+      if (!active || event.seq <= coveredSeq) return;
+      if (restoringOutput || event.seq !== coveredSeq + 1) {
         pending.set(event.seq, event);
         if (!restoringOutput) void recover();
         return;
       }
+      // Reserve the sequence before the asynchronous xterm write begins. A
+      // following live event is contiguous with this in-flight write and must
+      // queue behind it instead of triggering replay from the stale cursor.
+      coveredSeq = event.seq;
       outputQueue = outputQueue.then(async () => {
         if (!active || event.seq <= appliedSeq) return;
         await write(event.data);
@@ -173,6 +184,7 @@
           }
           await write(replay.snapshot.data);
           appliedSeq = replay.snapshot.toSeq;
+          coveredSeq = appliedSeq;
         }
         restoringOutput = false;
         for (const event of [...pending.values()].sort((left, right) => left.seq - right.seq)) {
@@ -310,7 +322,7 @@
         >
           {#each transcriptRecords as record (record.id)}
             <div class="transcript-line min-h-5" class:opacity-90={record.transient}>
-              {#each record.spans as span}
+              {#each record.spans as span, spanIndex (spanIndex)}
                 <span style={spanStyle(span)}>{span.text}</span>
               {/each}
             </div>

@@ -98,9 +98,10 @@ export interface MultiDeviceSessionState {
 }
 
 export interface CreateMultiDeviceSessionRequest {
-  workspaceKey: string;
+  /** Null creates an unassigned Session in a Device directory. */
+  workspaceKey: string | null;
   targetDeviceId: DeviceId;
-  /** Optional absolute Device path selected from its bounded workspace browser. */
+  /** Optional Device path selected from its bounded browser; defaults to the Device home. */
   targetPath?: string;
   session: Pick<SessionDraft, 'name' | 'launch'>
     & Partial<Pick<SessionDraft, 'tags' | 'pinned' | 'color'>>;
@@ -113,10 +114,14 @@ export interface BrowseDeviceWorkspaceDirectoriesRequest {
 
 export interface MultiDeviceSessionCreationPlan {
   planId: string;
-  workspaceKey: string;
+  workspaceKey: string | null;
   targetDeviceId: DeviceId;
   deviceName: string;
-  action: 'use-existing-location' | 'clone-project' | 'prepare-workspace-location';
+  action:
+    | 'use-existing-location'
+    | 'use-device-directory'
+    | 'clone-project'
+    | 'prepare-workspace-location';
   targetPath: string | null;
   executable: boolean;
   blockers: string[];

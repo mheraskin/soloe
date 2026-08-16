@@ -154,6 +154,46 @@ describe('MultiDeviceSessions', () => {
     expect(laptop.startedSessionIds).toEqual([created.ref.sessionId]);
   });
 
+  it('creates an unassigned Session in the selected Device home directory', async () => {
+    const createdRequests: DevicePlacedSessionRequest[] = [];
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe',
+      branch: 'main',
+      sessions: [],
+      onCreate: (request) => createdRequests.push(structuredClone(request))
+    });
+    const sessions = new MultiDeviceSessions({ devices: [laptop] });
+    await sessions.refresh();
+
+    const plan = await sessions.planCreate({
+      workspaceKey: null,
+      targetDeviceId: LAPTOP_ID,
+      session: {
+        name: 'Terminal',
+        launch: { type: 'terminal', shell: 'auto' }
+      }
+    });
+    const created = await sessions.executeCreate(plan.planId);
+
+    expect(plan).toMatchObject({
+      workspaceKey: null,
+      action: 'use-device-directory',
+      targetPath: '~',
+      executable: true
+    });
+    expect(created).toMatchObject({
+      ref: { deviceId: LAPTOP_ID },
+      session: { cwd: '~', runMode: 'windows' }
+    });
+    expect(created.session.projectId).toBeUndefined();
+    expect(createdRequests[0]?.draft).toMatchObject({ cwd: '~', runMode: 'windows' });
+    expect(createdRequests[0]?.draft.projectId).toBeUndefined();
+  });
+
   it('plans, reviews, and clones a missing Project before creating on another Device', async () => {
     const mac = fakeDevice({
       deviceId: MAC_ID,
