@@ -1,9 +1,10 @@
 import type { DeviceDescriptor, DeviceId, SessionRef, TerminalRef } from './devices.js';
 import type { GitWorktree } from './git.js';
 import type { Project } from './projects.js';
-import type { Session, SessionDraft, SessionRuntimeState } from './sessions.js';
+import type { Session, SessionDraft, SessionRuntimeState, SessionStatus } from './sessions.js';
 import type { TerminalReplaySnapshot } from './terminal.js';
 import type { DeviceWorkspaceSnapshot, RepositoryIdentity } from './workspaces.js';
+import type { ObservedAgentSnapshot } from './agents.js';
 
 export interface SessionDeviceSnapshot {
   descriptor: DeviceDescriptor;
@@ -11,6 +12,7 @@ export interface SessionDeviceSnapshot {
   sessions: Session[];
   archivedSessions: Session[];
   runtimes: SessionRuntimeState[];
+  observations?: ObservedAgentSnapshot[];
   capturedAt: string;
 }
 
@@ -35,6 +37,8 @@ export interface DeviceSessionInventory {
   sessions: Session[];
   archivedSessions: Session[];
   runtimes: SessionRuntimeState[];
+  /** Optional so clients remain compatible with Devices predating observer projection. */
+  observations?: ObservedAgentSnapshot[];
   capturedAt: string;
 }
 
@@ -50,7 +54,11 @@ export interface MultiDeviceSessionView {
   deviceName: string;
   available: boolean;
   session: Session;
+  /** Latest Device-published lifecycle status, independent of a live Terminal attachment. */
+  lifecycleStatus?: SessionStatus;
   runtime: SessionRuntimeState | null;
+  /** Last Device-published semantic state for this Session's foreground agent. */
+  observation?: ObservedAgentSnapshot | null;
 }
 
 export interface WorkspaceLocationView {

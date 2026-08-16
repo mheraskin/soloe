@@ -365,6 +365,7 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
             ...(localWorkspaceService ? { workspaceService: localWorkspaceService } : {}),
             ...(localGitHubProvider ? { githubProvider: localGitHubProvider } : {}),
             pty: services.pty,
+            observer: services.observer,
             terminalInputControl: services.terminalInputControl
           })
     });

@@ -72,6 +72,8 @@
   let browsingDirectories = $state(false);
   let folderName = $state('');
   let showLocationBrowser = $state(false);
+  let worktreeSelectOpen = $state(false);
+  let deviceSelectOpen = $state(false);
   let planRequest = 0;
 
   let usesDevicePlacement = $derived(deviceSessions.supported);
@@ -165,6 +167,10 @@
 
   function scheduleClose(event: PointerEvent): void {
     if (event.pointerType === 'touch' || touchPointerId !== null) return;
+    if (worktreeSelectOpen || deviceSelectOpen) {
+      clearCloseTimer();
+      return;
+    }
     if (openTimer) {
       clearOpenTimer();
       return;
@@ -286,6 +292,8 @@
       pendingDeviceOption = null;
       showLocationBrowser = false;
       directoryListing = null;
+      worktreeSelectOpen = false;
+      deviceSelectOpen = false;
     }
   }
 
@@ -566,6 +574,7 @@
             <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Worktree</span>
             <Select.Root
               type="single"
+              bind:open={worktreeSelectOpen}
               value={effectiveWorkspaceKey ?? NO_PROJECT_VALUE}
               onValueChange={(value) => {
                 selectedWorkspaceKey = value === NO_PROJECT_VALUE ? null : value;
@@ -585,7 +594,7 @@
                   </span>
                 </span>
               </Select.Trigger>
-              <Select.Content>
+              <Select.Content onpointerenter={clearCloseTimer} onpointerleave={scheduleClose}>
                 <Select.Item value={NO_PROJECT_VALUE} label="No project">
                   <span class="flex flex-col">
                     <span>No project</span>
@@ -606,6 +615,7 @@
           <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Run on device</span>
           <Select.Root
             type="single"
+            bind:open={deviceSelectOpen}
             value={selectedDeviceId ?? undefined}
             onValueChange={(value) => {
               selectedDeviceId = value as DeviceId;
@@ -615,7 +625,7 @@
               folderName = '';
             }}
           >
-            <Select.Trigger class="h-8 w-full text-xs">
+            <Select.Trigger class="h-8 w-full text-xs" aria-label="Choose device">
               <span class="flex min-w-0 items-center gap-2">
                 <Monitor class="size-3.5 shrink-0" />
                 <span class="truncate">{selectedDevice?.name ?? 'Choose device'}</span>
@@ -624,7 +634,7 @@
                 {/if}
               </span>
             </Select.Trigger>
-            <Select.Content>
+            <Select.Content onpointerenter={clearCloseTimer} onpointerleave={scheduleClose}>
               {#each deviceSessions.state.devices as device (device.deviceId)}
                 <Select.Item value={device.deviceId} label={device.name} disabled={!device.available}>
                   <span class="flex w-full items-center gap-2">

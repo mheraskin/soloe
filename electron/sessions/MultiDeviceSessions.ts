@@ -894,14 +894,20 @@ function sessionView(
   session: Session
 ): MultiDeviceSessionView {
   const ref = { deviceId: device.deviceId, sessionId: session.id };
+  const runtime = inventory.runtimes.find((candidate) => candidate.sessionId === session.id) ?? null;
   return {
     ref,
     key: `${ref.deviceId}/${encodeURIComponent(ref.sessionId)}`,
     deviceName: inventory.descriptor.name,
     available: device.status.state === 'ready',
     session: structuredClone(session),
-    runtime: structuredClone(
-      inventory.runtimes.find((runtime) => runtime.sessionId === session.id) ?? null
+    lifecycleStatus: runtime?.status ?? 'stopped',
+    runtime: structuredClone(runtime),
+    observation: structuredClone(
+      inventory.observations?.find((snapshot) =>
+        snapshot.subjectKind === 'session'
+        && (snapshot.sessionId ?? snapshot.id) === session.id
+      ) ?? null
     )
   };
 }

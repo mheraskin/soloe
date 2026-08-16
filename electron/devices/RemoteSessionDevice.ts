@@ -19,6 +19,7 @@ import type {
 } from '@shared/types/sessions.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { GitWorktree } from '@shared/types/git.js';
+import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
 import type {
   SpawnSpec,
   TerminalControlProof,
@@ -164,16 +165,24 @@ export class RemoteSessionDevice implements SessionDevice {
   }
 
   async snapshot(): Promise<SessionDeviceSnapshot> {
+    return {
+      ...await this.readSessionSnapshot(),
+      capturedAt: new Date().toISOString()
+    };
+  }
+
+  private async readSessionSnapshot(): Promise<Omit<SessionDeviceSnapshot, 'capturedAt'>> {
     if (!this.currentStatus.descriptor) await this.connect();
     const descriptor = this.currentStatus.descriptor;
     if (!descriptor) throw new Error(`Device ${this.deviceId} did not provide a descriptor.`);
-    const [workspace, sessions, archivedSessions, runtimes] = await Promise.all([
+    const [workspace, sessions, archivedSessions, runtimes, observations] = await Promise.all([
       descriptor.capabilities.features.includes('workspace-device.v1')
         ? this.rpc<DeviceWorkspaceSnapshot>('workspaceDevice', 'snapshot', [])
         : Promise.resolve(null),
       this.rpc<Session[]>('sessions', 'list', []),
       this.rpc<Session[]>('sessions', 'listArchived', []),
-      this.rpc<SessionRuntimeState[]>('terminal', 'listRunning', [])
+      this.rpc<SessionRuntimeState[]>('terminal', 'listRunning', []),
+      this.rpc<ObservedAgentSnapshot[]>('observer', 'list', []).catch(() => [])
     ]);
     return {
       descriptor: structuredClone(descriptor),
@@ -181,23 +190,16 @@ export class RemoteSessionDevice implements SessionDevice {
       sessions,
       archivedSessions,
       runtimes,
-      capturedAt: new Date().toISOString()
+      observations
     };
   }
 
   async readInventory(): Promise<DeviceSessionInventory> {
-    if (!this.currentStatus.descriptor) await this.connect();
-    const descriptor = this.currentStatus.descriptor;
-    if (!descriptor) throw new Error(`Device ${this.deviceId} did not provide a descriptor.`);
-    const [workspace, projects, sessions, archivedSessions, runtimes] = await Promise.all([
-      descriptor.capabilities.features.includes('workspace-device.v1')
-        ? this.rpc<DeviceWorkspaceSnapshot>('workspaceDevice', 'snapshot', [])
-        : Promise.resolve(null),
-      this.rpc<Project[]>('projects', 'list', []),
-      this.rpc<Session[]>('sessions', 'list', []),
-      this.rpc<Session[]>('sessions', 'listArchived', []),
-      this.rpc<SessionRuntimeState[]>('terminal', 'listRunning', [])
+    const [snapshot, projects] = await Promise.all([
+      this.readSessionSnapshot(),
+      this.rpc<Project[]>('projects', 'list', [])
     ]);
+    const { descriptor, workspace, sessions, archivedSessions, runtimes, observations } = snapshot;
     const projectInventories = await Promise.all(projects.map(async (project) => {
       const runMode = project.defaultRunMode ?? descriptor.platform;
       const gitRequest = {
@@ -236,6 +238,7 @@ export class RemoteSessionDevice implements SessionDevice {
       sessions,
       archivedSessions,
       runtimes,
+      observations,
       capturedAt: new Date().toISOString()
     };
   }

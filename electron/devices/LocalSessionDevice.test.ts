@@ -6,6 +6,27 @@ import { LocalSessionDevice } from './LocalSessionDevice.js';
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 
 describe('LocalSessionDevice', () => {
+  it('publishes semantic agent observations with its Session inventory', async () => {
+    const observation = {
+      id: 'session-1',
+      sessionId: 'session-1',
+      runtimeMode: 'tui' as const,
+      subjectKind: 'session' as const,
+      provider: 'codex' as const,
+      state: 'idle' as const
+    };
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never,
+      observer: { listSnapshots: () => [observation] }
+    });
+
+    await expect(client.readInventory()).resolves.toMatchObject({
+      observations: [observation]
+    });
+  });
+
   it('reconciles legacy records before publishing a Device snapshot', async () => {
     const session = {
       id: 'later',

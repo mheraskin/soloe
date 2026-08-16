@@ -17,12 +17,7 @@
     X
   } from '@lucide/svelte';
   import type { ProjectId } from '@shared/types/projects.js';
-  import type {
-    AgentObservedState,
-    Session,
-    SessionLaunchKind,
-    SessionStatus
-  } from '@shared/types/sessions.js';
+  import type { Session, SessionLaunchKind } from '@shared/types/sessions.js';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
@@ -67,10 +62,10 @@
   import { displaySessionKind } from './lib/session-agent';
   import { usesMacosNativeWindowControls } from './lib/platform-ui';
   import {
-    displayedAgentState as resolveDisplayedAgentState,
-    displayedAgentSummary
-  } from './lib/session-display-state';
-  import { isCollapsedSessionWorking } from './lib/collapsed-session-activity';
+    sessionStatusPresentation,
+    type SessionStatusDot,
+    type SessionStatusTone
+  } from './lib/session-status-presentation';
   import { collapsedSessionTabLabel } from './lib/collapsed-session-label';
   import { kbdHints } from './stores/kbd-hints.svelte';
   import { dnd, DND_MIME, type DropPosition } from './stores/dnd.svelte';
@@ -97,8 +92,11 @@
   import AppSkeleton from './components/AppSkeleton.svelte';
   import SettingsDialog from './components/SettingsDialog.svelte';
   import ConnectionMenu from './components/ConnectionMenu.svelte';
-  import DeviceTerminalViewer from './components/DeviceTerminalViewer.svelte';
-  import { deviceTerminalPresentationKey } from './lib/device-terminal-presentation';
+  import DeviceSessionArea from './components/DeviceSessionArea.svelte';
+  import {
+    deviceSessionStatus,
+    deviceTerminalPresentationKey
+  } from './lib/device-terminal-presentation';
   import { deviceSessions } from './stores/device-sessions.svelte';
   import appIconUrl from '../build/favicon.svg';
 
@@ -320,11 +318,8 @@
     shortcutIndex: number | null;
     local: boolean;
   };
-  type CollapsedStatusTone = 'active' | 'done' | 'issue';
-  type CollapsedStatusDot = {
-    tone: CollapsedStatusTone;
-    title: string;
-  };
+  type CollapsedStatusTone = SessionStatusTone;
+  type CollapsedStatusDot = SessionStatusDot;
   type CollapsedNav = {
     projectId: ProjectId | null;
     project: string;
@@ -358,96 +353,42 @@
     return classes[tone];
   }
 
-  function agentStateStatusTone(state: AgentObservedState): CollapsedStatusTone {
-    if (state === 'completed' || state === 'exited') return 'done';
-    if (state === 'failed' || state === 'waiting_for_approval') return 'issue';
-    return 'active';
-  }
-
-  function runtimeStatusTone(status: SessionStatus): CollapsedStatusTone | null {
-    if (status === 'running' || status === 'starting') return 'active';
-    if (status === 'exited') return 'done';
-    if (status === 'error') return 'issue';
-    return null;
-  }
-
-  function statusTitle(label: string, summary: string | null): string {
-    return summary ? `${label} · ${summary}` : label;
-  }
-
-  function stateLabel(state: AgentObservedState | SessionStatus): string {
-    return state.replaceAll('_', ' ');
-  }
-
-  function buildCollapsedSessionStatus(session: Session): {
+  function buildCollapsedSessionStatus(
+    session: Session,
+    projection: MultiDeviceSessionView | null = null
+  ): {
     statusDot: CollapsedStatusDot | null;
     working: boolean;
   } {
-    const status = sessions.statusFor(session.id);
-    const observed = sessions.observationFor(session.id);
-    const latestEvent = sessions.eventsFor(session.id)[0] ?? null;
+    const status = projection
+      ? deviceSessionStatus(projection)
+      : sessions.statusFor(session.id);
+    const observed = projection
+      ? projection.observation ?? null
+      : sessions.observationFor(session.id);
+    const latestEvent = projection ? null : sessions.eventsFor(session.id)[0] ?? null;
     const observedSummary = latestEvent?.state === observed?.state
       ? latestEvent?.summary ?? null
       : observed?.resultSummary ?? observed?.promptSummary ?? null;
-    if (observed?.state === 'completed' || observed?.state === 'exited') {
-      return {
-        statusDot: {
-          tone: 'done',
-          title: statusTitle(stateLabel(observed.state), observedSummary)
-        },
-        working: false
-      };
-    }
-    if (observed?.state === 'failed' || observed?.state === 'waiting_for_approval') {
-      return {
-        statusDot: {
-          tone: 'issue',
-          title: statusTitle(stateLabel(observed.state), observedSummary)
-        },
-        working: false
-      };
-    }
-    const displayedState = resolveDisplayedAgentState({
-      observed,
-      status,
-      hasRuntime: sessions.runtime[session.id] !== undefined,
-      hasNotificationMarker: agentNotifications.markerFor(session.id) !== null
-    });
-
-    if (displayedState) {
-      const summary = displayedAgentSummary(observed, displayedState, observedSummary);
-      if (isCollapsedSessionWorking(displayedState)) {
-        return { statusDot: null, working: true };
-      }
-      return {
-        statusDot: {
-          tone: agentStateStatusTone(displayedState),
-          title: statusTitle(stateLabel(displayedState), summary)
-        },
-        working: false
-      };
-    }
-
-    const runtimeTone = runtimeStatusTone(status);
+    const pendingOperation = projection ? deviceSessions.pendingOperation(projection.key) : null;
     if (
-      status === 'starting'
-      && (
-        session.launch.type === 'agent'
-        || observed?.provider === 'claude_code'
-        || observed?.provider === 'codex'
-        || observed?.provider === 'cursor'
-      )
+      pendingOperation === 'starting'
+      || pendingOperation === 'stopping'
+      || pendingOperation === 'restarting'
     ) {
       return { statusDot: null, working: true };
     }
-    if (!runtimeTone) return { statusDot: null, working: false };
-    return {
-      statusDot: {
-        tone: runtimeTone,
-        title: stateLabel(status)
-      },
-      working: false
-    };
+    const presentation = sessionStatusPresentation({
+      session,
+      observed,
+      status,
+      observedSummary,
+      hasRuntime: projection ? projection.runtime !== null : sessions.runtime[session.id] !== undefined,
+      hasNotificationMarker: projection
+        ? false
+        : agentNotifications.markerFor(session.id) !== null
+    });
+    return { statusDot: presentation.statusDot, working: presentation.working };
   }
 
   let collapsedNav = $derived.by<CollapsedNav | null>(() => {
@@ -498,16 +439,15 @@
           local: false
         })),
         sessions: projected.sessions.map((projection, index) => {
-          const status = projection.runtime?.status ?? 'stopped';
-          const tone = runtimeStatusTone(status);
+          const presentation = buildCollapsedSessionStatus(projection.session, projection);
           return {
             id: projection.key,
             name: projection.session.name,
             deviceName: projection.deviceName,
             index: index < 9 ? index + 1 : null,
-            kind: displaySessionKind(projection.session, null),
-            statusDot: tone ? { tone, title: stateLabel(status) } : null,
-            working: status === 'starting',
+            kind: displaySessionKind(projection.session, projection.observation ?? null),
+            statusDot: presentation.statusDot,
+            working: presentation.working,
             active: projection.key === projected.selected.key,
             session: projection.session,
             projection
@@ -768,7 +708,7 @@
   function selectCollapsedProject(projectId: ProjectId): void {
     const projected = collapsedNav?.projects.find((project) => project.id === projectId);
     if (projected?.selectedProjectionKey) {
-      void deviceSessions.openSession(projected.selectedProjectionKey).catch(reportError);
+      deviceSessions.selectSession(projected.selectedProjectionKey);
       return;
     }
     const project = projects.get(projectId);
@@ -781,7 +721,7 @@
 
   function selectCollapsedWorktree(option: CollapsedWorktreeOption): void {
     if (option.selectedProjectionKey) {
-      void deviceSessions.openSession(option.selectedProjectionKey).catch(reportError);
+      deviceSessions.selectSession(option.selectedProjectionKey);
       return;
     }
     if (option.selectedSessionId) {
@@ -850,7 +790,7 @@
     rightRail.fullscreen = false;
     const item = collapsedNav?.sessions.find((session) => session.id === id);
     if (item?.projection) {
-      void deviceSessions.openSession(item.projection.key).catch(reportError);
+      deviceSessions.selectSession(item.projection.key);
       return;
     }
     sessions.select(id);
@@ -1619,7 +1559,9 @@
             {#each collapsedNav.sessions as s (s.id)}
               <SessionContextMenu
                 session={s.session}
-                statusOverride={s.projection ? s.projection.runtime?.status ?? 'stopped' : null}
+                statusOverride={s.projection
+                  ? deviceSessionStatus(s.projection)
+                  : null}
                 lifecycle={s.projection ? projectedSessionLifecycle(s.projection) : null}
               >
                 {#snippet trigger({ props })}
@@ -1777,7 +1719,7 @@
             {#if deviceSessions.selectedProjection && mobilePage === 'workspace' && mobileMode === 'terminal'}
               <div class="h-full">
                 {#key deviceTerminalPresentationKey(deviceSessions.selectedProjection)}
-                  <DeviceTerminalViewer
+                  <DeviceSessionArea
                     projection={deviceSessions.selectedProjection}
                     onClose={() => deviceSessions.clearSelectedSession()}
                   />
@@ -1818,7 +1760,7 @@
         {#if deviceSessions.selectedProjection && !railFullscreen}
           <div class="min-w-0 flex-1">
             {#key deviceTerminalPresentationKey(deviceSessions.selectedProjection)}
-              <DeviceTerminalViewer
+              <DeviceSessionArea
                 projection={deviceSessions.selectedProjection}
                 onClose={() => deviceSessions.clearSelectedSession()}
               />

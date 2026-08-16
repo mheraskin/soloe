@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
 import appSource from '../App.svelte?raw';
-import { deviceTerminalPresentationKey } from './device-terminal-presentation';
+import {
+  deviceSessionStatus,
+  deviceSessionSurface,
+  deviceTerminalPresentationKey
+} from './device-terminal-presentation';
 
 describe('device terminal presentation identity', () => {
   it('reconstructs a remote presentation when its runtime terminal changes', () => {
@@ -21,6 +25,31 @@ describe('device terminal presentation identity', () => {
     expect(appSource.match(/#key deviceTerminalPresentationKey\(deviceSessions\.selectedProjection\)/gu))
       .toHaveLength(2);
     expect(appSource).not.toContain('#key deviceSessions.selectedProjection.key');
+    expect(appSource.match(/<DeviceSessionArea/gu)).toHaveLength(2);
+    expect(appSource).not.toContain('<DeviceTerminalViewer');
+  });
+
+  it('uses the resumable empty surface when a remote Session has exited', () => {
+    const exited = projection('terminal-1', 'Original name');
+    exited.runtime = { ...exited.runtime!, terminalId: null, status: 'exited' };
+
+    expect(deviceSessionSurface(exited)).toBe('empty');
+    expect(deviceSessionSurface(projection('terminal-1', 'Original name'))).toBe('terminal');
+  });
+
+  it('renders lifecycle pending intent without replacing Device-authoritative runtime state', () => {
+    const running = projection('terminal-1', 'Original name');
+
+    expect(deviceSessionSurface(running, true)).toBe('empty');
+    expect(running.runtime?.status).toBe('running');
+  });
+
+  it('defaults a projection without Device lifecycle facts to stopped', () => {
+    const unknown = projection('terminal-1', 'Original name');
+    unknown.runtime = null;
+    delete unknown.lifecycleStatus;
+
+    expect(deviceSessionStatus(unknown)).toBe('stopped');
   });
 });
 
@@ -46,6 +75,7 @@ function projection(
       sessionId: 'session-1',
       terminalId,
       status: 'running'
-    }
+    },
+    observation: null
   };
 }
