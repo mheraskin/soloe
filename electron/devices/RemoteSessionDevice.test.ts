@@ -92,6 +92,52 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('routes Session metadata, deletion, and command preview to the owning remote Device', async () => {
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') return jsonResponse(descriptor(FIRST_EPOCH));
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+          args: unknown[];
+        };
+        calls.push(request);
+        if (request.method === 'previewCommand') {
+          return jsonResponse({ ok: true, value: { description: 'pnpm codex' } });
+        }
+        return jsonResponse({ ok: true, value: request.method === 'delete' ? true : {} });
+      },
+      socketFactory: () => new FakeSocket()
+    });
+
+    await client.updateSession('remote-session', { name: 'Remote name', color: undefined });
+    await client.previewSessionCommand('remote-session');
+    await client.deleteSession('remote-session');
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        namespace: 'sessions',
+        method: 'update',
+        args: ['remote-session', { name: 'Remote name', color: null }]
+      }),
+      expect.objectContaining({
+        namespace: 'sessions',
+        method: 'previewCommand',
+        args: ['remote-session']
+      }),
+      expect.objectContaining({
+        namespace: 'sessions',
+        method: 'delete',
+        args: ['remote-session']
+      })
+    ]);
+    client.dispose();
+  });
+
   it('rejects malformed repository identity returned by a remote Device', async () => {
     const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,

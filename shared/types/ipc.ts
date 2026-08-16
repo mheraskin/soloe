@@ -176,6 +176,9 @@ export const IpcChannels = {
     openProjectOnDevice: 'sessions:open-project-on-device',
     executeDevicePreparation: 'sessions:execute-device-preparation',
     startOnDevice: 'sessions:start-on-device',
+    updateOnDevice: 'sessions:update-on-device',
+    deleteOnDevice: 'sessions:delete-on-device',
+    previewCommandOnDevice: 'sessions:preview-command-on-device',
     deviceTerminalDemand: 'sessions:device-terminal-demand',
     deviceTerminalInput: 'sessions:device-terminal-input',
     deviceTerminalInputLease: 'sessions:device-terminal-input-lease',
@@ -428,6 +431,11 @@ export interface SessionsApi {
   ): Promise<IpcResult<MultiDeviceSessionState>>;
   executeDevicePreparation?(planId: string): Promise<IpcResult<MultiDeviceSessionState>>;
   startOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionView>>;
+  updateOnDevice?(
+    request: { ref: SessionRef; patch: SessionUpdate }
+  ): Promise<IpcResult<MultiDeviceSessionView>>;
+  deleteOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionState>>;
+  previewCommandOnDevice?(ref: SessionRef): Promise<IpcResult<SpawnSpec>>;
   setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
   deviceTerminalInput?(
     request: { ref: TerminalRef; data: string; control: TerminalControlProof }

@@ -10,10 +10,16 @@ import type {
   DeviceEventEnvelope,
   DeviceId
 } from '@shared/types/devices.js';
-import type { Session, SessionId, SessionRuntimeState } from '@shared/types/sessions.js';
+import type {
+  Session,
+  SessionId,
+  SessionRuntimeState,
+  SessionUpdate
+} from '@shared/types/sessions.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type {
+  SpawnSpec,
   TerminalControlProof,
   TerminalInputLease,
   TerminalReplaySnapshot,
@@ -348,6 +354,22 @@ export class RemoteSessionDevice implements SessionDevice {
   startSession(sessionId: string): Promise<TerminalStartResult> {
     const id = requiredId(sessionId, 'Session');
     return this.rpc('terminal', 'start', [{ sessionId: id }]);
+  }
+
+  updateSession(sessionId: string, patch: SessionUpdate): Promise<Session> {
+    const id = requiredId(sessionId, 'Session');
+    const wirePatch: Record<string, unknown> = structuredClone(patch);
+    if ('color' in patch && patch.color === undefined) wirePatch.color = null;
+    return this.rpc('sessions', 'update', [id, wirePatch]);
+  }
+
+  deleteSession(sessionId: string): Promise<void> {
+    const id = requiredId(sessionId, 'Session');
+    return this.rpc('sessions', 'delete', [id]).then(() => undefined);
+  }
+
+  previewSessionCommand(sessionId: string): Promise<SpawnSpec> {
+    return this.rpc('sessions', 'previewCommand', [requiredId(sessionId, 'Session')]);
   }
 
   openProject(request: ProjectOpenRequest): Promise<Project> {

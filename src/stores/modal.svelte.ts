@@ -6,10 +6,15 @@ class ModalStore {
   draft = $state<SessionDraft>(defaultDraft('terminal'));
   editingId = $state<string | null>(null);
   error = $state<string | null>(null);
+  update = $state<((draft: SessionDraft) => Promise<void>) | null>(null);
 
-  openEdit(session: Session): void {
+  openEdit(
+    session: Session,
+    update: ((draft: SessionDraft) => Promise<void>) | null = null
+  ): void {
     this.editingId = session.id;
     this.draft = toDraft(session);
+    this.update = update;
     this.error = null;
     this.open = true;
   }
@@ -17,6 +22,8 @@ class ModalStore {
   close(): void {
     this.open = false;
     this.error = null;
+    this.editingId = null;
+    this.update = null;
   }
 }
 

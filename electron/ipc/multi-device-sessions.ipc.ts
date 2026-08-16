@@ -19,6 +19,9 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'openProjectOnDevice'
     | 'executePreparation'
     | 'startSession'
+    | 'updateSession'
+    | 'deleteSession'
+    | 'previewSessionCommand'
     | 'onState'
     | 'onDeviceEvent'
     | 'setTerminalOutputDemand'
@@ -89,6 +92,20 @@ export class MultiDeviceSessionsIpc {
     );
     ipcMain.handle(IpcChannels.sessions.startOnDevice, (_event, ref: SessionRef) =>
       ipcInvoke(() => this.options.sessions.startSession(structuredClone(ref)))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.updateOnDevice,
+      (_event, request: { ref: SessionRef; patch: import('@shared/types/sessions.js').SessionUpdate }) =>
+        ipcInvoke(() => this.options.sessions.updateSession(
+          structuredClone(request.ref),
+          structuredClone(request.patch)
+        ))
+    );
+    ipcMain.handle(IpcChannels.sessions.deleteOnDevice, (_event, ref: SessionRef) =>
+      ipcInvoke(() => this.options.sessions.deleteSession(structuredClone(ref)))
+    );
+    ipcMain.handle(IpcChannels.sessions.previewCommandOnDevice, (_event, ref: SessionRef) =>
+      ipcInvoke(() => this.options.sessions.previewSessionCommand(structuredClone(ref)))
     );
     ipcMain.handle(IpcChannels.sessions.deviceTerminalDemand, (_event, refs: TerminalRef[]) =>
       ipcInvoke(async () => {
@@ -185,6 +202,9 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.openProjectOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.executeDevicePreparation);
     ipcMain.removeHandler(IpcChannels.sessions.startOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.updateOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.deleteOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.previewCommandOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalDemand);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInput);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInputLease);

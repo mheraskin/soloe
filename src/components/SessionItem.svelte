@@ -107,6 +107,16 @@
         }
       : null
   );
+  let remoteMutations = $derived(
+    projection && !managedLocally
+      ? {
+          update: (patch: import('@shared/types/sessions.js').SessionUpdate) =>
+            deviceSessions.updateSession(projection!.key, patch),
+          remove: () => deviceSessions.deleteSession(projection!.key),
+          previewCommand: () => deviceSessions.previewCommand(projection!.key)
+        }
+      : null
+  );
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
@@ -124,7 +134,7 @@
 
   async function startEditing(e?: Event) {
     e?.stopPropagation();
-    if (editing || !managedLocally) return;
+    if (editing) return;
     editValue = session.name;
     editing = true;
     await tick();
@@ -147,7 +157,9 @@
     editing = false;
     editValue = '';
     try {
-      await sessions.update(session.id, { name: next, autoNamed: false });
+      const patch = { name: next, autoNamed: false };
+      if (projection && !managedLocally) await deviceSessions.updateSession(projection.key, patch);
+      else await sessions.update(session.id, patch);
     } catch (err) {
       reportError(err);
     }
@@ -177,7 +189,10 @@
   async function remove() {
     const ok = await confirmDeleteSession(session);
     if (!ok) return;
-    try { await sessions.remove(session.id); } catch (err) { reportError(err); }
+    try {
+      if (projection && !managedLocally) await deviceSessions.deleteSession(projection.key);
+      else await sessions.remove(session.id);
+    } catch (err) { reportError(err); }
   }
   function removeFromButton(e: Event) {
     e.stopPropagation();
@@ -278,7 +293,8 @@
     {session}
     statusOverride={projection ? status : null}
     lifecycle={remoteLifecycle}
-    onRename={managedLocally ? () => void startEditing() : null}
+    mutations={remoteMutations}
+    onRename={() => void startEditing()}
   >
     {#snippet trigger({ props })}
       <div
@@ -301,7 +317,7 @@
         ondrop={onDrop}
         ondragend={onDragEnd}
         onclick={onClick}
-        ondblclick={managedLocally ? startEditing : undefined}
+        ondblclick={startEditing}
         onkeydown={onRowKey}
         role="button"
         tabindex="0"
@@ -406,7 +422,7 @@
         {#if kbdIndex !== null}
           <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
         {/if}
-        {#if managedLocally}<div class="flex shrink-0 items-center gap-0.5">
+        <div class="flex shrink-0 items-center gap-0.5">
           <span class="relative flex size-7 shrink-0 items-center justify-center">
             <Button
               variant="ghost"
@@ -420,7 +436,7 @@
             </Button>
             <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
           </span>
-        </div>{/if}
+        </div>
       </div>
     {/snippet}
   </SessionContextMenu>

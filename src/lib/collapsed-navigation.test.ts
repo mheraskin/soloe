@@ -4,8 +4,43 @@ import type { MultiDeviceSessionState } from '@shared/types/multi-device-session
 import { projectedCollapsedNavigation } from './collapsed-navigation.js';
 
 describe('projectedCollapsedNavigation', () => {
+  it('uses the first available remote Session when the remote-only header has no selection yet', () => {
+    const state = remoteOnlyState();
+
+    const navigation = projectedCollapsedNavigation(state, null);
+
+    expect(navigation).toMatchObject({
+      project: { key: 'project:soloe', name: 'Soloe' },
+      workspace: { key: 'workspace:feature', name: 'feature/sidebar' },
+      selected: { key: 'device-xps/remote-one' }
+    });
+    expect(navigation?.sessions.map((session) => session.key)).toEqual([
+      'device-xps/remote-one',
+      'device-xps/remote-two'
+    ]);
+  });
+
   it('keeps project, workspace, and sibling navigation for a selected remote projection', () => {
-    const state = {
+    const state = remoteOnlyState();
+
+    const navigation = projectedCollapsedNavigation(state, 'device-xps/remote-two');
+
+    expect(navigation).toMatchObject({
+      project: { key: 'project:soloe', name: 'Soloe' },
+      workspace: { key: 'workspace:feature', name: 'feature/sidebar' },
+      selected: { key: 'device-xps/remote-two' }
+    });
+    expect(navigation?.sessions.map((session) => session.key)).toEqual([
+      'device-xps/remote-one',
+      'device-xps/remote-two'
+    ]);
+    expect(navigation?.projects.map(({ project }) => project.key)).toEqual(['project:soloe']);
+    expect(navigation?.workspaces.map(({ workspace }) => workspace.key)).toEqual(['workspace:feature']);
+  });
+});
+
+function remoteOnlyState(): MultiDeviceSessionState {
+  return {
       revision: 1,
       capturedAt: '2026-08-16T00:00:00.000Z',
       devices: [{
@@ -46,22 +81,7 @@ describe('projectedCollapsedNavigation', () => {
       unassigned: [],
       archivedSessions: []
     } satisfies MultiDeviceSessionState;
-
-    const navigation = projectedCollapsedNavigation(state, 'device-xps/remote-two');
-
-    expect(navigation).toMatchObject({
-      project: { key: 'project:soloe', name: 'Soloe' },
-      workspace: { key: 'workspace:feature', name: 'feature/sidebar' },
-      selected: { key: 'device-xps/remote-two' }
-    });
-    expect(navigation?.sessions.map((session) => session.key)).toEqual([
-      'device-xps/remote-one',
-      'device-xps/remote-two'
-    ]);
-    expect(navigation?.projects.map(({ project }) => project.key)).toEqual(['project:soloe']);
-    expect(navigation?.workspaces.map(({ workspace }) => workspace.key)).toEqual(['workspace:feature']);
-  });
-});
+}
 
 function remoteProjection(sessionId: string, name: string) {
   return {

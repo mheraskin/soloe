@@ -1886,12 +1886,17 @@ export class SoloeDomain extends EventEmitter {
           request.expectedVersion,
         )));
       }
-      case "update":
+      case "update": {
+        const wirePatch = args[1] as SessionUpdate & { color?: SessionUpdate["color"] | null };
+        const patch: SessionUpdate = wirePatch?.color === null
+          ? { ...wirePatch, color: undefined }
+          : wirePatch;
         return this.changeSession(
           this.observeSession(
-            await this.sessions.update(args[0] as SessionId, args[1] as SessionUpdate),
+            await this.sessions.update(args[0] as SessionId, patch),
           ),
         );
+      }
       case "delete": {
         const id = args[0] as SessionId;
         await this.sessions.delete(args[0] as SessionId);

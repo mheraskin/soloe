@@ -13,6 +13,7 @@
   } from '@lucide/svelte';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { modal } from '../stores/modal.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
@@ -44,7 +45,13 @@
   let isRunning = $derived(status === 'running' || status === 'starting');
 
   function edit() {
-    if (selected) modal.openEdit(selected);
+    if (!selected) return;
+    modal.openEdit(
+      selected,
+      projection
+        ? (draft) => deviceSessions.updateSession(projection!.key, draft)
+        : null
+    );
   }
   async function openCwd() {
     if (!selected) return;
@@ -67,7 +74,9 @@
   async function copyCmd() {
     if (!selected) return;
     try {
-      const spec = await ipc.sessions.previewCommand(selected.id);
+      const spec = projection
+        ? await deviceSessions.previewCommand(projection.key)
+        : await ipc.sessions.previewCommand(selected.id);
       await navigator.clipboard.writeText(spec.description);
       toasts.push('Copied command to clipboard', 'info');
     } catch (e) {
@@ -133,8 +142,7 @@
 
     <Tooltip.Provider delayDuration={250}>
       <div class="session-toolbar-actions flex shrink-0 items-center gap-0.5">
-        {#if projection}
-          {#if onClose}
+        {#if projection && onClose}
             <Tooltip.Root>
               <Tooltip.Trigger>
                 {#snippet child({ props })}
@@ -151,8 +159,8 @@
               </Tooltip.Trigger>
               <Tooltip.Content>Close remote terminal</Tooltip.Content>
             </Tooltip.Root>
-          {/if}
-        {:else}
+        {/if}
+        {#if !projection}
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
@@ -176,6 +184,7 @@
         </Tooltip.Root>
 
         <Separator orientation="vertical" class="mx-0.5 h-4" />
+        {/if}
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
@@ -210,7 +219,6 @@
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Root>
-        {/if}
       </div>
     </Tooltip.Provider>
   {:else}

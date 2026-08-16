@@ -7,8 +7,15 @@ import type {
 } from '@shared/types/devices.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
-import type { Session, SessionDraft, SessionId, SessionRuntimeState } from '@shared/types/sessions.js';
 import type {
+  Session,
+  SessionDraft,
+  SessionId,
+  SessionRuntimeState,
+  SessionUpdate
+} from '@shared/types/sessions.js';
+import type {
+  SpawnSpec,
   TerminalControlProof,
   TerminalInputLease,
   TerminalStartResult
@@ -82,6 +89,9 @@ export interface SessionDevice {
   terminalStop(terminalId: string): Promise<void>;
   createSession?(request: DevicePlacedSessionRequest): Promise<Session>;
   startSession?(sessionId: string): Promise<TerminalStartResult>;
+  updateSession?(sessionId: string, patch: SessionUpdate): Promise<Session>;
+  deleteSession?(sessionId: string): Promise<void>;
+  previewSessionCommand?(sessionId: string): Promise<SpawnSpec>;
   workspacePlan?(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan>;
   workspaceExecute?(
     command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
@@ -475,6 +485,42 @@ export class MultiDeviceSessions {
       throw new Error('The Session did not start on its Device.');
     }
     return structuredClone(started);
+  }
+
+  async updateSession(ref: SessionRef, patch: SessionUpdate): Promise<MultiDeviceSessionView> {
+    const current = findSession(this.currentState, ref);
+    if (!current) throw new Error('Session is unavailable.');
+    if (!current.available) throw new Error(`Device ${current.deviceName} is offline.`);
+    const device = this.requireReadyDevice(ref.deviceId);
+    if (!device.updateSession) throw new Error('The selected Device cannot update Sessions.');
+    await device.updateSession(ref.sessionId, structuredClone(patch));
+    const refreshed = await this.refresh();
+    const updated = findSession(refreshed, ref);
+    if (!updated) throw new Error('The updated Session was not returned by its Device.');
+    return structuredClone(updated);
+  }
+
+  async deleteSession(ref: SessionRef): Promise<MultiDeviceSessionState> {
+    const current = findSession(this.currentState, ref);
+    if (!current) throw new Error('Session is unavailable.');
+    if (!current.available) throw new Error(`Device ${current.deviceName} is offline.`);
+    const device = this.requireReadyDevice(ref.deviceId);
+    if (!device.deleteSession) throw new Error('The selected Device cannot delete Sessions.');
+    await device.deleteSession(ref.sessionId);
+    return this.refresh();
+  }
+
+  previewSessionCommand(ref: SessionRef): Promise<SpawnSpec> {
+    const current = findSession(this.currentState, ref);
+    if (!current) return Promise.reject(new Error('Session is unavailable.'));
+    if (!current.available) {
+      return Promise.reject(new Error(`Device ${current.deviceName} is offline.`));
+    }
+    const device = this.requireReadyDevice(ref.deviceId);
+    if (!device.previewSessionCommand) {
+      return Promise.reject(new Error('The selected Device cannot preview Session commands.'));
+    }
+    return device.previewSessionCommand(ref.sessionId);
   }
 
   async reorderSessions(orderedRefs: SessionRef[]): Promise<MultiDeviceSessionState> {

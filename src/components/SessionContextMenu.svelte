@@ -11,7 +11,13 @@
     Pencil,
     Trash2
   } from '@lucide/svelte';
-  import type { Session, SessionColor, SessionStatus } from '@shared/types/sessions.js';
+  import type {
+    Session,
+    SessionColor,
+    SessionStatus,
+    SessionUpdate
+  } from '@shared/types/sessions.js';
+  import type { SpawnSpec } from '@shared/types/terminal.js';
   import { SESSION_COLOR_TOKENS } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { sessionContextMenus } from '../stores/session-context-menus.svelte';
@@ -43,6 +49,7 @@
     onRename = null,
     statusOverride = null,
     lifecycle = null,
+    mutations = null,
     disabled = false,
     trigger
   }: {
@@ -53,6 +60,11 @@
       start?: () => void | Promise<void>;
       stop?: () => void | Promise<void>;
       restart?: () => void | Promise<void>;
+    } | null;
+    mutations?: {
+      update: (patch: SessionUpdate) => Promise<void>;
+      remove: () => Promise<void>;
+      previewCommand: () => Promise<SpawnSpec>;
     } | null;
     disabled?: boolean;
     trigger: Snippet<[{ props: Record<string, unknown> }]>;
@@ -100,7 +112,7 @@
   }
 
   function edit() {
-    modal.openEdit(session);
+    modal.openEdit(session, mutations ? (draft) => mutations.update(draft) : null);
   }
 
   function continueElsewhere() {
@@ -126,7 +138,10 @@
   async function remove() {
     const ok = await confirmDeleteSession(session);
     if (!ok) return;
-    try { await sessions.remove(session.id); } catch (err) { reportError(err); }
+    try {
+      if (mutations) await mutations.remove();
+      else await sessions.remove(session.id);
+    } catch (err) { reportError(err); }
   }
 
   async function openCwd() {
@@ -135,7 +150,9 @@
 
   async function copyCmd() {
     try {
-      const spec = await ipc.sessions.previewCommand(session.id);
+      const spec = mutations
+        ? await mutations.previewCommand()
+        : await ipc.sessions.previewCommand(session.id);
       await navigator.clipboard.writeText(spec.description);
     } catch (err) {
       reportError(err);
@@ -145,7 +162,9 @@
   async function setColor(color: SessionColor | null) {
     if ((session.color ?? null) === color) return;
     try {
-      await sessions.update(session.id, { color: color ?? undefined });
+      const patch = { color: color ?? undefined };
+      if (mutations) await mutations.update(patch);
+      else await sessions.update(session.id, patch);
     } catch (err) {
       reportError(err);
     }
@@ -181,7 +200,6 @@
     {#if status === 'running'}
       <ContextMenu.Item onSelect={restart}>Restart</ContextMenu.Item>
     {/if}
-    {#if !lifecycle}
     <ContextMenu.Separator />
     <ContextMenu.Item onSelect={() => void rename()}>
       <Pencil /> <span>Rename</span>
@@ -190,11 +208,12 @@
     <ContextMenu.Item onSelect={edit}>
       <Pencil /> <span>Edit...</span>
     </ContextMenu.Item>
-    <ContextMenu.Item onSelect={openCwd}>
-      <FolderOpen /> <span>Open cwd</span>
-    </ContextMenu.Item>
     <ContextMenu.Item onSelect={copyCmd}>
       <Copy /> <span>Copy command</span>
+    </ContextMenu.Item>
+    {#if !lifecycle}
+    <ContextMenu.Item onSelect={openCwd}>
+      <FolderOpen /> <span>Open cwd</span>
     </ContextMenu.Item>
     <ContextMenu.Item onSelect={continueElsewhere}>
       <ArrowRight /> <span>Continue in another session</span>
@@ -207,6 +226,7 @@
       <ContextMenu.Item onSelect={openBeside}>
         <Columns2 /> <span>Open beside current</span>
       </ContextMenu.Item>
+    {/if}
     {/if}
     <ContextMenu.Separator />
     <div class="flex items-center gap-2 px-1 py-1">
@@ -271,7 +291,6 @@
       <Trash2 /> <span>Delete</span>
       <ContextMenu.Shortcut>Ctrl+Del</ContextMenu.Shortcut>
     </ContextMenu.Item>
-    {/if}
   </ContextMenu.Content>
 </ContextMenu.Root>
 {/if}

@@ -48,7 +48,8 @@
     submitting = true;
     modal.error = null;
     try {
-      await sessions.update(modal.editingId, modal.draft);
+      if (modal.update) await modal.update(modal.draft);
+      else await sessions.update(modal.editingId, modal.draft);
       modal.close();
     } catch (e2) {
       modal.error = e2 instanceof Error ? e2.message : String(e2);

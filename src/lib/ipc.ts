@@ -218,6 +218,20 @@ export const backend = {
       if (!c.sessions.startOnDevice) throw new Error('Multi-Device Session start is unavailable.');
       return unwrap(await c.sessions.startOnDevice(toIpcPayload(ref)));
     },
+    updateOnDevice: async (ref: SessionRef, patch: SessionUpdate) => {
+      if (!c.sessions.updateOnDevice) throw new Error('Multi-Device Session updates are unavailable.');
+      return unwrap(await c.sessions.updateOnDevice(toIpcPayload({ ref, patch })));
+    },
+    deleteOnDevice: async (ref: SessionRef) => {
+      if (!c.sessions.deleteOnDevice) throw new Error('Multi-Device Session deletion is unavailable.');
+      return unwrap(await c.sessions.deleteOnDevice(toIpcPayload(ref)));
+    },
+    previewCommandOnDevice: async (ref: SessionRef) => {
+      if (!c.sessions.previewCommandOnDevice) {
+        throw new Error('Multi-Device Session command preview is unavailable.');
+      }
+      return unwrap(await c.sessions.previewCommandOnDevice(toIpcPayload(ref)));
+    },
     setDeviceTerminalDemand: async (refs: TerminalRef[]) => {
       if (!c.sessions.setDeviceTerminalDemand) {
         throw new Error('Multi-Device terminal output is unavailable.');

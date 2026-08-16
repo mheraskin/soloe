@@ -191,6 +191,45 @@ describe("SoloeDomain", () => {
     }
   });
 
+  it("accepts the remote wire representation for clearing a Session color", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-session-color-"));
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+
+    try {
+      await domain.init();
+      const created = await domain.invoke({
+        namespace: "sessions",
+        method: "create",
+        args: [{
+          name: "Colored",
+          cwd: directory,
+          runMode: hostPlatform(),
+          launch: { type: "terminal", shell: "auto" },
+          color: "violet",
+        }],
+      }) as { id: string };
+
+      const updated = await domain.invoke({
+        namespace: "sessions",
+        method: "update",
+        args: [created.id, { color: null }],
+      }) as { color?: string };
+
+      expect(updated.color).toBeUndefined();
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("adopts legacy Projects and Sessions into its Device Workspace registry", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-workspaces-"));
     const runtime = {

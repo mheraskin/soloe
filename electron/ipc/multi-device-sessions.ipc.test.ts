@@ -42,6 +42,9 @@ describe('MultiDeviceSessionsIpc', () => {
       planCreate: vi.fn(),
       executeCreate: vi.fn(),
       startSession: vi.fn(),
+      updateSession: vi.fn(async (_ref, patch) => ({ session: patch })),
+      deleteSession: vi.fn(async () => structuredClone(state)),
+      previewSessionCommand: vi.fn(async () => ({ description: 'pnpm codex' })),
       terminalCurrentInputLease: vi.fn(async () => null),
       terminalReleaseInputLease: vi.fn(async () => true),
       onState: vi.fn(() => () => undefined),
@@ -61,6 +64,9 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(electronMocks.handlers.has(IpcChannels.sessions.planCreateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.executeCreateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.startOnDevice)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.updateOnDevice)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.deleteOnDevice)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.previewCommandOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(
       IpcChannels.sessions.deviceTerminalCurrentInputLease
     )).toBe(true);
@@ -82,6 +88,23 @@ describe('MultiDeviceSessionsIpc', () => {
       value: state
     });
     expect(sessions.reorderSessions).toHaveBeenCalledWith(orderedRefs);
+
+    const sessionRef = { deviceId: 'device-1', sessionId: 'remote-session' };
+    await expect(invoke(IpcChannels.sessions.updateOnDevice, {
+      ref: sessionRef,
+      patch: { name: 'Renamed' }
+    })).resolves.toEqual({ ok: true, value: { session: { name: 'Renamed' } } });
+    await expect(invoke(IpcChannels.sessions.deleteOnDevice, sessionRef)).resolves.toEqual({
+      ok: true,
+      value: state
+    });
+    await expect(invoke(
+      IpcChannels.sessions.previewCommandOnDevice,
+      sessionRef
+    )).resolves.toEqual({ ok: true, value: { description: 'pnpm codex' } });
+    expect(sessions.updateSession).toHaveBeenCalledWith(sessionRef, { name: 'Renamed' });
+    expect(sessions.deleteSession).toHaveBeenCalledWith(sessionRef);
+    expect(sessions.previewSessionCommand).toHaveBeenCalledWith(sessionRef);
 
     const ref = { deviceId: 'device-1', terminalId: 'terminal-1' };
     await expect(invoke(

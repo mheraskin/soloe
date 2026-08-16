@@ -23,10 +23,21 @@ export function projectedCollapsedNavigation(
   state: MultiDeviceSessionState,
   selectedSessionKey: string | null
 ): ProjectedCollapsedNavigation | null {
-  if (!selectedSessionKey) return null;
+  const remoteDeviceIds = new Set(
+    state.devices.filter((device) => !device.local).map((device) => device.deviceId)
+  );
+  const effectiveSessionKey = selectedSessionKey
+    ?? state.projects.flatMap((project) => project.workspaces)
+      .flatMap((workspace) => workspace.sessions)
+      .find((session) => session.available && remoteDeviceIds.has(session.ref.deviceId))?.key
+    ?? state.unassigned.find((session) =>
+      session.available && remoteDeviceIds.has(session.ref.deviceId)
+    )?.key
+    ?? null;
+  if (!effectiveSessionKey) return null;
   for (const project of state.projects) {
     for (const workspace of project.workspaces) {
-      const selected = workspace.sessions.find((session) => session.key === selectedSessionKey);
+      const selected = workspace.sessions.find((session) => session.key === effectiveSessionKey);
       if (!selected) continue;
       return {
         selected,
@@ -50,7 +61,7 @@ export function projectedCollapsedNavigation(
       };
     }
   }
-  const selected = state.unassigned.find((session) => session.key === selectedSessionKey);
+  const selected = state.unassigned.find((session) => session.key === effectiveSessionKey);
   if (!selected) return null;
   return {
     selected,

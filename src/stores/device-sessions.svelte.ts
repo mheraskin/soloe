@@ -6,7 +6,8 @@ import type {
   MultiDeviceSessionState,
   MultiDeviceSessionView
 } from '@shared/types/multi-device-sessions.js';
-import type { SessionRuntimeState } from '@shared/types/sessions.js';
+import type { SessionRuntimeState, SessionUpdate } from '@shared/types/sessions.js';
+import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
 import type {
   TerminalExitEvent,
@@ -151,6 +152,41 @@ export class DeviceSessionsStore {
     await ipc.sessions.startOnDevice(projection.ref);
     await this.refresh();
     this.selectedSessionKey = key;
+  }
+
+  async updateSession(key: string, patch: SessionUpdate): Promise<void> {
+    const projection = this.sessions.find((candidate) => candidate.key === key);
+    if (!projection?.available) return;
+    const owner = this.device(projection.ref.deviceId);
+    if (!owner?.available) return;
+    if (owner.local) {
+      await localSessions.update(projection.ref.sessionId, structuredClone(patch));
+      return;
+    }
+    await ipc.sessions.updateOnDevice(projection.ref, structuredClone(patch));
+  }
+
+  async deleteSession(key: string): Promise<void> {
+    const projection = this.sessions.find((candidate) => candidate.key === key);
+    if (!projection?.available) return;
+    const owner = this.device(projection.ref.deviceId);
+    if (!owner?.available) return;
+    if (owner.local) {
+      await localSessions.remove(projection.ref.sessionId);
+    } else {
+      await ipc.sessions.deleteOnDevice(projection.ref);
+    }
+    if (this.selectedSessionKey === key) this.clearSelectedSession();
+  }
+
+  previewCommand(key: string): Promise<SpawnSpec> {
+    const projection = this.sessions.find((candidate) => candidate.key === key);
+    if (!projection?.available) return Promise.reject(new Error('Session is unavailable.'));
+    const owner = this.device(projection.ref.deviceId);
+    if (!owner?.available) return Promise.reject(new Error('Session Device is unavailable.'));
+    return owner.local
+      ? ipc.sessions.previewCommand(projection.ref.sessionId)
+      : ipc.sessions.previewCommandOnDevice(projection.ref);
   }
 
   clearSelectedSession(): void {
