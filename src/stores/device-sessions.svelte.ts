@@ -128,6 +128,31 @@ export class DeviceSessionsStore {
     }
   }
 
+  async stopSession(key: string): Promise<void> {
+    const projection = this.sessions.find((candidate) => candidate.key === key);
+    const terminalId = projection?.runtime?.terminalId;
+    if (!projection?.available || !terminalId) return;
+    await ipc.sessions.deviceTerminalStop({
+      deviceId: projection.ref.deviceId,
+      terminalId
+    });
+    await this.refresh();
+  }
+
+  async restartSession(key: string): Promise<void> {
+    const projection = this.sessions.find((candidate) => candidate.key === key);
+    if (!projection?.available) return;
+    if (projection.runtime?.terminalId) {
+      await ipc.sessions.deviceTerminalStop({
+        deviceId: projection.ref.deviceId,
+        terminalId: projection.runtime.terminalId
+      });
+    }
+    await ipc.sessions.startOnDevice(projection.ref);
+    await this.refresh();
+    this.selectedSessionKey = key;
+  }
+
   clearSelectedSession(): void {
     this.selectedSessionKey = null;
   }
@@ -292,9 +317,16 @@ export class DeviceSessionsStore {
       }
     };
     if (this.ownedInputLeases[key]?.leaseId !== lease?.leaseId) {
-      const remaining = { ...this.ownedInputLeases };
-      delete remaining[key];
-      this.ownedInputLeases = remaining;
+      const controlledHere = lease?.controllerDeviceId === this.localDevice?.deviceId
+        ? lease
+        : null;
+      if (controlledHere) {
+        this.ownedInputLeases = { ...this.ownedInputLeases, [key]: controlledHere };
+      } else {
+        const remaining = { ...this.ownedInputLeases };
+        delete remaining[key];
+        this.ownedInputLeases = remaining;
+      }
     }
     return lease;
   }
@@ -398,9 +430,19 @@ export class DeviceSessionsStore {
         [key]: event
       };
       if (this.ownedInputLeases[key]?.leaseId !== event.lease?.leaseId) {
-        const remaining = { ...this.ownedInputLeases };
-        delete remaining[key];
-        this.ownedInputLeases = remaining;
+        const controlledHere = event.lease?.controllerDeviceId === this.localDevice?.deviceId
+          ? event.lease
+          : null;
+        if (controlledHere) {
+          this.ownedInputLeases = {
+            ...this.ownedInputLeases,
+            [key]: structuredClone(controlledHere)
+          };
+        } else {
+          const remaining = { ...this.ownedInputLeases };
+          delete remaining[key];
+          this.ownedInputLeases = remaining;
+        }
       }
       return;
     }

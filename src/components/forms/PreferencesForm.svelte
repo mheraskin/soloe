@@ -275,12 +275,6 @@
     } catch (e) { reportError(e); }
   }
 
-  async function setKeepFullTerminalHistory(value: boolean) {
-    try {
-      await settings.update({ terminal: { keepFullHistory: value } });
-    } catch (e) { reportError(e); }
-  }
-
   async function setShiftNumberNavigation(value: ShiftNumberNavigationTarget) {
     try {
       await settings.update({ shortcuts: { shiftNumberNavigation: value } });
@@ -1146,22 +1140,6 @@
           id="pref-confirm-delete-tabs"
           checked={settings.current.terminal.confirmDeleteTabs}
           onCheckedChange={setConfirmDeleteTabs}
-        />
-      </div>
-      <div class="flex items-start justify-between gap-3">
-        <div class="flex flex-col gap-1">
-          <Label for="pref-keep-full-terminal-history" class="text-xs text-muted-foreground">
-            Keep complete output history
-          </Label>
-          <p class="m-0 text-[11px] text-muted-foreground">
-            Lets running terminals retain and render all future output. This can use substantial
-            memory; output omitted before enabling it cannot be restored.
-          </p>
-        </div>
-        <Switch
-          id="pref-keep-full-terminal-history"
-          checked={settings.current.terminal.keepFullHistory}
-          onCheckedChange={setKeepFullTerminalHistory}
         />
       </div>
     </Tabs.Content>

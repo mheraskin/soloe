@@ -7,8 +7,11 @@
     FileText,
     MoreHorizontal,
     Code2,
-    PanelLeftOpen
+    PanelLeftOpen,
+    Monitor,
+    X
   } from '@lucide/svelte';
+  import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import { modal } from '../stores/modal.svelte';
   import { reportError, toasts } from '../stores/toast.svelte';
@@ -24,13 +27,19 @@
 
   interface Props {
     onOpenNavigation?: () => void;
+    projection?: MultiDeviceSessionView | null;
+    onClose?: (() => void) | null;
   }
 
-  let { onOpenNavigation }: Props = $props();
-  let selected = $derived(sessions.selected);
-  let status = $derived(selected ? sessions.statusFor(selected.id) : 'stopped');
-  let observed = $derived(selected ? sessions.observationFor(selected.id) : null);
-  let currentCwd = $derived(selected ? sessions.currentCwdFor(selected.id) : null);
+  let { onOpenNavigation, projection = null, onClose = null }: Props = $props();
+  let selected = $derived(projection?.session ?? sessions.selected);
+  let status = $derived(
+    projection?.runtime?.status ?? (selected ? sessions.statusFor(selected.id) : 'stopped')
+  );
+  let observed = $derived(projection ? null : selected ? sessions.observationFor(selected.id) : null);
+  let currentCwd = $derived(
+    projection?.runtime?.cwd ?? (selected ? sessions.currentCwdFor(selected.id) : null)
+  );
   let displayKind = $derived(selected ? displaySessionKind(selected, observed) : 'terminal');
   let isRunning = $derived(status === 'running' || status === 'starting');
 
@@ -89,6 +98,12 @@
       <span class="session-toolbar-title max-w-44 shrink truncate text-xs font-medium text-foreground">
         {selected.name}
       </span>
+      {#if projection}
+        <span class="inline-flex min-w-0 shrink items-center gap-1 text-[10px] text-muted-foreground">
+          <Monitor class="size-3" />
+          <span class="max-w-28 truncate">{projection.deviceName}</span>
+        </span>
+      {/if}
       <span class="shrink-0 text-muted-foreground/35" aria-hidden="true">·</span>
       <Tooltip.Provider delayDuration={250}>
         <Tooltip.Root>
@@ -107,17 +122,37 @@
           </Tooltip.Content>
         </Tooltip.Root>
       </Tooltip.Provider>
-      <div class="session-toolbar-branch">
+      {#if !projection}<div class="session-toolbar-branch">
         <GitBranchWidget
           cwd={selected.cwd}
           runMode={selected.runMode}
           wslDistro={selected.wslDistro}
         />
-      </div>
+      </div>{/if}
     </div>
 
     <Tooltip.Provider delayDuration={250}>
       <div class="session-toolbar-actions flex shrink-0 items-center gap-0.5">
+        {#if projection}
+          {#if onClose}
+            <Tooltip.Root>
+              <Tooltip.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    variant="ghost"
+                    size="icon-xs"
+                    onclick={onClose}
+                    aria-label="Close remote terminal"
+                  >
+                    <X />
+                  </Button>
+                {/snippet}
+              </Tooltip.Trigger>
+              <Tooltip.Content>Close remote terminal</Tooltip.Content>
+            </Tooltip.Root>
+          {/if}
+        {:else}
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
@@ -175,6 +210,7 @@
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Root>
+        {/if}
       </div>
     </Tooltip.Provider>
   {:else}

@@ -638,9 +638,9 @@ async function setupServices(): Promise<AppServices> {
     getBinaries,
     processFactory: runtimeProcessFactory
   });
-  await manager.setKeepFullHistory((await settings.get()).terminal.keepFullHistory);
-  const releaseTerminalHistorySettings = settings.onChange((next) => {
-    void manager?.setKeepFullHistory(next.terminal.keepFullHistory).catch((error) => {
+  await manager.setKeepFullHistory(true);
+  const releaseTerminalHistorySettings = settings.onChange(() => {
+    void manager?.setKeepFullHistory(true).catch((error) => {
       console.warn('[terminal] failed to update Runtime history retention', error);
     });
   });

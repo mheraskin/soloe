@@ -23,6 +23,7 @@
     SessionLaunchKind,
     SessionStatus
   } from '@shared/types/sessions.js';
+  import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
   import { connections } from './stores/connections.svelte';
@@ -75,6 +76,7 @@
   import { attachMobileViewport } from './lib/mobile-viewport';
   import { changePageZoom } from './lib/page-zoom';
   import { scrollHorizontalWheel } from './lib/horizontal-wheel-scroll';
+  import { projectedCollapsedNavigation } from './lib/collapsed-navigation';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -300,6 +302,8 @@
     active: boolean;
     sessionCount: number;
     shortcutIndex: number | null;
+    selectedProjectionKey: string | null;
+    local: boolean;
   };
   type CollapsedWorktreeOption = {
     cwd: string;
@@ -309,8 +313,10 @@
     active: boolean;
     sessionCount: number;
     selectedSessionId: string | null;
+    selectedProjectionKey: string | null;
     firstSessionId: string | null;
     shortcutIndex: number | null;
+    local: boolean;
   };
   type CollapsedStatusTone = 'active' | 'done' | 'issue';
   type CollapsedStatusDot = {
@@ -334,7 +340,10 @@
       working: boolean;
       active: boolean;
       session: Session;
+      projection: MultiDeviceSessionView | null;
     }>;
+    workspaceKey: string | null;
+    defaultDeviceId: string | null;
   };
 
   function collapsedStatusDotClass(tone: CollapsedStatusTone): string {
@@ -440,7 +449,67 @@
   let collapsedNav = $derived.by<CollapsedNav | null>(() => {
     if (!sidebar.hidden) return null;
     const sel = sessions.selected;
-    if (!sel) return null;
+    if (!sel) {
+      const projected = projectedCollapsedNavigation(
+        deviceSessions.state,
+        deviceSessions.selectedSessionKey
+      );
+      if (!projected) return null;
+      const selectedLocation = projected.workspace?.locations.find((location) =>
+        location.deviceId === projected.selected.ref.deviceId
+      ) ?? projected.workspace?.locations[0] ?? null;
+      return {
+        projectId: null,
+        project: projected.project?.name ?? '',
+        worktree: projected.workspace?.branch ?? projected.workspace?.name ?? '',
+        cwd: selectedLocation?.path ?? projected.selected.session.cwd,
+        branch: projected.workspace?.branch ?? projected.selected.session.lastBranch ?? null,
+        workspaceKey: projected.workspace?.key ?? null,
+        defaultDeviceId: projected.selected.ref.deviceId,
+        projects: projected.projects.map(({ project, sessionCount }) => ({
+          id: project.key,
+          name: project.name,
+          path: project.repository?.kind === 'git'
+            ? project.repository.canonicalUrl
+            : project.workspaces.flatMap((workspace) => workspace.locations)[0]?.path ?? '',
+          active: project.key === projected.project?.key,
+          sessionCount,
+          shortcutIndex: null,
+          selectedProjectionKey: project.workspaces
+            .flatMap((workspace) => workspace.sessions)
+            .find((projection) => projection.available)?.key ?? null,
+          local: false
+        })),
+        worktrees: projected.workspaces.map(({ workspace, location, selectedSessionKey }) => ({
+          cwd: location?.path ?? '',
+          label: workspace.name,
+          ...(workspace.branch ? { branch: workspace.branch } : {}),
+          isMain: location?.isMain ?? false,
+          active: workspace.key === projected.workspace?.key,
+          sessionCount: workspace.sessions.length,
+          selectedSessionId: null,
+          selectedProjectionKey: selectedSessionKey,
+          firstSessionId: null,
+          shortcutIndex: null,
+          local: false
+        })),
+        sessions: projected.sessions.map((projection, index) => {
+          const status = projection.runtime?.status ?? 'stopped';
+          const tone = runtimeStatusTone(status);
+          return {
+            id: projection.key,
+            name: projection.session.name,
+            index: index < 9 ? index + 1 : null,
+            kind: displaySessionKind(projection.session, null),
+            statusDot: tone ? { tone, title: stateLabel(status) } : null,
+            working: status === 'starting',
+            active: projection.key === projected.selected.key,
+            session: projection.session,
+            projection
+          };
+        })
+      };
+    }
     const project = sel.projectId ? projects.get(sel.projectId) : null;
     const projectName = project?.name ?? null;
     const cwd = sel.cwd?.trim() ?? '';
@@ -473,7 +542,8 @@
         statusDot: presentation.statusDot,
         working: presentation.working,
         active: s.id === sel.id,
-        session: s
+        session: s,
+        projection: null
       };
     });
     const projectOptions = projects.recents.map((p, i) => ({
@@ -483,7 +553,9 @@
       active: p.id === sel.projectId,
       sessionCount: (sessions.byProject[p.id] ?? []).length,
       shortcutIndex:
-        settings.current.shortcuts.shiftNumberNavigation === 'project' && i < 9 ? i + 1 : null
+        settings.current.shortcuts.shiftNumberNavigation === 'project' && i < 9 ? i + 1 : null,
+      selectedProjectionKey: null,
+      local: true
     }));
     const worktreeOptions: CollapsedWorktreeOption[] = [];
     if (project) {
@@ -510,12 +582,14 @@
           selectedSessionId:
             sessions.lastSelectedIdForWorktree({ projectId: project.id, cwd: group.cwd })
             ?? firstId,
+          selectedProjectionKey: null,
           firstSessionId: firstId,
           shortcutIndex:
             settings.current.shortcuts.shiftNumberNavigation === 'worktree'
               && worktreeOptions.length < 9
               ? worktreeOptions.length + 1
-              : null
+              : null,
+          local: true
         });
       }
     }
@@ -528,7 +602,9 @@
       branch,
       projects: projectOptions,
       worktrees: worktreeOptions,
-      sessions: sessionList
+      sessions: sessionList,
+      workspaceKey: null,
+      defaultDeviceId: null
     };
   });
 
@@ -684,6 +760,11 @@
   }
 
   function selectCollapsedProject(projectId: ProjectId): void {
+    const projected = collapsedNav?.projects.find((project) => project.id === projectId);
+    if (projected?.selectedProjectionKey) {
+      void deviceSessions.openSession(projected.selectedProjectionKey).catch(reportError);
+      return;
+    }
     const project = projects.get(projectId);
     if (!project) return;
     const before = sessions.selectedId;
@@ -693,6 +774,10 @@
   }
 
   function selectCollapsedWorktree(option: CollapsedWorktreeOption): void {
+    if (option.selectedProjectionKey) {
+      void deviceSessions.openSession(option.selectedProjectionKey).catch(reportError);
+      return;
+    }
     if (option.selectedSessionId) {
       sessions.select(option.selectedSessionId);
       return;
@@ -757,7 +842,20 @@
 
   function selectCollapsedSession(id: string): void {
     rightRail.fullscreen = false;
+    const item = collapsedNav?.sessions.find((session) => session.id === id);
+    if (item?.projection) {
+      void deviceSessions.openSession(item.projection.key).catch(reportError);
+      return;
+    }
     sessions.select(id);
+  }
+
+  function projectedSessionLifecycle(projection: MultiDeviceSessionView) {
+    return {
+      start: () => deviceSessions.openSession(projection.key),
+      stop: () => deviceSessions.stopSession(projection.key),
+      restart: () => deviceSessions.restartSession(projection.key)
+    };
   }
 
   function closeMenusFromTitleBar(node: HTMLElement): { destroy(): void } {
@@ -797,6 +895,7 @@
     targetId: string;
     position: DropPosition;
   }): void {
+    if (collapsedNav?.projects.some((project) => !project.local)) return;
     const ids = collapsedNav?.projects.map((p) => p.id) ?? [];
     if (!ids.includes(args.draggedId) || !ids.includes(args.targetId)) return;
     const without = ids.filter((id) => id !== args.draggedId);
@@ -809,7 +908,7 @@
   }
 
   function onCollapsedProjectDragStart(e: DragEvent, project: CollapsedProjectOption): void {
-    if (!e.dataTransfer) return;
+    if (!project.local || !e.dataTransfer) return;
     suppressCollapsedDropdownSelect = true;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData(DND_MIME.project, project.id);
@@ -885,7 +984,7 @@
 
   function onCollapsedWorktreeDragStart(e: DragEvent, worktree: CollapsedWorktreeOption): void {
     const current = collapsedNav;
-    if (!current?.projectId || !e.dataTransfer) return;
+    if (!worktree.local || !current?.projectId || !e.dataTransfer) return;
     suppressCollapsedDropdownSelect = true;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData(DND_MIME.worktree, worktree.cwd);
@@ -957,8 +1056,8 @@
     targetId: string;
     position: DropPosition;
   }): void {
-    const list = collapsedNav?.sessions.map((s) => s.session) ?? [];
-    const ids = list.map((s) => s.id);
+    const items = collapsedNav?.sessions ?? [];
+    const ids = items.map((item) => item.id);
     if (!ids.includes(args.draggedId) || !ids.includes(args.targetId)) return;
     const without = ids.filter((id) => id !== args.draggedId);
     let insertAt = without.indexOf(args.targetId);
@@ -970,6 +1069,17 @@
       ...without.slice(insertAt)
     ];
     if (sameOrder(ids, newSubset)) return;
+    if (items.some((item) => item.projection)) {
+      const byKey = new Map(items.flatMap((item) =>
+        item.projection ? [[item.id, item.projection] as const] : []
+      ));
+      const ordered = newSubset.flatMap((id) => {
+        const projection = byKey.get(id);
+        return projection ? [projection] : [];
+      });
+      void deviceSessions.reorder(ordered).catch(reportError);
+      return;
+    }
     const subsetSet = new Set(ids);
     const queue = [...newSubset];
     const allIds = sessions.sessions.map((s) => {
@@ -979,48 +1089,58 @@
     void sessions.reorder(allIds).catch(reportError);
   }
 
-  function onCollapsedSessionDragStart(e: DragEvent, session: Session): void {
+  function onCollapsedSessionDragStart(
+    e: DragEvent,
+    item: CollapsedNav['sessions'][number]
+  ): void {
     if (!e.dataTransfer) return;
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData(DND_MIME.session, session.id);
+    e.dataTransfer.setData(DND_MIME.session, item.id);
     dnd.begin({
       kind: 'session',
-      id: session.id,
-      projectId: session.projectId ?? null,
-      worktreeCwd: session.cwd
+      id: item.id,
+      projectId: item.session.projectId ?? null,
+      worktreeCwd: item.session.cwd
     });
     sessionContextMenus.closeAll();
   }
 
-  function onCollapsedSessionDragOver(e: DragEvent, session: Session, el: HTMLElement): void {
+  function onCollapsedSessionDragOver(
+    e: DragEvent,
+    item: CollapsedNav['sessions'][number],
+    el: HTMLElement
+  ): void {
     if (dnd.drag?.kind !== 'session') return;
     const current = collapsedNav;
     if (!current) return;
-    if (dnd.drag.id === session.id) return;
-    if ((dnd.drag.projectId ?? null) !== (session.projectId ?? null)) return;
-    if (!sameWorktreePath(dnd.drag.worktreeCwd ?? '', session.cwd, session.runMode)) return;
-    if (!sameWorktreePath(session.cwd, current.cwd, session.runMode)) return;
+    if (dnd.drag.id === item.id) return;
+    const projectedList = current.sessions.some((candidate) => candidate.projection);
+    if (!projectedList) {
+      if ((dnd.drag.projectId ?? null) !== (item.session.projectId ?? null)) return;
+      if (!sameWorktreePath(dnd.drag.worktreeCwd ?? '', item.session.cwd, item.session.runMode)) return;
+      if (!sameWorktreePath(item.session.cwd, current.cwd, item.session.runMode)) return;
+    }
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     const position = horizontalDropPositionFromEvent(e, el);
     if (
       dnd.target?.kind !== 'session'
-      || dnd.target.id !== session.id
+      || dnd.target.id !== item.id
       || dnd.target.position !== position
     ) {
-      dnd.setTarget({ kind: 'session', id: session.id, position });
+      dnd.setTarget({ kind: 'session', id: item.id, position });
     }
   }
 
-  function onCollapsedSessionDrop(e: DragEvent, session: Session): void {
+  function onCollapsedSessionDrop(e: DragEvent, item: CollapsedNav['sessions'][number]): void {
     if (dnd.drag?.kind !== 'session') return;
     const draggedId = dnd.drag.id;
-    if (draggedId === session.id) return;
+    if (draggedId === item.id) return;
     e.preventDefault();
-    const position = dnd.target?.kind === 'session' && dnd.target.id === session.id
+    const position = dnd.target?.kind === 'session' && dnd.target.id === item.id
       ? dnd.target.position
       : 'after';
-    reorderCollapsedSession({ draggedId, targetId: session.id, position });
+    reorderCollapsedSession({ draggedId, targetId: item.id, position });
     dnd.end();
   }
 
@@ -1336,7 +1456,7 @@
                   class={`relative ${project.active ? 'bg-accent text-accent-foreground' : ''} ${
                     isDraggingCollapsedProject(project.id) ? 'opacity-40' : ''
                   }`}
-                  draggable="true"
+                  draggable={project.local ? 'true' : undefined}
                   onSelect={(e) => onCollapsedProjectSelect(e, project.id)}
                   ondragstart={(e) => onCollapsedProjectDragStart(e, project)}
                   ondragover={(e) =>
@@ -1422,7 +1542,7 @@
                   class={`relative ${worktree.active ? 'bg-accent text-accent-foreground' : ''} ${
                     isDraggingCollapsedWorktree(worktree.cwd) ? 'opacity-40' : ''
                   }`}
-                  draggable="true"
+                  draggable={worktree.local ? 'true' : undefined}
                   onSelect={(e) => onCollapsedWorktreeSelect(e, worktree)}
                   ondragstart={(e) => onCollapsedWorktreeDragStart(e, worktree)}
                   ondragover={(e) =>
@@ -1472,6 +1592,8 @@
             projectId={collapsedNav.projectId}
             cwd={collapsedNav.cwd}
             branch={collapsedNav.branch ?? undefined}
+            workspaceKey={collapsedNav.workspaceKey ?? undefined}
+            defaultDeviceId={collapsedNav.defaultDeviceId}
             side="bottom"
             align="start"
             class="h-5 w-5 rounded-sm text-muted-foreground hover:text-foreground"
@@ -1489,7 +1611,11 @@
             onwheel={(event) => scrollHorizontalWheel(event.currentTarget, event)}
           >
             {#each collapsedNav.sessions as s (s.id)}
-              <SessionContextMenu session={s.session}>
+              <SessionContextMenu
+                session={s.session}
+                statusOverride={s.projection ? s.projection.runtime?.status ?? 'stopped' : null}
+                lifecycle={s.projection ? projectedSessionLifecycle(s.projection) : null}
+              >
                 {#snippet trigger({ props })}
                   <button
                     {...props}
@@ -1511,11 +1637,13 @@
                     draggable="true"
                     onclick={() => selectCollapsedSession(s.id)}
                     onpointerdown={onCollapsedSessionPointerDown}
-                    onauxclick={(e) => onCollapsedSessionAuxClick(e, s.session)}
-                    ondragstart={(e) => onCollapsedSessionDragStart(e, s.session)}
+                    onauxclick={(e) => {
+                      if (!s.projection) onCollapsedSessionAuxClick(e, s.session);
+                    }}
+                    ondragstart={(e) => onCollapsedSessionDragStart(e, s)}
                     ondragover={(e) =>
-                      onCollapsedSessionDragOver(e, s.session, e.currentTarget as HTMLElement)}
-                    ondrop={(e) => onCollapsedSessionDrop(e, s.session)}
+                      onCollapsedSessionDragOver(e, s, e.currentTarget as HTMLElement)}
+                    ondrop={(e) => onCollapsedSessionDrop(e, s)}
                     ondragend={onCollapsedSessionDragEnd}
                   >
                     {#if collapsedSessionDropPosition(s.id) === 'before'}

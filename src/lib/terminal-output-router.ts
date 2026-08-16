@@ -15,7 +15,7 @@ type ReconnectSource = (listener: () => void) => () => void;
 
 const TRUNCATED_REPLAY_PREFIX =
   '\r\n\x1b[33m[Earlier terminal output omitted to bound memory]\r\n'
-  + '[Enable “Keep complete output history” in Settings > Terminal for future output.]\x1b[0m\r\n';
+  + '[Output omitted before complete history was enabled cannot be restored.]\x1b[0m\r\n';
 
 interface PendingBatch {
   data: string;

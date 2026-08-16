@@ -391,6 +391,28 @@ describe('MultiDeviceSessions', () => {
     expect(laptop.readInventoryCalls).toBe(1);
   });
 
+  it('does not publish or revise identical periodic inventory refreshes', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe',
+      branch: 'main',
+      sessions: []
+    });
+    const sessions = new MultiDeviceSessions({ devices: [laptop] });
+    const published: number[] = [];
+    sessions.onState((state) => published.push(state.revision));
+
+    const first = await sessions.refresh();
+    const unchanged = await sessions.refresh();
+
+    expect(unchanged).toEqual(first);
+    expect(published).toEqual([first.revision]);
+    expect(laptop.readInventoryCalls).toBe(2);
+  });
+
   it('propagates one merged Session order to every owning Device', async () => {
     const mac = fakeDevice({
       deviceId: MAC_ID,

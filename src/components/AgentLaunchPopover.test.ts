@@ -12,7 +12,10 @@ const sessionMocks = vi.hoisted(() => ({
 }));
 
 const deviceSessionMocks = vi.hoisted(() => ({
-  reorder: vi.fn(async () => undefined)
+  reorder: vi.fn(async () => undefined),
+  openSession: vi.fn(async () => undefined),
+  stopSession: vi.fn(async () => undefined),
+  restartSession: vi.fn(async () => undefined)
 }));
 
 vi.mock('../stores/sessions.svelte', () => ({
@@ -281,5 +284,36 @@ describe('AgentLaunchPopover touch gestures', () => {
       secondProjection,
       projection
     ]);
+  });
+
+  it('keeps lifecycle actions in the existing context menu for a remote Session row', () => {
+    const remoteSession = {
+      id: 'remote-session',
+      name: 'Remote agent',
+      cwd: '/repo-mobile',
+      runMode: 'linux',
+      launch: { type: 'terminal', shell: 'auto' },
+      createdAt: '2026-08-14T20:00:00.000Z',
+      lastUsedAt: '2026-08-14T20:00:00.000Z'
+    } as const;
+    const projection = {
+      ref: { deviceId: 'remote-device', sessionId: remoteSession.id },
+      key: 'remote-device/remote-session',
+      deviceName: 'Remote Linux',
+      available: true,
+      session: remoteSession,
+      runtime: null
+    };
+    const target = mountComponent(WorktreeGroup, {
+      title: 'feature/mobile',
+      cwd: '/repo-mobile',
+      projectId: null,
+      items: [remoteSession],
+      projections: [projection],
+      allowLocalActions: false
+    });
+    const row = target.querySelector<HTMLElement>(`[data-session-id="${projection.key}"]`);
+
+    expect(row?.outerHTML).toContain('data-context-menu-trigger');
   });
 });

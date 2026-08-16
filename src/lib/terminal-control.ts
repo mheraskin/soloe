@@ -19,6 +19,15 @@ export interface TerminalControlBackend {
   onLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
 }
 
+export function resolveTerminalControllerIdentity(
+  localDevice: { deviceId: string; name: string } | null | undefined,
+  fallback: TerminalControllerIdentity
+): TerminalControllerIdentity {
+  return localDevice
+    ? { deviceId: localDevice.deviceId, deviceName: localDevice.name }
+    : { ...fallback };
+}
+
 export class TerminalControlCoordinator {
   private readonly leases = new Map<string, TerminalInputLease | null>();
   private readonly owned = new Map<string, TerminalInputLease>();
@@ -31,7 +40,9 @@ export class TerminalControlCoordinator {
 
   constructor(
     private readonly backend: TerminalControlBackend,
-    private readonly identity: TerminalControllerIdentity
+    private readonly identitySource:
+      | TerminalControllerIdentity
+      | (() => TerminalControllerIdentity)
   ) {
     this.detachLease = backend.onLease((event) => this.apply(event));
   }
@@ -101,8 +112,7 @@ export class TerminalControlCoordinator {
   async refresh(terminalId: string): Promise<TerminalInputLease | null> {
     const lease = await this.backend.current(terminalId);
     this.leases.set(terminalId, lease);
-    const owned = this.owned.get(terminalId);
-    if (owned && !sameControl(owned, lease)) this.owned.delete(terminalId);
+    this.reconcileOwnedLease(terminalId, lease);
     this.notify();
     return lease;
   }
@@ -149,7 +159,7 @@ export class TerminalControlCoordinator {
     selectionEpoch: number
   ): Promise<boolean> {
     try {
-      const lease = await this.backend.acquire(terminalId, this.identity, takeover);
+      const lease = await this.backend.acquire(terminalId, this.identity(), takeover);
       const observed = this.leases.get(terminalId);
       if (observed && observed.generation > lease.generation) return false;
       if (!takeover && (
@@ -180,16 +190,27 @@ export class TerminalControlCoordinator {
     const incomingGeneration = event.lease?.generation ?? event.generation ?? 0;
     if (current && current.generation > incomingGeneration) return;
     this.leases.set(event.terminalId, event.lease ? structuredClone(event.lease) : null);
-    const owned = this.owned.get(event.terminalId);
-    if (
-      owned
-      && (
-        !sameControl(owned, event.lease)
-      )
-    ) {
-      this.owned.delete(event.terminalId);
-    }
+    this.reconcileOwnedLease(event.terminalId, event.lease);
     this.notify();
+  }
+
+  private reconcileOwnedLease(
+    terminalId: string,
+    lease: TerminalInputLease | null | undefined
+  ): void {
+    if (lease?.controllerDeviceId === this.identity().deviceId) {
+      this.owned.set(terminalId, structuredClone(lease));
+      return;
+    }
+    const owned = this.owned.get(terminalId);
+    if (owned && !sameControl(owned, lease)) this.owned.delete(terminalId);
+  }
+
+  private identity(): TerminalControllerIdentity {
+    const identity = typeof this.identitySource === 'function'
+      ? this.identitySource()
+      : this.identitySource;
+    return { ...identity };
   }
 
   private notify(): void {
