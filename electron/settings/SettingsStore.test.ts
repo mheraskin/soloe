@@ -53,6 +53,7 @@ describe('SettingsStore — defaults', () => {
     expect(s.defaults.runMode).toBe('linux');
     expect(s.defaults.wslDistro).toBeUndefined();
     expect(s.backend.placement).toBe('linux');
+    expect(s.startup.launchSoloeClient).toBe(false);
     await expect(store.update({ defaults: { runMode: 'wsl' } })).rejects.toThrow(
       /not available on linux/
     );
@@ -66,6 +67,7 @@ describe('SettingsStore — defaults', () => {
     expect(defaults.defaults.runMode).toBe('macos');
     expect(defaults.defaults.wslDistro).toBeUndefined();
     expect(defaults.backend.placement).toBe('macos');
+    expect(defaults.startup.launchSoloeClient).toBe(false);
 
     await store.update({ defaults: { shell: 'zsh', runMode: 'macos' } });
     await expect(new SettingsStore(macPath, 'macos').get()).resolves.toMatchObject({
