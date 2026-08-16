@@ -109,6 +109,12 @@ api.sessions.executeDevicePreparation = (planId) =>
   ipcRenderer.invoke(IpcChannels.sessions.executeDevicePreparation, planId);
 api.sessions.startOnDevice = (ref: SessionRef) =>
   ipcRenderer.invoke(IpcChannels.sessions.startOnDevice, ref);
+api.sessions.updateOnDevice = (request) =>
+  ipcRenderer.invoke(IpcChannels.sessions.updateOnDevice, request);
+api.sessions.deleteOnDevice = (ref: SessionRef) =>
+  ipcRenderer.invoke(IpcChannels.sessions.deleteOnDevice, ref);
+api.sessions.previewCommandOnDevice = (ref: SessionRef) =>
+  ipcRenderer.invoke(IpcChannels.sessions.previewCommandOnDevice, ref);
 api.sessions.setDeviceTerminalDemand = (refs: TerminalRef[]) =>
   ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalDemand, refs);
 api.sessions.deviceTerminalInput = (request: {

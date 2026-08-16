@@ -160,4 +160,29 @@ describe('remote Electron preload', () => {
     expect(exposed.vault).toBe(remoteVault);
     expect(exposed.connections).not.toBe(unsupportedConnections);
   });
+
+  it('exposes owner-routed Session mutations through the remote Electron preload', async () => {
+    delete process.env.SOLOE_CLIENT_TAILSCALE_SESSION;
+    process.env.SOLOE_CLIENT_SERVER_URL = 'http://127.0.0.1:43891';
+    process.env.SOLOE_SERVER_TOKEN = 'remote-test-token';
+    mocks.createBrowserApi.mockReturnValue(Object.fromEntries(
+      Object.keys(SOLOE_API_METHODS).map((namespace) => [namespace, {}])
+    ) as unknown as SoloeApi);
+
+    await import('./preload-remote.js');
+
+    const exposed = mocks.exposeInMainWorld.mock.calls[0]?.[1] as SoloeApi;
+    const ref = { deviceId: 'device-alpha', sessionId: 'session-1' };
+    const patch = { name: 'Renamed remotely' };
+
+    await exposed.sessions.updateOnDevice?.({ ref, patch });
+    await exposed.sessions.deleteOnDevice?.(ref);
+    await exposed.sessions.previewCommandOnDevice?.(ref);
+
+    expect(mocks.invoke.mock.calls).toEqual([
+      [IpcChannels.sessions.updateOnDevice, { ref, patch }],
+      [IpcChannels.sessions.deleteOnDevice, ref],
+      [IpcChannels.sessions.previewCommandOnDevice, ref]
+    ]);
+  });
 });
