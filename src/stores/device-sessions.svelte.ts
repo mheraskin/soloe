@@ -11,7 +11,12 @@ import type {
   MultiDeviceSessionState,
   MultiDeviceSessionView
 } from '@shared/types/multi-device-sessions.js';
-import type { SessionRuntimeState, SessionUpdate } from '@shared/types/sessions.js';
+import type {
+  AgentRuntimeProvider,
+  SessionLaunch,
+  SessionRuntimeState,
+  SessionUpdate
+} from '@shared/types/sessions.js';
 import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
@@ -25,6 +30,7 @@ import type {
 } from '@shared/types/terminal.js';
 import { terminalControlProof } from '@shared/types/terminal.js';
 import { ipc } from '../lib/ipc';
+import { sendBracketedPasteWithInput } from '../lib/terminal-paste';
 import { sessions as localSessions } from './sessions.svelte';
 
 export type DeviceSessionPendingOperation =
@@ -346,11 +352,66 @@ export class DeviceSessionsStore {
     ));
   }
 
-  async create(request: CreateMultiDeviceSessionRequest): Promise<MultiDeviceSessionView> {
+  async create(
+    request: CreateMultiDeviceSessionRequest,
+    select = true
+  ): Promise<MultiDeviceSessionView> {
     const created = await ipc.sessions.createOnDevice(structuredClone(request));
     if (!this.sessions.some((projection) => projection.key === created.key)) await this.refresh();
-    this.selectSession(created.key);
+    if (select) this.selectSession(created.key);
     return created;
+  }
+
+  workspaceKeyForSession(key: string): string | null {
+    for (const project of this.state.projects) {
+      for (const workspace of project.workspaces) {
+        if (workspace.sessions.some((projection) => projection.key === key)) return workspace.key;
+      }
+    }
+    return null;
+  }
+
+  async createBeside(
+    originKey: string,
+    input: {
+      name: string;
+      launch: SessionLaunch;
+      continuationPrompt?: string;
+      continuationProvider?: AgentRuntimeProvider;
+    }
+  ): Promise<MultiDeviceSessionView> {
+    const origin = this.sessions.find((projection) => projection.key === originKey);
+    if (!origin) throw new Error(`Session not found: ${originKey}`);
+    const workspaceKey = this.workspaceKeyForSession(originKey);
+    const created = await this.create({
+      workspaceKey,
+      targetDeviceId: origin.ref.deviceId,
+      ...(workspaceKey === null ? { targetPath: origin.session.cwd } : {}),
+      session: { name: input.name, launch: structuredClone(input.launch) }
+    }, false);
+
+    try {
+      if (input.continuationPrompt) {
+        const terminalId = created.runtime?.terminalId;
+        if (!terminalId) throw new Error(`Terminal did not start for ${created.session.name}`);
+        const terminalRef = { deviceId: created.ref.deviceId, terminalId };
+        const claimed = await this.claimTerminalInputControl(terminalRef);
+        if (!claimed) throw new Error('Could not acquire control of the new Session terminal.');
+        try {
+          await sendBracketedPasteWithInput(
+            (data) => this.terminalInput(terminalRef, data),
+            input.continuationPrompt,
+            true,
+            input.continuationProvider
+          );
+        } finally {
+          await this.releaseTerminalInputControl(terminalRef).catch(() => undefined);
+        }
+      }
+      return created;
+    } finally {
+      this.selectSession(created.key);
+    }
   }
 
   planCreate(

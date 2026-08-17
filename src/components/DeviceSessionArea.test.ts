@@ -35,6 +35,11 @@ describe('DeviceSessionArea', () => {
 
     expect(body).toContain('Session exited.');
     expect(body).toContain('Resume');
+    expect(body).toContain('New session');
+    expect(body).toContain('Continue in another agent');
+    expect(body).toContain('Claude');
+    expect(body).toContain('Codex');
+    expect(body).toContain('Cursor');
     expect(body).not.toContain('no running terminal to attach');
   });
 

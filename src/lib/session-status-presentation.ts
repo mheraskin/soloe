@@ -33,7 +33,11 @@ export interface SessionStatusPresentation {
 export function sessionStatusPresentation(
   input: SessionStatusPresentationInput
 ): SessionStatusPresentation {
-  if (!input.hasRuntime && (input.status === 'exited' || input.status === 'error')) {
+  if (
+    input.status === 'exited'
+    || input.status === 'stopped'
+    || input.status === 'error'
+  ) {
     const tone = runtimeStatusTone(input.status)!;
     return {
       agentState: null,
@@ -54,24 +58,24 @@ export function sessionStatusPresentation(
     input.observedSummary
   );
 
-  if (input.observed?.state === 'completed' || input.observed?.state === 'exited') {
+  if (agentState === 'completed' || agentState === 'exited') {
     return {
       agentState,
       agentSummary,
       statusDot: {
         tone: 'done',
-        title: statusTitle(stateLabel(input.observed.state), input.observedSummary)
+        title: statusTitle(stateLabel(agentState), agentSummary)
       },
       working: false
     };
   }
-  if (input.observed?.state === 'failed' || input.observed?.state === 'waiting_for_approval') {
+  if (agentState === 'failed' || agentState === 'waiting_for_approval') {
     return {
       agentState,
       agentSummary,
       statusDot: {
         tone: 'issue',
-        title: statusTitle(stateLabel(input.observed.state), input.observedSummary)
+        title: statusTitle(stateLabel(agentState), agentSummary)
       },
       working: false
     };
@@ -120,7 +124,7 @@ function agentStateTone(state: AgentObservedState): SessionStatusTone {
 
 function runtimeStatusTone(status: SessionStatus): SessionStatusTone | null {
   if (status === 'running' || status === 'starting') return 'active';
-  if (status === 'exited') return 'done';
+  if (status === 'exited' || status === 'stopped') return 'done';
   if (status === 'error') return 'issue';
   return null;
 }

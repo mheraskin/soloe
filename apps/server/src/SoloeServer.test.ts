@@ -1337,9 +1337,11 @@ describe('Soloe Server lifecycle', () => {
         }
       );
       expect(promptHookResponse.status).toBe(200);
-      expect(maybeRename).toHaveBeenCalledWith({
-        sessionId: session.id,
-        firstPrompt: 'repair automatic tab naming'
+      await vi.waitFor(() => {
+        expect(maybeRename).toHaveBeenCalledWith({
+          sessionId: session.id,
+          firstPrompt: 'repair automatic tab naming'
+        });
       });
       await expect(rpc(baseUrl, 'sessions', 'get', [session.id])).resolves.toEqual(
         expect.objectContaining({

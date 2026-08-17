@@ -33,15 +33,21 @@
     status,
     observation,
     onResume,
+    onOpenNew,
+    onContinueWith,
+    onLaunchPreset,
     pendingAction = null,
-    showLocalOnlyActions = true
+    useLocalActionFallbacks = true
   }: {
     session: Session | null;
     status: SessionStatus;
     observation?: ObservedAgentSnapshot | null;
     onResume?: () => Promise<void>;
+    onOpenNew?: () => Promise<void>;
+    onContinueWith?: (provider: AgentRuntimeProvider) => Promise<void>;
+    onLaunchPreset?: (preset: QuickLaunchPreset) => Promise<void>;
     pendingAction?: 'starting' | 'stopping' | 'restarting' | 'updating' | 'deleting' | null;
-    showLocalOnlyActions?: boolean;
+    useLocalActionFallbacks?: boolean;
   } = $props();
 
   let busy = $state(false);
@@ -54,7 +60,7 @@
   );
   let displayKind = $derived(session ? displaySessionKind(session, observed) : 'terminal');
   let canContinueAcrossAgents = $derived(
-    showLocalOnlyActions
+    (useLocalActionFallbacks || onContinueWith !== undefined)
       && session !== null
       && (displayKind === 'claude_code' || displayKind === 'codex' || displayKind === 'cursor')
   );
@@ -129,6 +135,10 @@
     if (!session || busy) return;
     busy = true;
     try {
+      if (onOpenNew) {
+        await onOpenNew();
+        return;
+      }
       const opts = {
         ...(session.projectId ? { projectId: session.projectId } : {}),
         cwd: session.cwd,
@@ -150,6 +160,10 @@
     if (!session || busyProvider) return;
     busyProvider = provider;
     try {
+      if (onContinueWith) {
+        await onContinueWith(provider);
+        return;
+      }
       const created = await sessions.continueWithAgent(session.id, provider);
       sessions.select(created.id);
     } catch (err) {
@@ -163,6 +177,10 @@
     if (!session || busyPresetId) return;
     busyPresetId = preset.id;
     try {
+      if (onLaunchPreset) {
+        await onLaunchPreset(preset);
+        return;
+      }
       const args = quickLaunchExtraArgs(preset);
       const created = await sessions.createAgentWithDefaults(preset.provider, {
         ...(session.projectId ? { projectId: session.projectId } : {}),
@@ -296,7 +314,7 @@
         <Button size="sm" onclick={resume} disabled={busy}>
           <Play /> <span>Resume</span>
         </Button>
-        {#if showLocalOnlyActions}
+        {#if useLocalActionFallbacks || onOpenNew}
           <Button size="sm" variant="outline" onclick={openNew} disabled={busy}>
             <Plus /> <span>New session</span>
           </Button>
@@ -355,10 +373,24 @@
               {/if}
               <span>Codex</span>
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              class="gap-2"
+              onclick={() => void continueWith('cursor')}
+              disabled={busyProvider !== null}
+            >
+              {#if busyProvider === 'cursor'}
+                <Loader2 class="size-3.5 animate-spin" />
+              {:else}
+                <KindIcon kind="cursor" size={14} />
+              {/if}
+              <span>Cursor</span>
+            </Button>
           </div>
         </div>
       {/if}
-      {#if showLocalOnlyActions && quickLaunchPresets.length > 0}
+      {#if (useLocalActionFallbacks || onLaunchPreset) && quickLaunchPresets.length > 0}
         <div class="mt-2 flex flex-col items-center gap-1.5">
           <span class="text-[11px] leading-4 text-muted-foreground">Quick launch</span>
           <div class="flex flex-wrap items-center justify-center gap-2">

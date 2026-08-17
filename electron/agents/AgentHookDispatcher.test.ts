@@ -279,6 +279,10 @@ describe('AgentHookDispatcher', () => {
       });
 
       expect(observer.getSnapshot('sess-2')?.state).toBe('waiting_for_approval');
+      expect(observer.getSnapshot('sess-2')?.interactive?.attention).toMatchObject({
+        kind: 'approval',
+        summary: 'approval: docker compose up'
+      });
       expect(observer.listEvents('sess-2').map((e) => e.summary)).toContain(
         'approval: docker compose up'
       );
@@ -443,6 +447,10 @@ describe('AgentHookDispatcher', () => {
       });
 
       expect(observer.getSnapshot('sess-2')?.state).toBe('waiting_for_approval');
+      expect(observer.getSnapshot('sess-2')?.interactive?.attention).toMatchObject({
+        kind: 'approval',
+        summary: 'approval: docker ps'
+      });
       expect(observer.listEvents('sess-2').map((e) => e.summary)).toContain(
         'approval: docker ps'
       );
@@ -476,6 +484,95 @@ describe('AgentHookDispatcher', () => {
       expect(observer.getSnapshot('sess-2')?.usageLimit?.resetAtLabel).toBe(
         'Apr 13th, 2026 12:46 AM'
       );
+    });
+  });
+
+  describe('cursor interactive hook events → observed state', () => {
+    it.each([
+      ['sessionStart', 'starting'],
+      ['beforeSubmitPrompt', 'working'],
+      ['preToolUse', 'running_tool'],
+      ['postToolUse', 'working'],
+      ['beforeShellExecution', 'running_tool'],
+      ['afterShellExecution', 'working'],
+      ['beforeMCPExecution', 'running_tool'],
+      ['afterMCPExecution', 'working'],
+      ['beforeReadFile', 'running_tool'],
+      ['afterFileEdit', 'working'],
+      ['preCompact', 'working'],
+      ['stop', 'completed'],
+      ['sessionEnd', 'exited']
+    ] as const)('%s → %s', async (hookEvent, expectedState) => {
+      await dispatcher.dispatch({
+        provider: 'cursor',
+        soloeSessionId: 'sess-cursor',
+        payload: { hook_event_name: hookEvent, status: 'completed' }
+      });
+
+      expect(observer.getSnapshot('sess-cursor')?.state).toBe(expectedState);
+      expect(observer.getSnapshot('sess-cursor')?.interactive?.observation).toBe('exact');
+    });
+
+    it('projects an aborted stop as idle and an error stop as failed', async () => {
+      await dispatcher.dispatch({
+        provider: 'cursor',
+        soloeSessionId: 'sess-cursor',
+        payload: { hook_event_name: 'stop', status: 'aborted' }
+      });
+      expect(observer.getSnapshot('sess-cursor')?.state).toBe('idle');
+
+      await dispatcher.dispatch({
+        provider: 'cursor',
+        soloeSessionId: 'sess-cursor',
+        payload: { hook_event_name: 'stop', status: 'error' }
+      });
+      expect(observer.getSnapshot('sess-cursor')?.state).toBe('failed');
+    });
+
+    it('projects an interrupted tool failure as an interrupted idle turn', async () => {
+      await dispatcher.dispatch({
+        provider: 'cursor',
+        soloeSessionId: 'sess-cursor',
+        payload: {
+          hook_event_name: 'postToolUseFailure',
+          is_interrupt: true
+        }
+      });
+
+      expect(observer.getSnapshot('sess-cursor')).toMatchObject({
+        state: 'idle',
+        interactive: {
+          lifecycle: 'running',
+          turn: 'idle',
+          attention: { kind: 'none' }
+        }
+      });
+    });
+
+    it('preserves approval attention while later activity hooks arrive', async () => {
+      observer.setTuiObservedState(
+        'sess-cursor',
+        'waiting_for_approval',
+        'waiting for approval'
+      );
+
+      await dispatcher.dispatch({
+        provider: 'cursor',
+        soloeSessionId: 'sess-cursor',
+        payload: {
+          hook_event_name: 'preToolUse',
+          tool_name: 'Shell',
+          tool_use_id: 'tool-1'
+        }
+      });
+
+      expect(observer.getSnapshot('sess-cursor')?.state).toBe('waiting_for_approval');
+      expect(observer.getSnapshot('sess-cursor')?.interactive).toMatchObject({
+        lifecycle: 'running',
+        turn: 'running_tool',
+        attention: { kind: 'approval' },
+        observation: 'degraded'
+      });
     });
   });
 

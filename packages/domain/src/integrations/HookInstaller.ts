@@ -70,21 +70,55 @@ const CLAUDE_EVENTS = [
   'PreToolUse',
   'PermissionRequest',
   'PostToolUse',
+  'PostToolUseFailure',
+  'PostToolBatch',
   'Notification',
   'Stop',
   'StopFailure',
   'SessionEnd',
   'PreCompact',
-  'SubagentStop'
+  'PostCompact',
+  'SubagentStart',
+  'SubagentStop',
+  'TaskCreated',
+  'TaskCompleted',
+  'Elicitation',
+  'ElicitationResult'
 ];
 
 const CODEX_EVENTS = [
   'SessionStart',
+  'SessionEnd',
   'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
   'PermissionRequest',
+  'PreCompact',
+  'PostCompact',
+  'SubagentStart',
+  'SubagentStop',
   'Stop'
+];
+
+const CURSOR_EVENTS = [
+  'sessionStart',
+  'sessionEnd',
+  'beforeSubmitPrompt',
+  'stop',
+  'preToolUse',
+  'postToolUse',
+  'postToolUseFailure',
+  'subagentStart',
+  'subagentStop',
+  'beforeShellExecution',
+  'afterShellExecution',
+  'beforeMCPExecution',
+  'afterMCPExecution',
+  'beforeReadFile',
+  'afterFileEdit',
+  'preCompact',
+  'afterAgentResponse',
+  'afterAgentThought'
 ];
 
 // Codex's persisted-hook-state keys use lowercase snake_case event labels (see
@@ -96,25 +130,30 @@ const CODEX_EVENT_LABEL: Record<string, string> = {
   PostToolUse: 'post_tool_use',
   PreCompact: 'pre_compact',
   PostCompact: 'post_compact',
+  SubagentStart: 'subagent_start',
+  SubagentStop: 'subagent_stop',
   SessionStart: 'session_start',
+  SessionEnd: 'session_end',
   UserPromptSubmit: 'user_prompt_submit',
   Stop: 'stop'
 };
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-// Bumping forces a one-time reinstall on next boot. v14 migrates the Claude
-// MCP entry from ~/.claude/settings.json (where it never actually loaded —
-// Claude Code reads MCP servers from ~/.claude.json) to ~/.claude.json, and
-// scrubs the stale settings.json entry as a side effect.
-export const SOLOE_HOOK_VERSION = 14;
+// Bumping forces a one-time reinstall on next boot. v15 adds the full current
+// interactive hook matrices, including Cursor's ~/.cursor/hooks.json, while
+// retaining v14's Claude MCP-location migration.
+export const SOLOE_HOOK_VERSION = 15;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
+const HOOK_COMMAND_CURSOR = buildHookCommand('cursor');
 
-function buildHookCommand(provider: 'claude' | 'codex'): string {
-  const endpoint = provider === 'claude' ? '/hook/claude' : '/hook/codex';
+function buildHookCommand(provider: 'claude' | 'codex' | 'cursor'): string {
+  const endpoint = provider === 'claude'
+    ? '/hook/claude'
+    : provider === 'codex' ? '/hook/codex' : '/hook/cursor';
   // POSIX sh: bail if no bridge URL; if URL points at host.wsl.internal and that
   // doesn't resolve (NAT-mode WSL2), swap the host for the WSL→Windows gateway
   // IP (or /etc/resolv.conf nameserver as fallback); then POST the payload.
@@ -127,7 +166,9 @@ function buildHookCommand(provider: 'claude' | 'codex'): string {
     '[ -n "$h" ] && u=$(printf \'%s\' "$u" | sed "s|host\\.wsl\\.internal|$h|"); ' +
     '} ;; esac';
   const curl =
-    'curl -sS --max-time 1 -X POST ' +
+    // The bridge acknowledges accepted hooks before reducing them. Keep the
+    // unreachable-host ceiling below a perceptible interactive pause too.
+    'curl -sS --connect-timeout 0.05 --max-time 0.2 -X POST ' +
     '-H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN" ' +
     '-H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" ' +
     '-H "Content-Type: application/json" ' +
@@ -135,7 +176,8 @@ function buildHookCommand(provider: 'claude' | 'codex'): string {
   // When running outside Soloe (no bridge URL), drain stdin before exiting —
   // otherwise codex/claude pipes the hook payload into a closed stdin and
   // reports "failed to write hook stdin: Broken pipe (os error 32)".
-  return `[ -z "$SOLOE_BRIDGE_URL" ] && { cat >/dev/null 2>&1; exit 0; }; u="$SOLOE_BRIDGE_URL"; ${wslResolve}; ${curl}`;
+  const response = provider === 'cursor' ? "; printf '{}'" : '';
+  return `[ -z "$SOLOE_BRIDGE_URL" ] && { cat >/dev/null 2>&1; exit 0; }; u="$SOLOE_BRIDGE_URL"; ${wslResolve}; ${curl}${response}`;
 }
 
 export function defaultLocalHost(nodePlatform?: string): HookHost {
@@ -206,7 +248,7 @@ export class HookInstaller {
         const [claude, codex, cursor] = await Promise.all([
           this.claudeHostSoloeStatus(host),
           this.codexFileSoloeStatus(this.codexConfigPath(host)),
-          this.cursorFileSoloeStatus(this.cursorConfigPath(host))
+          this.cursorHostSoloeStatus(host)
         ]);
         return { host: publicHost(host), claude, codex, cursor };
       })
@@ -302,12 +344,21 @@ export class HookInstaller {
 
   private async installCursorNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
+    if (!this.bridge) throw new Error('bridge identity not configured');
     const filePath = this.cursorConfigPath(target);
     const original = await readJsonOrNull(filePath);
-    if (!this.bridge) throw new Error('bridge identity not configured');
     const url = await this.resolveMcpUrlForHost(target);
     const updated = mergeCursorMcp(original ?? {}, { url, token: this.bridge.token });
     await this.writeAtomic(filePath, JSON.stringify(updated, null, 2) + '\n', original !== null);
+
+    const hooksPath = this.cursorHooksPath(target);
+    const hooksOriginal = await readJsonOrNull(hooksPath);
+    const hooksUpdated = mergeCursorHooks(hooksOriginal ?? {}, HOOK_COMMAND_CURSOR);
+    await this.writeAtomic(
+      hooksPath,
+      JSON.stringify(hooksUpdated, null, 2) + '\n',
+      hooksOriginal !== null
+    );
   }
 
   async uninstallCursor(host: HookHostKey): Promise<void> {
@@ -315,8 +366,22 @@ export class HookInstaller {
       const target = this.requireHost(host);
       const filePath = this.cursorConfigPath(target);
       const original = await readJsonOrNull(filePath);
-      if (!original) return;
-      await this.writeAtomic(filePath, JSON.stringify(removeSoloeFromCursor(original), null, 2) + '\n', false);
+      if (original) {
+        await this.writeAtomic(
+          filePath,
+          JSON.stringify(removeSoloeFromCursor(original), null, 2) + '\n',
+          false
+        );
+      }
+      const hooksPath = this.cursorHooksPath(target);
+      const hooksOriginal = await readJsonOrNull(hooksPath);
+      if (hooksOriginal) {
+        await this.writeAtomic(
+          hooksPath,
+          JSON.stringify(removeSoloeFromCursorHooks(hooksOriginal), null, 2) + '\n',
+          false
+        );
+      }
     });
   }
 
@@ -396,8 +461,12 @@ export class HookInstaller {
     if (!this.bridge) return false;
     const filePath = this.cursorConfigPath(host);
     const original = await readJsonOrNull(filePath);
+    const hooks = await readJsonOrNull(this.cursorHooksPath(host));
     if (!original || !cursorSoloeStatus(original).installed) return false;
-    if ((cursorSoloeStatus(original).version ?? 0) < SOLOE_HOOK_VERSION) {
+    if (
+      (cursorSoloeStatus(original).version ?? 0) < SOLOE_HOOK_VERSION
+      || !cursorHooksCurrent(hooks)
+    ) {
       await this.installCursorNow(key);
       return true;
     }
@@ -481,6 +550,10 @@ export class HookInstaller {
     return path.join(host.homeDir, '.cursor', 'mcp.json');
   }
 
+  private cursorHooksPath(host: HookHost): string {
+    return path.join(host.homeDir, '.cursor', 'hooks.json');
+  }
+
   private async claudeHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
     const [settings, claudeJson] = await Promise.all([
       readJsonOrNull(this.claudeUserPath(host)),
@@ -498,6 +571,17 @@ export class HookInstaller {
   private async cursorFileSoloeStatus(filePath: string): Promise<AgentIntegrationTargetStatus> {
     const data = await readJsonOrNull(filePath);
     return data ? cursorSoloeStatus(data) : emptyStatus();
+  }
+
+  private async cursorHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
+    const mcp = await this.cursorFileSoloeStatus(this.cursorConfigPath(host));
+    const hooks = await readJsonOrNull(this.cursorHooksPath(host));
+    const hooksInstalled = cursorHooksInstalled(hooks);
+    return {
+      installed: mcp.installed || hooksInstalled,
+      current: mcp.current && cursorHooksCurrent(hooks),
+      ...(mcp.version === undefined ? {} : { version: mcp.version })
+    };
   }
 
   private async writeAtomic(filePath: string, content: string, backup: boolean): Promise<void> {
@@ -623,6 +707,66 @@ export function mergeCursorMcp(
   };
   next['mcpServers'] = servers;
   return next;
+}
+
+export function mergeCursorHooks(
+  original: Record<string, unknown>,
+  command: string
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original, version: 1 };
+  const hooksRoot = isObject(next['hooks']) ? { ...next['hooks'] } : {};
+  removeSoloeCursorHookEntries(hooksRoot);
+  for (const event of CURSOR_EVENTS) {
+    const entries = Array.isArray(hooksRoot[event]) ? [...(hooksRoot[event] as unknown[])] : [];
+    entries.push({ command });
+    hooksRoot[event] = entries;
+  }
+  next['hooks'] = hooksRoot;
+  return next;
+}
+
+export function removeSoloeFromCursorHooks(
+  original: Record<string, unknown>
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original };
+  if (!isObject(next['hooks'])) return next;
+  const hooksRoot = { ...next['hooks'] };
+  removeSoloeCursorHookEntries(hooksRoot);
+  if (Object.keys(hooksRoot).length > 0) next['hooks'] = hooksRoot;
+  else delete next['hooks'];
+  return next;
+}
+
+function removeSoloeCursorHookEntries(hooksRoot: Record<string, unknown>): void {
+  for (const event of Object.keys(hooksRoot)) {
+    const entries = hooksRoot[event];
+    if (!Array.isArray(entries)) continue;
+    const filtered = entries.filter((entry) => !isSoloeCursorHookEntry(entry));
+    if (filtered.length > 0) hooksRoot[event] = filtered;
+    else delete hooksRoot[event];
+  }
+}
+
+function isSoloeCursorHookEntry(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  const command = value['command'];
+  return typeof command === 'string' && command.includes('/hook/cursor');
+}
+
+function cursorHooksInstalled(data: Record<string, unknown> | null): boolean {
+  if (!data || !isObject(data['hooks'])) return false;
+  return Object.values(data['hooks']).some((entries) =>
+    Array.isArray(entries) && entries.some(isSoloeCursorHookEntry)
+  );
+}
+
+function cursorHooksCurrent(data: Record<string, unknown> | null): boolean {
+  if (!data || !isObject(data['hooks'])) return false;
+  const hooks = data['hooks'];
+  return CURSOR_EVENTS.every((event) => {
+    const entries = hooks[event];
+    return Array.isArray(entries) && entries.some(isSoloeCursorHookEntry);
+  });
 }
 
 export function removeSoloeFromCursor(original: Record<string, unknown>): Record<string, unknown> {

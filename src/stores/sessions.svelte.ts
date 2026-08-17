@@ -22,6 +22,7 @@ import { agentNotifications, rowSessionIdFor } from './agent-notifications.svelt
 import { AGENT_NOTIFICATION_ACTIVATE_EVENT } from '../lib/agent-system-notifications';
 import { rightRail } from './right-rail.svelte';
 import { sendBracketedPaste } from '../lib/terminal-paste';
+import { continuationPrompt } from '../lib/session-continuation';
 import { sameWorktreePath, worktreePathKey } from '../lib/worktree-path';
 
 const LAST_SELECTED_BY_PROJECT_KEY = 'soloe.lastSelectedByProject.v1';
@@ -807,7 +808,7 @@ export class SessionsStore {
     });
     const terminalId = await this.waitForTerminalId(created.id, 5000);
     if (!terminalId) throw new Error(`Terminal did not start for ${created.name}`);
-    await this.pasteContinuationPrompt(origin, terminalId);
+    await this.pasteContinuationPrompt(origin, terminalId, provider);
     return created;
   }
 
@@ -835,7 +836,7 @@ export class SessionsStore {
     }
 
     const terminalId = await this.ensureTerminalId(target.id);
-    await this.pasteContinuationPrompt(origin, terminalId);
+    await this.pasteContinuationPrompt(origin, terminalId, this.agentProviderFor(target));
     this.select(target.id);
     return target;
   }
@@ -1101,11 +1102,16 @@ export class SessionsStore {
     return nextTerminalId;
   }
 
-  private async pasteContinuationPrompt(origin: Session, terminalId: string): Promise<void> {
+  private async pasteContinuationPrompt(
+    origin: Session,
+    terminalId: string,
+    provider: AgentRuntimeProvider | null
+  ): Promise<void> {
     await sendBracketedPaste(
       terminalId,
       continuationPrompt(origin, this.observationFor(origin.id)),
-      true
+      true,
+      provider
     );
   }
 
@@ -1285,43 +1291,6 @@ export class SessionsStore {
 }
 
 export const sessions = new SessionsStore();
-
-function continuationPrompt(
-  origin: Session,
-  observed: ObservedAgentSnapshot | null
-): string {
-  const provider = origin.currentAgentRuntime?.provider ?? launchProvider(origin) ?? 'terminal';
-  const handoffReason = (() => {
-    if (observed?.state === 'usage_limited') {
-      return 'The previous agent appears to have hit a usage limit.';
-    }
-    if (observed?.state === 'failed') {
-      return 'The previous tab stopped before completing the task.';
-    }
-    return 'The user requested this handoff from another Soloe tab.';
-  })();
-  const lines = [
-    'We are continuing from another Soloe tab.',
-    handoffReason,
-    '',
-    'Continue the same task from that session. Preserve the user intent and current course of work.',
-    'First inspect the raw session artifact if it is available, then continue from the latest useful state.',
-    '',
-    `Previous Soloe tab: ${origin.name || origin.id}`,
-    `Previous provider: ${provider}`,
-    `Working directory: ${origin.cwd}`,
-    `Run mode: ${origin.runMode}${origin.wslDistro ? ` (${origin.wslDistro})` : ''}`,
-    ...(origin.providerThreadId ? [`Provider session id: ${origin.providerThreadId}`] : []),
-    ...(origin.transcriptPath ? [`Transcript/session JSON path: ${origin.transcriptPath}`] : []),
-    ...(observed?.transcriptPath && observed.transcriptPath !== origin.transcriptPath
-      ? [`Observed transcript path: ${observed.transcriptPath}`]
-      : []),
-    ...(observed?.usageLimit?.message ? [`Usage limit message: ${observed.usageLimit.message}`] : []),
-    '',
-    'If the raw artifact path is inaccessible, say what context is missing and ask for the smallest useful handoff instead of starting over.'
-  ];
-  return lines.join('\n');
-}
 
 function normalizedDefaultCwd(cwd: string, runMode: RunMode): string {
   if (runMode !== 'wsl') return cwd;

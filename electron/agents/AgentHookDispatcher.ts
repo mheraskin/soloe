@@ -13,6 +13,7 @@ import type { AutoRenameService } from './AutoRenameService.js';
 import type { HookEvent, HookProvider } from './SoloeMcpServer.js';
 import { detectUsageLimit } from './UsageLimitDetector.js';
 import type { UsageLimitInfo } from './UsageLimitDetector.js';
+import type { InteractiveAgentEvent } from '@shared/interactive-agent-projection.js';
 
 export interface AgentHookDispatcherOptions {
   observer: AgentObserverManager;
@@ -41,6 +42,14 @@ export class AgentHookDispatcher {
 
   async dispatch(event: HookEvent): Promise<void> {
     const hookEvent = hookEventName(event.payload);
+    // Keep the original, device-local provider payload in the Electron log for
+    // diagnostics. Only the normalized projection is persisted or replicated.
+    this.opts.log?.('interactive hook received', {
+      provider: event.provider,
+      soloeSessionId: event.soloeSessionId,
+      hookEvent: hookEvent ?? null,
+      payload: event.payload
+    });
     await this.reportLocation(event.soloeSessionId, event.payload);
     try {
       if (event.provider === 'claude_code') {
@@ -53,7 +62,9 @@ export class AgentHookDispatcher {
       }
       await this.dispatchCursor(event.soloeSessionId, event.payload);
     } finally {
-      if (hookEvent === 'SessionEnd') this.reportedCwds.delete(event.soloeSessionId);
+      if (normalizeEventName(hookEvent) === 'sessionend') {
+        this.reportedCwds.delete(event.soloeSessionId);
+      }
     }
   }
 
@@ -116,7 +127,14 @@ export class AgentHookDispatcher {
       mapClaudeHook(hookEvent, payload),
       payload
     );
-    if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
+    if (mapping) {
+      this.applyMapping(
+        soloeSessionId,
+        mapping,
+        payload,
+        interactiveEventForHook('claude_code', hookEvent, payload, mapping)
+      );
+    }
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'claude_code', hookEvent);
   }
 
@@ -151,23 +169,38 @@ export class AgentHookDispatcher {
       mapCodexHook(hookEvent, payload),
       payload
     );
-    if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
+    if (mapping) {
+      this.applyMapping(
+        soloeSessionId,
+        mapping,
+        payload,
+        interactiveEventForHook('codex', hookEvent, payload, mapping)
+      );
+    }
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'codex', hookEvent);
   }
 
   async dispatchCursor(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
     const hookEvent = hookEventName(payload);
-    if (hookEvent === 'SessionStart') this.pendingAutoRename.add(soloeSessionId);
-    if (hookEvent === 'UserPromptSubmit') {
+    const normalizedEvent = normalizeEventName(hookEvent);
+    if (normalizedEvent === 'sessionstart') this.pendingAutoRename.add(soloeSessionId);
+    if (normalizedEvent === 'beforesubmitprompt') {
       const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'user_message');
       this.maybeTriggerAutoRename(soloeSessionId, prompt);
     }
     const mapping = await this.resolvePermissionMapping(
       soloeSessionId,
-      mapCursorShellHook(hookEvent),
+      mapCursorHook(hookEvent, payload),
       payload
     );
-    if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
+    if (mapping) {
+      this.applyMapping(
+        soloeSessionId,
+        mapping,
+        payload,
+        interactiveEventForHook('cursor', hookEvent, payload, mapping)
+      );
+    }
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'cursor', hookEvent);
   }
 
@@ -247,11 +280,23 @@ export class AgentHookDispatcher {
   private applyMapping(
     soloeSessionId: SessionId,
     mapping: HookMapping,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    interactiveEvent: InteractiveAgentEvent | null
   ): void {
     if (mapping.state) {
       const current = this.opts.observer.getSnapshot(soloeSessionId);
       if (!mapping.resolvesApproval && shouldPreserveApproval(current?.state, mapping.state)) {
+        if (interactiveEvent) {
+          this.opts.observer.applyTuiInteractiveEvent(
+            soloeSessionId,
+            interactiveEvent,
+            current?.state ?? 'waiting_for_approval',
+            current?.state === 'waiting_for_approval'
+              ? 'waiting for approval'
+              : mapping.summary
+          );
+          return;
+        }
         this.opts.observer.appendEvent({
           subjectId: soloeSessionId,
           subjectKind: current?.subjectKind ?? 'session',
@@ -261,6 +306,16 @@ export class AgentHookDispatcher {
         return;
       }
       const detail = stringField(payload, 'message') ?? stringField(payload, 'reason');
+      if (interactiveEvent) {
+        this.opts.observer.applyTuiInteractiveEvent(
+          soloeSessionId,
+          interactiveEvent,
+          mapping.state,
+          mapping.summary,
+          detail
+        );
+        return;
+      }
       this.opts.observer.setTuiObservedState(
         soloeSessionId,
         mapping.state,
@@ -290,7 +345,8 @@ export class AgentHookDispatcher {
       if (!existing) return;
 
       const existingRuntime = existing.currentAgentRuntime;
-      const startsRuntime = hookEvent === 'SessionStart';
+      const normalizedEvent = normalizeEventName(hookEvent);
+      const startsRuntime = normalizedEvent === 'sessionstart';
       const canUpdateRuntime =
         startsRuntime || !existingRuntime || existingRuntime.provider === provider;
       if (!canUpdateRuntime) return;
@@ -300,7 +356,7 @@ export class AgentHookDispatcher {
         existingRuntime?.provider === provider ? existingRuntime.providerThreadId : undefined;
       const runtime = {
         provider,
-        status: hookEvent === 'SessionEnd' ? 'exited' as const : 'active' as const,
+        status: normalizedEvent === 'sessionend' ? 'exited' as const : 'active' as const,
         providerThreadId: sessionId ?? priorProviderThreadId,
         startedAt: startsRuntime ? now : existingRuntime?.startedAt,
         lastEventAt: now
@@ -350,6 +406,115 @@ export class AgentHookDispatcher {
       this.opts.log?.('failed to mark session input', err);
     }
   }
+}
+
+function interactiveEventForHook(
+  provider: HookProvider,
+  hookEvent: string | undefined,
+  payload: Record<string, unknown>,
+  mapping: HookMapping
+): InteractiveAgentEvent | null {
+  const event = normalizeEventName(hookEvent);
+  const providerSession = providerSessionId(payload, provider);
+  const providerTurn = provider === 'cursor'
+    ? stringField(payload, 'generation_id')
+    : provider === 'codex'
+      ? stringField(payload, 'turn_id')
+      : stringField(payload, 'prompt_id');
+  const toolId = stringField(payload, 'tool_use_id') ?? stringField(payload, 'tool_call_id');
+  const toolName = stringField(payload, 'tool_name')
+    ?? (event.includes('shell') ? 'Shell' : undefined)
+    ?? (event.includes('mcp') ? 'MCP' : undefined)
+    ?? (event.includes('readfile') ? 'Read' : undefined)
+    ?? (event.includes('fileedit') ? 'Write' : undefined)
+    ?? (event.includes('subagent') ? 'Subagent' : undefined)
+    ?? 'Tool';
+
+  if (event === 'sessionstart') {
+    return {
+      type: 'session.started',
+      ...(providerSession ? { providerSessionId: providerSession } : {})
+    };
+  }
+  if (event === 'sessionend') {
+    return {
+      type: 'session.ended',
+      outcome: mapping.state === 'failed' ? 'failed' : 'exited',
+      summary: mapping.summary
+    };
+  }
+  if (event === 'userpromptsubmit' || event === 'beforesubmitprompt') {
+    return {
+      type: 'turn.submitted',
+      ...(providerTurn ? { providerTurnId: providerTurn } : {})
+    };
+  }
+  if (mapping.state === 'waiting_for_approval') {
+    return {
+      type: 'approval.requested',
+      ...(toolId ? { requestKey: toolId } : {}),
+      summary: mapping.summary
+    };
+  }
+  if (mapping.state === 'waiting_for_input') {
+    return { type: 'input.requested', summary: mapping.summary };
+  }
+  if (
+    event === 'pretooluse'
+    || event === 'beforeshellexecution'
+    || event === 'beforemcpexecution'
+    || event === 'beforereadfile'
+    || event === 'subagentstart'
+  ) {
+    return {
+      type: 'tool.started',
+      tool: { ...(toolId ? { id: toolId } : {}), name: toolName }
+    };
+  }
+  if (
+    event === 'posttooluse'
+    || event === 'posttoolbatch'
+    || event === 'aftershellexecution'
+    || event === 'aftermcpexecution'
+    || event === 'afterfileedit'
+    || event === 'subagentstop'
+  ) {
+    return { type: 'tool.finished' };
+  }
+  if (event === 'posttoolusefailure') {
+    if (mapping.state === 'idle') {
+      return { type: 'turn.stopped', outcome: 'interrupted', summary: mapping.summary };
+    }
+    if (mapping.state === 'failed') {
+      return { type: 'runtime.failed', summary: mapping.summary };
+    }
+    return { type: 'tool.finished' };
+  }
+  if (event === 'stop' || event === 'stopfailure') {
+    return {
+      type: 'turn.stopped',
+      outcome: mapping.state === 'failed'
+        ? 'failed'
+        : mapping.state === 'idle' ? 'interrupted' : 'completed',
+      summary: mapping.summary
+    };
+  }
+  if (mapping.state === 'failed') {
+    return { type: 'runtime.failed', summary: mapping.summary };
+  }
+  if (
+    event === 'precompact'
+    || event === 'postcompact'
+    || event === 'afteragentresponse'
+    || event === 'afteragentthought'
+    || mapping.state === 'working'
+  ) {
+    return {
+      type: 'turn.submitted',
+      ...(providerTurn ? { providerTurnId: providerTurn } : {})
+    };
+  }
+  return null;
 }
 
 function shouldPreserveApproval(
@@ -583,6 +748,12 @@ function mapClaudeHook(
       };
     case 'PostToolUse':
       return { state: 'working', summary: 'thinking' };
+    case 'PostToolUseFailure':
+      return booleanField(payload, 'is_interrupt')
+        ? { state: 'idle', summary: 'interrupted' }
+        : { state: 'working', summary: 'tool failed' };
+    case 'PostToolBatch':
+      return { state: 'working', summary: 'thinking' };
     case 'Notification':
       return mapClaudeNotification(payload);
     case 'Interrupt':
@@ -605,17 +776,79 @@ function mapClaudeHook(
     }
     case 'PreCompact':
       return { state: 'working', summary: 'compacting context' };
+    case 'PostCompact':
+      return { state: 'working', summary: 'thinking' };
+    case 'SubagentStart':
+      return { state: 'running_tool', summary: 'running subagent' };
     case 'SubagentStop':
-      return { summary: 'subagent stopped' };
+      return { state: 'working', summary: 'subagent stopped' };
+    case 'Elicitation':
+      return { state: 'waiting_for_input', summary: 'waiting for input' };
+    case 'ElicitationResult':
+      return { state: 'working', summary: 'thinking' };
+    case 'TaskCreated':
+    case 'TaskCompleted':
+      return { state: 'working', summary: 'thinking' };
+    case 'MessageDisplay':
+      return { summary: 'assistant response' };
     default:
       return null;
   }
 }
 
-function mapCursorShellHook(hookEvent: string | undefined): HookMapping | null {
-  if (hookEvent === 'SessionStart') return { state: 'starting', summary: 'session started' };
-  if (hookEvent === 'SessionEnd') return { state: 'idle', summary: 'idle' };
-  return null;
+function mapCursorHook(
+  hookEvent: string | undefined,
+  payload: Record<string, unknown>
+): HookMapping | null {
+  const normalized = normalizeEventName(hookEvent);
+  const toolName = stringField(payload, 'tool_name');
+  const toolSummary = toolName ? `tool: ${toolName}` : 'running tool';
+
+  switch (normalized) {
+    case 'sessionstart':
+      return { state: 'starting', summary: 'session started' };
+    case 'sessionend':
+      return normalizeEventName(stringField(payload, 'reason')) === 'error'
+        ? { state: 'failed', summary: 'session failed', resolvesApproval: true }
+        : { state: 'exited', summary: 'session ended', resolvesApproval: true };
+    case 'beforesubmitprompt':
+      return { state: 'working', summary: 'thinking' };
+    case 'pretooluse':
+    case 'beforeshellexecution':
+    case 'beforemcpexecution':
+    case 'beforereadfile':
+    case 'subagentstart':
+      return { state: 'running_tool', summary: toolSummary };
+    case 'posttooluse':
+    case 'aftershellexecution':
+    case 'aftermcpexecution':
+    case 'afterfileedit':
+    case 'subagentstop':
+      return { state: 'working', summary: 'thinking' };
+    case 'posttoolusefailure':
+      if (booleanField(payload, 'is_interrupt')) {
+        return { state: 'idle', summary: 'interrupted' };
+      }
+      return { state: 'working', summary: 'tool failed' };
+    case 'precompact':
+      return { state: 'working', summary: 'compacting context' };
+    case 'afteragentresponse':
+      return { state: 'working', summary: 'finishing response' };
+    case 'afteragentthought':
+      return { state: 'working', summary: 'thinking' };
+    case 'stop': {
+      const status = normalizeEventName(stringField(payload, 'status'));
+      if (status === 'error') {
+        return { state: 'failed', summary: 'failed', resolvesApproval: true };
+      }
+      if (status === 'aborted') {
+        return { state: 'idle', summary: 'interrupted', resolvesApproval: true };
+      }
+      return { state: 'completed', summary: 'completed', resolvesApproval: true };
+    }
+    default:
+      return null;
+  }
 }
 
 function isInterruptedClaudeStop(payload: Record<string, unknown>): boolean {
@@ -712,6 +945,14 @@ function mapCodexHook(
       };
     }
     case 'PostToolUse':
+      return { state: 'working', summary: 'thinking' };
+    case 'PreCompact':
+      return { state: 'working', summary: 'compacting context' };
+    case 'PostCompact':
+      return { state: 'working', summary: 'thinking' };
+    case 'SubagentStart':
+      return { state: 'running_tool', summary: 'running subagent' };
+    case 'SubagentStop':
       return { state: 'working', summary: 'thinking' };
     case 'Stop':
       return { state: 'completed', summary: 'completed' };

@@ -8,6 +8,28 @@ import type {
 export type AgentProvider = AgentRuntimeProvider;
 export type ObserverSubjectKind = 'session' | 'worker';
 
+export type InteractiveAgentLifecycle = 'starting' | 'running' | 'exited' | 'failed';
+export type InteractiveAgentTurn = 'idle' | 'working' | 'running_tool';
+export type InteractiveAgentObservation = 'exact' | 'degraded';
+
+export type InteractiveAgentAttention =
+  | { kind: 'none' }
+  | { kind: 'approval'; requestKey?: string; summary?: string }
+  | { kind: 'user_input'; requestKey?: string; summary?: string }
+  | { kind: 'usage_limit'; summary?: string }
+  | { kind: 'error'; summary?: string };
+
+export interface InteractiveAgentProjection {
+  lifecycle: InteractiveAgentLifecycle;
+  turn: InteractiveAgentTurn;
+  attention: InteractiveAgentAttention;
+  providerSessionId?: string;
+  providerTurnId?: string;
+  tool?: { id?: string; name: string };
+  observation: InteractiveAgentObservation;
+  lastEventAt: string;
+}
+
 export interface ObserverEvent {
   id: string;
   subjectId: string;
@@ -39,6 +61,8 @@ export interface ObservedAgentSnapshot {
   confidence?: number;
   error?: string;
   usageLimit?: AgentUsageLimit;
+  /** Orthogonal interactive-CLI facts; absent on older persisted snapshots. */
+  interactive?: InteractiveAgentProjection;
 }
 
 export interface AgentUsageLimit {

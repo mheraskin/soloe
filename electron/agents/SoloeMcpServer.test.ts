@@ -117,7 +117,7 @@ describe('SoloeMcpServer — hook endpoints', () => {
   let observer: AgentObserverManager;
   let runtime: AgentRuntimeManager;
   let captured: HookEvent[];
-  let hookHandler: (event: HookEvent) => void;
+  let hookHandler: (event: HookEvent) => void | Promise<void>;
 
   async function post(
     path: string,
@@ -186,7 +186,7 @@ describe('SoloeMcpServer — hook endpoints', () => {
       { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
     );
     expect(res.status).toBe(200);
-    expect(captured).toHaveLength(1);
+    await vi.waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toEqual({
       provider: 'claude_code',
       soloeSessionId: 'sess-1',
@@ -201,6 +201,7 @@ describe('SoloeMcpServer — hook endpoints', () => {
       { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
     );
     expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(captured).toHaveLength(1));
     expect(captured).toHaveLength(1);
     expect(captured[0]?.provider).toBe('codex');
   });
@@ -212,6 +213,7 @@ describe('SoloeMcpServer — hook endpoints', () => {
       { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
     );
     expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(captured).toHaveLength(1));
     expect(captured[0]).toEqual({
       provider: 'cursor',
       soloeSessionId: 'sess-1',
@@ -240,16 +242,35 @@ describe('SoloeMcpServer — hook endpoints', () => {
     expect(res.status).toBe(200);
   });
 
-  it('reports a 500 when the hook callback throws', async () => {
-    hookHandler = () => {
-      throw new Error('boom');
+  it('acknowledges hooks before processing and preserves arrival order', async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const handled: string[] = [];
+    hookHandler = async (event) => {
+      const eventName = String(event.payload.hook_event_name);
+      handled.push(eventName);
+      if (eventName === 'First') await firstBlocked;
     };
-    const res = await post(
+
+    const first = await post(
       '/hook/claude',
-      { hook_event_name: 'SessionStart' },
+      { hook_event_name: 'First' },
       { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
     );
-    expect(res.status).toBe(500);
+    expect(first.status).toBe(200);
+
+    const second = await post(
+      '/hook/claude',
+      { hook_event_name: 'Second' },
+      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+    );
+    expect(second.status).toBe(200);
+    expect(handled).toEqual(['First']);
+
+    releaseFirst();
+    await vi.waitFor(() => expect(handled).toEqual(['First', 'Second']));
   });
 
   it('binds to 0.0.0.0 but advertises 127.0.0.1 without a /mcp suffix', () => {

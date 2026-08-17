@@ -28,11 +28,25 @@ export async function sendBracketedPaste(
   submit: boolean,
   provider?: AgentRuntimeProvider | null
 ): Promise<void> {
+  return sendBracketedPasteWithInput(
+    (data) => terminalControl.input(terminalId, data),
+    text,
+    submit,
+    provider
+  );
+}
+
+export async function sendBracketedPasteWithInput(
+  input: (data: string) => Promise<void>,
+  text: string,
+  submit: boolean,
+  provider?: AgentRuntimeProvider | null
+): Promise<void> {
   // Strip embedded ESC chars — an `\x1b[201~` inside the body would close
   // paste mode early and let the rest of the text execute as keystrokes.
   const sanitized = text.replace(/\x1b/g, '');
-  await terminalControl.input(terminalId, `\x1b[200~${sanitized}\x1b[201~`);
+  await input(`\x1b[200~${sanitized}\x1b[201~`);
   if (!submit) return;
   await new Promise<void>((resolve) => setTimeout(resolve, submitYieldFor(provider)));
-  await terminalControl.input(terminalId, '\r');
+  await input('\r');
 }

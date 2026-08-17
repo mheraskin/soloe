@@ -156,6 +156,7 @@ const TOOLS: McpTool[] = [
 
 export class SoloeMcpServer {
   private server: Server | null = null;
+  private hookDispatchQueue: Promise<void> = Promise.resolve();
   readonly token: string;
 
   constructor(private readonly opts: SoloeMcpServerOptions) {
@@ -266,12 +267,22 @@ export class SoloeMcpServer {
     console.log(
       `[soloe-hook] hook arrived: provider=${provider} session=${soloeSessionId} event=${hookEventName}`
     );
-    try {
-      await this.opts.onHookEvent?.({ provider, soloeSessionId, payload });
-      writeJson(res, 200, { ok: true });
-    } catch (err) {
-      writeJson(res, 500, { error: errorMessage(err) });
-    }
+    // A hook command runs on the interactive CLI's critical path. Acknowledge
+    // as soon as the local bridge owns the payload, then reduce events in
+    // arrival order without making the TUI wait on persistence or UI work.
+    writeJson(res, 200, { ok: true });
+    const event = { provider, soloeSessionId, payload } satisfies HookEvent;
+    this.hookDispatchQueue = this.hookDispatchQueue
+      .then(async () => this.opts.onHookEvent?.(event))
+      .then(() => undefined)
+      .catch((error) => {
+        console.warn('[soloe-hook] hook dispatch failed', {
+          provider,
+          soloeSessionId,
+          hookEventName,
+          error: errorMessage(error)
+        });
+      });
   }
 
   async handlePayload(payload: unknown): Promise<unknown> {

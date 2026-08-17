@@ -31,6 +31,32 @@ describe('AgentObserverManager', () => {
     expect(observer.listEvents(session.id).map((e) => e.summary)).toContain('terminal running');
   });
 
+  it('projects PTY fallback states through the normalized interactive model', () => {
+    const observer = new AgentObserverManager();
+    observer.registerTuiSession(session);
+
+    observer.setTuiObservedState(
+      session.id,
+      'waiting_for_approval',
+      'waiting for approval'
+    );
+    expect(observer.getSnapshot(session.id)?.interactive).toMatchObject({
+      lifecycle: 'running',
+      attention: { kind: 'approval' },
+      observation: 'degraded'
+    });
+
+    observer.setTuiObservedState(session.id, 'working', 'approval answered');
+    expect(observer.getSnapshot(session.id)?.interactive).toMatchObject({
+      lifecycle: 'running',
+      turn: 'working',
+      attention: { kind: 'none' }
+    });
+
+    observer.updateTuiStatus({ sessionId: session.id, terminalId: 't-1', status: 'exited' });
+    expect(observer.getSnapshot(session.id)?.interactive?.lifecycle).toBe('exited');
+  });
+
   it('carries provider thread metadata from TUI sessions', () => {
     const observer = new AgentObserverManager();
     observer.registerTuiSession({
@@ -59,7 +85,8 @@ describe('AgentObserverManager', () => {
     observer.registerTuiSession(session);
     expect(observer.getSnapshot(session.id)).toMatchObject({
       state: 'usage_limited',
-      usageLimit: { resetAtLabel: '3:45pm' }
+      usageLimit: { resetAtLabel: '3:45pm' },
+      interactive: { attention: { kind: 'usage_limit' } }
     });
 
     observer.updateTuiStatus({ sessionId: session.id, terminalId: 't-1', status: 'exited' });

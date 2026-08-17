@@ -7,7 +7,11 @@ const mocks = vi.hoisted(() => ({
   deviceState: vi.fn(),
   refreshDevices: vi.fn(),
   startOnDevice: vi.fn(),
+  createOnDevice: vi.fn(),
   deviceTerminalStop: vi.fn(),
+  deviceTerminalInputLease: vi.fn(),
+  deviceTerminalInput: vi.fn(),
+  deviceTerminalReleaseInputLease: vi.fn(),
   updateOnDevice: vi.fn(),
   deleteOnDevice: vi.fn()
 }));
@@ -19,7 +23,11 @@ vi.mock('../lib/ipc', () => ({
       deviceState: mocks.deviceState,
       refreshDevices: mocks.refreshDevices,
       startOnDevice: mocks.startOnDevice,
+      createOnDevice: mocks.createOnDevice,
       deviceTerminalStop: mocks.deviceTerminalStop,
+      deviceTerminalInputLease: mocks.deviceTerminalInputLease,
+      deviceTerminalInput: mocks.deviceTerminalInput,
+      deviceTerminalReleaseInputLease: mocks.deviceTerminalReleaseInputLease,
       updateOnDevice: mocks.updateOnDevice,
       deleteOnDevice: mocks.deleteOnDevice,
       onDeviceStateChange: vi.fn((listener) => {
@@ -52,7 +60,11 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.deviceState.mockReset().mockResolvedValue(state(1, true));
     mocks.refreshDevices.mockReset().mockResolvedValue(state(1, true));
     mocks.startOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
+    mocks.createOnDevice.mockReset();
     mocks.deviceTerminalStop.mockReset().mockResolvedValue(true);
+    mocks.deviceTerminalInputLease.mockReset();
+    mocks.deviceTerminalInput.mockReset().mockResolvedValue(true);
+    mocks.deviceTerminalReleaseInputLease.mockReset().mockResolvedValue(true);
     mocks.updateOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
     mocks.deleteOnDevice.mockReset().mockResolvedValue({ ...state(2, true), unassigned: [] });
   });
@@ -305,6 +317,77 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     await expect(deletion).rejects.toThrow('delete rejected');
     expect(store.sessions).toHaveLength(1);
     expect(store.selectedSessionKey).toBe('device-xps/session-1');
+  });
+
+  it('creates and continues a Session on the origin Device without using local input', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    await vi.waitFor(() => expect(store.refreshing).toBe(false));
+    const created = {
+      ...state(2, true).unassigned[0]!,
+      ref: { deviceId: 'device-xps', sessionId: 'session-2' },
+      key: 'device-xps/session-2',
+      session: {
+        ...state(2, true).unassigned[0]!.session,
+        id: 'session-2',
+        name: 'Cursor',
+        launch: { type: 'agent' as const, provider: 'cursor' as const, resumeMode: 'new' as const }
+      },
+      runtime: {
+        sessionId: 'session-2',
+        terminalId: 'terminal-2',
+        status: 'running' as const
+      }
+    };
+    mocks.createOnDevice.mockResolvedValueOnce(created);
+    mocks.refreshDevices.mockResolvedValueOnce({
+      ...state(2, true),
+      unassigned: [state(2, true).unassigned[0]!, created]
+    });
+    mocks.deviceTerminalInputLease.mockResolvedValueOnce({
+      terminalId: 'terminal-2',
+      sessionId: 'session-2',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-2',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 1,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:02.000Z',
+      expiresAt: '2026-08-16T00:00:17.000Z'
+    });
+
+    await store.createBeside('device-xps/session-1', {
+      name: 'Cursor',
+      launch: { type: 'agent', provider: 'cursor', resumeMode: 'new' },
+      continuationPrompt: 'Continue this task',
+      continuationProvider: 'cursor'
+    });
+
+    expect(mocks.createOnDevice).toHaveBeenCalledWith({
+      workspaceKey: null,
+      targetDeviceId: 'device-xps',
+      targetPath: '/home/me/project',
+      session: {
+        name: 'Cursor',
+        launch: { type: 'agent', provider: 'cursor', resumeMode: 'new' }
+      }
+    });
+    expect(mocks.deviceTerminalInput).toHaveBeenNthCalledWith(
+      1,
+      { deviceId: 'device-xps', terminalId: 'terminal-2' },
+      '\x1b[200~Continue this task\x1b[201~',
+      expect.objectContaining({ leaseId: 'lease-2' })
+    );
+    expect(mocks.deviceTerminalInput).toHaveBeenNthCalledWith(
+      2,
+      { deviceId: 'device-xps', terminalId: 'terminal-2' },
+      '\r',
+      expect.objectContaining({ leaseId: 'lease-2' })
+    );
+    expect(mocks.deviceTerminalReleaseInputLease).toHaveBeenCalledOnce();
+    expect(store.selectedSessionKey).toBe('device-xps/session-2');
   });
 });
 

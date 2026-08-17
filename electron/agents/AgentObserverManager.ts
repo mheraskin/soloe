@@ -2,10 +2,16 @@ import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import type {
   AgentUsageLimit,
+  InteractiveAgentProjection,
   ObservedAgentSnapshot,
   ObserverEvent,
   ObserverSubjectKind
 } from '@shared/types/agents.js';
+import type { InteractiveAgentEvent } from '@shared/interactive-agent-projection.js';
+import {
+  initialInteractiveAgentProjection,
+  reduceInteractiveAgentProjection
+} from '@shared/interactive-agent-projection.js';
 import type {
   AgentObservedState,
   Session,
@@ -76,6 +82,7 @@ export class AgentObserverManager extends EventEmitter {
       providerThreadId: session.currentAgentRuntime?.providerThreadId ?? session.providerThreadId,
       transcriptPath: session.transcriptPath ?? existing?.transcriptPath,
       confidence: session.confidence,
+      interactive: existing?.interactive ?? initialInteractiveAgentProjection('degraded'),
       lastEventAt: new Date().toISOString()
     };
     return this.upsertSnapshot(snapshot, 'session registered');
@@ -102,6 +109,7 @@ export class AgentObserverManager extends EventEmitter {
         sessionId: event.sessionId
       }),
       state,
+      interactive: projectionForTerminalStatus(existing?.interactive, event.status, state),
       lastEventAt: new Date().toISOString(),
       ...(event.message ? { error: event.message } : {})
     };
@@ -114,7 +122,8 @@ export class AgentObserverManager extends EventEmitter {
     state: AgentObservedState,
     summary: string,
     detail?: string,
-    autoApprovesPermissions?: boolean
+    autoApprovesPermissions?: boolean,
+    interactive?: InteractiveAgentProjection
   ): ObservedAgentSnapshot {
     const existing = this.snapshots.get(sessionId);
     const snapshot: ObservedAgentSnapshot = {
@@ -127,7 +136,8 @@ export class AgentObserverManager extends EventEmitter {
       }),
       state,
       lastEventAt: new Date().toISOString(),
-      ...(autoApprovesPermissions === undefined ? {} : { autoApprovesPermissions })
+      ...(autoApprovesPermissions === undefined ? {} : { autoApprovesPermissions }),
+      interactive: interactive ?? projectionForLegacyTransition(existing?.interactive, state)
     };
     if (state !== 'usage_limited') delete snapshot.usageLimit;
     this.snapshots.set(sessionId, snapshot);
@@ -143,6 +153,34 @@ export class AgentObserverManager extends EventEmitter {
     return snapshot;
   }
 
+  applyTuiInteractiveEvent(
+    sessionId: SessionId,
+    event: InteractiveAgentEvent,
+    state: AgentObservedState,
+    summary: string,
+    detail?: string
+  ): ObservedAgentSnapshot {
+    const existing = this.snapshots.get(sessionId);
+    const hadDegradedAttention = existing?.interactive?.observation === 'degraded'
+      && existing.interactive.attention.kind !== 'none';
+    const current = {
+      ...(existing?.interactive ?? projectionFromLegacyState(existing?.state)),
+      observation: 'exact' as const
+    };
+    const reduced = reduceInteractiveAgentProjection(current, event);
+    // Cursor has no native permission-request hook. If its PTY parser found an
+    // approval, exact lifecycle/tool hooks must not relabel that attention as
+    // exact until an event actually resolves or replaces it.
+    const preservesDegradedAttention = hadDegradedAttention
+      && reduced.attention.kind !== 'none'
+      && event.type !== 'approval.requested'
+      && event.type !== 'input.requested';
+    const interactive = preservesDegradedAttention
+      ? { ...reduced, observation: 'degraded' as const }
+      : reduced;
+    return this.setTuiObservedState(sessionId, state, summary, detail, undefined, interactive);
+  }
+
   setTuiUsageLimit(sessionId: SessionId, usageLimit: AgentUsageLimit): ObservedAgentSnapshot {
     const existing = this.snapshots.get(sessionId);
     const snapshot: ObservedAgentSnapshot = {
@@ -155,6 +193,14 @@ export class AgentObserverManager extends EventEmitter {
       }),
       state: 'usage_limited',
       usageLimit,
+      interactive: reduceInteractiveAgentProjection(
+        existing?.interactive ?? projectionFromLegacyState(existing?.state),
+        {
+          type: 'usage.limited',
+          summary: usageLimit.message,
+          occurredAt: usageLimit.detectedAt
+        }
+      ),
       lastEventAt: usageLimit.detectedAt
     };
     this.snapshots.set(sessionId, snapshot);
@@ -374,5 +420,144 @@ export function terminalStatusToObservedState(status: SessionStatus): AgentObser
     case 'exited':
     case 'stopped':
       return 'exited';
+  }
+}
+
+function projectionFromLegacyState(
+  state: AgentObservedState | undefined
+): InteractiveAgentProjection {
+  const projection = initialInteractiveAgentProjection('degraded');
+  switch (state) {
+    case 'starting':
+      return projection;
+    case 'working':
+      return { ...projection, lifecycle: 'running', turn: 'working' };
+    case 'running_tool':
+      return { ...projection, lifecycle: 'running', turn: 'running_tool' };
+    case 'waiting_for_approval':
+      return {
+        ...projection,
+        lifecycle: 'running',
+        attention: { kind: 'approval' }
+      };
+    case 'waiting_for_input':
+      return {
+        ...projection,
+        lifecycle: 'running',
+        attention: { kind: 'user_input' }
+      };
+    case 'usage_limited':
+      return {
+        ...projection,
+        lifecycle: 'running',
+        attention: { kind: 'usage_limit' }
+      };
+    case 'failed':
+      return {
+        ...projection,
+        lifecycle: 'failed',
+        attention: { kind: 'error' }
+      };
+    case 'exited':
+      return { ...projection, lifecycle: 'exited' };
+    case 'idle':
+    case 'completed':
+    case undefined:
+      return { ...projection, lifecycle: 'running' };
+  }
+}
+
+function projectionForLegacyTransition(
+  current: InteractiveAgentProjection | undefined,
+  state: AgentObservedState
+): InteractiveAgentProjection {
+  const projection = current ?? initialInteractiveAgentProjection('degraded');
+  const lastEventAt = new Date().toISOString();
+  const base = { ...projection, observation: 'degraded' as const, lastEventAt };
+  switch (state) {
+    case 'starting':
+      return {
+        ...base,
+        lifecycle: 'starting',
+        turn: 'idle',
+        attention: { kind: 'none' },
+        tool: undefined
+      };
+    case 'working':
+      return {
+        ...base,
+        lifecycle: 'running',
+        turn: 'working',
+        attention: { kind: 'none' },
+        tool: undefined
+      };
+    case 'running_tool':
+      return {
+        ...base,
+        lifecycle: 'running',
+        turn: 'running_tool',
+        attention: { kind: 'none' }
+      };
+    case 'waiting_for_approval':
+      return {
+        ...base,
+        lifecycle: 'running',
+        attention: { kind: 'approval' }
+      };
+    case 'waiting_for_input':
+      return {
+        ...base,
+        lifecycle: 'running',
+        attention: { kind: 'user_input' }
+      };
+    case 'usage_limited':
+      return {
+        ...base,
+        lifecycle: 'running',
+        turn: 'idle',
+        attention: { kind: 'usage_limit' },
+        tool: undefined
+      };
+    case 'completed':
+    case 'idle':
+      return {
+        ...base,
+        lifecycle: 'running',
+        turn: 'idle',
+        attention: { kind: 'none' },
+        tool: undefined
+      };
+    case 'failed':
+      return {
+        ...base,
+        lifecycle: 'failed',
+        turn: 'idle',
+        attention: { kind: 'error' },
+        tool: undefined
+      };
+    case 'exited':
+      return {
+        ...base,
+        lifecycle: 'exited',
+        turn: 'idle',
+        attention: { kind: 'none' },
+        tool: undefined
+      };
+  }
+}
+
+function projectionForTerminalStatus(
+  current: InteractiveAgentProjection | undefined,
+  status: SessionStatus,
+  state: AgentObservedState
+): InteractiveAgentProjection {
+  const projection = projectionForLegacyTransition(current, state);
+  switch (status) {
+    case 'starting': return { ...projection, lifecycle: 'starting' };
+    case 'running': return { ...projection, lifecycle: 'running' };
+    case 'error': return { ...projection, lifecycle: 'failed' };
+    case 'exited':
+    case 'stopped':
+      return { ...projection, lifecycle: 'exited', turn: 'idle', tool: undefined };
   }
 }

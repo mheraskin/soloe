@@ -15,7 +15,9 @@ import {
   mergeClaudeMcp,
   mergeCodexMcp,
   mergeCursorMcp,
+  mergeCursorHooks,
   removeSoloeFromCursor,
+  removeSoloeFromCursorHooks,
   mcpUrlForHost,
   SOLOE_HOOK_VERSION,
   type HookHost
@@ -102,6 +104,7 @@ describe('HookInstaller', () => {
       // `[ ... ] && exit 0 curl ...` as a single command and curl never runs.
       expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && \{ cat >\/dev\/null 2>&1; exit 0; \};\s/);
       expect(cmd).toMatch(/;\s*curl /);
+      expect(cmd).toContain('--connect-timeout 0.05 --max-time 0.2');
       expect(cmd).toContain('"$u/hook/claude"');
       // WSL host resolution: substitute host.wsl.internal when it doesn't resolve
       expect(cmd).toContain('host.wsl.internal');
@@ -256,6 +259,7 @@ describe('HookInstaller', () => {
       const cmd = parsed.hooks.SessionStart![0]!.hooks[0]!.command;
       expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && \{ cat >\/dev\/null 2>&1; exit 0; \};\s/);
       expect(cmd).toMatch(/;\s*curl /);
+      expect(cmd).toContain('--connect-timeout 0.05 --max-time 0.2');
       expect(cmd).toContain('"$u/hook/codex"');
       expect(cmd).toContain('host.wsl.internal');
       expect(cmd).toContain('getent hosts host.wsl.internal');
@@ -770,6 +774,46 @@ describe('HookInstaller with bridge — MCP registration', () => {
     });
   });
 
+  it('installCursor writes all supported interactive Cursor hooks without replacing user hooks', async () => {
+    const hooksPath = join(homeDir, '.cursor', 'hooks.json');
+    await fs.mkdir(join(homeDir, '.cursor'), { recursive: true });
+    await fs.writeFile(hooksPath, JSON.stringify({
+      version: 1,
+      hooks: { afterFileEdit: [{ command: './hooks/user-format.sh' }] }
+    }));
+
+    await installer.installCursor(LOCAL);
+
+    const config = JSON.parse(await fs.readFile(hooksPath, 'utf8'));
+    expect(config.version).toBe(1);
+    expect(config.hooks.afterFileEdit).toEqual(
+      expect.arrayContaining([
+        { command: './hooks/user-format.sh' },
+        expect.objectContaining({ command: expect.stringContaining('/hook/cursor') })
+      ])
+    );
+    expect(Object.keys(config.hooks)).toEqual(expect.arrayContaining([
+      'sessionStart',
+      'sessionEnd',
+      'beforeSubmitPrompt',
+      'stop',
+      'preToolUse',
+      'postToolUse',
+      'postToolUseFailure',
+      'subagentStart',
+      'subagentStop',
+      'beforeShellExecution',
+      'afterShellExecution',
+      'beforeMCPExecution',
+      'afterMCPExecution',
+      'beforeReadFile',
+      'afterFileEdit',
+      'preCompact',
+      'afterAgentResponse',
+      'afterAgentThought'
+    ]));
+  });
+
   it('uninstallCursor removes only the Soloe MCP entry', async () => {
     const path = join(homeDir, '.cursor', 'mcp.json');
     await fs.mkdir(join(homeDir, '.cursor'), { recursive: true });
@@ -780,6 +824,23 @@ describe('HookInstaller with bridge — MCP registration', () => {
     const config = JSON.parse(await fs.readFile(path, 'utf8'));
     expect(config.mcpServers).toEqual({ user: { command: 'user-mcp' } });
     expect(removeSoloeFromCursor(config)).toEqual(config);
+  });
+
+  it('uninstallCursor removes only Soloe Cursor hooks', async () => {
+    const hooksPath = join(homeDir, '.cursor', 'hooks.json');
+    await fs.mkdir(join(homeDir, '.cursor'), { recursive: true });
+    await fs.writeFile(hooksPath, JSON.stringify(mergeCursorHooks({
+      version: 1,
+      hooks: { afterFileEdit: [{ command: './hooks/user-format.sh' }] }
+    }, 'curl /hook/cursor $SOLOE_SESSION_ID')));
+
+    await installer.uninstallCursor(LOCAL);
+
+    const config = JSON.parse(await fs.readFile(hooksPath, 'utf8'));
+    expect(config.hooks).toEqual({
+      afterFileEdit: [{ command: './hooks/user-format.sh' }]
+    });
+    expect(removeSoloeFromCursorHooks(config)).toEqual(config);
   });
 
   it('reinstall replaces the MCP entry rather than stacking it', async () => {
