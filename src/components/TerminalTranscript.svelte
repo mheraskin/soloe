@@ -12,6 +12,8 @@
   } from '../lib/terminal-transcript';
   import { terminalControl } from '../stores/terminal-control.svelte';
   import { FULL_TERMINAL_SCROLLBACK } from '../lib/terminal-write';
+  import { terminalTranscriptColor } from '../lib/terminal-theme';
+  import { appearanceTheme } from '../stores/appearance-theme.svelte';
 
   let {
     terminalId,
@@ -33,9 +35,12 @@
   let canonicalRows = $derived(terminalControl.lease(terminalId)?.rows ?? 30);
 
   function spanStyle(span: TranscriptSpan): string {
+    const colorTheme = appearanceTheme.resolved;
     return [
-      span.foreground ? `color:${span.foreground}` : '',
-      span.background ? `background-color:${span.background}` : '',
+      span.foreground ? `color:${terminalTranscriptColor(span.foreground, colorTheme)}` : '',
+      span.background
+        ? `background-color:${terminalTranscriptColor(span.background, colorTheme)}`
+        : '',
       span.bold ? 'font-weight:700' : '',
       span.italic ? 'font-style:italic' : '',
       span.underline ? 'text-decoration:underline' : '',
@@ -104,7 +109,7 @@
 
 <div
   bind:this={scroller}
-  class="terminal-transcript h-full w-full overflow-y-auto overflow-x-hidden bg-[#0f0f10] px-4 py-3 font-mono text-xs leading-5 text-[#e5e5e5] select-text"
+  class="terminal-transcript h-full w-full overflow-y-auto overflow-x-hidden bg-[var(--terminal-background)] px-4 py-3 font-mono text-xs leading-5 text-[var(--terminal-foreground)] select-text"
   onscroll={observeScroll}
   data-terminal-transcript
 >

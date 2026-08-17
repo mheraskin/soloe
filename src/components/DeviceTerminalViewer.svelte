@@ -8,7 +8,12 @@
   import type { TerminalRef } from '@shared/types/devices.js';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import type { TerminalOutputEvent } from '@shared/types/terminal.js';
-  import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
+  import {
+    terminalFontFamily,
+    terminalThemeFor,
+    terminalTranscriptColor
+  } from '../lib/terminal-theme';
+  import { appearanceTheme } from '../stores/appearance-theme.svelte';
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
@@ -35,6 +40,7 @@
   let takingControl = $state(false);
   let transcriptScroller: HTMLDivElement | undefined = $state();
   let transcriptRecords = $state.raw<TranscriptRecord[]>([]);
+  let activeTerminal = $state.raw<Terminal | null>(null);
   const transcriptFollow = new TerminalTranscriptFollowController();
   let pageVisible = $state(document.visibilityState === 'visible');
   let prepareInteractive = async (): Promise<void> => undefined;
@@ -91,7 +97,7 @@
       cursorBlink: true,
       scrollback: FULL_TERMINAL_SCROLLBACK,
       convertEol: false,
-      theme: terminalTheme,
+      theme: terminalThemeFor(appearanceTheme.resolved),
       allowProposedApi: true,
       linkHandler: terminalLinks.osc
     });
@@ -100,6 +106,7 @@
     terminal.loadAddon(fit);
     terminal.loadAddon(links);
     terminal.open(host);
+    activeTerminal = terminal;
 
     let active = true;
     let appliedSeq = 0;
@@ -261,7 +268,13 @@
       transcript.dispose();
       resizeTranscript = () => undefined;
       terminal.dispose();
+      if (activeTerminal === terminal) activeTerminal = null;
     };
+  });
+
+  $effect(() => {
+    const colorTheme = terminalThemeFor(appearanceTheme.resolved);
+    if (activeTerminal?.options) activeTerminal.options.theme = colorTheme;
   });
 
   $effect(() => {
@@ -302,9 +315,12 @@
   }
 
   function spanStyle(span: TranscriptSpan): string {
+    const colorTheme = appearanceTheme.resolved;
     return [
-      span.foreground ? `color:${span.foreground}` : '',
-      span.background ? `background-color:${span.background}` : '',
+      span.foreground ? `color:${terminalTranscriptColor(span.foreground, colorTheme)}` : '',
+      span.background
+        ? `background-color:${terminalTranscriptColor(span.background, colorTheme)}`
+        : '',
       span.bold ? 'font-weight:700' : '',
       span.italic ? 'font-style:italic' : '',
       span.underline ? 'text-decoration:underline' : '',
@@ -313,12 +329,12 @@
   }
 </script>
 
-<section class="flex h-full min-h-0 flex-col overflow-hidden bg-[#0f0f10]">
+<section class="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--terminal-background)]">
   <SessionToolbar {projection} {onClose} />
   <div class="relative min-h-72 flex-1">
     <div class="absolute inset-0" class:invisible={readOnly} bind:this={host}></div>
     {#if readOnly}
-      <div class="absolute inset-0 flex min-h-0 flex-col bg-[#0f0f10]">
+      <div class="absolute inset-0 flex min-h-0 flex-col bg-[var(--terminal-background)]">
         <div class="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-2 text-xs text-foreground">
           <span class="min-w-0 flex-1 truncate">
             Read-only — controlled by {inputLease?.lease?.controllerDeviceName ?? 'another client'}
@@ -332,7 +348,7 @@
         </div>
         <div
           bind:this={transcriptScroller}
-          class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 font-mono text-xs leading-5 text-[#e5e5e5] select-text"
+          class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 font-mono text-xs leading-5 text-[var(--terminal-foreground)] select-text"
           onscroll={observeTranscriptScroll}
         >
           {#each transcriptRecords as record (record.id)}
@@ -346,7 +362,7 @@
       </div>
     {/if}
     {#if (restoring && !readOnly) || takingControl}
-      <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-[#0f0f10] text-xs text-muted-foreground">
+      <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-[var(--terminal-background)] text-xs text-muted-foreground">
         {takingControl ? 'Taking control and preparing terminal…' : 'Restoring terminal…'}
       </div>
     {/if}

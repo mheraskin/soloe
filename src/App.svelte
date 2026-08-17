@@ -21,6 +21,7 @@
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import { sessions } from './stores/sessions.svelte';
   import { settings } from './stores/settings.svelte';
+  import { appearanceTheme } from './stores/appearance-theme.svelte';
   import { connections } from './stores/connections.svelte';
   import { platform } from './stores/platform.svelte';
   import { projects } from './stores/projects.svelte';
@@ -128,6 +129,7 @@
   let swipeStart: { pointerId: number; x: number; y: number } | null = null;
 
   onMount(() => {
+    const detachAppearanceTheme = appearanceTheme.attach();
     const detachMobileViewport = attachMobileViewport();
     const mobileQuery = window.matchMedia('(max-width: 767px)');
     const syncMobileLayout = () => {
@@ -169,6 +171,7 @@
     window.addEventListener('keydown', onClearPaneRing, true);
     window.addEventListener('beforeunload', flushRendererPersistence);
     return () => {
+      detachAppearanceTheme();
       detachMobileViewport();
       mobileQuery.removeEventListener('change', syncMobileLayout);
       window.removeEventListener('soloe:focus-pane', openFocusedPane);
@@ -281,9 +284,15 @@
 
   $effect(() => {
     const theme = settings.current.appearance.theme;
+    appearanceTheme.setPreference(theme);
     if (theme === appliedTheme) return;
     appliedTheme = theme;
     untrack(() => setMode(theme));
+  });
+
+  $effect(() => {
+    const themeColor = appearanceTheme.resolved === 'dark' ? '#0f0f10' : '#f7f8fa';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeColor);
   });
 
   // Rail fullscreen takes over the main area: terminal hides, the rail
@@ -1291,7 +1300,7 @@
   }
 </script>
 
-<ModeWatcher defaultMode="dark" />
+<ModeWatcher defaultMode="system" />
 
 {#if initialLoadState === 'loading'}
   <AppSkeleton label="Loading workspace" {macosWindowControls} />

@@ -195,7 +195,7 @@ export const DEFAULT_SETTINGS: Settings = {
     wslRepositoryRoot: ''
   },
   startup: { launchSoloeClient: false },
-  appearance: { theme: 'dark' },
+  appearance: { theme: 'system' },
   terminal: { fontSize: 13, confirmDeleteTabs: true, keepFullHistory: true },
   diff: { fontSize: 13 },
   browser: {

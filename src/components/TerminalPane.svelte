@@ -39,7 +39,8 @@
   import { usesMacosOverlayScrollbars } from '../lib/platform-ui';
   import type { ClipboardImagePayload } from '@shared/types/files.js';
   import { terminalControl } from '../stores/terminal-control.svelte';
-  import { terminalFontFamily, terminalTheme } from '../lib/terminal-theme';
+  import { terminalFontFamily, terminalThemeFor } from '../lib/terminal-theme';
+  import { appearanceTheme } from '../stores/appearance-theme.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { terminalLinkHandlers } from '../lib/terminal-links';
@@ -534,8 +535,7 @@
       // Activated only while visible; hidden panes otherwise retain one cursor
       // timer each even though they have no renderer.
       cursorBlink: false,
-      // Tokyo Night palette tuned to the #0f0f10 app shell.
-      theme: terminalTheme,
+      theme: untrack(() => terminalThemeFor(appearanceTheme.resolved)),
       allowProposedApi: true,
       scrollback: initScrollback,
       convertEol: false,
@@ -929,6 +929,11 @@
   // visible effect's fit settle first when a pane becomes visible and focused
   // in the same tick.
   $effect(() => {
+    const colorTheme = terminalThemeFor(appearanceTheme.resolved);
+    if (term?.options) term.options.theme = colorTheme;
+  });
+
+  $effect(() => {
     if (!focused || !ownsInput || !term) return;
     if (!shouldAutofocusTerminal()) return;
     requestAnimationFrame(() => term?.focus());
@@ -936,12 +941,12 @@
 </script>
 
 <div
-  class="terminal-pane-shell relative h-full w-full bg-[#0f0f10]"
+  class="terminal-pane-shell relative h-full w-full bg-[var(--terminal-background)]"
   data-overlay-scrollbars={macosOverlayScrollbars ? 'macos' : undefined}
 >
   {#if (!ready && !readOnly) || transitioningControl}
     <div
-      class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0f0f10]"
+      class="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[var(--terminal-background)]"
     >
       <div class="flex flex-col items-center gap-3">
         <span class="relative flex size-9 items-center justify-center">
@@ -957,7 +962,7 @@
     </div>
   {/if}
   {#if readOnly}
-    <div class="absolute inset-0 z-10 flex min-h-0 flex-col bg-[#0f0f10]">
+    <div class="absolute inset-0 z-10 flex min-h-0 flex-col bg-[var(--terminal-background)]">
       <div class="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-2 text-xs text-foreground">
         <span class="min-w-0 flex-1 truncate">
           Read-only — controlled by {inputLease?.controllerDeviceName ?? 'another client'}
@@ -1046,12 +1051,12 @@
 
 <style>
   :global(.xterm) {
-    background: #0f0f10 !important;
+    background: var(--terminal-background) !important;
     height: 100%;
   }
   :global(.xterm-screen),
   :global(.xterm-viewport) {
-    background: #0f0f10 !important;
+    background: var(--terminal-background) !important;
   }
 
   .terminal-pane-shell[data-overlay-scrollbars='macos'] :global(.xterm-viewport) {

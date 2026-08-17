@@ -47,6 +47,11 @@ describe('SettingsStore — defaults', () => {
     expect(settings.terminal.keepFullHistory).toBe(true);
   });
 
+  it('follows the system color scheme by default', async () => {
+    const settings = await new SettingsStore(path.join(tmpDir, 'theme-default.json')).get();
+    expect(settings.appearance.theme).toBe('system');
+  });
+
   it('selects native Linux defaults for the Linux build', async () => {
     const store = new SettingsStore(path.join(tmpDir, 'linux.json'), 'linux');
     const s = await store.get();

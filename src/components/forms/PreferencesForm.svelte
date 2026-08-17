@@ -19,7 +19,10 @@
     ServerCog,
     Bell,
     Keyboard,
-    ScanLine
+    ScanLine,
+    Sun,
+    Moon,
+    Monitor
   } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import { platform } from '../../stores/platform.svelte';
@@ -63,7 +66,31 @@
     requestAgentNotificationPermission
   } from '../../lib/agent-system-notifications';
 
-  const themes: ThemePref[] = ['dark', 'light', 'system'];
+  const themes: Array<{
+    value: ThemePref;
+    label: string;
+    description: string;
+    icon: typeof Palette;
+  }> = [
+    {
+      value: 'system',
+      label: 'Auto',
+      description: 'Follow your system setting',
+      icon: Monitor
+    },
+    {
+      value: 'light',
+      label: 'Light',
+      description: 'Bright and crisp',
+      icon: Sun
+    },
+    {
+      value: 'dark',
+      label: 'Dark',
+      description: 'Easy on the eyes',
+      icon: Moon
+    }
+  ];
   const terminalFontSizes: TerminalFontSizePref[] = [11, 12, 13, 14];
   const diffFontSizes: DiffFontSizePref[] = [11, 12, 13, 14, 15, 16];
   const builtInShortcuts = Object.values(Keymap);
@@ -560,20 +587,47 @@
     </Tabs.Content>
 
     <Tabs.Content value="appearance" class={contentClass}>
-      <div class="flex flex-col gap-1.5">
-        <Label class="text-xs text-muted-foreground">Theme</Label>
-        <Select.Root
-          type="single"
-          value={settings.current.appearance.theme}
-          onValueChange={(v) => setAppearance('theme', v as ThemePref)}
-        >
-          <Select.Trigger class="w-full">{settings.current.appearance.theme}</Select.Trigger>
-          <Select.Content>
-            {#each themes as t (t)}
-              <Select.Item value={t} label={t}>{t}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <h2 class="m-0 text-sm font-medium">Color theme</h2>
+          <p class="m-0 text-[11px] leading-4 text-muted-foreground">
+            Auto follows your device and updates whenever its appearance changes.
+          </p>
+        </div>
+        <div class="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Color theme">
+          {#each themes as theme (theme.value)}
+            {@const ThemeIcon = theme.icon}
+            {@const selected = settings.current.appearance.theme === theme.value}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              class={cn(
+                'flex min-h-20 items-start gap-3 rounded-lg border p-3 text-left transition-colors outline-none',
+                'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50',
+                selected
+                  ? 'border-primary bg-primary/8 text-foreground shadow-sm'
+                  : 'border-border bg-card text-foreground'
+              )}
+              onclick={() => void setAppearance('theme', theme.value)}
+            >
+              <span class={cn(
+                'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border',
+                selected
+                  ? 'border-primary/30 bg-primary/12 text-primary'
+                  : 'border-border bg-muted/60 text-muted-foreground'
+              )}>
+                <ThemeIcon class="size-4" aria-hidden="true" />
+              </span>
+              <span class="min-w-0">
+                <span class="block text-sm font-medium">{theme.label}</span>
+                <span class="mt-0.5 block text-[10px] leading-3.5 text-muted-foreground">
+                  {theme.description}
+                </span>
+              </span>
+            </button>
+          {/each}
+        </div>
       </div>
     </Tabs.Content>
 
