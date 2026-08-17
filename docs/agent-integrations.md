@@ -44,10 +44,11 @@ Known upstream boundaries are surfaced rather than inferred:
 
 - Cursor does not document that a print-stream `session_id` and a resumable chat ID are always identical. Soloe retains the observed ID as the strongest available resume candidate while keeping its own Session identity authoritative.
 - Cursor's interactive TUI does not expose its new chat ID to the parent terminal process. Exact reload therefore requires a chat ID captured by ACP/streaming or supplied through “Resume by chat id”; otherwise Soloe uses Cursor's documented latest-chat resume and labels that behavior accordingly. Soloe does not parse Cursor's undocumented on-disk chat storage.
+- Cursor's interactive TUI does not document a structured status stream for its parent terminal. Soloe marks a turn working only when input is submitted (draft keystrokes do not change state) and recognizes the approval surfaces emitted by the installed CLI. ACP worker state remains protocol-driven.
 - Cursor's print format intentionally suppresses thinking and has no documented MCP-specific event variant. The fallback preserves unknown raw records and reports MCP activity through the generic tool path. ACP is used when richer event semantics are available.
 - Cursor states that team-dashboard MCP servers are not supported in ACP mode. User and project `.cursor/mcp.json` servers remain supported.
 - Soloe workers can answer ACP permission requests automatically only when the owning Session is in an auto-approval mode. Otherwise the worker reports `waiting_for_approval` and rejects the request because Soloe's worker-control protocol has no interactive permission-response command. Cursor-specific blocking question and plan-approval requests are reported as `waiting_for_input` and rejected for the same reason; interactive Cursor TUI Sessions handle both normally.
-- This development host did not have Cursor installed, so the parser fixtures are based on the published schemas rather than a locally authenticated capture. See [the research record](./research/cursor-agent-cli.md) for exact sources and evidence.
+- The first-party Cursor CLI is installed on the development host. Structured parser fixtures remain based on the published schemas; interactive approval fixtures additionally use exact strings verified in the installed first-party bundle. See [the research record](./research/cursor-agent-cli.md) for exact sources and evidence.
 
 ## Third-party skills
 

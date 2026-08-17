@@ -4,9 +4,10 @@ Research date: 2026-08-16
 
 This note records the supported integration contract for Cursor's terminal agent. It uses only
 first-party Cursor documentation, Cursor's published changelog, and the current first-party
-installer. No Cursor CLI executable is installed in this worktree's host environment, so claims
-that depend on live `--help`, authenticated model listings, or captured agent runs are called out
-as unverified rather than inferred.
+installer. Cursor CLI release `2026.08.11-e8db854` was subsequently installed from that installer.
+The automated development process could verify the installed files and UI literals, but its
+non-interactive macOS process could not unlock the login keychain; claims that depend on
+authenticated model listings or captured agent runs remain unverified rather than inferred.
 
 ## Source and environment status
 
@@ -19,12 +20,13 @@ installer referenced release `2026.08.11-e8db854`.
 [January 8 changelog](https://cursor.com/changelog/cli-jan-08-2026),
 [current installer](https://cursor.com/install))
 
-Read-only checks on this host found none of `agent`, `cursor-agent`, `cursor`, or
-`cursor-agent-cli` on `PATH`, no `/Applications/Cursor.app`, no CLI symlink in
-`/usr/local/bin`, `/opt/homebrew/bin`, or `~/.local/bin`, and no Cursor Agent executable below
-`~/.local/share/cursor-agent` or `~/.cursor`. Consequently, the installed version string, live
-help output, account model list, real event variants, signal exit status, and resumed-session ID
-behavior could not be observed locally.
+After the initial read-only audit, the first-party installer created both `agent` and
+`cursor-agent` shims under `~/.local/bin` and installed release `2026.08.11-e8db854` under
+`~/.local/share/cursor-agent/versions`. The installed first-party bundle confirms the interactive
+approval labels used by Soloe's terminal fixtures, including “Run this command?”, “Proceed with
+this edit?”, and the web/MCP approval variants. Authenticated model listings, real event variants,
+signal exit status, and resumed-session ID behavior could not be captured from the automated
+process because Cursor reported that its macOS login keychain was locked.
 
 ## Discovery, version, installation, and authentication
 

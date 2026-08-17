@@ -355,6 +355,99 @@ describe('PtyManager', () => {
     expect(observer.listEvents(session.id).map((e) => e.summary)).toContain('approval answered');
   });
 
+  it('marks an idle Cursor session working only when the user submits input', async () => {
+    const cursorSession: Session = {
+      ...session,
+      id: 'cursor-input-state',
+      name: 'Cursor',
+      launch: { type: 'agent', provider: 'cursor', resumeMode: 'new' }
+    };
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => cursorSession),
+        touch: vi.fn(async () => {}),
+        update: vi.fn(async () => cursorSession)
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      observer,
+      cursorDiscovery: {
+        detect: vi.fn().mockResolvedValue({ available: true, binary: 'agent' })
+      },
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: cursorSession.id });
+    observer.setTuiObservedState(cursorSession.id, 'idle', 'idle');
+
+    manager.write(started.terminalId, 'draft text');
+    expect(observer.getSnapshot(cursorSession.id)?.state).toBe('idle');
+
+    manager.write(started.terminalId, '\r');
+    expect(observer.getSnapshot(cursorSession.id)?.state).toBe('working');
+    expect(observer.listEvents(cursorSession.id).map((event) => event.summary))
+      .toContain('prompt submitted');
+  });
+
+  it.each([
+    'Run this command?',
+    'Run this command outside the sandbox?',
+    'Proceed with this edit?',
+    'Run this MCP tool?',
+    'Allow this web fetch?',
+    'Allow this web search?',
+    'Approve mode switch (y/n)'
+  ])('detects the Cursor approval prompt %s', async (prompt) => {
+    const cursorSession: Session = {
+      ...session,
+      id: `cursor-approval-${prompt}`,
+      name: 'Cursor',
+      launch: { type: 'agent', provider: 'cursor', resumeMode: 'new' }
+    };
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => cursorSession),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      observer,
+      cursorDiscovery: {
+        detect: vi.fn().mockResolvedValue({ available: true, binary: 'agent' })
+      },
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: cursorSession.id });
+    observer.setTuiObservedState(cursorSession.id, 'working', 'thinking');
+    manager.forwardBatchedOutput([{
+      terminalId: started.terminalId,
+      sessionId: cursorSession.id,
+      data: prompt,
+      seq: 1
+    }]);
+
+    expect(observer.getSnapshot(cursorSession.id)?.state).toBe('waiting_for_approval');
+    expect(observer.listEvents(cursorSession.id).map((event) => event.summary))
+      .toContain('waiting for approval');
+  });
+
   it('does not publish approval state when effective Codex config uses auto-review', async () => {
     const codexSession: Session = {
       ...session,

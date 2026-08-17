@@ -316,11 +316,26 @@ export class PtyManager extends EventEmitter {
 
   private handleAgentInputState(instance: TerminalInstance, data: string): void {
     if (!instance.agentProvider) return;
-    if (/[\r\n]/.test(data)) {
+    const submitted = /[\r\n]/.test(data);
+    if (submitted) {
       this.markAgentSessionResumable(instance.sessionId);
     }
-    if (!data.includes('\x03')) return;
     const snapshot = this.opts.observer?.getSnapshot(instance.sessionId);
+    if (
+      instance.agentProvider === 'cursor'
+      && submitted
+      && snapshot?.state === 'idle'
+    ) {
+      // Cursor's interactive TUI does not expose a structured prompt lifecycle
+      // on the parent PTY. Treat submission (not draft keystrokes) as the start
+      // of work; explicit ACP events remain authoritative for worker sessions.
+      this.opts.observer?.setTuiObservedState(
+        instance.sessionId,
+        'working',
+        'prompt submitted'
+      );
+    }
+    if (!data.includes('\x03')) return;
     if (!snapshot || snapshot.state === 'idle' || snapshot.state === 'exited') return;
     this.opts.observer?.setTuiObservedState(instance.sessionId, 'idle', 'idle');
   }
@@ -553,7 +568,7 @@ export class PtyManager extends EventEmitter {
 
     const observedState = this.opts.observer?.getSnapshot(instance.sessionId)?.state;
     if (
-      isApprovalPromptOutput(signalText)
+      isApprovalPromptOutput(signalText, instance.agentProvider)
       && !instance.autoApprovesPermissions
       && observedState !== 'waiting_for_approval'
       && observedState !== 'usage_limited'
@@ -629,7 +644,8 @@ export class PtyManager extends EventEmitter {
 const noop = (): void => {};
 
 const AGENT_SIGNAL_TAIL_LENGTH = 256;
-const AGENT_SIGNAL_CANDIDATE = /allow|permission|approval|limit|credit/i;
+const AGENT_SIGNAL_CANDIDATE =
+  /allow|permission|approval|approve mode|run this|proceed with|limit|credit/i;
 const USAGE_LIMIT_CANDIDATE = /limit|credit/i;
 
 function legacyAgentProvider(session: Session): AgentRuntimeProvider | null {
@@ -638,11 +654,21 @@ function legacyAgentProvider(session: Session): AgentRuntimeProvider | null {
   return null;
 }
 
-function isApprovalPromptOutput(text: string): boolean {
+function isApprovalPromptOutput(text: string, provider: AgentRuntimeProvider): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, ' ');
-  return normalized.includes('do you want to allow')
+  if (normalized.includes('do you want to allow')
     || normalized.includes('needs your permission')
-    || normalized.includes('waiting for approval');
+    || normalized.includes('waiting for approval')) {
+    return true;
+  }
+  if (provider !== 'cursor') return false;
+  return normalized.includes('run this command?')
+    || normalized.includes('run this command outside the sandbox?')
+    || normalized.includes('proceed with this edit?')
+    || normalized.includes('run this mcp tool?')
+    || normalized.includes('allow this web fetch?')
+    || normalized.includes('allow this web search?')
+    || normalized.includes('approve mode switch (y/n)');
 }
 
 function newTerminalId(): TerminalId {
