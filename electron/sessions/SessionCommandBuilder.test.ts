@@ -286,7 +286,7 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
 
     expect(decodeAgentScript(innerLine(builder.build(claude, ctx).args))).toContain('--continue');
     expect(decodeAgentScript(innerLine(builder.build(codex, ctx).args))).toContain(
-      'exec "$__soloe_agent_bin" resume'
+      'exec "$__soloe_agent_bin" resume --include-non-interactive'
     );
   });
 });

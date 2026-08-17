@@ -126,6 +126,7 @@ export class SessionCommandBuilder {
       : isKnownEmptyCodexSession(s)
         ? []
         : ['resume'];
+    appendCodexResumePickerOptions(args);
     if (s.launch.type === 'agent' && s.launch.provider === 'codex') {
       appendAgentLaunchArgs(args, s.launch, 'codex');
     }
@@ -218,9 +219,8 @@ export class SessionCommandBuilder {
         break;
       }
       case 'resume_last':
-        // Include Codex exec sessions in the picker so Soloe exposes the full
-        // conversation history for a worktree, not only interactive TUI runs.
-        args.push('resume', '--include-non-interactive');
+        args.push('resume');
+        appendCodexResumePickerOptions(args);
         break;
       case 'resume_by_id':
         if (!launch.codexSessionId) {
@@ -265,6 +265,14 @@ function appendAgentLaunchArgs(
 function appendCodexTerminalMode(args: string[], extraArgs: string[] | undefined): void {
   if (extraArgs?.some((arg) => arg.trim().toLowerCase() === '--no-alt-screen')) return;
   args.push('--no-alt-screen');
+}
+
+function appendCodexResumePickerOptions(args: string[]): void {
+  if (args.length === 1 && args[0] === 'resume') {
+    // Include Codex exec sessions in the picker so Soloe exposes the full
+    // conversation history for a worktree, not only interactive TUI runs.
+    args.push('--include-non-interactive');
+  }
 }
 
 export function codexConfigOverrides(extraArgs: string[] | undefined): string[] {
