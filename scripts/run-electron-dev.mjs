@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 
 export const DEVELOPMENT_APP_NAME = 'Soloe';
 export const DEVELOPMENT_APP_ID = 'com.soloe.app.dev';
-export const DEVELOPMENT_BUNDLE_FORMAT_VERSION = 5;
+export const DEVELOPMENT_BUNDLE_FORMAT_VERSION = 6;
 export const DEVELOPMENT_HELPER_BUNDLES = [
   ['Electron Helper.app', 'Soloe Helper.app', 'Soloe Helper'],
   ['Electron Helper (GPU).app', 'Soloe Helper (GPU).app', 'Soloe Helper (GPU)'],
@@ -31,6 +31,12 @@ export const DEVELOPMENT_NESTED_SIGNABLES = [
   'Contents/Frameworks/Squirrel.framework/Versions/A/Squirrel',
   'Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework'
 ];
+export const DEVELOPMENT_FRAMEWORK_BUNDLES = [
+  'Electron Framework.framework',
+  'Mantle.framework',
+  'ReactiveObjC.framework',
+  'Squirrel.framework'
+];
 
 function run(command, args) {
   const result = spawnSync(command, args, { encoding: 'utf8' });
@@ -45,6 +51,20 @@ async function copyMacosApp(source, destination) {
   const cloned = spawnSync('cp', ['-cR', source, destination], { encoding: 'utf8' });
   if (cloned.status === 0) return;
   run('ditto', [source, destination]);
+}
+
+export async function normalizeMacosFrameworkBundle(frameworkPath) {
+  const versionsPath = join(frameworkPath, 'Versions');
+  const versionAPath = join(versionsPath, 'A');
+  if (!existsSync(versionAPath)) return;
+
+  await rm(join(versionsPath, 'Current'), { recursive: true, force: true });
+  await symlink('A', join(versionsPath, 'Current'));
+  for (const entry of await readdir(versionAPath)) {
+    const exposedPath = join(frameworkPath, entry);
+    await rm(exposedPath, { recursive: true, force: true });
+    await symlink(join('Versions', 'Current', entry), exposedPath);
+  }
 }
 
 export async function prepareMacosDevelopmentElectron() {
@@ -81,6 +101,11 @@ export async function prepareMacosDevelopmentElectron() {
   await mkdir(distDirectory, { recursive: true });
   await copyMacosApp(sourceApp, destinationApp);
 
+  const frameworksDirectory = join(destinationApp, 'Contents', 'Frameworks');
+  for (const frameworkName of DEVELOPMENT_FRAMEWORK_BUNDLES) {
+    await normalizeMacosFrameworkBundle(join(frameworksDirectory, frameworkName));
+  }
+
   const infoPlist = join(destinationApp, 'Contents', 'Info.plist');
   run('plutil', ['-replace', 'CFBundleDisplayName', '-string', DEVELOPMENT_APP_NAME, infoPlist]);
   run('plutil', ['-replace', 'CFBundleExecutable', '-string', DEVELOPMENT_APP_NAME, infoPlist]);
@@ -97,7 +122,10 @@ export async function prepareMacosDevelopmentElectron() {
     run('codesign', ['--force', '--sign', '-', join(destinationApp, relativePath)]);
   }
 
-  const frameworksDirectory = join(destinationApp, 'Contents', 'Frameworks');
+  for (const frameworkName of DEVELOPMENT_FRAMEWORK_BUNDLES) {
+    run('codesign', ['--force', '--sign', '-', join(frameworksDirectory, frameworkName)]);
+  }
+
   for (const [sourceName, destinationName, bundleName] of DEVELOPMENT_HELPER_BUNDLES) {
     const helperApp = join(frameworksDirectory, destinationName);
     await rename(join(frameworksDirectory, sourceName), helperApp);
@@ -118,6 +146,7 @@ export async function prepareMacosDevelopmentElectron() {
   }
 
   run('codesign', ['--force', '--sign', '-', destinationApp]);
+  run('codesign', ['--verify', '--deep', '--strict', destinationApp]);
   await writeFile(markerPath, cacheKey);
   return executablePath;
 }
