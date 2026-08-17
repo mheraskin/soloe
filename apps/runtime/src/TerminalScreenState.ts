@@ -1,6 +1,8 @@
 import { SerializeAddon } from '@xterm/addon-serialize';
-import { Terminal } from '@xterm/headless';
+import headlessXterm from '@xterm/headless';
 import type { RuntimeTerminalScreenSnapshot } from '@soloe/protocol';
+
+const { Terminal } = headlessXterm;
 
 interface HeadlessTerminal {
   write(data: string, callback: () => void): void;
