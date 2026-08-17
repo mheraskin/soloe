@@ -470,6 +470,17 @@ describe('SessionCommandBuilder — codex kind', () => {
     expect(script).toContain('cdx-123');
   });
 
+  it('includes non-interactive Codex sessions in the resume picker', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'resume_last' }
+    };
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+    expect(script).toContain('resume --include-non-interactive');
+  });
+
   it('uses captured Codex session id for a persisted new session', () => {
     const s: Session = {
       ...baseFields(),

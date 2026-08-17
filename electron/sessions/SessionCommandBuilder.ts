@@ -218,7 +218,9 @@ export class SessionCommandBuilder {
         break;
       }
       case 'resume_last':
-        args.push('resume');
+        // Include Codex exec sessions in the picker so Soloe exposes the full
+        // conversation history for a worktree, not only interactive TUI runs.
+        args.push('resume', '--include-non-interactive');
         break;
       case 'resume_by_id':
         if (!launch.codexSessionId) {
