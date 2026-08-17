@@ -5,7 +5,7 @@ import type {
   RuntimeTerminalStart,
   RuntimeTerminalState
 } from './RuntimeProcess.js';
-import type { RuntimeUsageSnapshot } from "@soloe/protocol";
+import type { RuntimeTerminalScreenSnapshot, RuntimeUsageSnapshot } from "@soloe/protocol";
 import type { TerminalReplaySnapshot } from './TerminalReplayBuffer.js';
 import type {
   TerminalControlProof,
@@ -65,6 +65,10 @@ export class RuntimeClient extends EventEmitter {
     return this.request('replay', { terminalId, afterSeq });
   }
 
+  screenSnapshot(terminalId: string): Promise<RuntimeTerminalScreenSnapshot> {
+    return this.request('screenSnapshot', { terminalId });
+  }
+
   setReplayUnbounded(unbounded: boolean): Promise<true> {
     return this.request('setReplayUnbounded', { unbounded });
   }
@@ -88,6 +92,10 @@ export class RuntimeClient extends EventEmitter {
 
   releaseInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean> {
     return this.request('releaseInputLease', { terminalId, ...control });
+  }
+
+  parkInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean> {
+    return this.request('parkInputLease', { terminalId, ...control });
   }
 
   releaseInputLeases(ownerId: string): Promise<number> {

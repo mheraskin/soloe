@@ -84,6 +84,15 @@ describe("SoloeDomain", () => {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
       replay: vi.fn(),
+      screenSnapshot: vi.fn(async (terminalId: string) => ({
+        kind: "xterm-vt-state-v1" as const,
+        terminalId,
+        sessionId: "session-1",
+        cols: 100,
+        rows: 30,
+        toSeq: 7,
+        data: "restored",
+      })),
       acquireInputLease: vi.fn(async (
         terminalId: string,
         ownerId: string,
@@ -107,6 +116,10 @@ describe("SoloeDomain", () => {
         terminalId: string,
         control: import("../../../shared/types/terminal.js").TerminalControlProof,
       ) => leases.release(terminalId, control)),
+      parkInputLease: vi.fn(async (
+        terminalId: string,
+        control: import("../../../shared/types/terminal.js").TerminalControlProof,
+      ) => leases.park(terminalId, control)),
       releaseInputLeases: vi.fn(async (ownerId: string) =>
         leases.releaseTransportClient(ownerId)),
       write: vi.fn(async (
@@ -188,6 +201,20 @@ describe("SoloeDomain", () => {
         method: "currentInputLease",
         args: ["terminal-1"],
       })).resolves.toMatchObject({ controllerDeviceId: "device-b" });
+
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "screenSnapshot",
+        args: ["terminal-1"],
+        clientId: "spectator-client",
+      })).resolves.toMatchObject({ toSeq: 7, data: "restored" });
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "parkInputLease",
+        args: ["terminal-1", terminalControlProof(secondLease)],
+        clientId: "client-b",
+      })).resolves.toBe(true);
+      expect(leases.current("terminal-1")).toBeNull();
 
       domain.releaseClient("client-b");
       expect(leases.current("terminal-1")).toBeNull();

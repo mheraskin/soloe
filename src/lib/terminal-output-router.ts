@@ -86,7 +86,8 @@ export class TerminalOutputRouter {
     terminalId: TerminalId,
     sessionId: SessionId,
     sink: TerminalPresentationSink,
-    initiallyVisible: boolean
+    initiallyVisible: boolean,
+    initialSeq = 0
   ): TerminalPresentation {
     const state: PresentationState = {
       terminalId,
@@ -94,8 +95,8 @@ export class TerminalOutputRouter {
       sink,
       visible: initiallyVisible,
       active: true,
-      appliedSeq: 0,
-      coveredSeq: 0,
+      appliedSeq: initialSeq,
+      coveredSeq: initialSeq,
       pending: [],
       writing: false,
       writeRevision: 0,
@@ -105,7 +106,7 @@ export class TerminalOutputRouter {
       replayRequired: false,
       replaying: false,
       replayRevision: 0,
-      highestObservedSeq: 0
+      highestObservedSeq: initialSeq
     };
     const group = this.presentations.get(terminalId) ?? new Set<PresentationState>();
     group.add(state);

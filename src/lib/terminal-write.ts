@@ -1,4 +1,7 @@
-export const FULL_TERMINAL_SCROLLBACK = 4_294_967_295;
+// Keep the browser viewport bounded. Durable restore comes from the Runtime's
+// headless screen snapshot plus sequence replay, not an effectively-unbounded
+// renderer buffer.
+export const FULL_TERMINAL_SCROLLBACK = 10_000;
 
 interface WritableTerminal {
   write(data: string, callback: () => void): void;

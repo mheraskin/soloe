@@ -120,6 +120,29 @@ describe('TerminalControlCoordinator', () => {
     expect(coordinator.owns('terminal-b')).toBe(true);
   });
 
+  it('parks control affinity while dropping exclusivity on deselect', async () => {
+    const control = backend();
+    const parked: string[] = [];
+    control.park = async (terminalId) => {
+      parked.push(terminalId);
+      control.events({
+        type: 'released',
+        terminalId,
+        lease: null,
+        observedAt: new Date().toISOString()
+      });
+      return true;
+    };
+    const coordinator = new TerminalControlCoordinator(control, identity);
+
+    await coordinator.select('terminal-a');
+    await coordinator.select(null);
+
+    expect(parked).toEqual(['terminal-a']);
+    expect(control.released).toEqual([]);
+    expect(coordinator.owns('terminal-a')).toBe(false);
+  });
+
   it('stops controlling immediately when a newer takeover event arrives', async () => {
     const control = backend();
     const coordinator = new TerminalControlCoordinator(control, identity);

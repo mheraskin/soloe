@@ -185,6 +185,11 @@ const soloe: SoloeApi = {
       control: TerminalControlProof;
     }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReleaseInputLease, request),
+    deviceTerminalParkInputLease: (request: {
+      ref: TerminalRef;
+      control: TerminalControlProof;
+    }) =>
+      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalParkInputLease, request),
     deviceTerminalResize: (request: {
       ref: TerminalRef;
       cols: number;
@@ -194,6 +199,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalResize, request),
     deviceTerminalReplay: (ref: TerminalRef, afterSeq?: number) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReplay, ref, afterSeq),
+    deviceTerminalScreenSnapshot: (ref: TerminalRef) =>
+      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalScreenSnapshot, ref),
     deviceTerminalStop: (ref: TerminalRef) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalStop, ref),
     onChange: (cb: (session: Session) => void) =>
@@ -224,12 +231,16 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.terminal.currentInputLease, terminalId),
     releaseInputLease: (terminalId: TerminalId, control: TerminalControlProof) =>
       ipcRenderer.invoke(IpcChannels.terminal.releaseInputLease, terminalId, control),
+    parkInputLease: (terminalId: TerminalId, control: TerminalControlProof) =>
+      ipcRenderer.invoke(IpcChannels.terminal.parkInputLease, terminalId, control),
     input: (payload: TerminalInputPayload) => ipcRenderer.invoke(IpcChannels.terminal.input, payload),
     resize: (payload: TerminalResizePayload) =>
       ipcRenderer.invoke(IpcChannels.terminal.resize, payload),
     listRunning: () => ipcRenderer.invoke(IpcChannels.terminal.listRunning),
     replay: (terminalId: TerminalId, afterSeq?: number) =>
       ipcRenderer.invoke(IpcChannels.terminal.replay, terminalId, afterSeq),
+    screenSnapshot: (terminalId: TerminalId) =>
+      ipcRenderer.invoke(IpcChannels.terminal.screenSnapshot, terminalId),
     setOutputDemand: (payload: TerminalOutputDemandPayload) =>
       ipcRenderer.invoke(IpcChannels.terminal.outputDemand, payload),
     onOutput: (cb: (event: TerminalOutputEvent) => void) =>

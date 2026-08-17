@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type {
   RuntimeReplaySnapshot,
+  RuntimeTerminalScreenSnapshot,
   RuntimeTerminalStart,
   RuntimeTerminalState,
   RuntimeUsageSnapshot,
@@ -201,6 +202,7 @@ export interface RuntimeControl {
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
   listRunning(): Promise<RuntimeTerminalState[]>;
   replay(terminalId: string, afterSeq?: number): Promise<RuntimeReplaySnapshot | null>;
+  screenSnapshot?(terminalId: string): Promise<RuntimeTerminalScreenSnapshot>;
   setReplayUnbounded?(unbounded: boolean): Promise<unknown>;
   acquireInputLease?(
     terminalId: string,
@@ -210,6 +212,10 @@ export interface RuntimeControl {
   ): Promise<TerminalInputLease>;
   currentInputLease?(terminalId: string): Promise<TerminalInputLease | null>;
   releaseInputLease?(
+    terminalId: string,
+    control: TerminalControlProof,
+  ): Promise<boolean>;
+  parkInputLease?(
     terminalId: string,
     control: TerminalControlProof,
   ): Promise<boolean>;
@@ -2158,6 +2164,13 @@ export class SoloeDomain extends EventEmitter {
           structuredClone(request.control),
         );
       }
+      case "deviceTerminalParkInputLease": {
+        const request = args[0] as { ref: TerminalRef; control: TerminalControlProof };
+        return this.requireMultiDeviceSessions(deviceSessions).terminalParkInputLease(
+          structuredClone(request.ref),
+          structuredClone(request.control),
+        );
+      }
       case "deviceTerminalResize": {
         const request = args[0] as {
           ref: TerminalRef;
@@ -2177,6 +2190,10 @@ export class SoloeDomain extends EventEmitter {
         return this.requireMultiDeviceSessions(deviceSessions).terminalReplay(
           structuredClone(args[0] as TerminalRef),
           args[1] as number | undefined,
+        );
+      case "deviceTerminalScreenSnapshot":
+        return this.requireMultiDeviceSessions(deviceSessions).terminalScreenSnapshot(
+          structuredClone(args[0] as TerminalRef),
         );
       case "deviceTerminalStop":
         await this.requireMultiDeviceSessions(deviceSessions).terminalStop(
@@ -2290,6 +2307,16 @@ export class SoloeDomain extends EventEmitter {
           requireTerminalControlProof(args[1]),
         );
       }
+      case "parkInputLease": {
+        requireTerminalClientId(clientId);
+        const park = this.options.runtime.parkInputLease;
+        if (!park) throw terminalInputLeaseUnavailable();
+        return park.call(
+          this.options.runtime,
+          requireTerminalId(args[0]),
+          requireTerminalControlProof(args[1]),
+        );
+      }
       case "input": {
         const terminalId = requireTerminalId(args[0]);
         const data = args[1] as string;
@@ -2344,6 +2371,11 @@ export class SoloeDomain extends EventEmitter {
         }));
       case "replay":
         return this.options.runtime.replay(args[0] as string, args[1] as number | undefined);
+      case "screenSnapshot": {
+        const snapshot = this.options.runtime.screenSnapshot;
+        if (!snapshot) return null;
+        return snapshot.call(this.options.runtime, requireTerminalId(args[0]));
+      }
       case "setOutputDemand":
         return true;
       default:

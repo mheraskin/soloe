@@ -191,8 +191,10 @@ export const IpcChannels = {
     deviceTerminalInputLease: 'sessions:device-terminal-input-lease',
     deviceTerminalCurrentInputLease: 'sessions:device-terminal-current-input-lease',
     deviceTerminalReleaseInputLease: 'sessions:device-terminal-release-input-lease',
+    deviceTerminalParkInputLease: 'sessions:device-terminal-park-input-lease',
     deviceTerminalResize: 'sessions:device-terminal-resize',
     deviceTerminalReplay: 'sessions:device-terminal-replay',
+    deviceTerminalScreenSnapshot: 'sessions:device-terminal-screen-snapshot',
     deviceTerminalStop: 'sessions:device-terminal-stop',
     changed: 'sessions:changed',
     deleted: 'sessions:deleted',
@@ -206,10 +208,12 @@ export const IpcChannels = {
     acquireInputLease: 'terminal:acquire-input-lease',
     currentInputLease: 'terminal:current-input-lease',
     releaseInputLease: 'terminal:release-input-lease',
+    parkInputLease: 'terminal:park-input-lease',
     input: 'terminal:input',
     resize: 'terminal:resize',
     listRunning: 'terminal:list-running',
     replay: 'terminal:replay',
+    screenSnapshot: 'terminal:screen-snapshot',
     outputDemand: 'terminal:output-demand',
     output: 'terminal:output',
     exit: 'terminal:exit',
@@ -459,6 +463,9 @@ export interface SessionsApi {
   deviceTerminalReleaseInputLease?(
     request: { ref: TerminalRef; control: TerminalControlProof }
   ): Promise<IpcResult<boolean>>;
+  deviceTerminalParkInputLease?(
+    request: { ref: TerminalRef; control: TerminalControlProof }
+  ): Promise<IpcResult<boolean>>;
   deviceTerminalResize?(
     request: { ref: TerminalRef; cols: number; rows: number; control: TerminalControlProof }
   ): Promise<IpcResult<true>>;
@@ -466,6 +473,9 @@ export interface SessionsApi {
     ref: TerminalRef,
     afterSeq?: number
   ): Promise<IpcResult<DeviceTerminalReplay>>;
+  deviceTerminalScreenSnapshot?(
+    ref: TerminalRef
+  ): Promise<IpcResult<import('./multi-device-sessions.js').DeviceTerminalScreenSnapshot>>;
   deviceTerminalStop?(ref: TerminalRef): Promise<IpcResult<true>>;
 
   onChange(listener: (session: Session) => void): () => void;
@@ -507,10 +517,15 @@ export interface TerminalApi {
     terminalId: TerminalId,
     control: TerminalControlProof
   ): Promise<IpcResult<boolean>>;
+  parkInputLease(
+    terminalId: TerminalId,
+    control: TerminalControlProof
+  ): Promise<IpcResult<boolean>>;
   input(payload: TerminalInputPayload): Promise<IpcResult<true>>;
   resize(payload: TerminalResizePayload): Promise<IpcResult<true>>;
   listRunning(): Promise<IpcResult<SessionRuntimeState[]>>;
   replay(terminalId: TerminalId, afterSeq?: number): Promise<IpcResult<import('./terminal.js').TerminalReplaySnapshot | null>>;
+  screenSnapshot(terminalId: TerminalId): Promise<IpcResult<import('./terminal.js').TerminalScreenSnapshot | null>>;
   setOutputDemand(payload: TerminalOutputDemandPayload): Promise<IpcResult<true>>;
 
   onOutput(listener: (event: TerminalOutputEvent) => void): () => void;

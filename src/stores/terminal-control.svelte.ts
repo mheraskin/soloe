@@ -21,6 +21,7 @@ class TerminalControlStore {
         ipc.terminal.acquireInputLease(terminalId, identity, takeover),
       current: (terminalId) => ipc.terminal.currentInputLease(terminalId),
       release: (terminalId, control) => ipc.terminal.releaseInputLease(terminalId, control),
+      park: (terminalId, control) => ipc.terminal.parkInputLease(terminalId, control),
       input: async (terminalId, data, control) => {
         await ipc.terminal.input(terminalId, data, control);
       },

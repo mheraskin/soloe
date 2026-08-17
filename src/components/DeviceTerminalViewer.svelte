@@ -115,12 +115,31 @@
     const links = new WebLinksAddon(terminalLinks.web);
     terminal.loadAddon(fit);
     terminal.loadAddon(links);
+    let disposed = false;
+    let disposeInitialized = () => terminal.dispose();
+    void (async () => {
+      let initialSeq = 0;
+      let initialData = '';
+      try {
+        const restored = await deviceSessions.terminalScreenSnapshot(ref);
+        if (disposed) return;
+        if (restored.snapshot) {
+          terminal.resize(restored.snapshot.cols, restored.snapshot.rows);
+          await writeTerminalData(terminal, restored.snapshot.data);
+          initialSeq = restored.snapshot.toSeq;
+          initialData = restored.snapshot.data;
+          restoring = false;
+        }
+      } catch {
+        // Older remote Devices use bounded raw replay below.
+      }
+      if (disposed) return;
     terminal.open(host);
     activeTerminal = terminal;
 
     let active = true;
-    let appliedSeq = 0;
-    let coveredSeq = 0;
+    let appliedSeq = initialSeq;
+    let coveredSeq = initialSeq;
     let restoringOutput = true;
     const pending = new Map<number, TerminalOutputEvent>();
     let outputQueue = Promise.resolve();
@@ -128,8 +147,8 @@
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     let lastSize: { cols: number; rows: number } | null = null;
     const transcript = new TerminalTranscriptProjector({
-      cols: inputLease?.lease?.cols ?? 120,
-      rows: inputLease?.lease?.rows ?? 30,
+      cols: terminal.cols,
+      rows: terminal.rows,
       scrollback: FULL_TERMINAL_SCROLLBACK
     });
     resizeTranscript = (cols, rows) => transcript.resize(cols, rows);
@@ -152,6 +171,10 @@
       await transcript.write(data);
       projectTranscript();
     };
+    if (initialData) {
+      await transcript.write(initialData);
+      projectTranscript();
+    }
     const recover = async (): Promise<void> => {
       if (restoringOutput || !active) return;
       restoringOutput = true;
@@ -207,7 +230,7 @@
     const attachment = deviceSessions.acquireTerminalOutput(ref, queueOutput);
     void attachment.ready
       .then(async () => {
-        const replay = await deviceSessions.terminalReplay(ref, 0);
+        const replay = await deviceSessions.terminalReplay(ref, appliedSeq);
         if (!active) return;
         if (replay.snapshot) {
           if (replay.snapshot.truncated) {
@@ -293,7 +316,7 @@
       });
     });
 
-    return () => {
+    disposeInitialized = () => {
       active = false;
       detachReconnect();
       attachment.dispose();
@@ -306,6 +329,14 @@
       resizeTranscript = () => undefined;
       terminal.dispose();
       if (activeTerminal === terminal) activeTerminal = null;
+    };
+    })().catch((cause) => {
+      if (!disposed) error = cause instanceof Error ? cause.message : String(cause);
+    });
+
+    return () => {
+      disposed = true;
+      disposeInitialized();
     };
   });
 

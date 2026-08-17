@@ -14,6 +14,7 @@ export interface TerminalControlBackend {
   ): Promise<TerminalInputLease>;
   current(terminalId: string): Promise<TerminalInputLease | null>;
   release(terminalId: string, control: TerminalControlProof): Promise<boolean>;
+  park?(terminalId: string, control: TerminalControlProof): Promise<boolean>;
   input(terminalId: string, data: string, control: TerminalControlProof): Promise<void>;
   resize(terminalId: string, cols: number, rows: number, control: TerminalControlProof): Promise<void>;
   onLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
@@ -122,7 +123,8 @@ export class TerminalControlCoordinator {
     this.owned.delete(terminalId);
     if (!lease) return;
     this.notify();
-    await this.backend.release(terminalId, terminalControlProof(lease)).catch(() => false);
+    const park = this.backend.park ?? this.backend.release;
+    await park.call(this.backend, terminalId, terminalControlProof(lease)).catch(() => false);
   }
 
   async input(terminalId: string, data: string): Promise<void> {
@@ -167,7 +169,8 @@ export class TerminalControlCoordinator {
         || this.selectedTerminalId !== terminalId
         || selectionEpoch !== this.selectionEpoch
       )) {
-        await this.backend.release(terminalId, terminalControlProof(lease)).catch(() => false);
+        const park = this.backend.park ?? this.backend.release;
+        await park.call(this.backend, terminalId, terminalControlProof(lease)).catch(() => false);
         return false;
       }
       this.leases.set(terminalId, lease);

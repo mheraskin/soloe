@@ -30,8 +30,10 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'terminalAcquireInputLease'
     | 'terminalCurrentInputLease'
     | 'terminalReleaseInputLease'
+    | 'terminalParkInputLease'
     | 'terminalResize'
     | 'terminalReplay'
+    | 'terminalScreenSnapshot'
     | 'terminalStop'
   >;
   getWindows: () => BrowserWindow[];
@@ -155,6 +157,14 @@ export class MultiDeviceSessionsIpc {
         ))
     );
     ipcMain.handle(
+      IpcChannels.sessions.deviceTerminalParkInputLease,
+      (_event, request: { ref: TerminalRef; control: TerminalControlProof }) =>
+        ipcInvoke(() => this.options.sessions.terminalParkInputLease(
+          structuredClone(request.ref),
+          structuredClone(request.control)
+        ))
+    );
+    ipcMain.handle(
       IpcChannels.sessions.deviceTerminalResize,
       (_event, request: { ref: TerminalRef; cols: number; rows: number; control: TerminalControlProof }) => ipcInvoke(async () => {
         await this.options.sessions.terminalResize(
@@ -170,6 +180,11 @@ export class MultiDeviceSessionsIpc {
       IpcChannels.sessions.deviceTerminalReplay,
       (_event, ref: TerminalRef, afterSeq?: number) =>
         ipcInvoke(() => this.options.sessions.terminalReplay(structuredClone(ref), afterSeq))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.deviceTerminalScreenSnapshot,
+      (_event, ref: TerminalRef) =>
+        ipcInvoke(() => this.options.sessions.terminalScreenSnapshot(structuredClone(ref)))
     );
     ipcMain.handle(IpcChannels.sessions.deviceTerminalStop, (_event, ref: TerminalRef) =>
       ipcInvoke(async () => {
@@ -217,8 +232,10 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalCurrentInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalReleaseInputLease);
+    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalParkInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalResize);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalReplay);
+    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalScreenSnapshot);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalStop);
   }
 }

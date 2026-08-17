@@ -36,6 +36,7 @@ import type {
   DeviceProjectInventory,
   DeviceSessionInventory,
   DeviceTerminalReplay,
+  DeviceTerminalScreenSnapshot,
   MultiDeviceSessionCreationPlan,
   MultiDeviceSessionState,
   MultiDeviceSessionView,
@@ -49,6 +50,7 @@ export type {
   DeviceProjectInventory,
   DeviceSessionInventory,
   DeviceTerminalReplay,
+  DeviceTerminalScreenSnapshot,
   MultiDeviceSessionState,
   MultiDeviceSessionView,
   ProjectView,
@@ -80,6 +82,7 @@ export interface SessionDevice {
   ): Promise<TerminalInputLease>;
   terminalCurrentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
   terminalReleaseInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean>;
+  terminalParkInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean>;
   terminalResize(
     terminalId: string,
     cols: number,
@@ -87,6 +90,7 @@ export interface SessionDevice {
     control: TerminalControlProof
   ): Promise<void>;
   terminalReplay(terminalId: string, afterSeq?: number): Promise<DeviceTerminalReplay>;
+  terminalScreenSnapshot(terminalId: string): Promise<DeviceTerminalScreenSnapshot>;
   terminalStop(terminalId: string): Promise<void>;
   createSession?(request: DevicePlacedSessionRequest): Promise<Session>;
   startSession?(sessionId: string): Promise<TerminalStartResult>;
@@ -635,6 +639,17 @@ export class MultiDeviceSessions {
     );
   }
 
+  async terminalParkInputLease(
+    ref: TerminalRef,
+    control: TerminalControlProof
+  ): Promise<boolean> {
+    assertControlTargetsDevice(ref, control);
+    return this.requireReadyDevice(ref.deviceId).terminalParkInputLease(
+      ref.terminalId,
+      control
+    );
+  }
+
   async terminalResize(
     ref: TerminalRef,
     cols: number,
@@ -652,6 +667,10 @@ export class MultiDeviceSessions {
 
   terminalReplay(ref: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {
     return this.requireReadyDevice(ref.deviceId).terminalReplay(ref.terminalId, afterSeq);
+  }
+
+  terminalScreenSnapshot(ref: TerminalRef): Promise<DeviceTerminalScreenSnapshot> {
+    return this.requireReadyDevice(ref.deviceId).terminalScreenSnapshot(ref.terminalId);
   }
 
   async terminalStop(ref: TerminalRef): Promise<void> {

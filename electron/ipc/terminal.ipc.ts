@@ -87,6 +87,12 @@ export class TerminalIpc {
         this.controlLeases.release(terminalId, control)
       )
     );
+    ipcMain.handle(
+      IpcChannels.terminal.parkInputLease,
+      (_event, terminalId: TerminalId, control: TerminalControlProof) => ipcInvoke(() =>
+        this.controlLeases.park(terminalId, control)
+      )
+    );
 
     ipcMain.handle(IpcChannels.terminal.input, (_event, payload: TerminalInputPayload) =>
       ipcInvoke(() => {
@@ -119,6 +125,9 @@ export class TerminalIpc {
 
     ipcMain.handle(IpcChannels.terminal.replay, (_e, terminalId: TerminalId, afterSeq?: number) =>
       ipcInvoke(() => this.opts.pty.replay(terminalId, afterSeq))
+    );
+    ipcMain.handle(IpcChannels.terminal.screenSnapshot, (_e, terminalId: TerminalId) =>
+      ipcInvoke(() => this.opts.pty.screenSnapshot(terminalId))
     );
 
     ipcMain.handle(
@@ -164,10 +173,12 @@ export class TerminalIpc {
     ipcMain.removeHandler(IpcChannels.terminal.acquireInputLease);
     ipcMain.removeHandler(IpcChannels.terminal.currentInputLease);
     ipcMain.removeHandler(IpcChannels.terminal.releaseInputLease);
+    ipcMain.removeHandler(IpcChannels.terminal.parkInputLease);
     ipcMain.removeHandler(IpcChannels.terminal.input);
     ipcMain.removeHandler(IpcChannels.terminal.resize);
     ipcMain.removeHandler(IpcChannels.terminal.listRunning);
     ipcMain.removeHandler(IpcChannels.terminal.replay);
+    ipcMain.removeHandler(IpcChannels.terminal.screenSnapshot);
     ipcMain.removeHandler(IpcChannels.terminal.outputDemand);
     this.outputDemandByWebContents.clear();
     this.controlLeases.clear();

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   deviceTerminalInputLease: vi.fn(),
   deviceTerminalInput: vi.fn(),
   deviceTerminalReleaseInputLease: vi.fn(),
+  deviceTerminalParkInputLease: vi.fn(),
   setDeviceTerminalDemand: vi.fn(),
   updateOnDevice: vi.fn(),
   deleteOnDevice: vi.fn()
@@ -32,6 +33,7 @@ vi.mock('../lib/ipc', () => ({
       deviceTerminalInputLease: mocks.deviceTerminalInputLease,
       deviceTerminalInput: mocks.deviceTerminalInput,
       deviceTerminalReleaseInputLease: mocks.deviceTerminalReleaseInputLease,
+      deviceTerminalParkInputLease: mocks.deviceTerminalParkInputLease,
       updateOnDevice: mocks.updateOnDevice,
       deleteOnDevice: mocks.deleteOnDevice,
       onDeviceStateChange: vi.fn((listener) => {
@@ -69,6 +71,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.deviceTerminalInputLease.mockReset();
     mocks.deviceTerminalInput.mockReset().mockResolvedValue(true);
     mocks.deviceTerminalReleaseInputLease.mockReset().mockResolvedValue(true);
+    mocks.deviceTerminalParkInputLease.mockReset().mockResolvedValue(true);
     mocks.setDeviceTerminalDemand.mockReset().mockResolvedValue(undefined);
     mocks.updateOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
     mocks.deleteOnDevice.mockReset().mockResolvedValue({ ...state(2, true), unassigned: [] });
@@ -394,7 +397,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       '\r',
       expect.objectContaining({ leaseId: 'lease-2' })
     );
-    expect(mocks.deviceTerminalReleaseInputLease).toHaveBeenCalledOnce();
+    expect(mocks.deviceTerminalParkInputLease).toHaveBeenCalledOnce();
     expect(store.selectedSessionKey).toBe('device-xps/session-2');
   });
 });

@@ -76,6 +76,18 @@ describe('TerminalOutputRouter', () => {
     expect(sink.write).toHaveBeenCalledTimes(2);
   });
 
+  it('continues after a Runtime screen snapshot instead of replaying it again', async () => {
+    const replay = vi.fn().mockResolvedValue(snapshot('t-1', 's-1', 42, 42, 'next'));
+    const sink = createSink();
+    const router = new TerminalOutputRouter(() => vi.fn(), replay);
+
+    router.attach('t-1', 's-1', sink, true, 41);
+    await settle();
+
+    expect(replay).toHaveBeenCalledWith('t-1', 41);
+    expect(sink.write).toHaveBeenCalledWith('next');
+  });
+
   it('commits a cursor only after xterm finishes an in-flight write', async () => {
     const live = createLiveSource();
     const initial = snapshot('t-1', 's-1', 1, 0, '');

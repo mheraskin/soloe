@@ -182,6 +182,51 @@ describe('Environment Runtime lifecycle', () => {
     }
   });
 
+  it('restores a sequence-qualified headless Terminal viewport before rendering', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const process = new FakeRuntimeProcess();
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => process }
+    });
+
+    try {
+      await host.listen();
+      const client = await RuntimeClient.connect(endpoint);
+      const started = await client.start({
+        sessionId: 'session-1',
+        spec: {
+          file: 'test-shell',
+          args: [],
+          cwd: directory,
+          env: {}
+        },
+        cols: 100,
+        rows: 30
+      });
+      const lease = await client.acquireInputLease(started.terminalId, 'client-a');
+      process.emit('data', '\x1b[2Jrestored viewport');
+      await client.resize(started.terminalId, 90, 28, terminalControlProof(lease));
+
+      const snapshot = await client.screenSnapshot(started.terminalId);
+
+      expect(snapshot).toMatchObject({
+        kind: 'xterm-vt-state-v1',
+        terminalId: started.terminalId,
+        sessionId: 'session-1',
+        cols: 90,
+        rows: 28,
+        toSeq: 1
+      });
+      expect(snapshot.data).toContain('restored viewport');
+      client.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('publishes ordered Terminal output to connected control clients', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);
@@ -382,6 +427,58 @@ describe('Environment Runtime lifecycle', () => {
       expect(process.writes).toEqual(['first', 'second']);
       expect(process.resizes).toEqual([{ cols: 90, rows: 28 }]);
       expect(resized).toMatchObject({ cols: 90, rows: 28, generation: secondLease.generation });
+      firstClient.disconnect();
+      secondClient.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('parks device affinity without keeping an exclusive input lease', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const process = new FakeRuntimeProcess();
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => process }
+    });
+
+    try {
+      await host.listen();
+      const firstClient = await RuntimeClient.connect(endpoint);
+      const secondClient = await RuntimeClient.connect(endpoint);
+      const started = await firstClient.start({
+        sessionId: 'session-1',
+        spec: {
+          file: 'test-shell',
+          args: [],
+          cwd: directory,
+          env: {}
+        },
+        cols: 100,
+        rows: 30
+      });
+      const firstLease = await firstClient.acquireInputLease(
+        started.terminalId,
+        'client-a',
+        false,
+        { deviceId: 'device-a', deviceName: 'MacBook Pro' }
+      );
+
+      await expect(firstClient.parkInputLease(
+        started.terminalId,
+        terminalControlProof(firstLease)
+      )).resolves.toBe(true);
+      await expect(firstClient.currentInputLease(started.terminalId)).resolves.toBeNull();
+
+      const secondLease = await secondClient.acquireInputLease(
+        started.terminalId,
+        'client-b',
+        false,
+        { deviceId: 'device-b', deviceName: 'iPad' }
+      );
+      expect(secondLease.controllerDeviceId).toBe('device-b');
       firstClient.disconnect();
       secondClient.disconnect();
     } finally {

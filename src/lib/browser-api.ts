@@ -155,6 +155,8 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     currentInputLease: (terminalId) => rpc("terminal", "currentInputLease", [terminalId]),
     releaseInputLease: (terminalId, control) =>
       rpc("terminal", "releaseInputLease", [terminalId, control]),
+    parkInputLease: (terminalId, control) =>
+      rpc("terminal", "parkInputLease", [terminalId, control]),
     input: ({ terminalId, data, control }) =>
       rpc("terminal", "input", [terminalId, data, control]),
     resize: ({ terminalId, dimensions, control }) =>
@@ -162,6 +164,8 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     listRunning: () => rpc("terminal", "listRunning", []),
     replay: (terminalId, afterSeq) =>
       rpc("terminal", "replay", [terminalId, afterSeq]),
+    screenSnapshot: (terminalId) =>
+      rpc("terminal", "screenSnapshot", [terminalId]),
     setOutputDemand: (payload) =>
       rpc("terminal", "setOutputDemand", [payload]),
     onOutput: (listener: (event: TerminalOutputEvent) => void) =>

@@ -57,6 +57,16 @@ export interface RuntimeReplaySnapshot {
   byteLength: number;
 }
 
+export interface RuntimeTerminalScreenSnapshot {
+  kind: 'xterm-vt-state-v1';
+  terminalId: string;
+  sessionId: string;
+  cols: number;
+  rows: number;
+  toSeq: number;
+  data: string;
+}
+
 export type RuntimeUsageAvailability =
   | "available"
   | "degraded"

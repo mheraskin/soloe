@@ -1,6 +1,7 @@
 import type {
   SessionDeviceSnapshot,
-  DeviceTerminalReplay
+  DeviceTerminalReplay,
+  DeviceTerminalScreenSnapshot
 } from '@shared/types/multi-device-sessions.js';
 import type {
   DeviceDescriptor,
@@ -287,6 +288,19 @@ export class LocalSessionDevice implements SessionDevice {
     return Promise.resolve(this.inputLeases.release(id, control));
   }
 
+  terminalParkInputLease(terminalId: string, control: TerminalControlProof): Promise<boolean> {
+    this.assertActive();
+    const id = requiredId(terminalId);
+    if (this.options.terminalInputControl) {
+      return this.options.terminalInputControl.parkInputLease(id, control)
+        .then((parked) => {
+          if (parked) this.ownedInputLeases.delete(id);
+          return parked;
+        });
+    }
+    return Promise.resolve(this.inputLeases.park(id, control));
+  }
+
   async terminalResize(
     terminalId: string,
     cols: number,
@@ -311,6 +325,19 @@ export class LocalSessionDevice implements SessionDevice {
     this.assertActive();
     const id = requiredId(terminalId);
     const snapshot = await this.options.pty.replay(id, afterSeq);
+    return {
+      terminalRef: { deviceId: this.deviceId, terminalId: id },
+      sessionRef: snapshot
+        ? { deviceId: this.deviceId, sessionId: snapshot.sessionId }
+        : null,
+      snapshot
+    };
+  }
+
+  async terminalScreenSnapshot(terminalId: string): Promise<DeviceTerminalScreenSnapshot> {
+    this.assertActive();
+    const id = requiredId(terminalId);
+    const snapshot = await this.options.pty.screenSnapshot(id);
     return {
       terminalRef: { deviceId: this.deviceId, terminalId: id },
       sessionRef: snapshot

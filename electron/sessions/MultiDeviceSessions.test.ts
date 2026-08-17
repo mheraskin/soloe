@@ -743,8 +743,18 @@ function fakeDevice(input: {
       terminalLeases.delete(terminalId);
       return true;
     },
+    terminalParkInputLease: async (terminalId, control) => {
+      if (terminalLeases.get(terminalId)?.leaseId !== control.leaseId) return false;
+      terminalLeases.delete(terminalId);
+      return true;
+    },
     terminalResize: async () => undefined,
     terminalReplay: async () => ({ terminalRef: null, sessionRef: null, snapshot: null }),
+    terminalScreenSnapshot: async () => ({
+      terminalRef: null,
+      sessionRef: null,
+      snapshot: null
+    }),
     terminalStop: async () => undefined,
     workspacePlan: async (intent) => {
       plannedIntents.push(structuredClone(intent));

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   RuntimeExitEvent,
   RuntimeOutputEvent,
+  RuntimeTerminalScreenSnapshot,
   RuntimeTerminalState,
 } from "@soloe/protocol";
 import { RuntimeClient } from "@soloe/runtime";
@@ -27,6 +28,8 @@ export interface RuntimeTerminalInputControl {
   ): Promise<TerminalInputLease>;
   currentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
   releaseInputLease(terminalId: string, control: import('../../shared/types/terminal.js').TerminalControlProof): Promise<boolean>;
+  parkInputLease(terminalId: string, control: import('../../shared/types/terminal.js').TerminalControlProof): Promise<boolean>;
+  screenSnapshot(terminalId: string): Promise<RuntimeTerminalScreenSnapshot>;
   onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
   writeInput(terminalId: string, data: string, lease?: TerminalInputLease): Promise<void>;
   resizeTerminal(
@@ -188,6 +191,17 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     control: import('../../shared/types/terminal.js').TerminalControlProof
   ): Promise<boolean> {
     return this.client.releaseInputLease(terminalId, control);
+  }
+
+  parkInputLease(
+    terminalId: string,
+    control: import('../../shared/types/terminal.js').TerminalControlProof
+  ): Promise<boolean> {
+    return this.client.parkInputLease(terminalId, control);
+  }
+
+  screenSnapshot(terminalId: string): Promise<RuntimeTerminalScreenSnapshot> {
+    return this.client.screenSnapshot(terminalId);
   }
 
   onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void {

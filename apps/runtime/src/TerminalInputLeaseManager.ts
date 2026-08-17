@@ -38,6 +38,10 @@ export class TerminalInputLeaseError extends Error {
 
 export class TerminalInputLeaseManager {
   private readonly leases = new Map<string, TerminalInputLease>();
+  private readonly affinities = new Map<string, {
+    controllerDeviceId: string;
+    controllerDeviceName: string;
+  }>();
   private readonly transportOwners = new Map<string, string>();
   private readonly generations = new Map<string, number>();
   private readonly ttlMs: number;
@@ -109,6 +113,10 @@ export class TerminalInputLeaseManager {
       expiresAt: new Date(timestamp + this.ttlMs).toISOString()
     };
     this.leases.set(terminal, lease);
+    this.affinities.set(terminal, {
+      controllerDeviceId: lease.controllerDeviceId,
+      controllerDeviceName: lease.controllerDeviceName
+    });
     this.transportOwners.set(terminal, transportClient);
     this.publish({
       type: current ? 'taken-over' : 'acquired',
@@ -182,6 +190,25 @@ export class TerminalInputLeaseManager {
     return current ? cloneLease(current) : null;
   }
 
+  affinity(terminalId: string): {
+    controllerDeviceId: string;
+    controllerDeviceName: string;
+  } | null {
+    const affinity = this.affinities.get(requiredIdentity(terminalId, 'Terminal'));
+    return affinity ? { ...affinity } : null;
+  }
+
+  park(terminalId: string, proof: TerminalControlProof): boolean {
+    const terminal = requiredIdentity(terminalId, 'Terminal');
+    const current = this.active(terminal);
+    if (!current || !sameControl(current, proof)) return false;
+    this.affinities.set(terminal, {
+      controllerDeviceId: current.controllerDeviceId,
+      controllerDeviceName: current.controllerDeviceName
+    });
+    return this.release(terminal, proof);
+  }
+
   release(terminalId: string, proof: TerminalControlProof): boolean {
     const terminal = requiredIdentity(terminalId, 'Terminal');
     const current = this.active(terminal);
@@ -214,6 +241,7 @@ export class TerminalInputLeaseManager {
     if (!current) return false;
     this.leases.delete(terminal);
     this.transportOwners.delete(terminal);
+    this.affinities.delete(terminal);
     this.publish({
       type: 'released',
       terminalId: terminal,
@@ -227,6 +255,7 @@ export class TerminalInputLeaseManager {
 
   clear(): void {
     for (const terminalId of [...this.leases.keys()]) this.clearTerminal(terminalId);
+    this.affinities.clear();
   }
 
   private active(terminalId: string): TerminalInputLease | null {

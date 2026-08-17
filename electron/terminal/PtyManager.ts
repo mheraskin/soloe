@@ -19,6 +19,7 @@ import type {
   TerminalLocationEvent,
   TerminalOutputEvent,
   TerminalReplaySnapshot,
+  TerminalScreenSnapshot,
   TerminalStartOptions,
   TerminalStartResult,
   TerminalStatusEvent
@@ -141,6 +142,13 @@ export class PtyManager extends EventEmitter {
 
   replay(terminalId: TerminalId, afterSeq = 0): TerminalReplaySnapshot | null {
     return this.replayBuffer.snapshot(terminalId, afterSeq);
+  }
+
+  screenSnapshot(terminalId: TerminalId): Promise<TerminalScreenSnapshot | null> {
+    const source = this.processFactory as PtyProcessFactory & {
+      screenSnapshot?(terminalId: string): Promise<TerminalScreenSnapshot>;
+    };
+    return source.screenSnapshot?.(terminalId) ?? Promise.resolve(null);
   }
 
   async setKeepFullHistory(enabled: boolean): Promise<void> {

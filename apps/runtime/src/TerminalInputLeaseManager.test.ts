@@ -220,6 +220,59 @@ describe('TerminalInputLeaseManager', () => {
     expect(second.generation).toBe(first.generation + 1);
   });
 
+  it('parks inactive control as non-blocking Device affinity', () => {
+    let leaseSequence = 0;
+    const manager = new TerminalInputLeaseManager({ leaseId: () => `lease-${++leaseSequence}` });
+    const first = manager.acquire('terminal-1', 'transport-a', {
+      controllerDeviceId: 'device-a',
+      controllerDeviceName: 'MacBook Pro'
+    });
+
+    expect(manager.park('terminal-1', terminalControlProof(first))).toBe(true);
+    expect(manager.current('terminal-1')).toBeNull();
+    expect(manager.affinity('terminal-1')).toEqual({
+      controllerDeviceId: 'device-a',
+      controllerDeviceName: 'MacBook Pro'
+    });
+    expect(() => manager.authorizeControl(
+      'terminal-1',
+      terminalControlProof(first),
+      'input'
+    )).toThrowError(expect.objectContaining({ code: 'terminal_input_lease_required' }));
+
+    const second = manager.acquire('terminal-1', 'transport-b', {
+      controllerDeviceId: 'device-b',
+      controllerDeviceName: 'iPad'
+    });
+    expect(second.controllerDeviceId).toBe('device-b');
+  });
+
+  it('resumes parked affinity without treating it as a takeover', () => {
+    const events = vi.fn();
+    let leaseSequence = 0;
+    const manager = new TerminalInputLeaseManager({
+      leaseId: () => `lease-${++leaseSequence}`,
+      onChange: events
+    });
+    const first = manager.acquire('terminal-1', 'transport-a', {
+      controllerDeviceId: 'device-a',
+      controllerDeviceName: 'MacBook Pro'
+    });
+    manager.park('terminal-1', terminalControlProof(first));
+
+    const resumed = manager.acquire('terminal-1', 'transport-a2', {
+      controllerDeviceId: 'device-a',
+      controllerDeviceName: 'MacBook Pro'
+    });
+
+    expect(resumed.generation).toBe(first.generation + 1);
+    expect(events.mock.calls.map(([event]) => event.type)).toEqual([
+      'acquired',
+      'released',
+      'acquired'
+    ]);
+  });
+
   it('makes only the newest simultaneous takeover generation authoritative', () => {
     let leaseSequence = 0;
     const manager = new TerminalInputLeaseManager({ leaseId: () => `lease-${++leaseSequence}` });

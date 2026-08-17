@@ -581,7 +581,7 @@ export class DeviceSessionsStore {
         observedAt: new Date().toISOString()
       }
     };
-    await ipc.sessions.deviceTerminalReleaseInputLease(
+    await ipc.sessions.deviceTerminalParkInputLease(
       terminalRef,
       terminalControlProof(lease)
     );
@@ -604,6 +604,10 @@ export class DeviceSessionsStore {
 
   terminalReplay(terminalRef: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {
     return ipc.sessions.deviceTerminalReplay(terminalRef, afterSeq);
+  }
+
+  terminalScreenSnapshot(terminalRef: TerminalRef) {
+    return ipc.sessions.deviceTerminalScreenSnapshot(terminalRef);
   }
 
   terminalStop(terminalRef: TerminalRef): Promise<void> {

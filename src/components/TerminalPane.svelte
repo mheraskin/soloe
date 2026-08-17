@@ -502,7 +502,8 @@
   }
 
   $effect(() => {
-    if (!host) return;
+    if (!host || !visible) return;
+    ready = false;
     const initFontSize = untrack(() => terminalFontSize);
     const initScrollback = untrack(() => terminalScrollback);
     const terminalLinks = terminalLinkHandlers((uri) => {
@@ -550,6 +551,23 @@
     t.loadAddon(unicode11);
     t.loadAddon(clipboard);
     t.unicode.activeVersion = '11';
+    let disposed = false;
+    let disposeInitialized = () => deferTerminalDispose(t);
+    void (async () => {
+      let initialSeq = 0;
+      try {
+        const snapshot = await ipc.terminal.screenSnapshot(terminalId);
+        if (disposed) return;
+        if (snapshot?.sessionId === sessionId) {
+          t.resize(snapshot.cols, snapshot.rows);
+          await writeTerminalData(t, snapshot.data);
+          initialSeq = snapshot.toSeq;
+          markReady();
+        }
+      } catch {
+        // Older Devices fall back to bounded raw replay through the output router.
+      }
+      if (disposed) return;
     t.open(host);
 
     t.attachCustomKeyEventHandler((e) => {
@@ -658,7 +676,8 @@
       terminalId,
       sessionId,
       { write: writeOutput, replace: replaceOutput },
-      untrack(() => visible && ownsInput)
+      untrack(() => visible),
+      initialSeq
     );
     outputPresentation = presentation;
 
@@ -693,7 +712,7 @@
     host?.addEventListener('mouseup', onHostMouseUp);
     host?.addEventListener('mousedown', onHostMouseDown);
 
-    return () => {
+    disposeInitialized = () => {
       host?.removeEventListener('mouseup', onHostMouseUp);
       host?.removeEventListener('mousedown', onHostMouseDown);
       onInput.dispose();
@@ -714,13 +733,19 @@
       // releasing the renderer (fixed upstream in xtermjs/xterm.js#4984).
       deferTerminalDispose(t);
     };
+    })().catch(reportError);
+
+    return () => {
+      disposed = true;
+      disposeInitialized();
+    };
   });
 
-  // Terminal construction is intentionally independent of visibility. Hidden
-  // resident presentations stop parsing output; reveal catches up from the
-  // last sequence xterm applied through the Terminal Replay history.
+  // Hidden panes own no browser xterm. The PTY-owning Runtime keeps their
+  // headless screen current, so reveal restores one compact viewport and then
+  // catches up only the sequence gap created during the snapshot request.
   $effect(() => {
-    const nextVisible = visible && ownsInput;
+    const nextVisible = visible;
     untrack(() => outputPresentation?.setVisible(nextVisible));
   });
 

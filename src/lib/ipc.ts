@@ -80,6 +80,7 @@ import type {
   TerminalControlProof,
   TerminalControllerIdentity,
   TerminalOutputEvent,
+  TerminalScreenSnapshot,
   TerminalStartOptions,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
@@ -282,6 +283,14 @@ export const backend = {
         toIpcPayload({ ref, control })
       ));
     },
+    deviceTerminalParkInputLease: async (ref: TerminalRef, control: TerminalControlProof) => {
+      if (!c.sessions.deviceTerminalParkInputLease) {
+        throw new Error('Multi-Device terminal input control is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalParkInputLease(
+        toIpcPayload({ ref, control })
+      ));
+    },
     deviceTerminalResize: async (
       ref: TerminalRef,
       cols: number,
@@ -300,6 +309,12 @@ export const backend = {
         throw new Error('Multi-Device terminal replay is unavailable.');
       }
       return unwrap(await c.sessions.deviceTerminalReplay(toIpcPayload(ref), afterSeq));
+    },
+    deviceTerminalScreenSnapshot: async (ref: TerminalRef) => {
+      if (!c.sessions.deviceTerminalScreenSnapshot) {
+        throw new Error('Multi-Device terminal screen snapshots are unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalScreenSnapshot(toIpcPayload(ref)));
     },
     deviceTerminalStop: async (ref: TerminalRef) => {
       if (!c.sessions.deviceTerminalStop) {
@@ -332,6 +347,8 @@ export const backend = {
       unwrap(await c.terminal.currentInputLease(terminalId)),
     releaseInputLease: async (terminalId: TerminalId, control: TerminalControlProof) =>
       unwrap(await c.terminal.releaseInputLease(terminalId, toIpcPayload(control))),
+    parkInputLease: async (terminalId: TerminalId, control: TerminalControlProof) =>
+      unwrap(await c.terminal.parkInputLease(terminalId, toIpcPayload(control))),
     input: async (terminalId: TerminalId, data: string, control: TerminalControlProof) =>
       unwrap(await c.terminal.input(toIpcPayload({ terminalId, data, control }))),
     resize: async (
@@ -347,12 +364,15 @@ export const backend = {
     listRunning: async () => unwrap(await c.terminal.listRunning()),
     replay: async (terminalId: TerminalId, afterSeq = 0) =>
       unwrap(await c.terminal.replay(terminalId, afterSeq)),
+    screenSnapshot: async (terminalId: TerminalId): Promise<TerminalScreenSnapshot | null> =>
+      unwrap(await c.terminal.screenSnapshot(terminalId)),
     attachPresentation: (
       terminalId: TerminalId,
       sessionId: SessionId,
       sink: Parameters<TerminalOutputRouter['attach']>[2],
-      initiallyVisible: boolean
-    ) => terminalOutputRouter.attach(terminalId, sessionId, sink, initiallyVisible),
+      initiallyVisible: boolean,
+      initialSeq = 0
+    ) => terminalOutputRouter.attach(terminalId, sessionId, sink, initiallyVisible, initialSeq),
     onExit: (cb: (event: TerminalExitEvent) => void) => c.terminal.onExit(cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) => c.terminal.onStatus(cb),
     onLocation: (cb: (event: TerminalLocationEvent) => void) => c.terminal.onLocation(cb),

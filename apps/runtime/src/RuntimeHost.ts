@@ -9,6 +9,7 @@ import type {
 } from './RuntimeProcess.js';
 import { ProcessTreeUsageSampler } from "./ProcessTreeUsageSampler.js";
 import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
+import { TerminalScreenState } from './TerminalScreenState.js';
 import {
   TerminalInputLeaseError,
   TerminalInputLeaseManager
@@ -42,6 +43,7 @@ export class RuntimeHost {
   private readonly terminalBySession = new Map<string, string>();
   private readonly outputSequence = new Map<string, number>();
   private readonly replayBuffer = new TerminalReplayBuffer();
+  private readonly screenState = new TerminalScreenState();
   private readonly usageSampler: Pick<ProcessTreeUsageSampler, "sample">;
   private readonly inputLeases: TerminalInputLeaseManager;
 
@@ -79,6 +81,7 @@ export class RuntimeHost {
     this.terminalBySession.clear();
     this.outputSequence.clear();
     this.replayBuffer.clear();
+    this.screenState.clear();
     this.inputLeases.clear();
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
@@ -137,6 +140,11 @@ export class RuntimeHost {
         const input = params as { terminalId: string; afterSeq?: number };
         return this.replayBuffer.snapshot(input.terminalId, input.afterSeq);
       }
+      case 'screenSnapshot': {
+        const input = params as { terminalId: string };
+        this.requireTerminal(input.terminalId);
+        return this.screenState.snapshot(input.terminalId);
+      }
       case 'setReplayUnbounded': {
         const input = params as { unbounded?: unknown };
         if (typeof input.unbounded !== 'boolean') {
@@ -174,6 +182,10 @@ export class RuntimeHost {
       case 'releaseInputLease': {
         const input = params as { terminalId: string } & TerminalControlProof;
         return this.inputLeases.release(input.terminalId, runtimeControlProof(input));
+      }
+      case 'parkInputLease': {
+        const input = params as { terminalId: string } & TerminalControlProof;
+        return this.inputLeases.park(input.terminalId, runtimeControlProof(input));
       }
       case 'releaseInputLeases': {
         const input = params as { ownerId: string };
@@ -217,6 +229,7 @@ export class RuntimeHost {
         terminal.process.resize(input.cols, input.rows);
         terminal.state.cols = input.cols;
         terminal.state.rows = input.rows;
+        await this.screenState.resize(input.terminalId, input.cols, input.rows);
         return lease;
       }
       case 'stop': {
@@ -271,6 +284,12 @@ export class RuntimeHost {
     this.terminals.set(terminalId, terminal);
     this.terminalBySession.set(input.sessionId, terminalId);
     this.outputSequence.set(terminalId, 0);
+    this.screenState.register({
+      terminalId,
+      sessionId: input.sessionId,
+      cols: input.cols,
+      rows: input.rows
+    });
     process.on('data', (data: string) => {
       for (const cwd of terminal.locationParser.push(data)) {
         if (cwd === state.cwd) continue;
@@ -290,12 +309,14 @@ export class RuntimeHost {
         seq
       };
       this.replayBuffer.append(event);
+      void this.screenState.write(terminalId, seq, data);
       this.broadcast('output', event);
     });
     process.once('exit', (event: { exitCode?: number | null; signal?: number | null } = {}) => {
       this.terminals.delete(terminalId);
       this.terminalBySession.delete(input.sessionId);
       this.outputSequence.delete(terminalId);
+      this.screenState.remove(terminalId);
       this.inputLeases.clearTerminal(terminalId);
       this.broadcast('exit', {
         terminalId,
