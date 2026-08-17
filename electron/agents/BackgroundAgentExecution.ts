@@ -58,6 +58,11 @@ interface Admission {
   resolve: (release: (() => void) | null) => void;
 }
 
+interface ResolvedProvider {
+  selection: ModelSelection;
+  executable: string;
+}
+
 const DEFAULT_MAX_CONCURRENCY = 2;
 const DEFAULT_MAX_BACKGROUND_CONCURRENCY = 1;
 const DEFAULT_AVAILABILITY_CACHE_MS = 60_000;
@@ -219,7 +224,7 @@ export class BackgroundAgentExecution {
 
   private async runOneShot(
     request: BackgroundAgentRequest,
-    provider: ModelSelection
+    provider: ResolvedProvider
   ): Promise<BackgroundAgentResult> {
     return new Promise<BackgroundAgentResult>((resolve) => {
       let child: ChildProcess;
@@ -291,19 +296,22 @@ export class BackgroundAgentExecution {
           });
           return;
         }
-        resolve({ ok: true, text: stdout.trim(), provider });
+        resolve({ ok: true, text: stdout.trim(), provider: provider.selection });
       });
     });
   }
 
-  private async resolveProvider(request: BackgroundAgentRequest): Promise<ModelSelection | null> {
+  private async resolveProvider(request: BackgroundAgentRequest): Promise<ResolvedProvider | null> {
     const seen = new Set<string>();
     for (const candidate of request.candidates) {
       const key = `${candidate.provider}\u001f${candidate.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const executable = executableFor(candidate, request.binaries);
-      if (await this.isAvailable(executable, request.scope)) return candidate;
+      for (const executable of executableCandidatesFor(candidate, request.binaries)) {
+        if (await this.isAvailable(executable, request.scope)) {
+          return { selection: candidate, executable };
+        }
+      }
     }
     return null;
   }
@@ -317,8 +325,8 @@ export class BackgroundAgentExecution {
     return value;
   }
 
-  private launch(provider: ModelSelection, request: BackgroundAgentRequest): ChildProcess {
-    const argv = buildArgv(provider, request.binaries);
+  private launch(provider: ResolvedProvider, request: BackgroundAgentRequest): ChildProcess {
+    const argv = buildArgv(provider.selection, request.binaries, provider.executable);
     if (request.scope.runMode === 'wsl') {
       const inner = buildWslAgentLine({}, argv.executable, argv.args);
       return this.spawnImpl(
@@ -478,24 +486,36 @@ export class BackgroundAgentExecution {
 
 function buildArgv(
   target: ModelSelection,
-  binaries: SettingsBinaries
+  binaries: SettingsBinaries,
+  resolvedExecutable?: string
 ): { executable: string; args: string[] } {
   if (target.provider === 'codex') {
     const modelArgs = target.id === CLI_DEFAULT_MODEL_ID ? [] : ['-m', target.id];
     return {
-      executable: binaries.codex || 'codex',
+      executable: resolvedExecutable ?? binaries.codex ?? 'codex',
       args: ['exec', '--skip-git-repo-check', '--color', 'never', ...modelArgs]
+    };
+  }
+  if (target.provider === 'cursor') {
+    const modelArgs = target.id === CLI_DEFAULT_MODEL_ID ? [] : ['--model', target.id];
+    return {
+      executable: resolvedExecutable ?? binaries.cursor ?? 'agent',
+      args: ['-p', '--output-format', 'text', ...modelArgs]
     };
   }
   const modelArgs = target.id === CLI_DEFAULT_MODEL_ID ? [] : ['--model', target.id];
   return {
-    executable: binaries.claude || 'claude',
+    executable: resolvedExecutable ?? binaries.claude ?? 'claude',
     args: ['-p', ...modelArgs, '--output-format', 'text']
   };
 }
 
-function executableFor(target: ModelSelection, binaries: SettingsBinaries): string {
-  return target.provider === 'codex' ? binaries.codex || 'codex' : binaries.claude || 'claude';
+function executableCandidatesFor(target: ModelSelection, binaries: SettingsBinaries): string[] {
+  if (target.provider === 'codex') return [binaries.codex || 'codex'];
+  if (target.provider === 'cursor') {
+    return binaries.cursor ? [binaries.cursor] : ['agent', 'cursor-agent'];
+  }
+  return [binaries.claude || 'claude'];
 }
 
 function processOptions(cwd: string | undefined) {
@@ -522,7 +542,7 @@ function unavailableResult(): Extract<BackgroundAgentResult, { ok: false }> {
   return {
     ok: false,
     reason: 'unavailable',
-    error: 'No configured Claude or Codex executable is available in this runtime.'
+    error: 'No configured Claude, Codex, or Cursor executable is available in this runtime.'
   };
 }
 

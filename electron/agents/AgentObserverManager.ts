@@ -174,7 +174,7 @@ export class AgentObserverManager extends EventEmitter {
 
   updateTuiProviderThread(
     sessionId: SessionId,
-    provider: 'claude_code' | 'codex',
+    provider: 'claude_code' | 'codex' | 'cursor',
     providerThreadId?: string
   ): ObservedAgentSnapshot {
     const existing = this.snapshots.get(sessionId);
@@ -197,7 +197,7 @@ export class AgentObserverManager extends EventEmitter {
   registerWorker(input: {
     workerId: string;
     originSessionId: SessionId;
-    provider: 'claude_code' | 'codex';
+    provider: 'claude_code' | 'codex' | 'cursor';
     promptSummary?: string;
     providerThreadId?: string;
     transcriptPath?: string;

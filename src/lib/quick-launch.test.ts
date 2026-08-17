@@ -23,6 +23,12 @@ const presets: QuickLaunchPreset[] = [
     label: 'Codex YOLO',
     provider: 'codex',
     extraArgs: '--dangerously-bypass-approvals-and-sandbox'
+  },
+  {
+    id: 'cursor-force',
+    label: 'Cursor force',
+    provider: 'cursor',
+    extraArgs: '--force --approve-mcps'
   }
 ];
 
@@ -34,12 +40,14 @@ describe('quick launch helpers', () => {
     expect(quickLaunchExtraArgs(presets[2]!)).toEqual([
       '--dangerously-bypass-approvals-and-sandbox'
     ]);
+    expect(quickLaunchExtraArgs(presets[3]!)).toEqual(['--force', '--approve-mcps']);
   });
 
-  it('selects the two exited-session quick options from settings', () => {
+  it('selects the exited-session quick options from settings', () => {
     expect(exitedSessionQuickLaunchPresets(presets).map((preset) => preset.label)).toEqual([
       'Claude danger',
-      'Codex YOLO'
+      'Codex YOLO',
+      'Cursor force'
     ]);
   });
 });

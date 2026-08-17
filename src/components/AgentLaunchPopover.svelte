@@ -72,6 +72,8 @@
   let browsingDirectories = $state(false);
   let folderName = $state('');
   let showLocationBrowser = $state(false);
+  let worktreeSelectOpen = $state(false);
+  let deviceSelectOpen = $state(false);
   let planRequest = 0;
 
   let usesDevicePlacement = $derived(deviceSessions.supported);
@@ -165,6 +167,10 @@
 
   function scheduleClose(event: PointerEvent): void {
     if (event.pointerType === 'touch' || touchPointerId !== null) return;
+    if (worktreeSelectOpen || deviceSelectOpen) {
+      clearCloseTimer();
+      return;
+    }
     if (openTimer) {
       clearOpenTimer();
       return;
@@ -286,6 +292,8 @@
       pendingDeviceOption = null;
       showLocationBrowser = false;
       directoryListing = null;
+      worktreeSelectOpen = false;
+      deviceSelectOpen = false;
     }
   }
 
@@ -293,12 +301,13 @@
     if (option === 'terminal') {
       return { type: 'terminal', shell: settings.current.defaults.shell };
     }
-    if (option === 'claude_code' || option === 'codex') {
+    if (option === 'claude_code' || option === 'codex' || option === 'cursor') {
       return {
         type: 'agent',
         provider: option,
         resumeMode: 'new',
-        ...(option === 'claude_code' ? { fullscreenTui: true } : {})
+        ...(option === 'claude_code' ? { fullscreenTui: true } : {}),
+        ...(option === 'cursor' ? { cursorMode: 'agent' as const } : {})
       };
     }
     const preset = presets.find((candidate) => candidate.id === option.slice('preset:'.length));
@@ -318,6 +327,7 @@
     if (option === 'terminal') return branch ? `${branch} terminal` : 'Terminal';
     if (option === 'claude_code') return branch ? `${branch} Claude` : 'Claude';
     if (option === 'codex') return branch ? `${branch} Codex` : 'Codex';
+    if (option === 'cursor') return branch ? `${branch} Cursor` : 'Cursor';
     return presets.find((candidate) => candidate.id === option.slice('preset:'.length))?.label
       ?? 'Session';
   }
@@ -495,7 +505,7 @@
       launchTerminal();
       return;
     }
-    if (option === 'claude_code' || option === 'codex') {
+    if (option === 'claude_code' || option === 'codex' || option === 'cursor') {
       launchAgent(option);
       return;
     }
@@ -564,6 +574,7 @@
             <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Worktree</span>
             <Select.Root
               type="single"
+              bind:open={worktreeSelectOpen}
               value={effectiveWorkspaceKey ?? NO_PROJECT_VALUE}
               onValueChange={(value) => {
                 selectedWorkspaceKey = value === NO_PROJECT_VALUE ? null : value;
@@ -583,7 +594,7 @@
                   </span>
                 </span>
               </Select.Trigger>
-              <Select.Content>
+              <Select.Content onpointerenter={clearCloseTimer} onpointerleave={scheduleClose}>
                 <Select.Item value={NO_PROJECT_VALUE} label="No project">
                   <span class="flex flex-col">
                     <span>No project</span>
@@ -604,6 +615,7 @@
           <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Run on device</span>
           <Select.Root
             type="single"
+            bind:open={deviceSelectOpen}
             value={selectedDeviceId ?? undefined}
             onValueChange={(value) => {
               selectedDeviceId = value as DeviceId;
@@ -613,7 +625,7 @@
               folderName = '';
             }}
           >
-            <Select.Trigger class="h-8 w-full text-xs">
+            <Select.Trigger class="h-8 w-full text-xs" aria-label="Choose device">
               <span class="flex min-w-0 items-center gap-2">
                 <Monitor class="size-3.5 shrink-0" />
                 <span class="truncate">{selectedDevice?.name ?? 'Choose device'}</span>
@@ -622,7 +634,7 @@
                 {/if}
               </span>
             </Select.Trigger>
-            <Select.Content>
+            <Select.Content onpointerenter={clearCloseTimer} onpointerleave={scheduleClose}>
               {#each deviceSessions.state.devices as device (device.deviceId)}
                 <Select.Item value={device.deviceId} label={device.name} disabled={!device.available}>
                   <span class="flex w-full items-center gap-2">
@@ -706,7 +718,7 @@
           {/if}
         </div>
       {/if}
-      <div class="mobile-session-picker grid grid-cols-3 gap-1">
+      <div class="mobile-session-picker grid grid-cols-4 gap-1">
         <Button
           variant="ghost"
           class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'claude_code' ? 'bg-muted text-foreground' : ''}`}
@@ -718,6 +730,18 @@
         >
           <KindIcon kind="claude_code" size={20} />
           <span class="truncate leading-none">Claude</span>
+        </Button>
+        <Button
+          variant="ghost"
+          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'cursor' ? 'bg-muted text-foreground' : ''}`}
+          title="New Cursor session"
+          aria-label="New Cursor session"
+          data-launch-option="cursor"
+          data-gesture-selected={selectedLaunchOption === 'cursor' ? 'true' : undefined}
+          onclick={(event) => onLaunchOptionClick(event, 'cursor')}
+        >
+          <KindIcon kind="cursor" size={20} />
+          <span class="truncate leading-none">Cursor</span>
         </Button>
         <Button
           variant="ghost"
@@ -758,7 +782,7 @@
               onclick={(event) => onLaunchOptionClick(event, `preset:${preset.id}`)}
             >
               <KindIcon
-                kind={preset.provider === 'claude_code' ? 'claude_code' : 'codex'}
+                kind={preset.provider}
                 size={14}
               />
               <span class="truncate">{preset.label}</span>

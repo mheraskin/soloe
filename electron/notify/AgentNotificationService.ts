@@ -157,5 +157,6 @@ function reasonFor(
 function providerLabel(provider: ObservedAgentSnapshot['provider']): string {
   if (provider === 'claude_code') return 'Claude';
   if (provider === 'codex') return 'Codex';
+  if (provider === 'cursor') return 'Cursor';
   return 'Agent';
 }

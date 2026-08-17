@@ -190,7 +190,7 @@
           hint: `${projection.deviceName} · ${projection.session.cwd}`,
           section: 'Sessions',
           icon: Terminal,
-          run: () => void deviceSessions.openSession(projection.key).catch(reportError)
+          run: () => deviceSessions.selectSession(projection.key)
         });
       }
     } else {

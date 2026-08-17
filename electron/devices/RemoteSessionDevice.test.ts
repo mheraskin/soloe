@@ -8,6 +8,49 @@ const FIRST_EPOCH = '22222222-2222-4222-8222-222222222222';
 const SECOND_EPOCH = '33333333-3333-4333-8333-333333333333';
 
 describe('RemoteSessionDevice', () => {
+  it('publishes semantic agent observations from the owning remote Device', async () => {
+    const observation = {
+      id: 'session-1',
+      sessionId: 'session-1',
+      runtimeMode: 'tui',
+      subjectKind: 'session',
+      provider: 'codex',
+      state: 'idle'
+    };
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') return jsonResponse(descriptor(FIRST_EPOCH));
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+        };
+        if (request.namespace === 'workspaceDevice') {
+          return jsonResponse({
+            ok: true,
+            value: {
+              schemaVersion: 1,
+              revision: 1,
+              deviceId: DEVICE_ID,
+              repositories: [],
+              checkouts: []
+            }
+          });
+        }
+        return jsonResponse({
+          ok: true,
+          value: request.namespace === 'observer' ? [observation] : []
+        });
+      },
+      socketFactory: () => new FakeSocket()
+    });
+
+    await expect(client.readInventory()).resolves.toMatchObject({ observations: [observation] });
+    client.dispose();
+  });
+
   it('includes the Device-owned Repository and Checkout registry in snapshots', async () => {
     const namespaces: string[] = [];
     const client = new RemoteSessionDevice({

@@ -425,7 +425,7 @@
         cwd={newSessionContext.cwd}
         branch={newSessionContext.branch}
         side="bottom"
-        align="end"
+        align="start"
         class="size-6"
         title="New session"
         ariaLabel="New session"

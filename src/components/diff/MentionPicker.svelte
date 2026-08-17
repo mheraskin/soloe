@@ -16,7 +16,7 @@
     | { kind: 'new-model'; provider: AgentRuntimeProvider; model: string; label: string };
 
   function modelProviderToRuntime(provider: ModelCatalogEntry['provider']): AgentRuntimeProvider {
-    return provider === 'claude' ? 'claude_code' : 'codex';
+    return provider === 'claude' ? 'claude_code' : provider;
   }
 
   // Builds the candidate list for the @-mention picker, in the order they
@@ -55,6 +55,7 @@
     // 3) Spawn-new entries.
     items.push({ kind: 'new-provider', provider: 'claude_code', label: 'Claude' });
     items.push({ kind: 'new-provider', provider: 'codex', label: 'Codex' });
+    items.push({ kind: 'new-provider', provider: 'cursor', label: 'Cursor' });
 
     // 4) Specific models from the catalog.
     for (const entry of settings.availableModels) {

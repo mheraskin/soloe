@@ -46,6 +46,44 @@ beforeEach(() => {
 });
 
 describe('PtyManager', () => {
+  it('passes a discovered Cursor alias to the command builder', async () => {
+    const cursorSession: Session = {
+      ...session,
+      id: 'cursor-legacy-alias',
+      name: 'Cursor',
+      launch: { type: 'agent', provider: 'cursor', resumeMode: 'new' }
+    };
+    const build = vi.fn(() => spec);
+    const detect = vi.fn().mockResolvedValue({
+      available: true,
+      binary: 'cursor-agent',
+      version: '1.2.3'
+    });
+    const manager = new PtyManager({
+      commandBuilder: { build } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => cursorSession),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      getBinaries: () => ({}),
+      cursorDiscovery: { detect },
+      baseEnv: {}
+    });
+
+    await manager.start({ sessionId: cursorSession.id });
+
+    expect(detect).toHaveBeenCalledWith({ kind: 'windows' });
+    expect(build).toHaveBeenCalledWith(cursorSession, expect.objectContaining({
+      binaries: { cursor: 'cursor-agent' }
+    }));
+  });
+
   it('makes each output batch replayable before observers receive it', () => {
     const manager = new PtyManager({} as PtyManagerOptions);
     const output: TerminalOutputEvent = {

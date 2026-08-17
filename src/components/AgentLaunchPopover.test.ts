@@ -19,6 +19,7 @@ const deviceSessionMocks = vi.hoisted(() => ({
   updateSession: vi.fn(async () => undefined),
   clearSelectedSession: vi.fn(),
   isSelected: vi.fn(() => false),
+  pendingOperation: vi.fn(() => null),
   planCreate: vi.fn(async () => ({
     planId: 'plan-1',
     workspaceKey: null,
@@ -151,6 +152,7 @@ function pointerEvent(
     pointerType: { value: init.pointerType },
     isPrimary: { value: true },
     button: { value: 0 },
+    ctrlKey: { value: false },
     clientX: { value: init.clientX },
     clientY: { value: init.clientY }
   });
@@ -256,6 +258,73 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(document.body.querySelector('[aria-label="New terminal"]')).not.toBeNull();
     expect(document.body.textContent).toContain('Run on device');
     expect(document.body.textContent).toContain('No project');
+  });
+
+  it('creates a Cursor Agent session through the shared device placement surface', async () => {
+    const target = mountComponent(AgentLaunchPopover, {});
+    const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
+    trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+    const cursor = document.body.querySelector<HTMLButtonElement>('[aria-label="New Cursor session"]');
+    expect(cursor).not.toBeNull();
+    cursor!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => expect(deviceSessionMocks.planCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetDeviceId: 'local-device',
+        session: expect.objectContaining({
+          name: 'Cursor',
+          launch: {
+            type: 'agent', provider: 'cursor', resumeMode: 'new', cursorMode: 'agent'
+          }
+        })
+      })
+    ));
+  });
+
+  it('keeps the launch popover open while hovering the portalled Device menu', async () => {
+    const target = mountComponent(AgentLaunchPopover, {});
+    const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
+    trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const deviceTrigger = document.body.querySelector<HTMLButtonElement>('[aria-label="Choose device"]');
+    expect(deviceTrigger).not.toBeNull();
+    Object.defineProperties(deviceTrigger!, {
+      hasPointerCapture: { value: vi.fn(() => false) },
+      releasePointerCapture: { value: vi.fn() }
+    });
+    deviceTrigger!.dispatchEvent(pointerEvent('pointerdown', {
+      pointerId: 12,
+      pointerType: 'mouse',
+      clientX: 100,
+      clientY: 100
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+
+    const popover = document.body.querySelector<HTMLElement>('[data-slot="popover-content"]');
+    const deviceMenu = document.body.querySelector<HTMLElement>('[data-slot="select-content"]');
+    expect(popover).not.toBeNull();
+    expect(deviceMenu).not.toBeNull();
+
+    popover!.dispatchEvent(pointerEvent('pointerleave', {
+      pointerId: 12,
+      pointerType: 'mouse',
+      clientX: 110,
+      clientY: 150
+    }));
+    deviceMenu!.dispatchEvent(pointerEvent('pointerenter', {
+      pointerId: 12,
+      pointerType: 'mouse',
+      clientX: 110,
+      clientY: 155
+    }));
+    await vi.advanceTimersByTimeAsync(250);
+    flushSync();
+
+    expect(document.body.querySelector('[aria-label="New terminal"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-slot="select-content"]')).not.toBeNull();
   });
 
   it('does not let the worktree drag handler claim a gesture that starts on plus', () => {

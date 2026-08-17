@@ -12,7 +12,7 @@
   import KindIcon from './KindIcon.svelte';
 
   const NEW_TARGET = '__new__';
-  const providers: AgentRuntimeProvider[] = ['claude_code', 'codex'];
+  const providers: AgentRuntimeProvider[] = ['claude_code', 'codex', 'cursor'];
 
   type TargetId = SessionId | typeof NEW_TARGET;
 
@@ -48,7 +48,7 @@
     const id = sessionHandoff.originId;
     if (!id || initializedFor === id) return;
     initializedFor = id;
-    selectedProvider = originKind === 'claude_code' ? 'codex' : 'claude_code';
+    selectedProvider = providers.find((provider) => provider !== originKind) ?? 'cursor';
     targetId = NEW_TARGET;
     void tick().then(() => {
       if (sessionHandoff.isOpen) continueButton?.focus();
@@ -83,7 +83,7 @@
   }
 
   function providerLabel(provider: AgentRuntimeProvider): string {
-    return provider === 'claude_code' ? 'Claude Code' : 'Codex';
+    return provider === 'claude_code' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Cursor';
   }
 
   function providerButtonClass(provider: AgentRuntimeProvider): string {

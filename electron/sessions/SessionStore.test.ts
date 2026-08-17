@@ -116,6 +116,14 @@ describe('SessionStore — validation', () => {
     };
     await expect(store.create(draft)).rejects.toThrow(/codexSessionId is required/);
   });
+
+  it('rejects Cursor resume_by_id without cursorSessionId', async () => {
+    const store = new SessionStore(storePath);
+    await expect(store.create({
+      name: 'Cursor', cwd: '/x', runMode: 'windows',
+      launch: { type: 'agent', provider: 'cursor', resumeMode: 'resume_by_id' }
+    })).rejects.toThrow(/cursorSessionId is required/);
+  });
 });
 
 describe('SessionStore — update/delete', () => {
@@ -275,6 +283,21 @@ describe('SessionStore — disk round-trip', () => {
     });
 
     expect(created.hasUserInput).toBe(false);
+  });
+
+  it('round-trips Cursor session identity, mode, model, and approval flags', async () => {
+    const store = new SessionStore(storePath);
+    const created = await store.create({
+      name: 'Cursor', cwd: '/x', runMode: 'windows',
+      launch: {
+        type: 'agent', provider: 'cursor', resumeMode: 'resume_by_id',
+        cursorSessionId: 'chat-123', cursorMode: 'ask', model: 'auto',
+        extraArgs: ['--force', '--approve-mcps']
+      }
+    });
+    const reloaded = new SessionStore(storePath);
+    await reloaded.init();
+    expect((await reloaded.get(created.id))?.launch).toEqual(created.launch);
   });
 
   it('preserves known-empty Claude sessions from older persisted storage', async () => {

@@ -10,6 +10,7 @@
     Copy
   } from '@lucide/svelte';
   import type { AgentRuntimeProvider, Session, SessionStatus } from '@shared/types/sessions.js';
+  import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
   import type { QuickLaunchPreset } from '@shared/types/settings.js';
   import { launchKind, launchProvider } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
@@ -27,15 +28,35 @@
   import KindIcon from './KindIcon.svelte';
   import KbdHint from './KbdHint.svelte';
 
-  let { session, status }: { session: Session | null; status: SessionStatus } = $props();
+  let {
+    session,
+    status,
+    observation,
+    onResume,
+    pendingAction = null,
+    showLocalOnlyActions = true
+  }: {
+    session: Session | null;
+    status: SessionStatus;
+    observation?: ObservedAgentSnapshot | null;
+    onResume?: () => Promise<void>;
+    pendingAction?: 'starting' | 'stopping' | 'restarting' | 'updating' | 'deleting' | null;
+    showLocalOnlyActions?: boolean;
+  } = $props();
 
   let busy = $state(false);
   let busyProvider = $state<AgentRuntimeProvider | null>(null);
   let busyPresetId = $state<string | null>(null);
-  let observed = $derived(session ? sessions.observationFor(session.id) : null);
+  let observed = $derived(
+    observation === undefined
+      ? session ? sessions.observationFor(session.id) : null
+      : observation
+  );
   let displayKind = $derived(session ? displaySessionKind(session, observed) : 'terminal');
   let canContinueAcrossAgents = $derived(
-    session !== null && (displayKind === 'claude_code' || displayKind === 'codex')
+    showLocalOnlyActions
+      && session !== null
+      && (displayKind === 'claude_code' || displayKind === 'codex' || displayKind === 'cursor')
   );
   let quickLaunchPresets = $derived(
     exitedSessionQuickLaunchPresets(settings.current.quickLaunch)
@@ -68,12 +89,26 @@
         ?? null
       );
     }
+    if (displayKind === 'cursor') {
+      return (
+        (session.currentAgentRuntime?.provider === 'cursor'
+          ? session.currentAgentRuntime.providerThreadId
+          : undefined)
+        ?? session.providerThreadId
+        ?? observed?.providerThreadId
+        ?? (session.launch.type === 'agent' && session.launch.provider === 'cursor'
+          ? session.launch.cursorSessionId
+          : undefined)
+        ?? null
+      );
+    }
     return null;
   });
   let providerResumeCommand = $derived.by(() => {
     if (!providerSessionId) return null;
     if (displayKind === 'claude_code') return `claude --resume ${providerSessionId}`;
     if (displayKind === 'codex') return `codex resume ${providerSessionId}`;
+    if (displayKind === 'cursor') return `agent --resume ${providerSessionId}`;
     return null;
   });
 
@@ -81,7 +116,8 @@
     if (!session || busy) return;
     busy = true;
     try {
-      await sessions.start(session.id);
+      if (onResume) await onResume();
+      else await sessions.start(session.id);
     } catch (err) {
       reportError(err);
     } finally {
@@ -235,7 +271,12 @@
     <h2 class="m-0 text-base font-medium text-foreground">{session.name}</h2>
     <p class="m-0 text-xs">{kindLabel(launchKind(session))} · {session.runMode}{session.wslDistro ? ` (${session.wslDistro})` : ''}</p>
     <p class="m-0 font-mono text-xs">{session.cwd}</p>
-    {#if status === 'starting'}
+    {#if pendingAction === 'stopping'}
+      <div class="mt-3 flex items-center gap-2 text-xs" aria-live="polite">
+        <Loader2 class="size-4 animate-spin" />
+        <span>Stopping session…</span>
+      </div>
+    {:else if status === 'starting'}
       <div class="mt-3 flex items-center gap-2 text-xs">
         <Loader2 class="size-4 animate-spin" />
         <span>Starting session…</span>
@@ -255,9 +296,11 @@
         <Button size="sm" onclick={resume} disabled={busy}>
           <Play /> <span>Resume</span>
         </Button>
-        <Button size="sm" variant="outline" onclick={openNew} disabled={busy}>
-          <Plus /> <span>New session</span>
-        </Button>
+        {#if showLocalOnlyActions}
+          <Button size="sm" variant="outline" onclick={openNew} disabled={busy}>
+            <Plus /> <span>New session</span>
+          </Button>
+        {/if}
       </div>
       {#if providerSessionId && providerResumeCommand}
         <div class="mt-3 flex w-full max-w-xl flex-col gap-1.5 rounded-md border border-border/70 bg-muted/20 p-3 text-left">
@@ -315,7 +358,7 @@
           </div>
         </div>
       {/if}
-      {#if quickLaunchPresets.length > 0}
+      {#if showLocalOnlyActions && quickLaunchPresets.length > 0}
         <div class="mt-2 flex flex-col items-center gap-1.5">
           <span class="text-[11px] leading-4 text-muted-foreground">Quick launch</span>
           <div class="flex flex-wrap items-center justify-center gap-2">

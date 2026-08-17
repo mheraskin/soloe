@@ -365,6 +365,7 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
             ...(localWorkspaceService ? { workspaceService: localWorkspaceService } : {}),
             ...(localGitHubProvider ? { githubProvider: localGitHubProvider } : {}),
             pty: services.pty,
+            observer: services.observer,
             terminalInputControl: services.terminalInputControl
           })
     });
@@ -527,6 +528,7 @@ async function setupServices(): Promise<AppServices> {
   let manager: PtyManager | undefined;
   const runtime = new AgentRuntimeManager({
     observer,
+    getCursorBinary: async () => (await settings.get()).binaries.cursor,
     autoApprovesPermissions: async (sessionId) => {
       const session = await store.get(sessionId);
       return session && manager
@@ -741,6 +743,7 @@ async function setupServices(): Promise<AppServices> {
   }
   const agentIntegrationIpc = new AgentIntegrationIpc({
     installer: hookInstaller,
+    getSettings: () => settings.get(),
     getWindows: () => BrowserWindow.getAllWindows()
   });
 

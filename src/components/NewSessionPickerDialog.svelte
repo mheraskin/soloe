@@ -18,6 +18,7 @@
   let terminalButton: HTMLButtonElement | null = $state(null);
   let claudeButton: HTMLButtonElement | null = $state(null);
   let codexButton: HTMLButtonElement | null = $state(null);
+  let cursorButton: HTMLButtonElement | null = $state(null);
   let kind = $state<SessionLaunchKind>('terminal');
   let workspaceKey = $state('');
   let deviceId = $state('');
@@ -66,7 +67,8 @@
   function buttonFor(value: SessionLaunchKind): HTMLButtonElement | null {
     if (value === 'terminal') return terminalButton;
     if (value === 'claude_code') return claudeButton;
-    return codexButton;
+    if (value === 'codex') return codexButton;
+    return cursorButton;
   }
 
   function initializePlacement(): void {
@@ -100,13 +102,15 @@
       type: 'agent',
       provider: value,
       resumeMode: 'new',
-      ...(value === 'claude_code' ? { fullscreenTui: true } : {})
+      ...(value === 'claude_code' ? { fullscreenTui: true } : {}),
+      ...(value === 'cursor' ? { cursorMode: 'agent' as const } : {})
     };
   }
 
   function sessionName(value: SessionLaunchKind): string {
     if (value === 'claude_code') return 'Claude';
     if (value === 'codex') return 'Codex';
+    if (value === 'cursor') return 'Cursor';
     return 'Terminal';
   }
 
@@ -178,7 +182,7 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="grid grid-cols-3 gap-2" aria-label="Session kind">
+    <div class="grid grid-cols-4 gap-2" aria-label="Session kind">
       <Button
         bind:ref={claudeButton}
         variant={kind === 'claude_code' ? 'secondary' : 'ghost'}
@@ -191,6 +195,19 @@
       >
         <KindIcon kind="claude_code" size={28} />
         <span class="leading-none">Claude</span>
+      </Button>
+      <Button
+        bind:ref={cursorButton}
+        variant={kind === 'cursor' ? 'secondary' : 'ghost'}
+        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        onclick={() => {
+          if (!placementAvailable) return legacyAgent('cursor');
+          kind = 'cursor';
+          resetPlan();
+        }}
+      >
+        <KindIcon kind="cursor" size={28} />
+        <span class="leading-none">Cursor</span>
       </Button>
       <Button
         bind:ref={codexButton}

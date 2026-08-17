@@ -12,7 +12,7 @@
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
 
-  type Provider = 'claude' | 'codex';
+  type Provider = 'claude' | 'codex' | 'cursor';
 
   let {
     status,
@@ -33,6 +33,7 @@
       const out: { host: AgentIntegrationHost; provider: Provider }[] = [];
       if (!entry.claude.current) out.push({ host: entry.host, provider: 'claude' });
       if (!entry.codex.current) out.push({ host: entry.host, provider: 'codex' });
+      if (!entry.cursor.current) out.push({ host: entry.host, provider: 'cursor' });
       return out;
     })
   );
@@ -42,6 +43,7 @@
       const out: { host: AgentIntegrationHost; provider: Provider }[] = [];
       if (entry.claude.installed) out.push({ host: entry.host, provider: 'claude' });
       if (entry.codex.installed) out.push({ host: entry.host, provider: 'codex' });
+      if (entry.cursor.installed) out.push({ host: entry.host, provider: 'cursor' });
       return out;
     })
   );
@@ -51,7 +53,9 @@
       pendingActions.every((a) =>
         a.provider === 'claude'
           ? availableHosts.find((h) => sameHost(h.host, a.host))?.claude.installed === true
-          : availableHosts.find((h) => sameHost(h.host, a.host))?.codex.installed === true
+          : a.provider === 'codex'
+            ? availableHosts.find((h) => sameHost(h.host, a.host))?.codex.installed === true
+            : availableHosts.find((h) => sameHost(h.host, a.host))?.cursor.installed === true
       )
   );
 
@@ -85,21 +89,21 @@
   }
 
   function providerLabel(provider: Provider): string {
-    return provider === 'claude' ? 'Claude' : 'Codex';
+    return provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : 'Cursor';
   }
 
   async function install(host: AgentIntegrationHost, provider: Provider): Promise<AgentIntegrationStatus> {
     const args = { host: hostKey(host) };
-    return provider === 'claude'
-      ? await ipc.agentIntegration.installClaude(args)
-      : await ipc.agentIntegration.installCodex(args);
+    if (provider === 'claude') return ipc.agentIntegration.installClaude(args);
+    if (provider === 'codex') return ipc.agentIntegration.installCodex(args);
+    return ipc.agentIntegration.installCursor(args);
   }
 
   async function uninstall(host: AgentIntegrationHost, provider: Provider): Promise<AgentIntegrationStatus> {
     const args = { host: hostKey(host) };
-    return provider === 'claude'
-      ? await ipc.agentIntegration.uninstallClaude(args)
-      : await ipc.agentIntegration.uninstallCodex(args);
+    if (provider === 'claude') return ipc.agentIntegration.uninstallClaude(args);
+    if (provider === 'codex') return ipc.agentIntegration.uninstallCodex(args);
+    return ipc.agentIntegration.uninstallCursor(args);
   }
 
   async function toggle(
@@ -211,6 +215,15 @@
         <div class="flex flex-wrap items-center gap-0.5">
           {@render providerButton(entry.host, 'claude', entry.claude)}
           {@render providerButton(entry.host, 'codex', entry.codex)}
+          {@render providerButton(entry.host, 'cursor', entry.cursor)}
+          {#if entry.cursor.cli}
+            <span
+              class={entry.cursor.cli.available ? 'ml-1 text-[10px] text-emerald-500' : 'ml-1 text-[10px] text-amber-500'}
+              title={entry.cursor.cli.reason ?? `Using ${entry.cursor.cli.binary}${entry.cursor.cli.version ? ` ${entry.cursor.cli.version}` : ''}`}
+            >
+              {entry.cursor.cli.available ? entry.cursor.cli.version ?? 'CLI found' : 'CLI missing'}
+            </span>
+          {/if}
         </div>
       </div>
     {/each}

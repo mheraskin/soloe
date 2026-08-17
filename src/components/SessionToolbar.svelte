@@ -18,6 +18,7 @@
   import { reportError, toasts } from '../stores/toast.svelte';
   import { ipc } from '../lib/ipc';
   import { displaySessionKind } from '../lib/session-agent';
+  import { deviceSessionStatus } from '../lib/device-terminal-presentation';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -35,11 +36,19 @@
   let { onOpenNavigation, projection = null, onClose = null }: Props = $props();
   let selected = $derived(projection?.session ?? sessions.selected);
   let status = $derived(
-    projection?.runtime?.status ?? (selected ? sessions.statusFor(selected.id) : 'stopped')
+    projection
+      ? deviceSessionStatus(projection)
+      : selected ? sessions.statusFor(selected.id) : 'stopped'
   );
-  let observed = $derived(projection ? null : selected ? sessions.observationFor(selected.id) : null);
+  let observed = $derived(
+    projection
+      ? projection.observation ?? null
+      : selected ? sessions.observationFor(selected.id) : null
+  );
   let currentCwd = $derived(
-    projection?.runtime?.cwd ?? (selected ? sessions.currentCwdFor(selected.id) : null)
+    projection
+      ? projection.runtime?.cwd ?? selected?.cwd ?? null
+      : selected ? sessions.currentCwdFor(selected.id) : null
   );
   let displayKind = $derived(selected ? displaySessionKind(selected, observed) : 'terminal');
   let isRunning = $derived(status === 'running' || status === 'starting');

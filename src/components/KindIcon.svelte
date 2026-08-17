@@ -3,12 +3,14 @@
   import type { SessionLaunchKind } from '@shared/types/sessions.js';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexUrl from '../lib/icons/codex.svg';
+  import cursorUrl from '../lib/icons/cursor.svg';
 
   let { kind, size = 14 }: { kind: SessionLaunchKind; size?: number } = $props();
 
   const sources: Partial<Record<SessionLaunchKind, { src: string; alt: string }>> = {
     claude_code: { src: claudeUrl, alt: 'Claude' },
-    codex: { src: codexUrl, alt: 'Codex' }
+    codex: { src: codexUrl, alt: 'Codex' },
+    cursor: { src: cursorUrl, alt: 'Cursor' }
   };
 
   let entry = $derived(sources[kind]);

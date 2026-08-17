@@ -61,7 +61,8 @@ describe('WorktreeOverviewService background execution', () => {
       priority: 'interactive',
       candidates: [
         { provider: 'codex', id: CLI_DEFAULT_MODEL_ID },
-        { provider: 'claude', id: CLI_DEFAULT_MODEL_ID }
+        { provider: 'claude', id: CLI_DEFAULT_MODEL_ID },
+        { provider: 'cursor', id: CLI_DEFAULT_MODEL_ID }
       ]
     }));
     expect(overview).toMatchObject({

@@ -77,6 +77,37 @@ describe('MultiDeviceSessions', () => {
     });
   });
 
+  it('projects the owning Device semantic observation onto its Session', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: [session({
+        id: 'remote-session',
+        projectId: 'windows-soloe',
+        cwd: 'C:\\src\\soloe-feature'
+      })],
+      observations: [{
+        id: 'remote-session',
+        sessionId: 'remote-session',
+        runtimeMode: 'tui',
+        subjectKind: 'session',
+        provider: 'codex',
+        state: 'idle'
+      }]
+    });
+
+    const state = await new MultiDeviceSessions({ devices: [laptop] }).refresh();
+
+    expect(state.projects[0]?.workspaces[0]?.sessions[0]?.observation).toMatchObject({
+      sessionId: 'remote-session',
+      state: 'idle'
+    });
+  });
+
   it('keeps the last known hierarchy when a Device goes offline and disables its Sessions', async () => {
     const laptop = fakeDevice({
       deviceId: LAPTOP_ID,
@@ -581,6 +612,7 @@ function fakeDevice(input: {
   workspacePath: string;
   branch: string;
   sessions: Session[];
+  observations?: DeviceSessionInventory['observations'];
   onCreate?: (request: DevicePlacedSessionRequest) => void;
   local?: boolean;
   hasProject?: boolean;
@@ -633,6 +665,7 @@ function fakeDevice(input: {
     sessions: input.sessions,
     archivedSessions: [],
     runtimes: [],
+    observations: input.observations ?? [],
     capturedAt: '2026-08-13T10:00:00.000Z'
   };
   const startedSessionIds: string[] = [];

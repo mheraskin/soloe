@@ -17,10 +17,8 @@
   import { reportError } from '../stores/toast.svelte';
   import { confirmDeleteSession } from '../lib/session-delete-confirmation';
   import { displaySessionKind } from '../lib/session-agent';
-  import {
-    displayedAgentState as resolveDisplayedAgentState,
-    displayedAgentSummary
-  } from '../lib/session-display-state';
+  import { sessionStatusPresentation } from '../lib/session-status-presentation';
+  import { deviceSessionStatus } from '../lib/device-terminal-presentation';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
@@ -64,8 +62,13 @@
   let isSelected = $derived(
     projection ? deviceSessions.isSelected(projection) : sessions.selectedId === session.id
   );
-  let status = $derived(projection?.runtime?.status ?? sessions.statusFor(session.id));
-  let observed = $derived(managedLocally ? sessions.observationFor(session.id) : null);
+  let status = $derived(
+    projection ? deviceSessionStatus(projection) : sessions.statusFor(session.id)
+  );
+  let pendingOperation = $derived(projection ? deviceSessions.pendingOperation(projection.key) : null);
+  let observed = $derived(
+    managedLocally ? sessions.observationFor(session.id) : projection?.observation ?? null
+  );
   let displayKind = $derived(displaySessionKind(session, observed));
   let latestEvent = $derived(managedLocally ? sessions.eventsFor(session.id)[0] ?? null : null);
   let observedSummary = $derived(
@@ -83,20 +86,38 @@
   let hasRuntime = $derived(
     projection ? projection.runtime !== null : sessions.runtime[session.id] !== undefined
   );
-  let isAgent = $derived(displayKind === 'claude_code' || displayKind === 'codex');
-  let displayedAgentState = $derived(
-    resolveDisplayedAgentState({
+  let isAgent = $derived(displayKind === 'claude_code' || displayKind === 'codex' || displayKind === 'cursor');
+  let statusPresentation = $derived(
+    sessionStatusPresentation({
+      session,
       observed,
       status,
+      observedSummary,
       hasRuntime,
       hasNotificationMarker: marker !== null
     })
   );
-  let displayedObservedSummary = $derived(
-    displayedAgentSummary(observed, displayedAgentState, observedSummary)
+  let displayedAgentState = $derived(statusPresentation.agentState);
+  let displayedObservedSummary = $derived(statusPresentation.agentSummary);
+  let showSpawnSpinner = $derived(
+    status === 'starting'
+    || pendingOperation === 'starting'
+    || pendingOperation === 'stopping'
+    || pendingOperation === 'restarting'
+    || pendingOperation === 'updating'
   );
-  let showSpawnSpinner = $derived(hasRuntime && status === 'starting');
-  let showAgentBadge = $derived(isAgent && displayedAgentState !== null);
+  let showAgentBadge = $derived(
+    isAgent && displayedAgentState !== null && pendingOperation === null
+  );
+  let pendingLabel = $derived(
+    pendingOperation === 'stopping'
+      ? 'Stopping'
+      : pendingOperation === 'restarting'
+        ? 'Restarting'
+        : pendingOperation === 'updating'
+          ? 'Saving'
+          : 'Starting'
+  );
   let statusPill = $derived(buildStatusPill());
   let remoteLifecycle = $derived(
     projection && !managedLocally
@@ -125,7 +146,7 @@
         if (managedLocally) sessions.select(null);
         else deviceSessions.clearSelectedSession();
       } else {
-        void deviceSessions.openSession(projection.key).catch(reportError);
+        deviceSessions.selectSession(projection.key);
       }
       return;
     }
@@ -203,12 +224,15 @@
   // Fallback for agents that predate observer snapshots or failed before one
   // was emitted. AgentStateBadge is the primary agent state pill.
   function buildStatusPill(): StatusPill | null {
-    if (!hasRuntime || !isAgent) return null;
-    if (status !== 'exited' && status !== 'error') return null;
+    if (!isAgent) return null;
+    const showRemoteLifecycle = projection !== null && !managedLocally;
+    if (!showRemoteLifecycle && (!hasRuntime || (status !== 'exited' && status !== 'error'))) {
+      return null;
+    }
     return {
       label: status,
       title: status,
-      tone: status === 'error' ? 'danger' : 'neutral'
+      tone: status === 'error' ? 'danger' : status === 'running' ? 'primary' : 'neutral'
     };
   }
 
@@ -304,6 +328,7 @@
         data-session-id={projection?.key ?? session.id}
         data-row-color={session.color ?? undefined}
         data-row-selected={isSelected ? 'true' : undefined}
+        aria-busy={pendingOperation ? 'true' : undefined}
         class={cn(
           'session-row group relative flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
           !session.color && 'hover:bg-accent/40',
@@ -375,8 +400,8 @@
             {:else if showSpawnSpinner}
               <span
                 class="inline-flex shrink-0 items-center text-muted-foreground"
-                title="Starting…"
-                aria-label="Starting"
+                title={`${pendingLabel}…`}
+                aria-label={pendingLabel}
               >
                 <Loader2 class="size-3 animate-spin" />
               </span>

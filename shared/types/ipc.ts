@@ -333,6 +333,8 @@ export const IpcChannels = {
     uninstallClaude: 'agent-integration:uninstall-claude',
     installCodex: 'agent-integration:install-codex',
     uninstallCodex: 'agent-integration:uninstall-codex',
+    installCursor: 'agent-integration:install-cursor',
+    uninstallCursor: 'agent-integration:uninstall-cursor',
     changed: 'agent-integration:changed'
   },
   notify: {
@@ -680,12 +682,21 @@ export interface AgentIntegrationTargetStatus {
   installed: boolean;
   current: boolean;
   version?: number;
+  cli?: AgentCliAvailability;
+}
+
+export interface AgentCliAvailability {
+  available: boolean;
+  binary?: string;
+  version?: string;
+  reason?: string;
 }
 
 export interface AgentIntegrationHostStatus {
   host: AgentIntegrationHost;
   claude: AgentIntegrationTargetStatus;
   codex: AgentIntegrationTargetStatus;
+  cursor: AgentIntegrationTargetStatus;
 }
 
 export interface AgentIntegrationStatus {
@@ -700,6 +711,10 @@ export interface AgentIntegrationCodexRequest {
   host: AgentIntegrationHostKey;
 }
 
+export interface AgentIntegrationCursorRequest {
+  host: AgentIntegrationHostKey;
+}
+
 export interface AgentIntegrationApi {
   status(): Promise<IpcResult<AgentIntegrationStatus>>;
   installClaude(request: AgentIntegrationClaudeRequest): Promise<IpcResult<AgentIntegrationStatus>>;
@@ -709,6 +724,10 @@ export interface AgentIntegrationApi {
   installCodex(request: AgentIntegrationCodexRequest): Promise<IpcResult<AgentIntegrationStatus>>;
   uninstallCodex(
     request: AgentIntegrationCodexRequest
+  ): Promise<IpcResult<AgentIntegrationStatus>>;
+  installCursor(request: AgentIntegrationCursorRequest): Promise<IpcResult<AgentIntegrationStatus>>;
+  uninstallCursor(
+    request: AgentIntegrationCursorRequest
   ): Promise<IpcResult<AgentIntegrationStatus>>;
   onChange(listener: (status: AgentIntegrationStatus) => void): () => void;
 }

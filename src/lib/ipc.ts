@@ -68,6 +68,7 @@ import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
 import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
+  AgentIntegrationCursorRequest,
   AgentIntegrationStatus,
   ToastNotification
 } from '@shared/types/ipc.js';
@@ -558,6 +559,10 @@ export const backend = {
       unwrap(await c.agentIntegration.installCodex(toIpcPayload(request))),
     uninstallCodex: async (request: AgentIntegrationCodexRequest) =>
       unwrap(await c.agentIntegration.uninstallCodex(toIpcPayload(request))),
+    installCursor: async (request: AgentIntegrationCursorRequest) =>
+      unwrap(await c.agentIntegration.installCursor(toIpcPayload(request))),
+    uninstallCursor: async (request: AgentIntegrationCursorRequest) =>
+      unwrap(await c.agentIntegration.uninstallCursor(toIpcPayload(request))),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       c.agentIntegration.onChange(cb)
   },

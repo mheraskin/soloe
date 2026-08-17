@@ -93,9 +93,11 @@ export class SessionCommandBuilder {
       case 'terminal':
         return this.buildStandard(session, session.launch, ctx);
       case 'agent':
-        return session.launch.provider === 'claude_code'
-          ? this.buildClaude(session, session.launch, ctx)
-          : this.buildCodex(session, session.launch, ctx);
+        switch (session.launch.provider) {
+          case 'claude_code': return this.buildClaude(session, session.launch, ctx);
+          case 'codex': return this.buildCodex(session, session.launch, ctx);
+          case 'cursor': return this.buildCursor(session, session.launch, ctx);
+        }
     }
   }
 
@@ -114,6 +116,20 @@ export class SessionCommandBuilder {
         ctx.binaries?.claude ?? 'claude',
         args,
         buildSoloeEnv(s.id, s.runMode, 'claude_code', ctx),
+        s.runMode
+      );
+    }
+
+    if (runtime.provider === 'cursor') {
+      const threadId = runtime.providerThreadId ?? s.providerThreadId;
+      const args = threadId ? ['--resume', threadId] : ['--continue'];
+      if (s.launch.type === 'agent' && s.launch.provider === 'cursor') {
+        appendAgentLaunchArgs(args, s.launch, 'cursor');
+      }
+      return buildAgentCommand(
+        ctx.binaries?.cursor ?? 'agent',
+        args,
+        buildSoloeEnv(s.id, s.runMode, 'cursor', ctx),
         s.runMode
       );
     }
@@ -242,21 +258,54 @@ export class SessionCommandBuilder {
       )
     };
   }
+
+  private buildCursor(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
+    const args: string[] = [];
+    switch (launch.resumeMode) {
+      case 'new': {
+        const chatId = launch.cursorSessionId ?? s.providerThreadId;
+        if (chatId) args.push('--resume', chatId);
+        break;
+      }
+      case 'resume_last':
+        args.push('--continue');
+        break;
+      case 'resume_by_id':
+        if (!launch.cursorSessionId) {
+          throw new Error('cursorSessionId is required for resume_by_id');
+        }
+        args.push('--resume', launch.cursorSessionId);
+        break;
+      case 'resume_by_name':
+        throw new Error('Cursor does not support resume_by_name');
+    }
+    appendAgentLaunchArgs(args, launch, 'cursor');
+    return buildAgentCommand(
+      ctx.binaries?.cursor ?? 'agent',
+      args,
+      buildSoloeEnv(s.id, s.runMode, 'cursor', ctx),
+      s.runMode
+    );
+  }
 }
 
 function appendAgentLaunchArgs(
   args: string[],
   launch: AgentLaunch,
-  provider: 'claude_code' | 'codex'
+  provider: 'claude_code' | 'codex' | 'cursor'
 ): void {
   if (launch.model) {
     if (provider === 'claude_code') args.push('--model', launch.model);
-    else args.push('-m', launch.model);
+    else if (provider === 'codex') args.push('-m', launch.model);
+    else args.push('--model', launch.model);
   }
   if (provider === 'codex' && launch.reasoningEffort) {
     args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
   }
   if (provider === 'codex') appendCodexTerminalMode(args, launch.extraArgs);
+  if (provider === 'cursor' && launch.cursorMode && launch.cursorMode !== 'agent') {
+    args.push('--mode', launch.cursorMode);
+  }
   appendExtraArgs(args, launch.extraArgs);
 }
 
@@ -492,7 +541,7 @@ function buildWslAgentExecLine(
 function buildSoloeEnv(
   sessionId: SessionId,
   runMode: Session['runMode'],
-  provider: 'claude_code' | 'codex' | undefined,
+  provider: 'claude_code' | 'codex' | 'cursor' | undefined,
   ctx: SessionBuildContext
 ): Record<string, string> {
   const inheritedTerm = ctx.baseEnv['TERM']?.trim();
@@ -590,7 +639,8 @@ function buildAgentLaunchFunctions(): string {
   return [
     '__soloe_agent_launch() {',
     '  __soloe_provider="$1"',
-    '  shift',
+    '  __soloe_binary="$2"',
+    '  shift 2',
     '  if [ -n "$SOLOE_BRIDGE_URL" ] && [ -n "$SOLOE_BRIDGE_TOKEN" ] && [ -n "$SOLOE_SESSION_ID" ]; then',
     '    __soloe_u="$SOLOE_BRIDGE_URL"',
     '    case "$__soloe_u" in *host.wsl.internal*)',
@@ -609,7 +659,7 @@ function buildAgentLaunchFunctions(): string {
     '      --data-binary @- "$__soloe_u/hook/$__soloe_provider" >/dev/null 2>&1 || true',
     '  fi',
     '  __soloe_exit=0',
-    '  command "$__soloe_provider" "$@" || __soloe_exit=$?',
+    '  command "$__soloe_binary" "$@" || __soloe_exit=$?',
     '  if [ -n "$SOLOE_BRIDGE_URL" ] && [ -n "$SOLOE_BRIDGE_TOKEN" ] && [ -n "$SOLOE_SESSION_ID" ]; then',
     '    __soloe_args_b64=$(printf \'%s\\0\' "$@" | base64 | tr -d \'\\n\')',
     '    printf \'{"hook_event_name":"SessionEnd","source":"shell_launch","argv_b64":"%s","exit_code":%s}\' "$__soloe_args_b64" "$__soloe_exit" | curl -sS --max-time 1 -X POST \\',
@@ -620,7 +670,9 @@ function buildAgentLaunchFunctions(): string {
     '  fi',
     '  return "$__soloe_exit"',
     '}',
-    'claude() { __soloe_agent_launch claude "$@"; }',
-    'codex() { __soloe_agent_launch codex "$@"; }'
+    'claude() { __soloe_agent_launch claude claude "$@"; }',
+    'codex() { __soloe_agent_launch codex codex "$@"; }',
+    'agent() { __soloe_agent_launch cursor agent "$@"; }',
+    'cursor-agent() { __soloe_agent_launch cursor cursor-agent "$@"; }'
   ].join('\n');
 }

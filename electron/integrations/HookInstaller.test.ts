@@ -14,6 +14,8 @@ import {
   removeSoloeFromCodex,
   mergeClaudeMcp,
   mergeCodexMcp,
+  mergeCursorMcp,
+  removeSoloeFromCursor,
   mcpUrlForHost,
   SOLOE_HOOK_VERSION,
   type HookHost
@@ -61,7 +63,8 @@ describe('HookInstaller', () => {
           available: true
         },
         claude: { installed: false, current: false },
-        codex: { installed: false, current: false }
+        codex: { installed: false, current: false },
+        cursor: { installed: false, current: false }
       }
     ]);
     expect(JSON.stringify(status)).not.toContain(homeDir);
@@ -754,6 +757,29 @@ describe('HookInstaller with bridge — MCP registration', () => {
     const parsed = parseToml(raw) as Record<string, unknown>;
     expect(parsed.hooks).toBeUndefined();
     expect(parsed.mcp_servers).toBeUndefined();
+  });
+
+  it('installCursor writes the authenticated global Cursor MCP entry', async () => {
+    await installer.installCursor(LOCAL);
+    const config = JSON.parse(await fs.readFile(join(homeDir, '.cursor', 'mcp.json'), 'utf8'));
+    expect(config.mcpServers.soloe).toMatchObject({
+      _soloe: true,
+      _soloe_version: SOLOE_HOOK_VERSION,
+      url: 'http://127.0.0.1:17896/mcp',
+      headers: { Authorization: 'Bearer tok-123' }
+    });
+  });
+
+  it('uninstallCursor removes only the Soloe MCP entry', async () => {
+    const path = join(homeDir, '.cursor', 'mcp.json');
+    await fs.mkdir(join(homeDir, '.cursor'), { recursive: true });
+    await fs.writeFile(path, JSON.stringify(mergeCursorMcp({
+      mcpServers: { user: { command: 'user-mcp' } }
+    }, { url: 'http://127.0.0.1:17896/mcp', token: 'tok-123' })));
+    await installer.uninstallCursor(LOCAL);
+    const config = JSON.parse(await fs.readFile(path, 'utf8'));
+    expect(config.mcpServers).toEqual({ user: { command: 'user-mcp' } });
+    expect(removeSoloeFromCursor(config)).toEqual(config);
   });
 
   it('reinstall replaces the MCP entry rather than stacking it', async () => {

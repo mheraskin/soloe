@@ -28,6 +28,7 @@ describe('SoloeMcpServer', () => {
       method: 'tools/list'
     });
     expect(JSON.stringify(tools)).toContain('create_worker_session');
+    expect(JSON.stringify(tools)).toContain('cursor');
 
     const created = await server.handlePayload({
       tool: 'create_worker_session',
@@ -38,6 +39,12 @@ describe('SoloeMcpServer', () => {
       }
     }) as { workerId: string };
     expect(created.workerId).toContain('codex-worker');
+
+    const cursor = await server.handlePayload({
+      tool: 'create_worker_session',
+      arguments: { originSessionId: 'main', provider: 'cursor', promptSummary: 'work' }
+    }) as { workerId: string };
+    expect(cursor.workerId).toContain('cursor-worker');
 
     const status = await server.handlePayload({
       tool: 'get_worker_status',
@@ -196,6 +203,20 @@ describe('SoloeMcpServer — hook endpoints', () => {
     expect(res.status).toBe(200);
     expect(captured).toHaveLength(1);
     expect(captured[0]?.provider).toBe('codex');
+  });
+
+  it('routes POST /hook/cursor with valid auth to onHookEvent', async () => {
+    const res = await post(
+      '/hook/cursor',
+      { hook_event_name: 'SessionStart', session_id: 'cursor-chat-1' },
+      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+    );
+    expect(res.status).toBe(200);
+    expect(captured[0]).toEqual({
+      provider: 'cursor',
+      soloeSessionId: 'sess-1',
+      payload: { hook_event_name: 'SessionStart', session_id: 'cursor-chat-1' }
+    });
   });
 
   it('returns 404 for unknown paths', async () => {

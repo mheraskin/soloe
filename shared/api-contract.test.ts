@@ -93,4 +93,12 @@ describe("Soloe API compatibility matrix", () => {
       }
     }
   });
+
+  it("exposes Cursor integration management on desktop and browser transports", () => {
+    for (const method of ["installCursor", "uninstallCursor"]) {
+      expect(apiKeys).toContain(`agentIntegration.${method}`);
+      expect(supportsRpc("local-electron", "agentIntegration", method)).toBe(true);
+      expect(supportsRpc("browser", "agentIntegration", method)).toBe(true);
+    }
+  });
 });

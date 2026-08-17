@@ -176,6 +176,56 @@ describe('BackgroundAgentExecution', () => {
     });
   });
 
+  it('runs Cursor headlessly with the configured binary and documented text output', async () => {
+    const child = new FakeChild();
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      isExecutableAvailable: async () => true
+    });
+    const pending = execution.execute(request({
+      candidates: [{ provider: 'cursor', id: 'auto' }],
+      binaries: { cursor: '/opt/cursor/agent' }
+    }));
+    await waitFor(() => spawnMock.mock.calls.length === 1);
+
+    expect(spawnMock.mock.calls[0]?.[0]).toBe('/opt/cursor/agent');
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual([
+      '-p', '--output-format', 'text', '--model', 'auto'
+    ]);
+    child.succeed('cursor result');
+    await expect(pending).resolves.toMatchObject({
+      ok: true, provider: { provider: 'cursor', id: 'auto' }
+    });
+  });
+
+  it('falls back to cursor-agent and launches the executable that passed discovery', async () => {
+    const child = new FakeChild();
+    const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => child);
+    const availability = vi.fn(async (executable: string) => executable === 'cursor-agent');
+    const execution = new BackgroundAgentExecution({
+      spawnImpl: spawnMock as unknown as typeof spawn,
+      isExecutableAvailable: availability
+    });
+    const pending = execution.execute(request({
+      candidates: [{ provider: 'cursor', id: 'auto' }],
+      binaries: {}
+    }));
+    await waitFor(() => spawnMock.mock.calls.length === 1);
+
+    expect(availability.mock.calls.map(([executable]) => executable)).toEqual([
+      'agent',
+      'cursor-agent'
+    ]);
+    expect(spawnMock.mock.calls[0]?.[0]).toBe('cursor-agent');
+    child.succeed('legacy alias result');
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      text: 'legacy alias result',
+      provider: { provider: 'cursor', id: 'auto' }
+    });
+  });
+
   it('serializes background work while leaving capacity for interactive work', async () => {
     const children: FakeChild[] = [];
     const spawnMock = vi.fn((..._args: Parameters<typeof spawn>) => {

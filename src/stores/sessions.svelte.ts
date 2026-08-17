@@ -231,6 +231,7 @@ export class SessionsStore {
   groups = $derived({
     claude: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'claude_code'),
     codex: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'codex'),
+    cursor: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'cursor'),
     terminal: this.sessions.filter((s) => s.launch.type === 'terminal')
   });
 
@@ -777,7 +778,7 @@ export class SessionsStore {
   }
 
   async createAgentWithDefaults(
-    kind: Extract<SessionLaunchKind, 'claude_code' | 'codex'>,
+    kind: AgentRuntimeProvider,
     opts: {
       projectId?: string;
       cwd?: string;
@@ -830,7 +831,7 @@ export class SessionsStore {
       throw new Error('Choose a session in the same worktree');
     }
     if (!this.agentProviderFor(target)) {
-      throw new Error('Choose a Claude Code or Codex session');
+      throw new Error('Choose a Claude Code, Codex, or Cursor session');
     }
 
     const terminalId = await this.ensureTerminalId(target.id);
@@ -895,6 +896,18 @@ export class SessionsStore {
               type: 'agent',
               provider: 'codex',
               resumeMode: 'new',
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
+            }
+          };
+        case 'cursor':
+          return {
+            ...base,
+            launch: {
+              type: 'agent',
+              provider: 'cursor',
+              resumeMode: 'new',
+              cursorMode: 'agent',
               ...(opts.model ? { model: opts.model } : {}),
               ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
             }
@@ -1104,7 +1117,7 @@ export class SessionsStore {
 
   private agentProviderFor(session: Session): AgentRuntimeProvider | null {
     const observedProvider = this.observationFor(session.id)?.provider;
-    if (observedProvider === 'claude_code' || observedProvider === 'codex') {
+    if (observedProvider === 'claude_code' || observedProvider === 'codex' || observedProvider === 'cursor') {
       return observedProvider;
     }
     return session.currentAgentRuntime?.provider ?? launchProvider(session);
@@ -1325,5 +1338,7 @@ function defaultSessionName(kind: SessionLaunchKind): string {
       return 'Claude';
     case 'codex':
       return 'Codex';
+    case 'cursor':
+      return 'Cursor';
   }
 }

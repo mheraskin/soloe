@@ -3,7 +3,7 @@ import type { Session } from './types/sessions.js';
 import { sessionAutoApprovesPermissions } from './agent-permissions.js';
 
 function agentSession(
-  provider: 'codex' | 'claude_code',
+  provider: 'codex' | 'claude_code' | 'cursor',
   extraArgs: string[]
 ): Session {
   return {
@@ -31,7 +31,10 @@ describe('sessionAutoApprovesPermissions', () => {
     ['codex', ['-c', 'approvals_reviewer="auto_review"']],
     ['claude_code', ['--dangerously-skip-permissions']],
     ['claude_code', ['--permission-mode', 'bypassPermissions']],
-    ['claude_code', ['--permission-mode=bypassPermissions']]
+    ['claude_code', ['--permission-mode=bypassPermissions']],
+    ['cursor', ['--force']],
+    ['cursor', ['--yolo']],
+    ['cursor', ['-f']]
   ] as const)('recognizes %s auto-approval arguments', (provider, extraArgs) => {
     expect(sessionAutoApprovesPermissions(agentSession(provider, [...extraArgs]))).toBe(true);
   });

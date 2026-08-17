@@ -31,6 +31,7 @@ import type {
 } from '@shared/types/workspaces.js';
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
 import type { Session, SessionId } from '@shared/types/sessions.js';
+import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
 import {
   terminalControlProof,
   type TerminalControlProof,
@@ -66,6 +67,7 @@ export interface LocalSessionDeviceOptions {
   >;
   githubProvider?: Pick<GitHubProviderService, 'status' | 'listOwners' | 'plan' | 'execute' | 'getCommand'>;
   pty: PtyManager;
+  observer?: { listSnapshots(): ObservedAgentSnapshot[] };
   terminalInputControl?: RuntimeTerminalInputControl;
   clientId?: string;
   tailscalePorts?: Pick<TailscalePortForwardManager, 'ensure'>;
@@ -158,6 +160,7 @@ export class LocalSessionDevice implements SessionDevice {
       sessions,
       archivedSessions,
       runtimes: this.options.pty.listRunning(),
+      observations: this.options.observer?.listSnapshots() ?? [],
       capturedAt: new Date().toISOString()
     };
   }
@@ -204,6 +207,7 @@ export class LocalSessionDevice implements SessionDevice {
       sessions: state.sessions,
       archivedSessions: state.archivedSessions,
       runtimes: state.runtimes,
+      observations: state.observations ?? [],
       capturedAt: state.capturedAt
     };
   }

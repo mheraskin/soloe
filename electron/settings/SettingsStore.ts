@@ -18,8 +18,8 @@ const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
 const VALID_DIFF_FONT_SIZES = new Set([11, 12, 13, 14, 15, 16]);
 const VALID_RUN_MODES = new Set(['windows', 'linux', 'macos', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
-const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex']);
-const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude']);
+const VALID_SESSION_LAUNCH_KINDS = new Set(['terminal', 'claude_code', 'codex', 'cursor']);
+const VALID_MODEL_PROVIDERS = new Set(['codex', 'claude', 'cursor']);
 const VALID_BACKEND_PLACEMENTS = new Set(['windows', 'linux', 'macos', 'wsl']);
 const VALID_SHIFT_NUMBER_NAVIGATION_TARGETS = new Set(['worktree', 'project']);
 const VALID_MODEL_TASKS: (keyof SettingsModels)[] = ['textGeneration', 'gitCommitGeneration', 'worktreeOverview'];
@@ -392,7 +392,7 @@ function pickSessionLaunchKind(value: unknown): Settings['defaults']['newSession
 }
 
 function filterStringRecord(raw: Record<string, unknown>): Settings['binaries'] {
-  const allowed: (keyof Settings['binaries'])[] = ['claude', 'codex', 'git', 'gh', 'fd', 'rg', 'editor'];
+  const allowed: (keyof Settings['binaries'])[] = ['claude', 'codex', 'cursor', 'git', 'gh', 'fd', 'rg', 'editor'];
   const out: Settings['binaries'] = {};
   for (const k of allowed) {
     const v = raw[k];

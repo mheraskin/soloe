@@ -18,7 +18,7 @@
   } = $props();
 
   let busyProvider = $state<AgentRuntimeProvider | null>(null);
-  const providers: AgentRuntimeProvider[] = ['claude_code', 'codex'];
+  const providers: AgentRuntimeProvider[] = ['claude_code', 'codex', 'cursor'];
 
   let observed = $derived(sessions.observationFor(session.id));
   let usageLimit = $derived(sessions.usageLimitFor(session.id));
@@ -59,7 +59,7 @@
   }
 
   function providerLabel(provider: AgentRuntimeProvider): string {
-    return provider === 'claude_code' ? 'Claude' : 'Codex';
+    return provider === 'claude_code' ? 'Claude' : provider === 'codex' ? 'Codex' : 'Cursor';
   }
 
   function providerName(provider: AgentRuntimeProvider | null): string {
@@ -70,7 +70,7 @@
     value: Session,
     observedProvider: string | undefined
   ): AgentRuntimeProvider | null {
-    if (observedProvider === 'claude_code' || observedProvider === 'codex') return observedProvider;
+    if (observedProvider === 'claude_code' || observedProvider === 'codex' || observedProvider === 'cursor') return observedProvider;
     return value.currentAgentRuntime?.provider ?? launchProvider(value);
   }
 

@@ -12,6 +12,7 @@ import type {
   MultiDeviceSessionView
 } from '@shared/types/multi-device-sessions.js';
 import type { SessionRuntimeState, SessionUpdate } from '@shared/types/sessions.js';
+import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
 import type {
@@ -25,6 +26,38 @@ import type {
 import { terminalControlProof } from '@shared/types/terminal.js';
 import { ipc } from '../lib/ipc';
 import { sessions as localSessions } from './sessions.svelte';
+
+export type DeviceSessionPendingOperation =
+  | 'starting'
+  | 'stopping'
+  | 'restarting'
+  | 'updating'
+  | 'deleting';
+
+type ProjectionPlacement =
+  | {
+      kind: 'workspace';
+      projectKey: string;
+      workspaceKey: string;
+      index: number;
+      projection: MultiDeviceSessionView;
+    }
+  | { kind: 'unassigned'; index: number; projection: MultiDeviceSessionView }
+  | { kind: 'archived'; index: number; projection: MultiDeviceSessionView };
+
+interface QueuedSessionUpdate {
+  ref: MultiDeviceSessionView['ref'];
+  patch: SessionUpdate;
+  pendingToken: number;
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+interface SessionUpdateQueue {
+  base: MultiDeviceSessionView['session'];
+  entries: QueuedSessionUpdate[];
+  running: boolean;
+}
 
 const EMPTY_STATE: MultiDeviceSessionState = {
   revision: 0,
@@ -44,15 +77,24 @@ export class DeviceSessionsStore {
   selectedDeviceId = $state<DeviceId | null>(null);
   inputLeaseEvents = $state<Record<string, TerminalInputLeaseEvent>>({});
   ownedInputLeases = $state<Record<string, TerminalInputLease>>({});
+  pendingOperations = $state<Record<string, DeviceSessionPendingOperation>>({});
   private detachState: (() => void) | null = null;
   private detachDeviceEvent: (() => void) | null = null;
   private loadRequest: Promise<void> | null = null;
+  private refreshRequest: Promise<void> | null = null;
   private readonly terminalOutputListeners = new Map<
     string,
     { ref: TerminalRef; listeners: Set<(event: TerminalOutputEvent) => void> }
   >();
   private readonly deviceReconnectListeners = new Map<DeviceId, Set<() => void>>();
   private demandSync: Promise<void> = Promise.resolve();
+  private pendingSequence = 0;
+  private authoritativeGeneration = 0;
+  private readonly pendingBySession = new Map<
+    string,
+    Map<number, DeviceSessionPendingOperation>
+  >();
+  private readonly sessionUpdateQueues = new Map<string, SessionUpdateQueue>();
 
   get sessions(): MultiDeviceSessionView[] {
     return [
@@ -97,6 +139,10 @@ export class DeviceSessionsStore {
       : this.selectedSessionKey === projection.key;
   }
 
+  pendingOperation(key: string): DeviceSessionPendingOperation | null {
+    return this.pendingOperations[key] ?? null;
+  }
+
   localTerminalRef(terminalId: string): TerminalRef | null {
     const deviceId = this.localDevice?.deviceId;
     return deviceId ? { deviceId, terminalId } : null;
@@ -125,13 +171,23 @@ export class DeviceSessionsStore {
       this.selectSession(key);
       return;
     }
-    if (!projection.runtime?.terminalId || projection.runtime.status !== 'running') {
-      await ipc.sessions.startOnDevice(projection.ref);
-      await this.refresh();
+    if (projection.runtime?.terminalId && projection.runtime.status === 'running') {
+      this.selectSession(key);
+      return;
     }
-    const refreshed = this.sessions.find((candidate) => candidate.key === key);
-    if (refreshed?.available && refreshed.runtime?.terminalId) {
-      this.selectedSessionKey = key;
+    const previousSelection = this.selectedSessionKey;
+    const pending = this.beginPending(key, 'starting');
+    this.selectedSessionKey = key;
+    try {
+      const started = await ipc.sessions.startOnDevice(projection.ref);
+      if (this.isLatestPending(key, pending)) this.replaceProjection(started);
+    } catch (error) {
+      if (this.isLatestPending(key, pending) && this.selectedSessionKey === key) {
+        this.selectedSessionKey = previousSelection;
+      }
+      throw error;
+    } finally {
+      this.endPending(key, pending);
     }
   }
 
@@ -139,25 +195,40 @@ export class DeviceSessionsStore {
     const projection = this.sessions.find((candidate) => candidate.key === key);
     const terminalId = projection?.runtime?.terminalId;
     if (!projection?.available || !terminalId) return;
-    await ipc.sessions.deviceTerminalStop({
-      deviceId: projection.ref.deviceId,
-      terminalId
-    });
-    await this.refresh();
+    const pending = this.beginPending(key, 'stopping');
+    try {
+      await ipc.sessions.deviceTerminalStop({
+        deviceId: projection.ref.deviceId,
+        terminalId
+      });
+      await this.refreshAfterCurrent();
+    } finally {
+      this.endPending(key, pending);
+    }
   }
 
   async restartSession(key: string): Promise<void> {
     const projection = this.sessions.find((candidate) => candidate.key === key);
     if (!projection?.available) return;
-    if (projection.runtime?.terminalId) {
-      await ipc.sessions.deviceTerminalStop({
-        deviceId: projection.ref.deviceId,
-        terminalId: projection.runtime.terminalId
-      });
+    const pending = this.beginPending(key, 'restarting');
+    let stopped = false;
+    try {
+      if (projection.runtime?.terminalId) {
+        await ipc.sessions.deviceTerminalStop({
+          deviceId: projection.ref.deviceId,
+          terminalId: projection.runtime.terminalId
+        });
+        stopped = true;
+      }
+      const restarted = await ipc.sessions.startOnDevice(projection.ref);
+      if (this.isLatestPending(key, pending)) this.replaceProjection(restarted);
+      this.selectedSessionKey = key;
+    } catch (error) {
+      if (stopped) await this.refreshAfterCurrent().catch(() => undefined);
+      throw error;
+    } finally {
+      this.endPending(key, pending);
     }
-    await ipc.sessions.startOnDevice(projection.ref);
-    await this.refresh();
-    this.selectedSessionKey = key;
   }
 
   async updateSession(key: string, patch: SessionUpdate): Promise<void> {
@@ -169,7 +240,7 @@ export class DeviceSessionsStore {
       await localSessions.update(projection.ref.sessionId, structuredClone(patch));
       return;
     }
-    await ipc.sessions.updateOnDevice(projection.ref, structuredClone(patch));
+    return this.enqueueSessionUpdate(key, projection, patch);
   }
 
   async deleteSession(key: string): Promise<void> {
@@ -179,10 +250,36 @@ export class DeviceSessionsStore {
     if (!owner?.available) return;
     if (owner.local) {
       await localSessions.remove(projection.ref.sessionId);
-    } else {
-      await ipc.sessions.deleteOnDevice(projection.ref);
+      return;
     }
+    const placement = this.captureProjectionPlacement(key);
+    const authorityAtDelete = this.authoritativeGeneration;
+    const previousSelection = this.selectedSessionKey;
+    const pending = this.beginPending(key, 'deleting');
+    this.removeProjection(key);
     if (this.selectedSessionKey === key) this.clearSelectedSession();
+    try {
+      const state = await ipc.sessions.deleteOnDevice(projection.ref);
+      this.applyState(state);
+    } catch (error) {
+      if (this.isLatestPending(key, pending)) {
+        const restored = authorityAtDelete === this.authoritativeGeneration && placement
+          ? this.restoreProjectionPlacement(placement)
+          : false;
+        if (!restored) void this.refresh().catch(() => undefined);
+        if (
+          restored
+          && previousSelection === key
+          && this.selectedSessionKey === null
+          && localSessions.selectedId === null
+        ) {
+          this.selectedSessionKey = key;
+        }
+      }
+      throw error;
+    } finally {
+      this.endPending(key, pending);
+    }
   }
 
   previewCommand(key: string): Promise<SpawnSpec> {
@@ -229,14 +326,18 @@ export class DeviceSessionsStore {
     return this.loadRequest;
   }
 
-  async refresh(): Promise<void> {
-    if (!this.supported || this.refreshing) return;
+  refresh(): Promise<void> {
+    if (!this.supported) return Promise.resolve();
+    if (this.refreshRequest) return this.refreshRequest;
     this.refreshing = true;
-    try {
-      this.applyState(await ipc.sessions.refreshDevices());
-    } finally {
-      this.refreshing = false;
-    }
+    const request = ipc.sessions.refreshDevices()
+      .then((state) => this.applyState(state))
+      .finally(() => {
+        this.refreshing = false;
+        if (this.refreshRequest === request) this.refreshRequest = null;
+      });
+    this.refreshRequest = request;
+    return request;
   }
 
   async reorder(ordered: MultiDeviceSessionView[]): Promise<void> {
@@ -247,7 +348,7 @@ export class DeviceSessionsStore {
 
   async create(request: CreateMultiDeviceSessionRequest): Promise<MultiDeviceSessionView> {
     const created = await ipc.sessions.createOnDevice(structuredClone(request));
-    await this.refresh();
+    if (!this.sessions.some((projection) => projection.key === created.key)) await this.refresh();
     this.selectSession(created.key);
     return created;
   }
@@ -260,7 +361,7 @@ export class DeviceSessionsStore {
 
   async executeCreate(planId: string): Promise<MultiDeviceSessionView> {
     const created = await ipc.sessions.executeCreateOnDevice(planId);
-    await this.refresh();
+    if (!this.sessions.some((projection) => projection.key === created.key)) await this.refresh();
     this.selectSession(created.key);
     return created;
   }
@@ -279,11 +380,11 @@ export class DeviceSessionsStore {
     deviceId: DeviceId,
     project: import('@shared/types/projects.js').ProjectOpenRequest
   ): Promise<void> {
-    this.state = await ipc.sessions.openProjectOnDevice({ deviceId, project });
+    this.applyState(await ipc.sessions.openProjectOnDevice({ deviceId, project }));
   }
 
   async executePreparation(planId: string): Promise<void> {
-    this.state = await ipc.sessions.executeDevicePreparation(planId);
+    this.applyState(await ipc.sessions.executeDevicePreparation(planId));
   }
 
   acquireTerminalOutput(
@@ -476,7 +577,9 @@ export class DeviceSessionsStore {
     const reconnected = state.devices
       .filter((device) => device.available && previousAvailability.get(device.deviceId) === false)
       .map((device) => device.deviceId);
+    this.authoritativeGeneration += 1;
     this.state = state;
+    this.reapplyPendingSessionUpdates();
     this.clearUnavailableSelection();
     for (const deviceId of reconnected) {
       for (const listener of [...(this.deviceReconnectListeners.get(deviceId) ?? [])]) {
@@ -530,13 +633,18 @@ export class DeviceSessionsStore {
     if (envelope.event === 'exit') {
       const event = terminalEvent<TerminalExitEvent>(envelope.payload);
       if (!event) return;
-      this.patchRuntime(envelope.deviceId, event.sessionId, {
-        sessionId: event.sessionId,
-        terminalId: event.terminalId,
-        status: 'exited',
-        exitCode: event.exitCode,
-        signal: event.signal
-      });
+      this.patchProjectionByRef(envelope.deviceId, event.sessionId, (projection) => ({
+        ...projection,
+        lifecycleStatus: 'exited',
+        runtime: null
+      }));
+      return;
+    }
+    if (envelope.event === 'observer.snapshot') {
+      const snapshot = observedAgentSnapshot(envelope.payload);
+      if (!snapshot || snapshot.subjectKind !== 'session') return;
+      const sessionId = snapshot.sessionId ?? snapshot.id;
+      this.patchObservation(envelope.deviceId, sessionId, snapshot);
       return;
     }
     if (envelope.event === 'location') {
@@ -551,26 +659,257 @@ export class DeviceSessionsStore {
   }
 
   private patchRuntime(deviceId: DeviceId, sessionId: string, runtime: SessionRuntimeState): void {
+    this.patchProjectionByRef(deviceId, sessionId, (projection) => ({
+      ...projection,
+      lifecycleStatus: runtime.status,
+      runtime: structuredClone({ ...projection.runtime, ...runtime })
+    }));
+  }
+
+  private patchObservation(
+    deviceId: DeviceId,
+    sessionId: string,
+    observation: ObservedAgentSnapshot
+  ): void {
+    this.patchProjectionByRef(deviceId, sessionId, (projection) => ({
+      ...projection,
+      observation: structuredClone(observation)
+    }));
+  }
+
+  private patchProjectionByRef(
+    deviceId: DeviceId,
+    sessionId: string,
+    update: (projection: MultiDeviceSessionView) => MultiDeviceSessionView
+  ): void {
+    this.patchAllProjections((projection) =>
+      projection.ref.deviceId === deviceId && projection.ref.sessionId === sessionId
+        ? update(projection)
+        : projection
+    );
+  }
+
+  private patchProjection(
+    key: string,
+    update: (projection: MultiDeviceSessionView) => MultiDeviceSessionView
+  ): void {
+    this.patchAllProjections((projection) => projection.key === key ? update(projection) : projection);
+  }
+
+  private replaceProjection(projection: MultiDeviceSessionView): void {
+    this.patchProjection(projection.key, () => structuredClone({
+      ...projection,
+      lifecycleStatus: projection.lifecycleStatus ?? projection.runtime?.status ?? 'stopped'
+    }));
+  }
+
+  private removeProjection(key: string): void {
+    this.patchAllProjections((projection) => projection, key);
+  }
+
+  private captureProjectionPlacement(key: string): ProjectionPlacement | null {
+    for (const project of this.state.projects) {
+      for (const workspace of project.workspaces) {
+        const index = workspace.sessions.findIndex((projection) => projection.key === key);
+        if (index >= 0) {
+          return {
+            kind: 'workspace',
+            projectKey: project.key,
+            workspaceKey: workspace.key,
+            index,
+            projection: structuredClone(workspace.sessions[index]!)
+          };
+        }
+      }
+    }
+    const unassignedIndex = this.state.unassigned.findIndex((projection) => projection.key === key);
+    if (unassignedIndex >= 0) {
+      return {
+        kind: 'unassigned',
+        index: unassignedIndex,
+        projection: structuredClone(this.state.unassigned[unassignedIndex]!)
+      };
+    }
+    const archivedIndex = this.state.archivedSessions.findIndex((projection) => projection.key === key);
+    return archivedIndex >= 0
+      ? {
+          kind: 'archived',
+          index: archivedIndex,
+          projection: structuredClone(this.state.archivedSessions[archivedIndex]!)
+        }
+      : null;
+  }
+
+  private restoreProjectionPlacement(placement: ProjectionPlacement): boolean {
+    if (
+      this.sessions.some((projection) => projection.key === placement.projection.key)
+      || this.state.archivedSessions.some((projection) => projection.key === placement.projection.key)
+    ) {
+      return true;
+    }
+    if (placement.kind === 'unassigned') {
+      this.state = {
+        ...this.state,
+        unassigned: insertAt(this.state.unassigned, placement.index, placement.projection)
+      };
+      return true;
+    }
+    if (placement.kind === 'archived') {
+      this.state = {
+        ...this.state,
+        archivedSessions: insertAt(
+          this.state.archivedSessions,
+          placement.index,
+          placement.projection
+        )
+      };
+      return true;
+    }
+    let restored = false;
     this.state = {
       ...this.state,
-      revision: this.state.revision + 1,
+      projects: this.state.projects.map((project) => project.key !== placement.projectKey
+        ? project
+        : {
+            ...project,
+            workspaces: project.workspaces.map((workspace) => {
+              if (workspace.key !== placement.workspaceKey) return workspace;
+              restored = true;
+              return {
+                ...workspace,
+                sessions: insertAt(workspace.sessions, placement.index, placement.projection)
+              };
+            })
+          })
+    };
+    return restored;
+  }
+
+  private patchAllProjections(
+    patch: (projection: MultiDeviceSessionView) => MultiDeviceSessionView,
+    removeKey: string | null = null
+  ): void {
+    const map = (items: MultiDeviceSessionView[]) => items
+      .filter((projection) => projection.key !== removeKey)
+      .map(patch);
+    this.state = {
+      ...this.state,
       projects: this.state.projects.map((project) => ({
         ...project,
         workspaces: project.workspaces.map((workspace) => ({
           ...workspace,
-          sessions: workspace.sessions.map((projection) =>
-            projection.ref.deviceId === deviceId && projection.ref.sessionId === sessionId
-              ? { ...projection, runtime: structuredClone(runtime) }
-              : projection
-          )
+          sessions: map(workspace.sessions)
         }))
       })),
-      unassigned: this.state.unassigned.map((projection) =>
-        projection.ref.deviceId === deviceId && projection.ref.sessionId === sessionId
-          ? { ...projection, runtime: structuredClone(runtime) }
-          : projection
-      )
+      unassigned: map(this.state.unassigned),
+      archivedSessions: map(this.state.archivedSessions)
     };
+  }
+
+  private enqueueSessionUpdate(
+    key: string,
+    projection: MultiDeviceSessionView,
+    patch: SessionUpdate
+  ): Promise<void> {
+    const queue = this.sessionUpdateQueues.get(key) ?? {
+      base: structuredClone(projection.session),
+      entries: [],
+      running: false
+    };
+    this.sessionUpdateQueues.set(key, queue);
+    const pendingToken = this.beginPending(key, 'updating');
+    const promise = new Promise<void>((resolve, reject) => {
+      queue.entries.push({
+        ref: structuredClone(projection.ref),
+        patch: structuredClone(patch),
+        pendingToken,
+        resolve,
+        reject
+      });
+    });
+    this.recomputeQueuedSession(key, queue);
+    if (!queue.running) void this.drainSessionUpdates(key, queue);
+    return promise;
+  }
+
+  private async drainSessionUpdates(key: string, queue: SessionUpdateQueue): Promise<void> {
+    queue.running = true;
+    while (queue.entries.length > 0) {
+      const entry = queue.entries[0]!;
+      try {
+        const updated = await ipc.sessions.updateOnDevice(entry.ref, structuredClone(entry.patch));
+        queue.base = structuredClone(updated.session);
+        this.replaceProjection(updated);
+        queue.entries.shift();
+        this.recomputeQueuedSession(key, queue);
+        entry.resolve();
+      } catch (error) {
+        queue.entries.shift();
+        this.recomputeQueuedSession(key, queue);
+        entry.reject(error);
+      } finally {
+        this.endPending(key, entry.pendingToken);
+      }
+    }
+    queue.running = false;
+    if (this.sessionUpdateQueues.get(key) === queue) this.sessionUpdateQueues.delete(key);
+  }
+
+  private recomputeQueuedSession(key: string, queue: SessionUpdateQueue): void {
+    const optimistic = queue.entries.reduce(
+      (session, entry) => ({ ...session, ...structuredClone(entry.patch) }),
+      structuredClone(queue.base)
+    );
+    this.patchProjection(key, (projection) => ({ ...projection, session: optimistic }));
+  }
+
+  private reapplyPendingSessionUpdates(): void {
+    for (const [key, queue] of this.sessionUpdateQueues) {
+      const authoritative = this.sessions.find((projection) => projection.key === key)?.session;
+      if (
+        authoritative
+        && (authoritative.version ?? -1) > (queue.base.version ?? -1)
+      ) {
+        queue.base = structuredClone(authoritative);
+      }
+      this.recomputeQueuedSession(key, queue);
+    }
+  }
+
+  private beginPending(key: string, operation: DeviceSessionPendingOperation): number {
+    const token = ++this.pendingSequence;
+    const pending = this.pendingBySession.get(key) ?? new Map<number, DeviceSessionPendingOperation>();
+    pending.set(token, operation);
+    this.pendingBySession.set(key, pending);
+    this.pendingOperations = { ...this.pendingOperations, [key]: operation };
+    return token;
+  }
+
+  private isLatestPending(key: string, token: number): boolean {
+    const pending = this.pendingBySession.get(key);
+    return pending ? [...pending.keys()].at(-1) === token : false;
+  }
+
+  private endPending(key: string, token: number): void {
+    const pending = this.pendingBySession.get(key);
+    pending?.delete(token);
+    if (!pending?.size) {
+      this.pendingBySession.delete(key);
+      const next = { ...this.pendingOperations };
+      delete next[key];
+      this.pendingOperations = next;
+      return;
+    }
+    this.pendingOperations = {
+      ...this.pendingOperations,
+      [key]: [...pending.values()].at(-1)!
+    };
+  }
+
+  private async refreshAfterCurrent(): Promise<void> {
+    const active = this.refreshRequest;
+    if (active) await active.catch(() => undefined);
+    await this.refresh();
   }
 
   private clearUnavailableSelection(): void {
@@ -581,6 +920,11 @@ export class DeviceSessionsStore {
     const selected = this.sessions.find((session) => session.key === this.selectedSessionKey);
     if (!selected) this.selectedSessionKey = null;
   }
+}
+
+function insertAt<T>(items: T[], index: number, item: T): T[] {
+  const insertion = Math.max(0, Math.min(index, items.length));
+  return [...items.slice(0, insertion), structuredClone(item), ...items.slice(insertion)];
 }
 
 function terminalRefKey(ref: TerminalRef): string {
@@ -599,6 +943,14 @@ function terminalStatusEvent(value: unknown): TerminalStatusEvent | null {
   if (typeof event.sessionId !== 'string' || !event.sessionId) return null;
   if (event.terminalId !== null && typeof event.terminalId !== 'string') return null;
   return value as TerminalStatusEvent;
+}
+
+function observedAgentSnapshot(value: unknown): ObservedAgentSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const snapshot = value as { id?: unknown; subjectKind?: unknown; state?: unknown };
+  if (typeof snapshot.id !== 'string' || !snapshot.id) return null;
+  if (typeof snapshot.subjectKind !== 'string' || typeof snapshot.state !== 'string') return null;
+  return value as ObservedAgentSnapshot;
 }
 
 export const deviceSessions = new DeviceSessionsStore();

@@ -47,7 +47,11 @@ export class AgentHookDispatcher {
         await this.dispatchClaude(event.soloeSessionId, event.payload);
         return;
       }
-      await this.dispatchCodex(event.soloeSessionId, event.payload);
+      if (event.provider === 'codex') {
+        await this.dispatchCodex(event.soloeSessionId, event.payload);
+        return;
+      }
+      await this.dispatchCursor(event.soloeSessionId, event.payload);
     } finally {
       if (hookEvent === 'SessionEnd') this.reportedCwds.delete(event.soloeSessionId);
     }
@@ -149,6 +153,22 @@ export class AgentHookDispatcher {
     );
     if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'codex', hookEvent);
+  }
+
+  async dispatchCursor(soloeSessionId: SessionId, payload: Record<string, unknown>): Promise<void> {
+    const hookEvent = hookEventName(payload);
+    if (hookEvent === 'SessionStart') this.pendingAutoRename.add(soloeSessionId);
+    if (hookEvent === 'UserPromptSubmit') {
+      const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'user_message');
+      this.maybeTriggerAutoRename(soloeSessionId, prompt);
+    }
+    const mapping = await this.resolvePermissionMapping(
+      soloeSessionId,
+      mapCursorShellHook(hookEvent),
+      payload
+    );
+    if (mapping) this.applyMapping(soloeSessionId, mapping, payload);
+    await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'cursor', hookEvent);
   }
 
   private maybeTriggerAutoRename(
@@ -365,16 +385,27 @@ function buildLaunchPatch(
 
   if (provider === 'claude_code') {
     delete base.codexSessionId;
+    delete base.cursorSessionId;
+    delete base.cursorMode;
     delete base.reasoningEffort;
     if (providerSessionId) base.claudeSessionId = providerSessionId;
     if (existing.launch.type === 'agent' && existing.launch.provider === 'claude_code') {
       base.fullscreenTui = existing.launch.fullscreenTui;
     }
+  } else if (provider === 'codex') {
+    delete base.claudeSessionId;
+    delete base.claudeSessionName;
+    delete base.cursorSessionId;
+    delete base.cursorMode;
+    delete base.fullscreenTui;
+    if (providerSessionId) base.codexSessionId = providerSessionId;
   } else {
     delete base.claudeSessionId;
     delete base.claudeSessionName;
+    delete base.codexSessionId;
+    delete base.reasoningEffort;
     delete base.fullscreenTui;
-    if (providerSessionId) base.codexSessionId = providerSessionId;
+    if (providerSessionId) base.cursorSessionId = providerSessionId;
   }
 
   if (hasCapturedArgs) {
@@ -386,6 +417,8 @@ function buildLaunchPatch(
     } else if (provider === 'codex') {
       delete base.reasoningEffort;
     }
+    if (provider === 'cursor' && parsed.cursorMode !== undefined) base.cursorMode = parsed.cursorMode;
+    else if (provider === 'cursor') delete base.cursorMode;
     if (parsed.extraArgs.length > 0) base.extraArgs = parsed.extraArgs;
     else delete base.extraArgs;
   }
@@ -425,12 +458,14 @@ function parseAgentLaunchArgs(
   providerSessionId?: string;
   model?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
+  cursorMode?: 'agent' | 'plan' | 'ask';
   extraArgs: string[];
 } {
   const extraArgs: string[] = [];
   let providerSessionId: string | undefined;
   let model: string | undefined;
   let reasoningEffort: 'low' | 'medium' | 'high' | undefined;
+  let cursorMode: 'agent' | 'plan' | 'ask' | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     const next = args[i + 1];
@@ -454,6 +489,31 @@ function parseAgentLaunchArgs(
       continue;
     }
     if (provider === 'claude_code' && arg === '--continue') continue;
+    if (provider === 'cursor' && arg === '--resume') {
+      if (next && !next.startsWith('-')) {
+        providerSessionId = next;
+        i += 1;
+      }
+      continue;
+    }
+    if (provider === 'cursor' && arg.startsWith('--resume=')) {
+      providerSessionId = arg.slice('--resume='.length);
+      continue;
+    }
+    if (provider === 'cursor' && arg === '--continue') continue;
+
+    if (provider === 'cursor' && arg === '--mode') {
+      if (next === 'agent' || next === 'plan' || next === 'ask') {
+        cursorMode = next;
+        i += 1;
+      }
+      continue;
+    }
+    if (provider === 'cursor' && arg.startsWith('--mode=')) {
+      const value = arg.slice('--mode='.length);
+      if (value === 'agent' || value === 'plan' || value === 'ask') cursorMode = value;
+      continue;
+    }
 
     if (arg === '--model' || arg === '-m') {
       if (next) {
@@ -489,6 +549,7 @@ function parseAgentLaunchArgs(
     ...(providerSessionId ? { providerSessionId } : {}),
     ...(model ? { model } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(cursorMode ? { cursorMode } : {}),
     extraArgs
   };
 }
@@ -549,6 +610,12 @@ function mapClaudeHook(
     default:
       return null;
   }
+}
+
+function mapCursorShellHook(hookEvent: string | undefined): HookMapping | null {
+  if (hookEvent === 'SessionStart') return { state: 'starting', summary: 'session started' };
+  if (hookEvent === 'SessionEnd') return { state: 'idle', summary: 'idle' };
+  return null;
 }
 
 function isInterruptedClaudeStop(payload: Record<string, unknown>): boolean {

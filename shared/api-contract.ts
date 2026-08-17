@@ -124,6 +124,8 @@ export const SOLOE_API_METHODS = {
     "uninstallClaude",
     "installCodex",
     "uninstallCodex",
+    "installCursor",
+    "uninstallCursor",
     "onChange",
   ],
   notify: ["onToast", "onActivateSession"],
@@ -324,6 +326,8 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "agentIntegration.uninstallClaude",
   "agentIntegration.installCodex",
   "agentIntegration.uninstallCodex",
+  "agentIntegration.installCursor",
+  "agentIntegration.uninstallCursor",
   "comments.sendRpcResponse",
   "diff.sendRpcResponse",
 ]);

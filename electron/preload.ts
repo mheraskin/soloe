@@ -3,6 +3,7 @@ import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
+  AgentIntegrationCursorRequest,
   AgentIntegrationStatus,
   SoloeApi,
   TerminalInputPayload,
@@ -421,6 +422,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.agentIntegration.installCodex, request),
     uninstallCodex: (request: AgentIntegrationCodexRequest) =>
       ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallCodex, request),
+    installCursor: (request: AgentIntegrationCursorRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.installCursor, request),
+    uninstallCursor: (request: AgentIntegrationCursorRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallCursor, request),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       subscribe<AgentIntegrationStatus>(IpcChannels.agentIntegration.changed, cb)
   },

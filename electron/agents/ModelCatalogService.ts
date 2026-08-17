@@ -48,17 +48,19 @@ export class ModelCatalogService {
     const settings = await this.opts.getSettings();
     const key = JSON.stringify({
       codex: settings.binaries.codex ?? 'codex',
-      claude: settings.binaries.claude ?? 'claude'
+      claude: settings.binaries.claude ?? 'claude',
+      cursor: settings.binaries.cursor ?? 'agent'
     });
     if (this.cache?.key === key && this.cache.expiresAt > Date.now()) {
       return this.cache.catalog.map((entry) => ({ ...entry }));
     }
 
-    const [codex, claude] = await Promise.all([
+    const [codex, claude, cursor] = await Promise.all([
       this.discoverCodex(settings.binaries),
-      this.discoverClaude(settings.binaries)
+      this.discoverClaude(settings.binaries),
+      this.discoverCursor(settings.binaries)
     ]);
-    const catalog = dedupeCatalog([...codex, ...claude]);
+    const catalog = dedupeCatalog([...codex, ...claude, ...cursor]);
     this.cache = {
       key,
       expiresAt: Date.now() + (this.opts.cacheMs ?? CACHE_MS),
@@ -123,10 +125,38 @@ export class ModelCatalogService {
       }))
     ];
   }
+
+  private async discoverCursor(binaries: SettingsBinaries): Promise<ModelCatalogEntry[]> {
+    const executable = binaries.cursor || 'agent';
+    let result = await this.runCommand(executable, ['models']);
+    if (result.exitCode !== 0 && !binaries.cursor && executable === 'agent') {
+      result = await this.runCommand('cursor-agent', ['models']);
+    }
+    if (result.exitCode !== 0) return [];
+    const models = parseCursorModels(result.stdout);
+    return [defaultEntry('cursor'), ...models];
+  }
 }
 
-function defaultEntry(provider: 'codex' | 'claude'): ModelCatalogEntry {
+function defaultEntry(provider: 'codex' | 'claude' | 'cursor'): ModelCatalogEntry {
   return { ...CLI_DEFAULT_MODEL_CATALOG.find((entry) => entry.provider === provider)! };
+}
+
+export function parseCursorModels(stdout: string): ModelCatalogEntry[] {
+  const seen = new Set<string>();
+  const entries: ModelCatalogEntry[] = [];
+  for (const rawLine of stdout.replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, '').split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    // Cursor documents the listing command but no machine-readable schema.
+    // Accept only an unadorned identifier line; decorated/column output stays
+    // unavailable rather than guessing where the identifier ends.
+    const id = /^[a-z0-9][a-z0-9._/-]*$/iu.test(line) ? line : undefined;
+    if (!id || /^(?:available|model|models)$/iu.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    entries.push({ provider: 'cursor', id, label: humanizeModelId(id) });
+  }
+  return entries;
 }
 
 function humanizeModelId(id: string): string {
