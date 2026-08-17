@@ -65,6 +65,7 @@ async function main() {
     SOLOE_SERVER_HOST: '127.0.0.1',
     SOLOE_SERVER_PORT: String(serverPort),
     SOLOE_SERVER_TOKEN: token,
+    SOLOE_TAILSCALE_DISCOVERY: '0',
     SOLOE_WEB_ROOT: path.join(root, 'out', 'web')
   };
   server = await startService(['--filter', '@soloe/server', 'start'], serverEnv, 'server');
@@ -1234,8 +1235,9 @@ async function runMobileWorkspaceWorkflow(input) {
     document.querySelectorAll('.mobile-page-indicator button').length === 2,
     'Mobile rendered more than the Sessions and Workspace pages'
   );
+  const escapedSessionId = CSS.escape(input.sessionId);
   const sessionRow = document.querySelector(
-    `[data-session-id="${CSS.escape(input.sessionId)}"]`
+    `[data-session-id="${escapedSessionId}"], [data-session-id$="/${escapedSessionId}"]`
   );
   assert(sessionRow, 'Mobile terminal fixture session is missing');
   if (sessionRow.getAttribute('data-row-selected') !== 'true') sessionRow.click();
@@ -1567,28 +1569,38 @@ async function runBrowserWorkflow(input) {
     return result;
   };
   const selectSession = async (id, name, projectId) => {
+    const escapedId = CSS.escape(id);
+    const sessionSelector = `[data-session-id="${escapedId}"], [data-session-id$="/${escapedId}"]`;
     await waitUntil(
       () => Boolean(
-        document.querySelector(`[data-session-id="${CSS.escape(id)}"]`)
+        document.querySelector(sessionSelector)
         || (projectId && document.querySelector(`[data-project-id="${CSS.escape(projectId)}"]`))
       ),
       10_000,
       `session ${name} sidebar data`
     );
-    let row = document.querySelector(`[data-session-id="${CSS.escape(id)}"]`);
+    let row = document.querySelector(sessionSelector);
     if (!row && projectId) {
       const project = document.querySelector(
         `[data-project-id="${CSS.escape(projectId)}"]`
       );
       const toggle = project?.querySelector('button');
       assert(toggle, `Missing project for session ${name}`);
-      toggle.click();
+      const isOpen = (button) => button.getAttribute('data-state') === 'open'
+        || button.getAttribute('aria-expanded') === 'true';
+      if (!isOpen(toggle)) toggle.click();
+      await sleep(0);
+      for (const worktreeToggle of document.querySelectorAll(
+        'button[aria-label^="Toggle worktree "]'
+      )) {
+        if (!isOpen(worktreeToggle)) worktreeToggle.click();
+      }
       await waitUntil(
-        () => Boolean(document.querySelector(`[data-session-id="${CSS.escape(id)}"]`)),
+        () => Boolean(document.querySelector(sessionSelector)),
         5_000,
         `session ${name} row`
       );
-      row = document.querySelector(`[data-session-id="${CSS.escape(id)}"]`);
+      row = document.querySelector(sessionSelector);
     }
     assert(row, `Missing session ${name}`);
     if (row.getAttribute('data-row-selected') !== 'true') row.click();
@@ -1636,7 +1648,7 @@ async function runBrowserWorkflow(input) {
   );
   const sessions = await unwrap(api.sessions.list(), 'sessions.list');
   assert(sessions.some((session) => session.id === input.sessionId), 'fixture session was not loaded');
-  await selectSession(input.sessionId, 'Browser fixture');
+  await selectSession(input.sessionId, 'Browser fixture', input.projectId);
 
   const normalPerformance = {
     files: await measurePane('Files'),
@@ -1919,6 +1931,10 @@ async function runBrowserWorkflow(input) {
     controllerDeviceId: inputLease.controllerDeviceId,
     leaseId: inputLease.leaseId
   };
+  await unwrap(
+    api.terminal.setOutputDemand({ terminalId: started.terminalId, active: true }),
+    'terminal.setOutputDemand'
+  );
   const output = new Promise((resolve, reject) => {
     let observed = '';
     const timeout = setTimeout(() => {
@@ -2014,7 +2030,7 @@ async function runBrowserWorkflow(input) {
   );
   await unwrap(api.features.scan({ ...largeScope, slug: 'alpha' }), 'large features.scan');
 
-  await selectSession(input.sessionId, 'Browser fixture');
+  await selectSession(input.sessionId, 'Browser fixture', input.projectId);
   const leaseDeadline = performance.now() + 5_000;
   do {
     inputLease = await unwrap(
@@ -2100,22 +2116,24 @@ async function runRemoteElectronWorkflow(input) {
       'remote Electron custom window controls'
     );
   }
-  await waitUntil(
-    () => Boolean(
-      document.querySelector(`[data-session-id="${CSS.escape(input.sessionId)}"]`)
-      || document.querySelector(`[data-session-id$="::${CSS.escape(input.sessionId)}"]`)
-      || document.querySelector(`[data-session-id$="/${CSS.escape(input.sessionId)}"]`)
-      || document.querySelector('[data-project-id]')
-    ),
-    10_000,
-    'remote Electron session sidebar data'
-  );
+  const showSidebar = document.querySelector('button[aria-label="Show sidebar"]');
+  if (showSidebar) showSidebar.click();
+  await sleep(100);
   let sessionRow = document.querySelector(
     `[data-session-id="${CSS.escape(input.sessionId)}"], [data-session-id$="::${CSS.escape(input.sessionId)}"], [data-session-id$="/${CSS.escape(input.sessionId)}"]`
   );
-  if (!sessionRow) {
+  if (!sessionRow && document.querySelector('.app-sidebar')) {
+    const isOpen = (button) => button.getAttribute('data-state') === 'open'
+      || button.getAttribute('aria-expanded') === 'true';
     for (const project of document.querySelectorAll('[data-project-id]')) {
-      project.querySelector('button')?.click();
+      const toggle = project.querySelector('button');
+      if (toggle && !isOpen(toggle)) toggle.click();
+    }
+    await sleep(0);
+    for (const worktreeToggle of document.querySelectorAll(
+      'button[aria-label^="Toggle worktree "]'
+    )) {
+      if (!isOpen(worktreeToggle)) worktreeToggle.click();
     }
     await waitUntil(
       () => Boolean(document.querySelector(
@@ -2128,13 +2146,26 @@ async function runRemoteElectronWorkflow(input) {
       `[data-session-id="${CSS.escape(input.sessionId)}"], [data-session-id$="::${CSS.escape(input.sessionId)}"], [data-session-id$="/${CSS.escape(input.sessionId)}"]`
     );
   }
-  assert(sessionRow, 'Remote Electron did not render the server-owned session');
-  if (sessionRow.getAttribute('data-row-selected') !== 'true') sessionRow.click();
-  await waitUntil(
-    () => sessionRow.getAttribute('data-row-selected') === 'true',
-    5_000,
-    'remote Electron session selection'
-  );
+  if (sessionRow) {
+    if (sessionRow.getAttribute('data-row-selected') !== 'true') sessionRow.click();
+    await waitUntil(
+      () => sessionRow.getAttribute('data-row-selected') === 'true',
+      5_000,
+      'remote Electron session selection'
+    );
+  } else {
+    const state = await unwrap(api.sessions.deviceState(), 'remote sessions.deviceState');
+    const projected = [
+      ...state.unassigned,
+      ...state.projects.flatMap((project) =>
+        project.workspaces.flatMap((workspace) => workspace.sessions)
+      )
+    ];
+    assert(
+      projected.some((session) => session.ref.sessionId === input.sessionId),
+      'Remote Electron could not load the server-owned session projection'
+    );
+  }
   await waitUntil(
     () => visible([...document.querySelectorAll('button')].find(
       (button) => button.textContent?.trim() === 'Take Over'

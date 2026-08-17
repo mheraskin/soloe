@@ -58,6 +58,16 @@
   );
   let readOnly = $derived(Boolean(inputLease?.lease && !ownsInput));
 
+  function compactTouchViewport(): boolean {
+    return window.matchMedia('(max-width: 767px)').matches
+      && window.matchMedia('(pointer: coarse)').matches;
+  }
+
+  function mobileKeyboardOpen(): boolean {
+    return window.matchMedia('(max-width: 767px)').matches
+      && document.documentElement.hasAttribute('data-mobile-keyboard-open');
+  }
+
   async function takeInputControl(): Promise<void> {
     if (!terminalRef || takingControl) return;
     takingControl = true;
@@ -222,7 +232,12 @@
       });
 
     const resize = async (force = false): Promise<void> => {
-      if (!active || !host?.isConnected || !deviceSessions.ownsTerminalInput(ref)) return;
+      if (
+        !active
+        || !host?.isConnected
+        || !deviceSessions.ownsTerminalInput(ref)
+        || mobileKeyboardOpen()
+      ) return;
       const rect = host.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) return;
       try {
@@ -231,7 +246,7 @@
         lastSize = { cols: terminal.cols, rows: terminal.rows };
         await deviceSessions.terminalResize(ref, terminal.cols, terminal.rows);
         restoring = false;
-        terminal.focus();
+        if (!compactTouchViewport()) terminal.focus();
       } catch {
         // A zero-sized panel will be fitted on the next observation.
       }
@@ -243,10 +258,31 @@
     prepareInteractive = () => resize(true);
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (!entry || entry.contentRect.width < 4 || entry.contentRect.height < 4) return;
+      if (
+        !entry
+        || mobileKeyboardOpen()
+        || entry.contentRect.width < 4
+        || entry.contentRect.height < 4
+      ) return;
       scheduleResize();
     });
+    const onViewportLayout = (event: Event): void => {
+      const detail = (event as CustomEvent<{
+        keyboardOpen?: boolean;
+        keyboardClosed?: boolean;
+      }>).detail;
+      if (detail?.keyboardOpen) {
+        terminal.scrollToBottom();
+        return;
+      }
+      if (detail?.keyboardClosed) {
+        requestAnimationFrame(() => requestAnimationFrame(() => void resize(true)));
+        return;
+      }
+      scheduleResize();
+    };
     resizeObserver.observe(host);
+    window.addEventListener('soloe:rail-layout', onViewportLayout);
     requestAnimationFrame(() => {
       void resize(true);
     });
@@ -263,6 +299,7 @@
       attachment.dispose();
       input.dispose();
       resizeObserver.disconnect();
+      window.removeEventListener('soloe:rail-layout', onViewportLayout);
       if (resizeTimer) clearTimeout(resizeTimer);
       if (projectionFrame) cancelAnimationFrame(projectionFrame);
       transcript.dispose();
@@ -331,7 +368,7 @@
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--terminal-background)]">
   <SessionToolbar {projection} {onClose} />
-  <div class="relative min-h-72 flex-1">
+  <div class="relative min-h-0 flex-1 overflow-hidden">
     <div class="absolute inset-0" class:invisible={readOnly} bind:this={host}></div>
     {#if readOnly}
       <div class="absolute inset-0 flex min-h-0 flex-col bg-[var(--terminal-background)]">
@@ -375,9 +412,27 @@
 </section>
 
 <style>
+  :global(.xterm) {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+  }
+
   .transcript-line {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
+  }
+
+  @media (max-width: 767px) {
+    :global(.xterm-viewport) {
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-y: contain;
+      touch-action: pan-y;
+    }
+
+    :global(.xterm-helper-textarea) {
+      font-size: 16px !important;
+    }
   }
 </style>

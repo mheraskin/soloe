@@ -183,9 +183,10 @@ export class DeviceSessionsStore {
     }
     const previousSelection = this.selectedSessionKey;
     const pending = this.beginPending(key, 'starting');
+    const ref = $state.snapshot(projection.ref);
     this.selectedSessionKey = key;
     try {
-      const started = await ipc.sessions.startOnDevice(projection.ref);
+      const started = await ipc.sessions.startOnDevice(ref);
       if (this.isLatestPending(key, pending)) this.replaceProjection(started);
     } catch (error) {
       if (this.isLatestPending(key, pending) && this.selectedSessionKey === key) {
@@ -217,6 +218,7 @@ export class DeviceSessionsStore {
     const projection = this.sessions.find((candidate) => candidate.key === key);
     if (!projection?.available) return;
     const pending = this.beginPending(key, 'restarting');
+    const ref = $state.snapshot(projection.ref);
     let stopped = false;
     try {
       if (projection.runtime?.terminalId) {
@@ -226,7 +228,7 @@ export class DeviceSessionsStore {
         });
         stopped = true;
       }
-      const restarted = await ipc.sessions.startOnDevice(projection.ref);
+      const restarted = await ipc.sessions.startOnDevice(ref);
       if (this.isLatestPending(key, pending)) this.replaceProjection(restarted);
       this.selectedSessionKey = key;
     } catch (error) {
@@ -259,13 +261,14 @@ export class DeviceSessionsStore {
       return;
     }
     const placement = this.captureProjectionPlacement(key);
+    const ref = $state.snapshot(projection.ref);
     const authorityAtDelete = this.authoritativeGeneration;
     const previousSelection = this.selectedSessionKey;
     const pending = this.beginPending(key, 'deleting');
     this.removeProjection(key);
     if (this.selectedSessionKey === key) this.clearSelectedSession();
     try {
-      const state = await ipc.sessions.deleteOnDevice(projection.ref);
+      const state = await ipc.sessions.deleteOnDevice(ref);
       this.applyState(state);
     } catch (error) {
       if (this.isLatestPending(key, pending)) {
@@ -295,7 +298,7 @@ export class DeviceSessionsStore {
     if (!owner?.available) return Promise.reject(new Error('Session Device is unavailable.'));
     return owner.local
       ? ipc.sessions.previewCommand(projection.ref.sessionId)
-      : ipc.sessions.previewCommandOnDevice(projection.ref);
+      : ipc.sessions.previewCommandOnDevice($state.snapshot(projection.ref));
   }
 
   ensureTailscalePort(
@@ -348,7 +351,7 @@ export class DeviceSessionsStore {
 
   async reorder(ordered: MultiDeviceSessionView[]): Promise<void> {
     this.applyState(await ipc.sessions.reorderOnDevices(
-      ordered.map((projection) => structuredClone(projection.ref))
+      ordered.map((projection) => $state.snapshot(projection.ref))
     ));
   }
 
@@ -778,7 +781,7 @@ export class DeviceSessionsStore {
             projectKey: project.key,
             workspaceKey: workspace.key,
             index,
-            projection: structuredClone(workspace.sessions[index]!)
+            projection: $state.snapshot(workspace.sessions[index]!)
           };
         }
       }
@@ -788,7 +791,7 @@ export class DeviceSessionsStore {
       return {
         kind: 'unassigned',
         index: unassignedIndex,
-        projection: structuredClone(this.state.unassigned[unassignedIndex]!)
+        projection: $state.snapshot(this.state.unassigned[unassignedIndex]!)
       };
     }
     const archivedIndex = this.state.archivedSessions.findIndex((projection) => projection.key === key);
@@ -796,7 +799,7 @@ export class DeviceSessionsStore {
       ? {
           kind: 'archived',
           index: archivedIndex,
-          projection: structuredClone(this.state.archivedSessions[archivedIndex]!)
+          projection: $state.snapshot(this.state.archivedSessions[archivedIndex]!)
         }
       : null;
   }
@@ -873,7 +876,7 @@ export class DeviceSessionsStore {
     patch: SessionUpdate
   ): Promise<void> {
     const queue = this.sessionUpdateQueues.get(key) ?? {
-      base: structuredClone(projection.session),
+      base: $state.snapshot(projection.session),
       entries: [],
       running: false
     };
@@ -881,7 +884,7 @@ export class DeviceSessionsStore {
     const pendingToken = this.beginPending(key, 'updating');
     const promise = new Promise<void>((resolve, reject) => {
       queue.entries.push({
-        ref: structuredClone(projection.ref),
+        ref: $state.snapshot(projection.ref),
         patch: structuredClone(patch),
         pendingToken,
         resolve,
@@ -931,7 +934,7 @@ export class DeviceSessionsStore {
         authoritative
         && (authoritative.version ?? -1) > (queue.base.version ?? -1)
       ) {
-        queue.base = structuredClone(authoritative);
+        queue.base = $state.snapshot(authoritative);
       }
       this.recomputeQueuedSession(key, queue);
     }

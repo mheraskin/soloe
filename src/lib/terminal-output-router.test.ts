@@ -172,24 +172,35 @@ describe('TerminalOutputRouter', () => {
 
   it('replays visible terminals when the server transport reconnects', async () => {
     const reconnect = createReconnectSource();
+    const recoveryOrder: string[] = [];
+    const demand = vi.fn(async (_terminalId: string, active: boolean) => {
+      recoveryOrder.push(`demand:${active}`);
+    });
     const replay = vi
       .fn()
-      .mockResolvedValueOnce(snapshot('t-1', 's-1', 1, 0, ''))
-      .mockResolvedValueOnce(snapshot('t-1', 's-1', 1, 1, 'while-offline'));
+      .mockImplementationOnce(async () => snapshot('t-1', 's-1', 1, 1, 'initial'))
+      .mockImplementationOnce(async () => {
+        recoveryOrder.push('replay');
+        return snapshot('t-1', 's-1', 2, 2, 'while-offline');
+      });
     const sink = createSink();
     const router = new TerminalOutputRouter(
       createLiveSource().source,
       replay,
-      undefined,
+      demand,
       reconnect.source
     );
     router.attach('t-1', 's-1', sink, true);
-    await settle();
+    await vi.waitFor(() => expect(sink.write).toHaveBeenCalledWith('initial'));
+    demand.mockClear();
+    recoveryOrder.length = 0;
 
     reconnect.emit();
-    await settle();
+    await vi.waitFor(() => expect(replay).toHaveBeenCalledTimes(2));
 
-    expect(replay).toHaveBeenNthCalledWith(2, 't-1', 0);
+    expect(demand).toHaveBeenCalledWith('t-1', true);
+    expect(recoveryOrder).toEqual(['demand:true', 'replay']);
+    expect(replay).toHaveBeenNthCalledWith(2, 't-1', 1);
     expect(sink.write).toHaveBeenCalledWith('while-offline');
   });
 

@@ -22,12 +22,25 @@ import type {
   DiffWorktreeTarget,
 } from "../../../shared/types/diff-rpc.js";
 import type {
+  AgentRuntimeProvider,
   Session,
   SessionDraft,
   SessionId,
   SessionUpdate,
 } from "../../../shared/types/sessions.js";
-import type { DeviceId } from "../../../shared/types/devices.js";
+import type {
+  DeviceId,
+  SessionRef,
+  TerminalRef,
+} from "../../../shared/types/devices.js";
+import type {
+  CreateMultiDeviceSessionRequest,
+} from "../../../shared/types/multi-device-sessions.js";
+import type {
+  AddMachineConnectionRequest,
+  ConnectionId,
+  ConnectionPreferencesUpdate,
+} from "../../../shared/types/connections.js";
 import { effectiveAgentProvider } from "../../../shared/types/sessions.js";
 import { sessionAutoApprovesPermissions } from "../../../shared/agent-permissions.js";
 import type { SettingsUpdate } from "../../../shared/types/settings.js";
@@ -153,6 +166,10 @@ import {
   CodexConfigReader,
   codexApprovalsAreAutomatic,
 } from "../../../electron/agents/CodexConfigReader.js";
+import {
+  isApprovalPromptOutput,
+  scanTerminalAgentSignals,
+} from "../../../shared/terminal-agent-signals.js";
 import { NodePtyProcessFactory } from "../../../electron/terminal/NodePtyProcessFactory.js";
 import { BridgePersistence } from "../../../electron/integrations/BridgePersistence.js";
 import { ProcessTreeUsageSampler } from "@soloe/runtime";
@@ -167,9 +184,20 @@ import type { CreateGitHubRepositoryIntent } from "../../../shared/types/provide
 import type {
   TerminalControlProof,
   TerminalInputLease,
+  TerminalOutputEvent,
 } from "../../../shared/types/terminal.js";
+import type { ConnectionRegistry } from "../../../electron/connections/ConnectionRegistry.js";
+import type { MultiDeviceSessions } from "../../../electron/sessions/MultiDeviceSessions.js";
 
 export interface RuntimeControl {
+  on?(
+    event: "output",
+    listener: (event: TerminalOutputEvent) => void,
+  ): unknown;
+  off?(
+    event: "output",
+    listener: (event: TerminalOutputEvent) => void,
+  ): unknown;
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
   listRunning(): Promise<RuntimeTerminalState[]>;
   replay(terminalId: string, afterSeq?: number): Promise<RuntimeReplaySnapshot | null>;
@@ -260,6 +288,13 @@ interface ActiveOverviewStream {
   controller: AbortController;
 }
 
+interface TerminalAgentSignalContext {
+  sessionId: SessionId;
+  provider: AgentRuntimeProvider;
+  autoApprovesPermissions: boolean;
+  tail: string;
+}
+
 export class SoloeDomain extends EventEmitter {
   private readonly sessions: SessionStore;
   private readonly settings: SettingsStore;
@@ -303,6 +338,31 @@ export class SoloeDomain extends EventEmitter {
     "getOverview" | "regenerate" | "streamFollowUp"
   >;
   private readonly overviewStreams = new Map<string, ActiveOverviewStream>();
+  private readonly terminalAgentSignals = new Map<string, TerminalAgentSignalContext>();
+  private multiDeviceSessions: MultiDeviceSessions | null = null;
+  private connectionRegistry: ConnectionRegistry | null = null;
+  private detachMultiDeviceState: (() => void) | null = null;
+  private detachMultiDeviceEvents: (() => void) | null = null;
+  private detachConnectionState: (() => void) | null = null;
+  private readonly handleRuntimeOutput = (event: TerminalOutputEvent): void => {
+    const context = this.terminalAgentSignals.get(event.terminalId);
+    if (!context) return;
+    const signal = scanTerminalAgentSignals(context.tail, event.data);
+    context.tail = signal.tail;
+    if (!signal.candidateText || context.autoApprovesPermissions) return;
+    const observedState = this.observer.getSnapshot(context.sessionId)?.state;
+    if (
+      isApprovalPromptOutput(signal.candidateText, context.provider)
+      && observedState !== "waiting_for_approval"
+      && observedState !== "usage_limited"
+    ) {
+      this.observer.setTuiObservedState(
+        context.sessionId,
+        "waiting_for_approval",
+        "waiting for approval",
+      );
+    }
+  };
   private observer!: AgentObserverManager;
   private workerRuntime!: AgentRuntimeManager;
   private agentBridge: SoloeMcpServer | null = null;
@@ -513,6 +573,7 @@ export class SoloeDomain extends EventEmitter {
     this.observer.on("event", (event) => {
       this.emit("event", "observer.event", event);
     });
+    this.options.runtime.on?.("output", this.handleRuntimeOutput);
     await Promise.all([
       this.sessions.init(),
       this.settings.init(),
@@ -532,8 +593,14 @@ export class SoloeDomain extends EventEmitter {
       });
     }
     await this.options.runtime.setReplayUnbounded?.(true);
-    for (const session of await this.sessions.list()) {
+    const sessions = await this.sessions.list();
+    for (const session of sessions) {
       this.observer.registerTuiSession(session);
+    }
+    const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+    for (const terminal of await this.options.runtime.listRunning()) {
+      const session = sessionsById.get(terminal.sessionId);
+      if (session) await this.trackTerminalAgentSignals(terminal.terminalId, session);
     }
     if (this.options.enableAgentBridge) {
       await this.startAgentBridge();
@@ -541,6 +608,9 @@ export class SoloeDomain extends EventEmitter {
   }
 
   async dispose(): Promise<void> {
+    this.detachServerDeviceSessions();
+    this.options.runtime.off?.("output", this.handleRuntimeOutput);
+    this.terminalAgentSignals.clear();
     this.usage.reset();
     for (const stream of this.overviewStreams.values()) {
       stream.controller.abort("application server stopping");
@@ -567,6 +637,36 @@ export class SoloeDomain extends EventEmitter {
     await this.backgroundAgentExecution.dispose();
     this.codexConfigReader.clear();
     await this.observerStore.dispose();
+  }
+
+  attachServerDeviceSessions(
+    sessions: MultiDeviceSessions,
+    connections: ConnectionRegistry,
+  ): () => void {
+    this.detachServerDeviceSessions();
+    this.multiDeviceSessions = sessions;
+    this.connectionRegistry = connections;
+    this.detachMultiDeviceState = sessions.onState((state) => {
+      this.emit("event", "sessions.deviceStateChange", state);
+    });
+    this.detachMultiDeviceEvents = sessions.onDeviceEvent((event) => {
+      this.emit("event", "sessions.deviceEvent", event);
+    });
+    this.detachConnectionState = connections.onChange((state) => {
+      this.emit("event", "connections.change", state);
+    });
+    return () => this.detachServerDeviceSessions();
+  }
+
+  private detachServerDeviceSessions(): void {
+    this.detachMultiDeviceState?.();
+    this.detachMultiDeviceEvents?.();
+    this.detachConnectionState?.();
+    this.detachMultiDeviceState = null;
+    this.detachMultiDeviceEvents = null;
+    this.detachConnectionState = null;
+    this.multiDeviceSessions = null;
+    this.connectionRegistry = null;
   }
 
   private async startAgentBridge(): Promise<void> {
@@ -767,6 +867,9 @@ export class SoloeDomain extends EventEmitter {
         );
       }
       throw unsupportedRpc("workspaceDevice", call.method);
+    }
+    if (call.namespace === "connections") {
+      return this.connectionsCall(call.method, call.args);
     }
     if (call.namespace === "sessions") {
       return this.sessionsCall(call.method, call.args);
@@ -1881,6 +1984,7 @@ export class SoloeDomain extends EventEmitter {
   }
 
   private async sessionsCall(method: string, args: unknown[]): Promise<unknown> {
+    const deviceSessions = this.multiDeviceSessions;
     switch (method) {
       case "list":
         return this.sessions.list();
@@ -1954,8 +2058,175 @@ export class SoloeDomain extends EventEmitter {
           binaries: settings.binaries,
         });
       }
+      case "deviceState":
+        return this.requireMultiDeviceSessions(deviceSessions).state();
+      case "refreshDevices":
+        return this.requireMultiDeviceSessions(deviceSessions).refresh();
+      case "reorderOnDevices":
+        return this.requireMultiDeviceSessions(deviceSessions).reorderSessions(
+          structuredClone(args[0] as SessionRef[]),
+        );
+      case "createOnDevice":
+        return this.requireMultiDeviceSessions(deviceSessions).create(
+          structuredClone(args[0] as CreateMultiDeviceSessionRequest),
+        );
+      case "planCreateOnDevice":
+        return this.requireMultiDeviceSessions(deviceSessions).planCreate(
+          structuredClone(args[0] as CreateMultiDeviceSessionRequest),
+        );
+      case "executeCreateOnDevice":
+        return this.requireMultiDeviceSessions(deviceSessions).executeCreate(
+          String(args[0] ?? ""),
+        );
+      case "browseDeviceWorkspaceDirectories": {
+        const request = args[0] as { deviceId: DeviceId; path?: string };
+        return this.requireMultiDeviceSessions(deviceSessions).browseWorkspaceDirectories(
+          request.deviceId,
+          request.path,
+        );
+      }
+      case "openProjectOnDevice": {
+        const request = args[0] as { deviceId: DeviceId; project: ProjectOpenRequest };
+        return this.requireMultiDeviceSessions(deviceSessions).openProjectOnDevice(
+          request.deviceId,
+          structuredClone(request.project),
+        );
+      }
+      case "executeDevicePreparation":
+        return this.requireMultiDeviceSessions(deviceSessions).executePreparation(
+          String(args[0] ?? ""),
+        );
+      case "startOnDevice":
+        return this.requireMultiDeviceSessions(deviceSessions).startSession(
+          structuredClone(args[0] as SessionRef),
+        );
+      case "updateOnDevice": {
+        const request = args[0] as { ref: SessionRef; patch: SessionUpdate };
+        return this.requireMultiDeviceSessions(deviceSessions).updateSession(
+          structuredClone(request.ref),
+          structuredClone(request.patch),
+        );
+      }
+      case "deleteOnDevice":
+        return this.requireMultiDeviceSessions(deviceSessions).deleteSession(
+          structuredClone(args[0] as SessionRef),
+        );
+      case "previewCommandOnDevice":
+        return this.requireMultiDeviceSessions(deviceSessions).previewSessionCommand(
+          structuredClone(args[0] as SessionRef),
+        );
+      case "ensureDeviceTailscalePort": {
+        const request = args[0] as { deviceId: DeviceId; port: number };
+        return this.requireMultiDeviceSessions(deviceSessions).ensureTailscalePort(
+          request.deviceId,
+          request.port,
+        );
+      }
+      case "setDeviceTerminalDemand":
+        await this.requireMultiDeviceSessions(deviceSessions).setTerminalOutputDemand(
+          structuredClone(args[0] as TerminalRef[]),
+        );
+        return true;
+      case "deviceTerminalInput": {
+        const request = args[0] as {
+          ref: TerminalRef;
+          data: string;
+          control: TerminalControlProof;
+        };
+        await this.requireMultiDeviceSessions(deviceSessions).terminalInput(
+          structuredClone(request.ref),
+          request.data,
+          structuredClone(request.control),
+        );
+        return true;
+      }
+      case "deviceTerminalInputLease": {
+        const request = args[0] as { ref: TerminalRef; takeover?: boolean };
+        return this.requireMultiDeviceSessions(deviceSessions).terminalAcquireInputLease(
+          structuredClone(request.ref),
+          request.takeover ?? false,
+        );
+      }
+      case "deviceTerminalCurrentInputLease":
+        return this.requireMultiDeviceSessions(deviceSessions).terminalCurrentInputLease(
+          structuredClone(args[0] as TerminalRef),
+        );
+      case "deviceTerminalReleaseInputLease": {
+        const request = args[0] as { ref: TerminalRef; control: TerminalControlProof };
+        return this.requireMultiDeviceSessions(deviceSessions).terminalReleaseInputLease(
+          structuredClone(request.ref),
+          structuredClone(request.control),
+        );
+      }
+      case "deviceTerminalResize": {
+        const request = args[0] as {
+          ref: TerminalRef;
+          cols: number;
+          rows: number;
+          control: TerminalControlProof;
+        };
+        await this.requireMultiDeviceSessions(deviceSessions).terminalResize(
+          structuredClone(request.ref),
+          request.cols,
+          request.rows,
+          structuredClone(request.control),
+        );
+        return true;
+      }
+      case "deviceTerminalReplay":
+        return this.requireMultiDeviceSessions(deviceSessions).terminalReplay(
+          structuredClone(args[0] as TerminalRef),
+          args[1] as number | undefined,
+        );
+      case "deviceTerminalStop":
+        await this.requireMultiDeviceSessions(deviceSessions).terminalStop(
+          structuredClone(args[0] as TerminalRef),
+        );
+        return true;
       default:
         throw unsupportedRpc("sessions", method);
+    }
+  }
+
+  private requireMultiDeviceSessions(
+    sessions: MultiDeviceSessions | null,
+  ): MultiDeviceSessions {
+    if (!sessions) {
+      throw new RpcError(
+        "device_sessions_unavailable",
+        "Server Device Sessions are still starting.",
+      );
+    }
+    return sessions;
+  }
+
+  private async connectionsCall(method: string, args: unknown[]): Promise<unknown> {
+    const connections = this.connectionRegistry;
+    if (!connections) {
+      throw new RpcError(
+        "device_connections_unavailable",
+        "Server Device discovery is still starting.",
+      );
+    }
+    switch (method) {
+      case "get":
+        return connections.get();
+      case "refresh":
+        return connections.refresh();
+      case "configure":
+        return connections.configureTailscale(args[0] as ConnectionPreferencesUpdate);
+      case "add":
+        return connections.add((args[0] as AddMachineConnectionRequest).endpoint);
+      case "remove":
+        return connections.remove(args[0] as ConnectionId);
+      case "setEnabled":
+        return connections.setEnabled(args[0] as ConnectionId, args[1] === true);
+      case "select": {
+        const result = await connections.select(args[0] as ConnectionId);
+        return { ...result, relaunching: false };
+      }
+      default:
+        throw unsupportedRpc("connections", method);
     }
   }
 
@@ -1972,13 +2243,17 @@ export class SoloeDomain extends EventEmitter {
       case "stop":
         await this.markTerminalStopped(args[0] as string);
         await this.options.runtime.stop(args[0] as string);
+        this.terminalAgentSignals.delete(args[0] as string);
         return true;
       case "restart": {
         const sessionId = args[0] as SessionId;
         const current = (await this.options.runtime.listRunning()).find(
           (terminal) => terminal.sessionId === sessionId,
         );
-        if (current) await this.options.runtime.stop(current.terminalId);
+        if (current) {
+          await this.options.runtime.stop(current.terminalId);
+          this.terminalAgentSignals.delete(current.terminalId);
+        }
         return this.startTerminal({
           sessionId,
           ...(args[1] as { cols?: number; rows?: number } | undefined),
@@ -2025,6 +2300,17 @@ export class SoloeDomain extends EventEmitter {
           data,
         );
         await this.options.runtime.write(terminalId, data, control);
+        const agentSignal = this.terminalAgentSignals.get(terminalId);
+        if (data && agentSignal) {
+          const snapshot = this.observer.getSnapshot(agentSignal.sessionId);
+          if (snapshot?.state === "waiting_for_approval") {
+            this.observer.setTuiObservedState(
+              agentSignal.sessionId,
+              "working",
+              "approval answered",
+            );
+          }
+        }
         if (interruptedSessionId) {
           const snapshot = this.observer.getSnapshot(interruptedSessionId);
           if (snapshot && snapshot.state !== "idle" && snapshot.state !== "exited") {
@@ -2101,6 +2387,7 @@ export class SoloeDomain extends EventEmitter {
       cols: options.cols ?? 120,
       rows: options.rows ?? 30,
     });
+    await this.trackTerminalAgentSignals(terminal.terminalId, session);
     this.emit("event", "status", {
       sessionId: session.id,
       terminalId: terminal.terminalId,
@@ -2147,6 +2434,23 @@ export class SoloeDomain extends EventEmitter {
       true,
     );
     return codexApprovalsAreAutomatic(config);
+  }
+
+  private async trackTerminalAgentSignals(
+    terminalId: string,
+    session: Session,
+  ): Promise<void> {
+    const provider = effectiveAgentProvider(session);
+    if (!provider) {
+      this.terminalAgentSignals.delete(terminalId);
+      return;
+    }
+    this.terminalAgentSignals.set(terminalId, {
+      sessionId: session.id,
+      provider,
+      autoApprovesPermissions: await this.sessionAutoApprovesPermissions(session),
+      tail: "",
+    });
   }
 
   private async requireSession(sessionId: SessionId) {

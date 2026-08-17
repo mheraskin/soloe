@@ -142,12 +142,26 @@
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
     if (projection) {
+      if (status === 'stopped' || status === 'exited' || status === 'error') {
+        if (managedLocally) {
+          deviceSessions.selectSession(projection.key);
+          void sessions.start(session.id).catch(reportError);
+        } else {
+          void deviceSessions.openSession(projection.key).catch(reportError);
+        }
+        return;
+      }
       if (isSelected) {
         if (managedLocally) sessions.select(null);
         else deviceSessions.clearSelectedSession();
       } else {
         deviceSessions.selectSession(projection.key);
       }
+      return;
+    }
+    if (status === 'stopped' || status === 'exited' || status === 'error') {
+      sessions.select(session.id);
+      void sessions.start(session.id).catch(reportError);
       return;
     }
     if (isSelected) sessions.select(null); else sessions.select(session.id);
@@ -225,6 +239,7 @@
   // was emitted. AgentStateBadge is the primary agent state pill.
   function buildStatusPill(): StatusPill | null {
     if (!isAgent) return null;
+    if (status === 'stopped') return null;
     const showRemoteLifecycle = projection !== null && !managedLocally;
     if (!showRemoteLifecycle && (!hasRuntime || (status !== 'exited' && status !== 'error'))) {
       return null;

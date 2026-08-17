@@ -25,6 +25,8 @@ import {
 } from '@soloe/runtime';
 import { SoloeServer } from './SoloeServer.js';
 import { SoloeDomain } from './SoloeDomain.js';
+import { ServerDeviceSessions } from './ServerDeviceSessions.js';
+import { TailscaleDiscovery } from '../../../electron/connections/TailscaleDiscovery.js';
 
 let endpointSequence = 0;
 
@@ -75,6 +77,83 @@ class PersistentProcess extends EventEmitter implements RuntimeProcess {
 }
 
 describe('Soloe Server lifecycle', () => {
+  it('publishes Device inventory and Sessions to standalone web clients', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-device-sessions-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    let domainRuntime: RuntimeClient | undefined;
+    let domain: SoloeDomain | undefined;
+    let server: SoloeServer | undefined;
+    let devices: ServerDeviceSessions | undefined;
+
+    try {
+      await runtime.listen();
+      domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
+      domain = new SoloeDomain({
+        dataDirectory: directory,
+        deviceId: TEST_DEVICE_DESCRIPTOR.deviceId,
+        runtime: domainRuntime
+      });
+      await domain.init();
+      server = new SoloeServer({
+        runtimeEndpoint,
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        deviceDescriptor: TEST_DEVICE_DESCRIPTOR,
+        rpcHandler: (call) => domain!.invoke(call)
+      });
+      domain.on('event', (event, payload) => server!.publish(event, payload));
+      const baseUrl = await server.listen();
+      devices = new ServerDeviceSessions({
+        dataDirectory: directory,
+        localDescriptor: TEST_DEVICE_DESCRIPTOR,
+        localEndpoint: baseUrl,
+        localToken: 'test-token',
+        discover: new TailscaleDiscovery(
+          async () => JSON.stringify({ BackendState: 'Stopped' }),
+          async () => ({ state: 'not-running', message: null, setupUrl: null })
+        )
+      });
+      await devices.init();
+      domain.attachServerDeviceSessions(devices.sessions, devices.connections);
+
+      const created = await rpc<{ id: string }>(baseUrl, 'sessions', 'create', [{
+        name: 'Web Device Session',
+        cwd: directory,
+        runMode: nativeRunMode(),
+        launch: { type: 'terminal', shell: 'auto' }
+      }]);
+      const state = await rpc<{
+        devices: Array<{ deviceId: string; local: boolean }>;
+        unassigned: Array<{ ref: { sessionId: string }; session: { name: string } }>;
+      }>(baseUrl, 'sessions', 'refreshDevices');
+
+      expect(state.devices).toEqual([
+        expect.objectContaining({
+          deviceId: TEST_DEVICE_DESCRIPTOR.deviceId,
+          local: true
+        })
+      ]);
+      expect(state.unassigned).toEqual([
+        expect.objectContaining({
+          ref: expect.objectContaining({ sessionId: created.id }),
+          session: expect.objectContaining({ name: 'Web Device Session' })
+        })
+      ]);
+    } finally {
+      await devices?.dispose();
+      await server?.close();
+      await domain?.dispose();
+      domainRuntime?.disconnect();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('reconnects to running Sessions after the server is replaced', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
@@ -571,6 +650,102 @@ describe('Soloe Server lifecycle', () => {
       other?.close();
       legacy?.close();
       await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('streams observer status without terminal output demand or input control', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-background-status-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const process = new PersistentProcess();
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => process }
+    });
+    let domainRuntime: RuntimeClient | undefined;
+    let domain: SoloeDomain | undefined;
+    let server: SoloeServer | undefined;
+    let socket: WebSocket | undefined;
+
+    try {
+      await runtime.listen();
+      domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
+      domain = new SoloeDomain({
+        dataDirectory: directory,
+        runtime: domainRuntime,
+        deviceId: TEST_DEVICE_DESCRIPTOR.deviceId,
+        cursorDiscovery: {
+          detect: vi.fn(async () => ({
+            available: true,
+            binary: 'agent',
+            version: '2026.08.11'
+          }))
+        }
+      });
+      await domain.init();
+      server = new SoloeServer({
+        runtimeEndpoint,
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        deviceDescriptor: TEST_DEVICE_DESCRIPTOR,
+        rpcHandler: (call) => domain!.invoke(call)
+      });
+      domain.on('event', (event, payload) => server!.publish(event, payload));
+      const baseUrl = await server.listen();
+      const session = await domain.invoke({
+        namespace: 'sessions',
+        method: 'create',
+        args: [{
+          name: 'Background Cursor',
+          cwd: directory,
+          runMode: nativeRunMode(),
+          launch: { type: 'agent', provider: 'cursor', resumeMode: 'new' }
+        }]
+      }) as { id: string };
+      const terminal = await domain.invoke({
+        namespace: 'terminal',
+        method: 'start',
+        args: [{ sessionId: session.id, cols: 100, rows: 30 }]
+      }) as { terminalId: string };
+
+      socket = new WebSocket(new URL(
+        '/api/runtime/events?token=test-token&eventFormat=envelope-v1&clientId=background-client',
+        baseUrl
+      ));
+      await opened(socket);
+      const messages: Array<{ event?: string }> = [];
+      socket.addEventListener('message', (event) => {
+        messages.push(JSON.parse(String(event.data)) as { event?: string });
+      });
+      const status = nextEvent(socket, 'observer.snapshot');
+
+      await expect(domain.invoke({
+        namespace: 'terminal',
+        method: 'currentInputLease',
+        args: [terminal.terminalId]
+      })).resolves.toBeNull();
+      process.emit(
+        'data',
+        '\u001b[35mRun this command?\u001b[0m\nNot in allowlist: head'
+      );
+
+      await expect(status).resolves.toEqual(expect.objectContaining({
+        event: 'observer.snapshot',
+        payload: expect.objectContaining({
+          id: session.id,
+          state: 'waiting_for_approval'
+        })
+      }));
+      expect(messages).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ event: 'output' })
+      ]));
+    } finally {
+      socket?.close();
+      await server?.close();
+      await domain?.dispose();
+      domainRuntime?.disconnect();
       await runtime.shutdown();
       await rm(directory, { recursive: true, force: true });
     }

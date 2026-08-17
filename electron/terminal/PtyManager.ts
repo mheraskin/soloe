@@ -28,6 +28,10 @@ import type { SessionCommandBuilder } from '../sessions/SessionCommandBuilder.js
 import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import {
+  isApprovalPromptOutput,
+  scanTerminalAgentSignals
+} from '@shared/terminal-agent-signals.js';
+import {
   CodexConfigReader,
   codexApprovalsAreAutomatic,
   type CodexEffectiveConfig
@@ -560,11 +564,10 @@ export class PtyManager extends EventEmitter {
     // Semantic scanning now runs once per 16 ms batch. Plain output needs no
     // allocation; ANSI output is stripped before the visible tail/candidate
     // gate so styling may safely split words such as `per…mission`.
-    const text = data.includes('\x1b') ? stripAnsi(data) : data;
-    if (!text) return;
-    const signalText = `${instance.agentSignalTail}${text}`;
-    instance.agentSignalTail = signalText.slice(-AGENT_SIGNAL_TAIL_LENGTH);
-    if (!AGENT_SIGNAL_CANDIDATE.test(signalText)) return;
+    const signal = scanTerminalAgentSignals(instance.agentSignalTail, data);
+    instance.agentSignalTail = signal.tail;
+    const signalText = signal.candidateText;
+    if (!signalText) return;
 
     const observedState = this.opts.observer?.getSnapshot(instance.sessionId)?.state;
     if (
@@ -585,7 +588,7 @@ export class PtyManager extends EventEmitter {
     const usageLimit = detectUsageLimitPlainText(instance.usageLimitBuffer);
     if (!usageLimit) return;
     instance.usageLimitDetected = true;
-    void this.logUsageLimitDetection(instance, usageLimit, text);
+    void this.logUsageLimitDetection(instance, usageLimit, signal.text);
     this.opts.observer?.setTuiUsageLimit(instance.sessionId, {
       ...usageLimit,
       detectedAt: new Date().toISOString()
@@ -643,32 +646,12 @@ export class PtyManager extends EventEmitter {
 
 const noop = (): void => {};
 
-const AGENT_SIGNAL_TAIL_LENGTH = 256;
-const AGENT_SIGNAL_CANDIDATE =
-  /allow|permission|approval|approve mode|run this|proceed with|limit|credit/i;
 const USAGE_LIMIT_CANDIDATE = /limit|credit/i;
 
 function legacyAgentProvider(session: Session): AgentRuntimeProvider | null {
   const kind = (session as unknown as { kind?: unknown }).kind;
   if (kind === 'claude_code' || kind === 'codex' || kind === 'cursor') return kind;
   return null;
-}
-
-function isApprovalPromptOutput(text: string, provider: AgentRuntimeProvider): boolean {
-  const normalized = text.toLowerCase().replace(/\s+/g, ' ');
-  if (normalized.includes('do you want to allow')
-    || normalized.includes('needs your permission')
-    || normalized.includes('waiting for approval')) {
-    return true;
-  }
-  if (provider !== 'cursor') return false;
-  return normalized.includes('run this command?')
-    || normalized.includes('run this command outside the sandbox?')
-    || normalized.includes('proceed with this edit?')
-    || normalized.includes('run this mcp tool?')
-    || normalized.includes('allow this web fetch?')
-    || normalized.includes('allow this web search?')
-    || normalized.includes('approve mode switch (y/n)');
 }
 
 function newTerminalId(): TerminalId {

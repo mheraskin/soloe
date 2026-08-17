@@ -1,6 +1,6 @@
 # Multi-Device Workspaces
 
-Status: implemented in the desktop application
+Status: implemented in the Application Server for desktop and web clients
 
 ## Product model
 
@@ -53,7 +53,7 @@ Device inventory is available.
 When Tailscale is installed and signed in:
 
 1. The Soloe Application Server ensures its Tailscale Serve mapping on startup.
-2. The desktop reads the local tailnet peer list.
+2. The Application Server reads the local tailnet peer list.
 3. It probes the fixed Soloe HTTPS endpoint for online peers.
 4. It authenticates the Tailscale identity, negotiates the Device descriptor,
    and pins the durable Device ID.
@@ -74,7 +74,7 @@ Each Device remains authoritative for:
 - its Runtime processes, terminal replay, and input leases;
 - its typed Git and Workspace preparation commands.
 
-The desktop Sessions service owns only aggregation, routing, and last-known
+The Application Server Sessions module owns only aggregation, routing, and last-known
 presentation evidence. It derives Project and Workspace grouping from Device
 inventories and stores no parallel logical Project/Workspace/Session
 membership model.
@@ -94,8 +94,11 @@ Soloe bearer tokens.
 - Concurrent inventory refresh requests are coalesced. Inventories refresh on
   connection, explicit Refresh, Device lifecycle events, and local
   Project/Session/Worktree changes rather than by an additional UI poller.
-- Closing the Electron client closes its Device transports. Remote agents keep
-  running under their owning Environment Runtime.
+- Closing a browser or Electron client releases only that client's terminal
+  presentations. The Application Server keeps Device transports and inventory
+  subscriptions alive, so background status continues to reach every client.
+- Replacing the Application Server reconnects Device transports. Remote agents
+  keep running under their owning Environment Runtime.
 
 ## Interfaces
 

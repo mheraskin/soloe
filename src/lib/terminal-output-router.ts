@@ -173,6 +173,7 @@ export class TerminalOutputRouter {
   }
 
   private recoverAfterReconnect(): void {
+    const demandRecovery = new Map<TerminalId, Promise<void>>();
     for (const group of this.presentations.values()) {
       for (const state of group) {
         if (!state.active || !state.visible) continue;
@@ -181,9 +182,25 @@ export class TerminalOutputRouter {
         state.recovering = true;
         state.replayRequired = true;
         state.highestObservedSeq = state.appliedSeq;
-        if (!state.writing) this.requestReplay(state);
+        const demandReady = demandRecovery.get(state.terminalId)
+          ?? this.reassertDemand(state.terminalId);
+        demandRecovery.set(state.terminalId, demandReady);
+        void demandReady.then(() => {
+          if (!state.active || !state.visible) return;
+          if (!state.writing) this.requestReplay(state);
+        });
       }
     }
+  }
+
+  private async reassertDemand(terminalId: TerminalId): Promise<void> {
+    if (!this.demandSource) return;
+    const demand = this.demandByTerminal.get(terminalId);
+    if (!demand || demand.owners === 0) return;
+    await demand.syncing;
+    if (demand.owners === 0) return;
+    demand.acknowledged = false;
+    await this.reconcileDemand(terminalId, demand);
   }
 
   private route(event: TerminalOutputEvent): void {

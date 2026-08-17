@@ -9,7 +9,12 @@ const terminalMocks = vi.hoisted(() => ({
   releaseLiveWrite: null as null | (() => void),
   outputListener: null as null | ((event: { seq: number; data: string }) => void),
   reconnectListener: null as null | (() => void),
-  replay: vi.fn()
+  replay: vi.fn(),
+  focus: vi.fn(),
+  fit: vi.fn(),
+  ownsInput: vi.fn(() => false),
+  claimInput: vi.fn(async () => false),
+  resize: vi.fn(async () => undefined)
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -20,13 +25,13 @@ vi.mock('@xterm/xterm', () => ({
     open() {}
     onData() { return { dispose() {} }; }
     scrollToBottom() {}
-    focus() {}
+    focus() { terminalMocks.focus(); }
     dispose() {}
   }
 }));
 
 vi.mock('@xterm/addon-fit', () => ({
-  FitAddon: class { fit() {} }
+  FitAddon: class { fit() { terminalMocks.fit(); } }
 }));
 
 vi.mock('../lib/terminal-write', () => ({
@@ -57,8 +62,8 @@ vi.mock('../lib/terminal-transcript', () => ({
 vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
     terminalInputLeaseEvent: vi.fn(() => null),
-    ownsTerminalInput: vi.fn(() => false),
-    claimTerminalInputControl: vi.fn(async () => false),
+    ownsTerminalInput: terminalMocks.ownsInput,
+    claimTerminalInputControl: terminalMocks.claimInput,
     releaseTerminalInputControl: vi.fn(async () => true),
     onDeviceReconnect: vi.fn((_deviceId, listener) => {
       terminalMocks.reconnectListener = listener;
@@ -73,7 +78,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
       return { ready: Promise.resolve(), dispose: vi.fn() };
     }),
     terminalReplay: terminalMocks.replay,
-    terminalResize: vi.fn(async () => undefined),
+    terminalResize: terminalMocks.resize,
     terminalInput: vi.fn(async () => undefined),
     updateSession: vi.fn(async () => undefined),
     previewCommand: vi.fn(async () => ({ description: '' }))
@@ -95,6 +100,11 @@ describe('DeviceTerminalViewer output sequencing', () => {
     terminalMocks.releaseLiveWrite = null;
     terminalMocks.outputListener = null;
     terminalMocks.reconnectListener = null;
+    terminalMocks.focus.mockReset();
+    terminalMocks.fit.mockReset();
+    terminalMocks.ownsInput.mockReset().mockReturnValue(false);
+    terminalMocks.claimInput.mockReset().mockResolvedValue(false);
+    terminalMocks.resize.mockReset().mockResolvedValue(undefined);
     terminalMocks.replay.mockReset()
       .mockResolvedValueOnce({
         snapshot: { fromSeq: 1, toSeq: 1, data: 'screen', truncated: false }
@@ -114,6 +124,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     if (component) await unmount(component);
     component = null;
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
 
@@ -183,6 +194,46 @@ describe('DeviceTerminalViewer output sequencing', () => {
       }, 1);
       expect(terminalMocks.writes).toEqual(['screen', 'live-2live-3']);
     });
+  });
+
+  it('refits a controlled remote terminal after mobile viewport recovery without forcing focus', async () => {
+    terminalMocks.ownsInput.mockReturnValue(true);
+    terminalMocks.claimInput.mockResolvedValue(true);
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width') || query.includes('pointer: coarse'),
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    }));
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 390,
+      bottom: 700,
+      width: 390,
+      height: 700,
+      toJSON: () => ({})
+    });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(terminalMocks.claimInput).toHaveBeenCalled());
+    await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
+    terminalMocks.fit.mockClear();
+    terminalMocks.focus.mockClear();
+
+    window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
+      detail: { keyboardOpen: false, keyboardClosed: true }
+    }));
+
+    await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
+    expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
 });
 

@@ -9,6 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -1362,6 +1363,96 @@ describe("SoloeDomain", () => {
           rows: 30,
         }),
       );
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("projects a Cursor terminal approval prompt into the observer state", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-cursor-approval-"));
+    const runtime = Object.assign(new EventEmitter(), {
+      start: vi.fn(async (input) => ({
+        terminalId: "cursor-terminal",
+        sessionId: input.sessionId,
+        pid: 7002,
+        status: "running" as const,
+        startedAt: "2026-08-17T10:00:00.000Z",
+        spec: input.spec,
+        cols: input.cols,
+        rows: input.rows,
+      })),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    });
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      cursorDiscovery: {
+        detect: vi.fn(async () => ({
+          available: true,
+          binary: "agent",
+          version: "2026.08.11",
+        })),
+      },
+    });
+
+    try {
+      await domain.init();
+      const session = (await domain.invoke({
+        namespace: "sessions",
+        method: "create",
+        args: [{
+          name: "Cursor",
+          cwd: directory,
+          runMode: hostPlatform(),
+          launch: { type: "agent", provider: "cursor", resumeMode: "new" },
+        }],
+      })) as { id: string };
+      await domain.invoke({
+        namespace: "terminal",
+        method: "start",
+        args: [{ sessionId: session.id, cols: 100, rows: 30 }],
+      });
+
+      runtime.emit("output", {
+        terminalId: "cursor-terminal",
+        sessionId: session.id,
+        seq: 1,
+        data: "\u001b[35mRun this command?\u001b[0m\nNot in allowlist: head",
+      });
+
+      expect(
+        await domain.invoke({ namespace: "observer", method: "list", args: [] }),
+      ).toEqual([
+        expect.objectContaining({
+          id: session.id,
+          state: "waiting_for_approval",
+        }),
+      ]);
+
+      await domain.invoke({
+        namespace: "terminal",
+        method: "input",
+        args: ["cursor-terminal", "\r", {
+          sessionId: session.id,
+          ownerDeviceId: "device-xps",
+          controllerDeviceId: "device-local",
+          leaseId: "lease-1",
+        }],
+        clientId: "client-local",
+      });
+      expect(
+        await domain.invoke({ namespace: "observer", method: "list", args: [] }),
+      ).toEqual([
+        expect.objectContaining({
+          id: session.id,
+          state: "working",
+        }),
+      ]);
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

@@ -221,7 +221,7 @@ One trusted machine with a durable Device identity that exposes a Soloe Applicat
 _Avoid_: Backend URL, remote workspace, endpoint
 
 **Device Connection Registry**:
-The client-local cache of this Device and automatically discovered Soloe Devices, including durable identity pins and last-known availability. Tailscale credentials and per-Device enablement are not part of this model.
+The Application Server-owned cache of this Device and automatically discovered Soloe Devices, including durable identity pins and last-known availability. It stays active independently of browser or desktop selection so status remains current. Tailscale credentials and per-Device enablement are not part of this model.
 _Avoid_: Device picker, Tailscale token store
 
 **Alignment Evidence**:

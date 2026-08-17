@@ -10,8 +10,32 @@ export const SOLOE_API_METHODS = {
     "delete",
     "reorder",
     "previewCommand",
+    "deviceState",
+    "refreshDevices",
+    "reorderOnDevices",
+    "createOnDevice",
+    "planCreateOnDevice",
+    "executeCreateOnDevice",
+    "browseDeviceWorkspaceDirectories",
+    "openProjectOnDevice",
+    "executeDevicePreparation",
+    "startOnDevice",
+    "updateOnDevice",
+    "deleteOnDevice",
+    "previewCommandOnDevice",
+    "ensureDeviceTailscalePort",
+    "setDeviceTerminalDemand",
+    "deviceTerminalInput",
+    "deviceTerminalInputLease",
+    "deviceTerminalCurrentInputLease",
+    "deviceTerminalReleaseInputLease",
+    "deviceTerminalResize",
+    "deviceTerminalReplay",
+    "deviceTerminalStop",
     "onChange",
     "onDelete",
+    "onDeviceStateChange",
+    "onDeviceEvent",
   ],
   terminal: [
     "start",
@@ -50,7 +74,16 @@ export const SOLOE_API_METHODS = {
     "usage",
   ],
   settings: ["get", "update", "modelCatalog", "onChange"],
-  connections: ["get", "refresh", "add", "remove", "setEnabled", "select", "onChange"],
+  connections: [
+    "get",
+    "refresh",
+    "configure",
+    "add",
+    "remove",
+    "setEnabled",
+    "select",
+    "onChange",
+  ],
   projects: [
     "list",
     "get",
@@ -224,6 +257,9 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "sessions.delete",
   "sessions.reorder",
   "sessions.previewCommand",
+  ...SOLOE_API_METHODS.sessions
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `sessions.${method}`),
   "terminal.start",
   "terminal.stop",
   "terminal.restart",
@@ -330,6 +366,9 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "agentIntegration.uninstallCursor",
   "comments.sendRpcResponse",
   "diff.sendRpcResponse",
+  ...SOLOE_API_METHODS.connections
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `connections.${method}`),
 ]);
 
 export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
@@ -344,7 +383,6 @@ export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
   "browser.openDevTools",
   "browser.setDevToolsLayout",
   "browser.closeDevTools",
-  ...SOLOE_API_METHODS.connections.map((method) => `connections.${method}`),
   ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`),
 ]);
 
@@ -356,6 +394,8 @@ export const CLIENT_NATIVE_METHODS = new Set<string>([
 export const SERVER_EVENT_METHODS = new Set<string>([
   "sessions.onChange",
   "sessions.onDelete",
+  "sessions.onDeviceStateChange",
+  "sessions.onDeviceEvent",
   "terminal.onOutput",
   "terminal.onExit",
   "terminal.onStatus",
@@ -373,6 +413,7 @@ export const SERVER_EVENT_METHODS = new Set<string>([
   "diff.onRpcRequest",
   "features.onChange",
   "vault.onChange",
+  "connections.onChange",
 ]);
 
 export const RUNTIME_OWNED_METHODS = new Set<string>([

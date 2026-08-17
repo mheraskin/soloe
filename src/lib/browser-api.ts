@@ -89,6 +89,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   if (options.token) url.searchParams.set("token", options.token);
   url.searchParams.set("clientId", clientId);
+  url.searchParams.set("eventFormat", "envelope-v1");
   let openedConnections = 0;
   const connectEvents = () => {
     const socket = socketFactory(url.toString());
@@ -161,7 +162,8 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     listRunning: () => rpc("terminal", "listRunning", []),
     replay: (terminalId, afterSeq) =>
       rpc("terminal", "replay", [terminalId, afterSeq]),
-    setOutputDemand: () => Promise.resolve({ ok: true, value: true }),
+    setOutputDemand: (payload) =>
+      rpc("terminal", "setOutputDemand", [payload]),
     onOutput: (listener: (event: TerminalOutputEvent) => void) =>
       subscribe("output", listener),
     onExit: (listener: (event: TerminalExitEvent) => void) =>

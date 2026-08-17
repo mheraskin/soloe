@@ -7,9 +7,9 @@ separation, not repository separation, provides lifecycle independence.
 | Process | Owns | May be replaced without stopping agents? |
 | --- | --- | --- |
 | Environment Runtime (`apps/runtime`) | PTYs, input, resize, bounded replay, terminal identity | No; this is the agent lifetime boundary |
-| Application Server (`apps/server`) | Domain state, authenticated HTTP/RPC/WebSocket | Yes |
+| Application Server (`apps/server`) | Domain state, Device inventory aggregation, composite Session routing, authenticated HTTP/RPC/WebSocket | Yes |
 | Tray Host (`apps/tray`) | Top-level ownership, start/stop, browser/Electron launch | No; exiting the tray stops everything |
-| Electron client and multi-Device Sessions service (`apps/desktop-electron`) | Native window, concurrent Device inventory, composite Session/terminal routing, and renderer projection | Yes |
+| Electron client (`apps/desktop-electron`) | Native window and embedded-browser controls | Yes |
 | Development Web Host (`apps/web`) | PWA assets, hot reload, authenticated API proxy | Yes while the tray remains |
 
 **Backend Placement** selects where the first two processes run:
@@ -34,10 +34,10 @@ can occupy the reserved directory without duplicating today's web build.
 
 Each Soloe Device is authoritative for its durable identity, Project records,
 Repository and Checkout registry, Session records, Git evidence, provider
-operations, and idempotent Device command receipts. The Electron host connects
-to compatible Devices concurrently and derives one Project → Workspace →
-Session view from their inventories. It does not store a second logical catalog
-or Session-membership model.
+operations, and idempotent Device command receipts. The Application Server
+connects to compatible Devices concurrently and derives one Project → Workspace
+→ Session view from their inventories for every browser and desktop client. It
+does not store a second logical catalog or Session-membership model.
 
 Physical state is addressed with composite references such as
 `(DeviceId, SessionId)` and `(DeviceId, CheckoutId)`. Endpoint URLs and display
@@ -93,7 +93,7 @@ macOS or Windows window, connection-registry, and embedded-browser controls
 over local Electron IPC. The browser uses the local HTTP/WebSocket API
 directly. Both replay visible terminals after reconnect.
 
-The Electron-owned Device Connection Registry catalogs the local supervised
+The Application Server-owned Device Connection Registry catalogs the local supervised
 Server plus automatically discovered Tailscale HTTPS endpoints. It hides CLI
 parsing, readiness probes, durable Device-ID pinning, compatibility, and
 connection health behind the Renderer Backend Interface. Compatible Devices
@@ -105,9 +105,9 @@ Device.
 
 The old process-wide active endpoint remains readable only for migration. It
 affects startup and relaunch behavior exclusively when
-`SOLOE_LEGACY_EXCLUSIVE_CONNECTION=1`; normal operation always anchors the
-desktop to its local host and lets the multi-Device Sessions service manage remote
-Devices. Both the development Web Host and packaged macOS Application Server
+`SOLOE_LEGACY_EXCLUSIVE_CONNECTION=1`; normal operation anchors every client to
+its local Application Server, which manages remote Devices. Both the
+development Web Host and packaged macOS Application Server
 expose the same readiness and Tailscale identity-to-session contract.
 
 The Server composes platform-independent domain services; none import Electron

@@ -13,7 +13,7 @@ that the Devices already own.
 ## Decision
 
 Each Soloe Device publishes a bounded inventory of its Projects, Git
-Worktrees, Sessions, and Runtime state. The desktop Sessions service combines
+Worktrees, Sessions, and Runtime state. The Application Server Sessions module combines
 those inventories into the normal Project → Workspace → Session navigation:
 
 - a Project is identified across Devices by its canonical Git remote;
@@ -22,7 +22,7 @@ those inventories into the normal Project → Workspace → Session navigation:
 - each Session remains owned and executed by exactly one Device.
 
 Project and Session identity, metadata, and ordering remain in the existing
-Device-local stores. The desktop may cache last-known inventory for disabled
+Device-local stores. The Application Server may cache last-known inventory for disabled
 offline presentation, but that cache is evidence, not an authority. There is
 no separate logical catalog, Session membership table, active Device switch,
 default-placement preference, or catalog import/export.
@@ -38,8 +38,8 @@ for confirmation before creating and starting the Session there.
 - The same Project and Branch on several Devices appears once with several
   Location chips.
 - A Session can be opened only while its owning Device is reachable.
-- Closing a desktop client releases its transports and presentations but does
-  not stop Device-owned Runtime processes.
+- Closing a desktop or web client releases its presentations but does not stop
+  the Application Server's Device transports or Device-owned Runtime processes.
 - Empty logical Workspaces that have no Device Location are not represented.
   If that becomes a product requirement, it needs an explicit shared authority
   rather than an implicit client-local duplicate.

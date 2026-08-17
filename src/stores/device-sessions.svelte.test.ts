@@ -1,3 +1,6 @@
+/**
+ * @vitest-environment jsdom
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MultiDeviceSessionState } from '@shared/types/multi-device-sessions.js';
 
@@ -12,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   deviceTerminalInputLease: vi.fn(),
   deviceTerminalInput: vi.fn(),
   deviceTerminalReleaseInputLease: vi.fn(),
+  setDeviceTerminalDemand: vi.fn(),
   updateOnDevice: vi.fn(),
   deleteOnDevice: vi.fn()
 }));
@@ -38,7 +42,7 @@ vi.mock('../lib/ipc', () => ({
         mocks.deviceEvent = listener;
         return () => undefined;
       }),
-      setDeviceTerminalDemand: vi.fn(async () => undefined)
+      setDeviceTerminalDemand: mocks.setDeviceTerminalDemand
     }
   }
 }));
@@ -65,6 +69,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.deviceTerminalInputLease.mockReset();
     mocks.deviceTerminalInput.mockReset().mockResolvedValue(true);
     mocks.deviceTerminalReleaseInputLease.mockReset().mockResolvedValue(true);
+    mocks.setDeviceTerminalDemand.mockReset().mockResolvedValue(undefined);
     mocks.updateOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
     mocks.deleteOnDevice.mockReset().mockResolvedValue({ ...state(2, true), unassigned: [] });
   });
@@ -137,6 +142,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       sessionId: 'session-1',
       state: 'idle'
     });
+    expect(mocks.setDeviceTerminalDemand).not.toHaveBeenCalled();
 
     mocks.stateChange?.(state(2, true));
     expect(store.sessions[0]?.observation).toBeNull();
@@ -182,6 +188,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     store.clearSelectedSession();
     await store.openSession('device-xps/session-1');
     expect(mocks.startOnDevice).toHaveBeenCalledOnce();
+    expect(() => structuredClone(mocks.startOnDevice.mock.calls[0]?.[0])).not.toThrow();
     expect(store.selectedSessionKey).toBe('device-xps/session-1');
   });
 
@@ -312,6 +319,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     const deletion = store.deleteSession('device-xps/session-1');
     expect(store.sessions).toHaveLength(0);
     expect(store.selectedSessionKey).toBeNull();
+    expect(() => structuredClone(mocks.deleteOnDevice.mock.calls[0]?.[0])).not.toThrow();
 
     request.reject(new Error('delete rejected'));
     await expect(deletion).rejects.toThrow('delete rejected');

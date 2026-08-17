@@ -15,6 +15,7 @@ import { SoloeDomain } from "./SoloeDomain.js";
 import { DeviceDescriptorService } from "./DeviceDescriptorService.js";
 import { DeviceIdentityStore } from "./DeviceIdentityStore.js";
 import { SoloeServer } from "./SoloeServer.js";
+import { ServerDeviceSessions } from "./ServerDeviceSessions.js";
 
 export interface RunningServerHost {
   address: string;
@@ -57,6 +58,8 @@ export async function startServerHost(): Promise<RunningServerHost> {
     clientDisconnected: (clientId) => domain.releaseClient(clientId),
     clientReconnected: (clientId) => domain.recoverClient(clientId),
   });
+  let deviceSessions: ServerDeviceSessions | null = null;
+  let detachDeviceSessions: (() => void) | null = null;
 
   try {
     await domain.init();
@@ -65,6 +68,20 @@ export async function startServerHost(): Promise<RunningServerHost> {
       server.publishToClient(clientId, event, payload),
     );
     const address = await server.listen();
+    deviceSessions = new ServerDeviceSessions({
+      dataDirectory,
+      localDescriptor: descriptor,
+      localEndpoint: address,
+      localToken: token,
+      ...(process.env.SOLOE_TAILSCALE_DISCOVERY === "0"
+        ? { discover: disabledTailscaleDiscovery() }
+        : {}),
+    });
+    await deviceSessions.init();
+    detachDeviceSessions = domain.attachServerDeviceSessions(
+      deviceSessions.sessions,
+      deviceSessions.connections,
+    );
     await writeServiceInfo(dataDirectory, {
       service: "server",
       pid: process.pid,
@@ -93,6 +110,10 @@ export async function startServerHost(): Promise<RunningServerHost> {
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
+        detachDeviceSessions?.();
+        detachDeviceSessions = null;
+        await deviceSessions?.dispose();
+        deviceSessions = null;
         await server.close();
         await domain.dispose();
         domainRuntime.disconnect();
@@ -105,11 +126,45 @@ export async function startServerHost(): Promise<RunningServerHost> {
       },
     };
   } catch (error) {
+    detachDeviceSessions?.();
+    await deviceSessions?.dispose().catch(() => undefined);
     await server.close().catch(() => undefined);
     await domain.dispose().catch(() => undefined);
     domainRuntime.disconnect();
     throw error;
   }
+}
+
+function disabledTailscaleDiscovery(): {
+  discover(): Promise<{
+    state: "unavailable";
+    tailnet: null;
+    selfDnsName: null;
+    message: string;
+    devices: [];
+    sharing: {
+      state: "unavailable";
+      message: string;
+      setupUrl: null;
+    };
+  }>;
+} {
+  return {
+    async discover() {
+      return {
+        state: "unavailable",
+        tailnet: null,
+        selfDnsName: null,
+        message: "Tailscale discovery is disabled for this server.",
+        devices: [],
+        sharing: {
+          state: "unavailable",
+          message: "Tailscale discovery is disabled for this server.",
+          setupUrl: null,
+        },
+      };
+    },
+  };
 }
 
 export function shouldEnsureTailscaleSharing(

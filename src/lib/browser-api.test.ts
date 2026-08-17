@@ -8,6 +8,35 @@ import {
 import { createBrowserApi } from "./browser-api.js";
 
 describe("browser API", () => {
+  it("exposes the Device Session contract in standalone web clients", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: { devices: [] } }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "browser-test",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+    const sessions = api.sessions as unknown as Record<string, unknown>;
+
+    expect(sessions.deviceState).toEqual(expect.any(Function));
+    expect(sessions.refreshDevices).toEqual(expect.any(Function));
+    expect(sessions.createOnDevice).toEqual(expect.any(Function));
+    expect(sessions.deviceTerminalReplay).toEqual(expect.any(Function));
+    expect(api.transport?.supports("sessions", "deviceState")).toBe(true);
+
+    await api.sessions.deviceState?.();
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "sessions",
+      method: "deviceState",
+      args: [],
+      clientId: "browser-test",
+    });
+  });
+
   it("maps preload-style calls onto authenticated same-origin RPC", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -70,6 +99,14 @@ describe("browser API", () => {
       namespace: "terminal",
       method: "resize",
       args: ["terminal-1", 90, 28, control],
+      clientId: "browser-test",
+    });
+
+    await api.terminal.setOutputDemand({ terminalId: "terminal-1", active: true });
+    expect(JSON.parse(String(fetchImpl.mock.calls[4]?.[1]?.body))).toEqual({
+      namespace: "terminal",
+      method: "setOutputDemand",
+      args: [{ terminalId: "terminal-1", active: true }],
       clientId: "browser-test",
     });
   });
@@ -585,7 +622,7 @@ describe("browser API", () => {
       authorization: "Bearer secret",
     });
     expect(socketUrl).toBe(
-      "ws://127.0.0.1:4317/api/runtime/events?token=secret&clientId=browser-test",
+      "ws://127.0.0.1:4317/api/runtime/events?token=secret&clientId=browser-test&eventFormat=envelope-v1",
     );
   });
 

@@ -13,10 +13,10 @@ There are now two intentionally different API layers:
 - `SoloeApi` is the complete single-Device renderer contract. The Application
   Server implements its authenticated RPC/event half and Electron supplies
   native client behavior.
-- optional methods on `SessionsApi` form an Electron-hosted multi-Device port.
-  It aggregates Device inventories and routes every Session or terminal request
-  by a composite Device reference. The PWA does not construct a socket set or
-  receive Device credentials.
+- optional methods on `SessionsApi` form an Application Server-hosted
+  multi-Device port. It aggregates Device inventories and routes every Session
+  or terminal request by a composite Device reference. Neither renderer
+  constructs a socket set or receives Device credentials.
 
 In the table below:
 
@@ -54,12 +54,12 @@ In the table below:
 | `features` | `scan`, `setBranchStatus`, `setIssueStatus`, `subscribe`, `unsubscribe`, `onChange` | IPC | Server | Server | Application Server |
 | `vault` | `list`, `save`, `update`, `delete`, `getSecret`, `onChange` | IPC | Server | Server | Application Server |
 | `browser` | `enableDeviceEmulation`, `disableDeviceEmulation`, `setUserAgent`, `openDevTools`, `setDevToolsLayout`, `closeDevTools` | Native | Native | Unavailable | Electron WebContents |
-| `sessions` multi-Device extension | Device inventory state/refresh, plan+confirm creation, composite terminal demand/input/takeover/replay/resize/stop, Device events | IPC | IPC | Unavailable | Electron Sessions service, with effects delegated to the owning Device/Runtime |
+| `sessions` multi-Device extension | Device inventory state/refresh, plan+confirm creation, composite terminal demand/input/takeover/replay/resize/stop, Device events | Server | Server | Server | Application Server Sessions module, with effects delegated to the owning Device/Runtime |
 
-Remote Electron's preload starts with the browser/server adapter and keeps
-window/browser controls, the connection registry, Vault, and the multi-Device Sessions port
-on Electron IPC. Device domain reads still use the authenticated server
-adapter. Contract tests enumerate these exceptions so another namespace cannot
+Remote Electron's preload starts with the browser/server adapter and keeps only
+window/browser controls and Vault on Electron IPC. Device discovery and the
+multi-Device Sessions port use the authenticated server adapter, exactly like
+the PWA. Contract tests enumerate these exceptions so another namespace cannot
 silently bypass the transport boundary.
 
 Local Electron remains a supported standalone transport. Its IPC handlers
