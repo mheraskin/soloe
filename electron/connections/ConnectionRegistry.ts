@@ -11,6 +11,10 @@ import type {
   TailscaleConnectionInfo
 } from '@shared/types/connections.js';
 import {
+  DEFAULT_TAILSCALE_HTTPS_PORT,
+  LEGACY_TAILSCALE_HTTPS_PORT
+} from '@soloe/domain';
+import {
   isDeviceId,
   negotiateDeviceProtocol,
   parseDeviceDescriptor,
@@ -137,7 +141,7 @@ export class ConnectionRegistry {
     this.tailscaleHttpsPort = validTailscalePort(
       options.tailscaleHttpsPort
         ?? numericEnvironmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT)
-        ?? 4318
+        ?? DEFAULT_TAILSCALE_HTTPS_PORT
     );
     this.resetLocalMachine();
   }
@@ -732,6 +736,12 @@ function validTailscalePort(value: number): number {
   return value;
 }
 
+function normalizePersistedTailscalePort(value: number): number {
+  return value === LEGACY_TAILSCALE_HTTPS_PORT
+    ? DEFAULT_TAILSCALE_HTTPS_PORT
+    : value;
+}
+
 function persistedMachineProjection(
   machine: PersistedMachineV1 | PersistedMachineV2,
   activeId: ConnectionId
@@ -859,7 +869,7 @@ function parsePersisted(value: unknown): ParsedConnections | null {
       activeId,
       preferences: {
         tailscaleEnabled: value['preferences']['tailscaleEnabled'] !== false,
-        tailscaleHttpsPort: port
+        tailscaleHttpsPort: normalizePersistedTailscalePort(port)
       },
       machines
     };

@@ -34,8 +34,10 @@ The native tray is independently runnable with `pnpm dev:tray`. In a packaged bu
 
 Soloe works locally without Tailscale. To connect Devices, install Tailscale and
 sign in from its macOS app, then open **Settings > Connections**. Soloe
-automatically configures its dedicated HTTPS Serve listener on port 4318 and
-discovers compatible Soloe backends at their exact MagicDNS names. If Tailscale
+automatically configures its dedicated HTTPS Serve listener on standard HTTPS
+port 443 and discovers compatible Soloe backends at their exact MagicDNS names.
+That makes each device available at `https://<device>.ts.net/` without a port.
+If Tailscale
 requires one-time HTTPS approval, Connections opens the approval page and a
 refresh completes setup without restarting Soloe.
 

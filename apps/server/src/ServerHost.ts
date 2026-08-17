@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TAILSCALE_HTTPS_PORT,
   TailscaleServeManager,
 } from "@soloe/domain";
 import {
@@ -83,7 +84,7 @@ export async function startServerHost(): Promise<RunningServerHost> {
       })}\n`,
     );
     if (shouldEnsureTailscaleSharing(process.env)) {
-      void ensureTailscaleSharing(address);
+      void ensureTailscaleSharing(tailscaleServeTarget(address, process.env));
     }
 
     let closed = false;
@@ -117,10 +118,28 @@ export function shouldEnsureTailscaleSharing(
   return environment.SOLOE_TAILSCALE_AUTO_SERVE !== "0";
 }
 
+/**
+ * Development runs the browser host separately from the API server. Point
+ * Tailscale at that host so the standard HTTPS endpoint serves the UI and the
+ * Vite proxy can forward `/api` and WebSocket traffic to the server. Packaged
+ * builds serve the UI from the API server's bundled web root instead.
+ */
+export function tailscaleServeTarget(
+  serverAddress: string,
+  environment: NodeJS.ProcessEnv,
+): string {
+  if (environment.SOLOE_WEB_ROOT?.trim()) return serverAddress;
+  const webPort = environmentPort(environment.SOLOE_WEB_PORT, 4318);
+  return `http://127.0.0.1:${webPort}`;
+}
+
 async function ensureTailscaleSharing(targetUrl: string): Promise<void> {
   const result = await new TailscaleServeManager({
     targetUrl,
-    httpsPort: environmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318),
+    httpsPort: environmentPort(
+      process.env.SOLOE_TAILSCALE_SERVE_PORT,
+      DEFAULT_TAILSCALE_HTTPS_PORT,
+    ),
   }).ensure();
   if (result.state === "ready") {
     process.stdout.write("[server] Soloe Device sharing is ready on Tailscale\n");

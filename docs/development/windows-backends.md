@@ -132,11 +132,16 @@ This lets a signed-in tailnet user open the stable HTTPS URL without first
 launching a tokenized URL from the tray. The web host remains bound to
 `127.0.0.1`; do not expose its port directly to the LAN or tailnet.
 
-Expose the default web port from a Windows terminal:
+Soloe configures the standard HTTPS endpoint automatically. If you need to
+recreate it manually, expose the internal web host through Tailscale Serve:
 
 ```powershell
-tailscale serve --bg 4318
+tailscale serve --bg --https=443 http://127.0.0.1:4318
 ```
+
+The resulting URL is `https://<device>.ts.net/`; port 443 is implicit. Soloe's
+web host remains on loopback port 4318 and proxies API/WebSocket traffic to the
+backend on port 4317.
 
 By default, any authenticated Tailscale user who can reach this Serve endpoint
 is accepted. Shared users can therefore access Soloe when the tailnet policy
@@ -356,7 +361,7 @@ wsl --distribution Ubuntu -- bash -lc 'node --version && pnpm --version'
 Tray failures include actionable diagnostics for missing Windows or WSL
 Node/PNPM, invalid WSL source paths, missing platform dependencies, failed
 runtime/server/web startup, graceful shutdown fallback, and incomplete cleanup.
-A port 4317 or 4318 conflict is recorded in `server.log` or `web.log`.
+A port 443, 4317, or 4318 conflict is recorded in `server.log` or `web.log`.
 
 If a visible shared control reports `rpc_not_supported`, do not add a renderer
 stub. Confirm the Windows client and selected backend use the same revision,

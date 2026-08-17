@@ -42,7 +42,7 @@ const SNAPSHOT: ConnectionSnapshot = {
     isSelf: true,
     lastSeenAt: '2026-08-13T10:00:00.000Z'
   }],
-  preferences: { tailscaleEnabled: true, tailscaleHttpsPort: 4318 },
+  preferences: { tailscaleEnabled: true, tailscaleHttpsPort: 443 },
   tailscale: {
     state: 'connected',
     tailnet: 'example.com',

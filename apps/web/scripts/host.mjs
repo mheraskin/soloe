@@ -2,7 +2,10 @@ import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises
 import path from "node:path";
 import process from "node:process";
 import { build, createServer, preview } from "vite";
-import { TailscaleServeManager } from "@soloe/domain";
+import {
+  DEFAULT_TAILSCALE_HTTPS_PORT,
+  TailscaleServeManager,
+} from "@soloe/domain";
 
 const mode = process.argv.includes("--preview") ? "preview" : "dev";
 const dataDirectory = required("SOLOE_DATA_DIR");
@@ -92,7 +95,10 @@ function required(name) {
 async function ensureTailscaleSharing(targetUrl) {
   const result = await new TailscaleServeManager({
     targetUrl,
-    httpsPort: environmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318),
+    httpsPort: environmentPort(
+      process.env.SOLOE_TAILSCALE_SERVE_PORT,
+      DEFAULT_TAILSCALE_HTTPS_PORT,
+    ),
   }).ensure();
   if (result.state === "ready") {
     process.stdout.write("[web-host] Soloe Device sharing is ready on Tailscale\n");

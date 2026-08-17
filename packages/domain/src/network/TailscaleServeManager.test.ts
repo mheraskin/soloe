@@ -19,9 +19,9 @@ describe("TailscaleServeManager", () => {
       if (args[0] === "status") return selfStatus();
       expect(args).toEqual(["serve", "status", "--json"]);
       return JSON.stringify({
-        TCP: { "4318": { HTTPS: true } },
+        TCP: { "443": { HTTPS: true } },
         Web: {
-          "workstation.tail1234.ts.net:4318": {
+          "workstation.tail1234.ts.net:443": {
             Handlers: { "/": { Proxy: TARGET } },
           },
         },
@@ -42,9 +42,9 @@ describe("TailscaleServeManager", () => {
       if (args[0] === "status") return selfStatus();
       if (args[1] === "status") {
         return JSON.stringify({
-          TCP: { "4318": { HTTPS: true } },
+          TCP: { "443": { HTTPS: true } },
           Web: {
-            "old-name.tail1234.ts.net:4318": {
+            "old-name.tail1234.ts.net:443": {
               Handlers: { "/": { Proxy: "http://127.0.0.1:4318" } },
             },
           },
@@ -54,7 +54,7 @@ describe("TailscaleServeManager", () => {
         "serve",
         "--bg",
         "--yes",
-        "--https=4318",
+        "--https=443",
         TARGET,
       ]);
       return "Available within your tailnet";
@@ -77,7 +77,7 @@ describe("TailscaleServeManager", () => {
         "serve",
         "--bg",
         "--yes",
-        "--https=4318",
+        "--https=443",
         TARGET,
       ]);
       return "Available within your tailnet";
@@ -96,9 +96,9 @@ describe("TailscaleServeManager", () => {
     const run = vi.fn(async (args: readonly string[]) => {
       if (args[0] === "status") return selfStatus();
       return JSON.stringify({
-        TCP: { "4318": { HTTPS: true } },
+        TCP: { "443": { HTTPS: true } },
         Web: {
-          "workstation.tail1234.ts.net:4318": {
+          "workstation.tail1234.ts.net:443": {
             Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } },
           },
         },
@@ -108,7 +108,7 @@ describe("TailscaleServeManager", () => {
     await expect(new TailscaleServeManager({ run, targetUrl: TARGET }).ensure())
       .resolves.toMatchObject({
         state: "conflict",
-        message: expect.stringContaining("4318"),
+        message: expect.stringContaining("443"),
       });
     expect(run).toHaveBeenCalledTimes(2);
   });

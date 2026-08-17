@@ -72,9 +72,9 @@ describe('ConnectionRegistry', () => {
     expect(snapshot.machines).toEqual([
       expect.objectContaining({ id: 'local', name: 'Test Mac', active: true }),
       expect.objectContaining({
-        id: 'tailscale:alpha.tail1234.ts.net:4318',
+        id: 'tailscale:alpha.tail1234.ts.net',
         name: 'Alpha',
-        endpoint: 'https://alpha.tail1234.ts.net:4318',
+        endpoint: 'https://alpha.tail1234.ts.net',
         source: 'discovered',
         status: 'available'
       })
@@ -231,8 +231,8 @@ describe('ConnectionRegistry', () => {
       probe: async () => true
     });
     await registry.refresh();
-    await expect(registry.select('tailscale:alpha.tail1234.ts.net:4318')).resolves.toEqual({
-      activeId: 'tailscale:alpha.tail1234.ts.net:4318',
+    await expect(registry.select('tailscale:alpha.tail1234.ts.net')).resolves.toEqual({
+      activeId: 'tailscale:alpha.tail1234.ts.net',
       relaunching: true
     });
 
@@ -242,8 +242,8 @@ describe('ConnectionRegistry', () => {
     });
     await restored.init();
 
-    expect(restored.activeEndpoint()).toBe('https://alpha.tail1234.ts.net:4318');
-    expect((await restored.get()).activeId).toBe('tailscale:alpha.tail1234.ts.net:4318');
+    expect(restored.activeEndpoint()).toBe('https://alpha.tail1234.ts.net');
+    expect((await restored.get()).activeId).toBe('tailscale:alpha.tail1234.ts.net');
   });
 
   it('keeps manually added HTTPS roots even when they are temporarily unavailable', async () => {
@@ -398,7 +398,7 @@ describe('ConnectionRegistry', () => {
       activeId: 'tailscale:alpha.tail1234.ts.net',
       preferences: {
         tailscaleEnabled: true,
-        tailscaleHttpsPort: 4318
+        tailscaleHttpsPort: 443
       },
       machines: [{
         trust: 'provisional',

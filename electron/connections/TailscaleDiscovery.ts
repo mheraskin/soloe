@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TAILSCALE_HTTPS_PORT,
   runTailscaleCommand,
   TailscaleServeManager,
   type TailscaleServeStatus
@@ -35,7 +36,10 @@ export class TailscaleDiscovery {
   ) {}
 
   async discover(
-    httpsPort = validEnvironmentPort(process.env.SOLOE_TAILSCALE_SERVE_PORT, 4318)
+    httpsPort = validEnvironmentPort(
+      process.env.SOLOE_TAILSCALE_SERVE_PORT,
+      DEFAULT_TAILSCALE_HTTPS_PORT,
+    )
   ): Promise<TailscaleDiscoveryResult> {
     try {
       const network = parseTailscaleStatus(await this.runStatus());
@@ -116,9 +120,27 @@ export function parseTailscaleStatus(raw: string): TailscaleNetworkResult {
 function createServeManager(httpsPort: number): TailscaleServeManager {
   const localPort = validEnvironmentPort(process.env.SOLOE_WEB_PORT, 4318);
   return new TailscaleServeManager({
-    targetUrl: `http://127.0.0.1:${localPort}`,
+    targetUrl: localTailscaleServeTarget(`http://127.0.0.1:${localPort}`),
     httpsPort
   });
+}
+
+function localTailscaleServeTarget(webTarget: string): string {
+  if (process.env.SOLOE_SUPERVISED_UI !== '1') return webTarget;
+  const serverUrl = process.env.SOLOE_CLIENT_SERVER_URL?.trim();
+  if (!serverUrl) return webTarget;
+  try {
+    const parsed = new URL(serverUrl);
+    if (
+      parsed.protocol !== 'http:'
+      || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
+    ) {
+      return webTarget;
+    }
+    return parsed.origin;
+  } catch {
+    return webTarget;
+  }
 }
 
 function sharingForNetwork(network: TailscaleNetworkResult): TailscaleServeStatus {

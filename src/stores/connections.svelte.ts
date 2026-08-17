@@ -12,7 +12,7 @@ const EMPTY_SNAPSHOT: ConnectionSnapshot = {
   machines: [],
   preferences: {
     tailscaleEnabled: true,
-    tailscaleHttpsPort: 4318
+    tailscaleHttpsPort: 443
   },
   tailscale: {
     state: 'unavailable',

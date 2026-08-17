@@ -3,7 +3,13 @@ import { createConnection } from "node:net";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_HTTPS_PORT = 4318;
+/**
+ * Standard HTTPS keeps the Soloe tailnet URL clean (`https://device.ts.net/`)
+ * while Tailscale proxies to Soloe's loopback web host internally.
+ */
+export const DEFAULT_TAILSCALE_HTTPS_PORT = 443;
+/** The pre-443 default, retained only for persisted-settings migration. */
+export const LEGACY_TAILSCALE_HTTPS_PORT = 4318;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 export type TailscaleServeState =
@@ -135,7 +141,7 @@ export class TailscaleServeManager {
 
   constructor(options: TailscaleServeManagerOptions) {
     this.targetUrl = normalizeLoopbackTarget(options.targetUrl);
-    this.httpsPort = validPort(options.httpsPort ?? DEFAULT_HTTPS_PORT);
+    this.httpsPort = validPort(options.httpsPort ?? DEFAULT_TAILSCALE_HTTPS_PORT);
     this.run = options.run ?? runTailscaleCommand;
   }
 

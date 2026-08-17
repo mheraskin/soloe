@@ -21,7 +21,7 @@
     connections.snapshot.tailscale.state === 'connected'
       && connections.snapshot.tailscale.sharing.state === 'ready'
   );
-  let portDraft = $state('4318');
+  let portDraft = $state('443');
   let savingPreferences = $state(false);
 
   $effect(() => {
@@ -114,7 +114,7 @@
         />
       </label>
       <label class="flex min-w-0 flex-col gap-1 sm:col-start-2">
-        <span class="text-[11px] font-medium">Soloe tailnet port</span>
+        <span class="text-[11px] font-medium">Soloe HTTPS port</span>
         <Input
           type="number"
           min="1"
@@ -133,7 +133,7 @@
         />
       </label>
       <p class="m-0 text-[10px] text-muted-foreground sm:col-start-1 sm:row-start-2 sm:self-end">
-        Other devices must expose Soloe on the same Tailscale Serve port. Restart their backend after changing it.
+        Keep 443 for a port-free HTTPS URL. Other devices must use the same Tailscale Serve port.
       </p>
     </div>
 
