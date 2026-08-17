@@ -610,6 +610,13 @@ describe("SoloeDomain", () => {
       dataDirectory: directory,
       runtime,
       integrationInstaller: installer,
+      cursorDiscovery: {
+        detect: vi.fn(async () => ({
+          available: true,
+          binary: "agent",
+          version: "test-version",
+        })),
+      },
     });
     const changes: unknown[] = [];
     domain.on("event", (name, payload) => {
@@ -629,6 +636,15 @@ describe("SoloeDomain", () => {
           {
             host: { kind: "linux", label: "Backend", available: true },
             claude: { installed: true, current: true },
+            cursor: {
+              installed: false,
+              current: false,
+              cli: {
+                available: true,
+                binary: "agent",
+                version: "test-version",
+              },
+            },
           },
         ],
       });
