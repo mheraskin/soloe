@@ -3,13 +3,14 @@ import type { Session } from '@shared/types/sessions.js';
 import { defaultDraft, kindLabel, toDraft, validateDraft } from './sessions-helpers';
 
 describe('toDraft', () => {
-  it('defaults Claude to ordinary scrollable terminal output', () => {
+  it('defaults Claude to its fullscreen TUI', () => {
     const draft = defaultDraft('claude_code');
 
     expect(draft.launch).toEqual({
       type: 'agent',
       provider: 'claude_code',
-      resumeMode: 'new'
+      resumeMode: 'new',
+      fullscreenTui: true
     });
   });
 

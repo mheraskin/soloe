@@ -306,6 +306,7 @@
         type: 'agent',
         provider: option,
         resumeMode: 'new',
+        ...(option === 'claude_code' ? { fullscreenTui: true } : {}),
         ...(option === 'cursor' ? { cursorMode: 'agent' as const } : {})
       };
     }
@@ -316,6 +317,7 @@
       type: 'agent',
       provider: preset.provider,
       resumeMode: 'new',
+      ...(preset.provider === 'claude_code' ? { fullscreenTui: true } : {}),
       ...(preset.model ? { model: preset.model } : {}),
       ...(extraArgs.length ? { extraArgs } : {})
     };

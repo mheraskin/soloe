@@ -219,7 +219,7 @@ export class SessionCommandBuilder {
         break;
     }
     const env: Record<string, string> = buildSoloeEnv(s.id, s.runMode, 'claude_code', ctx);
-    if (launch.fullscreenTui) env['CLAUDE_CODE_NO_FLICKER'] = '1';
+    if (launch.fullscreenTui !== false) env['CLAUDE_CODE_NO_FLICKER'] = '1';
     appendAgentLaunchArgs(args, launch, 'claude_code');
     return buildAgentCommand(ctx.binaries?.claude ?? 'claude', args, env, s.runMode);
   }

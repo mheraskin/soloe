@@ -74,10 +74,10 @@
 <div class="flex items-center gap-2">
   <Checkbox
     id="claude-fullscreen"
-    checked={draft.fullscreenTui ?? false}
+    checked={draft.fullscreenTui ?? true}
     onCheckedChange={(v) => update('fullscreenTui', v === true)}
   />
   <Label for="claude-fullscreen" class="text-sm text-foreground">
-    Fullscreen TUI (disables ordinary terminal scrollback)
+    Fullscreen TUI (sets CLAUDE_CODE_NO_FLICKER=1)
   </Label>
 </div>

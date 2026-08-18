@@ -371,6 +371,12 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     );
   });
 
+  it('defaults Claude to fullscreen TUI when the setting is absent', () => {
+    const script = decodeAgentScript(innerLine(builder.build(claudeBase('new'), ctx).args));
+
+    expect(script).toContain('CLAUDE_CODE_NO_FLICKER=1');
+  });
+
   it('exports CLAUDE_CODE_NO_FLICKER=1 when fullscreenTui is enabled', () => {
     const s = {
       ...claudeBase('new'),
@@ -378,6 +384,16 @@ describe('SessionCommandBuilder — claude_code kind', () => {
     } as Session;
     const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
     expect(script).toContain('CLAUDE_CODE_NO_FLICKER=1');
+  });
+
+  it('keeps Claude fullscreen TUI explicitly disableable', () => {
+    const s = {
+      ...claudeBase('new'),
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new', fullscreenTui: false }
+    } as Session;
+    const script = decodeAgentScript(innerLine(builder.build(s, ctx).args));
+
+    expect(script).not.toContain('CLAUDE_CODE_NO_FLICKER=1');
   });
 
   it('rewrites the bridge host to host.wsl.internal for wsl claude sessions', () => {

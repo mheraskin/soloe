@@ -102,6 +102,7 @@
       type: 'agent',
       provider: value,
       resumeMode: 'new',
+      ...(value === 'claude_code' ? { fullscreenTui: true } : {}),
       ...(value === 'cursor' ? { cursorMode: 'agent' as const } : {})
     };
   }
