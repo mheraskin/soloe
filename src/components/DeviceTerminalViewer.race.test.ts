@@ -26,16 +26,24 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 120;
     rows = 30;
+    private textarea: HTMLTextAreaElement | null = null;
     loadAddon() {}
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       terminalMocks.keyHandler = handler;
     }
-    open() { terminalMocks.opens += 1; }
+    open(host: HTMLElement) {
+      terminalMocks.opens += 1;
+      this.textarea = document.createElement('textarea');
+      host.append(this.textarea);
+    }
     resize() {}
     onData() { return { dispose() {} }; }
     paste() {}
     scrollToBottom() {}
-    focus() { terminalMocks.focus(); }
+    focus() {
+      terminalMocks.focus();
+      this.textarea?.focus();
+    }
     dispose() {}
   }
 }));
@@ -335,6 +343,24 @@ describe('DeviceTerminalViewer output sequencing', () => {
     await flushPromises();
     flushSync();
     expect(target.textContent).not.toContain('Restoring terminal…');
+  });
+
+  it('restores terminal focus when the app regains focus', async () => {
+    terminalMocks.ownsInput.mockReturnValue(true);
+    terminalMocks.claimInput.mockResolvedValue(true);
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(target.querySelector('textarea')).not.toBeNull());
+    target.querySelector('textarea')?.focus();
+    terminalMocks.focus.mockClear();
+
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(terminalMocks.focus).toHaveBeenCalledTimes(1));
   });
 
   it('refits a controlled remote terminal after mobile viewport recovery without forcing focus', async () => {

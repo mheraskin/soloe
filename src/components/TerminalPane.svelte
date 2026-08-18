@@ -43,6 +43,7 @@
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { terminalLinkHandlers } from '../lib/terminal-links';
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
+  import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
   import TerminalTranscript from './TerminalTranscript.svelte';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
@@ -535,6 +536,20 @@
       }
       if (disposed) return;
     t.open(host);
+    const detachWindowFocus = restoreTerminalFocusOnWindowActivation({
+      host,
+      canRestore: () => (
+        !disposed
+        && focused
+        && visible
+        && document.visibilityState === 'visible'
+        && shouldAutofocusTerminal()
+      ),
+      restore: async () => {
+        if (!terminalControl.owns(terminalId)) await terminalControl.select(terminalId);
+        if (!disposed && focused && visible && terminalControl.owns(terminalId)) t.focus();
+      }
+    });
 
     t.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
@@ -679,6 +694,7 @@
     host?.addEventListener('mousedown', onHostMouseDown);
 
     disposeInitialized = () => {
+      detachWindowFocus();
       host?.removeEventListener('mouseup', onHostMouseUp);
       host?.removeEventListener('mousedown', onHostMouseDown);
       onInput.dispose();

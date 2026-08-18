@@ -21,6 +21,7 @@
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { terminalLinkHandlers } from '../lib/terminal-links';
+  import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
   import {
     TerminalTranscriptFollowController,
     TerminalTranscriptProjector,
@@ -206,6 +207,17 @@
       if (disposed) return;
       terminal.open(host);
       activeTerminal = terminal;
+      const detachWindowFocus = restoreTerminalFocusOnWindowActivation({
+        host,
+        canRestore: () => active && !disposed && !readOnly && !compactTouchViewport(),
+        restore: async () => {
+          const claimed = deviceSessions.ownsTerminalInput(ref)
+            || await deviceSessions.claimTerminalInputControl(ref);
+          if (!active || disposed || !claimed || readOnly) return;
+          await prepareInteractive();
+          if (active && !disposed && deviceSessions.ownsTerminalInput(ref)) terminal.focus();
+        }
+      });
 
     let appliedSeq = initialSeq;
     let coveredSeq = initialSeq;
@@ -412,6 +424,7 @@
     disposeInitialized = () => {
       active = false;
       detachReconnect();
+      detachWindowFocus();
       attachment.dispose();
       input.dispose();
       resizeObserver.disconnect();
