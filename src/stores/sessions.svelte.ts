@@ -885,7 +885,6 @@ export class SessionsStore {
               type: 'agent',
               provider: 'claude_code',
               resumeMode: 'new',
-              fullscreenTui: true,
               ...(opts.model ? { model: opts.model } : {}),
               ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
             }

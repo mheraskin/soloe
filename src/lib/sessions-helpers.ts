@@ -45,8 +45,7 @@ export function defaultDraft(kind: SessionLaunchKind, defaults?: SettingsDefault
         launch: {
           type: 'agent',
           provider: 'claude_code',
-          resumeMode: 'new',
-          fullscreenTui: true
+          resumeMode: 'new'
         }
       };
     case 'codex':

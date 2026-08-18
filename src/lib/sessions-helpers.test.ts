@@ -3,6 +3,16 @@ import type { Session } from '@shared/types/sessions.js';
 import { defaultDraft, kindLabel, toDraft, validateDraft } from './sessions-helpers';
 
 describe('toDraft', () => {
+  it('defaults Claude to ordinary scrollable terminal output', () => {
+    const draft = defaultDraft('claude_code');
+
+    expect(draft.launch).toEqual({
+      type: 'agent',
+      provider: 'claude_code',
+      resumeMode: 'new'
+    });
+  });
+
   it('does not expose automatic rename provenance to the edit form', () => {
     const session: Session = {
       id: 'session-1',

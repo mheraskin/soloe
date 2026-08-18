@@ -78,6 +78,6 @@
     onCheckedChange={(v) => update('fullscreenTui', v === true)}
   />
   <Label for="claude-fullscreen" class="text-sm text-foreground">
-    Fullscreen TUI (sets CLAUDE_CODE_NO_FLICKER=1)
+    Fullscreen TUI (disables ordinary terminal scrollback)
   </Label>
 </div>
