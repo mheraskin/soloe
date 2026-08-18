@@ -97,6 +97,43 @@ describe('Soloe Server lifecycle', () => {
     expect(client.terminate).toHaveBeenCalledOnce();
   });
 
+  it('disconnects an event client that stops answering heartbeat pings', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-heartbeat-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    await runtime.listen();
+    const server = new SoloeServer({
+      runtimeEndpoint,
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      webSocketHeartbeatIntervalMs: 10
+    });
+    let socket: WebSocket | undefined;
+
+    try {
+      const baseUrl = await server.listen();
+      socket = new WebSocket(
+        new URL('/api/runtime/events?token=test-token', baseUrl).toString(),
+        { autoPong: false }
+      );
+      await opened(socket);
+
+      await expect(Promise.race([
+        closed(socket).then(() => true),
+        delay(250).then(() => false)
+      ])).resolves.toBe(true);
+    } finally {
+      socket?.terminate();
+      await server.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('publishes Device inventory and Sessions to standalone web clients', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-device-sessions-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);

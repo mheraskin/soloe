@@ -4,7 +4,7 @@ import type { Socket } from 'node:net';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   RuntimeProcess,
   RuntimeProcessFactory
@@ -41,6 +41,22 @@ class FakeRuntimeProcess extends EventEmitter implements RuntimeProcess {
 
   kill(): void {
     this.killed = true;
+    this.emit('exit', { exitCode: 0, signal: null });
+  }
+}
+
+class DelayedExitRuntimeProcess extends EventEmitter implements RuntimeProcess {
+  readonly pid = 4243;
+  killed = false;
+
+  write(): void {}
+  resize(): void {}
+
+  kill(): void {
+    this.killed = true;
+  }
+
+  finish(): void {
     this.emit('exit', { exitCode: 0, signal: null });
   }
 }
@@ -575,6 +591,47 @@ describe('Environment Runtime lifecycle', () => {
 
       expect(process.killed).toBe(true);
       expect(await client.listRunning()).toEqual([]);
+      client.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('waits for the PTY to exit before acknowledging stop and allowing restore', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const first = new DelayedExitRuntimeProcess();
+    const second = new FakeRuntimeProcess();
+    let spawnCount = 0;
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => spawnCount++ === 0 ? first : second }
+    });
+
+    try {
+      await host.listen();
+      const client = await RuntimeClient.connect(endpoint);
+      const started = await client.start({
+        sessionId: 'session-1',
+        spec: { file: 'test-shell', args: [], cwd: directory, env: {} },
+        cols: 100,
+        rows: 30
+      });
+      let stopped = false;
+      const stop = client.stop(started.terminalId).then(() => { stopped = true; });
+
+      await vi.waitFor(() => expect(first.killed).toBe(true));
+      expect(stopped).toBe(false);
+
+      first.finish();
+      await stop;
+      await expect(client.start({
+        sessionId: 'session-1',
+        spec: { file: 'test-shell', args: [], cwd: directory, env: {} },
+        cols: 100,
+        rows: 30
+      })).resolves.toMatchObject({ sessionId: 'session-1', pid: second.pid });
       client.disconnect();
     } finally {
       await host.shutdown();

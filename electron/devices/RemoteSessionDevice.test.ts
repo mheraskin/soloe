@@ -427,6 +427,49 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('reasserts terminal output demand after reconnecting the event stream', async () => {
+    const sockets: FakeSocket[] = [];
+    const demandCalls: Array<{ terminalId: string; active: boolean }> = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') {
+          return jsonResponse(descriptor(FIRST_EPOCH));
+        }
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace?: string;
+          method?: string;
+          args?: Array<{ terminalId: string; active: boolean }>;
+        };
+        if (request.namespace === 'terminal' && request.method === 'setOutputDemand') {
+          demandCalls.push(request.args![0]!);
+        }
+        return jsonResponse({ ok: true, value: true });
+      },
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelay: () => 0
+    });
+
+    await client.connect();
+    await client.setTerminalOutputDemand(new Set(['terminal-1']));
+    sockets[0]!.disconnect();
+
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    await vi.waitFor(() => {
+      expect(demandCalls.filter((call) => call.active)).toEqual([
+        { terminalId: 'terminal-1', active: true },
+        { terminalId: 'terminal-1', active: true }
+      ]);
+    });
+    client.dispose();
+  });
+
   it('retries an initially offline Device until the descriptor becomes reachable', async () => {
     let attempts = 0;
     const client = new RemoteSessionDevice({

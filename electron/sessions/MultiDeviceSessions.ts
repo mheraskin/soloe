@@ -730,6 +730,7 @@ export class MultiDeviceSessions {
       const existing = this.deviceDetachers.get(device.deviceId);
       if (existing?.device === device) continue;
       if (existing) this.detachDevice(device.deviceId);
+      let previousStatus = device.status.state;
       this.deviceDetachers.set(device.deviceId, {
         device,
         detach: [
@@ -743,7 +744,12 @@ export class MultiDeviceSessions {
               void this.refresh().catch(() => undefined);
             }
           }),
-          device.onStatus(() => this.publishCachedState())
+          device.onStatus((status) => {
+            const reconnected = status.state === 'ready' && previousStatus !== 'ready';
+            previousStatus = status.state;
+            this.publishCachedState();
+            if (reconnected) void this.refresh().catch(() => undefined);
+          })
         ]
       });
     }

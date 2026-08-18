@@ -18,6 +18,7 @@ import { DeviceDescriptorService } from "./DeviceDescriptorService.js";
 const MAX_JSON_REQUEST_BYTES = 32 * 1024 * 1024;
 const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
 const MAX_WEBSOCKET_BUFFERED_BYTES = 8 * 1024 * 1024;
+const DEFAULT_WEBSOCKET_HEARTBEAT_INTERVAL_MS = 10_000;
 
 export interface SoloeServerOptions {
   runtimeEndpoint: string;
@@ -31,6 +32,7 @@ export interface SoloeServerOptions {
   clientDisconnected?: (clientId: string) => void;
   clientReconnected?: (clientId: string) => void;
   clientDisconnectGraceMs?: number;
+  webSocketHeartbeatIntervalMs?: number;
 }
 
 export interface BrowserRpcCall {
@@ -59,6 +61,7 @@ export class SoloeServer {
     clientDisconnected?: (clientId: string) => void;
     clientReconnected?: (clientId: string) => void;
     clientDisconnectGraceMs: number;
+    webSocketHeartbeatIntervalMs: number;
   };
   private runtimeClient: RuntimeClient | undefined;
   private server: Server | undefined;
@@ -71,11 +74,13 @@ export class SoloeServer {
   private readonly socketClientIds = new WeakMap<WebSocket, string>();
   private readonly envelopedSockets = new WeakSet<WebSocket>();
   private readonly socketEventSequences = new WeakMap<WebSocket, number>();
+  private readonly socketHeartbeatAlive = new WeakMap<WebSocket, boolean>();
   private readonly clientEventSequences = new Map<string, number>();
   private readonly clientOutputDemand = new Map<string, Set<string>>();
   private readonly clientDisconnectTimers = new Map<string, NodeJS.Timeout>();
   private eventSequence = 0;
   private closing = false;
+  private webSocketHeartbeatTimer: NodeJS.Timeout | undefined;
 
   constructor(options: SoloeServerOptions) {
     this.options = {
@@ -99,6 +104,8 @@ export class SoloeServer {
         ? { clientReconnected: options.clientReconnected }
         : {}),
       clientDisconnectGraceMs: options.clientDisconnectGraceMs ?? 5_000,
+      webSocketHeartbeatIntervalMs:
+        options.webSocketHeartbeatIntervalMs ?? DEFAULT_WEBSOCKET_HEARTBEAT_INTERVAL_MS,
     };
   }
 
@@ -218,6 +225,8 @@ export class SoloeServer {
       });
     });
     webSocketServer.on("connection", (webSocket, request) => {
+      this.socketHeartbeatAlive.set(webSocket, true);
+      webSocket.on("pong", () => this.socketHeartbeatAlive.set(webSocket, true));
       const url = new URL(request.url ?? "/", "http://localhost");
       const eventFormat = url.searchParams.get("eventFormat");
       if (eventFormat !== null && eventFormat !== SOLOE_EVENT_FORMAT_V1) {
@@ -281,6 +290,7 @@ export class SoloeServer {
     this.server = server;
     this.webSocketServer = webSocketServer;
     this.runtimeListeners = runtimeListeners;
+    this.startWebSocketHeartbeat(webSocketServer);
 
     const address = server.address();
     if (!address || typeof address === "string") {
@@ -293,6 +303,8 @@ export class SoloeServer {
 
   async close(): Promise<void> {
     this.closing = true;
+    if (this.webSocketHeartbeatTimer) clearInterval(this.webSocketHeartbeatTimer);
+    this.webSocketHeartbeatTimer = undefined;
     for (const timer of this.clientDisconnectTimers.values()) clearTimeout(timer);
     this.clientDisconnectTimers.clear();
     this.clientSocketCounts.clear();
@@ -331,6 +343,22 @@ export class SoloeServer {
 
     this.runtimeClient?.disconnect();
     this.runtimeClient = undefined;
+  }
+
+  private startWebSocketHeartbeat(webSocketServer: WebSocketServer): void {
+    if (this.webSocketHeartbeatTimer) clearInterval(this.webSocketHeartbeatTimer);
+    this.webSocketHeartbeatTimer = setInterval(() => {
+      for (const client of webSocketServer.clients) {
+        if (client.readyState !== WebSocket.OPEN) continue;
+        if (this.socketHeartbeatAlive.get(client) === false) {
+          client.terminate();
+          continue;
+        }
+        this.socketHeartbeatAlive.set(client, false);
+        client.ping();
+      }
+    }, this.options.webSocketHeartbeatIntervalMs);
+    this.webSocketHeartbeatTimer.unref();
   }
 
   publish(

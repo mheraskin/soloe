@@ -151,6 +151,14 @@ export class RemoteSessionDevice implements SessionDevice {
           descriptor: this.transport.status.descriptor
         };
         this.publishStatus();
+      } else {
+        await this.reassertTerminalOutputDemand();
+        this.currentStatus = {
+          deviceId: this.deviceId,
+          state: 'ready',
+          descriptor: this.transport.status.descriptor
+        };
+        this.publishStatus();
       }
       this.reconnectAttempt = 0;
       return this.status;
@@ -261,6 +269,12 @@ export class RemoteSessionDevice implements SessionDevice {
       await this.rpc('terminal', 'setOutputDemand', [{ terminalId, active: true }]);
     }
     this.demandedTerminals = desired;
+  }
+
+  private async reassertTerminalOutputDemand(): Promise<void> {
+    for (const terminalId of this.demandedTerminals) {
+      await this.rpc('terminal', 'setOutputDemand', [{ terminalId, active: true }]);
+    }
   }
 
   async terminalInput(terminalId: string, data: string, control: TerminalControlProof): Promise<void> {
@@ -540,7 +554,7 @@ export class RemoteSessionDevice implements SessionDevice {
       : status.state === 'connecting'
         ? 'connecting'
         : status.state === 'connected'
-          ? status.compatibility?.status === 'compatible' ? 'ready' : 'incompatible'
+          ? status.compatibility?.status === 'compatible' ? 'connecting' : 'incompatible'
           : status.state === 'idle'
             ? 'idle'
             : 'offline';

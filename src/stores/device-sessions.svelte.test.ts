@@ -440,6 +440,38 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     );
   });
 
+  it('reclaims Session Control before uploading a remote clipboard image', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
+    mocks.deviceTerminalInputLease.mockResolvedValueOnce({
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-image',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 2,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:18.000Z',
+      expiresAt: '2026-08-16T00:00:33.000Z'
+    });
+
+    await store.pasteImagesIntoTerminal(
+      ref,
+      'session-1',
+      [{ mimeType: 'image/png', dataBase64: 'cG5n' }]
+    );
+
+    expect(mocks.deviceTerminalPasteImages).toHaveBeenCalledWith(
+      ref,
+      'session-1',
+      [{ mimeType: 'image/png', dataBase64: 'cG5n' }],
+      expect.objectContaining({ leaseId: 'lease-image' })
+    );
+  });
+
   it('renews stale Session Control and retries rejected terminal input once', async () => {
     const store = new DeviceSessionsStore();
     await store.load();
@@ -488,6 +520,34 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       ref,
       'a',
       expect.objectContaining({ leaseId: 'lease-current' })
+    );
+  });
+
+  it('reclaims an unowned Session Control lease before forwarding terminal input', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
+    mocks.deviceTerminalInputLease.mockResolvedValueOnce({
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-reclaimed',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 2,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:18.000Z',
+      expiresAt: '2026-08-16T00:00:33.000Z'
+    });
+
+    await store.terminalInput(ref, 'm');
+
+    expect(mocks.deviceTerminalInputLease).toHaveBeenCalledWith(ref, false);
+    expect(mocks.deviceTerminalInput).toHaveBeenCalledWith(
+      ref,
+      'm',
+      expect.objectContaining({ leaseId: 'lease-reclaimed' })
     );
   });
 });

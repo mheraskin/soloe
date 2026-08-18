@@ -18,6 +18,10 @@ const terminalMocks = vi.hoisted(() => ({
   ownsInput: vi.fn(() => false),
   claimInput: vi.fn(async () => false),
   resize: vi.fn(async () => undefined),
+  refresh: vi.fn(),
+  inputHandler: null as null | ((data: string) => void),
+  terminalInput: vi.fn(async () => undefined),
+  terminalOptions: null as null | Record<string, unknown>,
   keyHandler: null as null | ((event: KeyboardEvent) => boolean),
   pasteImages: vi.fn()
 }));
@@ -27,6 +31,9 @@ vi.mock('@xterm/xterm', () => ({
     cols = 120;
     rows = 30;
     private textarea: HTMLTextAreaElement | null = null;
+    constructor(options: Record<string, unknown>) {
+      terminalMocks.terminalOptions = options;
+    }
     loadAddon() {}
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       terminalMocks.keyHandler = handler;
@@ -37,12 +44,18 @@ vi.mock('@xterm/xterm', () => ({
       host.append(this.textarea);
     }
     resize() {}
-    onData() { return { dispose() {} }; }
+    onData(handler: (data: string) => void) {
+      terminalMocks.inputHandler = handler;
+      return { dispose() {} };
+    }
     paste() {}
     scrollToBottom() {}
     focus() {
       terminalMocks.focus();
       this.textarea?.focus();
+    }
+    refresh(start: number, end: number) {
+      terminalMocks.refresh(start, end);
     }
     dispose() {}
   }
@@ -50,6 +63,17 @@ vi.mock('@xterm/xterm', () => ({
 
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class { fit() { terminalMocks.fit(); } }
+}));
+
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    onContextLoss() {}
+    dispose() {}
+  }
+}));
+
+vi.mock('@xterm/addon-canvas', () => ({
+  CanvasAddon: class { dispose() {} }
 }));
 
 vi.mock('../lib/terminal-write', () => ({
@@ -103,7 +127,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
     terminalReplay: terminalMocks.replay,
     terminalScreenSnapshot: terminalMocks.screenSnapshot,
     terminalResize: terminalMocks.resize,
-    terminalInput: vi.fn(async () => undefined),
+    terminalInput: terminalMocks.terminalInput,
     pasteImagesIntoTerminal: terminalMocks.pasteImages,
     updateSession: vi.fn(async () => undefined),
     previewCommand: vi.fn(async () => ({ description: '' }))
@@ -132,6 +156,10 @@ describe('DeviceTerminalViewer output sequencing', () => {
     terminalMocks.ownsInput.mockReset().mockReturnValue(false);
     terminalMocks.claimInput.mockReset().mockResolvedValue(false);
     terminalMocks.resize.mockReset().mockResolvedValue(undefined);
+    terminalMocks.refresh.mockReset();
+    terminalMocks.inputHandler = null;
+    terminalMocks.terminalInput.mockReset().mockResolvedValue(undefined);
+    terminalMocks.terminalOptions = null;
     terminalMocks.keyHandler = null;
     terminalMocks.pasteImages.mockReset().mockResolvedValue({
       paths: [],
@@ -213,6 +241,19 @@ describe('DeviceTerminalViewer output sequencing', () => {
     expect(terminalMocks.replay).toHaveBeenCalledTimes(1);
   });
 
+  it('maps the Mac Option key to terminal Meta input', async () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+
+    await vi.waitFor(() => expect(terminalMocks.terminalOptions).not.toBeNull());
+    expect(terminalMocks.terminalOptions).toMatchObject({ macOptionIsMeta: true });
+  });
+
   it('replays output missed while the remote device reconnects', async () => {
     const target = document.createElement('div');
     document.body.append(target);
@@ -270,6 +311,46 @@ describe('DeviceTerminalViewer output sequencing', () => {
       { deviceId: 'device-xps', terminalId: 'terminal-1' },
       5
     );
+  });
+
+  it('restores the same authoritative scrollback after the remote viewer remounts', async () => {
+    terminalMocks.screenSnapshot.mockReset().mockResolvedValue({
+      snapshot: {
+        kind: 'xterm-vt-state-v1',
+        terminalId: 'terminal-1',
+        sessionId: 'session-1',
+        cols: 120,
+        rows: 30,
+        toSeq: 5,
+        data: 'old turn one\r\nold turn two\r\ncurrent screen'
+      }
+    });
+    terminalMocks.replay.mockReset().mockResolvedValue({ snapshot: null });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(terminalMocks.writes).toEqual([
+      'old turn one\r\nold turn two\r\ncurrent screen'
+    ]));
+
+    await unmount(component);
+    component = null;
+    target.replaceChildren();
+    terminalMocks.writes.length = 0;
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+
+    await vi.waitFor(() => expect(terminalMocks.writes).toEqual([
+      'old turn one\r\nold turn two\r\ncurrent screen'
+    ]));
+    expect(terminalMocks.screenSnapshot).toHaveBeenCalledTimes(2);
   });
 
   it('keeps xterm detached until the initial catch-up replay has been parsed', async () => {
@@ -361,6 +442,51 @@ describe('DeviceTerminalViewer output sequencing', () => {
 
     window.dispatchEvent(new Event('focus'));
     await vi.waitFor(() => expect(terminalMocks.focus).toHaveBeenCalledTimes(1));
+  });
+
+  it('lets the input path reclaim control instead of silently dropping a key', async () => {
+    terminalMocks.ownsInput.mockReturnValue(false);
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(terminalMocks.inputHandler).not.toBeNull());
+
+    terminalMocks.inputHandler?.('m');
+
+    await vi.waitFor(() => expect(terminalMocks.terminalInput).toHaveBeenCalledWith(
+      { deviceId: 'device-xps', terminalId: 'terminal-1' },
+      'm'
+    ));
+  });
+
+  it('refreshes all terminal rows after fitting a remote viewport', async () => {
+    terminalMocks.ownsInput.mockReturnValue(true);
+    terminalMocks.claimInput.mockResolvedValue(true);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 1200,
+      bottom: 800,
+      width: 1200,
+      height: 800,
+      toJSON: () => ({})
+    });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+
+    await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
+    await vi.waitFor(() => expect(terminalMocks.refresh).toHaveBeenCalledWith(0, 29));
   });
 
   it('refits a controlled remote terminal after mobile viewport recovery without forcing focus', async () => {

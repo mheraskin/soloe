@@ -94,6 +94,7 @@ export class DeviceSessionsStore {
     { ref: TerminalRef; listeners: Set<(event: TerminalOutputEvent) => void> }
   >();
   private readonly deviceReconnectListeners = new Map<DeviceId, Set<() => void>>();
+  private readonly terminalInputQueues = new Map<string, Promise<void>>();
   private demandSync: Promise<void> = Promise.resolve();
   private pendingSequence = 0;
   private authoritativeGeneration = 0;
@@ -491,25 +492,45 @@ export class DeviceSessionsStore {
 
   async terminalInput(terminalRef: TerminalRef, data: string): Promise<void> {
     const key = terminalRefKey(terminalRef);
-    const lease = this.ownedInputLeases[key];
-    if (!lease) return Promise.reject(new Error('Terminal control lease is required.'));
+    const previous = this.terminalInputQueues.get(key) ?? Promise.resolve();
+    const queued = previous.catch(() => undefined).then(() => this.sendTerminalInput(
+      terminalRef,
+      key,
+      data
+    ));
+    this.terminalInputQueues.set(key, queued);
     try {
-      await ipc.sessions.deviceTerminalInput(
-        terminalRef,
-        data,
-        terminalControlProof(lease)
-      );
+      await queued;
+    } finally {
+      if (this.terminalInputQueues.get(key) === queued) this.terminalInputQueues.delete(key);
+    }
+  }
+
+  private async sendTerminalInput(
+    terminalRef: TerminalRef,
+    key: string,
+    data: string
+  ): Promise<void> {
+    let lease = this.ownedInputLeases[key];
+    if (!lease) {
+      const recovered = await this.claimTerminalInputControl(terminalRef);
+      lease = this.ownedInputLeases[key];
+      if (!recovered || !lease) throw new Error('Terminal control lease is required.');
+    }
+    try {
+      await ipc.sessions.deviceTerminalInput(terminalRef, data, terminalControlProof(lease));
+      return;
     } catch (error) {
       if (!isRecoverableTerminalControlError(error)) throw error;
-      const recovered = await this.claimTerminalInputControl(terminalRef);
-      const current = this.ownedInputLeases[key];
-      if (!recovered || !current) throw error;
-      await ipc.sessions.deviceTerminalInput(
-        terminalRef,
-        data,
-        terminalControlProof(current)
-      );
     }
+    const recovered = await this.claimTerminalInputControl(terminalRef);
+    const current = this.ownedInputLeases[key];
+    if (!recovered || !current) throw new Error('Terminal control lease is required.');
+    await ipc.sessions.deviceTerminalInput(
+      terminalRef,
+      data,
+      terminalControlProof(current)
+    );
   }
 
   async pasteImagesIntoTerminal(
@@ -518,8 +539,12 @@ export class DeviceSessionsStore {
     images: ClipboardImagePayload[]
   ): Promise<ImagePasteResult> {
     const key = terminalRefKey(terminalRef);
-    const lease = this.ownedInputLeases[key];
-    if (!lease) return Promise.reject(new Error('Terminal control lease is required.'));
+    let lease = this.ownedInputLeases[key];
+    if (!lease) {
+      const recovered = await this.claimTerminalInputControl(terminalRef);
+      lease = this.ownedInputLeases[key];
+      if (!recovered || !lease) throw new Error('Terminal control lease is required.');
+    }
     try {
       return await ipc.sessions.deviceTerminalPasteImages(
         terminalRef,

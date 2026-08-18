@@ -241,7 +241,7 @@ export class RuntimeHost {
         const input = params as { terminalId: string };
         const terminal = this.terminals.get(input.terminalId);
         if (!terminal) return true;
-        terminal.process.kill();
+        await this.stopAndAwait(input.terminalId, terminal);
         return true;
       }
       default:
@@ -253,6 +253,44 @@ export class RuntimeHost {
     const terminal = this.terminals.get(terminalId);
     if (!terminal) throw new Error(`Terminal not found: ${terminalId}`);
     return terminal;
+  }
+
+  private stopAndAwait(
+    terminalId: string,
+    terminal: RunningTerminal,
+    timeoutMs = 2_000
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(forceTimer);
+        clearTimeout(failureTimer);
+        terminal.process.off('exit', onExit);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onExit = () => finish();
+      const forceTimer = setTimeout(() => {
+        try {
+          terminal.process.kill('SIGKILL');
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      }, timeoutMs);
+      const failureTimer = setTimeout(() => {
+        finish(new Error(`Terminal ${terminalId} did not exit after it was stopped`));
+      }, timeoutMs * 2);
+      forceTimer.unref();
+      failureTimer.unref();
+      terminal.process.once('exit', onExit);
+      try {
+        terminal.process.kill();
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   private async start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState> {

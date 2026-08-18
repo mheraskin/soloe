@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { terminalControlProof } from '@shared/types/terminal.js';
 import type { DeviceDescriptor, DeviceEventEnvelope } from '@shared/types/devices.js';
 import type { GitWorktree } from '@shared/types/git.js';
@@ -137,6 +137,25 @@ describe('MultiDeviceSessions', () => {
       ref: { deviceId: LAPTOP_ID, sessionId: 'remote-session' },
       available: false
     });
+  });
+
+  it('refreshes authoritative observations when an offline Device reconnects', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    const sessions = new MultiDeviceSessions({ devices: [laptop] });
+    await sessions.refresh();
+
+    laptop.setState('offline');
+    laptop.setState('ready');
+
+    await vi.waitFor(() => expect(laptop.readInventoryCalls).toBe(2));
   });
 
   it('creates a Session on the Device that owns the selected Workspace Location', async () => {
@@ -717,6 +736,7 @@ function fakeDevice(input: {
   let disposed = false;
   let readInventoryCalls = 0;
   const eventListeners = new Set<(event: DeviceEventEnvelope) => void>();
+  const statusListeners = new Set<(next: SessionDeviceStatus) => void>();
   return {
     deviceId: input.deviceId,
     local: input.local ?? false,
@@ -911,12 +931,16 @@ function fakeDevice(input: {
       eventListeners.add(listener);
       return () => eventListeners.delete(listener);
     },
-    onStatus: (_listener: (next: SessionDeviceStatus) => void) => () => undefined,
+    onStatus: (listener: (next: SessionDeviceStatus) => void) => {
+      statusListeners.add(listener);
+      return () => statusListeners.delete(listener);
+    },
     dispose: () => {
       disposed = true;
     },
     setState: (state) => {
       status.state = state;
+      for (const listener of statusListeners) listener(structuredClone(status));
     },
     startedSessionIds,
     plannedIntents,

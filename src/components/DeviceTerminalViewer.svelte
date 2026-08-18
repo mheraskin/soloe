@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { Terminal } from '@xterm/xterm';
+  import type { CanvasAddon as CanvasRendererAddon } from '@xterm/addon-canvas';
+  import type { WebglAddon as WebglRendererAddon } from '@xterm/addon-webgl';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import '@xterm/xterm/css/xterm.css';
@@ -22,6 +24,7 @@
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { terminalLinkHandlers } from '../lib/terminal-links';
   import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
+  import { TerminalFitController } from '../lib/terminal-fit';
   import {
     TerminalTranscriptFollowController,
     TerminalTranscriptProjector,
@@ -103,7 +106,6 @@
   }
 
   async function pasteFromClipboard(terminal: Terminal, ref: TerminalRef): Promise<void> {
-    if (!deviceSessions.ownsTerminalInput(ref)) return;
     if (effectiveAgentProvider(projection.session)) {
       const images = await readClipboardImages().catch(() => []);
       if (images.length > 0) {
@@ -137,17 +139,24 @@
       fontSize: 12,
       fontWeight: 400,
       fontWeightBold: 700,
+      lineHeight: 1.0,
+      letterSpacing: 0,
       minimumContrastRatio: 4.5,
       drawBoldTextInBrightColors: false,
+      rescaleOverlappingGlyphs: false,
       cursorStyle: 'bar',
+      cursorWidth: 2,
+      cursorInactiveStyle: 'outline',
       cursorBlink: true,
       scrollback: FULL_TERMINAL_SCROLLBACK,
       convertEol: false,
+      macOptionIsMeta: true,
       theme: terminalThemeFor(appearanceTheme.resolved),
       allowProposedApi: true,
       linkHandler: terminalLinks.osc
     });
     const fit = new FitAddon();
+    const terminalFit = new TerminalFitController();
     const links = new WebLinksAddon(terminalLinks.web);
     terminal.loadAddon(fit);
     terminal.loadAddon(links);
@@ -165,6 +174,45 @@
     let startupRestoreGeneration = 0;
     let startupRestoreQuietTimer: ReturnType<typeof setTimeout> | null = null;
     let startupRestoreMaxTimer: ReturnType<typeof setTimeout> | null = null;
+    let renderer: { dispose(): void } | null = null;
+    let rendererLoadToken = 0;
+    const attachCanvasRenderer = async (token: number): Promise<void> => {
+      let canvas: CanvasRendererAddon | null = null;
+      try {
+        const { CanvasAddon } = await import('@xterm/addon-canvas');
+        if (token !== rendererLoadToken || disposed || !active) return;
+        canvas = new CanvasAddon();
+        terminal.loadAddon(canvas);
+        renderer = canvas;
+        terminal.refresh(0, terminal.rows - 1);
+      } catch {
+        canvas?.dispose();
+      }
+    };
+    const attachRenderer = async (): Promise<void> => {
+      const token = ++rendererLoadToken;
+      let webgl: WebglRendererAddon | null = null;
+      try {
+        const { WebglAddon } = await import('@xterm/addon-webgl');
+        if (token !== rendererLoadToken || disposed || !active) return;
+        webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          if (renderer !== webgl) return;
+          renderer = null;
+          webgl?.dispose();
+          const fallbackToken = ++rendererLoadToken;
+          if (!disposed && active) void attachCanvasRenderer(fallbackToken);
+        });
+        terminal.loadAddon(webgl);
+        renderer = webgl;
+        terminal.refresh(0, terminal.rows - 1);
+      } catch {
+        webgl?.dispose();
+        if (token === rendererLoadToken && !disposed && active) {
+          await attachCanvasRenderer(token);
+        }
+      }
+    };
     const pending = new Map<number, TerminalOutputEvent>();
     let routeOutput = (event: TerminalOutputEvent): void => {
       pending.set(event.seq, event);
@@ -206,6 +254,7 @@
       }
       if (disposed) return;
       terminal.open(host);
+      void attachRenderer();
       activeTerminal = terminal;
       const detachWindowFocus = restoreTerminalFocusOnWindowActivation({
         host,
@@ -369,10 +418,10 @@
       const rect = host.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) return;
       try {
-        fit.fit();
-        if (!force && lastSize?.cols === terminal.cols && lastSize.rows === terminal.rows) return;
-        lastSize = { cols: terminal.cols, rows: terminal.rows };
-        await deviceSessions.terminalResize(ref, terminal.cols, terminal.rows);
+        const size = terminalFit.fit(terminal, fit, () => active && host?.isConnected === true);
+        if (!force && lastSize?.cols === size.cols && lastSize.rows === size.rows) return;
+        lastSize = size;
+        await deviceSessions.terminalResize(ref, size.cols, size.rows);
         if (!stabilizingStartup) restoring = false;
         if (!compactTouchViewport()) terminal.focus();
       } catch {
@@ -415,7 +464,6 @@
       void resize(true);
     });
     const input = terminal.onData((data) => {
-      if (!deviceSessions.ownsTerminalInput(ref)) return;
       void deviceSessions.terminalInput(ref, data).catch((cause) => {
         if (active) error = cause instanceof Error ? cause.message : String(cause);
       });
@@ -423,6 +471,9 @@
 
     disposeInitialized = () => {
       active = false;
+      rendererLoadToken += 1;
+      renderer?.dispose();
+      renderer = null;
       detachReconnect();
       detachWindowFocus();
       attachment.dispose();
@@ -430,6 +481,7 @@
       resizeObserver.disconnect();
       window.removeEventListener('soloe:rail-layout', onViewportLayout);
       if (resizeTimer) clearTimeout(resizeTimer);
+      terminalFit.cancel();
       clearStartupRestoreTimers();
       if (projectionFrame) cancelAnimationFrame(projectionFrame);
       transcript.dispose();
