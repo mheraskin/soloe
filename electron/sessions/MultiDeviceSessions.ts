@@ -566,6 +566,16 @@ export class MultiDeviceSessions {
     if (!current.available) throw new Error(`Device ${current.deviceName} is offline.`);
     const device = this.requireReadyDevice(ref.deviceId);
     if (!device.deleteSession) throw new Error('The selected Device cannot delete Sessions.');
+    if (
+      current.runtime?.terminalId
+      && (current.runtime.status === 'running' || current.runtime.status === 'starting')
+    ) {
+      try {
+        await device.terminalStop(current.runtime.terminalId);
+      } catch {
+        // Continue with deletion even if the remote Terminal has already stopped.
+      }
+    }
     await device.deleteSession(ref.sessionId);
     return this.refresh();
   }

@@ -562,8 +562,14 @@ describe('MultiDeviceSessions', () => {
       patch: { name: 'Renamed remotely', color: 'violet' }
     }]);
 
+    await multiDevice.startSession(ref);
+
     const state = await multiDevice.deleteSession(ref);
 
+    expect(laptop.lifecycleRequests).toEqual([
+      'stop:terminal-remote-session',
+      'delete:remote-session'
+    ]);
     expect(laptop.deletedSessionIds).toEqual(['remote-session']);
     expect(state.projects.flatMap((project) =>
       project.workspaces.flatMap((workspace) => workspace.sessions)
@@ -630,6 +636,7 @@ function fakeDevice(input: {
     patch: import('@shared/types/sessions.js').SessionUpdate;
   }>;
   deletedSessionIds: string[];
+  lifecycleRequests: string[];
   emitEvent(event: string, payload: unknown): void;
 } {
   const descriptor = deviceDescriptor(input.deviceId, input.name);
@@ -679,6 +686,7 @@ function fakeDevice(input: {
     patch: import('@shared/types/sessions.js').SessionUpdate;
   }> = [];
   const deletedSessionIds: string[] = [];
+  const lifecycleRequests: string[] = [];
   let pendingClone: import('@shared/types/workspaces.js').CloneProjectPresenceIntent | null = null;
   let disposed = false;
   let readInventoryCalls = 0;
@@ -709,6 +717,7 @@ function fakeDevice(input: {
       return structuredClone(inventory.sessions[index]!);
     },
     deleteSession: async (sessionId) => {
+      lifecycleRequests.push(`delete:${sessionId}`);
       deletedSessionIds.push(sessionId);
       inventory.sessions = inventory.sessions.filter((item) => item.id !== sessionId);
     },
@@ -755,7 +764,12 @@ function fakeDevice(input: {
       sessionRef: null,
       snapshot: null
     }),
-    terminalStop: async () => undefined,
+    terminalStop: async (terminalId) => {
+      lifecycleRequests.push(`stop:${terminalId}`);
+      inventory.runtimes = inventory.runtimes.filter(
+        (runtime) => runtime.terminalId !== terminalId
+      );
+    },
     workspacePlan: async (intent) => {
       plannedIntents.push(structuredClone(intent));
       return {
@@ -878,6 +892,7 @@ function fakeDevice(input: {
     reorderRequests,
     updateRequests,
     deletedSessionIds,
+    lifecycleRequests,
     emitEvent: (event, payload) => {
       const envelope: DeviceEventEnvelope = {
         event,

@@ -551,7 +551,7 @@ export class SoloeDomain extends EventEmitter {
     this.settings.onChange((settings) => {
       this.emit("event", "settings.change", settings);
       void this.options.runtime
-        .setReplayUnbounded?.(true)
+        .setReplayUnbounded?.(settings.terminal.keepFullHistory)
         .catch((error) => {
           console.warn("[terminal] failed to update Runtime history retention", error);
         });
@@ -598,7 +598,9 @@ export class SoloeDomain extends EventEmitter {
         adapter: new GhCliGitHubAdapter({ binary: initialSettings.binaries.gh ?? "gh" }),
       });
     }
-    await this.options.runtime.setReplayUnbounded?.(true);
+    await this.options.runtime.setReplayUnbounded?.(
+      initialSettings.terminal.keepFullHistory,
+    );
     const sessions = await this.sessions.list();
     for (const session of sessions) {
       this.observer.registerTuiSession(session);
@@ -656,6 +658,13 @@ export class SoloeDomain extends EventEmitter {
       this.emit("event", "sessions.deviceStateChange", state);
     });
     this.detachMultiDeviceEvents = sessions.onDeviceEvent((event) => {
+      if (
+        event.event === "sessions.deviceEvent"
+        || event.event === "sessions.deviceStateChange"
+        || event.event === "connections.change"
+      ) {
+        return;
+      }
       this.emit("event", "sessions.deviceEvent", event);
     });
     this.detachConnectionState = connections.onChange((state) => {

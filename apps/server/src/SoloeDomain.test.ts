@@ -22,6 +22,40 @@ import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 describe("SoloeDomain", () => {
+  it("applies the configured Terminal replay retention to Runtime", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-replay-retention-"));
+    const setReplayUnbounded = vi.fn(async () => true);
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime: {
+        start: vi.fn(),
+        listRunning: vi.fn(async () => []),
+        replay: vi.fn(),
+        write: vi.fn(),
+        resize: vi.fn(),
+        stop: vi.fn(),
+        setReplayUnbounded,
+      },
+    });
+
+    try {
+      await domain.init();
+      expect(setReplayUnbounded).toHaveBeenLastCalledWith(true);
+      setReplayUnbounded.mockClear();
+
+      await domain.invoke({
+        namespace: "settings",
+        method: "update",
+        args: [{ terminal: { keepFullHistory: false } }],
+      });
+
+      expect(setReplayUnbounded).toHaveBeenCalledWith(false);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("exposes a Device localhost port through the network RPC", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-network-"));
     const ensure = vi.fn(async (port: number) => ({

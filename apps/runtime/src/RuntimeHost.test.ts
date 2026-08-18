@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import type { Socket } from 'node:net';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -44,6 +46,21 @@ class FakeRuntimeProcess extends EventEmitter implements RuntimeProcess {
 }
 
 describe('Environment Runtime lifecycle', () => {
+  it('treats an abrupt control socket reset as a client disconnect', () => {
+    const host = new RuntimeHost({
+      endpoint: 'unused',
+      processFactory: { spawn: () => new FakeRuntimeProcess() }
+    });
+    const socket = new PassThrough() as unknown as Socket;
+    const accept = host as unknown as { accept(socket: Socket): void };
+
+    accept.accept(socket);
+
+    const reset = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    expect(() => socket.emit('error', reset)).not.toThrow();
+    socket.destroy();
+  });
+
   it('exposes runtime and PTY usage through the control protocol', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);

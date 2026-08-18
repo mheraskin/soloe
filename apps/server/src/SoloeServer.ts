@@ -17,6 +17,7 @@ import { DeviceDescriptorService } from "./DeviceDescriptorService.js";
 
 const MAX_JSON_REQUEST_BYTES = 32 * 1024 * 1024;
 const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
+const MAX_WEBSOCKET_BUFFERED_BYTES = 8 * 1024 * 1024;
 
 export interface SoloeServerOptions {
   runtimeEndpoint: string;
@@ -343,11 +344,14 @@ export class SoloeServer {
     for (const client of this.webSocketServer.clients) {
       if (client.readyState === WebSocket.OPEN) {
         if (!this.envelopedSockets.has(client)) {
-          client.send(legacyMessage);
+          this.sendWebSocket(client, legacyMessage);
           continue;
         }
         if (!this.shouldDeliverEnvelopedEvent(client, event, payload)) continue;
-        client.send(JSON.stringify(this.nextEventEnvelope(client, event, payload, metadata)));
+        this.sendWebSocket(
+          client,
+          JSON.stringify(this.nextEventEnvelope(client, event, payload, metadata)),
+        );
       }
     }
   }
@@ -367,13 +371,29 @@ export class SoloeServer {
         this.socketClientIds.get(client) === clientId
       ) {
         if (!this.envelopedSockets.has(client)) {
-          client.send(legacyMessage);
+          this.sendWebSocket(client, legacyMessage);
           continue;
         }
         if (!this.shouldDeliverEnvelopedEvent(client, event, payload)) continue;
-        client.send(JSON.stringify(this.nextEventEnvelope(client, event, payload, metadata)));
+        this.sendWebSocket(
+          client,
+          JSON.stringify(this.nextEventEnvelope(client, event, payload, metadata)),
+        );
       }
     }
+  }
+
+  private sendWebSocket(client: WebSocket, message: string): void {
+    if (
+      client.bufferedAmount + Buffer.byteLength(message, "utf8")
+      > MAX_WEBSOCKET_BUFFERED_BYTES
+    ) {
+      client.terminate();
+      return;
+    }
+    client.send(message, (error) => {
+      if (error) client.terminate();
+    });
   }
 
   private async handleRequest(

@@ -11,6 +11,7 @@ import {
   writeFile
 } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
+import { WebSocket } from 'ws';
 import type { DeviceDescriptor } from '@shared/types/devices.js';
 import { terminalControlProof, type TerminalInputLease } from '@shared/types/terminal.js';
 import type {
@@ -77,6 +78,25 @@ class PersistentProcess extends EventEmitter implements RuntimeProcess {
 }
 
 describe('Soloe Server lifecycle', () => {
+  it('disconnects WebSocket clients whose outbound event queue exceeds the cap', () => {
+    const server = new SoloeServer({ runtimeEndpoint: 'unused', token: 'secret' });
+    const client = {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: Number.MAX_SAFE_INTEGER,
+      send: vi.fn(),
+      terminate: vi.fn()
+    } as unknown as WebSocket;
+    const mutable = server as unknown as {
+      webSocketServer: { clients: Set<WebSocket> };
+    };
+    mutable.webSocketServer = { clients: new Set([client]) };
+
+    server.publish('sessions.change', { id: 'session-1' });
+
+    expect(client.send).not.toHaveBeenCalled();
+    expect(client.terminate).toHaveBeenCalledOnce();
+  });
+
   it('publishes Device inventory and Sessions to standalone web clients', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-device-sessions-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
@@ -88,6 +108,7 @@ describe('Soloe Server lifecycle', () => {
     let domain: SoloeDomain | undefined;
     let server: SoloeServer | undefined;
     let devices: ServerDeviceSessions | undefined;
+    let nestedDeviceEvents = 0;
 
     try {
       await runtime.listen();
@@ -120,6 +141,17 @@ describe('Soloe Server lifecycle', () => {
       });
       await devices.init();
       domain.attachServerDeviceSessions(devices.sessions, devices.connections);
+      domain.on('event', (event, payload) => {
+        if (
+          event === 'sessions.deviceEvent'
+          && payload
+          && typeof payload === 'object'
+          && 'event' in payload
+          && payload.event === 'sessions.deviceEvent'
+        ) {
+          nestedDeviceEvents += 1;
+        }
+      });
 
       const created = await rpc<{ id: string }>(baseUrl, 'sessions', 'create', [{
         name: 'Web Device Session',
@@ -144,6 +176,8 @@ describe('Soloe Server lifecycle', () => {
           session: expect.objectContaining({ name: 'Web Device Session' })
         })
       ]);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(nestedDeviceEvents).toBe(0);
     } finally {
       await devices?.dispose();
       await server?.close();

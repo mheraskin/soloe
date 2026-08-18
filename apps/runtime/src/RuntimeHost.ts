@@ -106,7 +106,12 @@ export class RuntimeHost {
     };
     socket.once('end', releaseSocket);
     socket.once('close', releaseSocket);
+    socket.once('error', releaseSocket);
     const lines = createInterface({ input: socket, crlfDelay: Infinity });
+    lines.on('error', () => {
+      releaseSocket();
+      socket.destroy();
+    });
     lines.on('line', (line) => {
       void this.handleLine(socket, line);
     });
