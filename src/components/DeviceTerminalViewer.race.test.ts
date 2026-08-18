@@ -154,6 +154,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
   afterEach(async () => {
     if (component) await unmount(component);
     component = null;
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.innerHTML = '';
@@ -293,6 +294,49 @@ describe('DeviceTerminalViewer output sequencing', () => {
     await vi.waitFor(() => expect(terminalMocks.opens).toBe(1));
   });
 
+  it('keeps a fresh agent startup replay covered until its output settles', async () => {
+    vi.useFakeTimers();
+    terminalMocks.ownsInput.mockReturnValue(true);
+    terminalMocks.claimInput.mockResolvedValue(true);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 1200,
+      bottom: 800,
+      width: 1200,
+      height: 800,
+      toJSON: () => ({})
+    });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: {
+        projection: remoteProjection('codex', new Date().toISOString()),
+        onClose: vi.fn()
+      }
+    });
+    flushSync();
+    await flushPromises();
+    flushSync();
+
+    expect(terminalMocks.opens).toBe(1);
+    expect(target.textContent).toContain('Restoring terminal…');
+
+    terminalMocks.outputListener?.({ seq: 2, data: 'resumed history' });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(750);
+    flushSync();
+    expect(target.textContent).toContain('Restoring terminal…');
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushPromises();
+    flushSync();
+    expect(target.textContent).not.toContain('Restoring terminal…');
+  });
+
   it('refits a controlled remote terminal after mobile viewport recovery without forcing focus', async () => {
     terminalMocks.ownsInput.mockReturnValue(true);
     terminalMocks.claimInput.mockResolvedValue(true);
@@ -376,7 +420,14 @@ describe('DeviceTerminalViewer output sequencing', () => {
   );
 });
 
-function remoteProjection(provider: 'claude_code' | 'codex' = 'codex') {
+async function flushPromises(rounds = 20): Promise<void> {
+  for (let index = 0; index < rounds; index += 1) await Promise.resolve();
+}
+
+function remoteProjection(
+  provider: 'claude_code' | 'codex' = 'codex',
+  startedAt?: string
+) {
   return {
     ref: { deviceId: 'device-xps', sessionId: 'session-1' },
     key: 'device-xps/session-1',
@@ -394,7 +445,8 @@ function remoteProjection(provider: 'claude_code' | 'codex' = 'codex') {
     runtime: {
       sessionId: 'session-1',
       terminalId: 'terminal-1',
-      status: 'running' as const
+      status: 'running' as const,
+      ...(startedAt ? { startedAt } : {})
     }
   };
 }

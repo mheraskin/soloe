@@ -29,6 +29,13 @@
   } from '../lib/terminal-transcript';
   import SessionToolbar from './SessionToolbar.svelte';
 
+  // Resumed agent TUIs repaint their saved conversation as live PTY output.
+  // Keep that startup burst covered, then expose one settled xterm frame.
+  const STARTUP_RESTORE_RECENCY_MS = 60_000;
+  const STARTUP_RESTORE_QUIET_MS = 2_000;
+  const STARTUP_RESTORE_NO_OUTPUT_MS = 8_000;
+  const STARTUP_RESTORE_MAX_WAIT_MS = 30_000;
+
   let {
     projection,
     onClose
@@ -69,6 +76,14 @@
   function mobileKeyboardOpen(): boolean {
     return window.matchMedia('(max-width: 767px)').matches
       && document.documentElement.hasAttribute('data-mobile-keyboard-open');
+  }
+
+  function isFreshAgentStartup(view: MultiDeviceSessionView, now = Date.now()): boolean {
+    if (!effectiveAgentProvider(view.session)) return false;
+    const startedAt = Date.parse(view.runtime?.startedAt ?? '');
+    if (!Number.isFinite(startedAt)) return false;
+    const age = now - startedAt;
+    return age >= -STARTUP_RESTORE_RECENCY_MS && age <= STARTUP_RESTORE_RECENCY_MS;
   }
 
   async function takeInputControl(): Promise<void> {
@@ -145,6 +160,10 @@
     });
     let disposed = false;
     let active = true;
+    let stabilizingStartup = isFreshAgentStartup(projection);
+    let startupRestoreGeneration = 0;
+    let startupRestoreQuietTimer: ReturnType<typeof setTimeout> | null = null;
+    let startupRestoreMaxTimer: ReturnType<typeof setTimeout> | null = null;
     const pending = new Map<number, TerminalOutputEvent>();
     let routeOutput = (event: TerminalOutputEvent): void => {
       pending.set(event.seq, event);
@@ -202,6 +221,37 @@
     });
     resizeTranscript = (cols, rows) => transcript.resize(cols, rows);
 
+    const clearStartupRestoreTimers = (): void => {
+      if (startupRestoreQuietTimer) clearTimeout(startupRestoreQuietTimer);
+      if (startupRestoreMaxTimer) clearTimeout(startupRestoreMaxTimer);
+      startupRestoreQuietTimer = null;
+      startupRestoreMaxTimer = null;
+    };
+    const revealRestoredTerminal = async (
+      generation: number,
+      force = false
+    ): Promise<void> => {
+      const queuedOutput = outputQueue;
+      await queuedOutput;
+      if (!active || disposed || !stabilizingStartup) return;
+      if (
+        !force
+        && (generation !== startupRestoreGeneration || queuedOutput !== outputQueue)
+      ) return;
+      stabilizingStartup = false;
+      clearStartupRestoreTimers();
+      terminal.scrollToBottom();
+      restoring = false;
+    };
+    const scheduleStartupReveal = (delay = STARTUP_RESTORE_QUIET_MS): void => {
+      if (!stabilizingStartup) return;
+      const generation = ++startupRestoreGeneration;
+      if (startupRestoreQuietTimer) clearTimeout(startupRestoreQuietTimer);
+      startupRestoreQuietTimer = setTimeout(() => {
+        void revealRestoredTerminal(generation);
+      }, delay);
+    };
+
     const projectTranscript = (): void => {
       if (projectionFrame) return;
       const shouldFollow = transcriptFollow.shouldFollowNewOutput();
@@ -216,6 +266,7 @@
     };
 
     const write = async (data: string): Promise<void> => {
+      scheduleStartupReveal();
       await writeTerminalData(terminal, data);
       await transcript.write(data);
       projectTranscript();
@@ -252,7 +303,8 @@
         if (active) error = cause instanceof Error ? cause.message : String(cause);
       } finally {
         restoringOutput = false;
-        restoring = false;
+        if (stabilizingStartup) scheduleStartupReveal();
+        else restoring = false;
       }
     };
     const queueOutput = (event: TerminalOutputEvent): void => {
@@ -280,7 +332,16 @@
       queueOutput(event);
     }
     terminal.scrollToBottom();
-    restoring = false;
+    if (stabilizingStartup) {
+      startupRestoreMaxTimer = setTimeout(() => {
+        void revealRestoredTerminal(startupRestoreGeneration, true);
+      }, STARTUP_RESTORE_MAX_WAIT_MS);
+      scheduleStartupReveal(
+        initialSeq > 0 ? STARTUP_RESTORE_QUIET_MS : STARTUP_RESTORE_NO_OUTPUT_MS
+      );
+    } else {
+      restoring = false;
+    }
 
     const detachReconnect = deviceSessions.onDeviceReconnect(ref.deviceId, () => {
       void recover();
@@ -300,7 +361,7 @@
         if (!force && lastSize?.cols === terminal.cols && lastSize.rows === terminal.rows) return;
         lastSize = { cols: terminal.cols, rows: terminal.rows };
         await deviceSessions.terminalResize(ref, terminal.cols, terminal.rows);
-        restoring = false;
+        if (!stabilizingStartup) restoring = false;
         if (!compactTouchViewport()) terminal.focus();
       } catch {
         // A zero-sized panel will be fitted on the next observation.
@@ -356,6 +417,7 @@
       resizeObserver.disconnect();
       window.removeEventListener('soloe:rail-layout', onViewportLayout);
       if (resizeTimer) clearTimeout(resizeTimer);
+      clearStartupRestoreTimers();
       if (projectionFrame) cancelAnimationFrame(projectionFrame);
       transcript.dispose();
       resizeTranscript = () => undefined;
@@ -461,7 +523,7 @@
         </div>
       </div>
     {/if}
-    {#if (restoring && !readOnly) || takingControl}
+    {#if restoring || takingControl}
       <div class="pointer-events-none absolute inset-0 flex items-center justify-center bg-[var(--terminal-background)] text-xs text-muted-foreground">
         {takingControl ? 'Taking control and preparing terminal…' : 'Restoring terminal…'}
       </div>
