@@ -29,28 +29,27 @@ describe('TerminalInputLeaseManager', () => {
       cols: 132,
       rows: 41
     });
+    expect(lease).not.toHaveProperty('expiresAt');
   });
 
-  it('renews one controlling Device and rejects another Device', () => {
+  it('keeps one controlling Device indefinitely and rejects another Device', () => {
     let now = Date.parse('2026-08-12T10:00:00.000Z');
     const manager = new TerminalInputLeaseManager({
       now: () => now,
-      leaseId: () => 'lease-a',
-      ttlMs: 10_000
+      leaseId: () => 'lease-a'
     });
 
     const acquired = manager.acquire('terminal-1', 'client-a');
-    now += 1_000;
-    const renewed = manager.authorizeControl(
+    now += 365 * 24 * 60 * 60 * 1_000;
+    const authorized = manager.authorizeControl(
       'terminal-1',
       terminalControlProof(acquired),
       'input'
     );
 
-    expect(renewed).toMatchObject({
+    expect(authorized).toMatchObject({
       leaseId: acquired.leaseId,
-      controllerDeviceId: 'client-a',
-      expiresAt: '2026-08-12T10:00:11.000Z'
+      controllerDeviceId: 'client-a'
     });
     expect(() => manager.acquire('terminal-1', 'client-b')).toThrowError(
       expect.objectContaining({ code: 'terminal_input_owned' })
@@ -89,29 +88,8 @@ describe('TerminalInputLeaseManager', () => {
     });
     expect(manager.releaseTransportClient('transport-before-reconnect')).toBe(0);
     expect(manager.current('terminal-1')).toMatchObject({ leaseId: first.leaseId });
-  });
-
-  it('expires stale ownership and permits a new owner', () => {
-    let now = 1_000;
-    const events = vi.fn();
-    let leaseSequence = 0;
-    const manager = new TerminalInputLeaseManager({
-      now: () => now,
-      leaseId: () => `lease-${++leaseSequence}`,
-      ttlMs: 1_000,
-      onChange: events
-    });
-
-    manager.acquire('terminal-1', 'client-a');
-    now = 2_001;
-    const acquired = manager.acquire('terminal-1', 'client-b');
-
-    expect(acquired).toMatchObject({ leaseId: 'lease-2', controllerDeviceId: 'client-b' });
-    expect(events.mock.calls.map(([event]) => event.type)).toEqual([
-      'acquired',
-      'expired',
-      'acquired'
-    ]);
+    expect(manager.releaseTransportClient('transport-after-reconnect')).toBe(0);
+    expect(manager.current('terminal-1')).toMatchObject({ leaseId: first.leaseId });
   });
 
   it('supports explicit visible takeover and rejects the stale lease', () => {
@@ -293,7 +271,7 @@ describe('TerminalInputLeaseManager', () => {
     )).toThrowError(expect.objectContaining({ code: 'terminal_control_lease_stale' }));
   });
 
-  it('releases only the matching lease and can release every lease for a client', () => {
+  it('releases only the matching lease and ignores transport disconnection', () => {
     let leaseSequence = 0;
     const manager = new TerminalInputLeaseManager({
       leaseId: () => `lease-${++leaseSequence}`
@@ -307,8 +285,8 @@ describe('TerminalInputLeaseManager', () => {
       leaseId: 'wrong'
     })).toBe(false);
     expect(manager.release('terminal-1', terminalControlProof(first))).toBe(true);
-    expect(manager.releaseTransportClient('client-a')).toBe(1);
-    expect(manager.current('terminal-2')).toBeNull();
+    expect(manager.releaseTransportClient('client-a')).toBe(0);
+    expect(manager.current('terminal-2')).toMatchObject({ controllerDeviceId: 'client-a' });
     expect(manager.current('terminal-3')).toMatchObject({ controllerDeviceId: 'client-b' });
   });
 });

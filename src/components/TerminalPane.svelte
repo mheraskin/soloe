@@ -780,13 +780,6 @@
     if (!focused || !visible) return;
     ready = false;
     void terminalControl.select(terminalId);
-    const renewal = setInterval(() => {
-      if (terminalControl.owns(terminalId)) void terminalControl.select(terminalId);
-    }, 5_000);
-    return () => {
-      clearInterval(renewal);
-      void terminalControl.release(terminalId).catch(() => undefined);
-    };
   });
 
   $effect(() => {

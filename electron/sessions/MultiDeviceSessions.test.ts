@@ -793,8 +793,7 @@ function fakeDevice(input: {
         generation: 1,
         cols: 120,
         rows: 30,
-        acquiredAt: '2026-08-13T10:00:00.000Z',
-        expiresAt: '2026-08-13T10:00:15.000Z'
+        acquiredAt: '2026-08-13T10:00:00.000Z'
       };
       terminalLeases.set(terminalId, lease);
       return lease;

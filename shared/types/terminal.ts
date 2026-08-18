@@ -99,7 +99,6 @@ export interface TerminalInputLease {
   cols: number;
   rows: number;
   acquiredAt: string;
-  expiresAt: string;
 }
 
 export type TerminalControlLease = TerminalInputLease;
@@ -114,7 +113,7 @@ export function terminalControlProof(lease: TerminalInputLease): TerminalControl
 }
 
 export interface TerminalInputLeaseEvent {
-  type: 'acquired' | 'renewed' | 'released' | 'expired' | 'taken-over' | 'resized';
+  type: 'acquired' | 'released' | 'taken-over' | 'resized';
   terminalId: TerminalId;
   lease: TerminalInputLease | null;
   generation?: number;

@@ -17,4 +17,9 @@ describe('TerminalPane layout', () => {
       /data-overlay-scrollbars='macos'[^\{]*:global\(\.xterm-viewport::-webkit-scrollbar\)\s*\{[^}]*width:\s*0/s
     );
   });
+
+  it('does not renew or release durable Session Control with pane visibility', () => {
+    expect(source).not.toContain('setInterval');
+    expect(source).not.toContain('terminalControl.release(terminalId)');
+  });
 });

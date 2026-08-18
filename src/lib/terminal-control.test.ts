@@ -22,8 +22,7 @@ function lease(terminalId: string, ownerId: string, generation: number): Termina
     generation,
     cols: 120,
     rows: 30,
-    acquiredAt: '2026-08-15T08:00:00.000Z',
-    expiresAt: '2026-08-15T08:00:15.000Z'
+    acquiredAt: '2026-08-15T08:00:00.000Z'
   };
 }
 
@@ -38,7 +37,7 @@ function backend(): TerminalControlBackend & {
 } {
   let listener: (event: TerminalInputLeaseEvent) => void = () => undefined;
   let generation = 0;
-  let current: TerminalInputLease | null = null;
+  const current = new Map<string, TerminalInputLease>();
   const released: string[] = [];
   const acquired: Array<{
     terminalId: string;
@@ -48,20 +47,22 @@ function backend(): TerminalControlBackend & {
   return {
     acquire: async (terminalId, identity, takeover) => {
       acquired.push({ terminalId, identity: structuredClone(identity), takeover });
-      if (current && !takeover) throw new Error('owned');
-      current = lease(terminalId, identity.deviceName, ++generation);
+      const existing = current.get(terminalId) ?? null;
+      if (existing && !takeover) throw new Error('owned');
+      const acquiredLease = lease(terminalId, identity.deviceName, ++generation);
+      current.set(terminalId, acquiredLease);
       listener({
         type: generation === 1 ? 'acquired' : 'taken-over',
         terminalId,
-        lease: current,
+        lease: acquiredLease,
         observedAt: new Date().toISOString()
       });
-      return current;
+      return acquiredLease;
     },
-    current: async () => current,
+    current: async (terminalId) => current.get(terminalId) ?? null,
     release: async (terminalId) => {
       released.push(terminalId);
-      current = null;
+      current.delete(terminalId);
       listener({
         type: 'released',
         terminalId,
@@ -108,7 +109,7 @@ describe('TerminalControlCoordinator', () => {
     ]);
   });
 
-  it('claims an unclaimed selected terminal and releases it when switching away', async () => {
+  it('keeps control of a Session when switching to another Session', async () => {
     const control = backend();
     const coordinator = new TerminalControlCoordinator(control, identity);
 
@@ -116,11 +117,12 @@ describe('TerminalControlCoordinator', () => {
     expect(coordinator.owns('terminal-a')).toBe(true);
 
     await coordinator.select('terminal-b');
-    expect(control.released).toEqual(['terminal-a']);
+    expect(control.released).toEqual([]);
+    expect(coordinator.owns('terminal-a')).toBe(true);
     expect(coordinator.owns('terminal-b')).toBe(true);
   });
 
-  it('parks control affinity while dropping exclusivity on deselect', async () => {
+  it('keeps control when the Session is deselected', async () => {
     const control = backend();
     const parked: string[] = [];
     control.park = async (terminalId) => {
@@ -138,9 +140,9 @@ describe('TerminalControlCoordinator', () => {
     await coordinator.select('terminal-a');
     await coordinator.select(null);
 
-    expect(parked).toEqual(['terminal-a']);
+    expect(parked).toEqual([]);
     expect(control.released).toEqual([]);
-    expect(coordinator.owns('terminal-a')).toBe(false);
+    expect(coordinator.owns('terminal-a')).toBe(true);
   });
 
   it('stops controlling immediately when a newer takeover event arrives', async () => {
@@ -160,18 +162,18 @@ describe('TerminalControlCoordinator', () => {
     await expect(coordinator.input('terminal-a', 'stale')).rejects.toThrow(/lease/u);
   });
 
-  it('releases control when the Session view becomes hidden', async () => {
+  it('keeps control when the Session view becomes hidden', async () => {
     const control = backend();
     const coordinator = new TerminalControlCoordinator(control, identity);
     await coordinator.select('terminal-a');
 
     await coordinator.setPageVisible(false);
 
-    expect(control.released).toEqual(['terminal-a']);
-    expect(coordinator.owns('terminal-a')).toBe(false);
+    expect(control.released).toEqual([]);
+    expect(coordinator.owns('terminal-a')).toBe(true);
   });
 
-  it('recognizes renewed control held by this durable Soloe Device', () => {
+  it('recognizes updated control held by this durable Soloe Device', () => {
     const control = backend();
     const coordinator = new TerminalControlCoordinator(control, identity);
     const acquired = {
@@ -189,7 +191,7 @@ describe('TerminalControlCoordinator', () => {
     expect(coordinator.owns('terminal-a')).toBe(true);
 
     control.events({
-      type: 'renewed',
+      type: 'resized',
       terminalId: 'terminal-a',
       lease: { ...acquired, leaseId: 'lease-2', generation: 2 },
       observedAt: '2026-08-15T08:01:05.000Z'

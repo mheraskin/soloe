@@ -478,15 +478,7 @@ export class LocalSessionDevice implements SessionDevice {
     this.disposed = true;
     this.inputControlDetach?.();
     this.inputControlDetach = null;
-    if (this.options.terminalInputControl) {
-      for (const lease of this.ownedInputLeases.values()) {
-        void this.options.terminalInputControl.releaseInputLease(
-          lease.terminalId,
-          terminalControlProof(lease)
-        );
-      }
-      this.ownedInputLeases.clear();
-    }
+    this.ownedInputLeases.clear();
     this.inputLeases.releaseTransportClient(this.clientId);
     for (const detach of this.ptyDetachers.splice(0)) detach();
     this.currentStatus = {

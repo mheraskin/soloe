@@ -17,6 +17,7 @@ const terminalMocks = vi.hoisted(() => ({
   fit: vi.fn(),
   ownsInput: vi.fn(() => false),
   claimInput: vi.fn(async () => false),
+  releaseInput: vi.fn(async () => true),
   resize: vi.fn(async () => undefined),
   refresh: vi.fn(),
   inputHandler: null as null | ((data: string) => void),
@@ -111,7 +112,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
     terminalInputLeaseEvent: vi.fn(() => null),
     ownsTerminalInput: terminalMocks.ownsInput,
     claimTerminalInputControl: terminalMocks.claimInput,
-    releaseTerminalInputControl: vi.fn(async () => true),
+    releaseTerminalInputControl: terminalMocks.releaseInput,
     onDeviceReconnect: vi.fn((_deviceId, listener) => {
       terminalMocks.reconnectListener = listener;
       return () => {
@@ -155,6 +156,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     terminalMocks.fit.mockReset();
     terminalMocks.ownsInput.mockReset().mockReturnValue(false);
     terminalMocks.claimInput.mockReset().mockResolvedValue(false);
+    terminalMocks.releaseInput.mockReset().mockResolvedValue(true);
     terminalMocks.resize.mockReset().mockResolvedValue(undefined);
     terminalMocks.refresh.mockReset();
     terminalMocks.inputHandler = null;
@@ -461,6 +463,23 @@ describe('DeviceTerminalViewer output sequencing', () => {
       { deviceId: 'device-xps', terminalId: 'terminal-1' },
       'm'
     ));
+  });
+
+  it('keeps remote input control when its terminal presentation unmounts', async () => {
+    terminalMocks.claimInput.mockResolvedValue(true);
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(terminalMocks.claimInput).toHaveBeenCalled());
+
+    await unmount(component);
+    component = null;
+
+    expect(terminalMocks.releaseInput).not.toHaveBeenCalled();
   });
 
   it('refreshes all terminal rows after fitting a remote viewport', async () => {

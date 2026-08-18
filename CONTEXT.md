@@ -125,7 +125,12 @@ Ref-counted intent from a visible Terminal Presentation to publish one PTY's liv
 _Avoid_: Terminal listener, running terminal
 
 **Terminal Control Lease**:
-The Environment Runtime-owned capability binding one Session to one controlling Soloe Device. Commands prove control with the Session ID, its owner Device ID, the controlling Device ID, and the granted Lease ID.
+The non-expiring Environment Runtime-owned capability binding one Session to one
+controlling Soloe Device. Commands prove control with the Session ID, its owner
+Device ID, the controlling Device ID, and the granted Lease ID. It remains
+authoritative across Client, tab, and transport inactivity until explicit
+release, Terminal exit, Environment Runtime shutdown, or takeover by another
+Device.
 _Avoid_: Terminal Input Lease, focused terminal, permanent lock
 
 **Session Control**:

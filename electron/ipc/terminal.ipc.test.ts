@@ -152,7 +152,7 @@ describe('TerminalIpc output demand', () => {
 });
 
 describe('TerminalIpc control lease', () => {
-  it('rejects spectator input and resize and releases control on renderer destruction', async () => {
+  it('rejects spectators and retains control across renderer destruction until takeover', async () => {
     const pty = createPty();
     vi.mocked(pty.listRunning).mockReturnValue([{
       sessionId: 's-1',
@@ -200,9 +200,18 @@ describe('TerminalIpc control lease', () => {
     expect(pty.resize).not.toHaveBeenCalled();
 
     controller.webContents.emit('destroyed');
-    await expect(current({ sender: spectator.webContents }, 't-1')).resolves.toEqual({
+    await expect(current({ sender: spectator.webContents }, 't-1')).resolves.toMatchObject({
       ok: true,
-      value: null
+      value: { leaseId: acquired.value.leaseId, controllerDeviceId: 'device-a' }
+    });
+    await expect(acquire(
+      { sender: spectator.webContents },
+      't-1',
+      { deviceId: 'device-b', deviceName: 'iPad' },
+      true
+    )).resolves.toMatchObject({
+      ok: true,
+      value: { controllerDeviceId: 'device-b' }
     });
     ipc.dispose();
   });

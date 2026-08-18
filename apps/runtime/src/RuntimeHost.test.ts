@@ -520,7 +520,7 @@ describe('Environment Runtime lifecycle', () => {
     }
   });
 
-  it('releases the terminal control lease when its Runtime client disconnects', async () => {
+  it('keeps terminal control bound to its Device when a Runtime client disconnects', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);
     const host = new RuntimeHost({
@@ -538,24 +538,25 @@ describe('Environment Runtime lifecycle', () => {
         cols: 100,
         rows: 30
       });
-      await controller.acquireInputLease(started.terminalId, 'client-a');
-      const released = new Promise((resolve) => {
-        const observe = (event: unknown) => {
-          if ((event as { type?: string }).type !== 'released') return;
-          spectator.off('inputLease', observe);
-          resolve(event);
-        };
-        spectator.on('inputLease', observe);
-      });
+      const lease = await controller.acquireInputLease(
+        started.terminalId,
+        'client-a',
+        false,
+        { deviceId: 'device-a', deviceName: 'MacBook Pro' }
+      );
 
       controller.disconnect();
 
-      await expect(released).resolves.toMatchObject({
-        type: 'released',
-        terminalId: started.terminalId,
-        previousControllerDeviceId: 'client-a'
+      await expect(spectator.currentInputLease(started.terminalId)).resolves.toMatchObject({
+        leaseId: lease.leaseId,
+        controllerDeviceId: 'device-a'
       });
-      await expect(spectator.currentInputLease(started.terminalId)).resolves.toBeNull();
+      await expect(spectator.acquireInputLease(
+        started.terminalId,
+        'client-b',
+        false,
+        { deviceId: 'device-b', deviceName: 'iPad' }
+      )).rejects.toThrow(/controlled by MacBook Pro/u);
       spectator.disconnect();
     } finally {
       await host.shutdown();

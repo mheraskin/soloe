@@ -23,11 +23,19 @@ A monotonically increasing generation may order lease observations and fence
 delayed state updates. It does not establish identity and is not sufficient to
 authorize terminal input or resize.
 
+Terminal Control Leases do not expire and are not released when a Client hides,
+switches Sessions, disconnects, or rebuilds its Device adapter. Another Device
+must explicitly take over control, producing a new Lease ID and generation.
+Explicit release, Terminal exit, and Environment Runtime shutdown still clear
+control.
+
 ## Consequences
 
 - Reconnecting one Soloe Device deterministically resumes its Session Control.
-- Switching tabs changes the Session being controlled; it does not create a
-  second Session identity.
+- Elapsed time and transport lifecycle do not change the Controller.
+- A different Device must explicitly take over before sending input or resize.
+- Switching tabs changes the presented Session without releasing control of the
+  previous Session or creating a second Session identity.
 - Device names and transport endpoints are presentation and routing data, not
   authority.
 - Input and resize are rejected unless all three control identifiers match.
@@ -36,3 +44,5 @@ authorize terminal input or resize.
 
 - Generation-only authorization confuses event ordering with identity.
 - Transport connection IDs make ownership change during reconnection.
+- Short time-to-live leases drop control during ordinary inactivity and make
+  input availability depend on renewal timing.

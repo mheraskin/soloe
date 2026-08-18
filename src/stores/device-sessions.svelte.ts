@@ -402,16 +402,12 @@ export class DeviceSessionsStore {
         const terminalRef = { deviceId: created.ref.deviceId, terminalId };
         const claimed = await this.claimTerminalInputControl(terminalRef);
         if (!claimed) throw new Error('Could not acquire control of the new Session terminal.');
-        try {
-          await sendBracketedPasteWithInput(
-            (data) => this.terminalInput(terminalRef, data),
-            input.continuationPrompt,
-            true,
-            input.continuationProvider
-          );
-        } finally {
-          await this.releaseTerminalInputControl(terminalRef).catch(() => undefined);
-        }
+        await sendBracketedPasteWithInput(
+          (data) => this.terminalInput(terminalRef, data),
+          input.continuationPrompt,
+          true,
+          input.continuationProvider
+        );
       }
       return created;
     } finally {

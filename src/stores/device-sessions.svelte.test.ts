@@ -371,8 +371,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       generation: 1,
       cols: 120,
       rows: 30,
-      acquiredAt: '2026-08-16T00:00:02.000Z',
-      expiresAt: '2026-08-16T00:00:17.000Z'
+      acquiredAt: '2026-08-16T00:00:02.000Z'
     });
 
     await store.createBeside('device-xps/session-1', {
@@ -403,7 +402,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       '\r',
       expect.objectContaining({ leaseId: 'lease-2' })
     );
-    expect(mocks.deviceTerminalParkInputLease).toHaveBeenCalledOnce();
+    expect(mocks.deviceTerminalParkInputLease).not.toHaveBeenCalled();
     expect(store.selectedSessionKey).toBe('device-xps/session-2');
   });
 
@@ -421,8 +420,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       generation: 1,
       cols: 120,
       rows: 30,
-      acquiredAt: '2026-08-16T00:00:02.000Z',
-      expiresAt: '2026-08-16T00:00:17.000Z'
+      acquiredAt: '2026-08-16T00:00:02.000Z'
     });
     await store.claimTerminalInputControl(ref);
 
@@ -454,8 +452,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       generation: 2,
       cols: 120,
       rows: 30,
-      acquiredAt: '2026-08-16T00:00:18.000Z',
-      expiresAt: '2026-08-16T00:00:33.000Z'
+      acquiredAt: '2026-08-16T00:00:18.000Z'
     });
 
     await store.pasteImagesIntoTerminal(
@@ -472,7 +469,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     );
   });
 
-  it('renews stale Session Control and retries rejected terminal input once', async () => {
+  it('reclaims stale Session Control and retries rejected terminal input once', async () => {
     const store = new DeviceSessionsStore();
     await store.load();
     const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
@@ -486,15 +483,13 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       generation: 1,
       cols: 120,
       rows: 30,
-      acquiredAt: '2026-08-16T00:00:02.000Z',
-      expiresAt: '2026-08-16T00:00:17.000Z'
+      acquiredAt: '2026-08-16T00:00:02.000Z'
     };
     const renewedLease = {
       ...firstLease,
       leaseId: 'lease-current',
       generation: 2,
-      acquiredAt: '2026-08-16T00:00:18.000Z',
-      expiresAt: '2026-08-16T00:00:33.000Z'
+      acquiredAt: '2026-08-16T00:00:18.000Z'
     };
     mocks.deviceTerminalInputLease
       .mockResolvedValueOnce(firstLease)
@@ -537,8 +532,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       generation: 2,
       cols: 120,
       rows: 30,
-      acquiredAt: '2026-08-16T00:00:18.000Z',
-      expiresAt: '2026-08-16T00:00:33.000Z'
+      acquiredAt: '2026-08-16T00:00:18.000Z'
     });
 
     await store.terminalInput(ref, 'm');

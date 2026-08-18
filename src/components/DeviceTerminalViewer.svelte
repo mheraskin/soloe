@@ -510,15 +510,6 @@
     void deviceSessions.claimTerminalInputControl(ref).then((claimed) => {
       if (claimed) void prepareInteractive();
     });
-    const leaseRenewal = setInterval(() => {
-      if (deviceSessions.ownsTerminalInput(ref)) {
-        void deviceSessions.claimTerminalInputControl(ref);
-      }
-    }, 5_000);
-    return () => {
-      clearInterval(leaseRenewal);
-      void deviceSessions.releaseTerminalInputControl(ref).catch(() => undefined);
-    };
   });
 
   onMount(() => {

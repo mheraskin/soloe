@@ -6,6 +6,45 @@ import { LocalSessionDevice } from './LocalSessionDevice.js';
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 
 describe('LocalSessionDevice', () => {
+  it('does not release durable Session Control when its Device adapter is disposed', async () => {
+    const releaseInputLease = vi.fn(async () => true);
+    const lease = {
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: DEVICE_ID,
+      leaseId: 'lease-1',
+      controllerDeviceId: 'device-macbook',
+      controllerDeviceName: 'MacBook Pro',
+      generation: 1,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-18T12:00:00.000Z'
+    };
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never,
+      terminalInputControl: {
+        acquireInputLease: vi.fn(async () => lease),
+        currentInputLease: vi.fn(async () => lease),
+        releaseInputLease,
+        parkInputLease: vi.fn(async () => true),
+        screenSnapshot: vi.fn(),
+        onInputLease: vi.fn(() => () => undefined),
+        writeInput: vi.fn(),
+        resizeTerminal: vi.fn()
+      }
+    });
+    await client.terminalAcquireInputLease('terminal-1', false, {
+      deviceId: 'device-macbook',
+      deviceName: 'MacBook Pro'
+    });
+
+    client.dispose();
+
+    expect(releaseInputLease).not.toHaveBeenCalled();
+  });
+
   it('publishes semantic agent observations with its Session inventory', async () => {
     const observation = {
       id: 'session-1',

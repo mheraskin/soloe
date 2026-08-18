@@ -76,10 +76,8 @@ export class TerminalControlCoordinator {
 
   async select(terminalId: string | null): Promise<void> {
     const normalized = terminalId?.trim() || null;
-    const previous = this.selectedTerminalId;
     const epoch = ++this.selectionEpoch;
     this.selectedTerminalId = normalized;
-    if (previous && previous !== normalized) await this.release(previous);
     if (!normalized || !this.pageVisible || epoch !== this.selectionEpoch) return;
     await this.claim(normalized, false, epoch);
   }
@@ -90,10 +88,7 @@ export class TerminalControlCoordinator {
     const terminalId = this.selectedTerminalId;
     const epoch = ++this.selectionEpoch;
     if (!terminalId) return;
-    if (!visible) {
-      await this.release(terminalId);
-      return;
-    }
+    if (!visible) return;
     await this.claim(terminalId, false, epoch);
   }
 
@@ -150,8 +145,6 @@ export class TerminalControlCoordinator {
 
   async dispose(): Promise<void> {
     this.detachLease();
-    const terminalIds = [...this.owned.keys()];
-    await Promise.all(terminalIds.map((terminalId) => this.release(terminalId)));
     this.listeners.clear();
   }
 
