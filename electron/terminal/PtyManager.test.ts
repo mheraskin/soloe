@@ -729,6 +729,44 @@ describe('PtyManager', () => {
     ).toHaveLength(1);
   });
 
+  it('recovers a stale Claude working state when the terminal renders its input prompt', async () => {
+    const claudeSession: Session = {
+      ...session,
+      id: 'claude-idle-prompt',
+      name: 'Claude',
+      launch: { type: 'agent', provider: 'claude_code', resumeMode: 'new' }
+    };
+    const observer = new AgentObserverManager();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => claudeSession),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      observer,
+      baseEnv: {}
+    });
+
+    const started = await manager.start({ sessionId: claudeSession.id });
+    observer.setTuiObservedState(claudeSession.id, 'working', 'thinking');
+    manager.forwardBatchedOutput([{
+      terminalId: started.terminalId,
+      sessionId: claudeSession.id,
+      data: '\x1b[2K\r❯ ',
+      seq: 1
+    }]);
+
+    expect(observer.getSnapshot(claudeSession.id)?.state).toBe('idle');
+  });
+
   it('ignores approval-looking terminal output for auto-approved agents', async () => {
     const codexSession: Session = {
       ...session,

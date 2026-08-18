@@ -43,7 +43,7 @@ In the table below:
 | `projects` | `list`, `get`, `create`, `open`, `update`, `delete`, `touch`, `reorder`, `refreshFavicons`, `readFavicon`, `detectFromPath`, `suggestPaths`, `onChange` | IPC | Server | Server | Application Server |
 | `notes` | `list`, `read`, `write`, `rename`, `delete`, `saveImage`, `readImage`, `cleanupImages`, `onChange` | IPC | Server | Server | Application Server |
 | `git` | `status`, `aheadBehind`, `shortstat`, `dirty`, `worktrees`, `branches`, `recentCommits`, `refHistory`, `commitsBetween`, `rangeChanges`, `resolveRefs`, `checkout`, `createWorktree`, `workingChanges`, `workingTreeSnapshot`, `setObservationDemand`, `fileDiff`, `reviewDiffs`, `fileBlame`, `fileLines`, `stageFiles`, `unstageFiles`, `discardFiles`, `commit`, `push`, `pull`, `fetch`, `onChange` | IPC | Server | Server | Application Server Git service |
-| `files` | `search`, `openInEditor`, `pasteIntoTerminal`, `pasteImagesIntoTerminal`, `listTree`, `readFile`, `writeFile` | IPC | Server | Server | Application Server Files service; paste targets Runtime |
+| `files` | `search`, `openInEditor`, `pasteIntoTerminal`, `pasteImagesIntoTerminal`, `listTree`, `readFile`, `writeFile` | IPC | Server | Server | Application Server Files service; image paste writes the owner Device's native clipboard, then targets Runtime |
 | `diagnostics` | `list`, `crashLogs` | IPC | Server | Server | Application Server |
 | `window` | `minimize`, `toggleMaximize`, `zoomIn`, `zoomOut`, `close` | Native | Native | Unavailable | Electron |
 | `agentIntegration` | `status`, `installClaude`, `uninstallClaude`, `installCodex`, `uninstallCodex`, `installCursor`, `uninstallCursor`, `onChange` | IPC | Server | Server | Application Server |
@@ -54,7 +54,11 @@ In the table below:
 | `features` | `scan`, `setBranchStatus`, `setIssueStatus`, `subscribe`, `unsubscribe`, `onChange` | IPC | Server | Server | Application Server |
 | `vault` | `list`, `save`, `update`, `delete`, `getSecret`, `onChange` | IPC | Server | Server | Application Server |
 | `browser` | `enableDeviceEmulation`, `disableDeviceEmulation`, `setUserAgent`, `openDevTools`, `setDevToolsLayout`, `closeDevTools` | Native | Native | Unavailable | Electron WebContents |
-| `sessions` multi-Device extension | Device inventory state/refresh, plan+confirm creation, composite terminal demand/input/takeover/replay/resize/stop, Device events | Server | Server | Server | Application Server Sessions module, with effects delegated to the owning Device/Runtime |
+| `sessions` multi-Device extension | Device inventory state/refresh, plan+confirm creation, composite terminal demand/input/image-paste/takeover/replay/resize/stop, Device events | Server | Server | Server | Application Server Sessions module, with effects delegated to the owning Device/Runtime |
+
+Multi-Device image paste sends clipboard bytes to the Device that owns the
+Claude Code or Codex process. That Device saves the image and inserts its local
+path into the agent terminal.
 
 Remote Electron's preload starts with the browser/server adapter and keeps only
 window/browser controls and Vault on Electron IPC. Device discovery and the

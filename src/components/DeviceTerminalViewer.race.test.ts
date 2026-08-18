@@ -6,15 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const terminalMocks = vi.hoisted(() => ({
   writes: [] as string[],
+  opens: 0,
+  releaseCatchUpWrite: null as null | (() => void),
   releaseLiveWrite: null as null | (() => void),
   outputListener: null as null | ((event: { seq: number; data: string }) => void),
   reconnectListener: null as null | (() => void),
+  screenSnapshot: vi.fn(),
   replay: vi.fn(),
   focus: vi.fn(),
   fit: vi.fn(),
   ownsInput: vi.fn(() => false),
   claimInput: vi.fn(async () => false),
-  resize: vi.fn(async () => undefined)
+  resize: vi.fn(async () => undefined),
+  keyHandler: null as null | ((event: KeyboardEvent) => boolean),
+  pasteImages: vi.fn()
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -22,8 +27,13 @@ vi.mock('@xterm/xterm', () => ({
     cols = 120;
     rows = 30;
     loadAddon() {}
-    open() {}
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      terminalMocks.keyHandler = handler;
+    }
+    open() { terminalMocks.opens += 1; }
+    resize() {}
     onData() { return { dispose() {} }; }
+    paste() {}
     scrollToBottom() {}
     focus() { terminalMocks.focus(); }
     dispose() {}
@@ -38,6 +48,11 @@ vi.mock('../lib/terminal-write', () => ({
   FULL_TERMINAL_SCROLLBACK: 10_000,
   writeTerminalData: vi.fn(async (_terminal: unknown, data: string) => {
     terminalMocks.writes.push(data);
+    if (data === 'catch-up') {
+      await new Promise<void>((resolve) => {
+        terminalMocks.releaseCatchUpWrite = resolve;
+      });
+    }
     if (data === 'live-2') {
       await new Promise<void>((resolve) => {
         terminalMocks.releaseLiveWrite = resolve;
@@ -78,8 +93,10 @@ vi.mock('../stores/device-sessions.svelte', () => ({
       return { ready: Promise.resolve(), dispose: vi.fn() };
     }),
     terminalReplay: terminalMocks.replay,
+    terminalScreenSnapshot: terminalMocks.screenSnapshot,
     terminalResize: terminalMocks.resize,
     terminalInput: vi.fn(async () => undefined),
+    pasteImagesIntoTerminal: terminalMocks.pasteImages,
     updateSession: vi.fn(async () => undefined),
     previewCommand: vi.fn(async () => ({ description: '' }))
   }
@@ -97,6 +114,8 @@ describe('DeviceTerminalViewer output sequencing', () => {
 
   beforeEach(() => {
     terminalMocks.writes.length = 0;
+    terminalMocks.opens = 0;
+    terminalMocks.releaseCatchUpWrite = null;
     terminalMocks.releaseLiveWrite = null;
     terminalMocks.outputListener = null;
     terminalMocks.reconnectListener = null;
@@ -105,6 +124,12 @@ describe('DeviceTerminalViewer output sequencing', () => {
     terminalMocks.ownsInput.mockReset().mockReturnValue(false);
     terminalMocks.claimInput.mockReset().mockResolvedValue(false);
     terminalMocks.resize.mockReset().mockResolvedValue(undefined);
+    terminalMocks.keyHandler = null;
+    terminalMocks.pasteImages.mockReset().mockResolvedValue({
+      paths: [],
+      insertedText: '\x16'
+    });
+    terminalMocks.screenSnapshot.mockReset().mockRejectedValue(new Error('unavailable'));
     terminalMocks.replay.mockReset()
       .mockResolvedValueOnce({
         snapshot: { fromSeq: 1, toSeq: 1, data: 'screen', truncated: false }
@@ -118,6 +143,12 @@ describe('DeviceTerminalViewer output sequencing', () => {
       return 1;
     });
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    }));
   });
 
   afterEach(async () => {
@@ -126,6 +157,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.innerHTML = '';
+    Reflect.deleteProperty(navigator, 'clipboard');
   });
 
   it('does not replay an in-flight live chunk when the next sequence arrives', async () => {
@@ -196,6 +228,71 @@ describe('DeviceTerminalViewer output sequencing', () => {
     });
   });
 
+  it('restores remote scrollback before replaying output that arrived after the snapshot', async () => {
+    terminalMocks.screenSnapshot.mockReset().mockResolvedValue({
+      snapshot: {
+        kind: 'xterm-vt-state-v1',
+        terminalId: 'terminal-1',
+        sessionId: 'session-1',
+        cols: 120,
+        rows: 30,
+        toSeq: 5,
+        data: 'earlier conversation\r\ncurrent screen'
+      }
+    });
+    terminalMocks.replay.mockReset().mockResolvedValue({
+      snapshot: { fromSeq: 6, toSeq: 6, data: 'finished turn', truncated: false }
+    });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+
+    await vi.waitFor(() => {
+      expect(terminalMocks.writes).toEqual([
+        'earlier conversation\r\ncurrent screen',
+        'finished turn'
+      ]);
+    });
+    expect(terminalMocks.replay).toHaveBeenCalledWith(
+      { deviceId: 'device-xps', terminalId: 'terminal-1' },
+      5
+    );
+  });
+
+  it('keeps xterm detached until the initial catch-up replay has been parsed', async () => {
+    terminalMocks.screenSnapshot.mockReset().mockResolvedValue({
+      snapshot: {
+        kind: 'xterm-vt-state-v1',
+        terminalId: 'terminal-1',
+        sessionId: 'session-1',
+        cols: 120,
+        rows: 30,
+        toSeq: 5,
+        data: 'current screen'
+      }
+    });
+    terminalMocks.replay.mockReset().mockResolvedValue({
+      snapshot: { fromSeq: 6, toSeq: 6, data: 'catch-up', truncated: false }
+    });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+
+    await vi.waitFor(() => expect(terminalMocks.releaseCatchUpWrite).not.toBeNull());
+    expect(terminalMocks.opens).toBe(0);
+
+    terminalMocks.releaseCatchUpWrite?.();
+    await vi.waitFor(() => expect(terminalMocks.opens).toBe(1));
+  });
+
   it('refits a controlled remote terminal after mobile viewport recovery without forcing focus', async () => {
     terminalMocks.ownsInput.mockReturnValue(true);
     terminalMocks.claimInput.mockResolvedValue(true);
@@ -235,9 +332,51 @@ describe('DeviceTerminalViewer output sequencing', () => {
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
+
+  it.each(['claude_code', 'codex'] as const)(
+    'uploads pasted images to a remote %s session',
+    async (provider) => {
+      terminalMocks.ownsInput.mockReturnValue(true);
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          read: vi.fn(async () => [{
+            types: ['image/png'],
+            getType: vi.fn(async () => new Blob([
+              new Uint8Array([1, 2, 3])
+            ], { type: 'image/png' }))
+          }]),
+          readText: vi.fn(async () => '')
+        }
+      });
+      const target = document.createElement('div');
+      document.body.append(target);
+      component = mount(DeviceTerminalViewer, {
+        target,
+        props: { projection: remoteProjection(provider), onClose: vi.fn() }
+      });
+      flushSync();
+      await vi.waitFor(() => expect(terminalMocks.keyHandler).not.toBeNull());
+
+      const event = new KeyboardEvent('keydown', {
+        cancelable: true,
+        ctrlKey: true,
+        key: 'v'
+      });
+      const preventDefault = vi.spyOn(event, 'preventDefault');
+      expect(terminalMocks.keyHandler?.(event)).toBe(false);
+
+      await vi.waitFor(() => expect(terminalMocks.pasteImages).toHaveBeenCalledWith(
+        { deviceId: 'device-xps', terminalId: 'terminal-1' },
+        'session-1',
+        [{ mimeType: 'image/png', dataBase64: 'AQID' }]
+      ));
+      expect(preventDefault).toHaveBeenCalled();
+    }
+  );
 });
 
-function remoteProjection() {
+function remoteProjection(provider: 'claude_code' | 'codex' = 'codex') {
   return {
     ref: { deviceId: 'device-xps', sessionId: 'session-1' },
     key: 'device-xps/session-1',
@@ -248,7 +387,7 @@ function remoteProjection() {
       name: 'Remote Codex',
       cwd: '/home/me/project',
       runMode: 'linux' as const,
-      launch: { type: 'agent' as const, provider: 'codex' as const, resumeMode: 'new' as const },
+      launch: { type: 'agent' as const, provider, resumeMode: 'new' as const },
       createdAt: '2026-08-16T00:00:00.000Z',
       lastUsedAt: '2026-08-16T00:00:00.000Z'
     },

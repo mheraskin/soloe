@@ -30,6 +30,7 @@ import type { SessionStore } from '../sessions/SessionStore.js';
 import type { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import {
   isApprovalPromptOutput,
+  isClaudeIdlePromptOutput,
   scanTerminalAgentSignals
 } from '@shared/terminal-agent-signals.js';
 import {
@@ -578,6 +579,13 @@ export class PtyManager extends EventEmitter {
     if (!signalText) return;
 
     const observedState = this.opts.observer?.getSnapshot(instance.sessionId)?.state;
+    if (
+      instance.agentProvider === 'claude_code'
+      && (observedState === 'working' || observedState === 'running_tool')
+      && isClaudeIdlePromptOutput(signal.text)
+    ) {
+      this.opts.observer?.setTuiObservedState(instance.sessionId, 'idle', 'idle');
+    }
     if (
       isApprovalPromptOutput(signalText, instance.agentProvider)
       && !instance.autoApprovesPermissions

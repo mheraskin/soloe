@@ -1,5 +1,4 @@
 export const SHIFT_ENTER_SEQUENCE = '\x1b[13;2u';
-export const AGENT_IMAGE_PASTE_SEQUENCE = '\x16';
 export const CTRL_SLASH_SEQUENCE = '\x1f';
 
 type KeyboardLike = Pick<
@@ -9,16 +8,6 @@ type KeyboardLike = Pick<
 
 export function isClipboardPasteShortcut(event: KeyboardLike): boolean {
   return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v';
-}
-
-export function shouldPasteImageViaSavedPath(session: {
-  launch?: { type: string; provider?: string };
-  runMode: string;
-  currentAgentRuntime?: { provider?: string };
-}): boolean {
-  const provider = session.currentAgentRuntime?.provider
-    ?? (session.launch?.type === 'agent' ? session.launch.provider : undefined);
-  return provider === 'claude_code' || session.runMode === 'wsl';
 }
 
 export function shouldSendShiftEnterSequence(event: KeyboardLike): boolean {

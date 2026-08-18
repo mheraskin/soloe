@@ -3,6 +3,7 @@ import headlessXterm from '@xterm/headless';
 import type { RuntimeTerminalScreenSnapshot } from '@soloe/protocol';
 
 const { Terminal } = headlessXterm;
+const SCREEN_SCROLLBACK = 10_000;
 
 interface HeadlessTerminal {
   write(data: string, callback: () => void): void;
@@ -87,7 +88,7 @@ export class TerminalScreenState {
       cols: screen.cols,
       rows: screen.rows,
       toSeq: screen.toSeq,
-      data: screen.adapter.serialize({ scrollback: 0 })
+      data: screen.adapter.serialize({ scrollback: SCREEN_SCROLLBACK })
     };
   }
 
@@ -120,7 +121,7 @@ function createHeadlessTerminal(input: { cols: number; rows: number }): Terminal
   const terminal = new Terminal({
     cols: input.cols,
     rows: input.rows,
-    scrollback: 1_000,
+    scrollback: SCREEN_SCROLLBACK,
     allowProposedApi: true
   });
   const serialize = new SerializeAddon();

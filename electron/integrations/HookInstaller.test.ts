@@ -104,7 +104,7 @@ describe('HookInstaller', () => {
       // `[ ... ] && exit 0 curl ...` as a single command and curl never runs.
       expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && \{ cat >\/dev\/null 2>&1; exit 0; \};\s/);
       expect(cmd).toMatch(/;\s*curl /);
-      expect(cmd).toContain('--connect-timeout 0.05 --max-time 0.2');
+      expect(cmd).toContain('--connect-timeout 0.1 --max-time 1');
       expect(cmd).toContain('"$u/hook/claude"');
       // WSL host resolution: substitute host.wsl.internal when it doesn't resolve
       expect(cmd).toContain('host.wsl.internal');
@@ -259,7 +259,7 @@ describe('HookInstaller', () => {
       const cmd = parsed.hooks.SessionStart![0]!.hooks[0]!.command;
       expect(cmd).toMatch(/^\[ -z "\$SOLOE_BRIDGE_URL" \] && \{ cat >\/dev\/null 2>&1; exit 0; \};\s/);
       expect(cmd).toMatch(/;\s*curl /);
-      expect(cmd).toContain('--connect-timeout 0.05 --max-time 0.2');
+      expect(cmd).toContain('--connect-timeout 0.1 --max-time 1');
       expect(cmd).toContain('"$u/hook/codex"');
       expect(cmd).toContain('host.wsl.internal');
       expect(cmd).toContain('getent hosts host.wsl.internal');

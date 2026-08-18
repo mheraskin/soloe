@@ -4,6 +4,7 @@ import type { DeviceDescriptor, DeviceEventEnvelope } from '@shared/types/device
 import type { GitWorktree } from '@shared/types/git.js';
 import type { Project } from '@shared/types/projects.js';
 import type { Session } from '@shared/types/sessions.js';
+import type { ImagePasteRequest } from '@shared/types/files.js';
 import type { RepositoryIdentity } from '@shared/types/workspaces.js';
 import type { DevicePlacedSessionRequest } from '@shared/types/workspaces.js';
 import {
@@ -367,6 +368,29 @@ describe('MultiDeviceSessions', () => {
       { terminalId: 'terminal-remote-session', data: 'git status\r' }
     ]);
 
+    const imageControl = {
+      sessionId: 'remote-session',
+      ownerDeviceId: LAPTOP_ID,
+      controllerDeviceId: MAC_ID,
+      leaseId: 'lease-remote-session'
+    };
+    await expect(sessions.terminalPasteImages({
+      ref: { deviceId: LAPTOP_ID, terminalId: 'terminal-remote-session' },
+      sessionId: 'remote-session',
+      images: [{ mimeType: 'image/png', dataBase64: 'cG5n' }],
+      control: imageControl
+    })).resolves.toEqual({
+      paths: [],
+      insertedText: '\x16'
+    });
+    expect(mac.imagePastes).toEqual([]);
+    expect(laptop.imagePastes).toEqual([{
+      terminalId: 'terminal-remote-session',
+      sessionId: 'remote-session',
+      images: [{ mimeType: 'image/png', dataBase64: 'cG5n' }],
+      control: imageControl
+    }]);
+
     const ref = { deviceId: LAPTOP_ID, terminalId: 'terminal-remote-session' };
     const lease = await sessions.terminalAcquireInputLease(ref);
     expect(lease).toMatchObject({
@@ -626,6 +650,7 @@ function fakeDevice(input: {
   setState(state: SessionDeviceStatus['state']): void;
   startedSessionIds: string[];
   terminalInputs: Array<{ terminalId: string; data: string }>;
+  imagePastes: ImagePasteRequest[];
   readonly disposed: boolean;
   plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[];
   openedProjectPaths: string[];
@@ -677,6 +702,7 @@ function fakeDevice(input: {
   };
   const startedSessionIds: string[] = [];
   const terminalInputs: Array<{ terminalId: string; data: string }> = [];
+  const imagePastes: ImagePasteRequest[] = [];
   const terminalLeases = new Map<string, import('@shared/types/terminal.js').TerminalInputLease>();
   const plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[] = [];
   const openedProjectPaths: string[] = [];
@@ -724,6 +750,13 @@ function fakeDevice(input: {
     setTerminalOutputDemand: async () => undefined,
     terminalInput: async (terminalId, data) => {
       terminalInputs.push({ terminalId, data });
+    },
+    pasteImagesIntoTerminal: async (request) => {
+      imagePastes.push(structuredClone(request));
+      return {
+        paths: [],
+        insertedText: '\x16'
+      };
     },
     terminalAcquireInputLease: async (
       terminalId,
@@ -889,6 +922,7 @@ function fakeDevice(input: {
     plannedIntents,
     openedProjectPaths,
     terminalInputs,
+    imagePastes,
     reorderRequests,
     updateRequests,
     deletedSessionIds,

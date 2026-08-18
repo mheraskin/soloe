@@ -5,7 +5,9 @@ import * as path from 'node:path';
 
 const electronMocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: never[]) => unknown>(),
-  removeHandler: vi.fn()
+  removeHandler: vi.fn(),
+  createFromBuffer: vi.fn(() => ({ isEmpty: () => false })),
+  writeImage: vi.fn()
 }));
 
 vi.mock('electron', () => ({
@@ -14,7 +16,9 @@ vi.mock('electron', () => ({
       electronMocks.handlers.set(channel, handler);
     }),
     removeHandler: electronMocks.removeHandler
-  }
+  },
+  nativeImage: { createFromBuffer: electronMocks.createFromBuffer },
+  clipboard: { writeImage: electronMocks.writeImage }
 }));
 
 import { IpcChannels } from '@shared/types/ipc.js';
@@ -25,6 +29,8 @@ let root: string;
 beforeEach(async () => {
   electronMocks.handlers.clear();
   electronMocks.removeHandler.mockClear();
+  electronMocks.createFromBuffer.mockClear();
+  electronMocks.writeImage.mockClear();
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-files-ipc-'));
 });
 
@@ -33,6 +39,50 @@ afterEach(async () => {
 });
 
 describe('FilesIpc Worktree File Index routing', () => {
+  it('places agent images on Electron native clipboard before sending Ctrl+V', async () => {
+    const write = vi.fn(async () => undefined);
+    const ipc = new FilesIpc({
+      fileIndex: fakeIndex() as never,
+      store: {
+        get: vi.fn(async () => ({
+          id: 'session-1',
+          launch: { type: 'agent', provider: 'codex', resumeMode: 'new' },
+          name: 'codex',
+          cwd: root,
+          runMode: 'linux',
+          createdAt: '2026-08-18T00:00:00.000Z',
+          lastUsedAt: '2026-08-18T00:00:00.000Z'
+        }))
+      } as never,
+      pty: {
+        listRunning: () => [{ terminalId: 'terminal-1', sessionId: 'session-1' }],
+        write
+      } as never,
+      authorizeScope: async () => true
+    });
+    const control = {
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-owner',
+      controllerDeviceId: 'device-controller',
+      leaseId: 'lease-1'
+    };
+
+    await expect(ipc.pasteImagesIntoTerminal({
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      images: [{
+        mimeType: 'image/png',
+        dataBase64: Buffer.from('png bytes').toString('base64')
+      }],
+      control
+    })).resolves.toEqual({ paths: [], insertedText: '\x16' });
+
+    expect(electronMocks.createFromBuffer).toHaveBeenCalledWith(Buffer.from('png bytes'));
+    expect(electronMocks.writeImage).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith('terminal-1', '\x16');
+    ipc.dispose();
+  });
+
   it('forwards exact search scope and tree force through one index', async () => {
     const fileIndex = fakeIndex();
     const ipc = createIpc(fileIndex);

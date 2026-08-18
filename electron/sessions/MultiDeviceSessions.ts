@@ -7,6 +7,11 @@ import type {
   TerminalRef
 } from '@shared/types/devices.js';
 import type { GitWorktree } from '@shared/types/git.js';
+import type {
+  DeviceImagePasteRequest,
+  ImagePasteRequest,
+  ImagePasteResult
+} from '@shared/types/files.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type {
   Session,
@@ -75,6 +80,7 @@ export interface SessionDevice {
   reorderSessions(orderedIds: SessionId[]): Promise<Session[]>;
   setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void>;
   terminalInput(terminalId: string, data: string, control: TerminalControlProof): Promise<void>;
+  pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult>;
   terminalAcquireInputLease?(
     terminalId: string,
     takeover?: boolean,
@@ -614,6 +620,16 @@ export class MultiDeviceSessions {
   async terminalInput(ref: TerminalRef, data: string, control: TerminalControlProof): Promise<void> {
     assertControlTargetsDevice(ref, control);
     await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data, control);
+  }
+
+  async terminalPasteImages(request: DeviceImagePasteRequest): Promise<ImagePasteResult> {
+    assertControlTargetsDevice(request.ref, request.control);
+    return this.requireReadyDevice(request.ref.deviceId).pasteImagesIntoTerminal({
+      terminalId: request.ref.terminalId,
+      sessionId: request.sessionId,
+      images: structuredClone(request.images),
+      control: structuredClone(request.control)
+    });
   }
 
   async terminalAcquireInputLease(

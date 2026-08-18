@@ -1,5 +1,9 @@
-import { ipcMain } from 'electron';
-import { FileService, type FileIndexScope } from '@soloe/domain';
+import { clipboard, ipcMain, nativeImage } from 'electron';
+import {
+  FileService,
+  type ClipboardImageWriter,
+  type FileIndexScope
+} from '@soloe/domain';
 import { IpcChannels } from '@shared/types/ipc.js';
 import type {
   FileOpenRequest,
@@ -8,7 +12,8 @@ import type {
   FileSearchRequest,
   FileTreeRequest,
   FileReadRequest,
-  FileWriteRequest
+  FileWriteRequest,
+  ImagePasteResult
 } from '@shared/types/files.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { WorktreeFileIndex } from '../files/WorktreeFileIndex.js';
@@ -24,6 +29,7 @@ export interface FilesIpcOptions {
   git?: GitService;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
   authorizeScope?: (scope: FileIndexScope) => Promise<boolean>;
+  clipboard?: ClipboardImageWriter;
 }
 
 export class FilesIpc {
@@ -33,6 +39,13 @@ export class FilesIpc {
   constructor(private readonly opts: FilesIpcOptions) {
     this.service = new FileService({
       fileIndex: opts.fileIndex,
+      clipboard: opts.clipboard ?? {
+        writeImage: async ({ data }) => {
+          const image = nativeImage.createFromBuffer(data);
+          if (image.isEmpty()) throw new Error('Clipboard image could not be decoded');
+          clipboard.writeImage(image);
+        }
+      },
       runtime: {
         listRunning: async () => opts.pty.listRunning().flatMap((terminal) =>
           terminal.terminalId
@@ -77,6 +90,10 @@ export class FilesIpc {
     });
   }
 
+  pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult> {
+    return this.service.pasteImagesIntoTerminal(request);
+  }
+
   register(): void {
     if (this.registered) return;
     this.registered = true;
@@ -94,7 +111,7 @@ export class FilesIpc {
     );
 
     ipcMain.handle(IpcChannels.files.pasteImagesIntoTerminal, (_event, request: ImagePasteRequest) =>
-      ipcInvoke(() => this.service.pasteImagesIntoTerminal(request))
+      ipcInvoke(() => this.pasteImagesIntoTerminal(request))
     );
 
     ipcMain.handle(IpcChannels.files.listTree, (_e, request: FileTreeRequest) =>

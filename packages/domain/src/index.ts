@@ -37,6 +37,7 @@ export * from "./features/FeatureService.js";
 export * from "./features/FeatureArtifactObservation.js";
 export * from "./runtime/wsl-paths.js";
 export * from "./system/BackendPathService.js";
+export * from "./system/SystemClipboardImageWriter.js";
 export * from "./network/TailscaleServeManager.js";
 export * from "./workspaces/WorkspaceDeviceStore.js";
 export * from "./workspaces/DeviceOperationStore.js";

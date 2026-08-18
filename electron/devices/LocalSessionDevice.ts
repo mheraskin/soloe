@@ -33,6 +33,7 @@ import type {
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
 import type { Session, SessionId } from '@shared/types/sessions.js';
 import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
+import type { ImagePasteRequest, ImagePasteResult } from '@shared/types/files.js';
 import {
   terminalControlProof,
   type TerminalControlProof,
@@ -49,6 +50,7 @@ import type {
 import type { PtyManager } from '../terminal/PtyManager.js';
 import type { RuntimeTerminalInputControl } from '../terminal/RemoteRuntimePtyProcessFactory.js';
 import { TerminalInputLeaseManager } from '@soloe/runtime';
+import type { FileService } from '@soloe/domain';
 import { randomUUID } from 'node:crypto';
 import type {
   DeviceSessionInventory,
@@ -70,6 +72,7 @@ export interface LocalSessionDeviceOptions {
   pty: PtyManager;
   observer?: { listSnapshots(): ObservedAgentSnapshot[] };
   terminalInputControl?: RuntimeTerminalInputControl;
+  files?: Pick<FileService, 'pasteImagesIntoTerminal'>;
   clientId?: string;
   tailscalePorts?: Pick<TailscalePortForwardManager, 'ensure'>;
 }
@@ -239,6 +242,14 @@ export class LocalSessionDevice implements SessionDevice {
     }
     this.inputLeases.authorizeControl(id, control, 'input');
     this.options.pty.write(id, data);
+  }
+
+  pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult> {
+    this.assertActive();
+    if (!this.options.files) {
+      return Promise.reject(new Error('Image paste is unavailable on this Device.'));
+    }
+    return this.options.files.pasteImagesIntoTerminal(structuredClone(request));
   }
 
   terminalAcquireInputLease(

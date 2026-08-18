@@ -18,6 +18,7 @@ import type {
   SessionUpdate
 } from '@shared/types/sessions.js';
 import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
+import type { ClipboardImagePayload, ImagePasteResult } from '@shared/types/files.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
 import type {
@@ -488,14 +489,56 @@ export class DeviceSessionsStore {
     };
   }
 
-  terminalInput(terminalRef: TerminalRef, data: string): Promise<void> {
-    const lease = this.ownedInputLeases[terminalRefKey(terminalRef)];
+  async terminalInput(terminalRef: TerminalRef, data: string): Promise<void> {
+    const key = terminalRefKey(terminalRef);
+    const lease = this.ownedInputLeases[key];
     if (!lease) return Promise.reject(new Error('Terminal control lease is required.'));
-    return ipc.sessions.deviceTerminalInput(
-      terminalRef,
-      data,
-      terminalControlProof(lease)
-    ).then(() => undefined);
+    try {
+      await ipc.sessions.deviceTerminalInput(
+        terminalRef,
+        data,
+        terminalControlProof(lease)
+      );
+    } catch (error) {
+      if (!isRecoverableTerminalControlError(error)) throw error;
+      const recovered = await this.claimTerminalInputControl(terminalRef);
+      const current = this.ownedInputLeases[key];
+      if (!recovered || !current) throw error;
+      await ipc.sessions.deviceTerminalInput(
+        terminalRef,
+        data,
+        terminalControlProof(current)
+      );
+    }
+  }
+
+  async pasteImagesIntoTerminal(
+    terminalRef: TerminalRef,
+    sessionId: string,
+    images: ClipboardImagePayload[]
+  ): Promise<ImagePasteResult> {
+    const key = terminalRefKey(terminalRef);
+    const lease = this.ownedInputLeases[key];
+    if (!lease) return Promise.reject(new Error('Terminal control lease is required.'));
+    try {
+      return await ipc.sessions.deviceTerminalPasteImages(
+        terminalRef,
+        sessionId,
+        images,
+        terminalControlProof(lease)
+      );
+    } catch (error) {
+      if (!isRecoverableTerminalControlError(error)) throw error;
+      const recovered = await this.claimTerminalInputControl(terminalRef);
+      const current = this.ownedInputLeases[key];
+      if (!recovered || !current) throw error;
+      return ipc.sessions.deviceTerminalPasteImages(
+        terminalRef,
+        sessionId,
+        images,
+        terminalControlProof(current)
+      );
+    }
   }
 
   async claimTerminalInputControl(
@@ -997,6 +1040,12 @@ function insertAt<T>(items: T[], index: number, item: T): T[] {
 
 function terminalRefKey(ref: TerminalRef): string {
   return `${ref.deviceId}/${encodeURIComponent(ref.terminalId)}`;
+}
+
+function isRecoverableTerminalControlError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === 'terminal_control_lease_stale'
+    || code === 'terminal_input_lease_required';
 }
 
 function terminalEvent<T extends { terminalId: string }>(value: unknown): T | null {

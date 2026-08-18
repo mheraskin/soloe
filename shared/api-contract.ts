@@ -26,6 +26,7 @@ export const SOLOE_API_METHODS = {
     "ensureDeviceTailscalePort",
     "setDeviceTerminalDemand",
     "deviceTerminalInput",
+    "deviceTerminalPasteImages",
     "deviceTerminalInputLease",
     "deviceTerminalCurrentInputLease",
     "deviceTerminalReleaseInputLease",

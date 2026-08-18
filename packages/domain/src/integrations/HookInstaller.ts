@@ -140,10 +140,10 @@ const CODEX_EVENT_LABEL: Record<string, string> = {
 
 const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
-// Bumping forces a one-time reinstall on next boot. v15 adds the full current
-// interactive hook matrices, including Cursor's ~/.cursor/hooks.json, while
-// retaining v14's Claude MCP-location migration.
-export const SOLOE_HOOK_VERSION = 15;
+// Bumping forces a one-time reinstall on next boot. v16 gives local bridge
+// delivery enough time to survive brief Device load without losing terminal
+// events such as Claude Stop; it retains v15's full interactive hook matrices.
+export const SOLOE_HOOK_VERSION = 16;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
@@ -168,7 +168,7 @@ function buildHookCommand(provider: 'claude' | 'codex' | 'cursor'): string {
   const curl =
     // The bridge acknowledges accepted hooks before reducing them. Keep the
     // unreachable-host ceiling below a perceptible interactive pause too.
-    'curl -sS --connect-timeout 0.05 --max-time 0.2 -X POST ' +
+    'curl -sS --connect-timeout 0.1 --max-time 1 -X POST ' +
     '-H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN" ' +
     '-H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" ' +
     '-H "Content-Type: application/json" ' +

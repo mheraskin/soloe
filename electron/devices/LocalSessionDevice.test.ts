@@ -152,6 +152,36 @@ describe('LocalSessionDevice', () => {
     });
     expect(ensure).toHaveBeenCalledWith(3000);
   });
+
+  it('delegates native clipboard image paste to the local file service', async () => {
+    const pasteImagesIntoTerminal = vi.fn(async () => ({
+      paths: [],
+      insertedText: '\x16'
+    }));
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never,
+      files: { pasteImagesIntoTerminal }
+    });
+    const request = {
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      images: [{ mimeType: 'image/png', dataBase64: 'cG5n' }],
+      control: {
+        sessionId: 'session-1',
+        ownerDeviceId: DEVICE_ID,
+        controllerDeviceId: DEVICE_ID,
+        leaseId: 'lease-1'
+      }
+    };
+
+    await expect(client.pasteImagesIntoTerminal(request)).resolves.toEqual({
+      paths: [],
+      insertedText: '\x16'
+    });
+    expect(pasteImagesIntoTerminal).toHaveBeenCalledWith(request);
+  });
 });
 
 function descriptor(): DeviceDescriptor {

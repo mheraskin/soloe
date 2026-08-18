@@ -8,6 +8,7 @@
   import type { TerminalRef } from '@shared/types/devices.js';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import type { TerminalOutputEvent } from '@shared/types/terminal.js';
+  import { effectiveAgentProvider } from '@shared/types/sessions.js';
   import {
     terminalFontFamily,
     terminalThemeFor,
@@ -15,6 +16,8 @@
   } from '../lib/terminal-theme';
   import { appearanceTheme } from '../stores/appearance-theme.svelte';
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
+  import { readClipboardImages } from '../lib/clipboard-images';
+  import { isClipboardPasteShortcut } from '../lib/terminal-input';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { terminalLinkHandlers } from '../lib/terminal-links';
@@ -83,6 +86,23 @@
     }
   }
 
+  async function pasteFromClipboard(terminal: Terminal, ref: TerminalRef): Promise<void> {
+    if (!deviceSessions.ownsTerminalInput(ref)) return;
+    if (effectiveAgentProvider(projection.session)) {
+      const images = await readClipboardImages().catch(() => []);
+      if (images.length > 0) {
+        await deviceSessions.pasteImagesIntoTerminal(
+          ref,
+          projection.ref.sessionId,
+          images
+        );
+        return;
+      }
+    }
+    const text = await navigator.clipboard.readText().catch(() => '');
+    if (text) terminal.paste(text);
+  }
+
   onMount(() => {
     const ref = terminalRef;
     if (!host || !ref) {
@@ -115,11 +135,31 @@
     const links = new WebLinksAddon(terminalLinks.web);
     terminal.loadAddon(fit);
     terminal.loadAddon(links);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (!isClipboardPasteShortcut(event)) return true;
+      event.preventDefault();
+      void pasteFromClipboard(terminal, ref).catch((cause) => {
+        error = cause instanceof Error ? cause.message : String(cause);
+      });
+      return false;
+    });
     let disposed = false;
-    let disposeInitialized = () => terminal.dispose();
+    let active = true;
+    const pending = new Map<number, TerminalOutputEvent>();
+    let routeOutput = (event: TerminalOutputEvent): void => {
+      pending.set(event.seq, event);
+    };
+    const attachment = deviceSessions.acquireTerminalOutput(ref, (event) => routeOutput(event));
+    let disposeInitialized = () => {
+      active = false;
+      attachment.dispose();
+      terminal.dispose();
+    };
     void (async () => {
       let initialSeq = 0;
       let initialData = '';
+      await attachment.ready;
+      if (disposed) return;
       try {
         const restored = await deviceSessions.terminalScreenSnapshot(ref);
         if (disposed) return;
@@ -128,20 +168,29 @@
           await writeTerminalData(terminal, restored.snapshot.data);
           initialSeq = restored.snapshot.toSeq;
           initialData = restored.snapshot.data;
-          restoring = false;
         }
       } catch {
         // Older remote Devices use bounded raw replay below.
       }
       if (disposed) return;
-    terminal.open(host);
-    activeTerminal = terminal;
+      const initialReplay = await deviceSessions.terminalReplay(ref, initialSeq);
+      if (disposed) return;
+      if (initialReplay.snapshot && initialReplay.snapshot.toSeq > initialSeq) {
+        const omitted = initialReplay.snapshot.truncated
+          ? '\r\n\u001b[33m[Earlier terminal output omitted]\u001b[0m\r\n'
+          : '';
+        const replayData = `${omitted}${initialReplay.snapshot.data}`;
+        if (replayData) await writeTerminalData(terminal, replayData);
+        initialData += replayData;
+        initialSeq = initialReplay.snapshot.toSeq;
+      }
+      if (disposed) return;
+      terminal.open(host);
+      activeTerminal = terminal;
 
-    let active = true;
     let appliedSeq = initialSeq;
     let coveredSeq = initialSeq;
     let restoringOutput = true;
-    const pending = new Map<number, TerminalOutputEvent>();
     let outputQueue = Promise.resolve();
     let projectionFrame = 0;
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -224,35 +273,18 @@
       });
     };
 
+    routeOutput = queueOutput;
+    restoringOutput = false;
+    for (const event of [...pending.values()].sort((left, right) => left.seq - right.seq)) {
+      pending.delete(event.seq);
+      queueOutput(event);
+    }
+    terminal.scrollToBottom();
+    restoring = false;
+
     const detachReconnect = deviceSessions.onDeviceReconnect(ref.deviceId, () => {
       void recover();
     });
-    const attachment = deviceSessions.acquireTerminalOutput(ref, queueOutput);
-    void attachment.ready
-      .then(async () => {
-        const replay = await deviceSessions.terminalReplay(ref, appliedSeq);
-        if (!active) return;
-        if (replay.snapshot) {
-          if (replay.snapshot.truncated) {
-            await write('\r\n\u001b[33m[Earlier terminal output omitted]\u001b[0m\r\n');
-          }
-          await write(replay.snapshot.data);
-          appliedSeq = replay.snapshot.toSeq;
-          coveredSeq = appliedSeq;
-        }
-        restoringOutput = false;
-        for (const event of [...pending.values()].sort((left, right) => left.seq - right.seq)) {
-          pending.delete(event.seq);
-          queueOutput(event);
-        }
-        terminal.scrollToBottom();
-      })
-      .catch((cause) => {
-        if (active) error = cause instanceof Error ? cause.message : String(cause);
-      })
-      .finally(() => {
-        if (active) restoring = false;
-      });
 
     const resize = async (force = false): Promise<void> => {
       if (

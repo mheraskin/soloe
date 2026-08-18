@@ -52,6 +52,10 @@ describe('MultiDeviceSessionsIpc', () => {
         forwarded: true
       })),
       previewSessionCommand: vi.fn(async () => ({ description: 'pnpm codex' })),
+      terminalPasteImages: vi.fn(async () => ({
+        paths: [],
+        insertedText: '\x16'
+      })),
       terminalCurrentInputLease: vi.fn(async () => null),
       terminalReleaseInputLease: vi.fn(async () => true),
       onState: vi.fn(() => () => undefined),
@@ -82,6 +86,9 @@ describe('MultiDeviceSessionsIpc', () => {
     )).toBe(true);
     expect(electronMocks.handlers.has(
       IpcChannels.sessions.deviceTerminalReleaseInputLease
+    )).toBe(true);
+    expect(electronMocks.handlers.has(
+      IpcChannels.sessions.deviceTerminalPasteImages
     )).toBe(true);
     await expect(invoke(IpcChannels.sessions.deviceState)).resolves.toEqual({
       ok: true,
@@ -132,6 +139,25 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(sessions.ensureTailscalePort).toHaveBeenCalledWith('device-1', 3000);
 
     const ref = { deviceId: 'device-1', terminalId: 'terminal-1' };
+    const imageRequest = {
+      ref,
+      sessionId: 'session-1',
+      images: [{ mimeType: 'image/png', dataBase64: 'cG5n' }],
+      control: {
+        sessionId: 'session-1',
+        ownerDeviceId: 'device-1',
+        controllerDeviceId: 'controller-device',
+        leaseId: 'lease-1'
+      }
+    };
+    await expect(invoke(
+      IpcChannels.sessions.deviceTerminalPasteImages,
+      imageRequest
+    )).resolves.toEqual({
+      ok: true,
+      value: { paths: [], insertedText: '\x16' }
+    });
+    expect(sessions.terminalPasteImages).toHaveBeenCalledWith(imageRequest);
     await expect(invoke(
       IpcChannels.sessions.deviceTerminalCurrentInputLease,
       ref

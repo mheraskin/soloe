@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   deviceTerminalStop: vi.fn(),
   deviceTerminalInputLease: vi.fn(),
   deviceTerminalInput: vi.fn(),
+  deviceTerminalPasteImages: vi.fn(),
   deviceTerminalReleaseInputLease: vi.fn(),
   deviceTerminalParkInputLease: vi.fn(),
   setDeviceTerminalDemand: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('../lib/ipc', () => ({
       deviceTerminalStop: mocks.deviceTerminalStop,
       deviceTerminalInputLease: mocks.deviceTerminalInputLease,
       deviceTerminalInput: mocks.deviceTerminalInput,
+      deviceTerminalPasteImages: mocks.deviceTerminalPasteImages,
       deviceTerminalReleaseInputLease: mocks.deviceTerminalReleaseInputLease,
       deviceTerminalParkInputLease: mocks.deviceTerminalParkInputLease,
       updateOnDevice: mocks.updateOnDevice,
@@ -70,6 +72,10 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.deviceTerminalStop.mockReset().mockResolvedValue(true);
     mocks.deviceTerminalInputLease.mockReset();
     mocks.deviceTerminalInput.mockReset().mockResolvedValue(true);
+    mocks.deviceTerminalPasteImages.mockReset().mockResolvedValue({
+      paths: [],
+      insertedText: '\x16'
+    });
     mocks.deviceTerminalReleaseInputLease.mockReset().mockResolvedValue(true);
     mocks.deviceTerminalParkInputLease.mockReset().mockResolvedValue(true);
     mocks.setDeviceTerminalDemand.mockReset().mockResolvedValue(undefined);
@@ -399,6 +405,90 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     );
     expect(mocks.deviceTerminalParkInputLease).toHaveBeenCalledOnce();
     expect(store.selectedSessionKey).toBe('device-xps/session-2');
+  });
+
+  it('uploads remote terminal images with the owned Session Control lease', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
+    mocks.deviceTerminalInputLease.mockResolvedValueOnce({
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-1',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 1,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:02.000Z',
+      expiresAt: '2026-08-16T00:00:17.000Z'
+    });
+    await store.claimTerminalInputControl(ref);
+
+    await store.pasteImagesIntoTerminal(
+      ref,
+      'session-1',
+      [{ mimeType: 'image/png', dataBase64: 'cG5n' }]
+    );
+
+    expect(mocks.deviceTerminalPasteImages).toHaveBeenCalledWith(
+      ref,
+      'session-1',
+      [{ mimeType: 'image/png', dataBase64: 'cG5n' }],
+      expect.objectContaining({ leaseId: 'lease-1', ownerDeviceId: 'device-xps' })
+    );
+  });
+
+  it('renews stale Session Control and retries rejected terminal input once', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
+    const firstLease = {
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-stale',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 1,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:02.000Z',
+      expiresAt: '2026-08-16T00:00:17.000Z'
+    };
+    const renewedLease = {
+      ...firstLease,
+      leaseId: 'lease-current',
+      generation: 2,
+      acquiredAt: '2026-08-16T00:00:18.000Z',
+      expiresAt: '2026-08-16T00:00:33.000Z'
+    };
+    mocks.deviceTerminalInputLease
+      .mockResolvedValueOnce(firstLease)
+      .mockResolvedValueOnce(renewedLease);
+    const stale = Object.assign(new Error('stale Session Control'), {
+      code: 'terminal_control_lease_stale'
+    });
+    mocks.deviceTerminalInput
+      .mockRejectedValueOnce(stale)
+      .mockResolvedValueOnce(true);
+    await store.claimTerminalInputControl(ref);
+
+    await store.terminalInput(ref, 'a');
+
+    expect(mocks.deviceTerminalInput).toHaveBeenNthCalledWith(
+      1,
+      ref,
+      'a',
+      expect.objectContaining({ leaseId: 'lease-stale' })
+    );
+    expect(mocks.deviceTerminalInput).toHaveBeenNthCalledWith(
+      2,
+      ref,
+      'a',
+      expect.objectContaining({ leaseId: 'lease-current' })
+    );
   });
 });
 

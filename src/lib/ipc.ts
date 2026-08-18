@@ -54,6 +54,7 @@ import type {
   WorkingTreeSnapshotRequest
 } from '@shared/types/git.js';
 import type {
+  ClipboardImagePayload,
   FileOpenRequest,
   FileReadRequest,
   FileReadResult,
@@ -61,6 +62,7 @@ import type {
   FileTreeResult,
   FileWriteRequest,
   ImagePasteRequest,
+  ImagePasteResult,
   FilePasteRequest,
   FileSearchRequest
 } from '@shared/types/files.js';
@@ -262,6 +264,19 @@ export const backend = {
         throw new Error('Multi-Device terminal input is unavailable.');
       }
       return unwrap(await c.sessions.deviceTerminalInput(toIpcPayload({ ref, data, control })));
+    },
+    deviceTerminalPasteImages: async (
+      ref: TerminalRef,
+      sessionId: string,
+      images: ClipboardImagePayload[],
+      control: TerminalControlProof
+    ): Promise<ImagePasteResult> => {
+      if (!c.sessions.deviceTerminalPasteImages) {
+        throw new Error('Multi-Device image paste is unavailable.');
+      }
+      return unwrap(await c.sessions.deviceTerminalPasteImages(
+        toIpcPayload({ ref, sessionId, images, control })
+      ));
     },
     deviceTerminalInputLease: async (ref: TerminalRef, takeover = false) => {
       if (!c.sessions.deviceTerminalInputLease) {

@@ -68,6 +68,7 @@ import type {
 } from "../../../shared/types/projects.js";
 import type { BrowserSessionUpdateRequest } from "../../../shared/types/browser-sessions.js";
 import type {
+  DeviceImagePasteRequest,
   FileOpenRequest,
   FilePasteRequest,
   FileReadRequest,
@@ -133,6 +134,8 @@ import {
   VaultStoreError,
   WslHostDetector,
   TailscalePortForwardManager,
+  SystemClipboardImageWriter,
+  type ClipboardImageWriter,
   type FileIndexScope,
 } from "@soloe/domain";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
@@ -169,6 +172,7 @@ import {
 } from "../../../electron/agents/CodexConfigReader.js";
 import {
   isApprovalPromptOutput,
+  isClaudeIdlePromptOutput,
   scanTerminalAgentSignals,
 } from "../../../shared/terminal-agent-signals.js";
 import { NodePtyProcessFactory } from "../../../electron/terminal/NodePtyProcessFactory.js";
@@ -272,6 +276,7 @@ export interface SoloeDomainOptions {
   pathService?: Pick<BackendPathService, "openSessionPath">;
   wslHostDetector?: Pick<WslHostDetector, "detect">;
   fileEditorLauncher?: (editor: string, absolutePath: string) => Promise<void>;
+  clipboardImageWriter?: ClipboardImageWriter;
   rendererBridgeTimeouts?: {
     commentsTimeoutMs?: number;
     diffTimeoutMs?: number;
@@ -355,8 +360,16 @@ export class SoloeDomain extends EventEmitter {
     if (!context) return;
     const signal = scanTerminalAgentSignals(context.tail, event.data);
     context.tail = signal.tail;
-    if (!signal.candidateText || context.autoApprovesPermissions) return;
+    if (!signal.candidateText) return;
     const observedState = this.observer.getSnapshot(context.sessionId)?.state;
+    if (
+      context.provider === "claude_code"
+      && (observedState === "working" || observedState === "running_tool")
+      && isClaudeIdlePromptOutput(signal.text)
+    ) {
+      this.observer.setTuiObservedState(context.sessionId, "idle", "idle");
+    }
+    if (context.autoApprovesPermissions) return;
     if (
       isApprovalPromptOutput(signal.candidateText, context.provider)
       && observedState !== "waiting_for_approval"
@@ -440,6 +453,7 @@ export class SoloeDomain extends EventEmitter {
         getBinaries: async () => (await this.settings.get()).binaries,
         useWslHostBridge: process.platform === "win32",
       }),
+      clipboard: options.clipboardImageWriter ?? new SystemClipboardImageWriter(),
       // File-paste calls without an explicit Terminal Control Lease are rejected by
       // RuntimeControl; the renderer terminal path supplies identity-qualified Session Control.
       runtime: options.runtime,
@@ -2155,6 +2169,10 @@ export class SoloeDomain extends EventEmitter {
         );
         return true;
       }
+      case "deviceTerminalPasteImages":
+        return this.requireMultiDeviceSessions(deviceSessions).terminalPasteImages(
+          structuredClone(args[0] as DeviceImagePasteRequest),
+        );
       case "deviceTerminalInputLease": {
         const request = args[0] as { ref: TerminalRef; takeover?: boolean };
         return this.requireMultiDeviceSessions(deviceSessions).terminalAcquireInputLease(

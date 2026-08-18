@@ -2,7 +2,7 @@ import type { AgentRuntimeProvider } from './types/sessions.js';
 
 const SIGNAL_TAIL_LENGTH = 256;
 const SIGNAL_CANDIDATE =
-  /allow|permission|approval|approve mode|run this|proceed with|limit|credit/i;
+  /allow|permission|approval|approve mode|run this|proceed with|limit|credit|❯/i;
 
 export interface TerminalAgentSignalScan {
   tail: string;
@@ -42,6 +42,10 @@ export function isApprovalPromptOutput(
     || normalized.includes('allow this web fetch?')
     || normalized.includes('allow this web search?')
     || normalized.includes('approve mode switch (y/n)');
+}
+
+export function isClaudeIdlePromptOutput(text: string): boolean {
+  return /(?:^|[\r\n])\s*❯(?:\s|$)/u.test(text);
 }
 
 function stripAnsi(input: string): string {

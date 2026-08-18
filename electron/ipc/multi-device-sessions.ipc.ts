@@ -4,6 +4,7 @@ import type { CreateMultiDeviceSessionRequest } from '@shared/types/multi-device
 import type { MultiDeviceSessions } from '../sessions/MultiDeviceSessions.js';
 import type { SessionRef, TerminalRef } from '@shared/types/devices.js';
 import type { TerminalControlProof } from '@shared/types/terminal.js';
+import type { DeviceImagePasteRequest } from '@shared/types/files.js';
 import { ipcInvoke } from './result.js';
 
 export interface MultiDeviceSessionsIpcOptions {
@@ -27,6 +28,7 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'onDeviceEvent'
     | 'setTerminalOutputDemand'
     | 'terminalInput'
+    | 'terminalPasteImages'
     | 'terminalAcquireInputLease'
     | 'terminalCurrentInputLease'
     | 'terminalReleaseInputLease'
@@ -136,6 +138,11 @@ export class MultiDeviceSessionsIpc {
       })
     );
     ipcMain.handle(
+      IpcChannels.sessions.deviceTerminalPasteImages,
+      (_event, request: DeviceImagePasteRequest) =>
+        ipcInvoke(() => this.options.sessions.terminalPasteImages(structuredClone(request)))
+    );
+    ipcMain.handle(
       IpcChannels.sessions.deviceTerminalInputLease,
       (_event, request: { ref: TerminalRef; takeover?: boolean }) =>
         ipcInvoke(() => this.options.sessions.terminalAcquireInputLease(
@@ -229,6 +236,7 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.ensureDeviceTailscalePort);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalDemand);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInput);
+    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalPasteImages);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalCurrentInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalReleaseInputLease);

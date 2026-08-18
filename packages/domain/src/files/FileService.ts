@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type {
   FilePasteRequest,
@@ -17,11 +16,7 @@ import type {
 } from "../../../../shared/types/files.js";
 import type { TerminalControlProof } from "../../../../shared/types/terminal.js";
 import { effectiveAgentProvider, type Session } from "../../../../shared/types/sessions.js";
-import {
-  joinHostPath,
-  posixToWslUnc,
-  worktreeHostPath,
-} from "../runtime/wsl-paths.js";
+import { worktreeHostPath } from "../runtime/wsl-paths.js";
 import { DomainError } from "../errors.js";
 import {
   WorktreeFileIndex,
@@ -30,7 +25,7 @@ import {
 
 const MAX_READ_BYTES = 5 * 1024 * 1024;
 const MAX_WRITE_BYTES = 5 * 1024 * 1024;
-const MAX_PASTED_IMAGES = 4;
+const MAX_PASTED_IMAGES = 1;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_TERMINAL_PASTE_LENGTH = 32 * 1024;
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
@@ -50,8 +45,13 @@ export interface FilesRuntime {
   ): Promise<unknown>;
 }
 
+export interface ClipboardImageWriter {
+  writeImage(image: { mimeType: string; data: Buffer }): Promise<void>;
+}
+
 export interface FileServiceOptions {
   fileIndex?: WorktreeFileIndex;
+  clipboard?: ClipboardImageWriter;
   runtime: FilesRuntime;
   getSession(sessionId: string): Promise<Session | null>;
   authorizeScope(scope: FileIndexScope): Promise<boolean>;
@@ -320,6 +320,7 @@ export class FileService {
         "The terminal does not belong to the requested Session",
       );
     }
+    const control = terminalControl(request);
     if (request.images.length === 0 || request.images.length > MAX_PASTED_IMAGES) {
       throw new DomainError(
         "invalid_image_count",
@@ -327,57 +328,35 @@ export class FileService {
       );
     }
 
-    const safeSessionId = session.id.replace(/[^a-zA-Z0-9_.-]/gu, "-");
-    const providerDirectory =
-      session.runMode === "wsl"
-        ? `/tmp/soloe-images/${safeSessionId}`
-        : path.join(os.tmpdir(), "soloe-images", safeSessionId);
-    if (session.runMode === "wsl" && process.platform === "win32" && !session.wslDistro) {
+    const image = request.images[0]!;
+    const mimeType = image.mimeType.toLowerCase();
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
       throw new DomainError(
-        "invalid_wsl_distribution",
-        "A WSL distribution is required for image paste",
+        "invalid_image_type",
+        `Unsupported clipboard image type: ${image.mimeType}`,
       );
     }
-    const writeDirectory =
-      session.runMode === "wsl" && process.platform === "win32"
-        ? posixToWslUnc(session.wslDistro!, providerDirectory)
-        : providerDirectory;
-    await fs.mkdir(writeDirectory, { recursive: true });
-    const paths: string[] = [];
-    for (let index = 0; index < request.images.length; index += 1) {
-      const image = request.images[index]!;
-      const mimeType = image.mimeType.toLowerCase();
-      if (!ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
-        throw new DomainError(
-          "invalid_image_type",
-          `Unsupported clipboard image type: ${image.mimeType}`,
-        );
-      }
-      const buffer = decodeBase64(image.dataBase64);
-      if (buffer.length === 0) {
-        throw new DomainError("invalid_image", "Clipboard image was empty");
-      }
-      if (buffer.length > MAX_IMAGE_BYTES) {
-        throw new DomainError(
-          "request_too_large",
-          `Clipboard image exceeds the ${MAX_IMAGE_BYTES}-byte limit`,
-        );
-      }
-      const filename =
-        `${Date.now()}-${index + 1}-${randomBytes(3).toString("hex")}.` +
-        extensionForMime(mimeType);
-      const absolutePath = joinHostPath(writeDirectory, filename);
-      await fs.writeFile(absolutePath, buffer);
-      paths.push(
-        session.runMode === "wsl"
-          ? `${providerDirectory}/${filename}`
-          : absolutePath,
+    const buffer = decodeBase64(image.dataBase64);
+    if (buffer.length === 0) {
+      throw new DomainError("invalid_image", "Clipboard image was empty");
+    }
+    if (buffer.length > MAX_IMAGE_BYTES) {
+      throw new DomainError(
+        "request_too_large",
+        `Clipboard image exceeds the ${MAX_IMAGE_BYTES}-byte limit`,
+      );
+    }
+    if (!this.options.clipboard) {
+      throw new DomainError(
+        "clipboard_unavailable",
+        "Native image clipboard access is unavailable on this Device",
       );
     }
 
-    const insertedText = `${paths.join(" ")} `;
-    await this.options.runtime.write(request.terminalId, insertedText, terminalControl(request));
-    return { paths, insertedText };
+    await this.options.clipboard.writeImage({ mimeType, data: buffer });
+    const insertedText = "\x16";
+    await this.options.runtime.write(request.terminalId, insertedText, control);
+    return { paths: [], insertedText };
   }
 
   dispose(): void {
@@ -645,13 +624,6 @@ function decodeBase64(value: string): Buffer {
     throw new DomainError("invalid_image", "Clipboard image data is not valid base64");
   }
   return Buffer.from(value, "base64");
-}
-
-function extensionForMime(mimeType: string): string {
-  if (mimeType === "image/jpeg" || mimeType === "image/jpg") return "jpg";
-  if (mimeType === "image/gif") return "gif";
-  if (mimeType === "image/webp") return "webp";
-  return "png";
 }
 
 function terminalControl(request: { control: TerminalControlProof }): TerminalControlProof {

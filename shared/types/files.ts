@@ -1,4 +1,5 @@
 import type { RunMode } from './sessions.js';
+import type { TerminalRef } from './devices.js';
 import type { TerminalControlProof, TerminalId } from './terminal.js';
 
 export interface FileSearchRequest {
@@ -36,6 +37,13 @@ export interface ClipboardImagePayload {
 
 export interface ImagePasteRequest {
   terminalId: TerminalId;
+  sessionId: string;
+  images: ClipboardImagePayload[];
+  control: TerminalControlProof;
+}
+
+export interface DeviceImagePasteRequest {
+  ref: TerminalRef;
   sessionId: string;
   images: ClipboardImagePayload[];
   control: TerminalControlProof;

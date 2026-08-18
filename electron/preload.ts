@@ -93,6 +93,7 @@ import type {
   WorkingTreeSnapshotRequest
 } from '@shared/types/git.js';
 import type {
+  DeviceImagePasteRequest,
   FileOpenRequest,
   FileReadRequest,
   FileTreeRequest,
@@ -176,6 +177,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalDemand, refs),
     deviceTerminalInput: (request: { ref: TerminalRef; data: string; control: TerminalControlProof }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInput, request),
+    deviceTerminalPasteImages: (request: DeviceImagePasteRequest) =>
+      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalPasteImages, request),
     deviceTerminalInputLease: (request: { ref: TerminalRef; takeover?: boolean }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalInputLease, request),
     deviceTerminalCurrentInputLease: (ref: TerminalRef) =>

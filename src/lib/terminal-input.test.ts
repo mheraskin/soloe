@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AGENT_IMAGE_PASTE_SEQUENCE,
   CTRL_SLASH_SEQUENCE,
   altWordEditSequence,
   ctrlSlashSequence,
   isClipboardPasteShortcut,
   SHIFT_ENTER_SEQUENCE,
-  shouldPasteImageViaSavedPath,
   shouldSendShiftEnterSequence
 } from './terminal-input';
 import { Keymap } from './keymap';
@@ -71,21 +69,6 @@ describe('terminal input helpers', () => {
 
   it('uses the CSI-u Shift+Enter sequence Codex-compatible terminals emit', () => {
     expect(SHIFT_ENTER_SEQUENCE).toBe('\x1b[13;2u');
-  });
-
-  it('uses Ctrl+V passthrough for native agent image paste', () => {
-    expect(AGENT_IMAGE_PASTE_SEQUENCE).toBe('\x16');
-  });
-
-  it('falls back to saved image paths where clipboard image paste is unreliable', () => {
-    expect(shouldPasteImageViaSavedPath({ launch: { type: 'agent', provider: 'claude_code' }, runMode: 'windows' })).toBe(true);
-    expect(shouldPasteImageViaSavedPath({
-      launch: { type: 'terminal' },
-      runMode: 'windows',
-      currentAgentRuntime: { provider: 'claude_code' }
-    })).toBe(true);
-    expect(shouldPasteImageViaSavedPath({ launch: { type: 'agent', provider: 'codex' }, runMode: 'wsl' })).toBe(true);
-    expect(shouldPasteImageViaSavedPath({ launch: { type: 'agent', provider: 'codex' }, runMode: 'windows' })).toBe(false);
   });
 
   it('emits readline mnemonics in plain shells for Alt-modified word keys', () => {

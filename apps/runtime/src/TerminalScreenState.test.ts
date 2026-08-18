@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { TerminalScreenState } from './TerminalScreenState.js';
 
 describe('TerminalScreenState', () => {
-  it('serializes one sequence-qualified viewport without renderer work', async () => {
+  it('serializes sequence-qualified scrollback without renderer work', async () => {
     const serialize = vi.fn(() => '\u001b[2Jcurrent screen');
     const terminal = fakeTerminal();
     const screens = new TerminalScreenState({
@@ -28,7 +28,7 @@ describe('TerminalScreenState', () => {
       toSeq: 2,
       data: '\u001b[2Jcurrent screen'
     });
-    expect(serialize).toHaveBeenCalledWith({ scrollback: 0 });
+    expect(serialize).toHaveBeenCalledWith({ scrollback: 10_000 });
     expect(terminal.open).toBeUndefined();
   });
 

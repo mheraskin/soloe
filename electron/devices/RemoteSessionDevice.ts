@@ -21,6 +21,7 @@ import type {
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
+import type { ImagePasteRequest, ImagePasteResult } from '@shared/types/files.js';
 import type {
   SpawnSpec,
   TerminalControlProof,
@@ -268,6 +269,10 @@ export class RemoteSessionDevice implements SessionDevice {
       data,
       structuredClone(control)
     ]);
+  }
+
+  pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult> {
+    return this.rpc('files', 'pasteImagesIntoTerminal', [structuredClone(request)]);
   }
 
   terminalAcquireInputLease(

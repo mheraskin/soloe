@@ -1520,6 +1520,72 @@ describe("SoloeDomain", () => {
     }
   });
 
+  it("recovers a remote Claude working state when its terminal renders the idle prompt", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-claude-idle-"));
+    const runtime = Object.assign(new EventEmitter(), {
+      start: vi.fn(async (input) => ({
+        terminalId: "claude-terminal",
+        sessionId: input.sessionId,
+        pid: 7003,
+        status: "running" as const,
+        startedAt: "2026-08-17T10:00:00.000Z",
+        spec: input.spec,
+        cols: input.cols,
+        rows: input.rows,
+      })),
+      listRunning: vi.fn(async () => []),
+      replay: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    });
+    const domain = new SoloeDomain({ dataDirectory: directory, runtime });
+
+    try {
+      await domain.init();
+      const session = (await domain.invoke({
+        namespace: "sessions",
+        method: "create",
+        args: [{
+          name: "Claude",
+          cwd: directory,
+          runMode: hostPlatform(),
+          launch: { type: "agent", provider: "claude_code", resumeMode: "new" },
+        }],
+      })) as { id: string };
+      await domain.invoke({
+        namespace: "terminal",
+        method: "start",
+        args: [{ sessionId: session.id, cols: 100, rows: 30 }],
+      });
+      const observer = (domain as unknown as {
+        observer: { setTuiObservedState(id: string, state: "working", summary: string): void };
+      }).observer;
+      observer.setTuiObservedState(session.id, "working", "thinking");
+      expect(
+        await domain.invoke({ namespace: "observer", method: "list", args: [] }),
+      ).toEqual([
+        expect.objectContaining({ id: session.id, state: "working" }),
+      ]);
+
+      runtime.emit("output", {
+        terminalId: "claude-terminal",
+        sessionId: session.id,
+        seq: 1,
+        data: "\u001b[2K\r❯ ",
+      });
+
+      expect(
+        await domain.invoke({ namespace: "observer", method: "list", args: [] }),
+      ).toEqual([
+        expect.objectContaining({ id: session.id, state: "idle" }),
+      ]);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("owns observer snapshots, events, and worker operations in the server domain", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-observer-"));
     const runtime = {

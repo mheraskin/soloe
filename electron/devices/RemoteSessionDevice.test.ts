@@ -135,6 +135,51 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('uploads clipboard images through the owning remote Device file service', async () => {
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') return jsonResponse(descriptor(FIRST_EPOCH));
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+          args: unknown[];
+        };
+        calls.push(request);
+        return jsonResponse({
+          ok: true,
+          value: { paths: [], insertedText: '\x16' }
+        });
+      },
+      socketFactory: () => new FakeSocket()
+    });
+    const request = {
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      images: [{ mimeType: 'image/png', dataBase64: 'cG5n' }],
+      control: {
+        sessionId: 'session-1',
+        ownerDeviceId: DEVICE_ID,
+        controllerDeviceId: 'controller-device',
+        leaseId: 'lease-1'
+      }
+    };
+
+    await expect(client.pasteImagesIntoTerminal(request)).resolves.toEqual({
+      paths: [],
+      insertedText: '\x16'
+    });
+    expect(calls).toEqual([expect.objectContaining({
+      namespace: 'files',
+      method: 'pasteImagesIntoTerminal',
+      args: [request]
+    })]);
+    client.dispose();
+  });
+
   it('asks the owning remote Device to expose a localhost port through Tailscale', async () => {
     const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
     const client = new RemoteSessionDevice({

@@ -49,6 +49,7 @@ import type {
   GitRemoteOpResult
 } from './git.js';
 import type {
+  DeviceImagePasteRequest,
   FileOpenRequest,
   FileReadRequest,
   FileReadResult,
@@ -188,6 +189,7 @@ export const IpcChannels = {
     ensureDeviceTailscalePort: 'sessions:ensure-device-tailscale-port',
     deviceTerminalDemand: 'sessions:device-terminal-demand',
     deviceTerminalInput: 'sessions:device-terminal-input',
+    deviceTerminalPasteImages: 'sessions:device-terminal-paste-images',
     deviceTerminalInputLease: 'sessions:device-terminal-input-lease',
     deviceTerminalCurrentInputLease: 'sessions:device-terminal-current-input-lease',
     deviceTerminalReleaseInputLease: 'sessions:device-terminal-release-input-lease',
@@ -456,6 +458,9 @@ export interface SessionsApi {
   deviceTerminalInput?(
     request: { ref: TerminalRef; data: string; control: TerminalControlProof }
   ): Promise<IpcResult<true>>;
+  deviceTerminalPasteImages?(
+    request: DeviceImagePasteRequest
+  ): Promise<IpcResult<ImagePasteResult>>;
   deviceTerminalInputLease?(
     request: { ref: TerminalRef; takeover?: boolean }
   ): Promise<IpcResult<TerminalInputLease>>;

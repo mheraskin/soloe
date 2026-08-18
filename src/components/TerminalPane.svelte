@@ -28,16 +28,14 @@
   import { Keymap, shiftNumberIndexFromEvent, tabIndexFromEvent } from '../lib/keymap';
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import {
-    AGENT_IMAGE_PASTE_SEQUENCE,
     ctrlSlashSequence,
     isClipboardPasteShortcut,
     SHIFT_ENTER_SEQUENCE,
-    shouldPasteImageViaSavedPath,
     shouldSendShiftEnterSequence
   } from '../lib/terminal-input';
   import { deferTerminalDispose, TerminalFitController } from '../lib/terminal-fit';
   import { usesMacosOverlayScrollbars } from '../lib/platform-ui';
-  import type { ClipboardImagePayload } from '@shared/types/files.js';
+  import { readClipboardImages } from '../lib/clipboard-images';
   import { terminalControl } from '../stores/terminal-control.svelte';
   import { terminalFontFamily, terminalThemeFor } from '../lib/terminal-theme';
   import { appearanceTheme } from '../stores/appearance-theme.svelte';
@@ -278,34 +276,6 @@
     search?.findNext(findQuery);
   }
 
-  async function clipboardImages(): Promise<ClipboardImagePayload[]> {
-    if (!navigator.clipboard?.read) return [];
-    const items = await navigator.clipboard.read();
-    const images: ClipboardImagePayload[] = [];
-    for (const item of items) {
-      const imageType = item.types.find((type) => type.startsWith('image/'));
-      if (!imageType) continue;
-      const blob = await item.getType(imageType);
-      images.push({
-        mimeType: imageType,
-        dataBase64: await blobToBase64(blob)
-      });
-    }
-    return images;
-  }
-
-  function blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(reader.error ?? new Error('Failed to read clipboard image'));
-      reader.onload = () => {
-        const result = typeof reader.result === 'string' ? reader.result : '';
-        resolve(result.replace(/^data:[^,]*,/u, ''));
-      };
-      reader.readAsDataURL(blob);
-    });
-  }
-
   function clearChip(): void {
     chipText = '';
     chipAnchor = null;
@@ -374,18 +344,14 @@
     if (!ownsInput) return;
     const session = sessions.sessions.find((item) => item.id === sessionId);
     if (session && effectiveAgentProvider(session)) {
-      const images = await clipboardImages().catch(() => []);
+      const images = await readClipboardImages().catch(() => []);
       if (images.length > 0) {
-        if (shouldPasteImageViaSavedPath(session)) {
-          await ipc.files.pasteImagesIntoTerminal({
-            terminalId,
-            sessionId,
-            images,
-            control: terminalControlProof(inputLease!)
-          });
-          return;
-        }
-        sendTerminalInput(AGENT_IMAGE_PASTE_SEQUENCE);
+        await ipc.files.pasteImagesIntoTerminal({
+          terminalId,
+          sessionId,
+          images,
+          control: terminalControlProof(inputLease!)
+        });
         return;
       }
     }
