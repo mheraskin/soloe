@@ -329,7 +329,10 @@
 
   .mobile-workspace-surface {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: var(--mobile-workspace-dock-height);
+    left: 0;
     min-width: 0;
     overflow: hidden;
   }
@@ -598,6 +601,10 @@
 
   html[data-mobile-keyboard-open] .mobile-workspace-page {
     padding-bottom: 0;
+  }
+
+  html[data-mobile-keyboard-open] .mobile-workspace-surface {
+    bottom: 0;
   }
 
   html[data-mobile-keyboard-open] .mobile-notes-surface textarea {
