@@ -48,4 +48,11 @@ describe('TerminalPane layout', () => {
     expect(snapshotAt).toBeGreaterThan(initializeAt);
     expect(openAt).toBeLessThan(snapshotAt);
   });
+
+  it('refits the local xterm after the mobile keyboard changes the visible viewport', () => {
+    expect(source).not.toContain('if (mobileKeyboardOpen()) return');
+    expect(source).toMatch(
+      /if \(detail\?\.keyboardOpen\) \{[^}]*scheduleFit\(true\)/s
+    );
+  });
 });

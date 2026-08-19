@@ -856,14 +856,10 @@
       host === currentHost &&
       currentHost.isConnected;
     let scrollAfterFit = false;
-    const mobileKeyboardOpen = () =>
-      compactViewport
-      && document.documentElement.hasAttribute('data-mobile-keyboard-open');
     const scheduleFit = (
       scrollToBottom = false,
       measurement: { width: number; height: number } = currentHost.getBoundingClientRect()
     ) => {
-      if (mobileKeyboardOpen()) return;
       scrollAfterFit ||= scrollToBottom;
       terminalFit.scheduleMeasuredFit(
         currentTerm,
@@ -888,7 +884,7 @@
     };
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (!entry || !visible || term !== currentTerm || mobileKeyboardOpen()) return;
+      if (!entry || !visible || term !== currentTerm) return;
       const { width, height } = entry.contentRect;
       scheduleFit(false, { width, height });
     });
@@ -898,7 +894,9 @@
         keyboardClosed?: boolean;
       }>).detail;
       if (detail?.keyboardOpen) {
-        currentTerm.scrollToBottom();
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => scheduleFit(true));
+        });
         return;
       }
       if (detail?.keyboardClosed) {

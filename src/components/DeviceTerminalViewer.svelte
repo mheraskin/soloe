@@ -78,11 +78,6 @@
       && window.matchMedia('(pointer: coarse)').matches;
   }
 
-  function mobileKeyboardOpen(): boolean {
-    return window.matchMedia('(max-width: 767px)').matches
-      && document.documentElement.hasAttribute('data-mobile-keyboard-open');
-  }
-
   function isFreshAgentStartup(view: MultiDeviceSessionView, now = Date.now()): boolean {
     if (!effectiveAgentProvider(view.session)) return false;
     const startedAt = Date.parse(view.runtime?.startedAt ?? '');
@@ -426,7 +421,6 @@
         !active
         || !host?.isConnected
         || !deviceSessions.ownsTerminalInput(ref)
-        || mobileKeyboardOpen()
       ) return;
       const rect = host.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) return;
@@ -450,7 +444,6 @@
       const entry = entries[0];
       if (
         !entry
-        || mobileKeyboardOpen()
         || entry.contentRect.width < 4
         || entry.contentRect.height < 4
       ) return;
@@ -462,7 +455,10 @@
         keyboardClosed?: boolean;
       }>).detail;
       if (detail?.keyboardOpen) {
-        terminal.scrollToBottom();
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          void resize(true);
+          terminal.scrollToBottom();
+        }));
         return;
       }
       if (detail?.keyboardClosed) {
