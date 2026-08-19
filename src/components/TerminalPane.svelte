@@ -45,7 +45,6 @@
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
   import { loadTerminalScreenSnapshot } from '../lib/terminal-screen-snapshot';
-  import { attachTerminalTouchScroll } from '../lib/terminal-touch-scroll';
   import TerminalTranscript from './TerminalTranscript.svelte';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
@@ -523,19 +522,8 @@
     // Mount before any network work so mobile browsers always get a real xterm
     // surface, even if a suspended snapshot request never settles.
     t.open(host);
-    const detachTouchScroll = attachTerminalTouchScroll({
-      target: host,
-      scrollLines: (lines) => t.scrollLines(lines),
-      rowHeight: () => {
-        const height = host?.getBoundingClientRect().height ?? 0;
-        return t.rows > 0 && height > 0 ? height / t.rows : 1;
-      }
-    });
     let disposed = false;
-    let disposeInitialized = () => {
-      detachTouchScroll();
-      deferTerminalDispose(t);
-    };
+    let disposeInitialized = () => deferTerminalDispose(t);
     void (async () => {
       let initialSeq = 0;
       try {
@@ -711,7 +699,6 @@
     host?.addEventListener('mousedown', onHostMouseDown);
 
     disposeInitialized = () => {
-      detachTouchScroll();
       detachWindowFocus();
       host?.removeEventListener('mouseup', onHostMouseUp);
       host?.removeEventListener('mousedown', onHostMouseDown);
@@ -869,10 +856,14 @@
       host === currentHost &&
       currentHost.isConnected;
     let scrollAfterFit = false;
+    const mobileKeyboardOpen = () =>
+      compactViewport
+      && document.documentElement.hasAttribute('data-mobile-keyboard-open');
     const scheduleFit = (
       scrollToBottom = false,
       measurement: { width: number; height: number } = currentHost.getBoundingClientRect()
     ) => {
+      if (mobileKeyboardOpen()) return;
       scrollAfterFit ||= scrollToBottom;
       terminalFit.scheduleMeasuredFit(
         currentTerm,
@@ -897,7 +888,7 @@
     };
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (!entry || !visible || term !== currentTerm) return;
+      if (!entry || !visible || term !== currentTerm || mobileKeyboardOpen()) return;
       const { width, height } = entry.contentRect;
       scheduleFit(false, { width, height });
     });
@@ -907,9 +898,7 @@
         keyboardClosed?: boolean;
       }>).detail;
       if (detail?.keyboardOpen) {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => scheduleFit(true));
-        });
+        currentTerm.scrollToBottom();
         return;
       }
       if (detail?.keyboardClosed) {

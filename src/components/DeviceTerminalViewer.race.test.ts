@@ -196,7 +196,6 @@ describe('DeviceTerminalViewer output sequencing', () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.innerHTML = '';
-    document.documentElement.removeAttribute('data-mobile-keyboard-open');
     Reflect.deleteProperty(navigator, 'clipboard');
   });
 
@@ -584,48 +583,6 @@ describe('DeviceTerminalViewer output sequencing', () => {
     }));
 
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
-    expect(terminalMocks.focus).not.toHaveBeenCalled();
-  });
-
-  it('refits a controlled remote terminal when the mobile keyboard covers its old rows', async () => {
-    terminalMocks.ownsInput.mockReturnValue(true);
-    terminalMocks.claimInput.mockResolvedValue(true);
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width') || query.includes('pointer: coarse'),
-      media: query,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn()
-    }));
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: 390,
-      bottom: 430,
-      width: 390,
-      height: 430,
-      toJSON: () => ({})
-    });
-    const target = document.createElement('div');
-    document.body.append(target);
-    component = mount(DeviceTerminalViewer, {
-      target,
-      props: { projection: remoteProjection(), onClose: vi.fn() }
-    });
-    flushSync();
-    await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
-    terminalMocks.fit.mockClear();
-    terminalMocks.resize.mockClear();
-    terminalMocks.focus.mockClear();
-    document.documentElement.setAttribute('data-mobile-keyboard-open', '');
-
-    window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
-      detail: { keyboardOpen: true, keyboardClosed: false }
-    }));
-
-    await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
-    await vi.waitFor(() => expect(terminalMocks.resize).toHaveBeenCalled());
     expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
 
