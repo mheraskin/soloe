@@ -517,6 +517,30 @@ describe('RemoteSessionDevice', () => {
     sockets[0]?.establish();
     client.dispose();
   });
+
+  it('stays ready when the established event stream publishes transport status', async () => {
+    const socket = new FakeSocket();
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async () => jsonResponse(descriptor(FIRST_EPOCH)),
+      socketFactory: () => socket
+    });
+
+    await expect(client.connect()).resolves.toMatchObject({ state: 'ready' });
+
+    socket.message({
+      event: 'location',
+      deviceId: DEVICE_ID,
+      serverEpoch: FIRST_EPOCH,
+      sequence: 1,
+      observedAt: new Date().toISOString(),
+      payload: { terminalId: 'terminal-1', cwd: '/workspace' }
+    });
+
+    expect(client.status.state).toBe('ready');
+    client.dispose();
+  });
 });
 
 class CloseBeforeEstablishedSocket {
@@ -547,6 +571,11 @@ class FakeSocket {
   }
 
   close(): void {}
+
+  message(value: unknown): void {
+    const event = { data: JSON.stringify(value) } as MessageEvent;
+    for (const listener of this.listeners.get('message') ?? []) listener(event);
+  }
 
   disconnect(): void {
     for (const listener of this.listeners.get('close') ?? []) listener({} as Event);

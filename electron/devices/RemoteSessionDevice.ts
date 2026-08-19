@@ -554,7 +554,9 @@ export class RemoteSessionDevice implements SessionDevice {
       : status.state === 'connecting'
         ? 'connecting'
         : status.state === 'connected'
-          ? status.compatibility?.status === 'compatible' ? 'connecting' : 'incompatible'
+          ? status.compatibility?.status === 'compatible'
+            ? this.currentStatus.state === 'ready' ? 'ready' : 'connecting'
+            : 'incompatible'
           : status.state === 'idle'
             ? 'idle'
             : 'offline';
