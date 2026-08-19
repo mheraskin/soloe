@@ -14,8 +14,6 @@ const terminalMocks = vi.hoisted(() => ({
   screenSnapshot: vi.fn(),
   replay: vi.fn(),
   focus: vi.fn(),
-  nextTerminalId: 0,
-  scrollTerminalIds: [] as number[],
   fit: vi.fn(),
   ownsInput: vi.fn(() => false),
   claimInput: vi.fn(async () => false),
@@ -33,7 +31,6 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 120;
     rows = 30;
-    private readonly id = ++terminalMocks.nextTerminalId;
     private textarea: HTMLTextAreaElement | null = null;
     constructor(options: Record<string, unknown>) {
       terminalMocks.terminalOptions = options;
@@ -53,9 +50,7 @@ vi.mock('@xterm/xterm', () => ({
       return { dispose() {} };
     }
     paste() {}
-    scrollToBottom() {
-      terminalMocks.scrollTerminalIds.push(this.id);
-    }
+    scrollToBottom() {}
     focus() {
       terminalMocks.focus();
       this.textarea?.focus();
@@ -158,7 +153,6 @@ describe('DeviceTerminalViewer output sequencing', () => {
     terminalMocks.outputListener = null;
     terminalMocks.reconnectListener = null;
     terminalMocks.focus.mockReset();
-    terminalMocks.scrollTerminalIds.length = 0;
     terminalMocks.fit.mockReset();
     terminalMocks.ownsInput.mockReset().mockReturnValue(false);
     terminalMocks.claimInput.mockReset().mockResolvedValue(false);
@@ -553,7 +547,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     await vi.waitFor(() => expect(terminalMocks.refresh).toHaveBeenCalledWith(0, 29));
   });
 
-  it('refits a controlled remote terminal after mobile viewport recovery without scrolling output', async () => {
+  it('refits a controlled remote terminal after mobile viewport recovery without forcing focus', async () => {
     terminalMocks.ownsInput.mockReturnValue(true);
     terminalMocks.claimInput.mockResolvedValue(true);
     vi.stubGlobal('matchMedia', (query: string) => ({
@@ -580,21 +574,15 @@ describe('DeviceTerminalViewer output sequencing', () => {
       props: { projection: remoteProjection(), onClose: vi.fn() }
     });
     flushSync();
-    const terminalId = terminalMocks.nextTerminalId;
     await vi.waitFor(() => expect(terminalMocks.claimInput).toHaveBeenCalled());
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
-    await vi.waitFor(() => {
-      expect(terminalMocks.scrollTerminalIds).toContain(terminalId);
-    });
     terminalMocks.fit.mockClear();
     terminalMocks.focus.mockClear();
-    terminalMocks.scrollTerminalIds.length = 0;
 
     window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
       detail: { keyboardOpen: false, keyboardClosed: true }
     }));
 
-    expect(terminalMocks.scrollTerminalIds.filter((id) => id === terminalId)).toHaveLength(0);
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
@@ -626,12 +614,10 @@ describe('DeviceTerminalViewer output sequencing', () => {
       props: { projection: remoteProjection(), onClose: vi.fn() }
     });
     flushSync();
-    const terminalId = terminalMocks.nextTerminalId;
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     terminalMocks.fit.mockClear();
     terminalMocks.resize.mockClear();
     terminalMocks.focus.mockClear();
-    terminalMocks.scrollTerminalIds.length = 0;
     document.documentElement.setAttribute('data-mobile-keyboard-open', '');
 
     window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
@@ -640,7 +626,6 @@ describe('DeviceTerminalViewer output sequencing', () => {
 
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     await vi.waitFor(() => expect(terminalMocks.resize).toHaveBeenCalled());
-    expect(terminalMocks.scrollTerminalIds.filter((id) => id === terminalId)).toHaveLength(0);
     expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
 

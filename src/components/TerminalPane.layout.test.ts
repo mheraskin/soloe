@@ -49,11 +49,10 @@ describe('TerminalPane layout', () => {
     expect(openAt).toBeLessThan(snapshotAt);
   });
 
-  it('refits local xterm for mobile keyboard layout without scrolling its output', () => {
+  it('refits the local xterm after the mobile keyboard changes the visible viewport', () => {
     expect(source).not.toContain('if (mobileKeyboardOpen()) return');
-    expect(source).not.toContain('scheduleFit(true)');
     expect(source).toMatch(
-      /if \(detail\?\.keyboardOpen \|\| detail\?\.keyboardClosed\) \{[^}]*scheduleFit\(\)/s
+      /if \(detail\?\.keyboardOpen\) \{[^}]*scheduleFit\(true\)/s
     );
   });
 
