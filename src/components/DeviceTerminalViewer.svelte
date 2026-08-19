@@ -26,6 +26,7 @@
   import { terminalLinkHandlers } from '../lib/terminal-links';
   import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
   import { TerminalFitController } from '../lib/terminal-fit';
+  import { attachTerminalTouchScroll } from '../lib/terminal-touch-scroll';
   import {
     TerminalTranscriptFollowController,
     TerminalTranscriptProjector,
@@ -167,6 +168,14 @@
     // Mount before restoring over the network. A phone may suspend that request,
     // but the terminal surface and the replay fallback must still initialize.
     terminal.open(host);
+    const detachTouchScroll = attachTerminalTouchScroll({
+      target: host,
+      scrollLines: (lines) => terminal.scrollLines(lines),
+      rowHeight: () => {
+        const height = host?.getBoundingClientRect().height ?? 0;
+        return terminal.rows > 0 && height > 0 ? height / terminal.rows : 1;
+      }
+    });
     let disposed = false;
     let active = true;
     let stabilizingStartup = isFreshAgentStartup(projection);
@@ -219,6 +228,7 @@
     const attachment = deviceSessions.acquireTerminalOutput(ref, (event) => routeOutput(event));
     let disposeInitialized = () => {
       active = false;
+      detachTouchScroll();
       attachment.dispose();
       terminal.dispose();
     };
@@ -485,6 +495,7 @@
 
     disposeInitialized = () => {
       active = false;
+      detachTouchScroll();
       rendererLoadToken += 1;
       renderer?.dispose();
       renderer = null;

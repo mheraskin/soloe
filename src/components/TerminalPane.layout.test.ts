@@ -55,4 +55,9 @@ describe('TerminalPane layout', () => {
       /if \(detail\?\.keyboardOpen\) \{[^}]*scheduleFit\(true\)/s
     );
   });
+
+  it('enables momentum swipe scrolling for local and remote xterm sessions', () => {
+    expect(source).toContain('attachTerminalTouchScroll({');
+    expect(deviceViewerSource).toContain('attachTerminalTouchScroll({');
+  });
 });
