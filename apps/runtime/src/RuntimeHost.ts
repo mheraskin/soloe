@@ -8,8 +8,7 @@ import type {
   RuntimeTerminalState
 } from './RuntimeProcess.js';
 import { ProcessTreeUsageSampler } from "./ProcessTreeUsageSampler.js";
-import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
-import { TerminalScreenState } from './TerminalScreenState.js';
+import { TerminalHistoryBuffer } from './TerminalHistoryBuffer.js';
 import {
   TerminalInputLeaseError,
   TerminalInputLeaseManager
@@ -42,8 +41,7 @@ export class RuntimeHost {
   private readonly terminals = new Map<string, RunningTerminal>();
   private readonly terminalBySession = new Map<string, string>();
   private readonly outputSequence = new Map<string, number>();
-  private readonly replayBuffer = new TerminalReplayBuffer();
-  private readonly screenState = new TerminalScreenState();
+  private readonly historyBuffer = new TerminalHistoryBuffer();
   private readonly usageSampler: Pick<ProcessTreeUsageSampler, "sample">;
   private readonly inputLeases: TerminalInputLeaseManager;
 
@@ -80,8 +78,7 @@ export class RuntimeHost {
     this.terminals.clear();
     this.terminalBySession.clear();
     this.outputSequence.clear();
-    this.replayBuffer.clear();
-    this.screenState.clear();
+    this.historyBuffer.clear();
     this.inputLeases.clear();
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
@@ -141,21 +138,17 @@ export class RuntimeHost {
         return [...this.terminals.values()].map(({ state }) => state);
       case "usage":
         return this.usageSampler.sample();
-      case 'replay': {
-        const input = params as { terminalId: string; afterSeq?: number };
-        return this.replayBuffer.snapshot(input.terminalId, input.afterSeq);
-      }
-      case 'screenSnapshot': {
+      case 'historySnapshot': {
         const input = params as { terminalId: string };
         this.requireTerminal(input.terminalId);
-        return this.screenState.snapshot(input.terminalId);
+        return this.historyBuffer.snapshot(input.terminalId);
       }
-      case 'setReplayUnbounded': {
+      case 'setHistoryUnbounded': {
         const input = params as { unbounded?: unknown };
         if (typeof input.unbounded !== 'boolean') {
-          throw new Error('Invalid replay retention setting');
+          throw new Error('Invalid terminal history retention setting');
         }
-        this.replayBuffer.setUnbounded(input.unbounded);
+        this.historyBuffer.setUnbounded(input.unbounded);
         return true;
       }
       case 'acquireInputLease': {
@@ -234,7 +227,7 @@ export class RuntimeHost {
         terminal.process.resize(input.cols, input.rows);
         terminal.state.cols = input.cols;
         terminal.state.rows = input.rows;
-        await this.screenState.resize(input.terminalId, input.cols, input.rows);
+        this.historyBuffer.resize(input.terminalId, input.cols, input.rows);
         return lease;
       }
       case 'stop': {
@@ -327,7 +320,7 @@ export class RuntimeHost {
     this.terminals.set(terminalId, terminal);
     this.terminalBySession.set(input.sessionId, terminalId);
     this.outputSequence.set(terminalId, 0);
-    this.screenState.register({
+    this.historyBuffer.register({
       terminalId,
       sessionId: input.sessionId,
       cols: input.cols,
@@ -351,15 +344,13 @@ export class RuntimeHost {
         data,
         seq
       };
-      this.replayBuffer.append(event);
-      void this.screenState.write(terminalId, seq, data);
+      this.historyBuffer.append(event);
       this.broadcast('output', event);
     });
     process.once('exit', (event: { exitCode?: number | null; signal?: number | null } = {}) => {
       this.terminals.delete(terminalId);
       this.terminalBySession.delete(input.sessionId);
       this.outputSequence.delete(terminalId);
-      this.screenState.remove(terminalId);
       this.inputLeases.clearTerminal(terminalId);
       this.broadcast('exit', {
         terminalId,

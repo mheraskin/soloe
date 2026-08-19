@@ -29,7 +29,7 @@ describe('LocalSessionDevice', () => {
         currentInputLease: vi.fn(async () => lease),
         releaseInputLease,
         parkInputLease: vi.fn(async () => true),
-        screenSnapshot: vi.fn(),
+        historySnapshot: vi.fn(),
         onInputLease: vi.fn(() => () => undefined),
         writeInput: vi.fn(),
         resizeTerminal: vi.fn()

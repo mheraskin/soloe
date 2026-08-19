@@ -47,24 +47,17 @@ export interface RuntimeLocationEvent {
   cwd: string;
 }
 
-export interface RuntimeReplaySnapshot {
+export interface RuntimeHistorySnapshot {
+  kind: 'ghostty-vt-history-v1';
   terminalId: string;
   sessionId: string;
+  cols: number;
+  rows: number;
   data: string;
   fromSeq: number;
   toSeq: number;
   truncated: boolean;
   byteLength: number;
-}
-
-export interface RuntimeTerminalScreenSnapshot {
-  kind: 'xterm-vt-state-v1';
-  terminalId: string;
-  sessionId: string;
-  cols: number;
-  rows: number;
-  toSeq: number;
-  data: string;
 }
 
 export type RuntimeUsageAvailability =

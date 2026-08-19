@@ -6,7 +6,6 @@ import type {
 } from '@shared/types/devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
-  DeviceTerminalReplay,
   MultiDeviceSessionCreationPlan,
   MultiDeviceSessionState,
   MultiDeviceSessionView
@@ -672,12 +671,8 @@ export class DeviceSessionsStore {
     ).then(() => undefined);
   }
 
-  terminalReplay(terminalRef: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {
-    return ipc.sessions.deviceTerminalReplay(terminalRef, afterSeq);
-  }
-
-  terminalScreenSnapshot(terminalRef: TerminalRef) {
-    return ipc.sessions.deviceTerminalScreenSnapshot(terminalRef);
+  terminalHistory(terminalRef: TerminalRef) {
+    return ipc.sessions.deviceTerminalHistory(terminalRef);
   }
 
   terminalStop(terminalRef: TerminalRef): Promise<void> {

@@ -22,26 +22,26 @@ import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 describe("SoloeDomain", () => {
-  it("applies the configured Terminal replay retention to Runtime", async () => {
+  it("applies the configured Terminal history retention to Runtime", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-replay-retention-"));
-    const setReplayUnbounded = vi.fn(async () => true);
+    const setHistoryUnbounded = vi.fn(async () => true);
     const domain = new SoloeDomain({
       dataDirectory: directory,
       runtime: {
         start: vi.fn(),
         listRunning: vi.fn(async () => []),
-        replay: vi.fn(),
+        historySnapshot: vi.fn(),
         write: vi.fn(),
         resize: vi.fn(),
         stop: vi.fn(),
-        setReplayUnbounded,
+        setHistoryUnbounded,
       },
     });
 
     try {
       await domain.init();
-      expect(setReplayUnbounded).toHaveBeenLastCalledWith(true);
-      setReplayUnbounded.mockClear();
+      expect(setHistoryUnbounded).toHaveBeenLastCalledWith(true);
+      setHistoryUnbounded.mockClear();
 
       await domain.invoke({
         namespace: "settings",
@@ -49,7 +49,7 @@ describe("SoloeDomain", () => {
         args: [{ terminal: { keepFullHistory: false } }],
       });
 
-      expect(setReplayUnbounded).toHaveBeenCalledWith(false);
+      expect(setHistoryUnbounded).toHaveBeenCalledWith(false);
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });
@@ -72,7 +72,7 @@ describe("SoloeDomain", () => {
       runtime: {
         start: vi.fn(),
         listRunning: vi.fn(async () => []),
-        replay: vi.fn(),
+        historySnapshot: vi.fn(),
         write: vi.fn(),
         resize: vi.fn(),
         stop: vi.fn(),
@@ -117,15 +117,17 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
-      screenSnapshot: vi.fn(async (terminalId: string) => ({
-        kind: "xterm-vt-state-v1" as const,
+      historySnapshot: vi.fn(async (terminalId: string) => ({
+        kind: "ghostty-vt-history-v1" as const,
         terminalId,
         sessionId: "session-1",
         cols: 100,
         rows: 30,
+        fromSeq: 1,
         toSeq: 7,
         data: "restored",
+        truncated: false,
+        byteLength: 8,
       })),
       acquireInputLease: vi.fn(async (
         terminalId: string,
@@ -238,7 +240,7 @@ describe("SoloeDomain", () => {
 
       await expect(domain.invoke({
         namespace: "terminal",
-        method: "screenSnapshot",
+        method: "historySnapshot",
         args: ["terminal-1"],
         clientId: "spectator-client",
       })).resolves.toMatchObject({ toSeq: 7, data: "restored" });
@@ -264,7 +266,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -309,7 +311,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -348,7 +350,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -438,7 +440,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -506,7 +508,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -554,7 +556,7 @@ describe("SoloeDomain", () => {
       runtime: {
         start: vi.fn(),
         listRunning: vi.fn(async () => []),
-        replay: vi.fn(),
+        historySnapshot: vi.fn(),
         write: vi.fn(),
         resize: vi.fn(),
         stop: vi.fn(),
@@ -663,7 +665,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -772,7 +774,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -824,7 +826,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -893,7 +895,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -984,7 +986,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1050,7 +1052,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1166,7 +1168,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1250,7 +1252,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1369,7 +1371,7 @@ describe("SoloeDomain", () => {
         rows: input.rows,
       })),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1444,7 +1446,7 @@ describe("SoloeDomain", () => {
         rows: input.rows,
       })),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1534,7 +1536,7 @@ describe("SoloeDomain", () => {
         rows: input.rows,
       })),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1591,7 +1593,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1722,7 +1724,7 @@ describe("SoloeDomain", () => {
           rows: 30,
         },
       ]),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -1903,7 +1905,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -2334,7 +2336,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),
@@ -2535,7 +2537,7 @@ describe("SoloeDomain", () => {
     const runtime = {
       start: vi.fn(),
       listRunning: vi.fn(async () => []),
-      replay: vi.fn(),
+      historySnapshot: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       stop: vi.fn(),

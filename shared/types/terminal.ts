@@ -34,25 +34,18 @@ export interface TerminalOutputEvent {
   seq: number;
 }
 
-export interface TerminalReplaySnapshot {
+/** Renderer-neutral VT history reconstructed by Ghostty in each web surface. */
+export interface TerminalHistorySnapshot {
+  kind: 'ghostty-vt-history-v1';
   terminalId: TerminalId;
   sessionId: SessionId;
+  cols: number;
+  rows: number;
   data: string;
   fromSeq: number;
   toSeq: number;
   truncated: boolean;
   byteLength: number;
-}
-
-/** A compact, sequence-qualified xterm state produced by the PTY-owning Runtime. */
-export interface TerminalScreenSnapshot {
-  kind: 'xterm-vt-state-v1';
-  terminalId: TerminalId;
-  sessionId: SessionId;
-  cols: number;
-  rows: number;
-  toSeq: number;
-  data: string;
 }
 
 export interface TerminalExitEvent {

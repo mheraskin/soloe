@@ -7,13 +7,13 @@ import { describe, expect, it } from 'vitest';
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 describe('Environment Runtime raw Node startup', () => {
-  it('loads the headless terminal module through the production ESM loader', () => {
+  it('loads the terminal history module through the production ESM loader', () => {
     expect(() => execFileSync(process.execPath, [
       '--import',
       'tsx',
       '--input-type=module',
       '--eval',
-      `await import(${JSON.stringify(path.join(runtimeDirectory, 'TerminalScreenState.ts'))})`
+      `await import(${JSON.stringify(path.join(runtimeDirectory, 'TerminalHistoryBuffer.ts'))})`
     ], {
       cwd: runtimeDirectory,
       encoding: 'utf8',

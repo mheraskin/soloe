@@ -82,7 +82,7 @@ import type {
   TerminalControlProof,
   TerminalControllerIdentity,
   TerminalOutputEvent,
-  TerminalScreenSnapshot,
+  TerminalHistorySnapshot,
   TerminalStartOptions,
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
@@ -125,7 +125,10 @@ import type {
   VaultSaveRequest,
   VaultUpdateRequest
 } from '@shared/types/vault.js';
-import { TerminalOutputRouter } from './terminal-output-router';
+import {
+  TerminalSessionRegistry,
+  type TerminalSessionState
+} from './terminal-session';
 
 function unwrap<T>(r: IpcResult<T>): T {
   if (!r.ok) {
@@ -154,14 +157,14 @@ const terminalReconnect = (
     onReconnect?: (listener: () => void) => () => void;
   }) | undefined
 )?.onReconnect;
-const terminalOutputRouter = new TerminalOutputRouter(
-  (listener) => c.terminal.onOutput(listener),
-  async (terminalId, afterSeq) => unwrap(await c.terminal.replay(terminalId, afterSeq)),
-  async (terminalId, active) => {
+const terminalSessions = new TerminalSessionRegistry({
+  subscribeOutput: (listener) => c.terminal.onOutput(listener),
+  historySnapshot: async (terminalId) => unwrap(await c.terminal.historySnapshot(terminalId)),
+  setOutputDemand: async (terminalId, active) => {
     unwrap(await c.terminal.setOutputDemand({ terminalId, active }));
   },
-  terminalReconnect ? (listener) => terminalReconnect(listener) : undefined
-);
+  onReconnect: terminalReconnect ? (listener) => terminalReconnect(listener) : undefined
+});
 
 export const backend = {
   connection: {
@@ -319,17 +322,11 @@ export const backend = {
         toIpcPayload({ ref, cols, rows, control })
       ));
     },
-    deviceTerminalReplay: async (ref: TerminalRef, afterSeq = 0) => {
-      if (!c.sessions.deviceTerminalReplay) {
-        throw new Error('Multi-Device terminal replay is unavailable.');
+    deviceTerminalHistory: async (ref: TerminalRef) => {
+      if (!c.sessions.deviceTerminalHistory) {
+        throw new Error('Multi-Device terminal history is unavailable.');
       }
-      return unwrap(await c.sessions.deviceTerminalReplay(toIpcPayload(ref), afterSeq));
-    },
-    deviceTerminalScreenSnapshot: async (ref: TerminalRef) => {
-      if (!c.sessions.deviceTerminalScreenSnapshot) {
-        throw new Error('Multi-Device terminal screen snapshots are unavailable.');
-      }
-      return unwrap(await c.sessions.deviceTerminalScreenSnapshot(toIpcPayload(ref)));
+      return unwrap(await c.sessions.deviceTerminalHistory(toIpcPayload(ref)));
     },
     deviceTerminalStop: async (ref: TerminalRef) => {
       if (!c.sessions.deviceTerminalStop) {
@@ -377,17 +374,14 @@ export const backend = {
       control
     }))),
     listRunning: async () => unwrap(await c.terminal.listRunning()),
-    replay: async (terminalId: TerminalId, afterSeq = 0) =>
-      unwrap(await c.terminal.replay(terminalId, afterSeq)),
-    screenSnapshot: async (terminalId: TerminalId): Promise<TerminalScreenSnapshot | null> =>
-      unwrap(await c.terminal.screenSnapshot(terminalId)),
-    attachPresentation: (
+    historySnapshot: async (terminalId: TerminalId): Promise<TerminalHistorySnapshot | null> =>
+      unwrap(await c.terminal.historySnapshot(terminalId)),
+    attachSession: (
       terminalId: TerminalId,
       sessionId: SessionId,
-      sink: Parameters<TerminalOutputRouter['attach']>[2],
-      initiallyVisible: boolean,
-      initialSeq = 0
-    ) => terminalOutputRouter.attach(terminalId, sessionId, sink, initiallyVisible, initialSeq),
+      listener: (state: TerminalSessionState) => void,
+      initiallyVisible: boolean
+    ) => terminalSessions.connect(terminalId, sessionId, listener, initiallyVisible),
     onExit: (cb: (event: TerminalExitEvent) => void) => c.terminal.onExit(cb),
     onStatus: (cb: (event: TerminalStatusEvent) => void) => c.terminal.onStatus(cb),
     onLocation: (cb: (event: TerminalLocationEvent) => void) => c.terminal.onLocation(cb),

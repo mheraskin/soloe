@@ -138,6 +138,19 @@ async function main() {
       expectCustomWindowControls: process.platform !== 'darwin'
     })})`
   );
+  const remoteTerminalMarker = `soloe-ghostty-remote-${Date.now()}`;
+  await typeTerminalCommand(
+    remote.cdp,
+    nativeRunMode === 'windows'
+      ? `Write-Output '${remoteTerminalMarker}'\n`
+      : `printf '${remoteTerminalMarker}\\n'\n`
+  );
+  await waitForTerminalMarker(
+    remote.cdp,
+    workflow.terminal.terminalId,
+    remoteTerminalMarker
+  );
+  remoteWorkflow.ghosttyTerminalInputObserved = true;
   await second.cdp.evaluate(`(() => {
     window.__soloeNotesEvents = [];
     window.soloe.notes.onChange((event) => window.__soloeNotesEvents.push(event));
@@ -210,17 +223,16 @@ async function main() {
     runningAfterClose.some((entry) => entry.terminalId === workflow.terminal.terminalId),
     'closing the browser stopped a runtime-owned terminal'
   );
-  const replay = await second.cdp.evaluate(`(async () => {
-    const result = await window.soloe.terminal.replay(
-      ${JSON.stringify(workflow.terminal.terminalId)},
-      0
+  const history = await second.cdp.evaluate(`(async () => {
+    const result = await window.soloe.terminal.historySnapshot(
+      ${JSON.stringify(workflow.terminal.terminalId)}
     );
     if (!result.ok) throw new Error(result.error);
     return result.value;
   })()`);
   assert(
-    replay?.data?.includes(workflow.terminal.marker),
-    'replacement browser could not replay terminal output'
+    history?.data?.includes(workflow.terminal.marker),
+    'replacement browser could not read terminal history'
   );
 
   const result = {
@@ -242,7 +254,7 @@ async function main() {
       reconnectObservedByAllClients: true,
       terminalSurvivedRemoteElectronClose: true,
       terminalSurvivedBrowserClose: true,
-      replayRecoveredByReplacementClient: true
+      historyRecoveredByReplacementClient: true
     }
   };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -377,8 +389,10 @@ async function runLiveSessionControlSmoke() {
 
 async function typeTerminalCommand(cdp, command) {
   await cdp.evaluate(`(() => {
-    const textarea = document.querySelector('.xterm-helper-textarea');
-    if (!textarea) throw new Error('Interactive xterm textarea is unavailable');
+    const textarea = document.querySelector(
+      '.terminal-surface[data-terminal-pane-role="full"] .t3-ghostty-input'
+    );
+    if (!textarea) throw new Error('Interactive Ghostty input is unavailable');
     textarea.focus();
     return true;
   })()`);
@@ -406,9 +420,8 @@ async function typeTerminalCommand(cdp, command) {
 
 async function waitForTerminalMarker(cdp, terminalId, marker) {
   await waitFor(async () => cdp.evaluate(`(async () => {
-    const result = await window.soloe.terminal.replay(
-      ${JSON.stringify(terminalId)},
-      0
+    const result = await window.soloe.terminal.historySnapshot(
+      ${JSON.stringify(terminalId)}
     );
     return Boolean(result.ok && result.value?.data?.includes(${JSON.stringify(marker)}));
   })()`), 10_000, `terminal marker ${marker}`);
@@ -443,7 +456,7 @@ async function prepareLiveSessionClient(input) {
       (button) => button.textContent?.trim() === 'Take Over'
     );
     if (terminalId && (input.expectReadOnly ? visible(takeover) : visible(
-      document.querySelector('.xterm-helper-textarea')
+      document.querySelector('.t3-ghostty-input')
     ))) break;
     await sleep(50);
   }
@@ -516,11 +529,10 @@ async function runExistingServerSmoke() {
     `${fixtureCommand}\n`
   ]);
   await waitFor(async () => {
-    const replay = await rpc(baseUrl, 'terminal', 'replay', [
-      bootstrapTerminal.terminalId,
-      0
+    const history = await rpc(baseUrl, 'terminal', 'historySnapshot', [
+      bootstrapTerminal.terminalId
     ]);
-    return replay.data.includes(readyMarker);
+    return history.data.includes(readyMarker);
   }, 20_000, 'WSL fixture repository');
   await configureOverviewAgent(baseUrl, overviewAgent);
 
@@ -641,17 +653,16 @@ async function runExistingServerSmoke() {
     runningAfterClose.some((entry) => entry.terminalId === workflow.terminal.terminalId),
     'closing WSL-backed clients stopped a runtime-owned terminal'
   );
-  const replay = await second.cdp.evaluate(`(async () => {
-    const result = await window.soloe.terminal.replay(
-      ${JSON.stringify(workflow.terminal.terminalId)},
-      0
+  const history = await second.cdp.evaluate(`(async () => {
+    const result = await window.soloe.terminal.historySnapshot(
+      ${JSON.stringify(workflow.terminal.terminalId)}
     );
     if (!result.ok) throw new Error(result.error);
     return result.value;
   })()`);
   assert(
-    replay?.data?.includes(workflow.terminal.marker),
-    'replacement WSL browser could not replay terminal output'
+    history?.data?.includes(workflow.terminal.marker),
+    'replacement WSL browser could not read terminal history'
   );
 
   process.stdout.write(`${JSON.stringify({
@@ -673,7 +684,7 @@ async function runExistingServerSmoke() {
       remoteElectronNotesChangeObserved: true,
       terminalSurvivedRemoteElectronClose: true,
       terminalSurvivedBrowserClose: true,
-      replayRecoveredByReplacementClient: true,
+      historyRecoveredByReplacementClient: true,
       reconnectObservedByAllClients: serverRestart.exercised
     },
     serverRestart
@@ -1251,7 +1262,7 @@ async function runMobileWorkspaceWorkflow(input) {
   try {
     await waitUntil(
       () => document.querySelector(
-        '.terminal-surface[data-terminal-pane-role="full"] .xterm-screen'
+        '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host canvas'
       ),
       15_000,
       'mobile terminal renderer'
@@ -1260,21 +1271,21 @@ async function runMobileWorkspaceWorkflow(input) {
     const surfaces = [...document.querySelectorAll('.terminal-surface')].map((surface) => ({
       role: surface.getAttribute('data-terminal-pane-role'),
       text: surface.textContent?.trim().slice(0, 160) ?? '',
-      xterm: Boolean(surface.querySelector('.xterm-screen'))
+      ghostty: Boolean(surface.querySelector('.ghostty-terminal-host canvas'))
     }));
     throw new Error(`${error.message}; surfaces=${JSON.stringify(surfaces)}`);
   }
   const terminalFitsViewport = () => {
     const terminalHost = document.querySelector(
-      '.terminal-surface[data-terminal-pane-role="full"] .xterm'
+      '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host'
     );
-    const terminalScreen = document.querySelector(
-      '.terminal-surface[data-terminal-pane-role="full"] .xterm-screen'
+    const terminalCanvas = document.querySelector(
+      '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host canvas'
     );
-    if (!terminalHost || !terminalScreen) return false;
+    if (!terminalHost || !terminalCanvas) return false;
     const terminalHostRect = terminalHost.getBoundingClientRect();
-    const terminalScreenRect = terminalScreen.getBoundingClientRect();
-    return terminalScreenRect.width <= terminalHostRect.width + 1
+    const terminalCanvasRect = terminalCanvas.getBoundingClientRect();
+    return terminalCanvasRect.width <= terminalHostRect.width + 1
       && terminalHostRect.right <= window.innerWidth + 1;
   };
   await waitUntil(
@@ -1284,34 +1295,35 @@ async function runMobileWorkspaceWorkflow(input) {
   );
 
   const root = document.documentElement;
-  const terminalShell = document.querySelector('.terminal-pane-shell');
-  const xtermViewport = document.querySelector(
-    '.terminal-surface[data-terminal-pane-role="full"] .xterm-viewport'
+  const ghosttyCanvas = document.querySelector(
+    '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host canvas'
   );
-  const xtermRoot = document.querySelector(
-    '.terminal-surface[data-terminal-pane-role="full"] .xterm'
+  const ghosttyRoot = document.querySelector(
+    '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host'
   );
+  const ghosttyInput = ghosttyRoot?.querySelector('.t3-ghostty-input');
+  const ghosttyScrollbar = ghosttyRoot?.querySelector('[role="scrollbar"]');
   assert(
-    terminalShell && xtermViewport && xtermRoot,
+    ghosttyCanvas && ghosttyRoot && ghosttyInput && ghosttyScrollbar,
     'Mobile terminal keyboard surfaces are missing'
   );
-  const xtermBeforeKeyboard = xtermRoot.getBoundingClientRect();
+  const ghosttyBeforeKeyboard = ghosttyRoot.getBoundingClientRect();
   root.style.setProperty('--keyboard-inset', '300px');
   root.setAttribute('data-mobile-keyboard-open', '');
   window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
     detail: { keyboardOpen: true, keyboardClosed: false }
   }));
   await new Promise((resolve) => setTimeout(resolve, 50));
-  const xtermWithKeyboard = xtermRoot.getBoundingClientRect();
-  const viewportStyle = getComputedStyle(xtermViewport);
+  const ghosttyWithKeyboard = ghosttyRoot.getBoundingClientRect();
   assert(
-    Math.abs(xtermBeforeKeyboard.width - xtermWithKeyboard.width) <= 1
-      && Math.abs(xtermBeforeKeyboard.height - xtermWithKeyboard.height) <= 1,
+    Math.abs(ghosttyBeforeKeyboard.width - ghosttyWithKeyboard.width) <= 1
+      && Math.abs(ghosttyBeforeKeyboard.height - ghosttyWithKeyboard.height) <= 1,
     'Mobile keyboard resized the terminal renderer'
   );
   assert(
-    viewportStyle.touchAction === 'pan-y',
-    'Mobile momentum terminal scrolling was not configured'
+    ghosttyCanvas.getAttribute('aria-hidden') === 'true'
+      && ghosttyInput.getAttribute('aria-label') === 'Terminal input',
+    'Mobile Ghostty accessibility surfaces were not configured'
   );
   root.removeAttribute('data-mobile-keyboard-open');
   root.style.removeProperty('--keyboard-inset');
@@ -1346,7 +1358,7 @@ async function runMobileWorkspaceWorkflow(input) {
   const terminalSurface = document.querySelector('.mobile-workspace-terminal');
   const paneSurface = document.querySelector('.mobile-workspace-pane');
   const terminalRenderer = document.querySelector(
-    '.terminal-surface[data-terminal-pane-role="full"] .xterm'
+    '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host'
   );
   assert(terminalSurface && paneSurface && terminalRenderer, 'Mobile workspace surfaces are missing');
   const terminalSurfaceRect = terminalSurface.getBoundingClientRect();
@@ -1462,7 +1474,8 @@ async function runMobileWorkspaceWorkflow(input) {
     selectedPaneToggle: true,
     centeredActiveIndicator: true,
     stableKeyboardOverlay: true,
-    momentumTerminalScroll: true,
+    ghosttyAccessibilitySurface: true,
+    terminalScrollbarControl: true,
     twoPageNavigation: true,
     swipeNavigation: true,
     serviceWorkerReady
@@ -1961,10 +1974,10 @@ async function runBrowserWorkflow(input) {
     'terminal.input'
   );
   await output;
-  const replay = await unwrap(api.terminal.replay(started.terminalId, 0), 'terminal.replay');
+  const history = await unwrap(api.terminal.historySnapshot(started.terminalId), 'terminal.historySnapshot');
   assert(
-    replay.data.includes(marker),
-    'Terminal replay did not include the output marker'
+    history.data.includes(marker),
+    'Terminal history did not include the output marker'
   );
 
   for (const label of ['Files', 'Working diff', 'Feature Lab']) {
@@ -2077,7 +2090,7 @@ async function runBrowserWorkflow(input) {
       marker,
       inputLease,
       outputObserved: true,
-      replayObserved: true
+      historyObserved: true
     }
   };
 }
@@ -2166,23 +2179,58 @@ async function runRemoteElectronWorkflow(input) {
       'Remote Electron could not load the server-owned session projection'
     );
   }
-  await waitUntil(
-    () => visible([...document.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Take Over'
-    )),
-    10_000,
-    'remote Electron read-only takeover control'
-  );
+  try {
+    await waitUntil(
+      () => visible([...document.querySelectorAll('button')].find(
+        (button) => button.textContent?.trim() === 'Take Over'
+      )) || Boolean(document.querySelector(
+        '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host[data-ghostty-ready="true"]'
+      )),
+      10_000,
+      'remote Electron terminal control state'
+    );
+  } catch (error) {
+    const running = await unwrap(api.terminal.listRunning(), 'remote terminal.listRunning diagnostic');
+    const runningTerminal = running.find((terminal) => terminal.sessionId === input.sessionId);
+    const lease = runningTerminal
+      ? await unwrap(
+        api.terminal.currentInputLease(runningTerminal.terminalId),
+        'remote terminal.currentInputLease diagnostic'
+      )
+      : null;
+    const diagnostics = {
+      selected: sessionRow?.getAttribute('data-row-selected') ?? null,
+      runningTerminal,
+      lease,
+      surfaces: [...document.querySelectorAll('.terminal-surface')].map((surface) => ({
+        role: surface.getAttribute('data-terminal-pane-role'),
+        visible: visible(surface),
+        ghostty: Boolean(surface.querySelector('.ghostty-terminal-host canvas')),
+        text: surface.textContent?.trim().slice(0, 160) ?? ''
+      }))
+    };
+    throw new Error(`${error.message}; diagnostics=${JSON.stringify(diagnostics)}`);
+  }
   const takeoverButton = [...document.querySelectorAll('button')].find(
     (button) => button.textContent?.trim() === 'Take Over'
   );
-  takeoverButton.click();
+  const terminalControlTakeover = visible(takeoverButton);
+  if (terminalControlTakeover) {
+    takeoverButton.click();
+    await waitUntil(
+      () => !visible([...document.querySelectorAll('button')].find(
+        (button) => button.textContent?.trim() === 'Take Over'
+      )),
+      10_000,
+      'remote Electron terminal control takeover'
+    );
+  }
   await waitUntil(
-    () => !visible([...document.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'Take Over'
+    () => Boolean(document.querySelector(
+      '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host[data-ghostty-ready="true"]'
     )),
     10_000,
-    'remote Electron terminal control takeover'
+    'remote Electron Ghostty surface'
   );
 
   const paneSelectors = {
@@ -2247,7 +2295,8 @@ async function runRemoteElectronWorkflow(input) {
 
   return {
     transport: api.transport.kind,
-    terminalControlTakeover: true,
+    terminalControlTakeover,
+    terminalControlReady: true,
     nativeOverrides: input.expectCustomWindowControls ? ['window', 'browser'] : ['browser'],
     panes: {
       files: true,

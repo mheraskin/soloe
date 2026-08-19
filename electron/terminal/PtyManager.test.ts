@@ -84,7 +84,7 @@ describe('PtyManager', () => {
     }));
   });
 
-  it('makes each output batch replayable before observers receive it', () => {
+  it('makes each output batch available in history before observers receive it', async () => {
     const manager = new PtyManager({} as PtyManagerOptions);
     const output: TerminalOutputEvent = {
       terminalId: 't-1',
@@ -92,14 +92,18 @@ describe('PtyManager', () => {
       seq: 1,
       data: 'ready'
     };
-    let replaySeenInsideObserver = null;
+    let historySeenInsideObserver: ReturnType<PtyManager['historySnapshot']> | null = null;
     manager.on('output', (event) => {
-      replaySeenInsideObserver = manager.replay(event.terminalId, event.seq - 1);
+      historySeenInsideObserver = manager.historySnapshot(event.terminalId);
     });
 
     manager.forwardBatchedOutput([output]);
 
-    expect(replaySeenInsideObserver).toMatchObject({ data: 'ready', fromSeq: 1, toSeq: 1 });
+    await expect(historySeenInsideObserver).resolves.toMatchObject({
+      data: 'ready',
+      fromSeq: 1,
+      toSeq: 1
+    });
   });
 
   it('semantically observes final buffered output before publishing terminal exit', async () => {
@@ -162,7 +166,7 @@ describe('PtyManager', () => {
     expect(options).not.toHaveProperty('encoding');
   });
 
-  it('exposes a terminal id before spawn so the renderer can mount xterm', async () => {
+  it('exposes a terminal id before spawn so the renderer can mount Ghostty', async () => {
     const manager = new PtyManager({
       commandBuilder: {
         build: vi.fn(() => spec)

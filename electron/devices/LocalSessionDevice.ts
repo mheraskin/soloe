@@ -1,7 +1,6 @@
 import type {
   SessionDeviceSnapshot,
-  DeviceTerminalReplay,
-  DeviceTerminalScreenSnapshot
+  DeviceTerminalHistory
 } from '@shared/types/multi-device-sessions.js';
 import type {
   DeviceDescriptor,
@@ -332,23 +331,10 @@ export class LocalSessionDevice implements SessionDevice {
     this.options.pty.resize(id, { cols, rows });
   }
 
-  async terminalReplay(terminalId: string, afterSeq = 0): Promise<DeviceTerminalReplay> {
+  async terminalHistory(terminalId: string): Promise<DeviceTerminalHistory> {
     this.assertActive();
     const id = requiredId(terminalId);
-    const snapshot = await this.options.pty.replay(id, afterSeq);
-    return {
-      terminalRef: { deviceId: this.deviceId, terminalId: id },
-      sessionRef: snapshot
-        ? { deviceId: this.deviceId, sessionId: snapshot.sessionId }
-        : null,
-      snapshot
-    };
-  }
-
-  async terminalScreenSnapshot(terminalId: string): Promise<DeviceTerminalScreenSnapshot> {
-    this.assertActive();
-    const id = requiredId(terminalId);
-    const snapshot = await this.options.pty.screenSnapshot(id);
+    const snapshot = await this.options.pty.historySnapshot(id);
     return {
       terminalRef: { deviceId: this.deviceId, terminalId: id },
       sessionRef: snapshot

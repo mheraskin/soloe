@@ -18,7 +18,7 @@ describe("Soloe API transport contract", () => {
       "terminal.input",
       "terminal.resize",
       "terminal.listRunning",
-      "terminal.replay",
+      "terminal.historySnapshot",
     ]) {
       const [namespace, name] = method.split(".");
       expect(supportsRpc("remote-electron", namespace!, name!)).toBe(true);

@@ -79,7 +79,7 @@ describe('terminal input helpers', () => {
     expect(altWordEditSequence(key({ altKey: true, key: 'a' }))).toBeNull();
   });
 
-  it('emits xterm-native sequences in agent TUI sessions for Alt+Backspace/Delete', () => {
+  it('emits TUI-compatible sequences for Alt+Backspace/Delete', () => {
     const claude = { launch: { type: 'agent', provider: 'claude_code' } };
     const codex = { launch: { type: 'agent', provider: 'codex' } };
     const cursor = { launch: { type: 'agent', provider: 'cursor' } };

@@ -631,7 +631,7 @@
 
   function isTerminalKeyTarget(e: KeyboardEvent): boolean {
     const target = e.target as HTMLElement | null;
-    return Boolean(target?.closest('.xterm'));
+    return Boolean(target?.closest('.ghostty-terminal-host'));
   }
 
   // Ctrl+/-/0 should drive the rail browser's zoom whenever the browser tab
@@ -1774,7 +1774,7 @@
       {#if !sidebar.hidden}
         <Sidebar />
       {/if}
-      <!-- Stays mounted across fullscreen toggles so xterm doesn't re-attach. -->
+      <!-- Stays mounted across fullscreen toggles so terminal session state remains resident. -->
       <div class={railFullscreen ? 'hidden' : 'contents'}>
         <div class={deviceSessions.selectedProjection ? 'hidden' : 'contents'}>
           <TerminalArea />

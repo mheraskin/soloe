@@ -2,8 +2,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type {
-  RuntimeReplaySnapshot,
-  RuntimeTerminalScreenSnapshot,
+  RuntimeHistorySnapshot,
   RuntimeTerminalStart,
   RuntimeTerminalState,
   RuntimeUsageSnapshot,
@@ -205,9 +204,8 @@ export interface RuntimeControl {
   ): unknown;
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
   listRunning(): Promise<RuntimeTerminalState[]>;
-  replay(terminalId: string, afterSeq?: number): Promise<RuntimeReplaySnapshot | null>;
-  screenSnapshot?(terminalId: string): Promise<RuntimeTerminalScreenSnapshot>;
-  setReplayUnbounded?(unbounded: boolean): Promise<unknown>;
+  historySnapshot(terminalId: string): Promise<RuntimeHistorySnapshot | null>;
+  setHistoryUnbounded?(unbounded: boolean): Promise<unknown>;
   acquireInputLease?(
     terminalId: string,
     ownerId: string,
@@ -565,7 +563,7 @@ export class SoloeDomain extends EventEmitter {
     this.settings.onChange((settings) => {
       this.emit("event", "settings.change", settings);
       void this.options.runtime
-        .setReplayUnbounded?.(settings.terminal.keepFullHistory)
+        .setHistoryUnbounded?.(settings.terminal.keepFullHistory)
         .catch((error) => {
           console.warn("[terminal] failed to update Runtime history retention", error);
         });
@@ -612,7 +610,7 @@ export class SoloeDomain extends EventEmitter {
         adapter: new GhCliGitHubAdapter({ binary: initialSettings.binaries.gh ?? "gh" }),
       });
     }
-    await this.options.runtime.setReplayUnbounded?.(
+    await this.options.runtime.setHistoryUnbounded?.(
       initialSettings.terminal.keepFullHistory,
     );
     const sessions = await this.sessions.list();
@@ -2213,13 +2211,8 @@ export class SoloeDomain extends EventEmitter {
         );
         return true;
       }
-      case "deviceTerminalReplay":
-        return this.requireMultiDeviceSessions(deviceSessions).terminalReplay(
-          structuredClone(args[0] as TerminalRef),
-          args[1] as number | undefined,
-        );
-      case "deviceTerminalScreenSnapshot":
-        return this.requireMultiDeviceSessions(deviceSessions).terminalScreenSnapshot(
+      case "deviceTerminalHistory":
+        return this.requireMultiDeviceSessions(deviceSessions).terminalHistory(
           structuredClone(args[0] as TerminalRef),
         );
       case "deviceTerminalStop":
@@ -2396,13 +2389,8 @@ export class SoloeDomain extends EventEmitter {
           startedAt: terminal.startedAt,
           cwd: terminal.cwd,
         }));
-      case "replay":
-        return this.options.runtime.replay(args[0] as string, args[1] as number | undefined);
-      case "screenSnapshot": {
-        const snapshot = this.options.runtime.screenSnapshot;
-        if (!snapshot) return null;
-        return snapshot.call(this.options.runtime, requireTerminalId(args[0]));
-      }
+      case "historySnapshot":
+        return this.options.runtime.historySnapshot(requireTerminalId(args[0]));
       case "setOutputDemand":
         return true;
       default:

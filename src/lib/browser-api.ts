@@ -112,7 +112,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
           listener(message.payload);
         }
       } catch {
-        // Ignore malformed messages; replay repairs any resulting output gap.
+        // Ignore malformed messages; a history resync repairs any resulting output gap.
       }
     });
     socket.addEventListener("close", () => {
@@ -162,10 +162,8 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     resize: ({ terminalId, dimensions, control }) =>
       rpc("terminal", "resize", [terminalId, dimensions.cols, dimensions.rows, control]),
     listRunning: () => rpc("terminal", "listRunning", []),
-    replay: (terminalId, afterSeq) =>
-      rpc("terminal", "replay", [terminalId, afterSeq]),
-    screenSnapshot: (terminalId) =>
-      rpc("terminal", "screenSnapshot", [terminalId]),
+    historySnapshot: (terminalId) =>
+      rpc("terminal", "historySnapshot", [terminalId]),
     setOutputDemand: (payload) =>
       rpc("terminal", "setOutputDemand", [payload]),
     onOutput: (listener: (event: TerminalOutputEvent) => void) =>

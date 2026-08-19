@@ -1,9 +1,6 @@
 import { render } from 'svelte/server';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@xterm/xterm', () => ({ Terminal: class {} }));
-vi.mock('@xterm/addon-fit', () => ({ FitAddon: class {} }));
-vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 
 import DeviceSessionArea from './DeviceSessionArea.svelte';
 

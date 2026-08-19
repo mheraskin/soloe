@@ -31,9 +31,10 @@ export {
   type ServiceInfo,
 } from "./ServiceRendezvous.js";
 export {
-  TerminalReplayBuffer,
-  type TerminalReplayBufferOptions,
-} from "./TerminalReplayBuffer.js";
+  TerminalHistoryBuffer,
+  type TerminalHistoryBufferOptions,
+} from "./TerminalHistoryBuffer.js";
+export { sanitizeTerminalHistoryChunk } from './TerminalHistorySanitizer.js';
 export {
   TerminalInputLeaseError,
   TerminalInputLeaseManager,

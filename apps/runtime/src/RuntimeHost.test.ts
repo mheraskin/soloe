@@ -140,7 +140,7 @@ describe('Environment Runtime lifecycle', () => {
     try {
       await host.listen();
       const firstClient = await RuntimeClient.connect(endpoint);
-      await expect(firstClient.setReplayUnbounded(true)).resolves.toBe(true);
+      await expect(firstClient.setHistoryUnbounded(true)).resolves.toBe(true);
       const started = await firstClient.start({
         sessionId: 'session-1',
         spec: {
@@ -171,7 +171,7 @@ describe('Environment Runtime lifecycle', () => {
     }
   });
 
-  it('replays Terminal output produced while no control client is connected', async () => {
+  it('retains Terminal history produced while no control client is connected', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);
     const process = new FakeRuntimeProcess();
@@ -199,9 +199,12 @@ describe('Environment Runtime lifecycle', () => {
       process.emit('data', ' while disconnected');
 
       const secondClient = await RuntimeClient.connect(endpoint);
-      expect(await secondClient.replay(started.terminalId, 0)).toEqual({
+      expect(await secondClient.historySnapshot(started.terminalId)).toEqual({
+        kind: 'ghostty-vt-history-v1',
         terminalId: started.terminalId,
         sessionId: 'session-1',
+        cols: 100,
+        rows: 30,
         data: 'before disconnect while disconnected',
         fromSeq: 1,
         toSeq: 2,
@@ -215,7 +218,7 @@ describe('Environment Runtime lifecycle', () => {
     }
   });
 
-  it('restores a sequence-qualified headless Terminal viewport before rendering', async () => {
+  it('returns sequence-qualified VT history and authoritative geometry', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);
     const process = new FakeRuntimeProcess();
@@ -242,10 +245,10 @@ describe('Environment Runtime lifecycle', () => {
       process.emit('data', '\x1b[2Jrestored viewport');
       await client.resize(started.terminalId, 90, 28, terminalControlProof(lease));
 
-      const snapshot = await client.screenSnapshot(started.terminalId);
+      const snapshot = await client.historySnapshot(started.terminalId);
 
       expect(snapshot).toMatchObject({
-        kind: 'xterm-vt-state-v1',
+        kind: 'ghostty-vt-history-v1',
         terminalId: started.terminalId,
         sessionId: 'session-1',
         cols: 90,

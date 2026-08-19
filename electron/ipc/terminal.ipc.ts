@@ -123,11 +123,8 @@ export class TerminalIpc {
       ipcInvoke(() => this.opts.pty.listRunning())
     );
 
-    ipcMain.handle(IpcChannels.terminal.replay, (_e, terminalId: TerminalId, afterSeq?: number) =>
-      ipcInvoke(() => this.opts.pty.replay(terminalId, afterSeq))
-    );
-    ipcMain.handle(IpcChannels.terminal.screenSnapshot, (_e, terminalId: TerminalId) =>
-      ipcInvoke(() => this.opts.pty.screenSnapshot(terminalId))
+    ipcMain.handle(IpcChannels.terminal.historySnapshot, (_e, terminalId: TerminalId) =>
+      ipcInvoke(() => this.opts.pty.historySnapshot(terminalId))
     );
 
     ipcMain.handle(
@@ -177,8 +174,7 @@ export class TerminalIpc {
     ipcMain.removeHandler(IpcChannels.terminal.input);
     ipcMain.removeHandler(IpcChannels.terminal.resize);
     ipcMain.removeHandler(IpcChannels.terminal.listRunning);
-    ipcMain.removeHandler(IpcChannels.terminal.replay);
-    ipcMain.removeHandler(IpcChannels.terminal.screenSnapshot);
+    ipcMain.removeHandler(IpcChannels.terminal.historySnapshot);
     ipcMain.removeHandler(IpcChannels.terminal.outputDemand);
     this.outputDemandByWebContents.clear();
     this.controlLeases.clear();
