@@ -100,6 +100,7 @@
   } from './lib/device-terminal-presentation';
   import { deviceSessions } from './stores/device-sessions.svelte';
   import appIconUrl from '../build/favicon.svg';
+  import { scheduleMobileWorkspaceRefresh } from './lib/mobile-workspace-layout';
 
   const loadNewSessionModal = () => import('./components/NewSessionModal.svelte');
   const loadConfirmDialog = () => import('./components/ConfirmDialog.svelte');
@@ -127,6 +128,18 @@
     requestedMobileMode === 'pane' && rightRail.open ? 'pane' : 'terminal'
   );
   let swipeStart: { pointerId: number; x: number; y: number } | null = null;
+
+  $effect(() => {
+    const mobile = isMobile;
+    mobilePage;
+    mobileMode;
+    if (!mobile) return;
+    return scheduleMobileWorkspaceRefresh(() => {
+      window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
+        detail: { workspaceChanged: true }
+      }));
+    });
+  });
 
   onMount(() => {
     const detachAppearanceTheme = appearanceTheme.attach();

@@ -44,6 +44,7 @@
   import { terminalLinkHandlers } from '../lib/terminal-links';
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
+  import { loadTerminalScreenSnapshot } from '../lib/terminal-screen-snapshot';
   import TerminalTranscript from './TerminalTranscript.svelte';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
@@ -518,12 +519,17 @@
     t.loadAddon(unicode11);
     t.loadAddon(clipboard);
     t.unicode.activeVersion = '11';
+    // Mount before any network work so mobile browsers always get a real xterm
+    // surface, even if a suspended snapshot request never settles.
+    t.open(host);
     let disposed = false;
     let disposeInitialized = () => deferTerminalDispose(t);
     void (async () => {
       let initialSeq = 0;
       try {
-        const snapshot = await ipc.terminal.screenSnapshot(terminalId);
+        const snapshot = await loadTerminalScreenSnapshot(
+          () => ipc.terminal.screenSnapshot(terminalId)
+        );
         if (disposed) return;
         if (snapshot?.sessionId === sessionId) {
           t.resize(snapshot.cols, snapshot.rows);
@@ -535,7 +541,6 @@
         // Older Devices fall back to bounded raw replay through the output router.
       }
       if (disposed) return;
-    t.open(host);
     const detachWindowFocus = restoreTerminalFocusOnWindowActivation({
       host,
       canRestore: () => (

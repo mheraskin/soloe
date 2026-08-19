@@ -355,7 +355,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     expect(terminalMocks.screenSnapshot).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps xterm detached until the initial catch-up replay has been parsed', async () => {
+  it('mounts xterm while the initial catch-up replay is parsed', async () => {
     terminalMocks.screenSnapshot.mockReset().mockResolvedValue({
       snapshot: {
         kind: 'xterm-vt-state-v1',
@@ -379,7 +379,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     flushSync();
 
     await vi.waitFor(() => expect(terminalMocks.releaseCatchUpWrite).not.toBeNull());
-    expect(terminalMocks.opens).toBe(0);
+    expect(terminalMocks.opens).toBe(1);
 
     terminalMocks.releaseCatchUpWrite?.();
     await vi.waitFor(() => expect(terminalMocks.opens).toBe(1));
@@ -438,7 +438,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
       props: { projection: remoteProjection(), onClose: vi.fn() }
     });
     flushSync();
-    await vi.waitFor(() => expect(target.querySelector('textarea')).not.toBeNull());
+    await vi.waitFor(() => expect(terminalMocks.inputHandler).not.toBeNull());
     target.querySelector('textarea')?.focus();
     terminalMocks.focus.mockClear();
 

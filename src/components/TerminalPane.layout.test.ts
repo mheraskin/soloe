@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import source from './TerminalPane.svelte?raw';
+import deviceViewerSource from './DeviceTerminalViewer.svelte?raw';
 
 describe('TerminalPane layout', () => {
   it('lets xterm use the complete pane without an outer inset', () => {
@@ -21,5 +22,30 @@ describe('TerminalPane layout', () => {
   it('does not renew or release durable Session Control with pane visibility', () => {
     expect(source).not.toContain('setInterval');
     expect(source).not.toContain('terminalControl.release(terminalId)');
+  });
+
+  it('mounts xterm before waiting for a screen snapshot over the network', () => {
+    const initializeAt = source.indexOf('const t = new Terminal({');
+    const openAt = source.indexOf('t.open(host)', initializeAt);
+    const snapshotAt = source.indexOf('() => ipc.terminal.screenSnapshot(terminalId)', initializeAt);
+
+    expect(initializeAt).toBeGreaterThanOrEqual(0);
+    expect(openAt).toBeGreaterThan(initializeAt);
+    expect(snapshotAt).toBeGreaterThan(initializeAt);
+    expect(openAt).toBeLessThan(snapshotAt);
+  });
+
+  it('mounts remote xterm before waiting for its device snapshot', () => {
+    const initializeAt = deviceViewerSource.indexOf('const terminal = new Terminal({');
+    const openAt = deviceViewerSource.indexOf('terminal.open(host)', initializeAt);
+    const snapshotAt = deviceViewerSource.indexOf(
+      '() => deviceSessions.terminalScreenSnapshot(ref)',
+      initializeAt
+    );
+
+    expect(initializeAt).toBeGreaterThanOrEqual(0);
+    expect(openAt).toBeGreaterThan(initializeAt);
+    expect(snapshotAt).toBeGreaterThan(initializeAt);
+    expect(openAt).toBeLessThan(snapshotAt);
   });
 });

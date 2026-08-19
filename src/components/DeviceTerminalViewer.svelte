@@ -20,6 +20,7 @@
   import { FULL_TERMINAL_SCROLLBACK, writeTerminalData } from '../lib/terminal-write';
   import { readClipboardImages } from '../lib/clipboard-images';
   import { isClipboardPasteShortcut } from '../lib/terminal-input';
+  import { loadTerminalScreenSnapshot } from '../lib/terminal-screen-snapshot';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { terminalLinkHandlers } from '../lib/terminal-links';
@@ -168,6 +169,9 @@
       });
       return false;
     });
+    // Mount before restoring over the network. A phone may suspend that request,
+    // but the terminal surface and the replay fallback must still initialize.
+    terminal.open(host);
     let disposed = false;
     let active = true;
     let stabilizingStartup = isFreshAgentStartup(projection);
@@ -229,9 +233,11 @@
       await attachment.ready;
       if (disposed) return;
       try {
-        const restored = await deviceSessions.terminalScreenSnapshot(ref);
+        const restored = await loadTerminalScreenSnapshot(
+          () => deviceSessions.terminalScreenSnapshot(ref)
+        );
         if (disposed) return;
-        if (restored.snapshot) {
+        if (restored?.snapshot) {
           terminal.resize(restored.snapshot.cols, restored.snapshot.rows);
           await writeTerminalData(terminal, restored.snapshot.data);
           initialSeq = restored.snapshot.toSeq;
@@ -253,7 +259,6 @@
         initialSeq = initialReplay.snapshot.toSeq;
       }
       if (disposed) return;
-      terminal.open(host);
       void attachRenderer();
       activeTerminal = terminal;
       const detachWindowFocus = restoreTerminalFocusOnWindowActivation({

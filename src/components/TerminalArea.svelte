@@ -125,7 +125,7 @@
   }
 </script>
 
-<section class="terminal-area flex min-w-[220px] flex-1 flex-col bg-background">
+<section class="terminal-area flex h-full min-h-0 w-full min-w-[220px] flex-1 flex-col bg-background">
   <SessionToolbar {onOpenNavigation} />
   <div class="relative min-h-0 flex-1 overflow-hidden" bind:this={containerEl}>
     {#each residentPanes as pane (pane.terminalId)}
