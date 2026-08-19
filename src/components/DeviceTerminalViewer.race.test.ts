@@ -553,7 +553,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     await vi.waitFor(() => expect(terminalMocks.refresh).toHaveBeenCalledWith(0, 29));
   });
 
-  it('refits a controlled remote terminal after mobile viewport recovery without forcing focus', async () => {
+  it('refits a controlled remote terminal after mobile viewport recovery without scrolling output', async () => {
     terminalMocks.ownsInput.mockReturnValue(true);
     terminalMocks.claimInput.mockResolvedValue(true);
     vi.stubGlobal('matchMedia', (query: string) => ({
@@ -594,7 +594,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
       detail: { keyboardOpen: false, keyboardClosed: true }
     }));
 
-    expect(terminalMocks.scrollTerminalIds.filter((id) => id === terminalId)).toHaveLength(1);
+    expect(terminalMocks.scrollTerminalIds.filter((id) => id === terminalId)).toHaveLength(0);
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
@@ -626,10 +626,12 @@ describe('DeviceTerminalViewer output sequencing', () => {
       props: { projection: remoteProjection(), onClose: vi.fn() }
     });
     flushSync();
+    const terminalId = terminalMocks.nextTerminalId;
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     terminalMocks.fit.mockClear();
     terminalMocks.resize.mockClear();
     terminalMocks.focus.mockClear();
+    terminalMocks.scrollTerminalIds.length = 0;
     document.documentElement.setAttribute('data-mobile-keyboard-open', '');
 
     window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
@@ -638,6 +640,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
 
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     await vi.waitFor(() => expect(terminalMocks.resize).toHaveBeenCalled());
+    expect(terminalMocks.scrollTerminalIds.filter((id) => id === terminalId)).toHaveLength(0);
     expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
 

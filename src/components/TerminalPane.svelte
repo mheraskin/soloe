@@ -868,12 +868,9 @@
       fit === currentFit &&
       host === currentHost &&
       currentHost.isConnected;
-    let scrollAfterFit = false;
     const scheduleFit = (
-      scrollToBottom = false,
       measurement: { width: number; height: number } = currentHost.getBoundingClientRect()
     ) => {
-      scrollAfterFit ||= scrollToBottom;
       terminalFit.scheduleMeasuredFit(
         currentTerm,
         currentFit,
@@ -881,10 +878,6 @@
         canFit,
         ({ cols, rows }) => {
           void sendAuthoritativeResize(cols, rows);
-          if (scrollAfterFit) {
-            scrollAfterFit = false;
-            currentTerm.scrollToBottom();
-          }
         },
         (err) => {
           console.warn('[DEBUG-xterm] scheduled layout fit failed', {
@@ -899,22 +892,18 @@
       const entry = entries[0];
       if (!entry || !visible || term !== currentTerm) return;
       const { width, height } = entry.contentRect;
-      scheduleFit(false, { width, height });
+      scheduleFit({ width, height });
     });
     const onRailLayout = (event: Event) => {
       const detail = (event as CustomEvent<{
         keyboardOpen?: boolean;
         keyboardClosed?: boolean;
       }>).detail;
-      if (detail?.keyboardOpen) {
+      if (detail?.keyboardOpen || detail?.keyboardClosed) {
+        // Let Safari's native xterm textarea focus reveal the input. A layout
+        // change needs one refit, but must not move the terminal's scrollback.
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => scheduleFit(true));
-        });
-        return;
-      }
-      if (detail?.keyboardClosed) {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => scheduleFit(true));
+          requestAnimationFrame(() => scheduleFit());
         });
         return;
       }

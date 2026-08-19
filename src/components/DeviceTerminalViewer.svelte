@@ -464,18 +464,11 @@
         keyboardOpen?: boolean;
         keyboardClosed?: boolean;
       }>).detail;
-      if (detail?.keyboardOpen) {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          void resize(true);
-          terminal.scrollToBottom();
-        }));
-        return;
-      }
-      if (detail?.keyboardClosed) {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          void resize(true);
-          terminal.scrollToBottom();
-        }));
+      if (detail?.keyboardOpen || detail?.keyboardClosed) {
+        // The user's tap focuses xterm's hidden textarea, so Safari performs
+        // the native visual-viewport reveal. Only refit here: scrolling the
+        // xterm buffer makes restored output visibly play past the viewport.
+        requestAnimationFrame(() => requestAnimationFrame(() => void resize(true)));
         return;
       }
       scheduleResize();
