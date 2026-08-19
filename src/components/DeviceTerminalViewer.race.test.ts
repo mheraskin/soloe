@@ -14,6 +14,7 @@ const terminalMocks = vi.hoisted(() => ({
   screenSnapshot: vi.fn(),
   replay: vi.fn(),
   focus: vi.fn(),
+  scrollToBottom: vi.fn(),
   fit: vi.fn(),
   ownsInput: vi.fn(() => false),
   claimInput: vi.fn(async () => false),
@@ -50,7 +51,9 @@ vi.mock('@xterm/xterm', () => ({
       return { dispose() {} };
     }
     paste() {}
-    scrollToBottom() {}
+    scrollToBottom() {
+      terminalMocks.scrollToBottom();
+    }
     focus() {
       terminalMocks.focus();
       this.textarea?.focus();
@@ -153,6 +156,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     terminalMocks.outputListener = null;
     terminalMocks.reconnectListener = null;
     terminalMocks.focus.mockReset();
+    terminalMocks.scrollToBottom.mockReset();
     terminalMocks.fit.mockReset();
     terminalMocks.ownsInput.mockReset().mockReturnValue(false);
     terminalMocks.claimInput.mockReset().mockResolvedValue(false);
@@ -578,12 +582,14 @@ describe('DeviceTerminalViewer output sequencing', () => {
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
     terminalMocks.fit.mockClear();
     terminalMocks.focus.mockClear();
+    terminalMocks.scrollToBottom.mockClear();
 
     window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
       detail: { keyboardOpen: false, keyboardClosed: true }
     }));
 
     await vi.waitFor(() => expect(terminalMocks.fit).toHaveBeenCalled());
+    expect(terminalMocks.scrollToBottom).toHaveBeenCalled();
     expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
 

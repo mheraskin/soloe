@@ -27,6 +27,7 @@
   import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
   import { TerminalFitController } from '../lib/terminal-fit';
   import { attachTerminalTouchScroll } from '../lib/terminal-touch-scroll';
+  import { scheduleTerminalViewportSnap } from '../lib/terminal-viewport-snap';
   import {
     TerminalTranscriptFollowController,
     TerminalTranscriptProjector,
@@ -146,6 +147,7 @@
       cursorInactiveStyle: 'outline',
       cursorBlink: true,
       scrollback: FULL_TERMINAL_SCROLLBACK,
+      smoothScrollDuration: 0,
       convertEol: false,
       macOptionIsMeta: true,
       theme: terminalThemeFor(appearanceTheme.resolved),
@@ -459,20 +461,18 @@
       ) return;
       scheduleResize();
     });
+    let cancelViewportSnap = (): void => {};
     const onViewportLayout = (event: Event): void => {
       const detail = (event as CustomEvent<{
         keyboardOpen?: boolean;
         keyboardClosed?: boolean;
       }>).detail;
-      if (detail?.keyboardOpen) {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (detail?.keyboardOpen || detail?.keyboardClosed) {
+        cancelViewportSnap();
+        cancelViewportSnap = scheduleTerminalViewportSnap(() => {
           void resize(true);
           terminal.scrollToBottom();
-        }));
-        return;
-      }
-      if (detail?.keyboardClosed) {
-        requestAnimationFrame(() => requestAnimationFrame(() => void resize(true)));
+        });
         return;
       }
       scheduleResize();
@@ -505,6 +505,7 @@
       input.dispose();
       resizeObserver.disconnect();
       window.removeEventListener('soloe:rail-layout', onViewportLayout);
+      cancelViewportSnap();
       if (resizeTimer) clearTimeout(resizeTimer);
       terminalFit.cancel();
       clearStartupRestoreTimers();
