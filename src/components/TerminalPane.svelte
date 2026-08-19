@@ -46,7 +46,6 @@
   import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
   import { loadTerminalScreenSnapshot } from '../lib/terminal-screen-snapshot';
   import { attachTerminalTouchScroll } from '../lib/terminal-touch-scroll';
-  import { scheduleTerminalViewportSnap } from '../lib/terminal-viewport-snap';
   import TerminalTranscript from './TerminalTranscript.svelte';
 
   // `visible` drives layout work (fit/resize/atlas) and runs for both panes of
@@ -503,7 +502,6 @@
       cursorStyle: 'bar',
       cursorWidth: 2,
       cursorInactiveStyle: 'outline',
-      smoothScrollDuration: 0,
       // Activated only while visible; hidden panes otherwise retain one cursor
       // timer each even though they have no renderer.
       cursorBlink: false,
@@ -903,30 +901,21 @@
       const { width, height } = entry.contentRect;
       scheduleFit(false, { width, height });
     });
-    const fitAndSnapToBottom = () => {
-      const measurement = currentHost.getBoundingClientRect();
-      if (measurement.width < 4 || measurement.height < 4 || !canFit()) return;
-      try {
-        const { cols, rows } = terminalFit.fit(currentTerm, currentFit, canFit);
-        void sendAuthoritativeResize(cols, rows);
-        currentTerm.scrollToBottom();
-      } catch (err) {
-        console.warn('[DEBUG-xterm] mobile viewport fit failed', {
-          terminalId,
-          sessionId,
-          err
-        });
-      }
-    };
-    let cancelViewportSnap = (): void => {};
     const onRailLayout = (event: Event) => {
       const detail = (event as CustomEvent<{
         keyboardOpen?: boolean;
         keyboardClosed?: boolean;
       }>).detail;
-      if (detail?.keyboardOpen || detail?.keyboardClosed) {
-        cancelViewportSnap();
-        cancelViewportSnap = scheduleTerminalViewportSnap(fitAndSnapToBottom);
+      if (detail?.keyboardOpen) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => scheduleFit(true));
+        });
+        return;
+      }
+      if (detail?.keyboardClosed) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => scheduleFit(true));
+        });
         return;
       }
       scheduleFit();
@@ -941,7 +930,6 @@
     return () => {
       ro.disconnect();
       window.removeEventListener('soloe:rail-layout', onRailLayout);
-      cancelViewportSnap();
       terminalFit.cancel();
       document.fonts.removeEventListener('loadingdone', repaintFontAtlas);
       try {

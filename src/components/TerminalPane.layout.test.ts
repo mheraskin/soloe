@@ -49,14 +49,11 @@ describe('TerminalPane layout', () => {
     expect(openAt).toBeLessThan(snapshotAt);
   });
 
-  it('instantly refits and snaps local xterm after either mobile keyboard transition', () => {
+  it('refits the local xterm after the mobile keyboard changes the visible viewport', () => {
     expect(source).not.toContain('if (mobileKeyboardOpen()) return');
     expect(source).toMatch(
-      /if \(detail\?\.keyboardOpen \|\| detail\?\.keyboardClosed\) \{[^}]*scheduleTerminalViewportSnap\(fitAndSnapToBottom\)/s
+      /if \(detail\?\.keyboardOpen\) \{[^}]*scheduleFit\(true\)/s
     );
-    expect(source).toContain('currentTerm.scrollToBottom();');
-    expect(source).toContain('smoothScrollDuration: 0');
-    expect(deviceViewerSource).toContain('smoothScrollDuration: 0');
   });
 
   it('enables momentum swipe scrolling for local and remote xterm sessions', () => {
