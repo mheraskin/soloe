@@ -100,7 +100,10 @@
   });
 
   $effect(() => {
-    if (!open || !usesDevicePlacement) return;
+    // Launching already obtains the authoritative plan. Re-previewing while it
+    // executes replaces the ready card with the shorter loading row and makes
+    // the popover visibly jump before it closes.
+    if (!open || !usesDevicePlacement || launchingDevice) return;
     if (!placementInitialized) {
       const contextualWorkspace = workspaceKey
         ? workspaceChoices.find((workspace) => workspace.key === workspaceKey)

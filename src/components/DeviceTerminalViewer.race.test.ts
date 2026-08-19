@@ -385,7 +385,26 @@ describe('DeviceTerminalViewer output sequencing', () => {
     await vi.waitFor(() => expect(terminalMocks.opens).toBe(1));
   });
 
-  it('keeps a fresh agent startup replay covered until its output settles', async () => {
+  it('reveals a brand-new agent startup without waiting for output to settle', async () => {
+    vi.useFakeTimers();
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: {
+        projection: remoteProjection('codex', new Date().toISOString()),
+        onClose: vi.fn()
+      }
+    });
+    flushSync();
+    await flushPromises();
+    flushSync();
+
+    expect(terminalMocks.opens).toBe(1);
+    expect(target.textContent).not.toContain('Restoring terminal…');
+  });
+
+  it('keeps a resumed agent startup replay covered until its output settles', async () => {
     vi.useFakeTimers();
     terminalMocks.ownsInput.mockReturnValue(true);
     terminalMocks.claimInput.mockResolvedValue(true);
@@ -405,7 +424,7 @@ describe('DeviceTerminalViewer output sequencing', () => {
     component = mount(DeviceTerminalViewer, {
       target,
       props: {
-        projection: remoteProjection('codex', new Date().toISOString()),
+        projection: remoteProjection('codex', new Date().toISOString(), true),
         onClose: vi.fn()
       }
     });
@@ -635,7 +654,8 @@ async function flushPromises(rounds = 20): Promise<void> {
 
 function remoteProjection(
   provider: 'claude_code' | 'codex' = 'codex',
-  startedAt?: string
+  startedAt?: string,
+  hasUserInput = false
 ) {
   return {
     ref: { deviceId: 'device-xps', sessionId: 'session-1' },
@@ -649,7 +669,8 @@ function remoteProjection(
       runMode: 'linux' as const,
       launch: { type: 'agent' as const, provider, resumeMode: 'new' as const },
       createdAt: '2026-08-16T00:00:00.000Z',
-      lastUsedAt: '2026-08-16T00:00:00.000Z'
+      lastUsedAt: '2026-08-16T00:00:00.000Z',
+      hasUserInput
     },
     runtime: {
       sessionId: 'session-1',

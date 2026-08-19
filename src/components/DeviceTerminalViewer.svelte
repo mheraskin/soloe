@@ -83,8 +83,13 @@
       && document.documentElement.hasAttribute('data-mobile-keyboard-open');
   }
 
-  function isFreshAgentStartup(view: MultiDeviceSessionView, now = Date.now()): boolean {
+  function isResumedAgentStartup(view: MultiDeviceSessionView, now = Date.now()): boolean {
     if (!effectiveAgentProvider(view.session)) return false;
+    // A freshly created agent Session is known-empty until its first submitted
+    // prompt. Only cover startup output when the Device may be repainting a
+    // persisted conversation; otherwise the loading overlay hides a usable new
+    // prompt while the agent prints its normal startup banner.
+    if (view.session.hasUserInput === false) return false;
     const startedAt = Date.parse(view.runtime?.startedAt ?? '');
     if (!Number.isFinite(startedAt)) return false;
     const age = now - startedAt;
@@ -174,7 +179,7 @@
     terminal.open(host);
     let disposed = false;
     let active = true;
-    let stabilizingStartup = isFreshAgentStartup(projection);
+    let stabilizingStartup = isResumedAgentStartup(projection);
     let startupRestoreGeneration = 0;
     let startupRestoreQuietTimer: ReturnType<typeof setTimeout> | null = null;
     let startupRestoreMaxTimer: ReturnType<typeof setTimeout> | null = null;

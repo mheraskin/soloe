@@ -282,6 +282,55 @@ describe('AgentLaunchPopover touch gestures', () => {
     ));
   });
 
+  it('keeps the workspace preview stable while a Session launch is in progress', async () => {
+    const readyPlan = {
+      planId: 'plan-ready',
+      workspaceKey: null,
+      targetDeviceId: 'local-device',
+      deviceName: 'This Mac',
+      action: 'use-existing-location' as const,
+      targetPath: '/repo',
+      executable: true,
+      blockers: [],
+      warnings: [],
+      expiresAt: '2099-01-01T00:00:00.000Z'
+    };
+    let planCalls = 0;
+    let resolveUnexpectedPreview: (() => void) | undefined;
+    const unexpectedPreview = new Promise<typeof readyPlan>((resolve) => {
+      resolveUnexpectedPreview = () => resolve(readyPlan);
+    });
+    let resolveExecution: (() => void) | undefined;
+    const execution = new Promise<undefined>((resolve) => {
+      resolveExecution = () => resolve(undefined);
+    });
+    deviceSessionMocks.planCreate.mockImplementation(async () => {
+      planCalls += 1;
+      if (planCalls <= 2) return readyPlan;
+      return unexpectedPreview;
+    });
+    deviceSessionMocks.executeCreate.mockImplementation(() => execution);
+
+    const target = mountComponent(AgentLaunchPopover, {});
+    const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
+    trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Workspace ready'));
+    deviceSessionMocks.planCreate.mockClear();
+
+    const codex = document.body.querySelector<HTMLButtonElement>('[aria-label="New Codex session"]');
+    codex!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(deviceSessionMocks.executeCreate).toHaveBeenCalledWith('plan-ready'));
+    await Promise.resolve();
+    flushSync();
+
+    expect(deviceSessionMocks.planCreate).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain('Workspace ready');
+    expect(document.body.textContent).not.toContain('Checking workspace…');
+
+    resolveExecution?.();
+    resolveUnexpectedPreview?.();
+  });
+
   it('keeps the launch popover open while hovering the portalled Device menu', async () => {
     const target = mountComponent(AgentLaunchPopover, {});
     const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
