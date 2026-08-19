@@ -345,7 +345,10 @@ export class DeviceSessionsStore {
     if (this.refreshRequest) return this.refreshRequest;
     this.refreshing = true;
     const request = ipc.sessions.refreshDevices()
-      .then((state) => this.applyState(state))
+      .then((state) => {
+        if (state.revision < this.state.revision) return;
+        this.applyState(state);
+      })
       .finally(() => {
         this.refreshing = false;
         if (this.refreshRequest === request) this.refreshRequest = null;

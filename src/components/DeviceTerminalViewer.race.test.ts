@@ -465,6 +465,44 @@ describe('DeviceTerminalViewer output sequencing', () => {
     ));
   });
 
+  it('reclaims focus and clears an input error after the Device reconnects', async () => {
+    terminalMocks.terminalInput.mockRejectedValueOnce(new Error('Device xps is offline.'));
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 1200,
+      bottom: 800,
+      width: 1200,
+      height: 800,
+      toJSON: () => ({})
+    });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewer, {
+      target,
+      props: { projection: remoteProjection(), onClose: vi.fn() }
+    });
+    flushSync();
+    await vi.waitFor(() => expect(terminalMocks.inputHandler).not.toBeNull());
+
+    terminalMocks.inputHandler?.('m');
+    await vi.waitFor(() => expect(target.textContent).toContain('Device xps is offline.'));
+
+    terminalMocks.claimInput.mockClear().mockResolvedValue(true);
+    terminalMocks.ownsInput.mockReturnValue(true);
+    terminalMocks.focus.mockClear();
+    terminalMocks.reconnectListener?.();
+
+    await vi.waitFor(() => expect(terminalMocks.claimInput).toHaveBeenCalledWith({
+      deviceId: 'device-xps',
+      terminalId: 'terminal-1'
+    }));
+    await vi.waitFor(() => expect(target.textContent).not.toContain('Device xps is offline.'));
+    await vi.waitFor(() => expect(terminalMocks.focus).toHaveBeenCalled());
+  });
+
   it('keeps remote input control when its terminal presentation unmounts', async () => {
     terminalMocks.claimInput.mockResolvedValue(true);
     const target = document.createElement('div');

@@ -114,6 +114,24 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     await vi.waitFor(() => expect(store.selectedProjection?.available).toBe(true));
   });
 
+  it('does not let an older refresh overwrite a newer reconnect event', async () => {
+    const staleRefresh = deferred<MultiDeviceSessionState>();
+    mocks.deviceState.mockResolvedValueOnce(state(1, false));
+    mocks.refreshDevices.mockReturnValueOnce(staleRefresh.promise);
+    const store = new DeviceSessionsStore();
+    await store.load();
+    await vi.waitFor(() => expect(mocks.refreshDevices).toHaveBeenCalledOnce());
+
+    mocks.stateChange?.(state(3, true));
+    expect(store.device('device-xps')?.available).toBe(true);
+
+    staleRefresh.resolve(state(2, false));
+    await vi.waitFor(() => expect(store.refreshing).toBe(false));
+
+    expect(store.state.revision).toBe(3);
+    expect(store.device('device-xps')?.available).toBe(true);
+  });
+
   it('projects Exit immediately but lets the next Device inventory remain authoritative', async () => {
     const store = new DeviceSessionsStore();
     await store.load();

@@ -405,7 +405,15 @@
     }
 
     const detachReconnect = deviceSessions.onDeviceReconnect(ref.deviceId, () => {
-      void recover();
+      void (async () => {
+        await recover();
+        if (!active) return;
+        const claimed = await deviceSessions.claimTerminalInputControl(ref);
+        if (!active || !claimed) return;
+        error = null;
+        await prepareInteractive();
+        if (active && pageVisible && !compactTouchViewport()) terminal.focus();
+      })();
     });
 
     const resize = async (force = false): Promise<void> => {
@@ -464,9 +472,14 @@
       void resize(true);
     });
     const input = terminal.onData((data) => {
-      void deviceSessions.terminalInput(ref, data).catch((cause) => {
-        if (active) error = cause instanceof Error ? cause.message : String(cause);
-      });
+      void deviceSessions.terminalInput(ref, data).then(
+        () => {
+          if (active) error = null;
+        },
+        (cause) => {
+          if (active) error = cause instanceof Error ? cause.message : String(cause);
+        }
+      );
     });
 
     disposeInitialized = () => {
