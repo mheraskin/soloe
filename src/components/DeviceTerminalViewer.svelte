@@ -472,7 +472,10 @@
         return;
       }
       if (detail?.keyboardClosed) {
-        requestAnimationFrame(() => requestAnimationFrame(() => void resize(true)));
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          void resize(true);
+          terminal.scrollToBottom();
+        }));
         return;
       }
       scheduleResize();
