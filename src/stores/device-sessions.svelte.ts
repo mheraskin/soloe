@@ -158,16 +158,19 @@ export class DeviceSessionsStore {
 
   selectSession(key: string): void {
     const projection = this.sessions.find((candidate) => candidate.key === key);
-    if (!projection?.available) return;
+    if (!projection) return;
     const owner = this.device(projection.ref.deviceId);
-    if (!owner?.available) return;
+    if (!owner) return;
+    const reconnect = !projection.available || !owner.available;
     if (owner.local) {
       this.selectedSessionKey = null;
       localSessions.select(projection.ref.sessionId);
+      if (reconnect) void this.refreshAfterCurrent().catch(() => undefined);
       return;
     }
     localSessions.select(null);
     this.selectedSessionKey = key;
+    if (reconnect) void this.refreshAfterCurrent().catch(() => undefined);
   }
 
   async openSession(key: string): Promise<void> {

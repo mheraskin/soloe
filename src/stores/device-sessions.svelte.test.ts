@@ -99,6 +99,21 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     expect(reconnected).toHaveBeenCalledOnce();
   });
 
+  it('navigates to cached Sessions and refreshes an offline Device immediately', async () => {
+    mocks.deviceState.mockResolvedValueOnce(state(1, false));
+    mocks.refreshDevices.mockResolvedValueOnce(state(1, false));
+    const store = new DeviceSessionsStore();
+    await store.load();
+    await vi.waitFor(() => expect(store.refreshing).toBe(false));
+    mocks.refreshDevices.mockClear().mockResolvedValueOnce(state(2, true));
+
+    store.selectSession('device-xps/session-1');
+
+    expect(store.selectedSessionKey).toBe('device-xps/session-1');
+    await vi.waitFor(() => expect(mocks.refreshDevices).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(store.selectedProjection?.available).toBe(true));
+  });
+
   it('projects Exit immediately but lets the next Device inventory remain authoritative', async () => {
     const store = new DeviceSessionsStore();
     await store.load();
