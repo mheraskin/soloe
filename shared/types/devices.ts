@@ -25,6 +25,8 @@ export interface DevicePortForwardResult {
     | 'conflict'
     | 'error';
   dnsName: string | null;
+  /** IPv4 address used to preserve virtual-host subdomains through wildcard DNS. */
+  ipAddress?: string | null;
   port: number;
   forwarded: boolean;
   message: string | null;

@@ -44,6 +44,13 @@ describe('resolveDeviceBrowserUrl', () => {
       url: 'https://example.com/docs',
       target
     });
+    await expect(resolveDeviceBrowserUrl(
+      'http://attacker-xps.example.ts.net:8877/order-ahead/',
+      target
+    )).resolves.toEqual({
+      url: 'http://attacker-xps.example.ts.net:8877/order-ahead/',
+      target
+    });
     expect(ensure).not.toHaveBeenCalled();
   });
 
@@ -60,6 +67,65 @@ describe('resolveDeviceBrowserUrl', () => {
 
     await expect(resolveDeviceBrowserUrl('xps.example.ts.net:5173', target))
       .resolves.toMatchObject({ url: 'http://xps.example.ts.net:5173/' });
+  });
+
+  it('routes a Device MagicDNS subdomain through the resolvable Device hostname', async () => {
+    vi.spyOn(deviceSessions, 'ensureTailscalePort').mockResolvedValue({
+      deviceId: DEVICE_ID,
+      state: 'ready',
+      dnsName: 'xps.example.ts.net',
+      ipAddress: '100.101.102.103',
+      port: 8877,
+      forwarded: true,
+      message: null,
+      setupUrl: null
+    });
+
+    await expect(resolveDeviceBrowserUrl(
+      'http://ember-oak.xps.example.ts.net:8877/order-ahead/',
+      target
+    )).resolves.toEqual({
+      url: 'http://ember-oak.100.101.102.103.nip.io:8877/order-ahead/',
+      target
+    });
+    expect(deviceSessions.ensureTailscalePort).toHaveBeenCalledWith(DEVICE_ID, 8877);
+  });
+
+  it('preserves a localhost subdomain when routing it to another Device', async () => {
+    vi.spyOn(deviceSessions, 'ensureTailscalePort').mockResolvedValue({
+      deviceId: DEVICE_ID,
+      state: 'ready',
+      dnsName: 'xps.example.ts.net',
+      ipAddress: '100.101.102.103',
+      port: 8877,
+      forwarded: true,
+      message: null,
+      setupUrl: null
+    });
+
+    await expect(resolveDeviceBrowserUrl(
+      'http://ember-oak.localhost:8877/order-ahead/?menu=lunch#items',
+      target
+    )).resolves.toMatchObject({
+      url: 'http://ember-oak.100.101.102.103.nip.io:8877/order-ahead/?menu=lunch#items'
+    });
+  });
+
+  it('fails explicitly when an older Device cannot provide an address for a subdomain', async () => {
+    vi.spyOn(deviceSessions, 'ensureTailscalePort').mockResolvedValue({
+      deviceId: DEVICE_ID,
+      state: 'ready',
+      dnsName: 'xps.example.ts.net',
+      port: 8877,
+      forwarded: true,
+      message: null,
+      setupUrl: null
+    });
+
+    await expect(resolveDeviceBrowserUrl(
+      'http://ember-oak.localhost:8877/order-ahead/',
+      target
+    )).rejects.toThrow('did not report a Tailscale IPv4 address');
   });
 
   it('resolves the local DNS name and remote endpoint aliases for device labels', () => {

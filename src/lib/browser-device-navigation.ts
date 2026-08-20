@@ -57,7 +57,9 @@ export async function resolveDeviceBrowserUrl(
 
   const targetHostname = target.tailscaleDnsName?.toLowerCase() ?? null;
   const hostname = parsed.hostname.toLowerCase();
-  const targetsSelectedDevice = targetHostname !== null && hostname === targetHostname;
+  const subdomain = deviceSubdomain(hostname, targetHostname);
+  const targetsSelectedDevice = targetHostname !== null
+    && (hostname === targetHostname || hostname.endsWith(`.${targetHostname}`));
   if (!isLoopbackBrowserHostname(hostname) && !targetsSelectedDevice) {
     return { url: normalized, target };
   }
@@ -67,11 +69,43 @@ export async function resolveDeviceBrowserUrl(
     throw new Error(result.message ?? `Could not open port ${port} on ${target.name}.`);
   }
 
-  parsed.hostname = result.dnsName;
+  if (subdomain) {
+    if (!result.ipAddress || !isIpv4Address(result.ipAddress)) {
+      throw new Error(
+        `Could not route the ${subdomain} subdomain through ${target.name}: `
+        + 'the Device did not report a Tailscale IPv4 address.'
+      );
+    }
+    // MagicDNS publishes the Device hostname, not arbitrary children beneath it.
+    // IP-backed wildcard DNS keeps the application's virtual-host prefix intact.
+    parsed.hostname = `${subdomain}.${result.ipAddress}.nip.io`;
+  } else {
+    parsed.hostname = result.dnsName;
+  }
   return {
     url: parsed.toString(),
     target: { ...target, tailscaleDnsName: result.dnsName }
   };
+}
+
+function deviceSubdomain(hostname: string, targetHostname: string | null): string | null {
+  if (hostname.endsWith('.localhost')) {
+    return hostname.slice(0, -'.localhost'.length) || null;
+  }
+  if (targetHostname && hostname.endsWith(`.${targetHostname}`)) {
+    return hostname.slice(0, -(targetHostname.length + 1)) || null;
+  }
+  return null;
+}
+
+function isIpv4Address(value: string): boolean {
+  const octets = value.split('.');
+  return octets.length === 4 && octets.every((octet) => {
+    if (!/^\d{1,3}$/u.test(octet)) return false;
+    if (octet.length > 1 && octet.startsWith('0')) return false;
+    const number = Number(octet);
+    return number >= 0 && number <= 255;
+  });
 }
 
 export async function openDeviceBrowserUrl(rawUrl: string, deviceId: DeviceId): Promise<void> {

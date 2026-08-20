@@ -170,6 +170,7 @@ describe('LocalSessionDevice', () => {
       message: null,
       setupUrl: null,
       dnsName: 'local.tailnet.ts.net',
+      ipAddress: '100.101.102.103',
       port,
       forwarded: true
     }));
@@ -186,6 +187,7 @@ describe('LocalSessionDevice', () => {
       message: null,
       setupUrl: null,
       dnsName: 'local.tailnet.ts.net',
+      ipAddress: '100.101.102.103',
       port: 3000,
       forwarded: true
     });

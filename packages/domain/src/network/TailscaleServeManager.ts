@@ -38,6 +38,7 @@ export interface TailscaleServeManagerOptions {
 
 export interface TailscalePortForwardStatus extends TailscaleServeStatus {
   dnsName: string | null;
+  ipAddress: string | null;
   port: number;
   forwarded: boolean;
 }
@@ -68,11 +69,12 @@ export class TailscalePortForwardManager {
   async ensure(rawPort: number): Promise<TailscalePortForwardStatus> {
     const port = validPort(rawPort);
     let selfDnsName: string;
+    let selfIpAddress: string | null;
     let serveStatus: unknown;
     try {
-      selfDnsName = parseSelfDnsName(
-        parseJsonStatus(await this.run(["status", "--json"]), "status"),
-      );
+      const status = parseJsonStatus(await this.run(["status", "--json"]), "status");
+      selfDnsName = parseSelfDnsName(status);
+      selfIpAddress = parseSelfIpv4Address(status);
       serveStatus = parseJsonStatus(
         await this.run(["serve", "status", "--json"]),
         "Serve status",
@@ -83,7 +85,7 @@ export class TailscalePortForwardManager {
 
     const existing = inspectTcpForward(serveStatus, port);
     if (existing === "owned") {
-      return readyPortForward(selfDnsName, port, true);
+      return readyPortForward(selfDnsName, selfIpAddress, port, true);
     }
     if (existing === "occupied") {
       return {
@@ -91,13 +93,14 @@ export class TailscalePortForwardManager {
         message: `Tailscale Serve port ${port} is already used by another service.`,
         setupUrl: null,
         dnsName: selfDnsName,
+        ipAddress: selfIpAddress,
         port,
         forwarded: false,
       };
     }
 
     if (await this.probe(selfDnsName, port)) {
-      return readyPortForward(selfDnsName, port, false);
+      return readyPortForward(selfDnsName, selfIpAddress, port, false);
     }
 
     const loopbackHost = await firstListeningLoopback(this.probe, port);
@@ -107,6 +110,7 @@ export class TailscalePortForwardManager {
         message: `Nothing is listening on localhost:${port} on this Device.`,
         setupUrl: null,
         dnsName: selfDnsName,
+        ipAddress: selfIpAddress,
         port,
         forwarded: false,
       };
@@ -123,9 +127,9 @@ export class TailscalePortForwardManager {
         `--tcp=${port}`,
         target,
       ]);
-      return readyPortForward(selfDnsName, port, true);
+      return readyPortForward(selfDnsName, selfIpAddress, port, true);
     } catch (error) {
-      return portForwardFailure(commandFailure(error), port, selfDnsName);
+      return portForwardFailure(commandFailure(error), port, selfDnsName, selfIpAddress);
     }
   }
 }
@@ -308,6 +312,7 @@ async function firstListeningLoopback(
 
 function readyPortForward(
   dnsName: string,
+  ipAddress: string | null,
   port: number,
   forwarded: boolean,
 ): TailscalePortForwardStatus {
@@ -316,6 +321,7 @@ function readyPortForward(
     message: null,
     setupUrl: null,
     dnsName,
+    ipAddress,
     port,
     forwarded,
   };
@@ -325,8 +331,9 @@ function portForwardFailure(
   status: TailscaleServeStatus,
   port: number,
   dnsName: string | null = null,
+  ipAddress: string | null = null,
 ): TailscalePortForwardStatus {
-  return { ...status, dnsName, port, forwarded: false };
+  return { ...status, dnsName, ipAddress, port, forwarded: false };
 }
 
 function probeTcpPort(host: string, port: number): Promise<boolean> {
@@ -366,6 +373,24 @@ function parseSelfDnsName(raw: unknown): string {
     throw new Error("Tailscale status did not report this device's DNS name.");
   }
   return dnsName;
+}
+
+function parseSelfIpv4Address(raw: unknown): string | null {
+  const self = isRecord(raw) && isRecord(raw.Self) ? raw.Self : null;
+  const addresses = self && Array.isArray(self.TailscaleIPs) ? self.TailscaleIPs : [];
+  return addresses.find((value): value is string =>
+    typeof value === "string" && isIpv4Address(value)
+  ) ?? null;
+}
+
+function isIpv4Address(value: string): boolean {
+  const octets = value.split(".");
+  return octets.length === 4 && octets.every((octet) => {
+    if (!/^\d{1,3}$/u.test(octet)) return false;
+    if (octet.length > 1 && octet.startsWith("0")) return false;
+    const number = Number(octet);
+    return number >= 0 && number <= 255;
+  });
 }
 
 function commandFailure(error: unknown): TailscaleServeStatus {
