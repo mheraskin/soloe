@@ -120,7 +120,9 @@ async function main() {
   });
   const mobileWorkspace = await first.cdp.evaluate(
     `(${runMobileWorkspaceWorkflow.toString()})(${JSON.stringify({
-      sessionId: normalSession.id
+      sessionId: normalSession.id,
+      terminalId: workflow.terminal.terminalId,
+      runMode: nativeRunMode
     })})`
   );
   await first.cdp.send('Emulation.clearDeviceMetricsOverride');
@@ -1213,6 +1215,7 @@ function delay(milliseconds) {
 }
 
 async function runMobileWorkspaceWorkflow(input) {
+  const api = window.soloe;
   const assert = (condition, message) => {
     if (!condition) throw new Error(message);
   };
@@ -1345,29 +1348,122 @@ async function runMobileWorkspaceWorkflow(input) {
     'terminal touch momentum after release'
   );
   assert(page() === 'workspace', 'Vertical terminal swipe triggered workspace navigation');
+  const tap = (type, buttons) => ghosttyCanvas.dispatchEvent(new PointerEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    pointerType: 'touch',
+    pointerId: 42,
+    isPrimary: true,
+    button: 0,
+    buttons,
+    clientX: 190,
+    clientY: 220
+  }));
+  tap('pointerdown', 1);
+  tap('pointerup', 0);
+  await waitUntil(
+    () => document.activeElement === ghosttyInput,
+    2_000,
+    'mobile terminal input focus'
+  );
   const ghosttyBeforeKeyboard = ghosttyRoot.getBoundingClientRect();
+  const previousAppHeight = root.style.getPropertyValue('--app-height');
+  const previousAppTop = root.style.getPropertyValue('--app-top');
+  const keyboardHeight = 300;
+  const visibleViewportHeight = Math.max(320, Math.round(window.innerHeight - keyboardHeight));
+  root.style.setProperty('--app-height', `${visibleViewportHeight}px`);
+  root.style.setProperty('--app-top', '0px');
   root.style.setProperty('--keyboard-inset', '300px');
   root.setAttribute('data-mobile-keyboard-open', '');
   window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
     detail: { keyboardOpen: true, keyboardClosed: false }
   }));
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  try {
+    await waitUntil(() => {
+      const hostRect = ghosttyRoot.getBoundingClientRect();
+      const inputRect = ghosttyInput.getBoundingClientRect();
+      return hostRect.bottom <= visibleViewportHeight + 1
+        && inputRect.bottom <= visibleViewportHeight + 1;
+    }, 5_000, 'mobile terminal above the virtual keyboard');
+  } catch (error) {
+    const geometry = {
+      visibleViewportHeight,
+      innerHeight: window.innerHeight,
+      appHeight: root.style.getPropertyValue('--app-height'),
+      appTop: root.style.getPropertyValue('--app-top'),
+      shell: document.querySelector('.app-shell')?.getBoundingClientRect().toJSON(),
+      workspace: document.querySelector('.mobile-workspace')?.getBoundingClientRect().toJSON(),
+      host: ghosttyRoot.getBoundingClientRect().toJSON(),
+      input: ghosttyInput.getBoundingClientRect().toJSON(),
+      inputStyle: { left: ghosttyInput.style.left, top: ghosttyInput.style.top },
+      canvas: {
+        width: ghosttyCanvas.width,
+        height: ghosttyCanvas.height,
+        clientWidth: ghosttyCanvas.clientWidth,
+        clientHeight: ghosttyCanvas.clientHeight
+      }
+    };
+    throw new Error(`${error.message}; geometry=${JSON.stringify(geometry)}`);
+  }
   const ghosttyWithKeyboard = ghosttyRoot.getBoundingClientRect();
   assert(
     Math.abs(ghosttyBeforeKeyboard.width - ghosttyWithKeyboard.width) <= 1
-      && Math.abs(ghosttyBeforeKeyboard.height - ghosttyWithKeyboard.height) <= 1,
-    'Mobile keyboard resized the terminal renderer'
+      && ghosttyWithKeyboard.height >= 120
+      && ghosttyWithKeyboard.height < ghosttyBeforeKeyboard.height - 80,
+    'Mobile keyboard did not refit the terminal into its visible viewport'
   );
   assert(
     ghosttyCanvas.getAttribute('aria-hidden') === 'true'
-      && ghosttyInput.getAttribute('aria-label') === 'Terminal input',
+      && ghosttyInput.getAttribute('aria-label') === 'Terminal input'
+      && ghosttyInput.getAttribute('inputmode') === 'text'
+      && ghosttyInput.getAttribute('enterkeyhint') === 'enter'
+      && ghosttyInput.getAttribute('autocorrect') === 'off'
+      && document.activeElement === ghosttyInput,
     'Mobile Ghostty accessibility surfaces were not configured'
+  );
+  const mobileInputMarker = `soloe-mobile-input-${crypto.randomUUID()}`;
+  const mobileOutput = new Promise((resolve, reject) => {
+    let observed = '';
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      reject(new Error('Mobile terminal input marker timed out'));
+    }, 10_000);
+    const unsubscribe = api.terminal.onOutput((event) => {
+      if (event.terminalId !== input.terminalId) return;
+      observed += event.data;
+      if (!observed.includes(mobileInputMarker)) return;
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve();
+    });
+  });
+  ghosttyInput.value = input.runMode === 'windows'
+    ? `Write-Output '${mobileInputMarker}'\r\n`
+    : `printf '${mobileInputMarker}\\n'\n`;
+  ghosttyInput.dispatchEvent(new InputEvent('input', {
+    bubbles: true,
+    data: ghosttyInput.value,
+    inputType: 'insertText'
+  }));
+  await mobileOutput;
+  assert(
+    document.activeElement === ghosttyInput,
+    'Mobile terminal lost keyboard focus while delivering input'
   );
   root.removeAttribute('data-mobile-keyboard-open');
   root.style.removeProperty('--keyboard-inset');
+  if (previousAppHeight) root.style.setProperty('--app-height', previousAppHeight);
+  else root.style.removeProperty('--app-height');
+  if (previousAppTop) root.style.setProperty('--app-top', previousAppTop);
+  else root.style.removeProperty('--app-top');
   window.dispatchEvent(new CustomEvent('soloe:rail-layout', {
     detail: { keyboardOpen: false, keyboardClosed: true }
   }));
+  await waitUntil(
+    () => ghosttyRoot.getBoundingClientRect().height >= ghosttyBeforeKeyboard.height - 1,
+    5_000,
+    'mobile terminal after keyboard dismissal'
+  );
 
   const activeIndicatorIsCentered = () => {
     const indicator = document.querySelector('.mobile-page-indicator');
@@ -1511,7 +1607,8 @@ async function runMobileWorkspaceWorkflow(input) {
     paneOverlay: true,
     selectedPaneToggle: true,
     centeredActiveIndicator: true,
-    stableKeyboardOverlay: true,
+    visibleKeyboardTerminal: true,
+    mobileGhosttyInputObserved: true,
     ghosttyAccessibilitySurface: true,
     terminalScrollbarControl: true,
     touchTerminalScroll: true,

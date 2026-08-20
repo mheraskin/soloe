@@ -16,6 +16,7 @@ import {
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
   terminalGridCellAt,
+  terminalInputPosition,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
   terminalLinkAtColumn,
@@ -393,6 +394,30 @@ describe("terminalContentOriginY", () => {
       const origin = terminalContentOriginY(height, 4, rows, 16, true);
       expect(origin + rows * 16).toBe(height - 4);
     }
+  });
+});
+
+describe("terminalInputPosition", () => {
+  const options = {
+    cursorX: 10,
+    cursorY: 4,
+    cellWidth: 9,
+    cellHeight: 18,
+    originY: 4,
+    viewportWidth: 390,
+    viewportHeight: 488,
+    padding: 4,
+  };
+
+  it("anchors the mobile keyboard input to an on-screen cursor", () => {
+    expect(terminalInputPosition(options)).toEqual({ left: 94, top: 76 });
+  });
+
+  it("keeps an off-screen logical cursor inside the visible terminal", () => {
+    expect(terminalInputPosition({ ...options, cursorX: 80, cursorY: 42 })).toEqual({
+      left: 389,
+      top: 470,
+    });
   });
 });
 

@@ -167,6 +167,30 @@ export function terminalContentOriginY(
   return padding + Math.max(0, slack);
 }
 
+export function terminalInputPosition(options: {
+  readonly cursorX: number;
+  readonly cursorY: number;
+  readonly cellWidth: number;
+  readonly cellHeight: number;
+  readonly originY: number;
+  readonly viewportWidth: number;
+  readonly viewportHeight: number;
+  readonly padding: number;
+}): { readonly left: number; readonly top: number } {
+  const left = options.padding + options.cursorX * options.cellWidth;
+  const top = options.originY + options.cursorY * options.cellHeight;
+  return {
+    left: Math.max(
+      options.padding,
+      Math.min(left, Math.max(options.padding, options.viewportWidth - 1)),
+    ),
+    top: Math.max(
+      options.padding,
+      Math.min(top, Math.max(options.padding, options.viewportHeight - options.cellHeight)),
+    ),
+  };
+}
+
 export interface TerminalScrollbarGeometry {
   readonly thumbHeight: number;
   readonly thumbTop: number;
@@ -604,6 +628,7 @@ export class GhosttyTerminalSurface {
   private touchGesture: TerminalTouchGesture | null = null;
   private touchMomentum: TerminalTouchMomentum | null = null;
   private touchMomentumFrame = 0;
+  private layoutFitFrame = 0;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
   // preference restarts a blink cycle that has no timer left to notice it.
@@ -660,6 +685,9 @@ export class GhosttyTerminalSurface {
     input.setAttribute("aria-label", "Terminal input");
     input.autocapitalize = "off";
     input.autocomplete = "off";
+    input.inputMode = "text";
+    input.setAttribute("enterkeyhint", "enter");
+    input.setAttribute("autocorrect", "off");
     input.spellcheck = false;
     input.style.cssText =
       "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
@@ -1099,6 +1127,7 @@ export class GhosttyTerminalSurface {
       this.options.onResize(this.cols, this.rows);
     }
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
+    if (this.layoutFitFrame !== 0) window.cancelAnimationFrame(this.layoutFitFrame);
     this.cancelTouchMomentum();
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {
@@ -1636,6 +1665,17 @@ export class GhosttyTerminalSurface {
     this.applyTerminalScroll(delta.rows, event);
   };
 
+  private readonly onLayoutChange = () => {
+    if (this.layoutFitFrame !== 0) window.cancelAnimationFrame(this.layoutFitFrame);
+    // Mobile visualViewport updates publish before the browser has completed
+    // the CSS layout pass. Fit on the next frame so the keyboard-sized app
+    // shell and the cursor-anchored textarea use the same visible geometry.
+    this.layoutFitFrame = window.requestAnimationFrame(() => {
+      this.layoutFitFrame = 0;
+      this.fit();
+    });
+  };
+
   private updateTouchGesture(event: PointerEvent, touch: TerminalTouchGesture): void {
     const deltaPixels = touch.lastY - event.clientY;
     const elapsed = event.timeStamp - touch.lastTime;
@@ -1794,6 +1834,7 @@ export class GhosttyTerminalSurface {
   };
 
   private installEvents(): void {
+    window.addEventListener("soloe:rail-layout", this.onLayoutChange);
     this.input.addEventListener("keydown", this.onKeyDown);
     this.input.addEventListener("keyup", this.onKeyUp);
     this.input.addEventListener("focus", this.onFocus);
@@ -1819,6 +1860,7 @@ export class GhosttyTerminalSurface {
   }
 
   private removeEvents(): void {
+    window.removeEventListener("soloe:rail-layout", this.onLayoutChange);
     this.input.removeEventListener("keydown", this.onKeyDown);
     this.input.removeEventListener("keyup", this.onKeyUp);
     this.input.removeEventListener("focus", this.onFocus);
@@ -1989,13 +2031,29 @@ export class GhosttyTerminalSurface {
 
   private positionInput(): void {
     const snapshot = this.snapshot;
-    if (!snapshot || !snapshot.cursorVisible || snapshot.cursorX < 0 || snapshot.cursorY < 0) {
-      return;
-    }
+    if (!snapshot) return;
     // The IME candidate window anchors to the textarea, so it must follow the
-    // terminal cursor for composition to appear where the user is typing.
-    const left = CONTENT_PADDING + snapshot.cursorX * this.metrics.width;
-    const top = this.originY + snapshot.cursorY * this.metrics.height;
+    // terminal cursor for composition to appear where the user is typing. A
+    // scrolled-back cursor is reported off-screen; retain its last logical
+    // location and clamp that anchor into the resized visible viewport.
+    const cursorX =
+      snapshot.cursorX >= 0
+        ? snapshot.cursorX
+        : Math.max(0, (this.inputLeft - CONTENT_PADDING) / this.metrics.width);
+    const cursorY =
+      snapshot.cursorY >= 0
+        ? snapshot.cursorY
+        : Math.max(0, (this.inputTop - this.originY) / this.metrics.height);
+    const { left, top } = terminalInputPosition({
+      cursorX,
+      cursorY,
+      cellWidth: this.metrics.width,
+      cellHeight: this.metrics.height,
+      originY: this.originY,
+      viewportWidth: this.mount.clientWidth,
+      viewportHeight: this.mountHeight,
+      padding: CONTENT_PADDING,
+    });
     if (left === this.inputLeft && top === this.inputTop) return;
     this.inputLeft = left;
     this.inputTop = top;
