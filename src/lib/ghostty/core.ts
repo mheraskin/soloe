@@ -67,6 +67,8 @@ export interface GhosttyTheme {
   readonly foreground: GhosttyColor;
   readonly background: GhosttyColor;
   readonly cursor: GhosttyColor;
+  /** Complete xterm-compatible palette, including the configurable ANSI 16. */
+  readonly palette?: readonly GhosttyColor[];
   /** CSS color the renderer overlays on selected cells; not sent to Ghostty. */
   readonly selectionBackground?: string;
 }
@@ -152,6 +154,26 @@ export interface GhosttyMouseInput {
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
+const OSC_COLOR_QUERIES = [
+  { code: 10, bytes: encoder.encode("\u001b]10;?\u0007") },
+  { code: 10, bytes: encoder.encode("\u001b]10;?\u001b\\") },
+  { code: 11, bytes: encoder.encode("\u001b]11;?\u0007") },
+  { code: 11, bytes: encoder.encode("\u001b]11;?\u001b\\") },
+] as const;
+
+function bytesEqual(left: readonly number[], right: Uint8Array): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function bytesStartWith(value: readonly number[], prefix: Uint8Array): boolean {
+  return value.length <= prefix.length && value.every((byte, index) => byte === prefix[index]);
+}
+
+function oscRgb(color: GhosttyColor): string {
+  const channel = (value: number) => value.toString(16).padStart(2, "0").repeat(2);
+  return `${channel(color.r)}/${channel(color.g)}/${channel(color.b)}`;
+}
+
 function blend(foreground: GhosttyColor, background: GhosttyColor): GhosttyColor {
   const channel = (front: number, back: number) => Math.floor((front * 155 + back * 100) / 255);
   return {
@@ -183,6 +205,8 @@ export class GhosttyTerminalCore {
   private mouseEvent = 0;
   private ptyWriterId = 0;
   private ptyWriter: ((data: string) => void) | null = null;
+  private colorQueryPrefix: number[] = [];
+  private theme: GhosttyTheme | null = null;
   private scratch = 0;
   private style = 0;
   private scrollbar = 0;
@@ -298,6 +322,7 @@ export class GhosttyTerminalCore {
     this.runtime.bytes(pointer, bytes.length).set(bytes);
     this.runtime.call("ghostty_terminal_vt_write", this.terminal, pointer, bytes.length);
     this.runtime.free(pointer, bytes.length);
+    this.replyToColorQueries(bytes);
   }
 
   resetAndWrite(data: string): void {
@@ -353,6 +378,10 @@ export class GhosttyTerminalCore {
 
   setTheme(theme: GhosttyTheme): void {
     this.ensureActive();
+    if (theme.palette && theme.palette.length !== 256) {
+      throw new Error(`Ghostty terminal palette must contain 256 colors, got ${theme.palette.length}`);
+    }
+    this.theme = theme;
     const color = this.runtime.alloc(3);
     for (const [option, value] of [
       [11, theme.foreground],
@@ -363,6 +392,50 @@ export class GhosttyTerminalCore {
       this.runtime.call("ghostty_terminal_set", this.terminal, option, color);
     }
     this.runtime.free(color, 3);
+    if (theme.palette) {
+      const palette = this.runtime.alloc(theme.palette.length * 3);
+      const bytes = this.runtime.bytes(palette, theme.palette.length * 3);
+      theme.palette.forEach((value, index) => {
+        bytes.set([value.r, value.g, value.b], index * 3);
+      });
+      this.runtime.call("ghostty_terminal_set", this.terminal, 14, palette);
+      this.runtime.free(palette, theme.palette.length * 3);
+    } else {
+      this.runtime.call("ghostty_terminal_set", this.terminal, 14, 0);
+    }
+  }
+
+  /**
+   * The pinned libghostty-vt C adapter parses OSC 10/11 queries but currently
+   * discards the query operation instead of routing a response through
+   * write_pty. Full-screen TUIs such as Codex use these replies to derive a
+   * readable rich-color palette, so supply the missing embedder response.
+   */
+  private replyToColorQueries(bytes: Uint8Array): void {
+    const writer = this.ptyWriterId !== 0 ? this.ptyWriter : null;
+    const theme = this.theme;
+    if (!writer || !theme) {
+      this.colorQueryPrefix = [];
+      return;
+    }
+
+    for (const byte of bytes) {
+      this.colorQueryPrefix.push(byte);
+      const match = OSC_COLOR_QUERIES.find((query) => bytesEqual(this.colorQueryPrefix, query.bytes));
+      if (match) {
+        const color = match.code === 10 ? theme.foreground : theme.background;
+        writer(`\u001b]${match.code};rgb:${oscRgb(color)}\u001b\\`);
+        this.colorQueryPrefix = [];
+        continue;
+      }
+
+      while (
+        this.colorQueryPrefix.length > 0 &&
+        !OSC_COLOR_QUERIES.some((query) => bytesStartWith(this.colorQueryPrefix, query.bytes))
+      ) {
+        this.colorQueryPrefix.shift();
+      }
+    }
   }
 
   scroll(deltaRows: number): void {

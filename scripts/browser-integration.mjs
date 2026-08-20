@@ -2108,6 +2108,7 @@ async function runBrowserWorkflow(input) {
     api.terminal.setOutputDemand({ terminalId: started.terminalId, active: true }),
     'terminal.setOutputDemand'
   );
+  const ansiColorOutput = `\u001b[31m${colorMarker}\u001b[0m`;
   const output = new Promise((resolve, reject) => {
     let observed = '';
     const timeout = setTimeout(() => {
@@ -2117,7 +2118,9 @@ async function runBrowserWorkflow(input) {
     const unsubscribe = api.terminal.onOutput((event) => {
       if (event.terminalId !== started.terminalId) return;
       observed += event.data;
-      if (!observed.includes(marker)) return;
+      // The PTY echoes the command before executing it. Wait for the actual
+      // SGR output so the retained-history assertion cannot race that echo.
+      if (!observed.includes(ansiColorOutput) || !observed.includes(marker)) return;
       clearTimeout(timeout);
       unsubscribe();
       resolve(event);
@@ -2140,7 +2143,7 @@ async function runBrowserWorkflow(input) {
     'Terminal history did not include the output marker'
   );
   assert(
-    history.data.includes(`\u001b[31m${colorMarker}\u001b[0m`),
+    history.data.includes(ansiColorOutput),
     'Terminal history did not preserve ANSI color sequences'
   );
 
