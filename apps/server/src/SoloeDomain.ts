@@ -138,7 +138,10 @@ import {
   type FileIndexScope,
 } from "@soloe/domain";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
-import { SessionCommandBuilder } from "../../../electron/sessions/SessionCommandBuilder.js";
+import {
+  codexThreadPersistence,
+  SessionCommandBuilder,
+} from "../../../electron/sessions/SessionCommandBuilder.js";
 import { ShellDetector } from "../../../electron/terminal/ShellDetector.js";
 import { NativeCommandBuilder } from "../../../electron/runtime/WindowsCommandBuilder.js";
 import { WslCommandBuilder } from "../../../electron/runtime/WslCommandBuilder.js";
@@ -701,6 +704,21 @@ export class SoloeDomain extends EventEmitter {
       path.join(this.options.dataDirectory, "bridge.json"),
     );
     const initial = await persistence.loadOrCreate();
+    let bridgeReady = false;
+    const pendingCodexHandoffs = new Set<SessionId>();
+    const durableCodexThreads = new Set<string>();
+    const isDurableCodexThread = async (
+      providerThreadId: string,
+      soloeSessionId?: SessionId,
+    ): Promise<boolean> => {
+      if (durableCodexThreads.has(providerThreadId)) return true;
+      if (soloeSessionId && !await this.sessions.get(soloeSessionId)) return false;
+      // Reject only a confirmed missing UUID. Non-UUID provider identities and
+      // unreadable/missing Codex homes remain compatible with attached runtimes.
+      const durable = codexThreadPersistence(providerThreadId, process.env) !== false;
+      if (durable) durableCodexThreads.add(providerThreadId);
+      return durable;
+    };
     const dispatcher = new AgentHookDispatcher({
       observer: this.observer,
       sessionStore: this.sessions,
@@ -721,13 +739,32 @@ export class SoloeDomain extends EventEmitter {
           cwd,
         });
       },
+      isProviderThreadDurable: (provider, providerThreadId) =>
+        provider !== "codex"
+        || isDurableCodexThread(providerThreadId),
     });
     this.codexShellSnapshotWatcher = new CodexShellSnapshotWatcher({
       directory: codexShellSnapshotDirectory(),
-      onThread: (thread) => dispatcher.captureCodexThread(
-        thread.soloeSessionId,
+      isThreadDurable: (thread) => isDurableCodexThread(
         thread.providerThreadId,
+        thread.soloeSessionId,
       ),
+      onThread: async (thread) => {
+        const existing = await this.sessions.get(thread.soloeSessionId);
+        const previousThreadId = existing?.currentAgentRuntime?.provider === "codex"
+          ? existing.currentAgentRuntime.providerThreadId ?? existing.providerThreadId
+          : existing?.providerThreadId;
+        await dispatcher.captureCodexThread(
+          thread.soloeSessionId,
+          thread.providerThreadId,
+        );
+        if (!previousThreadId || previousThreadId === thread.providerThreadId) return;
+        if (!bridgeReady) {
+          pendingCodexHandoffs.add(thread.soloeSessionId);
+          return;
+        }
+        await this.restartCodexAfterThreadSwitch(thread.soloeSessionId);
+      },
       log: (message, detail) => console.warn(`[codex-resume] ${message}`, detail),
     });
     await this.codexShellSnapshotWatcher.start();
@@ -767,6 +804,11 @@ export class SoloeDomain extends EventEmitter {
     await persistence.save({ port, token: initial.token });
     this.agentBridge = started.bridge;
     this.agentBridgeInfo = started.info;
+    bridgeReady = true;
+    for (const sessionId of pendingCodexHandoffs) {
+      await this.restartCodexAfterThreadSwitch(sessionId);
+    }
+    pendingCodexHandoffs.clear();
     if (!this.options.integrationInstaller) {
       const installer = new HookInstaller({
         bridge: { port, token: initial.token },
@@ -786,6 +828,23 @@ export class SoloeDomain extends EventEmitter {
         }
       }
     }
+  }
+
+  private async restartCodexAfterThreadSwitch(sessionId: SessionId): Promise<void> {
+    const current = (await this.options.runtime.listRunning()).find(
+      (terminal) => terminal.sessionId === sessionId,
+    );
+    if (!current) return;
+    console.log(
+      `[codex-resume] restarting ${sessionId} after a confirmed thread switch`,
+    );
+    await this.options.runtime.stop(current.terminalId);
+    this.terminalAgentSignals.delete(current.terminalId);
+    await this.startTerminal({
+      sessionId,
+      cols: current.cols,
+      rows: current.rows,
+    });
   }
 
   private async resolveDiffTarget(input: {

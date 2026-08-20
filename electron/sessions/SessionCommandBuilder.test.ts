@@ -421,6 +421,25 @@ describe('SessionCommandBuilder — claude_code kind', () => {
 });
 
 describe('SessionCommandBuilder — codex kind', () => {
+  it('enables the current Soloe MCP bridge only for Codex launched by Soloe', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    };
+
+    const script = decodeAgentScript(innerLine(builder.build(s, {
+      ...ctx,
+      bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
+    }).args));
+
+    expect(script).toContain('mcp_servers.soloe.enabled=true');
+    expect(script).toContain('mcp_servers.soloe.url=');
+    expect(script).toContain('mcp_servers.soloe.bearer_token_env_var=');
+    expect(script).toContain('http://host.wsl.internal:1234/mcp');
+  });
+
   it('uses inline mode so Codex output remains in terminal scrollback', () => {
     const s: Session = {
       ...baseFields(),

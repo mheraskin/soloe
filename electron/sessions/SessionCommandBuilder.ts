@@ -143,6 +143,7 @@ export class SessionCommandBuilder {
         ? []
         : ['resume'];
     appendCodexResumePickerOptions(args);
+    appendCodexBridgeOverrides(args, ctx.bridge, s.runMode);
     if (s.launch.type === 'agent' && s.launch.provider === 'codex') {
       appendAgentLaunchArgs(args, s.launch, 'codex');
     }
@@ -249,6 +250,7 @@ export class SessionCommandBuilder {
     if (launch.reasoningEffort) {
       args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
     }
+    appendCodexBridgeOverrides(args, ctx.bridge, s.runMode);
     appendCodexTerminalMode(args, launch.extraArgs);
     appendExtraArgs(args, launch.extraArgs);
     return {
@@ -289,6 +291,23 @@ export class SessionCommandBuilder {
       s.runMode
     );
   }
+}
+
+function appendCodexBridgeOverrides(
+  args: string[],
+  bridge: SessionBuildContext['bridge'],
+  runMode: Session['runMode']
+): void {
+  if (!bridge) return;
+  const url = runMode === 'wsl' ? wslReachableBridgeUrl(bridge.url) : bridge.url;
+  args.push(
+    '-c',
+    'mcp_servers.soloe.enabled=true',
+    '-c',
+    `mcp_servers.soloe.url=${JSON.stringify(`${url}/mcp`)}`,
+    '-c',
+    'mcp_servers.soloe.bearer_token_env_var="SOLOE_BRIDGE_TOKEN"'
+  );
 }
 
 function appendAgentLaunchArgs(
@@ -422,7 +441,7 @@ function shouldResumeCodexThread(
 
 const CODEX_THREAD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
-function codexThreadPersistence(
+export function codexThreadPersistence(
   threadId: string,
   env: Record<string, string | undefined>
 ): boolean | undefined {

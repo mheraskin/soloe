@@ -143,7 +143,7 @@ const SOLOE_VERSION_KEY = '_soloe_version';
 // Bumping forces a one-time reinstall on next boot. v16 gives local bridge
 // delivery enough time to survive brief Device load without losing terminal
 // events such as Claude Stop; it retains v15's full interactive hook matrices.
-export const SOLOE_HOOK_VERSION = 16;
+export const SOLOE_HOOK_VERSION = 17;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
@@ -790,6 +790,7 @@ export function mergeCodexMcp(
   servers[SOLOE_MCP_NAME] = {
     [SOLOE_MARKER]: true,
     [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
+    enabled: false,
     url: args.url,
     bearer_token_env_var: SOLOE_BRIDGE_TOKEN_ENV
   };

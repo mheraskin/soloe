@@ -22,6 +22,85 @@ import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 describe("SoloeDomain", () => {
+  it("restarts Codex in place after a confirmed thread switch to release the old writer", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-codex-handoff-"));
+    const stop = vi.fn(async () => true);
+    const start = vi.fn(async (input: {
+      sessionId: string;
+      cols: number;
+      rows: number;
+      spec: { file: string; args: string[] };
+    }) => ({
+      terminalId: "terminal-new",
+      sessionId: input.sessionId,
+      pid: 42,
+      status: "running" as const,
+      startedAt: new Date().toISOString(),
+      cwd: directory,
+      spec: input.spec,
+      cols: input.cols,
+      rows: input.rows,
+    }));
+    let sessionId = "";
+    const runtime = {
+      start,
+      listRunning: vi.fn(async () => sessionId ? [{
+        terminalId: "terminal-old",
+        sessionId,
+        pid: 41,
+        status: "running" as const,
+        startedAt: new Date().toISOString(),
+        cwd: directory,
+        spec: { file: "codex", args: [], cwd: directory, env: {} },
+        cols: 132,
+        rows: 43,
+      }] : []),
+      historySnapshot: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop,
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      integrationInstaller: new HookInstaller({ hosts: [] }),
+    });
+
+    try {
+      await domain.init();
+      const created = await domain.invoke({
+        namespace: "sessions",
+        method: "create",
+        args: [{
+          name: "Codex",
+          cwd: directory,
+          runMode: hostPlatform(),
+          launch: {
+            type: "agent",
+            provider: "codex",
+            resumeMode: "new",
+            codexSessionId: "01a019bf-f267-78c2-94bd-3f31f37f4ecd",
+          },
+        }],
+      }) as { id: string };
+      sessionId = created.id;
+
+      await (domain as unknown as {
+        restartCodexAfterThreadSwitch(id: string): Promise<void>;
+      }).restartCodexAfterThreadSwitch(created.id);
+
+      expect(stop).toHaveBeenCalledWith("terminal-old");
+      expect(start).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: created.id,
+        cols: 132,
+        rows: 43,
+      }));
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("applies the configured Terminal history retention to Runtime", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-replay-retention-"));
     const setHistoryUnbounded = vi.fn(async () => true);
