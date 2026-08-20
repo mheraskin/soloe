@@ -634,8 +634,11 @@ function buildWslBashLocationLine(env: Record<string, string>): string {
     ([k, v]) => `export ${k}=${posixSingleQuote(v)}`
   );
   const rcLines = [
-    'test -r ~/.bashrc && source ~/.bashrc',
     ...exportLines,
+    // Bash themes commonly decide whether to emit colors while .bashrc is
+    // sourced. WSL does not inherit Soloe's InnerCommand env, so publish the
+    // terminal capabilities before that decision is made.
+    'test -r ~/.bashrc && source ~/.bashrc',
     buildAgentLaunchFunctions(),
     `PROMPT_COMMAND='${escaped}'`,
     'eval "$PROMPT_COMMAND"'

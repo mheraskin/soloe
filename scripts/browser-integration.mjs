@@ -122,6 +122,7 @@ async function main() {
     `(${runMobileWorkspaceWorkflow.toString()})(${JSON.stringify({
       sessionId: normalSession.id,
       terminalId: workflow.terminal.terminalId,
+      colorMarker: workflow.terminal.colorMarker,
       runMode: nativeRunMode
     })})`
   );
@@ -1310,6 +1311,24 @@ async function runMobileWorkspaceWorkflow(input) {
     ghosttyCanvas && ghosttyRoot && ghosttyInput && ghosttyScrollbar,
     'Mobile terminal keyboard surfaces are missing'
   );
+  const ansiRedPixelCount = () => {
+    const context = ghosttyCanvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return 0;
+    const pixels = context.getImageData(0, 0, ghosttyCanvas.width, ghosttyCanvas.height).data;
+    let redPixels = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const red = pixels[index] ?? 0;
+      const green = pixels[index + 1] ?? 0;
+      const blue = pixels[index + 2] ?? 0;
+      if (red >= green + 60 && red >= blue + 60) redPixels += 1;
+    }
+    return redPixels;
+  };
+  await waitUntil(
+    () => ansiRedPixelCount() >= 500,
+    5_000,
+    `ANSI color replay for ${input.colorMarker}`
+  );
   const scrollbarValue = () => Number(ghosttyScrollbar.getAttribute('aria-valuenow'));
   await waitUntil(
     () => Number(ghosttyScrollbar.getAttribute('aria-valuemax')) > 0
@@ -1609,6 +1628,7 @@ async function runMobileWorkspaceWorkflow(input) {
     centeredActiveIndicator: true,
     visibleKeyboardTerminal: true,
     mobileGhosttyInputObserved: true,
+    ansiColorReplay: true,
     ghosttyAccessibilitySurface: true,
     terminalScrollbarControl: true,
     touchTerminalScroll: true,
@@ -2052,6 +2072,7 @@ async function runBrowserWorkflow(input) {
   assert(Array.isArray(integration.hosts), 'Agent integration status was not real');
 
   const marker = `soloe-browser-${crypto.randomUUID()}`;
+  const colorMarker = `soloe-ansi-color-${crypto.randomUUID()}`;
   const started = await unwrap(
     api.terminal.start({ sessionId: input.sessionId, cols: 100, rows: 30 }),
     'terminal.start'
@@ -2104,8 +2125,8 @@ async function runBrowserWorkflow(input) {
     api.terminal.input({
       terminalId: started.terminalId,
       data: input.runMode === 'windows'
-        ? `1..160 | ForEach-Object { Write-Output \"soloe-scroll-$($_)\" }; Write-Output '${marker}'\r\n`
-        : `for i in $(seq 1 160); do printf 'soloe-scroll-%s\\n' \"$i\"; done; printf '${marker}\\n'\n`,
+        ? `1..160 | ForEach-Object { Write-Output \"soloe-scroll-$($_)\" }; $e=[char]27; Write-Output \"$($e)[41m${colorMarker}$($e)[0m\"; Write-Output '${marker}'\r\n`
+        : `for i in $(seq 1 160); do printf 'soloe-scroll-%s\\n' \"$i\"; done; printf '\\033[41m${colorMarker}\\033[0m\\n'; printf '${marker}\\n'\n`,
       control
     }),
     'terminal.input'
@@ -2115,6 +2136,10 @@ async function runBrowserWorkflow(input) {
   assert(
     history.data.includes(marker),
     'Terminal history did not include the output marker'
+  );
+  assert(
+    history.data.includes(`\u001b[41m${colorMarker}\u001b[0m`),
+    'Terminal history did not preserve ANSI color sequences'
   );
 
   for (const label of ['Files', 'Working diff', 'Feature Lab']) {
@@ -2225,6 +2250,7 @@ async function runBrowserWorkflow(input) {
     terminal: {
       terminalId: started.terminalId,
       marker,
+      colorMarker,
       inputLease,
       outputObserved: true,
       historyObserved: true

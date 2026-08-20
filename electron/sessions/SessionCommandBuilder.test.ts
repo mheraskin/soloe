@@ -54,6 +54,12 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(rc).toContain('eval "$PROMPT_COMMAND"');
     expect(rc).toContain('export TERM=xterm-256color');
     expect(rc).toContain('export COLORTERM=truecolor');
+    expect(rc.indexOf('export TERM=xterm-256color')).toBeLessThan(
+      rc.indexOf('source ~/.bashrc')
+    );
+    expect(rc.indexOf('export COLORTERM=truecolor')).toBeLessThan(
+      rc.indexOf('source ~/.bashrc')
+    );
     expect(rc).not.toContain('mkdir');
     expect(rc).not.toContain('.soloe');
     expect(rc).not.toContain('TMPDIR');
