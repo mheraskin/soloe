@@ -46,6 +46,31 @@ beforeEach(() => {
 });
 
 describe('PtyManager', () => {
+  it('does not inherit NO_COLOR into an interactive terminal', async () => {
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: { PATH: '/usr/bin', NO_COLOR: '1' }
+    });
+
+    await manager.start({ sessionId: session.id });
+
+    const options = vi.mocked(pty.spawn).mock.calls[0]?.[2];
+    expect(options?.env).toMatchObject({ PATH: '/usr/bin' });
+    expect(options?.env).not.toHaveProperty('NO_COLOR');
+  });
+
   it('passes a discovered Cursor alias to the command builder', async () => {
     const cursorSession: Session = {
       ...session,

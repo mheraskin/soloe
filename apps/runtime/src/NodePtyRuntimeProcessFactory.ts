@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import * as pty from 'node-pty';
+import { mergeTerminalEnvironment } from '../../../shared/terminal-environment.js';
 import type {
   RuntimeProcess,
   RuntimeProcessFactory
@@ -37,10 +38,7 @@ export class NodePtyRuntimeProcessFactory implements RuntimeProcessFactory {
       cols: options.cols,
       rows: options.rows,
       cwd: options.spec.cwd,
-      env: {
-        ...stringEnvironment(processEnv()),
-        ...options.spec.env
-      },
+      env: mergeTerminalEnvironment(processEnv(), options.spec.env),
       useConpty: process.platform === 'win32'
     });
     return new NodePtyRuntimeProcess(child);
@@ -49,12 +47,4 @@ export class NodePtyRuntimeProcessFactory implements RuntimeProcessFactory {
 
 function processEnv(): NodeJS.ProcessEnv {
   return process.env;
-}
-
-function stringEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(environment).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined
-    )
-  );
 }

@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { mergeTerminalEnvironment } from '@shared/terminal-environment.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { InnerCommand } from './InnerCommand.js';
 
@@ -10,7 +11,7 @@ export interface NativeRunOptions {
 
 export class NativeCommandBuilder {
   build(inner: InnerCommand, opts: NativeRunOptions): SpawnSpec {
-    const env = mergeEnv(opts.baseEnv, inner.env);
+    const env = mergeTerminalEnvironment(opts.baseEnv, inner.env);
     const cwd = expandHome(opts.cwd);
     return {
       file: inner.executable,
@@ -32,20 +33,6 @@ function expandHome(cwd: string): string {
     return path.join(os.homedir(), cwd.slice(2));
   }
   return cwd;
-}
-
-function mergeEnv(
-  base: Record<string, string | undefined>,
-  overrides: Record<string, string>
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) {
-    if (typeof v === 'string') out[k] = v;
-  }
-  for (const [k, v] of Object.entries(overrides)) {
-    out[k] = v;
-  }
-  return out;
 }
 
 function describe(inner: InnerCommand, cwd: string): string {

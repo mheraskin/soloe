@@ -10,6 +10,7 @@ import type {
 } from '@shared/types/sessions.js';
 import { effectiveAgentProvider } from '@shared/types/sessions.js';
 import { sessionAutoApprovesPermissions as launchAutoApprovesPermissions } from '@shared/agent-permissions.js';
+import { mergeTerminalEnvironment } from '@shared/terminal-environment.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
@@ -209,7 +210,7 @@ export class PtyManager extends EventEmitter {
         spec,
         cols,
         rows,
-        env: mergeEnv(this.baseEnv, spec.env)
+        env: mergeTerminalEnvironment(this.baseEnv, spec.env)
       });
     } catch (err) {
       release();
@@ -681,20 +682,6 @@ function shortLogText(value: string, maxLength: number): string {
   const normalized = stripAnsi(value).replace(/\r\n?/g, '\n').trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(-maxLength + 3)}...`;
-}
-
-function mergeEnv(
-  base: NodeJS.ProcessEnv,
-  overrides: Record<string, string>
-): { [key: string]: string } {
-  const out: { [key: string]: string } = {};
-  for (const [k, v] of Object.entries(base)) {
-    if (typeof v === 'string') out[k] = v;
-  }
-  for (const [k, v] of Object.entries(overrides)) {
-    out[k] = v;
-  }
-  return out;
 }
 
 function errorMessage(err: unknown): string {

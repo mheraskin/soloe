@@ -139,6 +139,7 @@ async function main() {
       terminalId: workflow.terminal.terminalId,
       normalCwd: normalRepo,
       colorMarker: workflow.terminal.colorMarker,
+      colorEnvMarker: workflow.terminal.colorEnvMarker,
       runMode: nativeRunMode,
       expectCustomWindowControls: process.platform !== 'darwin'
     })})`
@@ -2075,6 +2076,7 @@ async function runBrowserWorkflow(input) {
 
   const marker = `soloe-browser-${crypto.randomUUID()}`;
   const colorMarker = `soloe-ansi-color-${crypto.randomUUID()}`;
+  const colorEnvMarker = `soloe-color-env-${crypto.randomUUID()}`;
   const started = await unwrap(
     api.terminal.start({ sessionId: input.sessionId, cols: 100, rows: 30 }),
     'terminal.start'
@@ -2120,7 +2122,11 @@ async function runBrowserWorkflow(input) {
       observed += event.data;
       // The PTY echoes the command before executing it. Wait for the actual
       // SGR output so the retained-history assertion cannot race that echo.
-      if (!observed.includes(ansiColorOutput) || !observed.includes(marker)) return;
+      if (
+        !observed.includes(ansiColorOutput)
+        || !observed.includes(colorEnvMarker)
+        || !observed.includes(marker)
+      ) return;
       clearTimeout(timeout);
       unsubscribe();
       resolve(event);
@@ -2130,8 +2136,8 @@ async function runBrowserWorkflow(input) {
     api.terminal.input({
       terminalId: started.terminalId,
       data: input.runMode === 'windows'
-        ? `1..160 | ForEach-Object { Write-Output \"soloe-scroll-$($_)\" }; $e=[char]27; Write-Output \"$($e)[31m${colorMarker}$($e)[0m\"; Write-Output '${marker}'\r\n`
-        : `for i in $(seq 1 160); do printf 'soloe-scroll-%s\\n' \"$i\"; done; printf '\\033[31m${colorMarker}\\033[0m\\n'; printf '${marker}\\n'\n`,
+        ? `if (Test-Path Env:NO_COLOR) { Write-Output 'soloe-color-env-blocked' } else { Write-Output '${colorEnvMarker}' }; 1..160 | ForEach-Object { Write-Output \"soloe-scroll-$($_)\" }; $e=[char]27; Write-Output \"$($e)[31m${colorMarker}$($e)[0m\"; Write-Output '${marker}'\r\n`
+        : `if [ -z \"\${NO_COLOR+x}\" ]; then printf '${colorEnvMarker}\\n'; else printf 'soloe-color-env-blocked\\n'; fi; for i in $(seq 1 160); do printf 'soloe-scroll-%s\\n' \"$i\"; done; printf '\\033[31m${colorMarker}\\033[0m\\n'; printf '${marker}\\n'\n`,
       control
     }),
     'terminal.input'
@@ -2145,6 +2151,10 @@ async function runBrowserWorkflow(input) {
   assert(
     history.data.includes(ansiColorOutput),
     'Terminal history did not preserve ANSI color sequences'
+  );
+  assert(
+    history.data.includes(colorEnvMarker),
+    'Terminal process inherited NO_COLOR and disabled application colors'
   );
 
   for (const label of ['Files', 'Working diff', 'Feature Lab']) {
@@ -2256,6 +2266,7 @@ async function runBrowserWorkflow(input) {
       terminalId: started.terminalId,
       marker,
       colorMarker,
+      colorEnvMarker,
       inputLease,
       outputObserved: true,
       historyObserved: true
@@ -2408,6 +2419,10 @@ async function runRemoteElectronWorkflow(input) {
     colorHistory.data.includes(`\u001b[31m${input.colorMarker}\u001b[0m`),
     'Remote Electron terminal history lost ANSI foreground sequences'
   );
+  assert(
+    colorHistory.data.includes(input.colorEnvMarker),
+    'Remote Electron terminal inherited NO_COLOR from its launcher'
+  );
   const colorCanvas = document.querySelector(
     '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host canvas'
   );
@@ -2495,6 +2510,7 @@ async function runRemoteElectronWorkflow(input) {
     transport: api.transport.kind,
     terminalControlTakeover,
     terminalControlReady: true,
+    terminalColorEnvironment: true,
     ansiForegroundRender: true,
     nativeOverrides: input.expectCustomWindowControls ? ['window', 'browser'] : ['browser'],
     panes: {
