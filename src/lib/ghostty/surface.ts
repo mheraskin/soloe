@@ -387,6 +387,46 @@ export function terminalWheelDeltaRows(
   return { rows, remainder: total - rows };
 }
 
+export type TerminalTouchAxis = "pending" | "horizontal" | "vertical";
+
+export function terminalTouchAxis(
+  deltaX: number,
+  deltaY: number,
+  threshold = 8,
+): TerminalTouchAxis {
+  const horizontal = Math.abs(deltaX);
+  const vertical = Math.abs(deltaY);
+  if (Math.max(horizontal, vertical) < threshold) return "pending";
+  if (horizontal >= vertical * 1.2) return "horizontal";
+  if (vertical >= horizontal * 1.2) return "vertical";
+  return "pending";
+}
+
+export function terminalTouchDeltaRows(
+  deltaPixels: number,
+  cellHeight: number,
+  remainder: number,
+): { readonly rows: number; readonly remainder: number } {
+  const total = remainder + deltaPixels / Math.max(1, cellHeight);
+  const rows = Math.trunc(total);
+  return { rows, remainder: total - rows };
+}
+
+const TOUCH_MOMENTUM_TIME_CONSTANT_MS = 325;
+
+export function terminalTouchMomentumStep(
+  velocity: number,
+  elapsedMs: number,
+  cellHeight: number,
+  remainder: number,
+): { readonly rows: number; readonly remainder: number; readonly velocity: number } {
+  const elapsed = Math.max(0, elapsedMs);
+  const decay = Math.exp(-elapsed / TOUCH_MOMENTUM_TIME_CONSTANT_MS);
+  const distance = velocity * TOUCH_MOMENTUM_TIME_CONSTANT_MS * (1 - decay);
+  const delta = terminalTouchDeltaRows(distance, cellHeight, remainder);
+  return { ...delta, velocity: velocity * decay };
+}
+
 export function terminalWheelArrowData(rows: number, applicationCursorKeys: boolean): string {
   if (rows === 0) return "";
   const sequence =
@@ -459,6 +499,24 @@ export function advanceTerminalSelectionClickSequence(
 export interface GhosttySelectionPosition {
   readonly start: { readonly x: number; readonly y: number };
   readonly end: { readonly x: number; readonly y: number };
+}
+
+interface TerminalTouchGesture {
+  readonly pointerId: number;
+  readonly startX: number;
+  readonly startY: number;
+  axis: TerminalTouchAxis;
+  lastY: number;
+  lastTime: number;
+  remainder: number;
+  velocity: number;
+}
+
+interface TerminalTouchMomentum {
+  velocity: number;
+  remainder: number;
+  lastTime: number | null;
+  readonly event: PointerEvent;
 }
 
 export interface GhosttyTerminalSurfaceOptions {
@@ -543,6 +601,9 @@ export class GhosttyTerminalSurface {
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private wheelRemainder = 0;
+  private touchGesture: TerminalTouchGesture | null = null;
+  private touchMomentum: TerminalTouchMomentum | null = null;
+  private touchMomentumFrame = 0;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
   // preference restarts a blink cycle that has no timer left to notice it.
@@ -591,6 +652,8 @@ export class GhosttyTerminalSurface {
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
+    canvas.style.touchAction = "none";
+    canvas.style.overscrollBehavior = "contain";
 
     const input = document.createElement("textarea");
     input.className = "t3-ghostty-input";
@@ -717,6 +780,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onReducedMotionChange = () => {
     if (this.disposed) return;
+    if (this.reducedMotionMedia?.matches) this.cancelTouchMomentum();
     // Nothing else wakes an idle steady cursor: the blink timer only reschedules
     // from a render, and reduced motion is exactly the state that stopped it.
     this.cursorOn = true;
@@ -1035,6 +1099,7 @@ export class GhosttyTerminalSurface {
       this.options.onResize(this.cols, this.rows);
     }
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
+    this.cancelTouchMomentum();
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
@@ -1265,6 +1330,21 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerDown = (event: PointerEvent) => {
+    this.cancelTouchMomentum();
+    if (event.pointerType === "touch") {
+      if (!event.isPrimary) return;
+      this.touchGesture = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        axis: "pending",
+        lastY: event.clientY,
+        lastTime: event.timeStamp,
+        remainder: 0,
+        velocity: 0,
+      };
+      return;
+    }
     this.focus();
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
       const button = ghosttyMouseButton(event.button);
@@ -1326,6 +1406,27 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onPointerMove = (event: PointerEvent) => {
+    const touch = this.touchGesture;
+    if (touch?.pointerId === event.pointerId) {
+      if (touch.axis === "pending") {
+        touch.axis = terminalTouchAxis(
+          event.clientX - touch.startX,
+          event.clientY - touch.startY,
+        );
+        if (touch.axis === "vertical") {
+          try {
+            this.canvas.setPointerCapture(event.pointerId);
+          } catch {
+            // Synthetic browser tests do not register an active native pointer.
+          }
+        }
+      }
+      if (touch.axis !== "vertical") return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.updateTouchGesture(event, touch);
+      return;
+    }
     if (this.linkActivationPointerId === event.pointerId) return;
     // Hover motion is only reportable in any-event tracking (DEC 1003); normal and
     // button-event tracking never report motion without a captured pressed button.
@@ -1455,6 +1556,29 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerUp = (event: PointerEvent) => {
+    const touch = this.touchGesture;
+    if (touch?.pointerId === event.pointerId) {
+      this.touchGesture = null;
+      if (touch.axis === "vertical") {
+        event.preventDefault();
+        event.stopPropagation();
+        this.updateTouchGesture(event, touch);
+        if (this.canvas.hasPointerCapture(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+        if (
+          event.type !== "pointercancel" &&
+          !this.reducedMotionMedia?.matches &&
+          event.timeStamp - touch.lastTime < 100 &&
+          Math.abs(touch.velocity) >= 0.02
+        ) {
+          this.startTouchMomentum(touch.velocity, touch.remainder, event);
+        }
+      } else if (touch.axis === "pending" && event.type !== "pointercancel") {
+        this.focus();
+      }
+      return;
+    }
     this.setSelectionAutoscroll(0);
     if (this.linkActivationPointerId === event.pointerId) {
       event.preventDefault();
@@ -1499,6 +1623,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onWheel = (event: WheelEvent) => {
     if (event.deltaY === 0) return;
+    this.cancelTouchMomentum();
     event.preventDefault();
     const delta = terminalWheelDeltaRows(
       event,
@@ -1508,22 +1633,87 @@ export class GhosttyTerminalSurface {
     );
     this.wheelRemainder = delta.remainder;
     if (delta.rows === 0) return;
-    const magnitude = Math.abs(delta.rows);
+    this.applyTerminalScroll(delta.rows, event);
+  };
+
+  private updateTouchGesture(event: PointerEvent, touch: TerminalTouchGesture): void {
+    const deltaPixels = touch.lastY - event.clientY;
+    const elapsed = event.timeStamp - touch.lastTime;
+    touch.lastY = event.clientY;
+    touch.lastTime = event.timeStamp;
+    if (elapsed > 0 && elapsed <= 100 && deltaPixels !== 0) {
+      const instantaneous = Math.max(-3, Math.min(3, deltaPixels / elapsed));
+      touch.velocity =
+        touch.velocity === 0 ? instantaneous : touch.velocity * 0.65 + instantaneous * 0.35;
+    } else if (elapsed > 100) {
+      touch.velocity = 0;
+    }
+    const delta = terminalTouchDeltaRows(deltaPixels, this.metrics.height, touch.remainder);
+    touch.remainder = delta.remainder;
+    if (delta.rows !== 0) this.applyTerminalScroll(delta.rows, event);
+  }
+
+  private startTouchMomentum(
+    velocity: number,
+    remainder: number,
+    event: PointerEvent,
+  ): void {
+    this.touchMomentum = { velocity, remainder, lastTime: null, event };
+    this.touchMomentumFrame = window.requestAnimationFrame(this.advanceTouchMomentum);
+  }
+
+  private readonly advanceTouchMomentum = (time: number) => {
+    const momentum = this.touchMomentum;
+    if (momentum === null || this.disposed) return;
+    if (momentum.lastTime === null) {
+      momentum.lastTime = time;
+    } else {
+      const step = terminalTouchMomentumStep(
+        momentum.velocity,
+        Math.min(50, time - momentum.lastTime),
+        this.metrics.height,
+        momentum.remainder,
+      );
+      momentum.lastTime = time;
+      momentum.velocity = step.velocity;
+      momentum.remainder = step.remainder;
+      if (step.rows !== 0 && !this.applyTerminalScroll(step.rows, momentum.event)) {
+        this.cancelTouchMomentum();
+        return;
+      }
+    }
+    if (Math.abs(momentum.velocity) < 0.02) {
+      this.cancelTouchMomentum();
+      return;
+    }
+    this.touchMomentumFrame = window.requestAnimationFrame(this.advanceTouchMomentum);
+  };
+
+  private cancelTouchMomentum(): void {
+    if (this.touchMomentumFrame !== 0) {
+      window.cancelAnimationFrame(this.touchMomentumFrame);
+      this.touchMomentumFrame = 0;
+    }
+    this.touchMomentum = null;
+  }
+
+  private applyTerminalScroll(rows: number, event: MouseEvent): boolean {
+    const magnitude = Math.abs(rows);
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
-      const button = delta.rows < 0 ? 4 : 5;
+      const button = rows < 0 ? 4 : 5;
       for (let index = 0; index < magnitude; index += 1) {
         this.sendMouse("press", button, event);
       }
-      return;
+      return true;
     }
     if (this.core.isAlternateScreen()) {
-      // The alternate screen has no scrollback: translate wheel motion into
-      // arrow keys so full-screen apps like vim and less scroll, matching xterm.
-      this.options.onData(terminalWheelArrowData(delta.rows, this.core.isApplicationCursorKeys()));
-      return;
+      // The alternate screen has no scrollback: translate motion into arrow
+      // keys so full-screen apps like vim and less scroll, matching wheel input.
+      this.options.onData(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
+      return true;
     }
-    this.scrollViewport(delta.rows);
-  };
+    return this.scrollViewport(rows) !== 0;
+  }
 
   private readonly onMouseDown = (event: MouseEvent) => {
     if (event.button === 0) event.preventDefault();
@@ -1540,6 +1730,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onScrollbarPointerDown = (event: PointerEvent) => {
     if (event.button !== 0) return;
+    this.cancelTouchMomentum();
     const state = this.readScrollbarState();
     if (state === null) return;
     const bounds = this.scrollbar.getBoundingClientRect();
@@ -1652,7 +1843,7 @@ export class GhosttyTerminalSurface {
     this.scrollbar.removeEventListener("keydown", this.onScrollbarKeyDown);
   }
 
-  private scrollViewport(deltaRows: number): void {
+  private scrollViewport(deltaRows: number): number {
     let delta = Math.trunc(deltaRows);
     const state = this.readScrollbarState();
     if (state !== null) {
@@ -1661,11 +1852,12 @@ export class GhosttyTerminalSurface {
       delta = offset - state.offset;
       this.scrollbarState = { ...state, offset };
     }
-    if (delta === 0) return;
+    if (delta === 0) return 0;
     this.core.scroll(delta);
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
+    return delta;
   }
 
   private scrollbarToPointer(clientY: number, bounds: DOMRect): void {

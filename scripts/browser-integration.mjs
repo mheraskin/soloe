@@ -1307,6 +1307,44 @@ async function runMobileWorkspaceWorkflow(input) {
     ghosttyCanvas && ghosttyRoot && ghosttyInput && ghosttyScrollbar,
     'Mobile terminal keyboard surfaces are missing'
   );
+  const scrollbarValue = () => Number(ghosttyScrollbar.getAttribute('aria-valuenow'));
+  await waitUntil(
+    () => Number(ghosttyScrollbar.getAttribute('aria-valuemax')) > 0
+      && Number.isFinite(scrollbarValue()),
+    5_000,
+    'mobile terminal scrollback'
+  );
+  const scrollBeforeTouch = scrollbarValue();
+  const touch = (type, clientY, buttons) => ghosttyCanvas.dispatchEvent(new PointerEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    pointerType: 'touch',
+    pointerId: 41,
+    isPrimary: true,
+    button: 0,
+    buttons,
+    clientX: 190,
+    clientY
+  }));
+  touch('pointerdown', 220, 1);
+  for (const clientY of [250, 285, 325]) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    touch('pointermove', clientY, 1);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  touch('pointerup', 360, 0);
+  await waitUntil(
+    () => scrollbarValue() < scrollBeforeTouch,
+    2_000,
+    'finger drag to move terminal scrollback'
+  );
+  const scrollAtRelease = scrollbarValue();
+  await waitUntil(
+    () => scrollbarValue() < scrollAtRelease,
+    1_000,
+    'terminal touch momentum after release'
+  );
+  assert(page() === 'workspace', 'Vertical terminal swipe triggered workspace navigation');
   const ghosttyBeforeKeyboard = ghosttyRoot.getBoundingClientRect();
   root.style.setProperty('--keyboard-inset', '300px');
   root.setAttribute('data-mobile-keyboard-open', '');
@@ -1476,6 +1514,8 @@ async function runMobileWorkspaceWorkflow(input) {
     stableKeyboardOverlay: true,
     ghosttyAccessibilitySurface: true,
     terminalScrollbarControl: true,
+    touchTerminalScroll: true,
+    inertialTerminalScroll: true,
     twoPageNavigation: true,
     swipeNavigation: true,
     serviceWorkerReady
@@ -1967,8 +2007,8 @@ async function runBrowserWorkflow(input) {
     api.terminal.input({
       terminalId: started.terminalId,
       data: input.runMode === 'windows'
-        ? `Write-Output '${marker}'\r\n`
-        : `printf '${marker}\\n'\n`,
+        ? `1..160 | ForEach-Object { Write-Output \"soloe-scroll-$($_)\" }; Write-Output '${marker}'\r\n`
+        : `for i in $(seq 1 160); do printf 'soloe-scroll-%s\\n' \"$i\"; done; printf '${marker}\\n'\n`,
       control
     }),
     'terminal.input'

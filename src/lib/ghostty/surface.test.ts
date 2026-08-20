@@ -26,6 +26,9 @@ import {
   terminalFontSize,
   terminalWheelArrowData,
   terminalWheelDeltaRows,
+  terminalTouchAxis,
+  terminalTouchDeltaRows,
+  terminalTouchMomentumStep,
 } from "./surface";
 
 const cell = (text: string): GhosttyCell => ({
@@ -416,6 +419,42 @@ describe("terminalWheelDeltaRows", () => {
     const result = terminalWheelDeltaRows({ deltaY: -1, deltaMode: 2 }, 16, 24, 0);
     expect(result.rows).toBe(-24);
     expect(result.remainder).toBe(0);
+  });
+});
+
+describe("terminal touch scrolling", () => {
+  it("waits for intent and keeps horizontal workspace swipes available", () => {
+    expect(terminalTouchAxis(3, 4)).toBe("pending");
+    expect(terminalTouchAxis(30, 8)).toBe("horizontal");
+    expect(terminalTouchAxis(8, 30)).toBe("vertical");
+    expect(terminalTouchAxis(12, 12)).toBe("pending");
+  });
+
+  it("turns direct finger motion into rows without losing sub-row distance", () => {
+    const first = terminalTouchDeltaRows(10, 16, 0);
+    const second = terminalTouchDeltaRows(10, 16, first.remainder);
+    expect(first.rows).toBe(0);
+    expect(second.rows).toBe(1);
+    expect(second.remainder).toBeCloseTo(4 / 16);
+
+    const reverse = terminalTouchDeltaRows(-20, 16, second.remainder);
+    expect(reverse.rows).toBe(-1);
+    expect(reverse.remainder).toBe(0);
+  });
+
+  it("integrates inertial decay consistently across different frame sizes", () => {
+    const single = terminalTouchMomentumStep(1, 32, 16, 0);
+    const firstHalf = terminalTouchMomentumStep(1, 16, 16, 0);
+    const secondHalf = terminalTouchMomentumStep(
+      firstHalf.velocity,
+      16,
+      16,
+      firstHalf.remainder,
+    );
+    expect(firstHalf.rows + secondHalf.rows).toBe(single.rows);
+    expect(secondHalf.remainder).toBeCloseTo(single.remainder, 6);
+    expect(secondHalf.velocity).toBeCloseTo(single.velocity, 6);
+    expect(Math.abs(single.velocity)).toBeLessThan(1);
   });
 });
 
