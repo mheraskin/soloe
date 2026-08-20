@@ -78,6 +78,49 @@ describe("FileService", () => {
     },
   );
 
+  it("uses an image already present on the local owning Device clipboard", async () => {
+    const write = vi.fn(async () => undefined);
+    const writeImage = vi.fn(async () => undefined);
+    const service = createService({
+      clipboard: { writeImage },
+      runtime: {
+        listRunning: async () => [
+          { terminalId: "terminal-1", sessionId: "session-1" },
+        ],
+        write,
+      },
+      getSession: async () => ({
+        id: "session-1",
+        launch: { type: "agent", provider: "codex", resumeMode: "new" },
+        name: "agent",
+        cwd: root,
+        runMode: "linux",
+        createdAt: "2026-08-18T00:00:00.000Z",
+        lastUsedAt: "2026-08-18T00:00:00.000Z",
+      }),
+    });
+    const control = {
+      sessionId: "session-1",
+      ownerDeviceId: "device-local",
+      controllerDeviceId: "device-local",
+      leaseId: "lease-1",
+    };
+
+    await expect(service.pasteImagesIntoTerminal({
+      terminalId: "terminal-1",
+      sessionId: "session-1",
+      images: [{
+        mimeType: "image/png",
+        dataBase64: Buffer.from("clipboard image").toString("base64"),
+      }],
+      control,
+    })).resolves.toEqual({ paths: [], insertedText: "\x16" });
+
+    expect(writeImage).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith("terminal-1", "\x16", control);
+    service.dispose();
+  });
+
   it("returns explicit text, binary, oversized, and unavailable metadata", async () => {
     await writeFile(path.join(root, "text.txt"), "hello\n");
     await writeFile(path.join(root, "binary.bin"), Buffer.from([1, 0, 2]));
