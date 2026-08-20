@@ -136,7 +136,9 @@ async function main() {
     `(${runRemoteElectronWorkflow.toString()})(${JSON.stringify({
       projectId: normalProject.id,
       sessionId: normalSession.id,
+      terminalId: workflow.terminal.terminalId,
       normalCwd: normalRepo,
+      colorMarker: workflow.terminal.colorMarker,
       runMode: nativeRunMode,
       expectCustomWindowControls: process.platform !== 'darwin'
     })})`
@@ -1325,7 +1327,7 @@ async function runMobileWorkspaceWorkflow(input) {
     return redPixels;
   };
   await waitUntil(
-    () => ansiRedPixelCount() >= 500,
+    () => ansiRedPixelCount() >= 100,
     5_000,
     `ANSI color replay for ${input.colorMarker}`
   );
@@ -2125,8 +2127,8 @@ async function runBrowserWorkflow(input) {
     api.terminal.input({
       terminalId: started.terminalId,
       data: input.runMode === 'windows'
-        ? `1..160 | ForEach-Object { Write-Output \"soloe-scroll-$($_)\" }; $e=[char]27; Write-Output \"$($e)[41m${colorMarker}$($e)[0m\"; Write-Output '${marker}'\r\n`
-        : `for i in $(seq 1 160); do printf 'soloe-scroll-%s\\n' \"$i\"; done; printf '\\033[41m${colorMarker}\\033[0m\\n'; printf '${marker}\\n'\n`,
+        ? `1..160 | ForEach-Object { Write-Output \"soloe-scroll-$($_)\" }; $e=[char]27; Write-Output \"$($e)[31m${colorMarker}$($e)[0m\"; Write-Output '${marker}'\r\n`
+        : `for i in $(seq 1 160); do printf 'soloe-scroll-%s\\n' \"$i\"; done; printf '\\033[31m${colorMarker}\\033[0m\\n'; printf '${marker}\\n'\n`,
       control
     }),
     'terminal.input'
@@ -2138,7 +2140,7 @@ async function runBrowserWorkflow(input) {
     'Terminal history did not include the output marker'
   );
   assert(
-    history.data.includes(`\u001b[41m${colorMarker}\u001b[0m`),
+    history.data.includes(`\u001b[31m${colorMarker}\u001b[0m`),
     'Terminal history did not preserve ANSI color sequences'
   );
 
@@ -2395,6 +2397,36 @@ async function runRemoteElectronWorkflow(input) {
     10_000,
     'remote Electron Ghostty surface'
   );
+  const colorHistory = await unwrap(
+    api.terminal.historySnapshot(input.terminalId),
+    'remote terminal ANSI history'
+  );
+  assert(
+    colorHistory.data.includes(`\u001b[31m${input.colorMarker}\u001b[0m`),
+    'Remote Electron terminal history lost ANSI foreground sequences'
+  );
+  const colorCanvas = document.querySelector(
+    '.terminal-surface[data-terminal-pane-role="full"] .ghostty-terminal-host canvas'
+  );
+  assert(colorCanvas, 'Remote Electron Ghostty canvas is missing');
+  const ansiForegroundPixels = () => {
+    const context = colorCanvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return 0;
+    const pixels = context.getImageData(0, 0, colorCanvas.width, colorCanvas.height).data;
+    let redPixels = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const red = pixels[index] ?? 0;
+      const green = pixels[index + 1] ?? 0;
+      const blue = pixels[index + 2] ?? 0;
+      if (red >= green + 60 && red >= blue + 60) redPixels += 1;
+    }
+    return redPixels;
+  };
+  await waitUntil(
+    () => ansiForegroundPixels() >= 100,
+    5_000,
+    'remote Electron ANSI foreground rendering'
+  );
 
   const paneSelectors = {
     Files: '.mobile-files-surface',
@@ -2460,6 +2492,7 @@ async function runRemoteElectronWorkflow(input) {
     transport: api.transport.kind,
     terminalControlTakeover,
     terminalControlReady: true,
+    ansiForegroundRender: true,
     nativeOverrides: input.expectCustomWindowControls ? ['window', 'browser'] : ['browser'],
     panes: {
       files: true,
