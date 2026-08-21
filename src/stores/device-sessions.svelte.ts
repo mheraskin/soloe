@@ -65,6 +65,18 @@ interface SessionUpdateQueue {
   running: boolean;
 }
 
+interface QueuedTerminalInput {
+  data: string;
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+interface TerminalInputQueue {
+  ref: TerminalRef;
+  entries: QueuedTerminalInput[];
+  running: boolean;
+}
+
 const EMPTY_STATE: MultiDeviceSessionState = {
   revision: 0,
   capturedAt: new Date(0).toISOString(),
@@ -93,7 +105,7 @@ export class DeviceSessionsStore {
     { ref: TerminalRef; listeners: Set<(event: TerminalOutputEvent) => void> }
   >();
   private readonly deviceReconnectListeners = new Map<DeviceId, Set<() => void>>();
-  private readonly terminalInputQueues = new Map<string, Promise<void>>();
+  private readonly terminalInputQueues = new Map<string, TerminalInputQueue>();
   private demandSync: Promise<void> = Promise.resolve();
   private pendingSequence = 0;
   private authoritativeGeneration = 0;
@@ -491,20 +503,40 @@ export class DeviceSessionsStore {
     };
   }
 
-  async terminalInput(terminalRef: TerminalRef, data: string): Promise<void> {
+  terminalInput(terminalRef: TerminalRef, data: string): Promise<void> {
     const key = terminalRefKey(terminalRef);
-    const previous = this.terminalInputQueues.get(key) ?? Promise.resolve();
-    const queued = previous.catch(() => undefined).then(() => this.sendTerminalInput(
-      terminalRef,
-      key,
-      data
-    ));
-    this.terminalInputQueues.set(key, queued);
-    try {
-      await queued;
-    } finally {
-      if (this.terminalInputQueues.get(key) === queued) this.terminalInputQueues.delete(key);
+    let queue = this.terminalInputQueues.get(key);
+    if (!queue) {
+      queue = { ref: structuredClone(terminalRef), entries: [], running: false };
+      this.terminalInputQueues.set(key, queue);
     }
+    const currentQueue = queue;
+    const result = new Promise<void>((resolve, reject) => {
+      currentQueue.entries.push({ data, resolve, reject });
+    });
+    if (!currentQueue.running) {
+      currentQueue.running = true;
+      queueMicrotask(() => void this.drainTerminalInput(key, currentQueue));
+    }
+    return result;
+  }
+
+  private async drainTerminalInput(key: string, queue: TerminalInputQueue): Promise<void> {
+    while (queue.entries.length > 0) {
+      const batch = queue.entries.splice(0);
+      try {
+        await this.sendTerminalInput(
+          queue.ref,
+          key,
+          batch.map((entry) => entry.data).join('')
+        );
+        for (const entry of batch) entry.resolve();
+      } catch (error) {
+        for (const entry of batch) entry.reject(error);
+      }
+    }
+    queue.running = false;
+    if (this.terminalInputQueues.get(key) === queue) this.terminalInputQueues.delete(key);
   }
 
   private async sendTerminalInput(
