@@ -26,6 +26,7 @@
   import { terminalLinkHandlers } from '../lib/terminal-links';
   import { restoreTerminalFocusOnWindowActivation } from '../lib/terminal-window-focus';
   import { TerminalFitController } from '../lib/terminal-fit';
+  import { attachTerminalTouchScroll } from '../lib/terminal-touch-scroll';
   import {
     TerminalTranscriptFollowController,
     TerminalTranscriptProjector,
@@ -177,6 +178,14 @@
     // Mount before restoring over the network. A phone may suspend that request,
     // but the terminal surface and the replay fallback must still initialize.
     terminal.open(host);
+    const detachTouchScroll = attachTerminalTouchScroll({
+      target: host,
+      scrollLines: (lines) => terminal.scrollLines(lines),
+      rowHeight: () => {
+        const height = host?.getBoundingClientRect().height ?? 0;
+        return terminal.rows > 0 && height > 0 ? height / terminal.rows : 1;
+      }
+    });
     let disposed = false;
     let active = true;
     let stabilizingStartup = isResumedAgentStartup(projection);
@@ -229,6 +238,7 @@
     const attachment = deviceSessions.acquireTerminalOutput(ref, (event) => routeOutput(event));
     let disposeInitialized = () => {
       active = false;
+      detachTouchScroll();
       attachment.dispose();
       terminal.dispose();
     };
@@ -431,7 +441,6 @@
         !active
         || !host?.isConnected
         || !deviceSessions.ownsTerminalInput(ref)
-        || mobileKeyboardOpen()
       ) return;
       const rect = host.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) return;
@@ -455,7 +464,6 @@
       const entry = entries[0];
       if (
         !entry
-        || mobileKeyboardOpen()
         || entry.contentRect.width < 4
         || entry.contentRect.height < 4
       ) return;
@@ -467,7 +475,10 @@
         keyboardClosed?: boolean;
       }>).detail;
       if (detail?.keyboardOpen) {
-        terminal.scrollToBottom();
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          void resize(true);
+          terminal.scrollToBottom();
+        }));
         return;
       }
       if (detail?.keyboardClosed) {
@@ -494,6 +505,7 @@
 
     disposeInitialized = () => {
       active = false;
+      detachTouchScroll();
       rendererLoadToken += 1;
       renderer?.dispose();
       renderer = null;
