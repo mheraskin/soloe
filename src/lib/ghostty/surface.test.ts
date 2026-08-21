@@ -4,6 +4,7 @@ import type { GhosttyCell, GhosttyRow } from "./core";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
+  TerminalInteractiveWheelFrameCoalescer,
   advanceTerminalSelectionClickSequence,
   ghosttyMouseButton,
   isTerminalAltGraphText,
@@ -489,6 +490,62 @@ describe("terminalWheelArrowData", () => {
     expect(terminalWheelArrowData(3, false)).toBe("\u001b[B\u001b[B\u001b[B");
     expect(terminalWheelArrowData(-1, true)).toBe("\u001bOA");
     expect(terminalWheelArrowData(0, true)).toBe("");
+  });
+});
+
+describe("TerminalInteractiveWheelFrameCoalescer", () => {
+  it("collapses a high-resolution trackpad burst into one latest-direction action", () => {
+    let frame: FrameRequestCallback | null = null;
+    let frameId = 0;
+    const flush = vi.fn();
+    const coalescer = new TerminalInteractiveWheelFrameCoalescer<{ sequence: number }>(
+      (callback) => {
+        frame = callback;
+        frameId += 1;
+        return frameId;
+      },
+      vi.fn(),
+      flush,
+    );
+    const runFrame = (time: number) => {
+      const callback = frame;
+      frame = null;
+      expect(callback).not.toBeNull();
+      if (callback === null) throw new Error("Expected a scheduled animation frame");
+      callback(time);
+    };
+
+    for (let sequence = 0; sequence < 50; sequence += 1) {
+      coalescer.enqueue(8, { sequence });
+    }
+
+    expect(frameId).toBe(1);
+    expect(flush).not.toHaveBeenCalled();
+    runFrame(16);
+    expect(flush).toHaveBeenCalledTimes(1);
+    expect(flush).toHaveBeenLastCalledWith(1, { sequence: 49 });
+
+    coalescer.enqueue(-12, { sequence: 50 });
+    expect(frameId).toBe(2);
+    runFrame(32);
+    expect(flush).toHaveBeenCalledTimes(2);
+    expect(flush).toHaveBeenLastCalledWith(-1, { sequence: 50 });
+  });
+
+  it("cancels a pending action when the terminal surface is disposed", () => {
+    const cancel = vi.fn();
+    const flush = vi.fn();
+    const coalescer = new TerminalInteractiveWheelFrameCoalescer<null>(
+      () => 42,
+      cancel,
+      flush,
+    );
+
+    coalescer.enqueue(5, null);
+    coalescer.dispose();
+
+    expect(cancel).toHaveBeenCalledWith(42);
+    expect(flush).not.toHaveBeenCalled();
   });
 });
 

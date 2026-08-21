@@ -464,6 +464,49 @@ export function terminalWheelArrowData(rows: number, applicationCursorKeys: bool
   return sequence.repeat(Math.abs(rows));
 }
 
+/**
+ * Full-screen terminal applications consume wheel motion as PTY input instead
+ * of moving a local scrollback viewport. High-resolution trackpads can publish
+ * many multi-row events before one paint; forwarding every row leaves the
+ * application draining an input backlog after the gesture has ended. Keep only
+ * the latest direction for the next frame so interaction stays live and there
+ * is never more than one queued terminal action.
+ */
+export class TerminalInteractiveWheelFrameCoalescer<Event> {
+  private frame = 0;
+  private pending: { readonly rows: -1 | 1; readonly event: Event } | null = null;
+
+  constructor(
+    private readonly schedule: (callback: FrameRequestCallback) => number,
+    private readonly cancel: (frame: number) => void,
+    private readonly flush: (rows: -1 | 1, event: Event) => void,
+  ) {}
+
+  enqueue(rows: number, event: Event): void {
+    if (rows === 0) return;
+    this.pending = { rows: rows < 0 ? -1 : 1, event };
+    if (this.frame !== 0) return;
+    this.frame = this.schedule(this.flushFrame);
+  }
+
+  cancelPending(): void {
+    if (this.frame !== 0) this.cancel(this.frame);
+    this.frame = 0;
+    this.pending = null;
+  }
+
+  dispose(): void {
+    this.cancelPending();
+  }
+
+  private readonly flushFrame = () => {
+    this.frame = 0;
+    const pending = this.pending;
+    this.pending = null;
+    if (pending !== null) this.flush(pending.rows, pending.event);
+  };
+}
+
 export function isTerminalLinkPointerGesture(
   event: Pick<MouseEvent, "ctrlKey" | "metaKey">,
   platform = navigator.platform,
@@ -625,6 +668,7 @@ export class GhosttyTerminalSurface {
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private wheelRemainder = 0;
+  private readonly interactiveWheel: TerminalInteractiveWheelFrameCoalescer<WheelEvent>;
   private touchGesture: TerminalTouchGesture | null = null;
   private touchMomentum: TerminalTouchMomentum | null = null;
   private touchMomentumFrame = 0;
@@ -658,6 +702,13 @@ export class GhosttyTerminalSurface {
     this.core = core;
     this.metrics = metrics;
     this.options = options;
+    this.interactiveWheel = new TerminalInteractiveWheelFrameCoalescer(
+      (callback) => window.requestAnimationFrame(callback),
+      (frame) => window.cancelAnimationFrame(frame),
+      (rows, event) => {
+        if (!this.disposed) this.applyTerminalScroll(rows, event);
+      },
+    );
     this.theme = options.theme;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
@@ -1128,6 +1179,7 @@ export class GhosttyTerminalSurface {
     }
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
     if (this.layoutFitFrame !== 0) window.cancelAnimationFrame(this.layoutFitFrame);
+    this.interactiveWheel.dispose();
     this.cancelTouchMomentum();
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {
@@ -1360,6 +1412,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onPointerDown = (event: PointerEvent) => {
     this.cancelTouchMomentum();
+    this.interactiveWheel.cancelPending();
     if (event.pointerType === "touch") {
       if (!event.isPrimary) return;
       this.touchGesture = {
@@ -1662,6 +1715,13 @@ export class GhosttyTerminalSurface {
     );
     this.wheelRemainder = delta.remainder;
     if (delta.rows === 0) return;
+    if (
+      shouldReportTerminalMouse(this.core.isMouseTracking(), event) ||
+      this.core.isAlternateScreen()
+    ) {
+      this.interactiveWheel.enqueue(delta.rows, event);
+      return;
+    }
     this.applyTerminalScroll(delta.rows, event);
   };
 
