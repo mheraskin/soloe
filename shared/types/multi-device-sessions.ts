@@ -2,7 +2,7 @@ import type { DeviceDescriptor, DeviceId, SessionRef, TerminalRef } from './devi
 import type { GitWorktree } from './git.js';
 import type { Project } from './projects.js';
 import type { Session, SessionDraft, SessionRuntimeState, SessionStatus } from './sessions.js';
-import type { TerminalReplaySnapshot, TerminalScreenSnapshot } from './terminal.js';
+import type { TerminalHistorySnapshot } from './terminal.js';
 import type { DeviceWorkspaceSnapshot, RepositoryIdentity } from './workspaces.js';
 import type { ObservedAgentSnapshot } from './agents.js';
 
@@ -42,16 +42,10 @@ export interface DeviceSessionInventory {
   capturedAt: string;
 }
 
-export interface DeviceTerminalReplay {
+export interface DeviceTerminalHistory {
   terminalRef: TerminalRef | null;
   sessionRef: SessionRef | null;
-  snapshot: TerminalReplaySnapshot | null;
-}
-
-export interface DeviceTerminalScreenSnapshot {
-  terminalRef: TerminalRef | null;
-  sessionRef: SessionRef | null;
-  snapshot: TerminalScreenSnapshot | null;
+  snapshot: TerminalHistorySnapshot | null;
 }
 
 export interface MultiDeviceSessionView {

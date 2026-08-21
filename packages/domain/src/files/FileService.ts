@@ -353,7 +353,9 @@ export class FileService {
       );
     }
 
-    await this.options.clipboard.writeImage({ mimeType, data: buffer });
+    if (control.controllerDeviceId !== control.ownerDeviceId) {
+      await this.options.clipboard.writeImage({ mimeType, data: buffer });
+    }
     const insertedText = "\x16";
     await this.options.runtime.write(request.terminalId, insertedText, control);
     return { paths: [], insertedText };

@@ -1,63 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import source from './TerminalPane.svelte?raw';
 import deviceViewerSource from './DeviceTerminalViewer.svelte?raw';
+import surfaceSource from './GhosttyTerminal.svelte?raw';
+import ghosttySurfaceSource from '../lib/ghostty/surface.ts?raw';
 
-describe('TerminalPane layout', () => {
-  it('lets xterm use the complete pane without an outer inset', () => {
-    const shellClass = source.match(/class="terminal-pane-shell ([^"]+)"/)?.[1] ?? '';
-
-    expect(shellClass).not.toMatch(/\bp-(?:0\.5|1|2|3|4|5|6|7|8)\b/);
-    expect(source).not.toMatch(/:global\(\.xterm\)\s*\{[^}]*\bpadding:/s);
+describe('Ghostty terminal presentation', () => {
+  it('uses the shared Ghostty surface for local and Device terminals', () => {
+    expect(source).toContain("import GhosttyTerminal from './GhosttyTerminal.svelte'");
+    expect(deviceViewerSource).toContain("import GhosttyTerminal from './GhosttyTerminal.svelte'");
+    expect(surfaceSource).toContain('GhosttyTerminalSurface.create');
+    expect(`${source}\n${deviceViewerSource}\n${surfaceSource}`).not.toContain('@xterm');
   });
 
-  it('does not reserve a hidden scrollbar gutter at the right edge', () => {
-    expect(source).toMatch(
-      /data-overlay-scrollbars='macos'[^\{]*:global\(\.xterm-viewport\)\s*\{[^}]*scrollbar-width:\s*none/s
-    );
-    expect(source).toMatch(
-      /data-overlay-scrollbars='macos'[^\{]*:global\(\.xterm-viewport::-webkit-scrollbar\)\s*\{[^}]*width:\s*0/s
-    );
+  it('renders read-only terminals through the same Ghostty grid', () => {
+    expect(source).toContain('interactive={ownsInput}');
+    expect(deviceViewerSource).toContain('interactive={ownsInput && pageVisible}');
+    expect(`${source}\n${deviceViewerSource}`).not.toContain('TerminalTranscript');
   });
 
   it('does not renew or release durable Session Control with pane visibility', () => {
     expect(source).not.toContain('setInterval');
     expect(source).not.toContain('terminalControl.release(terminalId)');
+    expect(source).toContain('connection?.setVisible(nextVisible)');
   });
 
-  it('mounts xterm before waiting for a screen snapshot over the network', () => {
-    const initializeAt = source.indexOf('const t = new Terminal({');
-    const openAt = source.indexOf('t.open(host)', initializeAt);
-    const snapshotAt = source.indexOf('() => ipc.terminal.screenSnapshot(terminalId)', initializeAt);
-
-    expect(initializeAt).toBeGreaterThanOrEqual(0);
-    expect(openAt).toBeGreaterThan(initializeAt);
-    expect(snapshotAt).toBeGreaterThan(initializeAt);
-    expect(openAt).toBeLessThan(snapshotAt);
+  it('applies incremental history bytes and resets only when the prefix changes', () => {
+    expect(surfaceSource).toContain('terminalState.buffer.startsWith(appliedBuffer)');
+    expect(surfaceSource).toContain('current.write(terminalState.buffer.slice(appliedBuffer.length))');
+    expect(surfaceSource).toContain('current.resetAndWrite(terminalState.buffer)');
   });
 
-  it('mounts remote xterm before waiting for its device snapshot', () => {
-    const initializeAt = deviceViewerSource.indexOf('const terminal = new Terminal({');
-    const openAt = deviceViewerSource.indexOf('terminal.open(host)', initializeAt);
-    const snapshotAt = deviceViewerSource.indexOf(
-      '() => deviceSessions.terminalScreenSnapshot(ref)',
-      initializeAt
-    );
-
-    expect(initializeAt).toBeGreaterThanOrEqual(0);
-    expect(openAt).toBeGreaterThan(initializeAt);
-    expect(snapshotAt).toBeGreaterThan(initializeAt);
-    expect(openAt).toBeLessThan(snapshotAt);
-  });
-
-  it('refits the local xterm after the mobile keyboard changes the visible viewport', () => {
-    expect(source).not.toContain('if (mobileKeyboardOpen()) return');
-    expect(source).toMatch(
-      /if \(detail\?\.keyboardOpen\) \{[^}]*scheduleFit\(true\)/s
+  it('refits Ghostty after the mobile keyboard changes the visible viewport', () => {
+    expect(ghosttySurfaceSource).toContain('window.addEventListener("soloe:rail-layout"');
+    expect(ghosttySurfaceSource).toMatch(
+      /onLayoutChange[\s\S]*requestAnimationFrame\(\(\) => \{[\s\S]*this\.fit\(\)/
     );
   });
 
-  it('enables momentum swipe scrolling for local and remote xterm sessions', () => {
-    expect(source).toContain('attachTerminalTouchScroll({');
-    expect(deviceViewerSource).toContain('attachTerminalTouchScroll({');
+  it('enables momentum swipe scrolling in the shared local and remote Ghostty surface', () => {
+    expect(ghosttySurfaceSource).toContain('private startTouchMomentum(');
+    expect(ghosttySurfaceSource).toContain('terminalTouchMomentumStep(');
+    expect(surfaceSource).toContain('GhosttyTerminalSurface.create');
   });
 });

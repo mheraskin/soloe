@@ -1,39 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
+import { TerminalHistoryBuffer } from './TerminalHistoryBuffer.js';
 
-describe('TerminalReplayBuffer', () => {
-  it('returns ordered immutable replay snapshots and supports sequence cursors', () => {
-    const replay = new TerminalReplayBuffer();
+describe('TerminalHistoryBuffer', () => {
+  it('returns one ordered renderer-neutral history snapshot', () => {
+    const replay = new TerminalHistoryBuffer();
+    replay.register({ terminalId: 't-1', sessionId: 'session-t-1', cols: 120, rows: 30 });
     replay.append(event('t-1', 1, 'one'));
     replay.append(event('t-1', 2, 'two'));
     replay.append(event('t-1', 3, 'three'));
 
     expect(replay.snapshot('t-1')).toEqual({
+      kind: 'ghostty-vt-history-v1',
       terminalId: 't-1',
       sessionId: 'session-t-1',
+      cols: 120,
+      rows: 30,
       data: 'onetwothree',
       fromSeq: 1,
       toSeq: 3,
       truncated: false,
       byteLength: 11
     });
-    expect(replay.snapshot('t-1', 1)).toMatchObject({
-      data: 'twothree',
-      fromSeq: 2,
-      toSeq: 3,
-      truncated: false
-    });
-    expect(replay.snapshot('t-1', 3)).toMatchObject({
-      data: '',
-      fromSeq: 4,
-      toSeq: 3,
-      truncated: false,
-      byteLength: 0
-    });
   });
 
   it('evicts whole events at the per-terminal byte and event ceilings', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 6,
       maxTotalBytes: 100,
       maxEventsPerTerminal: 2
@@ -53,7 +44,7 @@ describe('TerminalReplayBuffer', () => {
   });
 
   it('enforces one global byte ceiling across terminals in arrival order', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 20,
       maxTotalBytes: 7
     });
@@ -66,7 +57,7 @@ describe('TerminalReplayBuffer', () => {
   });
 
   it('never retains an individual event larger than either byte ceiling', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 4,
       maxTotalBytes: 8
     });
@@ -82,21 +73,21 @@ describe('TerminalReplayBuffer', () => {
     expect(replay.retainedByteLength()).toBe(0);
   });
 
-  it('qualifies a cursor replay as truncated when a sequence gap follows the cursor', () => {
-    const replay = new TerminalReplayBuffer();
+  it('marks retained history as truncated when the output sequence has a gap', () => {
+    const replay = new TerminalHistoryBuffer();
     replay.append(event('t-1', 1, 'one'));
     replay.append(event('t-1', 3, 'three'));
 
-    expect(replay.snapshot('t-1', 1)).toMatchObject({
-      data: 'three',
-      fromSeq: 3,
+    expect(replay.snapshot('t-1')).toMatchObject({
+      data: 'onethree',
+      fromSeq: 1,
       toSeq: 3,
       truncated: true
     });
   });
 
   it('forgets terminal state and releases its global budget', () => {
-    const replay = new TerminalReplayBuffer();
+    const replay = new TerminalHistoryBuffer();
     replay.append(event('t-1', 1, 'abc'));
     replay.remove('t-1');
 
@@ -105,7 +96,7 @@ describe('TerminalReplayBuffer', () => {
   });
 
   it('keeps retained output globally constant across one hundred noisy terminals', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 4096,
       maxTotalBytes: 8192
     });
@@ -119,7 +110,7 @@ describe('TerminalReplayBuffer', () => {
   });
 
   it('does not retain evicted chronology behind an earlier quiet terminal', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 4096,
       maxTotalBytes: 8192,
       maxEventsPerTerminal: 4096,
@@ -142,7 +133,7 @@ describe('TerminalReplayBuffer', () => {
   });
 
   it('removing a noisy terminal leaves no chronology pinned by quiet terminals', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 128,
       maxTotalBytes: 1024,
       maxEventsPerTerminal: 128
@@ -162,7 +153,7 @@ describe('TerminalReplayBuffer', () => {
   });
 
   it('bounds global event objects even when payload bytes are tiny', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 100,
       maxTotalBytes: 100,
       maxEventsPerTerminal: 100,
@@ -179,7 +170,7 @@ describe('TerminalReplayBuffer', () => {
   });
 
   it('retains complete output while unbounded and reapplies limits when disabled', () => {
-    const replay = new TerminalReplayBuffer({
+    const replay = new TerminalHistoryBuffer({
       maxBytesPerTerminal: 6,
       maxTotalBytes: 6,
       maxEventsPerTerminal: 2,
@@ -204,6 +195,30 @@ describe('TerminalReplayBuffer', () => {
       fromSeq: 2,
       toSeq: 3,
       truncated: true
+    });
+  });
+
+  it('removes terminal queries without changing visual VT output', () => {
+    const history = new TerminalHistoryBuffer();
+    history.append(event('t-1', 1, 'before\u001b[6n\u001b[31mred\u001b[0m'));
+    history.append(event('t-1', 2, '\u001b]10;?\u0007after'));
+
+    expect(history.snapshot('t-1')).toMatchObject({
+      data: 'before\u001b[31mred\u001b[0mafter',
+      fromSeq: 1,
+      toSeq: 2
+    });
+  });
+
+  it('sanitizes query sequences split across output events', () => {
+    const history = new TerminalHistoryBuffer();
+    history.append(event('t-1', 1, 'before\u001b]11;'));
+    history.append(event('t-1', 2, '?\u001b\\after'));
+
+    expect(history.snapshot('t-1')).toMatchObject({
+      data: 'beforeafter',
+      fromSeq: 1,
+      toSeq: 2
     });
   });
 });

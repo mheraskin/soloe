@@ -40,8 +40,7 @@ import type {
   CreateMultiDeviceSessionRequest,
   DeviceProjectInventory,
   DeviceSessionInventory,
-  DeviceTerminalReplay,
-  DeviceTerminalScreenSnapshot,
+  DeviceTerminalHistory,
   MultiDeviceSessionCreationPlan,
   MultiDeviceSessionState,
   MultiDeviceSessionView,
@@ -54,8 +53,7 @@ export type {
   CreateMultiDeviceSessionRequest,
   DeviceProjectInventory,
   DeviceSessionInventory,
-  DeviceTerminalReplay,
-  DeviceTerminalScreenSnapshot,
+  DeviceTerminalHistory,
   MultiDeviceSessionState,
   MultiDeviceSessionView,
   ProjectView,
@@ -95,8 +93,7 @@ export interface SessionDevice {
     rows: number,
     control: TerminalControlProof
   ): Promise<void>;
-  terminalReplay(terminalId: string, afterSeq?: number): Promise<DeviceTerminalReplay>;
-  terminalScreenSnapshot(terminalId: string): Promise<DeviceTerminalScreenSnapshot>;
+  terminalHistory(terminalId: string): Promise<DeviceTerminalHistory>;
   terminalStop(terminalId: string): Promise<void>;
   createSession?(request: DevicePlacedSessionRequest): Promise<Session>;
   startSession?(sessionId: string): Promise<TerminalStartResult>;
@@ -691,12 +688,8 @@ export class MultiDeviceSessions {
     );
   }
 
-  terminalReplay(ref: TerminalRef, afterSeq = 0): Promise<DeviceTerminalReplay> {
-    return this.requireReadyDevice(ref.deviceId).terminalReplay(ref.terminalId, afterSeq);
-  }
-
-  terminalScreenSnapshot(ref: TerminalRef): Promise<DeviceTerminalScreenSnapshot> {
-    return this.requireReadyDevice(ref.deviceId).terminalScreenSnapshot(ref.terminalId);
+  terminalHistory(ref: TerminalRef): Promise<DeviceTerminalHistory> {
+    return this.requireReadyDevice(ref.deviceId).terminalHistory(ref.terminalId);
   }
 
   async terminalStop(ref: TerminalRef): Promise<void> {

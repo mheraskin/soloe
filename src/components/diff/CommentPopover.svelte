@@ -80,7 +80,7 @@
   // Also pre-empts bits-ui's default auto-focus, which would otherwise land
   // on the first focusable child (the close button) before this runs.
   // rAF defers past bits-ui's FocusScope mount so a focus call from a
-  // different focus context (e.g. clicking the marker while xterm's
+  // different focus context (e.g. clicking the marker while the terminal's
   // helper-textarea holds focus in the terminal pane) actually lands.
   $effect(() => {
     if (!editing) return;

@@ -46,6 +46,31 @@ beforeEach(() => {
 });
 
 describe('PtyManager', () => {
+  it('does not inherit NO_COLOR into an interactive terminal', async () => {
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      baseEnv: { PATH: '/usr/bin', NO_COLOR: '1' }
+    });
+
+    await manager.start({ sessionId: session.id });
+
+    const options = vi.mocked(pty.spawn).mock.calls[0]?.[2];
+    expect(options?.env).toMatchObject({ PATH: '/usr/bin' });
+    expect(options?.env).not.toHaveProperty('NO_COLOR');
+  });
+
   it('passes a discovered Cursor alias to the command builder', async () => {
     const cursorSession: Session = {
       ...session,
@@ -84,7 +109,7 @@ describe('PtyManager', () => {
     }));
   });
 
-  it('makes each output batch replayable before observers receive it', () => {
+  it('makes each output batch available in history before observers receive it', async () => {
     const manager = new PtyManager({} as PtyManagerOptions);
     const output: TerminalOutputEvent = {
       terminalId: 't-1',
@@ -92,14 +117,18 @@ describe('PtyManager', () => {
       seq: 1,
       data: 'ready'
     };
-    let replaySeenInsideObserver = null;
+    let historySeenInsideObserver: ReturnType<PtyManager['historySnapshot']> | null = null;
     manager.on('output', (event) => {
-      replaySeenInsideObserver = manager.replay(event.terminalId, event.seq - 1);
+      historySeenInsideObserver = manager.historySnapshot(event.terminalId);
     });
 
     manager.forwardBatchedOutput([output]);
 
-    expect(replaySeenInsideObserver).toMatchObject({ data: 'ready', fromSeq: 1, toSeq: 1 });
+    await expect(historySeenInsideObserver).resolves.toMatchObject({
+      data: 'ready',
+      fromSeq: 1,
+      toSeq: 1
+    });
   });
 
   it('semantically observes final buffered output before publishing terminal exit', async () => {
@@ -162,7 +191,7 @@ describe('PtyManager', () => {
     expect(options).not.toHaveProperty('encoding');
   });
 
-  it('exposes a terminal id before spawn so the renderer can mount xterm', async () => {
+  it('exposes a terminal id before spawn so the renderer can mount Ghostty', async () => {
     const manager = new PtyManager({
       commandBuilder: {
         build: vi.fn(() => spec)

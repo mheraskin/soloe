@@ -541,15 +541,14 @@ export class SoloeServer {
     }
 
     const terminalRoute = url.pathname.match(
-      /^\/api\/runtime\/terminals\/([^/]+)(?:\/(replay|input|resize))?$/,
+      /^\/api\/runtime\/terminals\/([^/]+)(?:\/(history|input|resize))?$/,
     );
     if (terminalRoute) {
       const terminalId = decodeURIComponent(terminalRoute[1]!);
       const operation = terminalRoute[2];
 
-      if (request.method === "GET" && operation === "replay") {
-        const afterSeq = Number(url.searchParams.get("afterSeq") ?? "0");
-        this.json(response, 200, await runtimeClient.replay(terminalId, afterSeq));
+      if (request.method === "GET" && operation === "history") {
+        this.json(response, 200, await runtimeClient.historySnapshot(terminalId));
         return;
       }
       if (request.method === "POST" && operation === "input") {

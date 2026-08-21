@@ -34,8 +34,7 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'terminalReleaseInputLease'
     | 'terminalParkInputLease'
     | 'terminalResize'
-    | 'terminalReplay'
-    | 'terminalScreenSnapshot'
+    | 'terminalHistory'
     | 'terminalStop'
   >;
   getWindows: () => BrowserWindow[];
@@ -184,14 +183,9 @@ export class MultiDeviceSessionsIpc {
       })
     );
     ipcMain.handle(
-      IpcChannels.sessions.deviceTerminalReplay,
-      (_event, ref: TerminalRef, afterSeq?: number) =>
-        ipcInvoke(() => this.options.sessions.terminalReplay(structuredClone(ref), afterSeq))
-    );
-    ipcMain.handle(
-      IpcChannels.sessions.deviceTerminalScreenSnapshot,
+      IpcChannels.sessions.deviceTerminalHistory,
       (_event, ref: TerminalRef) =>
-        ipcInvoke(() => this.options.sessions.terminalScreenSnapshot(structuredClone(ref)))
+        ipcInvoke(() => this.options.sessions.terminalHistory(structuredClone(ref)))
     );
     ipcMain.handle(IpcChannels.sessions.deviceTerminalStop, (_event, ref: TerminalRef) =>
       ipcInvoke(async () => {
@@ -242,8 +236,7 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalReleaseInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalParkInputLease);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalResize);
-    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalReplay);
-    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalScreenSnapshot);
+    ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalHistory);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalStop);
   }
 }

@@ -11,9 +11,8 @@
 
   type TerminalPaneComponent = typeof import('./TerminalPane.svelte').default;
 
-  // Parsing xterm and its renderer stack used to block the shell even when
-  // there was no live terminal. Keep it lazy until a PTY is actually running;
-  // the main-process replay tail retains output produced while it loads.
+  // Loading the Ghostty WASM parser is deferred until a PTY is actually running;
+  // Runtime-owned VT history retains output produced while the module loads.
   const terminalPaneModule = new LazyModule<TerminalPaneComponent>(() =>
     import('./TerminalPane.svelte').then((module) => module.default)
   );
@@ -142,12 +141,9 @@
       {@const focused = interactive && (split ? pane.sessionId === split.focusedId : role === 'full')}
       {@const ratio = split?.ratio ?? 0.5}
       <!--
-        LRU-resident hidden panes are pushed out of the viewport rather than faded out.
-        xterm pauses rendering via a viewport IntersectionObserver, and an
-        opacity-0 pane still intersects — so every backgrounded terminal kept
-        repainting an agent TUI every frame. Translating keeps the layout box
-        (display:none would zero it, and xterm's char measurement never
-        recovers, leaving fit() a permanent no-op for panes that mount hidden).
+        LRU-resident hidden panes retain only their transport state. The shared
+        Ghostty surface releases its canvas and WASM core until `visible` is true;
+        translating the pane keeps the surrounding split layout deterministic.
       -->
       <div
         class={`terminal-surface group absolute inset-y-0 ${

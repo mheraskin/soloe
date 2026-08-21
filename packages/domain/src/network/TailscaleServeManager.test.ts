@@ -10,7 +10,12 @@ const TARGET = "http://127.0.0.1:4317";
 const SELF_DNS_NAME = "workstation.tail1234.ts.net.";
 
 function selfStatus(): string {
-  return JSON.stringify({ Self: { DNSName: SELF_DNS_NAME } });
+  return JSON.stringify({
+    Self: {
+      DNSName: SELF_DNS_NAME,
+      TailscaleIPs: ["100.101.102.103", "fd7a:115c:a1e0::1"],
+    },
+  });
 }
 
 describe("TailscaleServeManager", () => {
@@ -175,6 +180,7 @@ describe("TailscalePortForwardManager", () => {
         message: null,
         setupUrl: null,
         dnsName: "workstation.tail1234.ts.net",
+        ipAddress: "100.101.102.103",
         port: 3000,
         forwarded: false,
       });

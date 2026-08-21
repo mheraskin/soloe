@@ -810,8 +810,7 @@ function fakeDevice(input: {
       return true;
     },
     terminalResize: async () => undefined,
-    terminalReplay: async () => ({ terminalRef: null, sessionRef: null, snapshot: null }),
-    terminalScreenSnapshot: async () => ({
+    terminalHistory: async () => ({
       terminalRef: null,
       sessionRef: null,
       snapshot: null

@@ -99,7 +99,7 @@ describe("monorepo boundaries", () => {
       "electron/main.ts",
       "electron/terminal/RemoteRuntimePtyProcessFactory.ts",
       "electron/terminal/RemoteRuntimePtyProcessFactory.test.ts",
-      "electron/terminal/TerminalReplayBuffer.ts",
+      "electron/terminal/TerminalHistoryBuffer.ts",
     ]) {
       const source = await readFile(path.join(root, file), "utf8");
       expect(source, file).not.toMatch(/apps\/runtime\/src|\.\.\/\.\.\/runtime\/src/);

@@ -3,8 +3,7 @@ import { WebSocket } from 'ws';
 
 import type {
   SessionDeviceSnapshot,
-  DeviceTerminalReplay,
-  DeviceTerminalScreenSnapshot
+  DeviceTerminalHistory
 } from '@shared/types/multi-device-sessions.js';
 import type {
   DeviceDescriptor,
@@ -26,8 +25,7 @@ import type {
   SpawnSpec,
   TerminalControlProof,
   TerminalInputLease,
-  TerminalReplaySnapshot,
-  TerminalScreenSnapshot,
+  TerminalHistorySnapshot,
   TerminalStartResult
 } from '@shared/types/terminal.js';
 import type {
@@ -335,30 +333,11 @@ export class RemoteSessionDevice implements SessionDevice {
     ]);
   }
 
-  async terminalReplay(
-    terminalId: string,
-    afterSeq = 0
-  ): Promise<DeviceTerminalReplay> {
+  async terminalHistory(terminalId: string): Promise<DeviceTerminalHistory> {
     const id = requiredId(terminalId, 'Terminal');
-    const snapshot = await this.rpc<TerminalReplaySnapshot | null>(
+    const snapshot = await this.rpc<TerminalHistorySnapshot | null>(
       'terminal',
-      'replay',
-      [id, nonNegativeInteger(afterSeq, 'replay sequence')]
-    );
-    return {
-      terminalRef: { deviceId: this.deviceId, terminalId: id },
-      sessionRef: snapshot
-        ? { deviceId: this.deviceId, sessionId: snapshot.sessionId }
-        : null,
-      snapshot
-    };
-  }
-
-  async terminalScreenSnapshot(terminalId: string): Promise<DeviceTerminalScreenSnapshot> {
-    const id = requiredId(terminalId, 'Terminal');
-    const snapshot = await this.rpc<TerminalScreenSnapshot | null>(
-      'terminal',
-      'screenSnapshot',
+      'historySnapshot',
       [id]
     );
     return {

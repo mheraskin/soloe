@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   RuntimeExitEvent,
   RuntimeOutputEvent,
-  RuntimeTerminalScreenSnapshot,
+  RuntimeHistorySnapshot,
   RuntimeTerminalState,
 } from "@soloe/protocol";
 import { RuntimeClient } from "@soloe/runtime";
@@ -29,7 +29,7 @@ export interface RuntimeTerminalInputControl {
   currentInputLease(terminalId: string): Promise<TerminalInputLease | null>;
   releaseInputLease(terminalId: string, control: import('../../shared/types/terminal.js').TerminalControlProof): Promise<boolean>;
   parkInputLease(terminalId: string, control: import('../../shared/types/terminal.js').TerminalControlProof): Promise<boolean>;
-  screenSnapshot(terminalId: string): Promise<RuntimeTerminalScreenSnapshot>;
+  historySnapshot(terminalId: string): Promise<RuntimeHistorySnapshot | null>;
   onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void;
   writeInput(terminalId: string, data: string, lease?: TerminalInputLease): Promise<void>;
   resizeTerminal(
@@ -161,8 +161,8 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     return this.client.listRunning();
   }
 
-  setReplayUnbounded(unbounded: boolean): Promise<true> {
-    return this.client.setReplayUnbounded(unbounded);
+  setHistoryUnbounded(unbounded: boolean): Promise<true> {
+    return this.client.setHistoryUnbounded(unbounded);
   }
 
   acquireInputLease(
@@ -200,8 +200,8 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     return this.client.parkInputLease(terminalId, control);
   }
 
-  screenSnapshot(terminalId: string): Promise<RuntimeTerminalScreenSnapshot> {
-    return this.client.screenSnapshot(terminalId);
+  historySnapshot(terminalId: string): Promise<RuntimeHistorySnapshot | null> {
+    return this.client.historySnapshot(terminalId);
   }
 
   onInputLease(listener: (event: TerminalInputLeaseEvent) => void): () => void {

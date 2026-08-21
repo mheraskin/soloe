@@ -858,6 +858,51 @@ describe('AgentHookDispatcher', () => {
       });
     });
 
+    it('does not replace a durable Codex thread with a failed bootstrap id', async () => {
+      const created = await sessionStore.create({
+        name: 'Codex',
+        cwd: '/tmp',
+        runMode: 'linux',
+        launch: {
+          type: 'agent',
+          provider: 'codex',
+          resumeMode: 'new',
+          codexSessionId: '019fce46-6a9a-7fb0-8b2c-a23c73388e7d'
+        }
+      });
+      await sessionStore.update(created.id, {
+        providerThreadId: '019fce46-6a9a-7fb0-8b2c-a23c73388e7d'
+      });
+      const validatingDispatcher = new AgentHookDispatcher({
+        observer,
+        sessionStore,
+        isProviderThreadDurable: async (_provider, threadId) =>
+          threadId !== '01a019c8-8f8c-78a1-8865-fe5f760beeb0'
+      });
+
+      await validatingDispatcher.dispatch({
+        provider: 'codex',
+        soloeSessionId: created.id,
+        payload: {
+          hook_event_name: 'SessionStart',
+          session_id: '01a019c8-8f8c-78a1-8865-fe5f760beeb0',
+          transcript_path: '/missing/failed-bootstrap.jsonl'
+        }
+      });
+
+      const updated = await sessionStore.get(created.id);
+      expect(updated?.providerThreadId).toBe('019fce46-6a9a-7fb0-8b2c-a23c73388e7d');
+      expect(updated?.transcriptPath).not.toBe('/missing/failed-bootstrap.jsonl');
+      expect(updated?.launch).toMatchObject({
+        type: 'agent',
+        provider: 'codex',
+        codexSessionId: '019fce46-6a9a-7fb0-8b2c-a23c73388e7d'
+      });
+      expect(updated?.currentAgentRuntime?.providerThreadId).toBe(
+        '019fce46-6a9a-7fb0-8b2c-a23c73388e7d'
+      );
+    });
+
     it('marks a shell-launched agent idle when the command exits without closing the terminal', async () => {
       const created = await sessionStore.create({
         name: 'shell',

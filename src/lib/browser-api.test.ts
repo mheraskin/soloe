@@ -25,7 +25,7 @@ describe("browser API", () => {
     expect(sessions.deviceState).toEqual(expect.any(Function));
     expect(sessions.refreshDevices).toEqual(expect.any(Function));
     expect(sessions.createOnDevice).toEqual(expect.any(Function));
-    expect(sessions.deviceTerminalReplay).toEqual(expect.any(Function));
+    expect(sessions.deviceTerminalHistory).toEqual(expect.any(Function));
     expect(api.transport?.supports("sessions", "deviceState")).toBe(true);
 
     await api.sessions.deviceState?.();

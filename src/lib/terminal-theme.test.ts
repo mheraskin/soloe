@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { terminalThemeFor, terminalTranscriptColor } from './terminal-theme';
+import { terminalThemeFor } from './terminal-theme';
 
 describe('terminal themes', () => {
   it('provides distinct, readable terminal surfaces', () => {
-    expect(terminalThemeFor('light').background).toBe('#f7f8fa');
-    expect(terminalThemeFor('dark').background).toBe('#0f0f10');
+    expect(terminalThemeFor('light').background).toEqual({ r: 247, g: 248, b: 250 });
+    expect(terminalThemeFor('dark').background).toEqual({ r: 15, g: 15, b: 16 });
   });
 
-  it('remaps indexed transcript colors through the active palette', () => {
-    expect(terminalTranscriptColor('#e5e5e5', 'light')).toBe('#6e7781');
-    expect(terminalTranscriptColor('#e5e5e5', 'dark')).toBe('#a9b1d6');
-    expect(terminalTranscriptColor('#123456', 'light')).toBe('#123456');
+  it('preserves the xterm themes across the complete Ghostty palette', () => {
+    const dark = terminalThemeFor('dark').palette;
+    const light = terminalThemeFor('light').palette;
+
+    expect(dark).toHaveLength(256);
+    expect(light).toHaveLength(256);
+    expect(dark?.[1]).toEqual({ r: 247, g: 118, b: 142 });
+    expect(dark?.[12]).toEqual({ r: 141, g: 176, b: 255 });
+    expect(light?.[1]).toEqual({ r: 207, g: 34, b: 46 });
+    expect(dark?.[208]).toEqual({ r: 255, g: 135, b: 0 });
   });
 });

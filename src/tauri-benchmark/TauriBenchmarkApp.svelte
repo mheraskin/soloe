@@ -1,15 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Terminal } from '@xterm/xterm';
-  import { FitAddon } from '@xterm/addon-fit';
-  import '@xterm/xterm/css/xterm.css';
+  import { GhosttyTerminalSurface } from '../lib/ghostty/surface';
+  import { darkTerminalTheme, terminalFontFamily } from '../lib/terminal-theme';
   import { TauriTerminalClient, type TauriSpikeInfo } from './tauri-terminal-client';
   import { runTauriBenchmark } from './run-tauri-benchmark';
 
   const client = new TauriTerminalClient();
   let host: HTMLDivElement;
-  let terminal: Terminal | null = null;
-  let fit: FitAddon | null = null;
+  let terminal: GhosttyTerminalSurface | null = null;
   let info: TauriSpikeInfo | null = $state(null);
   let terminalId: string | null = $state(null);
   let status = $state('initializing');
@@ -32,28 +30,26 @@
 
   onMount(() => {
     document.documentElement.classList.add('dark');
-    const term = new Terminal({
-      convertEol: false,
-      cursorBlink: true,
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace",
-      fontSize: 13,
-      scrollback: 10_000,
-      theme: { background: '#171717', foreground: '#d0d0d0', cursor: '#e39a62' }
-    });
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(host);
-    fitAddon.fit();
-    terminal = term;
-    fit = fitAddon;
-    const dataDisposable = term.onData((data) => {
-      if (terminalId) void client.input(terminalId, data).catch(showError);
-    });
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      if (terminalId) void client.resize(terminalId, term.cols, term.rows).catch(() => {});
-    });
-    resizeObserver.observe(host);
+    let disposed = false;
+    void GhosttyTerminalSurface.create(host, {
+      theme: darkTerminalTheme,
+      font: { family: terminalFontFamily, size: 13 },
+      onData: (data) => {
+        if (terminalId) void client.input(terminalId, data).catch(showError);
+      },
+      onResize: (cols, rows) => {
+        if (terminalId) void client.resize(terminalId, cols, rows).catch(() => undefined);
+      },
+      onSelectionChange: () => undefined,
+      beforeKey: () => true,
+      onLinkActivate: () => undefined
+    }).then((surface) => {
+      if (disposed) {
+        surface.dispose();
+        return;
+      }
+      terminal = surface;
+    }).catch(showError);
 
     let previousFrame = performance.now();
     let frameHandle = 0;
@@ -67,11 +63,11 @@
     void initialize();
     return () => {
       cleanupTerminalListeners();
-      resizeObserver.disconnect();
+      disposed = true;
       cancelAnimationFrame(frameHandle);
-      dataDisposable.dispose();
       if (terminalId) void client.stop(terminalId).catch(() => {});
-      term.dispose();
+      terminal?.dispose();
+      terminal = null;
     };
   });
 
@@ -107,7 +103,7 @@
       terminal?.write(data);
     });
     cleanupExit = client.onExit(nextTerminalId, (exitCode, signalName) => {
-      terminal?.writeln(`\r\n[process exited: ${exitCode}${signalName ? `, ${signalName}` : ''}]`);
+      terminal?.write(`\r\n[process exited: ${exitCode}${signalName ? `, ${signalName}` : ''}]\r\n`);
       terminalId = null;
       burstRunning = false;
       status = 'exited';
@@ -182,7 +178,7 @@
     <div>
       <p class="eyebrow">Soloe migration laboratory</p>
       <h1>Tauri + Rust terminal spike</h1>
-      <p class="subtitle">The existing Svelte/xterm stack, backed directly by <code>soloe-terminal</code>.</p>
+      <p class="subtitle">The Svelte/Ghostty WASM stack, backed directly by <code>soloe-terminal</code>.</p>
     </div>
     <span class:bad={status === 'error'} class="status">{status}</span>
   </header>

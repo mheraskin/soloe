@@ -382,14 +382,15 @@ describe('Soloe Server lifecycle', () => {
       expect(startResponse.status).toBe(201);
       const terminal = (await startResponse.json()) as { terminalId: string };
 
-      process.emit('data', 'output-before-replay');
-      const replayResponse = await request(
+      process.emit('data', 'output-before-history');
+      const historyResponse = await request(
         baseUrl,
-        `/api/runtime/terminals/${terminal.terminalId}/replay?afterSeq=0`
+        `/api/runtime/terminals/${terminal.terminalId}/history`
       );
-      expect(await replayResponse.json()).toEqual(
+      expect(await historyResponse.json()).toEqual(
         expect.objectContaining({
-          data: 'output-before-replay',
+          kind: 'ghostty-vt-history-v1',
+          data: 'output-before-history',
           fromSeq: 1,
           toSeq: 1
         })
@@ -1255,7 +1256,7 @@ describe('Soloe Server lifecycle', () => {
     }
   });
 
-  it('supports browser startup, project/session creation, terminal output, and replay', async () => {
+  it('supports browser startup, project/session creation, terminal output, and history', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-browser-contract-'));
     const runtimeEndpoint = testRuntimeEndpoint(directory);
     const process = new PersistentProcess();
@@ -1600,8 +1601,9 @@ describe('Soloe Server lifecycle', () => {
       );
       process.emit('data', 'browser contract output');
 
-      expect(await rpc(baseUrl, 'terminal', 'replay', [started.terminalId, 0])).toEqual(
+      expect(await rpc(baseUrl, 'terminal', 'historySnapshot', [started.terminalId])).toEqual(
         expect.objectContaining({
+          kind: 'ghostty-vt-history-v1',
           data: 'browser contract output',
           fromSeq: 1,
           toSeq: 1

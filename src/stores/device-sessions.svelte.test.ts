@@ -551,6 +551,45 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     );
   });
 
+  it('batches terminal input that arrives while a remote write is in flight', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
+    mocks.deviceTerminalInputLease.mockResolvedValueOnce({
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-current',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 1,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:18.000Z'
+    });
+    const firstWrite = deferred<boolean>();
+    mocks.deviceTerminalInput
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockResolvedValue(true);
+    await store.claimTerminalInputControl(ref);
+
+    const first = store.terminalInput(ref, 'a');
+    await vi.waitFor(() => expect(mocks.deviceTerminalInput).toHaveBeenCalledTimes(1));
+    const second = store.terminalInput(ref, 'b');
+    const third = store.terminalInput(ref, 'c');
+    const fourth = store.terminalInput(ref, 'd');
+    firstWrite.resolve(true);
+    await Promise.all([first, second, third, fourth]);
+
+    expect(mocks.deviceTerminalInput).toHaveBeenCalledTimes(2);
+    expect(mocks.deviceTerminalInput).toHaveBeenNthCalledWith(
+      2,
+      ref,
+      'bcd',
+      expect.objectContaining({ leaseId: 'lease-current' })
+    );
+  });
+
   it('reclaims an unowned Session Control lease before forwarding terminal input', async () => {
     const store = new DeviceSessionsStore();
     await store.load();

@@ -200,10 +200,8 @@ const soloe: SoloeApi = {
       control: TerminalControlProof;
     }) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalResize, request),
-    deviceTerminalReplay: (ref: TerminalRef, afterSeq?: number) =>
-      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalReplay, ref, afterSeq),
-    deviceTerminalScreenSnapshot: (ref: TerminalRef) =>
-      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalScreenSnapshot, ref),
+    deviceTerminalHistory: (ref: TerminalRef) =>
+      ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalHistory, ref),
     deviceTerminalStop: (ref: TerminalRef) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalStop, ref),
     onChange: (cb: (session: Session) => void) =>
@@ -240,10 +238,8 @@ const soloe: SoloeApi = {
     resize: (payload: TerminalResizePayload) =>
       ipcRenderer.invoke(IpcChannels.terminal.resize, payload),
     listRunning: () => ipcRenderer.invoke(IpcChannels.terminal.listRunning),
-    replay: (terminalId: TerminalId, afterSeq?: number) =>
-      ipcRenderer.invoke(IpcChannels.terminal.replay, terminalId, afterSeq),
-    screenSnapshot: (terminalId: TerminalId) =>
-      ipcRenderer.invoke(IpcChannels.terminal.screenSnapshot, terminalId),
+    historySnapshot: (terminalId: TerminalId) =>
+      ipcRenderer.invoke(IpcChannels.terminal.historySnapshot, terminalId),
     setOutputDemand: (payload: TerminalOutputDemandPayload) =>
       ipcRenderer.invoke(IpcChannels.terminal.outputDemand, payload),
     onOutput: (cb: (event: TerminalOutputEvent) => void) =>

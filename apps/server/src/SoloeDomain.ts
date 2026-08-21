@@ -2,8 +2,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type {
-  RuntimeReplaySnapshot,
-  RuntimeTerminalScreenSnapshot,
+  RuntimeHistorySnapshot,
   RuntimeTerminalStart,
   RuntimeTerminalState,
   RuntimeUsageSnapshot,
@@ -139,7 +138,10 @@ import {
   type FileIndexScope,
 } from "@soloe/domain";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
-import { SessionCommandBuilder } from "../../../electron/sessions/SessionCommandBuilder.js";
+import {
+  codexThreadPersistence,
+  SessionCommandBuilder,
+} from "../../../electron/sessions/SessionCommandBuilder.js";
 import { ShellDetector } from "../../../electron/terminal/ShellDetector.js";
 import { NativeCommandBuilder } from "../../../electron/runtime/WindowsCommandBuilder.js";
 import { WslCommandBuilder } from "../../../electron/runtime/WslCommandBuilder.js";
@@ -205,9 +207,8 @@ export interface RuntimeControl {
   ): unknown;
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
   listRunning(): Promise<RuntimeTerminalState[]>;
-  replay(terminalId: string, afterSeq?: number): Promise<RuntimeReplaySnapshot | null>;
-  screenSnapshot?(terminalId: string): Promise<RuntimeTerminalScreenSnapshot>;
-  setReplayUnbounded?(unbounded: boolean): Promise<unknown>;
+  historySnapshot(terminalId: string): Promise<RuntimeHistorySnapshot | null>;
+  setHistoryUnbounded?(unbounded: boolean): Promise<unknown>;
   acquireInputLease?(
     terminalId: string,
     ownerId: string,
@@ -565,7 +566,7 @@ export class SoloeDomain extends EventEmitter {
     this.settings.onChange((settings) => {
       this.emit("event", "settings.change", settings);
       void this.options.runtime
-        .setReplayUnbounded?.(settings.terminal.keepFullHistory)
+        .setHistoryUnbounded?.(settings.terminal.keepFullHistory)
         .catch((error) => {
           console.warn("[terminal] failed to update Runtime history retention", error);
         });
@@ -612,7 +613,7 @@ export class SoloeDomain extends EventEmitter {
         adapter: new GhCliGitHubAdapter({ binary: initialSettings.binaries.gh ?? "gh" }),
       });
     }
-    await this.options.runtime.setReplayUnbounded?.(
+    await this.options.runtime.setHistoryUnbounded?.(
       initialSettings.terminal.keepFullHistory,
     );
     const sessions = await this.sessions.list();
@@ -703,6 +704,21 @@ export class SoloeDomain extends EventEmitter {
       path.join(this.options.dataDirectory, "bridge.json"),
     );
     const initial = await persistence.loadOrCreate();
+    let bridgeReady = false;
+    const pendingCodexHandoffs = new Set<SessionId>();
+    const durableCodexThreads = new Set<string>();
+    const isDurableCodexThread = async (
+      providerThreadId: string,
+      soloeSessionId?: SessionId,
+    ): Promise<boolean> => {
+      if (durableCodexThreads.has(providerThreadId)) return true;
+      if (soloeSessionId && !await this.sessions.get(soloeSessionId)) return false;
+      // Reject only a confirmed missing UUID. Non-UUID provider identities and
+      // unreadable/missing Codex homes remain compatible with attached runtimes.
+      const durable = codexThreadPersistence(providerThreadId, process.env) !== false;
+      if (durable) durableCodexThreads.add(providerThreadId);
+      return durable;
+    };
     const dispatcher = new AgentHookDispatcher({
       observer: this.observer,
       sessionStore: this.sessions,
@@ -723,13 +739,32 @@ export class SoloeDomain extends EventEmitter {
           cwd,
         });
       },
+      isProviderThreadDurable: (provider, providerThreadId) =>
+        provider !== "codex"
+        || isDurableCodexThread(providerThreadId),
     });
     this.codexShellSnapshotWatcher = new CodexShellSnapshotWatcher({
       directory: codexShellSnapshotDirectory(),
-      onThread: (thread) => dispatcher.captureCodexThread(
-        thread.soloeSessionId,
+      isThreadDurable: (thread) => isDurableCodexThread(
         thread.providerThreadId,
+        thread.soloeSessionId,
       ),
+      onThread: async (thread) => {
+        const existing = await this.sessions.get(thread.soloeSessionId);
+        const previousThreadId = existing?.currentAgentRuntime?.provider === "codex"
+          ? existing.currentAgentRuntime.providerThreadId ?? existing.providerThreadId
+          : existing?.providerThreadId;
+        await dispatcher.captureCodexThread(
+          thread.soloeSessionId,
+          thread.providerThreadId,
+        );
+        if (!previousThreadId || previousThreadId === thread.providerThreadId) return;
+        if (!bridgeReady) {
+          pendingCodexHandoffs.add(thread.soloeSessionId);
+          return;
+        }
+        await this.restartCodexAfterThreadSwitch(thread.soloeSessionId);
+      },
       log: (message, detail) => console.warn(`[codex-resume] ${message}`, detail),
     });
     await this.codexShellSnapshotWatcher.start();
@@ -769,6 +804,11 @@ export class SoloeDomain extends EventEmitter {
     await persistence.save({ port, token: initial.token });
     this.agentBridge = started.bridge;
     this.agentBridgeInfo = started.info;
+    bridgeReady = true;
+    for (const sessionId of pendingCodexHandoffs) {
+      await this.restartCodexAfterThreadSwitch(sessionId);
+    }
+    pendingCodexHandoffs.clear();
     if (!this.options.integrationInstaller) {
       const installer = new HookInstaller({
         bridge: { port, token: initial.token },
@@ -788,6 +828,23 @@ export class SoloeDomain extends EventEmitter {
         }
       }
     }
+  }
+
+  private async restartCodexAfterThreadSwitch(sessionId: SessionId): Promise<void> {
+    const current = (await this.options.runtime.listRunning()).find(
+      (terminal) => terminal.sessionId === sessionId,
+    );
+    if (!current) return;
+    console.log(
+      `[codex-resume] restarting ${sessionId} after a confirmed thread switch`,
+    );
+    await this.options.runtime.stop(current.terminalId);
+    this.terminalAgentSignals.delete(current.terminalId);
+    await this.startTerminal({
+      sessionId,
+      cols: current.cols,
+      rows: current.rows,
+    });
   }
 
   private async resolveDiffTarget(input: {
@@ -2213,13 +2270,8 @@ export class SoloeDomain extends EventEmitter {
         );
         return true;
       }
-      case "deviceTerminalReplay":
-        return this.requireMultiDeviceSessions(deviceSessions).terminalReplay(
-          structuredClone(args[0] as TerminalRef),
-          args[1] as number | undefined,
-        );
-      case "deviceTerminalScreenSnapshot":
-        return this.requireMultiDeviceSessions(deviceSessions).terminalScreenSnapshot(
+      case "deviceTerminalHistory":
+        return this.requireMultiDeviceSessions(deviceSessions).terminalHistory(
           structuredClone(args[0] as TerminalRef),
         );
       case "deviceTerminalStop":
@@ -2396,13 +2448,8 @@ export class SoloeDomain extends EventEmitter {
           startedAt: terminal.startedAt,
           cwd: terminal.cwd,
         }));
-      case "replay":
-        return this.options.runtime.replay(args[0] as string, args[1] as number | undefined);
-      case "screenSnapshot": {
-        const snapshot = this.options.runtime.screenSnapshot;
-        if (!snapshot) return null;
-        return snapshot.call(this.options.runtime, requireTerminalId(args[0]));
-      }
+      case "historySnapshot":
+        return this.options.runtime.historySnapshot(requireTerminalId(args[0]));
       case "setOutputDemand":
         return true;
       default:

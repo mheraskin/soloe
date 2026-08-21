@@ -22,6 +22,10 @@ export interface AgentHookDispatcherOptions {
   onSessionChange?: (session: Session) => void;
   onLocation?: (sessionId: SessionId, cwd: string) => void | Promise<void>;
   autoApprovesPermissions?: (session: Session) => boolean | Promise<boolean>;
+  isProviderThreadDurable?: (
+    provider: HookProvider,
+    providerThreadId: string
+  ) => boolean | Promise<boolean>;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -339,10 +343,18 @@ export class AgentHookDispatcher {
     provider: HookProvider,
     hookEvent: string | undefined
   ): Promise<void> {
-    const sessionId = providerSessionId(payload, provider);
+    const reportedSessionId = providerSessionId(payload, provider);
     try {
       const existing = await this.opts.sessionStore.get(soloeSessionId);
       if (!existing) return;
+
+      const sessionId = reportedSessionId && await this.isDurableProviderThread(
+        provider,
+        reportedSessionId
+      )
+        ? reportedSessionId
+        : undefined;
+      const rejectedSessionId = reportedSessionId !== undefined && sessionId === undefined;
 
       const existingRuntime = existing.currentAgentRuntime;
       const normalizedEvent = normalizeEventName(hookEvent);
@@ -353,7 +365,11 @@ export class AgentHookDispatcher {
 
       const now = new Date().toISOString();
       const priorProviderThreadId =
-        existingRuntime?.provider === provider ? existingRuntime.providerThreadId : undefined;
+        existingRuntime?.provider === provider
+          ? existingRuntime.providerThreadId ?? existing.providerThreadId
+          : launchProvider(existing) === provider
+            ? existing.providerThreadId
+            : undefined;
       const runtime = {
         provider,
         status: normalizedEvent === 'sessionend' ? 'exited' as const : 'active' as const,
@@ -366,7 +382,9 @@ export class AgentHookDispatcher {
         currentAgentRuntime: runtime,
         providerThreadId: runtime.providerThreadId
       } as SessionUpdate;
-      const transcriptPath = stringField(payload, 'transcript_path');
+      const transcriptPath = rejectedSessionId
+        ? undefined
+        : stringField(payload, 'transcript_path');
       if (transcriptPath) patch.transcriptPath = transcriptPath;
 
       const launchPatch = buildLaunchPatch(existing, provider, sessionId, payload, startsRuntime);
@@ -392,6 +410,19 @@ export class AgentHookDispatcher {
       }
     } catch (err) {
       this.opts.log?.('failed to sync current agent runtime', err);
+    }
+  }
+
+  private async isDurableProviderThread(
+    provider: HookProvider,
+    providerThreadId: string
+  ): Promise<boolean> {
+    if (!this.opts.isProviderThreadDurable) return true;
+    try {
+      return await this.opts.isProviderThreadDurable(provider, providerThreadId);
+    } catch (error) {
+      this.opts.log?.('provider thread durability check failed', error);
+      return false;
     }
   }
 

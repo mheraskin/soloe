@@ -29,7 +29,7 @@ describe('LocalSessionDevice', () => {
         currentInputLease: vi.fn(async () => lease),
         releaseInputLease,
         parkInputLease: vi.fn(async () => true),
-        screenSnapshot: vi.fn(),
+        historySnapshot: vi.fn(),
         onInputLease: vi.fn(() => () => undefined),
         writeInput: vi.fn(),
         resizeTerminal: vi.fn()
@@ -170,6 +170,7 @@ describe('LocalSessionDevice', () => {
       message: null,
       setupUrl: null,
       dnsName: 'local.tailnet.ts.net',
+      ipAddress: '100.101.102.103',
       port,
       forwarded: true
     }));
@@ -186,6 +187,7 @@ describe('LocalSessionDevice', () => {
       message: null,
       setupUrl: null,
       dnsName: 'local.tailnet.ts.net',
+      ipAddress: '100.101.102.103',
       port: 3000,
       forwarded: true
     });

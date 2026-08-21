@@ -670,6 +670,7 @@ describe('mergeCodexMcp / removeSoloeFromCodex (pure)', () => {
     expect(servers.soloe).toMatchObject({
       _soloe: true,
       _soloe_version: SOLOE_HOOK_VERSION,
+      enabled: false,
       url: 'http://127.0.0.1:17896/mcp',
       bearer_token_env_var: 'SOLOE_BRIDGE_TOKEN'
     });

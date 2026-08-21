@@ -21,7 +21,7 @@ export function shouldSendShiftEnterSequence(event: KeyboardLike): boolean {
 }
 
 export function ctrlSlashSequence(event: KeyboardLike): string | null {
-  // xterm 5.5 does not translate Ctrl+/ itself. Prefer the physical Slash key,
+  // Prefer the physical Slash key so Ghostty sees one unambiguous control byte,
   // but also match the produced character because many layouts place "/" on
   // another physical key (for example Shift+7). Emit Ctrl+_ (US, 0x1f), the
   // control character terminal applications expect from Ctrl+/.
@@ -32,7 +32,7 @@ export function ctrlSlashSequence(event: KeyboardLike): string | null {
 }
 
 // Sequences emitted for Alt-modified word edit/navigation. Caller must have
-// verified altKey is set with no ctrl/meta. xterm.js's defaults
+// verified altKey is set with no ctrl/meta. These conventional VT sequences
 // (\x1b\x7f for Alt+Backspace, \x1b[3;3~ for Alt+Delete) parse cleanly in
 // agent TUIs (claude code via ink/keypress, codex via crossterm) but bash
 // readline doesn't bind \e\x7f to backward-kill-word out of the box and tty

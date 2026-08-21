@@ -54,6 +54,12 @@ describe('SessionCommandBuilder — wsl wrapping', () => {
     expect(rc).toContain('eval "$PROMPT_COMMAND"');
     expect(rc).toContain('export TERM=xterm-256color');
     expect(rc).toContain('export COLORTERM=truecolor');
+    expect(rc.indexOf('export TERM=xterm-256color')).toBeLessThan(
+      rc.indexOf('source ~/.bashrc')
+    );
+    expect(rc.indexOf('export COLORTERM=truecolor')).toBeLessThan(
+      rc.indexOf('source ~/.bashrc')
+    );
     expect(rc).not.toContain('mkdir');
     expect(rc).not.toContain('.soloe');
     expect(rc).not.toContain('TMPDIR');
@@ -415,6 +421,25 @@ describe('SessionCommandBuilder — claude_code kind', () => {
 });
 
 describe('SessionCommandBuilder — codex kind', () => {
+  it('enables the current Soloe MCP bridge only for Codex launched by Soloe', () => {
+    const s: Session = {
+      ...baseFields(),
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      launch: { type: 'agent', provider: 'codex', resumeMode: 'new' }
+    };
+
+    const script = decodeAgentScript(innerLine(builder.build(s, {
+      ...ctx,
+      bridge: { url: 'http://127.0.0.1:1234', token: 'secret' }
+    }).args));
+
+    expect(script).toContain('mcp_servers.soloe.enabled=true');
+    expect(script).toContain('mcp_servers.soloe.url=');
+    expect(script).toContain('mcp_servers.soloe.bearer_token_env_var=');
+    expect(script).toContain('http://host.wsl.internal:1234/mcp');
+  });
+
   it('uses inline mode so Codex output remains in terminal scrollback', () => {
     const s: Session = {
       ...baseFields(),

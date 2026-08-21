@@ -10,6 +10,7 @@ import type {
 } from '@shared/types/sessions.js';
 import { effectiveAgentProvider } from '@shared/types/sessions.js';
 import { sessionAutoApprovesPermissions as launchAutoApprovesPermissions } from '@shared/agent-permissions.js';
+import { mergeTerminalEnvironment } from '@shared/terminal-environment.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type {
   SpawnSpec,
@@ -18,8 +19,7 @@ import type {
   TerminalId,
   TerminalLocationEvent,
   TerminalOutputEvent,
-  TerminalReplaySnapshot,
-  TerminalScreenSnapshot,
+  TerminalHistorySnapshot,
   TerminalStartOptions,
   TerminalStartResult,
   TerminalStatusEvent
@@ -43,7 +43,7 @@ import {
   resolveCursorSessionBinaries
 } from '../agents/CursorCliDiscovery.js';
 import type { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
-import { TerminalReplayBuffer } from './TerminalReplayBuffer.js';
+import { TerminalHistoryBuffer } from './TerminalHistoryBuffer.js';
 import { detectUsageLimitPlainText, stripAnsi } from '../agents/UsageLimitDetector.js';
 import type { UsageLimitInfo } from '../agents/UsageLimitDetector.js';
 import { NodePtyProcessFactory } from './NodePtyProcessFactory.js';
@@ -86,7 +86,7 @@ export interface PtyManagerOptions {
   observer?: AgentObserverManager;
   bridgeInfo?: () => { url: string; token: string } | null;
   getBinaries?: () => Promise<SettingsBinaries> | SettingsBinaries;
-  replayBuffer?: TerminalReplayBuffer;
+  historyBuffer?: TerminalHistoryBuffer;
   processFactory?: PtyProcessFactory;
   codexConfigReader?: CodexConfigReader;
   cursorDiscovery?: Pick<CursorCliDiscovery, 'detect'>;
@@ -106,7 +106,7 @@ export class PtyManager extends EventEmitter {
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly agentSpawnQueues = new Map<string, Promise<void>>();
   private readonly pendingAgentInputPersistence = new Map<SessionId, Promise<void>>();
-  private readonly replayBuffer: TerminalReplayBuffer;
+  private readonly historyBuffer: TerminalHistoryBuffer;
   private readonly processFactory: PtyProcessFactory;
   private readonly codexConfigReader: CodexConfigReader;
   private readonly cursorDiscovery: Pick<CursorCliDiscovery, 'detect'>;
@@ -115,7 +115,7 @@ export class PtyManager extends EventEmitter {
   constructor(private readonly opts: PtyManagerOptions) {
     super();
     this.baseEnv = opts.baseEnv ?? process.env;
-    this.replayBuffer = opts.replayBuffer ?? new TerminalReplayBuffer();
+    this.historyBuffer = opts.historyBuffer ?? new TerminalHistoryBuffer();
     this.processFactory = opts.processFactory ?? new NodePtyProcessFactory();
     this.cursorDiscovery = opts.cursorDiscovery ?? new CursorCliDiscovery();
     this.codexConfigReader = opts.codexConfigReader ?? new CodexConfigReader({
@@ -136,25 +136,21 @@ export class PtyManager extends EventEmitter {
         this.handleLocationSequences(instance, ev.data);
         this.handleAgentOutput(instance, ev.data);
       }
-      this.replayBuffer.append(ev);
+      this.historyBuffer.append(ev);
       this.emit('output', ev);
     }
   }
 
-  replay(terminalId: TerminalId, afterSeq = 0): TerminalReplaySnapshot | null {
-    return this.replayBuffer.snapshot(terminalId, afterSeq);
-  }
-
-  screenSnapshot(terminalId: TerminalId): Promise<TerminalScreenSnapshot | null> {
+  async historySnapshot(terminalId: TerminalId): Promise<TerminalHistorySnapshot | null> {
     const source = this.processFactory as PtyProcessFactory & {
-      screenSnapshot?(terminalId: string): Promise<TerminalScreenSnapshot>;
+      historySnapshot?(terminalId: string): Promise<TerminalHistorySnapshot | null>;
     };
-    return source.screenSnapshot?.(terminalId) ?? Promise.resolve(null);
+    return source.historySnapshot?.(terminalId) ?? this.historyBuffer.snapshot(terminalId);
   }
 
   async setKeepFullHistory(enabled: boolean): Promise<void> {
-    this.replayBuffer.setUnbounded(enabled);
-    await this.processFactory.setReplayUnbounded?.(enabled);
+    this.historyBuffer.setUnbounded(enabled);
+    await this.processFactory.setHistoryUnbounded?.(enabled);
   }
 
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
@@ -214,7 +210,7 @@ export class PtyManager extends EventEmitter {
         spec,
         cols,
         rows,
-        env: mergeEnv(this.baseEnv, spec.env)
+        env: mergeTerminalEnvironment(this.baseEnv, spec.env)
       });
     } catch (err) {
       release();
@@ -248,6 +244,7 @@ export class PtyManager extends EventEmitter {
       autoApprovesPermissions
     };
     this.terminals.set(terminalId, instance);
+    this.historyBuffer.register({ terminalId, sessionId, cols, rows });
     this.attachProcess(instance);
 
     void this.opts.store.touch(sessionId).catch(() => {});
@@ -298,6 +295,12 @@ export class PtyManager extends EventEmitter {
       };
       this.terminals.set(terminal.terminalId, instance);
       this.sessionToTerminal.set(terminal.sessionId, terminal.terminalId);
+      this.historyBuffer.register({
+        terminalId: terminal.terminalId,
+        sessionId: terminal.sessionId,
+        cols: terminal.cols,
+        rows: terminal.rows
+      });
       this.opts.observer?.registerTuiSession(session);
       this.opts.observer?.setAutoApprovesPermissions(
         terminal.sessionId,
@@ -393,6 +396,7 @@ export class PtyManager extends EventEmitter {
       instance.pty.resize(cols, rows);
       instance.cols = cols;
       instance.rows = rows;
+      this.historyBuffer.resize(terminalId, cols, rows);
     } catch {
       // ignore - pty may have just exited
     }
@@ -439,7 +443,7 @@ export class PtyManager extends EventEmitter {
     this.sessionToTerminal.clear();
     this.opts.batcher.destroy();
     this.codexConfigReader.clear();
-    this.replayBuffer.clear();
+    this.historyBuffer.clear();
     this.removeAllListeners();
     await this.processFactory.dispose?.();
   }
@@ -517,7 +521,7 @@ export class PtyManager extends EventEmitter {
     this.emit('exit', { terminalId, sessionId, exitCode, signal });
     this.emitStatus(sessionId, terminalId, 'exited');
     this.terminals.delete(terminalId);
-    this.replayBuffer.remove(terminalId);
+    this.historyBuffer.remove(terminalId);
   }
 
   private emitStatus(
@@ -678,20 +682,6 @@ function shortLogText(value: string, maxLength: number): string {
   const normalized = stripAnsi(value).replace(/\r\n?/g, '\n').trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(-maxLength + 3)}...`;
-}
-
-function mergeEnv(
-  base: NodeJS.ProcessEnv,
-  overrides: Record<string, string>
-): { [key: string]: string } {
-  const out: { [key: string]: string } = {};
-  for (const [k, v] of Object.entries(base)) {
-    if (typeof v === 'string') out[k] = v;
-  }
-  for (const [k, v] of Object.entries(overrides)) {
-    out[k] = v;
-  }
-  return out;
 }
 
 function errorMessage(err: unknown): string {
