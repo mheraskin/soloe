@@ -41,9 +41,16 @@
   let pageVisible = $state(document.visibilityState === 'visible');
   let lastSize: { cols: number; rows: number } | null = null;
 
+  // Shield terminal attachment effects from whole-projection replacements. The
+  // multi-Device store publishes fresh projection objects for ordinary status
+  // updates; those must not reset an already-ready terminal surface when the
+  // underlying Device, Session, and terminal identities did not change.
+  let terminalDeviceId = $derived(projection.ref.deviceId);
+  let terminalSessionId = $derived(projection.ref.sessionId);
+  let terminalRuntimeId = $derived(projection.runtime?.terminalId ?? null);
   let terminalRef = $derived<TerminalRef | null>(
-    projection.runtime?.terminalId
-      ? { deviceId: projection.ref.deviceId, terminalId: projection.runtime.terminalId }
+    terminalRuntimeId
+      ? { deviceId: terminalDeviceId, terminalId: terminalRuntimeId }
       : null
   );
   let inputLease = $derived(
@@ -58,18 +65,21 @@
   const font = { family: terminalFontFamily, size: 12 };
 
   $effect(() => {
-    const ref = terminalRef;
-    if (!ref) {
+    const deviceId = terminalDeviceId;
+    const sessionId = terminalSessionId;
+    const terminalId = terminalRuntimeId;
+    if (!terminalId) {
       terminalState = null;
       error = 'This Session has no running terminal to attach.';
       return;
     }
+    const ref: TerminalRef = { deviceId, terminalId };
     surfaceReady = false;
     error = null;
     let outputReady = Promise.resolve();
     const session = new TerminalHistorySession(
-      ref.terminalId,
-      projection.ref.sessionId,
+      terminalId,
+      sessionId,
       {
         subscribeOutput: (listener) => {
           const attachment = deviceSessions.acquireTerminalOutput(ref, listener);
@@ -80,7 +90,7 @@
         setOutputDemand: async (_terminalId, active) => {
           if (active) await outputReady;
         },
-        onReconnect: (listener) => deviceSessions.onDeviceReconnect(ref.deviceId, listener)
+        onReconnect: (listener) => deviceSessions.onDeviceReconnect(deviceId, listener)
       }
     );
     const attached = session.connect(
