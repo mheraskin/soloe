@@ -113,8 +113,14 @@ export class MultiDeviceSessionsIpc {
     );
     ipcMain.handle(
       IpcChannels.sessions.ensureDeviceTailscalePort,
-      (_event, request: { deviceId: string; port: number }) =>
-        ipcInvoke(() => this.options.sessions.ensureTailscalePort(request.deviceId, request.port))
+      (_event, request: { deviceId: string; port: number; virtualHostname?: string }) =>
+        ipcInvoke(() => request.virtualHostname
+          ? this.options.sessions.ensureTailscalePort(
+              request.deviceId,
+              request.port,
+              request.virtualHostname
+            )
+          : this.options.sessions.ensureTailscalePort(request.deviceId, request.port))
     );
     ipcMain.handle(IpcChannels.sessions.deviceTerminalDemand, (_event, refs: TerminalRef[]) =>
       ipcInvoke(async () => {

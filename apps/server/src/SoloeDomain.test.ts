@@ -145,6 +145,15 @@ describe("SoloeDomain", () => {
       port,
       forwarded: true,
     }));
+    const ensureBrowserRoute = vi.fn(async (request: {
+      targetPort: number;
+      virtualHostname: string;
+    }) => ({
+      port: 43127,
+      targetPort: request.targetPort,
+      virtualHostname: request.virtualHostname,
+    }));
+    const disposeBrowserRoutes = vi.fn(async () => undefined);
     const domain = new SoloeDomain({
       dataDirectory: directory,
       deviceId: "11111111-1111-4111-8111-111111111111",
@@ -157,6 +166,7 @@ describe("SoloeDomain", () => {
         stop: vi.fn(),
       },
       tailscalePorts: { ensure },
+      browserRoutes: { ensure: ensureBrowserRoute, dispose: disposeBrowserRoutes },
     });
 
     try {
@@ -178,10 +188,30 @@ describe("SoloeDomain", () => {
       await expect(domain.invoke({
         namespace: "network",
         method: "ensureTailscalePort",
+        args: [{
+          port: 8877,
+          virtualHostname: "ember-oak.xps.tailnet.ts.net",
+        }],
+      })).resolves.toMatchObject({
+        deviceId: "11111111-1111-4111-8111-111111111111",
+        dnsName: "xps.tailnet.ts.net",
+        port: 43127,
+        targetPort: 8877,
+        virtualHostname: "ember-oak.xps.tailnet.ts.net",
+      });
+      expect(ensureBrowserRoute).toHaveBeenCalledWith({
+        targetPort: 8877,
+        virtualHostname: "ember-oak.xps.tailnet.ts.net",
+      });
+      expect(ensure).toHaveBeenLastCalledWith(43127);
+      await expect(domain.invoke({
+        namespace: "network",
+        method: "ensureTailscalePort",
         args: [0],
       })).rejects.toMatchObject({ code: "invalid_network_port" });
     } finally {
       await domain.dispose();
+      expect(disposeBrowserRoutes).toHaveBeenCalledOnce();
       await rm(directory, { recursive: true, force: true });
     }
   });

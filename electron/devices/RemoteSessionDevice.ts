@@ -353,8 +353,11 @@ export class RemoteSessionDevice implements SessionDevice {
     await this.rpc('terminal', 'stop', [requiredId(terminalId, 'Terminal')]);
   }
 
-  ensureTailscalePort(port: number): Promise<DevicePortForwardResult> {
-    return this.rpc('network', 'ensureTailscalePort', [positiveInteger(port, 'port')]);
+  ensureTailscalePort(port: number, virtualHostname?: string): Promise<DevicePortForwardResult> {
+    const validPort = positiveInteger(port, 'port');
+    return this.rpc('network', 'ensureTailscalePort', [virtualHostname
+      ? { port: validPort, virtualHostname }
+      : validPort]);
   }
 
   workspacePlan(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan> {

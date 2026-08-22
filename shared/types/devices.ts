@@ -27,6 +27,10 @@ export interface DevicePortForwardResult {
   dnsName: string | null;
   /** IPv4 address used to preserve virtual-host subdomains through wildcard DNS. */
   ipAddress?: string | null;
+  /** Original development-server port when `port` is a Soloe proxy listener. */
+  targetPort?: number;
+  /** Host header restored by a Soloe browser-route proxy. */
+  virtualHostname?: string;
   port: number;
   forwarded: boolean;
   message: string | null;

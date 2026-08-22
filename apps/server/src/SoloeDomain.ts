@@ -132,6 +132,7 @@ import {
   VaultStore,
   VaultStoreError,
   WslHostDetector,
+  BrowserRouteProxy,
   TailscalePortForwardManager,
   SystemClipboardImageWriter,
   type ClipboardImageWriter,
@@ -262,6 +263,7 @@ export interface SoloeDomainOptions {
   codexConfigReader?: Pick<CodexConfigReader, "read" | "clear">;
   autoRename?: Pick<AutoRenameService, "maybeRename">;
   tailscalePorts?: Pick<TailscalePortForwardManager, "ensure">;
+  browserRoutes?: Pick<BrowserRouteProxy, "ensure" | "dispose">;
   integrationInstaller?: Pick<
     HookInstaller,
     | "status"
@@ -317,6 +319,7 @@ export class SoloeDomain extends EventEmitter {
   private githubProviderService: GitHubProviderService | null = null;
   private readonly browserSessions: BrowserSessionStore;
   private readonly tailscalePorts: Pick<TailscalePortForwardManager, "ensure">;
+  private readonly browserRoutes: Pick<BrowserRouteProxy, "ensure" | "dispose">;
   private readonly files: FileService;
   private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
@@ -431,6 +434,7 @@ export class SoloeDomain extends EventEmitter {
       path.join(options.dataDirectory, "browser-sessions.json"),
     );
     this.tailscalePorts = options.tailscalePorts ?? new TailscalePortForwardManager();
+    this.browserRoutes = options.browserRoutes ?? new BrowserRouteProxy();
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
@@ -650,6 +654,7 @@ export class SoloeDomain extends EventEmitter {
     this.featureArtifacts.dispose();
     this.git.dispose();
     this.files.dispose();
+    await this.browserRoutes.dispose();
     this.rendererBridge.dispose();
     this.codexShellSnapshotWatcher?.dispose();
     this.codexShellSnapshotWatcher = null;
@@ -985,8 +990,22 @@ export class SoloeDomain extends EventEmitter {
             "This Soloe server has no Device identity",
           );
         }
-        const status = await this.tailscalePorts.ensure(requirePort(call.args[0]));
-        return { deviceId: this.options.deviceId, ...status };
+        const request = requireBrowserRouteRequest(call.args[0]);
+        const route = request.virtualHostname
+          ? await this.browserRoutes.ensure({
+              targetPort: request.port,
+              virtualHostname: request.virtualHostname,
+            })
+          : null;
+        const status = await this.tailscalePorts.ensure(route?.port ?? request.port);
+        return {
+          deviceId: this.options.deviceId,
+          ...status,
+          ...(route ? {
+            targetPort: route.targetPort,
+            virtualHostname: route.virtualHostname,
+          } : {}),
+        };
       }
       throw unsupportedRpc("network", call.method);
     }
@@ -2202,11 +2221,21 @@ export class SoloeDomain extends EventEmitter {
           structuredClone(args[0] as SessionRef),
         );
       case "ensureDeviceTailscalePort": {
-        const request = args[0] as { deviceId: DeviceId; port: number };
-        return this.requireMultiDeviceSessions(deviceSessions).ensureTailscalePort(
-          request.deviceId,
-          request.port,
-        );
+        const request = args[0] as {
+          deviceId: DeviceId;
+          port: number;
+          virtualHostname?: string;
+        };
+        return request.virtualHostname
+          ? this.requireMultiDeviceSessions(deviceSessions).ensureTailscalePort(
+              request.deviceId,
+              request.port,
+              request.virtualHostname,
+            )
+          : this.requireMultiDeviceSessions(deviceSessions).ensureTailscalePort(
+              request.deviceId,
+              request.port,
+            );
       }
       case "setDeviceTerminalDemand":
         await this.requireMultiDeviceSessions(deviceSessions).setTerminalOutputDemand(
@@ -3419,6 +3448,30 @@ function requirePort(value: unknown): number {
     );
   }
   return Number(value);
+}
+
+function requireBrowserRouteRequest(value: unknown): {
+  port: number;
+  virtualHostname?: string;
+} {
+  if (typeof value === "number") return { port: requirePort(value) };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RpcError(
+      "invalid_browser_route",
+      "Browser route must contain a network port and optional virtual hostname",
+    );
+  }
+  const request = value as Record<string, unknown>;
+  const port = requirePort(request.port);
+  if (request.virtualHostname === undefined) return { port };
+  if (
+    typeof request.virtualHostname !== "string"
+    || !request.virtualHostname.trim()
+    || request.virtualHostname.length > 253
+  ) {
+    throw new RpcError("invalid_browser_route", "Browser route hostname is invalid");
+  }
+  return { port, virtualHostname: request.virtualHostname };
 }
 
 function validateListObserverEventsRequest(

@@ -64,21 +64,23 @@ export async function resolveDeviceBrowserUrl(
     return { url: normalized, target };
   }
 
-  const result = await deviceSessions.ensureTailscalePort(target.deviceId, port);
+  const virtualHostname = subdomain ? parsed.hostname : undefined;
+  const result = virtualHostname
+    ? await deviceSessions.ensureTailscalePort(target.deviceId, port, virtualHostname)
+    : await deviceSessions.ensureTailscalePort(target.deviceId, port);
   if (result.state !== 'ready' || !result.dnsName) {
     throw new Error(result.message ?? `Could not open port ${port} on ${target.name}.`);
   }
 
   if (subdomain) {
-    if (!result.ipAddress || !isIpv4Address(result.ipAddress)) {
+    if (!result.virtualHostname || result.targetPort !== port || result.port === port) {
       throw new Error(
         `Could not route the ${subdomain} subdomain through ${target.name}: `
-        + 'the Device did not report a Tailscale IPv4 address.'
+        + 'the Device does not support virtual-host browser routes.'
       );
     }
-    // MagicDNS publishes the Device hostname, not arbitrary children beneath it.
-    // IP-backed wildcard DNS keeps the application's virtual-host prefix intact.
-    parsed.hostname = `${subdomain}.${result.ipAddress}.nip.io`;
+    parsed.hostname = result.dnsName;
+    parsed.port = String(result.port);
   } else {
     parsed.hostname = result.dnsName;
   }
@@ -96,16 +98,6 @@ function deviceSubdomain(hostname: string, targetHostname: string | null): strin
     return hostname.slice(0, -(targetHostname.length + 1)) || null;
   }
   return null;
-}
-
-function isIpv4Address(value: string): boolean {
-  const octets = value.split('.');
-  return octets.length === 4 && octets.every((octet) => {
-    if (!/^\d{1,3}$/u.test(octet)) return false;
-    if (octet.length > 1 && octet.startsWith('0')) return false;
-    const number = Number(octet);
-    return number >= 0 && number <= 255;
-  });
 }
 
 export async function openDeviceBrowserUrl(rawUrl: string, deviceId: DeviceId): Promise<void> {

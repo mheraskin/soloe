@@ -16,7 +16,11 @@ import type {
   TerminalInputLeaseEvent
 } from '@shared/types/terminal.js';
 import type { SessionStore } from '../sessions/SessionStore.js';
-import { TailscalePortForwardManager, type WorkspaceDeviceStore } from '@soloe/domain';
+import {
+  BrowserRouteProxy,
+  TailscalePortForwardManager,
+  type WorkspaceDeviceStore
+} from '@soloe/domain';
 import type { ProjectStore } from '../projects/ProjectStore.js';
 import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
 import type { GitService } from '../git/GitService.js';
@@ -74,6 +78,7 @@ export interface LocalSessionDeviceOptions {
   files?: Pick<FileService, 'pasteImagesIntoTerminal'>;
   clientId?: string;
   tailscalePorts?: Pick<TailscalePortForwardManager, 'ensure'>;
+  browserRoutes?: Pick<BrowserRouteProxy, 'ensure' | 'dispose'>;
 }
 
 export class LocalSessionDevice implements SessionDevice {
@@ -92,11 +97,15 @@ export class LocalSessionDevice implements SessionDevice {
   private readonly ownedInputLeases = new Map<string, TerminalInputLease>();
   private inputControlDetach: (() => void) | null = null;
   private readonly tailscalePorts: Pick<TailscalePortForwardManager, 'ensure'>;
+  private readonly browserRoutes: Pick<BrowserRouteProxy, 'ensure' | 'dispose'>;
+  private readonly ownsBrowserRoutes: boolean;
 
   constructor(private readonly options: LocalSessionDeviceOptions) {
     this.deviceId = options.descriptor.deviceId;
     this.clientId = options.clientId ?? `sessions-${randomUUID()}`;
     this.tailscalePorts = options.tailscalePorts ?? new TailscalePortForwardManager();
+    this.ownsBrowserRoutes = !options.browserRoutes;
+    this.browserRoutes = options.browserRoutes ?? new BrowserRouteProxy();
     this.inputLeases = new TerminalInputLeaseManager({
       onChange: (event) => this.publishEvent('inputLease', event)
     });
@@ -351,10 +360,20 @@ export class LocalSessionDevice implements SessionDevice {
     this.inputLeases.clearTerminal(id);
   }
 
-  async ensureTailscalePort(port: number): Promise<DevicePortForwardResult> {
+  async ensureTailscalePort(port: number, virtualHostname?: string): Promise<DevicePortForwardResult> {
     this.assertActive();
-    const status = await this.tailscalePorts.ensure(port);
-    return { deviceId: this.deviceId, ...status };
+    const route = virtualHostname
+      ? await this.browserRoutes.ensure({ targetPort: port, virtualHostname })
+      : null;
+    const status = await this.tailscalePorts.ensure(route?.port ?? port);
+    return {
+      deviceId: this.deviceId,
+      ...status,
+      ...(route ? {
+        targetPort: route.targetPort,
+        virtualHostname: route.virtualHostname
+      } : {})
+    };
   }
 
   workspacePlan(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan> {
@@ -462,6 +481,7 @@ export class LocalSessionDevice implements SessionDevice {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.ownsBrowserRoutes) void this.browserRoutes.dispose();
     this.inputControlDetach?.();
     this.inputControlDetach = null;
     this.ownedInputLeases.clear();

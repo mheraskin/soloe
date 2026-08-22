@@ -247,13 +247,14 @@ export const backend = {
     },
     ensureDeviceTailscalePort: async (
       deviceId: DeviceId,
-      port: number
+      port: number,
+      virtualHostname?: string
     ): Promise<DevicePortForwardResult> => {
       if (!c.sessions.ensureDeviceTailscalePort) {
         throw new Error('Tailscale port forwarding is unavailable.');
       }
       return unwrap(await c.sessions.ensureDeviceTailscalePort(
-        toIpcPayload({ deviceId, port })
+        toIpcPayload({ deviceId, port, ...(virtualHostname ? { virtualHostname } : {}) })
       ));
     },
     setDeviceTerminalDemand: async (refs: TerminalRef[]) => {

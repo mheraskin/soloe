@@ -450,7 +450,7 @@ export interface SessionsApi {
   deleteOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionState>>;
   previewCommandOnDevice?(ref: SessionRef): Promise<IpcResult<SpawnSpec>>;
   ensureDeviceTailscalePort?(
-    request: { deviceId: DeviceId; port: number }
+    request: { deviceId: DeviceId; port: number; virtualHostname?: string }
   ): Promise<IpcResult<DevicePortForwardResult>>;
   setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
   deviceTerminalInput?(

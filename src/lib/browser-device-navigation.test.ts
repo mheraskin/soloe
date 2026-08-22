@@ -74,8 +74,9 @@ describe('resolveDeviceBrowserUrl', () => {
       deviceId: DEVICE_ID,
       state: 'ready',
       dnsName: 'xps.example.ts.net',
-      ipAddress: '100.101.102.103',
-      port: 8877,
+      port: 43127,
+      targetPort: 8877,
+      virtualHostname: 'ember-oak.xps.example.ts.net',
       forwarded: true,
       message: null,
       setupUrl: null
@@ -85,10 +86,14 @@ describe('resolveDeviceBrowserUrl', () => {
       'http://ember-oak.xps.example.ts.net:8877/order-ahead/',
       target
     )).resolves.toEqual({
-      url: 'http://ember-oak.100.101.102.103.nip.io:8877/order-ahead/',
+      url: 'http://xps.example.ts.net:43127/order-ahead/',
       target
     });
-    expect(deviceSessions.ensureTailscalePort).toHaveBeenCalledWith(DEVICE_ID, 8877);
+    expect(deviceSessions.ensureTailscalePort).toHaveBeenCalledWith(
+      DEVICE_ID,
+      8877,
+      'ember-oak.xps.example.ts.net'
+    );
   });
 
   it('preserves a localhost subdomain when routing it to another Device', async () => {
@@ -96,8 +101,9 @@ describe('resolveDeviceBrowserUrl', () => {
       deviceId: DEVICE_ID,
       state: 'ready',
       dnsName: 'xps.example.ts.net',
-      ipAddress: '100.101.102.103',
-      port: 8877,
+      port: 43128,
+      targetPort: 8877,
+      virtualHostname: 'ember-oak.localhost',
       forwarded: true,
       message: null,
       setupUrl: null
@@ -107,11 +113,11 @@ describe('resolveDeviceBrowserUrl', () => {
       'http://ember-oak.localhost:8877/order-ahead/?menu=lunch#items',
       target
     )).resolves.toMatchObject({
-      url: 'http://ember-oak.100.101.102.103.nip.io:8877/order-ahead/?menu=lunch#items'
+      url: 'http://xps.example.ts.net:43128/order-ahead/?menu=lunch#items'
     });
   });
 
-  it('fails explicitly when an older Device cannot provide an address for a subdomain', async () => {
+  it('fails explicitly when an older Device cannot provide a virtual-host route', async () => {
     vi.spyOn(deviceSessions, 'ensureTailscalePort').mockResolvedValue({
       deviceId: DEVICE_ID,
       state: 'ready',
@@ -125,7 +131,7 @@ describe('resolveDeviceBrowserUrl', () => {
     await expect(resolveDeviceBrowserUrl(
       'http://ember-oak.localhost:8877/order-ahead/',
       target
-    )).rejects.toThrow('did not report a Tailscale IPv4 address');
+    )).rejects.toThrow('does not support virtual-host browser routes');
   });
 
   it('resolves the local DNS name and remote endpoint aliases for device labels', () => {

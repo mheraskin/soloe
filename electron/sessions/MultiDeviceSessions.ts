@@ -100,7 +100,7 @@ export interface SessionDevice {
   updateSession?(sessionId: string, patch: SessionUpdate): Promise<Session>;
   deleteSession?(sessionId: string): Promise<void>;
   previewSessionCommand?(sessionId: string): Promise<SpawnSpec>;
-  ensureTailscalePort?(port: number): Promise<DevicePortForwardResult>;
+  ensureTailscalePort?(port: number, virtualHostname?: string): Promise<DevicePortForwardResult>;
   workspacePlan?(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan>;
   workspaceExecute?(
     command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
@@ -541,13 +541,16 @@ export class MultiDeviceSessions {
 
   async ensureTailscalePort(
     deviceId: DeviceId,
-    port: number
+    port: number,
+    virtualHostname?: string
   ): Promise<DevicePortForwardResult> {
     const device = this.requireReadyDevice(deviceId);
     if (!device.ensureTailscalePort) {
       throw new Error('The selected Device cannot publish Tailscale ports.');
     }
-    return structuredClone(await device.ensureTailscalePort(port));
+    return structuredClone(virtualHostname
+      ? await device.ensureTailscalePort(port, virtualHostname)
+      : await device.ensureTailscalePort(port));
   }
 
   async updateSession(ref: SessionRef, patch: SessionUpdate): Promise<MultiDeviceSessionView> {

@@ -137,6 +137,16 @@ describe('MultiDeviceSessionsIpc', () => {
       }
     });
     expect(sessions.ensureTailscalePort).toHaveBeenCalledWith('device-1', 3000);
+    await invoke(IpcChannels.sessions.ensureDeviceTailscalePort, {
+      deviceId: 'device-1',
+      port: 8877,
+      virtualHostname: 'ember-oak.xps.tailnet.ts.net'
+    });
+    expect(sessions.ensureTailscalePort).toHaveBeenLastCalledWith(
+      'device-1',
+      8877,
+      'ember-oak.xps.tailnet.ts.net'
+    );
 
     const ref = { deviceId: 'device-1', terminalId: 'terminal-1' };
     const imageRequest = {
