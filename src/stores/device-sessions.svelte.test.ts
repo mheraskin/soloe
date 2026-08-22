@@ -19,7 +19,8 @@ const mocks = vi.hoisted(() => ({
   deviceTerminalParkInputLease: vi.fn(),
   setDeviceTerminalDemand: vi.fn(),
   updateOnDevice: vi.fn(),
-  deleteOnDevice: vi.fn()
+  deleteOnDevice: vi.fn(),
+  reorderOnDevices: vi.fn()
 }));
 
 vi.mock('../lib/ipc', () => ({
@@ -38,6 +39,7 @@ vi.mock('../lib/ipc', () => ({
       deviceTerminalParkInputLease: mocks.deviceTerminalParkInputLease,
       updateOnDevice: mocks.updateOnDevice,
       deleteOnDevice: mocks.deleteOnDevice,
+      reorderOnDevices: mocks.reorderOnDevices,
       onDeviceStateChange: vi.fn((listener) => {
         mocks.stateChange = listener;
         return () => undefined;
@@ -81,6 +83,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.setDeviceTerminalDemand.mockReset().mockResolvedValue(undefined);
     mocks.updateOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
     mocks.deleteOnDevice.mockReset().mockResolvedValue({ ...state(2, true), unassigned: [] });
+    mocks.reorderOnDevices.mockReset();
   });
 
   it('preserves the selected Session and announces a Device reconnect', async () => {
@@ -97,6 +100,44 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.stateChange?.(state(3, true));
     expect(store.selectedSessionKey).toBe('device-xps/session-1');
     expect(reconnected).toHaveBeenCalledOnce();
+  });
+
+  it('reorders remote Sessions immediately and rolls back when persistence fails', async () => {
+    const initial = state(1, true);
+    const second = structuredClone(initial.unassigned[0]!);
+    second.key = 'device-xps/session-2';
+    second.ref.sessionId = 'session-2';
+    second.session.id = 'session-2';
+    second.session.name = 'Second';
+    initial.unassigned.push(second);
+    mocks.deviceState.mockResolvedValueOnce(initial);
+    mocks.refreshDevices.mockResolvedValueOnce(initial);
+    const persisted = deferred<MultiDeviceSessionState>();
+    mocks.reorderOnDevices.mockReturnValueOnce(persisted.promise);
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ordered = [store.sessions[1]!, store.sessions[0]!];
+
+    const request = store.reorder(ordered);
+    expect(store.sessions.map((session) => session.key)).toEqual([
+      'device-xps/session-2',
+      'device-xps/session-1'
+    ]);
+
+    const refreshed = structuredClone(initial);
+    refreshed.revision = 2;
+    mocks.stateChange?.(refreshed);
+    expect(store.sessions.map((session) => session.key)).toEqual([
+      'device-xps/session-2',
+      'device-xps/session-1'
+    ]);
+
+    persisted.reject(new Error('remote Device rejected the order'));
+    await expect(request).rejects.toThrow('remote Device rejected the order');
+    expect(store.sessions.map((session) => session.key)).toEqual([
+      'device-xps/session-1',
+      'device-xps/session-2'
+    ]);
   });
 
   it('navigates to cached Sessions and refreshes an offline Device immediately', async () => {

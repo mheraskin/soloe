@@ -77,6 +77,12 @@ interface TerminalInputQueue {
   running: boolean;
 }
 
+interface PendingSessionReorder {
+  sequence: number;
+  orderedKeys: string[];
+  rollbackState: MultiDeviceSessionState;
+}
+
 const EMPTY_STATE: MultiDeviceSessionState = {
   revision: 0,
   capturedAt: new Date(0).toISOString(),
@@ -108,6 +114,9 @@ export class DeviceSessionsStore {
   private readonly terminalInputQueues = new Map<string, TerminalInputQueue>();
   private demandSync: Promise<void> = Promise.resolve();
   private pendingSequence = 0;
+  private reorderSequence = 0;
+  private pendingReorder: PendingSessionReorder | null = null;
+  private reorderPersistence: Promise<void> = Promise.resolve();
   private authoritativeGeneration = 0;
   private readonly pendingBySession = new Map<
     string,
@@ -319,13 +328,14 @@ export class DeviceSessionsStore {
 
   ensureTailscalePort(
     deviceId: DeviceId,
-    port: number
+    port: number,
+    virtualHostname?: string
   ): Promise<DevicePortForwardResult> {
     const device = this.device(deviceId);
     if (!device?.available) {
       return Promise.reject(new Error('The selected Device is unavailable.'));
     }
-    return ipc.sessions.ensureDeviceTailscalePort(deviceId, port);
+    return ipc.sessions.ensureDeviceTailscalePort(deviceId, port, virtualHostname);
   }
 
   clearSelectedSession(): void {
@@ -369,9 +379,32 @@ export class DeviceSessionsStore {
   }
 
   async reorder(ordered: MultiDeviceSessionView[]): Promise<void> {
-    this.applyState(await ipc.sessions.reorderOnDevices(
-      ordered.map((projection) => $state.snapshot(projection.ref))
-    ));
+    const previous = $state.snapshot(this.state);
+    const sequence = ++this.reorderSequence;
+    const keys = ordered.map((projection) => projection.key);
+    this.pendingReorder = { sequence, orderedKeys: keys, rollbackState: previous };
+    this.state = stateWithOptimisticSessionOrder(previous, keys);
+    try {
+      const refs = ordered.map((projection) => $state.snapshot(projection.ref));
+      const persistence = this.reorderPersistence
+        .catch(() => undefined)
+        .then(() => ipc.sessions.reorderOnDevices(refs));
+      this.reorderPersistence = persistence.then(() => undefined, () => undefined);
+      const state = await persistence;
+      if (sequence === this.pendingReorder?.sequence) {
+        this.pendingReorder = null;
+        this.applyState(state);
+      }
+    } catch (error) {
+      if (sequence === this.pendingReorder?.sequence) {
+        const rollback = this.pendingReorder.rollbackState;
+        this.pendingReorder = null;
+        this.state = rollback;
+        this.reapplyPendingSessionUpdates();
+        this.clearUnavailableSelection();
+      }
+      throw error;
+    }
   }
 
   async create(
@@ -744,6 +777,13 @@ export class DeviceSessionsStore {
       .map((device) => device.deviceId);
     this.authoritativeGeneration += 1;
     this.state = state;
+    if (this.pendingReorder) {
+      this.pendingReorder.rollbackState = $state.snapshot(state);
+      this.state = stateWithOptimisticSessionOrder(
+        $state.snapshot(this.state),
+        this.pendingReorder.orderedKeys
+      );
+    }
     this.reapplyPendingSessionUpdates();
     this.clearUnavailableSelection();
     for (const deviceId of reconnected) {
@@ -1085,6 +1125,30 @@ export class DeviceSessionsStore {
     const selected = this.sessions.find((session) => session.key === this.selectedSessionKey);
     if (!selected) this.selectedSessionKey = null;
   }
+}
+
+function stateWithOptimisticSessionOrder(
+  state: MultiDeviceSessionState,
+  orderedKeys: readonly string[]
+): MultiDeviceSessionState {
+  const rank = new Map(orderedKeys.map((key, index) => [key, index] as const));
+  const reorder = (sessions: MultiDeviceSessionView[]): MultiDeviceSessionView[] => {
+    const ordered = sessions
+      .filter((session) => rank.has(session.key))
+      .sort((left, right) => rank.get(left.key)! - rank.get(right.key)!);
+    let index = 0;
+    return sessions.map((session) => rank.has(session.key) ? ordered[index++]! : session);
+  };
+  const snapshot = structuredClone(state);
+  snapshot.projects = snapshot.projects.map((project) => ({
+    ...project,
+    workspaces: project.workspaces.map((workspace) => ({
+      ...workspace,
+      sessions: reorder(workspace.sessions)
+    }))
+  }));
+  snapshot.unassigned = reorder(snapshot.unassigned);
+  return snapshot;
 }
 
 function insertAt<T>(items: T[], index: number, item: T): T[] {
