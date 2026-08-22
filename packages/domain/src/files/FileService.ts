@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type {
   FilePasteRequest,
@@ -52,6 +53,7 @@ export interface ClipboardImageWriter {
 export interface FileServiceOptions {
   fileIndex?: WorktreeFileIndex;
   clipboard?: ClipboardImageWriter;
+  imagePasteDirectory?: string;
   runtime: FilesRuntime;
   getSession(sessionId: string): Promise<Session | null>;
   authorizeScope(scope: FileIndexScope): Promise<boolean>;
@@ -346,23 +348,35 @@ export class FileService {
         `Clipboard image exceeds the ${MAX_IMAGE_BYTES}-byte limit`,
       );
     }
-    if (!this.options.clipboard) {
-      throw new DomainError(
-        "clipboard_unavailable",
-        "Native image clipboard access is unavailable on this Device",
-      );
-    }
-
+    let paths: string[] = [];
+    let insertedText = "\x16";
     if (control.controllerDeviceId !== control.ownerDeviceId) {
-      await this.options.clipboard.writeImage({ mimeType, data: buffer });
+      try {
+        if (!this.options.clipboard) throw new Error("Native clipboard access is unavailable");
+        await this.options.clipboard.writeImage({ mimeType, data: buffer });
+      } catch {
+        const imagePath = await this.saveTemporaryImage(mimeType, buffer);
+        paths = [imagePath];
+        insertedText = `\x1b[200~${imagePath}\x1b[201~`;
+      }
     }
-    const insertedText = "\x16";
     await this.options.runtime.write(request.terminalId, insertedText, control);
-    return { paths: [], insertedText };
+    return { paths, insertedText };
   }
 
   dispose(): void {
     this.fileIndex.dispose();
+  }
+
+  private async saveTemporaryImage(mimeType: string, data: Buffer): Promise<string> {
+    const directory = this.options.imagePasteDirectory ?? tmpdir();
+    await fs.mkdir(directory, { recursive: true });
+    const imagePath = path.join(
+      directory,
+      `soloe-paste-${randomBytes(16).toString("hex")}${imageExtension(mimeType)}`,
+    );
+    await fs.writeFile(imagePath, data, { flag: "wx", mode: 0o600 });
+    return imagePath;
   }
 
   private async authorize(scope: FileIndexScope): Promise<void> {
@@ -626,6 +640,13 @@ function decodeBase64(value: string): Buffer {
     throw new DomainError("invalid_image", "Clipboard image data is not valid base64");
   }
   return Buffer.from(value, "base64");
+}
+
+function imageExtension(mimeType: string): string {
+  if (mimeType === "image/png") return ".png";
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg") return ".jpg";
+  if (mimeType === "image/gif") return ".gif";
+  return ".webp";
 }
 
 function terminalControl(request: { control: TerminalControlProof }): TerminalControlProof {

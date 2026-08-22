@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ClipboardImageWriter } from "../files/FileService.js";
 import { DomainError } from "../errors.js";
+import { TrayClipboardImageWriter } from "./TrayClipboardImageWriter.js";
 
 export interface ClipboardCommandRunner {
   run(command: string, args: string[], input?: Buffer | string): Promise<void>;
@@ -13,21 +14,34 @@ export interface SystemClipboardImageWriterOptions {
   platform?: NodeJS.Platform;
   environment?: NodeJS.ProcessEnv;
   commands?: ClipboardCommandRunner;
+  bridge?: ClipboardImageWriter;
 }
 
 export class SystemClipboardImageWriter implements ClipboardImageWriter {
   private readonly platform: NodeJS.Platform;
   private readonly environment: NodeJS.ProcessEnv;
   private readonly commands: ClipboardCommandRunner;
+  private readonly bridge?: ClipboardImageWriter;
 
   constructor(options: SystemClipboardImageWriterOptions = {}) {
     this.platform = options.platform ?? process.platform;
     this.environment = options.environment ?? process.env;
     this.commands = options.commands ?? { run: runClipboardCommand };
+    const endpoint = this.environment.SOLOE_CLIPBOARD_ENDPOINT?.trim();
+    this.bridge = options.bridge
+      ?? (endpoint ? new TrayClipboardImageWriter(endpoint) : undefined);
   }
 
   async writeImage(image: { mimeType: string; data: Buffer }): Promise<void> {
     try {
+      if (this.bridge) {
+        try {
+          await this.bridge.writeImage(image);
+          return;
+        } catch {
+          // Keep platform commands as a compatibility path for servers not launched by the tray.
+        }
+      }
       if (this.platform === "win32" || this.environment.WSL_DISTRO_NAME?.trim()) {
         await this.writeWindowsImage(image.data);
         return;

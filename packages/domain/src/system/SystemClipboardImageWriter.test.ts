@@ -2,6 +2,45 @@ import { describe, expect, it, vi } from "vitest";
 import { SystemClipboardImageWriter } from "./SystemClipboardImageWriter.js";
 
 describe("SystemClipboardImageWriter", () => {
+  it("uses the persistent Tray Host clipboard before optional system commands", async () => {
+    const writeImage = vi.fn(async () => undefined);
+    const run = vi.fn(async () => undefined);
+    const writer = new SystemClipboardImageWriter({
+      platform: "linux",
+      environment: { SOLOE_CLIPBOARD_ENDPOINT: "/tmp/soloe-clipboard.sock" },
+      bridge: { writeImage },
+      commands: { run },
+    });
+    const data = Buffer.from("png bytes");
+
+    await writer.writeImage({ mimeType: "image/png", data });
+
+    expect(writeImage).toHaveBeenCalledWith({ mimeType: "image/png", data });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("falls back to system commands when the Tray Host clipboard is unavailable", async () => {
+    const writeImage = vi.fn(async () => {
+      throw new Error("tray stopped");
+    });
+    const run = vi.fn(async () => undefined);
+    const writer = new SystemClipboardImageWriter({
+      platform: "linux",
+      environment: {
+        SOLOE_CLIPBOARD_ENDPOINT: "/tmp/soloe-clipboard.sock",
+        WAYLAND_DISPLAY: "wayland-0",
+      },
+      bridge: { writeImage },
+      commands: { run },
+    });
+    const data = Buffer.from("png bytes");
+
+    await writer.writeImage({ mimeType: "image/png", data });
+
+    expect(writeImage).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledWith("wl-copy", ["--type", "image/png"], data);
+  });
+
   it("writes Wayland image bytes with their native MIME type", async () => {
     const run = vi.fn(async () => undefined);
     const writer = new SystemClipboardImageWriter({

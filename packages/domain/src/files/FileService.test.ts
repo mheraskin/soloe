@@ -1,6 +1,7 @@
 import {
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
   symlink,
@@ -118,6 +119,55 @@ describe("FileService", () => {
 
     expect(writeImage).not.toHaveBeenCalled();
     expect(write).toHaveBeenCalledWith("terminal-1", "\x16", control);
+    service.dispose();
+  });
+
+  it("falls back to a temporary image path when the owning Device has no clipboard helper", async () => {
+    const write = vi.fn(async () => undefined);
+    const service = createService({
+      clipboard: {
+        writeImage: vi.fn(async () => {
+          throw new Error("wl-copy and xclip are unavailable");
+        }),
+      },
+      imagePasteDirectory: directory,
+      runtime: {
+        listRunning: async () => [
+          { terminalId: "terminal-1", sessionId: "session-1" },
+        ],
+        write,
+      },
+      getSession: async () => ({
+        id: "session-1",
+        launch: { type: "agent", provider: "codex", resumeMode: "new" },
+        name: "agent",
+        cwd: root,
+        runMode: "linux",
+        createdAt: "2026-08-18T00:00:00.000Z",
+        lastUsedAt: "2026-08-18T00:00:00.000Z",
+      }),
+    });
+    const control = {
+      sessionId: "session-1",
+      ownerDeviceId: "device-owner",
+      controllerDeviceId: "device-controller",
+      leaseId: "lease-1",
+    };
+
+    const result = await service.pasteImagesIntoTerminal({
+      terminalId: "terminal-1",
+      sessionId: "session-1",
+      images: [{
+        mimeType: "image/png",
+        dataBase64: Buffer.from("clipboard image").toString("base64"),
+      }],
+      control,
+    });
+
+    expect(result.paths).toHaveLength(1);
+    await expect(readFile(result.paths[0]!)).resolves.toEqual(Buffer.from("clipboard image"));
+    expect(result.insertedText).toBe(`\x1b[200~${result.paths[0]}\x1b[201~`);
+    expect(write).toHaveBeenCalledWith("terminal-1", result.insertedText, control);
     service.dispose();
   });
 

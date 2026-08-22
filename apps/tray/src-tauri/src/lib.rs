@@ -1,3 +1,5 @@
+#[cfg(unix)]
+mod clipboard;
 mod ownership;
 mod services;
 
@@ -180,11 +182,24 @@ impl MenuActionState {
 }
 
 pub fn run() {
-    let (discovered, instance_guard) = match BackendSupervisor::discover() {
+    let (mut discovered, instance_guard) = match BackendSupervisor::discover() {
         Ok(startup) => startup,
         Err(error) => {
             eprintln!("[tray] {error}");
             return;
+        }
+    };
+
+    #[cfg(unix)]
+    let native_clipboard = match clipboard::NativeClipboardHost::start(discovered.data_directory())
+    {
+        Ok(host) => {
+            discovered.set_native_clipboard_endpoint(host.endpoint().to_path_buf());
+            Some(host)
+        }
+        Err(error) => {
+            eprintln!("[tray] native clipboard host unavailable: {error}");
+            None
         }
     };
 
@@ -554,6 +569,8 @@ pub fn run() {
                 }
             });
             app.manage(instance_guard);
+            #[cfg(unix)]
+            app.manage(native_clipboard);
             app.manage(supervisor);
             Ok(())
         })

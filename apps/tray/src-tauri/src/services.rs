@@ -320,6 +320,7 @@ pub struct BackendSupervisor {
     data_directory: PathBuf,
     processes: Arc<dyn ProcessOperations>,
     owner_id: String,
+    native_clipboard_endpoint: Option<PathBuf>,
     native_owner: NativeProcessOwner,
     lease: Mutex<Option<OwnershipLease>>,
     backend_children: Mutex<Vec<Child>>,
@@ -339,6 +340,7 @@ impl BackendSupervisor {
                 data_directory,
                 processes: Arc::new(SystemProcessOperations),
                 owner_id,
+                native_clipboard_endpoint: None,
                 native_owner: NativeProcessOwner::new()?,
                 lease: Mutex::new(None),
                 backend_children: Mutex::new(Vec::new()),
@@ -361,12 +363,29 @@ impl BackendSupervisor {
             data_directory,
             processes,
             owner_id: "test-owner".to_string(),
+            native_clipboard_endpoint: None,
             native_owner: NativeProcessOwner::new().unwrap(),
             lease: Mutex::new(None),
             backend_children: Mutex::new(Vec::new()),
             client_children: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(LifecycleState::Stopped),
             transition: Mutex::new(()),
+        }
+    }
+
+    pub fn data_directory(&self) -> &Path {
+        &self.data_directory
+    }
+
+    pub fn set_native_clipboard_endpoint(&mut self, endpoint: PathBuf) {
+        self.native_clipboard_endpoint = Some(endpoint);
+    }
+
+    fn configure_native_clipboard(&self, command: &mut Command, service: &str) {
+        if service == "server"
+            && let Some(endpoint) = &self.native_clipboard_endpoint
+        {
+            command.env("SOLOE_CLIPBOARD_ENDPOINT", endpoint);
         }
     }
 
@@ -1159,6 +1178,7 @@ impl BackendSupervisor {
                     .env("SOLOE_DATA_DIR", &self.data_directory)
                     .env("SOLOE_OWNER_ID", &self.owner_id)
                     .env("SOLOE_WEB_ROOT", "");
+                self.configure_native_clipboard(&mut command, service);
                 command
             }
             BackendPlacement::Wsl => {
@@ -1217,6 +1237,7 @@ impl BackendSupervisor {
                 &self.owner_id,
             )
             .command();
+        self.configure_native_clipboard(&mut command, "server");
         command
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
@@ -2286,6 +2307,30 @@ mod tests {
         processes: Arc<dyn ProcessOperations>,
     ) -> BackendSupervisor {
         BackendSupervisor::new(PathBuf::from("/repo"), directory, processes)
+    }
+
+    #[test]
+    fn native_clipboard_endpoint_is_exposed_only_to_the_application_server() {
+        let mut supervisor = test_supervisor(
+            PathBuf::from("/unused"),
+            Arc::new(FakeProcessOperations::default()),
+        );
+        supervisor.set_native_clipboard_endpoint(PathBuf::from("/tmp/clipboard.sock"));
+        let mut server = Command::new("server");
+        let mut runtime = Command::new("runtime");
+
+        supervisor.configure_native_clipboard(&mut server, "server");
+        supervisor.configure_native_clipboard(&mut runtime, "runtime");
+
+        assert!(server.get_envs().any(|(name, value)| {
+            name == "SOLOE_CLIPBOARD_ENDPOINT"
+                && value == Some(std::ffi::OsStr::new("/tmp/clipboard.sock"))
+        }));
+        assert!(
+            !runtime
+                .get_envs()
+                .any(|(name, _)| name == "SOLOE_CLIPBOARD_ENDPOINT")
+        );
     }
 
     #[test]
