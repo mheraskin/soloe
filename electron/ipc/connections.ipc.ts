@@ -36,6 +36,9 @@ export class ConnectionsIpc {
       (_event, patch: ConnectionPreferencesUpdate) =>
         ipcInvoke(() => this.options.registry.configureTailscale(patch))
     );
+    ipcMain.handle(IpcChannels.connections.setupShortDns, () =>
+      ipcInvoke(() => this.options.registry.setupShortDns())
+    );
     ipcMain.handle(
       IpcChannels.connections.add,
       (_event, request: AddMachineConnectionRequest) =>
@@ -69,6 +72,7 @@ export class ConnectionsIpc {
     ipcMain.removeHandler(IpcChannels.connections.get);
     ipcMain.removeHandler(IpcChannels.connections.refresh);
     ipcMain.removeHandler(IpcChannels.connections.configure);
+    ipcMain.removeHandler(IpcChannels.connections.setupShortDns);
     ipcMain.removeHandler(IpcChannels.connections.add);
     ipcMain.removeHandler(IpcChannels.connections.remove);
     ipcMain.removeHandler(IpcChannels.connections.enable);

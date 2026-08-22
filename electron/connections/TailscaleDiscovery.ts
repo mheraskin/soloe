@@ -10,6 +10,7 @@ export interface TailscaleDevice {
   dnsName: string;
   online: boolean;
   isSelf: boolean;
+  ipAddress: string | null;
   os?: string;
 }
 
@@ -17,6 +18,7 @@ export interface TailscaleNetworkResult {
   state: 'connected' | 'not-running' | 'unavailable' | 'error';
   tailnet: string | null;
   selfDnsName: string | null;
+  selfIpAddress: string | null;
   message: string | null;
   devices: TailscaleDevice[];
 }
@@ -56,6 +58,7 @@ export class TailscaleDiscovery {
           state: 'unavailable',
           tailnet: null,
           selfDnsName: null,
+          selfIpAddress: null,
           message: 'Tailscale CLI was not found. Install Tailscale or set SOLOE_TAILSCALE_CLI.',
           devices: [],
           sharing: {
@@ -69,6 +72,7 @@ export class TailscaleDiscovery {
         state: 'error',
         tailnet: null,
         selfDnsName: null,
+        selfIpAddress: null,
         message: error instanceof Error ? error.message : String(error),
         devices: [],
         sharing: {
@@ -96,6 +100,7 @@ export function parseTailscaleStatus(raw: string): TailscaleNetworkResult {
       state: 'not-running',
       tailnet: tailnetName(value),
       selfDnsName: null,
+      selfIpAddress: null,
       message: `Tailscale is ${backendState.toLowerCase()}.`,
       devices: []
     };
@@ -112,6 +117,7 @@ export function parseTailscaleStatus(raw: string): TailscaleNetworkResult {
     state: 'connected',
     tailnet: tailnetName(value),
     selfDnsName: self?.dnsName ?? null,
+    selfIpAddress: self?.ipAddress ?? null,
     message: null,
     devices: [...(self ? [self] : []), ...peers]
   };
@@ -211,13 +217,20 @@ function deviceFromStatus(value: unknown, isSelf: boolean): TailscaleDevice | nu
   if (!dnsName) return null;
   const hostname = stringValue(value['HostName'])?.trim();
   const os = stringValue(value['OS'])?.trim();
+  const ipAddress = tailscaleIpv4(value['TailscaleIPs']);
   return {
     name: hostname || dnsName.split('.')[0] || dnsName,
     dnsName,
     online: isSelf || value['Online'] === true,
     isSelf,
+    ipAddress,
     ...(os ? { os } : {})
   };
+}
+
+function tailscaleIpv4(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  return value.find((entry): entry is string => typeof entry === 'string' && entry.startsWith('100.')) ?? null;
 }
 
 function tailnetName(status: Record<string, unknown>): string | null {

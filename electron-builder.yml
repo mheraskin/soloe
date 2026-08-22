@@ -17,6 +17,8 @@ files:
   - build/THIRD_PARTY_LICENSES.md
   - package.json
 extraResources:
+  - from: build/device-dns
+    to: bin
   - from: build/icon.ico
     to: build/icon.ico
   - from: build/icon.png

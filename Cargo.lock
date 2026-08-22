@@ -3066,6 +3066,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "soloe-device-dns"
+version = "0.1.0"
+
+[[package]]
 name = "soloe-terminal"
 version = "0.1.0"
 dependencies = [

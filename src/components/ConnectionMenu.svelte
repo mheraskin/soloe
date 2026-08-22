@@ -16,7 +16,7 @@
     if (!deviceSessions.loaded) void deviceSessions.load().catch(reportError);
   });
 
-  let devices = $derived(deviceSessions.state.devices);
+  let devices = $derived(deviceSessions.visibleDevices);
   let selectedDevice = $derived(
     deviceSessions.selectedDeviceId
       ? devices.find((device) => device.deviceId === deviceSessions.selectedDeviceId) ?? null
@@ -36,7 +36,7 @@
   }
 </script>
 
-{#if deviceSessions.supported}
+{#if deviceSessions.multiDeviceActive}
   <DropdownMenu.Root>
     <DropdownMenu.Trigger>
       {#snippet child({ props })}

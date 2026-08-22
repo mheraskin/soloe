@@ -19,28 +19,32 @@ const CONNECTED: TailscaleDiscoveryResult = {
   state: 'connected',
   tailnet: 'example.com',
   selfDnsName: 'client.tail1234.ts.net',
+  selfIpAddress: '100.64.0.1',
   message: null,
   sharing: { state: 'ready', message: null, setupUrl: null },
   devices: [
     {
       name: 'Client',
       dnsName: 'client.tail1234.ts.net',
-      online: true,
-      isSelf: true,
+    online: true,
+    isSelf: true,
+    ipAddress: '100.64.0.1',
       os: 'macOS'
     },
     {
       name: 'Alpha',
       dnsName: 'alpha.tail1234.ts.net',
-      online: true,
-      isSelf: false,
+    online: true,
+    isSelf: false,
+    ipAddress: '100.64.0.2',
       os: 'linux'
     },
     {
       name: 'Offline',
       dnsName: 'offline.tail1234.ts.net',
-      online: false,
-      isSelf: false
+    online: false,
+    isSelf: false,
+    ipAddress: '100.64.0.3'
     }
   ]
 };
@@ -445,6 +449,7 @@ describe('ConnectionRegistry', () => {
         state: 'unavailable',
         tailnet: null,
         selfDnsName: null,
+        selfIpAddress: null,
         message: 'not installed',
         devices: [],
         sharing: {

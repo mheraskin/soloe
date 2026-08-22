@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { CircleAlert, ExternalLink, Monitor, RefreshCw, Wifi, WifiOff } from '@lucide/svelte';
+  import { CircleAlert, ExternalLink, Globe2, Monitor, RefreshCw, Wifi, WifiOff } from '@lucide/svelte';
   import { connections } from '../../stores/connections.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
@@ -23,6 +23,7 @@
   );
   let portDraft = $state('443');
   let savingPreferences = $state(false);
+  let settingUpDns = $state(false);
 
   $effect(() => {
     if (!savingPreferences) {
@@ -71,9 +72,39 @@
     savingPreferences = true;
     try {
       await connections.configureTailscale({ tailscaleEnabled: enabled });
+      if (
+        enabled
+        && connections.shortDnsSetupSupported
+        && connections.snapshot.shortDns.state === 'setup-required'
+      ) {
+        await setupShortDns();
+      }
     } finally {
       savingPreferences = false;
     }
+  }
+
+  async function setupShortDns(): Promise<void> {
+    settingUpDns = true;
+    try {
+      await connections.setupShortDns();
+    } finally {
+      settingUpDns = false;
+    }
+  }
+
+  async function openShortDnsApproval(): Promise<void> {
+    const url = connections.snapshot.shortDns.setupUrl;
+    if (url) await ipc.system.openExternal(url);
+  }
+
+  function shortDnsTitle(): string {
+    const state = connections.snapshot.shortDns.state;
+    if (state === 'ready') return 'Short Device URLs are ready';
+    if (state === 'setup-required') return 'Set up short Device URLs';
+    if (state === 'route-required') return 'Approve the private DNS route';
+    if (state === 'disabled') return 'Short Device URLs are off';
+    return 'Short Device URLs need attention';
   }
 
   async function savePort(): Promise<void> {
@@ -136,6 +167,44 @@
         Keep 443 for a port-free HTTPS URL. Other devices must use the same Tailscale Serve port.
       </p>
     </div>
+
+    {#if connections.snapshot.preferences.tailscaleEnabled}
+      <div class="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/20 p-3">
+        <div class="flex min-w-0 gap-2.5">
+          <Globe2 class={`mt-0.5 size-4 shrink-0 ${connections.snapshot.shortDns.state === 'ready' ? 'text-success' : 'text-muted-foreground'}`} />
+          <div class="min-w-0">
+            <h3 class="m-0 text-xs font-medium">{shortDnsTitle()}</h3>
+            {#if connections.snapshot.shortDns.message}
+              <p class="mt-1 mb-0 max-w-xl text-[11px] text-muted-foreground">
+                {connections.snapshot.shortDns.message}
+              </p>
+            {/if}
+            {#if connections.snapshot.shortDns.zone && connections.snapshot.shortDns.nameserver}
+              <p class="mt-1 mb-0 font-mono text-[10px] text-muted-foreground">
+                {connections.snapshot.shortDns.zone} → {connections.snapshot.shortDns.nameserver}
+              </p>
+            {/if}
+          </div>
+        </div>
+        {#if connections.snapshot.shortDns.state === 'setup-required'}
+          {#if connections.shortDnsSetupSupported}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={settingUpDns}
+              onclick={() => void setupShortDns().catch(reportError)}
+            >
+              {settingUpDns ? 'Installing…' : 'Install DNS'}
+            </Button>
+          {/if}
+        {:else if connections.snapshot.shortDns.state === 'route-required'}
+          <Button variant="outline" size="sm" class="gap-1.5" onclick={() => void openShortDnsApproval().catch(reportError)}>
+            <ExternalLink class="size-3.5" />
+            Open Tailscale DNS
+          </Button>
+        {/if}
+      </div>
+    {/if}
 
     <div class="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/20 p-3">
       <div class="flex min-w-0 gap-2.5">

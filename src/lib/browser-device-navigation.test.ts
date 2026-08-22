@@ -5,6 +5,7 @@ import type { BrowserTargetDevice } from '@shared/types/browser-sessions.js';
 import { resolveDeviceBrowserUrl, tailscaleDnsNameForDevice } from './browser-device-navigation';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
+const LOCAL_DEVICE_ID = '00000000-0000-4000-8000-000000000000';
 const target: BrowserTargetDevice = {
   deviceId: DEVICE_ID,
   name: 'XPS',
@@ -15,6 +16,59 @@ const target: BrowserTargetDevice = {
 describe('resolveDeviceBrowserUrl', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    deviceSessions.state = {
+      revision: 1,
+      capturedAt: '2026-08-22T00:00:00.000Z',
+      devices: [
+        {
+          deviceId: LOCAL_DEVICE_ID,
+          name: 'MBP',
+          state: 'ready',
+          available: true,
+          local: true
+        },
+        {
+          deviceId: DEVICE_ID,
+          name: 'XPS',
+          state: 'ready',
+          available: true,
+          local: false
+        }
+      ],
+      projects: [],
+      unassigned: [],
+      archivedSessions: []
+    };
+    connections.snapshot = {
+      ...connections.snapshot,
+      shortDns: {
+        state: 'ready',
+        zone: 'mbp',
+        nameserver: '100.64.0.3',
+        message: null,
+        setupUrl: null,
+        readyZones: ['mbp', 'xps']
+      }
+    };
+  });
+
+  it('keeps local navigation unchanged when no remote Device is connected', async () => {
+    deviceSessions.state = {
+      ...deviceSessions.state,
+      devices: [deviceSessions.state.devices[0]!]
+    };
+    const ensure = vi.spyOn(deviceSessions, 'ensureTailscalePort');
+
+    await expect(resolveDeviceBrowserUrl('localhost:3000/path', {
+      deviceId: LOCAL_DEVICE_ID,
+      name: 'MBP',
+      tailscaleDnsName: 'mbp.example.ts.net',
+      local: true
+    })).resolves.toEqual({
+      url: 'http://localhost:3000/path',
+      target: null
+    });
+    expect(ensure).not.toHaveBeenCalled();
   });
 
   it('rewrites a loopback URL through the selected Device without losing URL parts', async () => {
@@ -23,6 +77,8 @@ describe('resolveDeviceBrowserUrl', () => {
       state: 'ready',
       dnsName: 'xps.example.ts.net',
       port: 3000,
+      targetPort: 3000,
+      virtualHostname: 'xps',
       forwarded: true,
       message: null,
       setupUrl: null
@@ -32,10 +88,10 @@ describe('resolveDeviceBrowserUrl', () => {
       'http://localhost:3000/path?q=yes#result',
       target
     )).resolves.toEqual({
-      url: 'http://xps.example.ts.net:3000/path?q=yes#result',
+      url: 'http://xps:3000/path?q=yes#result',
       target
     });
-    expect(deviceSessions.ensureTailscalePort).toHaveBeenCalledWith(DEVICE_ID, 3000);
+    expect(deviceSessions.ensureTailscalePort).toHaveBeenCalledWith(DEVICE_ID, 3000, 'xps');
   });
 
   it('leaves public URLs alone', async () => {
@@ -60,13 +116,15 @@ describe('resolveDeviceBrowserUrl', () => {
       state: 'ready',
       dnsName: 'xps.example.ts.net',
       port: 5173,
+      targetPort: 5173,
+      virtualHostname: 'xps',
       forwarded: true,
       message: null,
       setupUrl: null
     });
 
     await expect(resolveDeviceBrowserUrl('xps.example.ts.net:5173', target))
-      .resolves.toMatchObject({ url: 'http://xps.example.ts.net:5173/' });
+      .resolves.toMatchObject({ url: 'http://xps:5173/' });
   });
 
   it('routes a Device MagicDNS subdomain through the resolvable Device hostname', async () => {
@@ -74,9 +132,9 @@ describe('resolveDeviceBrowserUrl', () => {
       deviceId: DEVICE_ID,
       state: 'ready',
       dnsName: 'xps.example.ts.net',
-      port: 43127,
+      port: 8877,
       targetPort: 8877,
-      virtualHostname: 'ember-oak.xps.example.ts.net',
+      virtualHostname: 'ember-oak.xps',
       forwarded: true,
       message: null,
       setupUrl: null
@@ -86,13 +144,13 @@ describe('resolveDeviceBrowserUrl', () => {
       'http://ember-oak.xps.example.ts.net:8877/order-ahead/',
       target
     )).resolves.toEqual({
-      url: 'http://xps.example.ts.net:43127/order-ahead/',
+      url: 'http://ember-oak.xps:8877/order-ahead/',
       target
     });
     expect(deviceSessions.ensureTailscalePort).toHaveBeenCalledWith(
       DEVICE_ID,
       8877,
-      'ember-oak.xps.example.ts.net'
+      'ember-oak.xps'
     );
   });
 
@@ -101,9 +159,9 @@ describe('resolveDeviceBrowserUrl', () => {
       deviceId: DEVICE_ID,
       state: 'ready',
       dnsName: 'xps.example.ts.net',
-      port: 43128,
+      port: 8877,
       targetPort: 8877,
-      virtualHostname: 'ember-oak.localhost',
+      virtualHostname: 'ember-oak.xps',
       forwarded: true,
       message: null,
       setupUrl: null
@@ -113,7 +171,45 @@ describe('resolveDeviceBrowserUrl', () => {
       'http://ember-oak.localhost:8877/order-ahead/?menu=lunch#items',
       target
     )).resolves.toMatchObject({
-      url: 'http://xps.example.ts.net:43128/order-ahead/?menu=lunch#items'
+      url: 'http://ember-oak.xps:8877/order-ahead/?menu=lunch#items'
+    });
+    expect(deviceSessions.ensureTailscalePort).toHaveBeenCalledWith(
+      DEVICE_ID,
+      8877,
+      'ember-oak.xps'
+    );
+  });
+
+  it('uses a nip.io compatibility hostname until private split DNS is approved', async () => {
+    connections.snapshot = {
+      ...connections.snapshot,
+      shortDns: {
+        state: 'route-required',
+        zone: 'mbp',
+        nameserver: '100.64.0.3',
+        message: 'Approve the route.',
+        setupUrl: 'https://login.tailscale.com/admin/dns',
+        readyZones: []
+      }
+    };
+    vi.spyOn(deviceSessions, 'ensureTailscalePort').mockResolvedValue({
+      deviceId: DEVICE_ID,
+      state: 'ready',
+      dnsName: 'xps.example.ts.net',
+      ipAddress: '100.99.182.95',
+      port: 8877,
+      targetPort: 8877,
+      virtualHostname: 'ember-oak.xps',
+      forwarded: true,
+      message: null,
+      setupUrl: null
+    });
+
+    await expect(resolveDeviceBrowserUrl(
+      'http://ember-oak.localhost:8877/order-ahead/',
+      target
+    )).resolves.toMatchObject({
+      url: 'http://ember-oak.xps.100-99-182-95.nip.io:8877/order-ahead/'
     });
   });
 

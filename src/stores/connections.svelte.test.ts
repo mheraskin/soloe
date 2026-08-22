@@ -50,6 +50,14 @@ const SNAPSHOT: ConnectionSnapshot = {
     message: null,
     sharing: { state: 'ready', message: null, setupUrl: null }
   },
+  shortDns: {
+    state: 'ready',
+    zone: 'client',
+    nameserver: '100.64.0.1',
+    message: null,
+    setupUrl: null,
+    readyZones: ['client']
+  },
   refreshedAt: '2026-08-13T10:00:00.000Z'
 };
 

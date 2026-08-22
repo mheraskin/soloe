@@ -212,6 +212,33 @@ describe("TailscalePortForwardManager", () => {
     expect(run).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps the public port while forwarding to a private browser proxy", async () => {
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      if (args[1] === "status") return "{}";
+      expect(args).toEqual([
+        "serve",
+        "--bg",
+        "--yes",
+        "--tcp=8877",
+        "tcp://127.0.0.1:43127",
+      ]);
+      return "Available within your tailnet";
+    });
+    const probe = vi.fn(async (host: string, port: number) =>
+      host === "127.0.0.1" && port === 43127
+    );
+
+    await expect(new TailscalePortForwardManager({ run, probe }).ensure(8877, 43127))
+      .resolves.toMatchObject({
+        state: "ready",
+        dnsName: "workstation.tail1234.ts.net",
+        port: 8877,
+        forwarded: true,
+      });
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
   it("reuses its exact existing forward without overwriting Serve", async () => {
     const run = vi.fn(async (args: readonly string[]) => {
       if (args[0] === "status") return selfStatus();
@@ -221,6 +248,41 @@ describe("TailscalePortForwardManager", () => {
     await expect(new TailscalePortForwardManager({ run }).ensure(3000))
       .resolves.toMatchObject({ state: "ready", forwarded: true });
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses an exact public-to-private forward", async () => {
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      return JSON.stringify({ TCP: { "8877": { TCPForward: "127.0.0.1:43127" } } });
+    });
+
+    await expect(new TailscalePortForwardManager({ run }).ensure(8877, 43127))
+      .resolves.toMatchObject({ state: "ready", port: 8877, forwarded: true });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("migrates Soloe's legacy same-port forward to the private proxy", async () => {
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args[0] === "status") return selfStatus();
+      if (args[1] === "status") {
+        return JSON.stringify({ TCP: { "8877": { TCPForward: "127.0.0.1:8877" } } });
+      }
+      expect(args).toEqual([
+        "serve",
+        "--bg",
+        "--yes",
+        "--tcp=8877",
+        "tcp://127.0.0.1:43127",
+      ]);
+      return "Available within your tailnet";
+    });
+    const probe = vi.fn(async (host: string, port: number) =>
+      host === "127.0.0.1" && port === 43127
+    );
+
+    await expect(new TailscalePortForwardManager({ run, probe }).ensure(8877, 43127))
+      .resolves.toMatchObject({ state: "ready", port: 8877, forwarded: true });
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it("does not replace another Serve route on the requested port", async () => {

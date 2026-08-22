@@ -35,6 +35,8 @@ const deviceSessionMocks = vi.hoisted(() => ({
   executeCreate: vi.fn(async () => undefined)
 }));
 
+const deviceSessionState = vi.hoisted(() => ({ multiDeviceActive: true }));
+
 vi.mock('../stores/sessions.svelte', () => ({
   sessions: {
     ...sessionMocks,
@@ -52,16 +54,44 @@ vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
     ...deviceSessionMocks,
     supported: true,
+    get multiDeviceActive() {
+      return deviceSessionState.multiDeviceActive;
+    },
     state: {
-      devices: [{
+      devices: [
+        {
+          deviceId: 'local-device',
+          name: 'This Mac',
+          local: true,
+          available: true,
+          state: 'ready'
+        },
+        {
+          deviceId: 'remote-device',
+          name: 'Remote Device',
+          local: false,
+          available: true,
+          state: 'ready'
+        }
+      ],
+      projects: []
+    },
+    visibleDevices: [
+      {
         deviceId: 'local-device',
         name: 'This Mac',
         local: true,
         available: true,
         state: 'ready'
-      }],
-      projects: []
-    },
+      },
+      {
+        deviceId: 'remote-device',
+        name: 'Remote Device',
+        local: false,
+        available: true,
+        state: 'ready'
+      }
+    ],
     localDevice: {
       deviceId: 'local-device',
       name: 'This Mac',
@@ -177,6 +207,7 @@ describe('AgentLaunchPopover touch gestures', () => {
     for (const mock of Object.values(sessionMocks)) mock.mockClear();
     for (const mock of Object.values(deviceSessionMocks)) mock.mockClear();
     deviceSessionMocks.isSelected.mockReturnValue(false);
+    deviceSessionState.multiDeviceActive = true;
   });
 
   afterEach(async () => {
@@ -258,6 +289,21 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(document.body.querySelector('[aria-label="New terminal"]')).not.toBeNull();
     expect(document.body.textContent).toContain('Run on device');
     expect(document.body.textContent).toContain('No project');
+  });
+
+  it('keeps the legacy local launch flow when no remote Device exists', async () => {
+    deviceSessionState.multiDeviceActive = false;
+    const target = mountComponent(AgentLaunchPopover, {});
+    const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
+    trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    expect(document.body.textContent).not.toContain('Run on device');
+    const terminal = document.body.querySelector<HTMLButtonElement>('[aria-label="New terminal"]');
+    terminal!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => expect(sessionMocks.createWithDefaults).toHaveBeenCalledOnce());
+    expect(deviceSessionMocks.planCreate).not.toHaveBeenCalled();
   });
 
   it('creates a Cursor Agent session through the shared device placement surface', async () => {

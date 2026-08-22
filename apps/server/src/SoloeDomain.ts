@@ -997,7 +997,9 @@ export class SoloeDomain extends EventEmitter {
               virtualHostname: request.virtualHostname,
             })
           : null;
-        const status = await this.tailscalePorts.ensure(route?.port ?? request.port);
+        const status = route
+          ? await this.tailscalePorts.ensure(request.port, route.port)
+          : await this.tailscalePorts.ensure(request.port);
         return {
           deviceId: this.options.deviceId,
           ...status,

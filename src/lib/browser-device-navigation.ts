@@ -17,7 +17,8 @@ export interface BrowserTargetOption {
 }
 
 export function browserTargetOptions(): BrowserTargetOption[] {
-  return deviceSessions.state.devices.map((device) => ({
+  if (!deviceSessions.multiDeviceActive) return [];
+  return deviceSessions.visibleDevices.map((device) => ({
     target: {
       deviceId: device.deviceId,
       name: device.name,
@@ -34,6 +35,7 @@ export function browserTargetForDevice(deviceId: DeviceId): BrowserTargetDevice 
 }
 
 export function defaultBrowserTarget(): BrowserTargetDevice | null {
+  if (!deviceSessions.multiDeviceActive) return null;
   const local = deviceSessions.localDevice;
   return local ? browserTargetForDevice(local.deviceId) : null;
 }
@@ -47,8 +49,13 @@ export async function resolveDeviceBrowserUrl(
   try {
     parsed = new URL(normalized);
   } catch {
-    return { url: normalized, target: requestedTarget };
+    return {
+      url: normalized,
+      target: deviceSessions.multiDeviceActive ? requestedTarget : null
+    };
   }
+
+  if (!deviceSessions.multiDeviceActive) return { url: normalized, target: null };
 
   const target = requestedTarget ?? defaultBrowserTarget();
   if (!target) return { url: normalized, target: null };
@@ -56,31 +63,51 @@ export async function resolveDeviceBrowserUrl(
   if (!port) return { url: normalized, target };
 
   const targetHostname = target.tailscaleDnsName?.toLowerCase() ?? null;
+  const shortTargetHostname = shortDeviceHostname(targetHostname, target.name);
+  if (!shortTargetHostname) return { url: normalized, target };
   const hostname = parsed.hostname.toLowerCase();
-  const subdomain = deviceSubdomain(hostname, targetHostname);
+  const subdomain = deviceSubdomain(hostname, targetHostname, shortTargetHostname);
   const targetsSelectedDevice = targetHostname !== null
-    && (hostname === targetHostname || hostname.endsWith(`.${targetHostname}`));
+    && (
+      hostname === targetHostname
+      || hostname.endsWith(`.${targetHostname}`)
+      || hostname === shortTargetHostname
+      || hostname.endsWith(`.${shortTargetHostname}`)
+    );
   if (!isLoopbackBrowserHostname(hostname) && !targetsSelectedDevice) {
     return { url: normalized, target };
   }
 
-  const virtualHostname = subdomain ? parsed.hostname : undefined;
-  const result = virtualHostname
-    ? await deviceSessions.ensureTailscalePort(target.deviceId, port, virtualHostname)
-    : await deviceSessions.ensureTailscalePort(target.deviceId, port);
+  const virtualHostname = subdomain
+    ? `${subdomain}.${shortTargetHostname}`
+    : shortTargetHostname;
+  const result = await deviceSessions.ensureTailscalePort(
+    target.deviceId,
+    port,
+    virtualHostname
+  );
   if (result.state !== 'ready' || !result.dnsName) {
     throw new Error(result.message ?? `Could not open port ${port} on ${target.name}.`);
   }
 
-  if (subdomain) {
-    if (!result.virtualHostname || result.targetPort !== port || result.port === port) {
+  if (result.virtualHostname && result.targetPort === port) {
+    if (result.port === port) {
+      parsed.hostname = connections.snapshot.shortDns.readyZones.includes(shortTargetHostname)
+        ? virtualHostname
+        : fallbackHostname(virtualHostname, result.ipAddress, result.dnsName);
+      parsed.port = String(port);
+    } else {
+      // Compatibility with Devices that expose the private route port.
+      parsed.hostname = result.dnsName;
+      parsed.port = String(result.port);
+    }
+  } else if (subdomain) {
+    if (!result.virtualHostname || result.targetPort !== port) {
       throw new Error(
         `Could not route the ${subdomain} subdomain through ${target.name}: `
         + 'the Device does not support virtual-host browser routes.'
       );
     }
-    parsed.hostname = result.dnsName;
-    parsed.port = String(result.port);
   } else {
     parsed.hostname = result.dnsName;
   }
@@ -90,14 +117,52 @@ export async function resolveDeviceBrowserUrl(
   };
 }
 
-function deviceSubdomain(hostname: string, targetHostname: string | null): string | null {
+function fallbackHostname(
+  virtualHostname: string,
+  ipAddress: string | null | undefined,
+  magicDnsName: string
+): string {
+  if (!virtualHostname.includes('.')) return magicDnsName;
+  const encodedIp = ipAddress?.replaceAll('.', '-');
+  if (encodedIp && /^100-(?:\d{1,3}-){2}\d{1,3}$/u.test(encodedIp)) {
+    return `${virtualHostname}.${encodedIp}.nip.io`;
+  }
+  throw new Error(
+    `Short subdomain URLs are not configured on this Device. Set them up in Settings → Connections.`
+  );
+}
+
+function deviceSubdomain(
+  hostname: string,
+  targetHostname: string | null,
+  shortTargetHostname: string
+): string | null {
   if (hostname.endsWith('.localhost')) {
     return hostname.slice(0, -'.localhost'.length) || null;
   }
   if (targetHostname && hostname.endsWith(`.${targetHostname}`)) {
     return hostname.slice(0, -(targetHostname.length + 1)) || null;
   }
+  if (hostname.endsWith(`.${shortTargetHostname}`)) {
+    return hostname.slice(0, -(shortTargetHostname.length + 1)) || null;
+  }
   return null;
+}
+
+function shortDeviceHostname(targetHostname: string | null, deviceName: string): string | null {
+  const magicDnsLabel = targetHostname?.split('.')[0] ?? '';
+  if (isDnsLabel(magicDnsLabel)) return magicDnsLabel;
+  const nameLabel = deviceName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/^-|-$/gu, '');
+  return isDnsLabel(nameLabel) ? nameLabel : null;
+}
+
+function isDnsLabel(value: string): boolean {
+  return value.length <= 63
+    && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(value);
 }
 
 export async function openDeviceBrowserUrl(rawUrl: string, deviceId: DeviceId): Promise<void> {
@@ -109,7 +174,7 @@ export async function openDeviceBrowserUrl(rawUrl: string, deviceId: DeviceId): 
   rightRail.openTab('browser');
   try {
     const resolved = await resolveDeviceBrowserUrl(rawUrl, target);
-    if (resolved.target) browserStore.setTargetDevice(tab.id, resolved.target);
+    browserStore.setTargetDevice(tab.id, resolved.target);
     browserStore.navigate(tab.id, resolved.url);
   } catch (error) {
     browserStore.closeTab(tab.id);

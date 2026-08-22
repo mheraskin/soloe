@@ -13,12 +13,14 @@ describe('TailscaleDiscovery', () => {
       Self: {
         HostName: 'Client Mac',
         DNSName: 'Client-Mac.tail1234.ts.net.',
+        TailscaleIPs: ['100.64.0.1', 'fd7a:115c:a1e0::1'],
         OS: 'macOS'
       },
       Peer: {
         alpha: {
           HostName: 'Alpha',
           DNSName: 'Alpha.tail1234.ts.net.',
+          TailscaleIPs: ['100.64.0.2'],
           Online: true,
           OS: 'linux'
         },
@@ -39,6 +41,7 @@ describe('TailscaleDiscovery', () => {
       state: 'connected',
       tailnet: 'example.com',
       selfDnsName: 'client-mac.tail1234.ts.net',
+      selfIpAddress: '100.64.0.1',
       message: null,
       devices: [
         {
@@ -46,6 +49,7 @@ describe('TailscaleDiscovery', () => {
           dnsName: 'client-mac.tail1234.ts.net',
           online: true,
           isSelf: true,
+          ipAddress: '100.64.0.1',
           os: 'macOS'
         },
         {
@@ -53,13 +57,15 @@ describe('TailscaleDiscovery', () => {
           dnsName: 'alpha.tail1234.ts.net',
           online: true,
           isSelf: false,
+          ipAddress: '100.64.0.2',
           os: 'linux'
         },
         {
           name: 'Offline',
           dnsName: 'offline.tail1234.ts.net',
           online: false,
-          isSelf: false
+          isSelf: false,
+          ipAddress: null
         }
       ]
     });
@@ -73,6 +79,7 @@ describe('TailscaleDiscovery', () => {
       state: 'not-running',
       tailnet: 'example.com',
       selfDnsName: null,
+      selfIpAddress: null,
       message: 'Tailscale is needslogin.',
       devices: []
     });

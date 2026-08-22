@@ -76,7 +76,7 @@
   let deviceSelectOpen = $state(false);
   let planRequest = 0;
 
-  let usesDevicePlacement = $derived(deviceSessions.supported);
+  let usesDevicePlacement = $derived(deviceSessions.multiDeviceActive);
   let effectiveWorkspaceKey = $derived(workspaceKey ?? selectedWorkspaceKey);
   let workspaceChoices = $derived.by(() => deviceSessions.state.projects.flatMap((project) =>
     project.workspaces.map((workspace) => ({
@@ -114,10 +114,10 @@
       selectedWorkspaceKey = contextualWorkspace?.key ?? null;
       placementInitialized = true;
     }
-    const availableIds = new Set(deviceSessions.state.devices.map((device) => device.deviceId));
+    const availableIds = new Set(deviceSessions.visibleDevices.map((device) => device.deviceId));
     const preferred = defaultDeviceId && availableIds.has(defaultDeviceId)
       ? defaultDeviceId
-      : deviceSessions.localDevice?.deviceId ?? deviceSessions.state.devices[0]?.deviceId ?? null;
+      : deviceSessions.localDevice?.deviceId ?? deviceSessions.visibleDevices[0]?.deviceId ?? null;
     if (!selectedDeviceId || !availableIds.has(selectedDeviceId)) {
       selectedDeviceId = preferred;
       return;
@@ -377,14 +377,14 @@
   }
 
   async function launchOnDevice(option: LaunchOption): Promise<void> {
-    const availableIds = new Set(deviceSessions.state.devices
+    const availableIds = new Set(deviceSessions.visibleDevices
       .filter((device) => device.available)
       .map((device) => device.deviceId));
     const targetDeviceId = selectedDeviceId && availableIds.has(selectedDeviceId)
       ? selectedDeviceId
       : defaultDeviceId && availableIds.has(defaultDeviceId)
         ? defaultDeviceId
-        : deviceSessions.localDevice?.deviceId ?? deviceSessions.state.devices[0]?.deviceId ?? null;
+        : deviceSessions.localDevice?.deviceId ?? deviceSessions.visibleDevices[0]?.deviceId ?? null;
     if (!targetDeviceId || launchingDevice) return;
     selectedDeviceId = targetDeviceId;
     launchingDevice = true;
@@ -638,7 +638,7 @@
               </span>
             </Select.Trigger>
             <Select.Content onpointerenter={clearCloseTimer} onpointerleave={scheduleClose}>
-              {#each deviceSessions.state.devices as device (device.deviceId)}
+              {#each deviceSessions.visibleDevices as device (device.deviceId)}
                 <Select.Item value={device.deviceId} label={device.name} disabled={!device.available}>
                   <span class="flex w-full items-center gap-2">
                     <span class={`size-2 rounded-full ${device.available ? 'bg-success' : 'bg-muted-foreground/50'}`}></span>

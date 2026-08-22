@@ -66,11 +66,29 @@ export interface TailscaleConnectionInfo {
   sharing: TailscaleSharingInfo;
 }
 
+export type ShortDnsState =
+  | 'disabled'
+  | 'unavailable'
+  | 'setup-required'
+  | 'route-required'
+  | 'ready'
+  | 'error';
+
+export interface ShortDnsInfo {
+  state: ShortDnsState;
+  zone: string | null;
+  nameserver: string | null;
+  message: string | null;
+  setupUrl: string | null;
+  readyZones: string[];
+}
+
 export interface ConnectionSnapshot {
   activeId: ConnectionId;
   machines: MachineConnection[];
   preferences: ConnectionPreferences;
   tailscale: TailscaleConnectionInfo;
+  shortDns: ShortDnsInfo;
   refreshedAt: string | null;
 }
 

@@ -25,11 +25,20 @@ const EMPTY_SNAPSHOT: ConnectionSnapshot = {
       setupUrl: 'https://tailscale.com/download'
     }
   },
+  shortDns: {
+    state: 'disabled',
+    zone: null,
+    nameserver: null,
+    message: 'Enable Tailscale connections to use short Device URLs.',
+    setupUrl: null,
+    readyZones: []
+  },
   refreshedAt: null
 };
 
 export class ConnectionsStore {
   readonly supported = supportsBackendOperation('connections', 'get');
+  readonly shortDnsSetupSupported = supportsBackendOperation('connections', 'setupShortDns');
   snapshot = $state<ConnectionSnapshot>(structuredClone(EMPTY_SNAPSHOT));
   loaded = $state(false);
   refreshing = $state(false);
@@ -87,6 +96,10 @@ export class ConnectionsStore {
     tailscaleHttpsPort?: number;
   }): Promise<void> {
     this.snapshot = await ipc.connections.configure(patch);
+  }
+
+  async setupShortDns(): Promise<void> {
+    this.snapshot = await ipc.connections.setupShortDns();
   }
 
   async remove(id: ConnectionId): Promise<void> {

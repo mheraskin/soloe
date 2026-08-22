@@ -20,18 +20,20 @@ export interface BrowserRoute {
   virtualHostname: string;
 }
 
-interface ActiveRoute extends BrowserRoute {
+interface ActiveRoute {
   server: Server;
   sockets: Set<Socket>;
+  port: number;
+  targetPort: number;
 }
 
 const ROUTE_PORT_START = 40_000;
 const ROUTE_PORT_COUNT = 20_000;
 
 /**
- * Gives a virtual-host development server its own loopback listener. Tailscale
- * publishes that listener, while this proxy restores the Host header the
- * application expects instead of making public wildcard DNS part of routing.
+ * Gives every development-server port one loopback listener. Tailscale
+ * publishes that listener on the original public port, while this proxy keeps
+ * the browser's Host header intact for both the Device apex and its subdomains.
  */
 export class BrowserRouteProxy {
   private readonly routes = new Map<string, Promise<ActiveRoute>>();
@@ -39,10 +41,10 @@ export class BrowserRouteProxy {
   async ensure(request: BrowserRouteRequest): Promise<BrowserRoute> {
     const targetPort = validPort(request.targetPort);
     const virtualHostname = validHostname(request.virtualHostname);
-    const key = `${virtualHostname}\u0000${targetPort}`;
+    const key = String(targetPort);
     let route = this.routes.get(key);
     if (!route) {
-      route = this.createRoute(targetPort, virtualHostname);
+      route = this.createRoute(targetPort);
       this.routes.set(key, route);
       void route.catch(() => {
         if (this.routes.get(key) === route) this.routes.delete(key);
@@ -52,7 +54,7 @@ export class BrowserRouteProxy {
     return {
       port: active.port,
       targetPort: active.targetPort,
-      virtualHostname: active.virtualHostname,
+      virtualHostname,
     };
   }
 
@@ -67,30 +69,25 @@ export class BrowserRouteProxy {
     }));
   }
 
-  private async createRoute(
-    targetPort: number,
-    virtualHostname: string,
-  ): Promise<ActiveRoute> {
-    const authority = `${virtualHostname}:${targetPort}`;
+  private async createRoute(targetPort: number): Promise<ActiveRoute> {
     const sockets = new Set<Socket>();
     const server = createServer((request, response) => {
-      proxyRequest(request, response, targetPort, authority);
+      proxyRequest(request, response, targetPort);
     });
     server.on("connection", (socket) => {
       sockets.add(socket);
       socket.once("close", () => sockets.delete(socket));
     });
     server.on("upgrade", (request, socket, head) => {
-      proxyUpgrade(request, socket, head, targetPort, authority);
+      proxyUpgrade(request, socket, head, targetPort);
     });
-    const key = `${virtualHostname}\u0000${targetPort}`;
-    await listenOnStableRoutePort(server, key);
+    await listenOnStableRoutePort(server, String(targetPort));
     const address = server.address();
     if (!address || typeof address === "string") {
       server.close();
       throw new Error("Browser route proxy did not bind to a TCP port");
     }
-    return { server, sockets, port: address.port, targetPort, virtualHostname };
+    return { server, sockets, port: address.port, targetPort };
   }
 }
 
@@ -137,14 +134,14 @@ function proxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
   targetPort: number,
-  authority: string,
 ): void {
+  const headers = rewriteFallbackHost(request.headers);
   const upstream = requestHttp({
     hostname: "127.0.0.1",
     port: targetPort,
     method: request.method,
     path: request.url,
-    headers: { ...request.headers, host: authority },
+    headers,
   }, (upstreamResponse) => {
     response.writeHead(
       upstreamResponse.statusCode ?? 502,
@@ -169,17 +166,16 @@ function proxyUpgrade(
   client: Duplex,
   head: Buffer,
   targetPort: number,
-  authority: string,
 ): void {
   const upstream = connect(targetPort, "127.0.0.1");
   upstream.once("connect", () => {
+    const rewrittenHost = fallbackVirtualHost(request.headers.host);
     const headers = request.rawHeaders.flatMap((value, index, all) => {
-      if (index % 2 !== 0 || value.toLowerCase() === "host") return [];
-      return [`${value}: ${all[index + 1] ?? ""}`];
+      if (index % 2 !== 0) return [];
+      return [`${value}: ${value.toLowerCase() === "host" && rewrittenHost ? rewrittenHost : (all[index + 1] ?? "")}`];
     });
     upstream.write([
       `${request.method ?? "GET"} ${request.url ?? "/"} HTTP/${request.httpVersion}`,
-      `Host: ${authority}`,
       ...headers,
       "",
       "",
@@ -190,6 +186,19 @@ function proxyUpgrade(
   const fail = () => client.destroy();
   upstream.once("error", fail);
   client.once("error", () => upstream.destroy());
+}
+
+function rewriteFallbackHost(headers: IncomingMessage["headers"]): IncomingMessage["headers"] {
+  const host = fallbackVirtualHost(headers.host);
+  return host ? { ...headers, host } : headers;
+}
+
+function fallbackVirtualHost(host: string | undefined): string | null {
+  if (!host) return null;
+  const match = /^(?<virtual>.+)\.(?:\d{1,3}-){3}\d{1,3}\.nip\.io(?<port>:\d+)?$/iu.exec(host);
+  return match?.groups?.["virtual"]
+    ? `${match.groups["virtual"]}${match.groups["port"] ?? ""}`
+    : null;
 }
 
 function validPort(value: number): number {

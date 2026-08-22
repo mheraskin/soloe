@@ -365,7 +365,9 @@ export class LocalSessionDevice implements SessionDevice {
     const route = virtualHostname
       ? await this.browserRoutes.ensure({ targetPort: port, virtualHostname })
       : null;
-    const status = await this.tailscalePorts.ensure(route?.port ?? port);
+    const status = route
+      ? await this.tailscalePorts.ensure(port, route.port)
+      : await this.tailscalePorts.ensure(port);
     return {
       deviceId: this.deviceId,
       ...status,

@@ -69,6 +69,7 @@ import { ConnectionsIpc } from './ipc/connections.ipc.js';
 import { MultiDeviceSessionsIpc } from './ipc/multi-device-sessions.ipc.js';
 import { ConnectionRegistry } from './connections/ConnectionRegistry.js';
 import { TailscaleDiscovery } from './connections/TailscaleDiscovery.js';
+import { DeviceDnsSetup, resolveDeviceDnsHelperPath } from './connections/DeviceDnsSetup.js';
 import {
   describeSoloeEndpoint,
   probeSoloeEndpoint
@@ -177,6 +178,9 @@ interface AppServices {
 async function initializeConnections(): Promise<void> {
   const userDataPath = app.getPath('userData');
   const tailscale = new TailscaleDiscovery();
+  const dnsSetup = new DeviceDnsSetup({
+    helperPath: resolveDeviceDnsHelperPath(app.isPackaged ? process.resourcesPath : null)
+  });
   connectionRegistry = new ConnectionRegistry({
     filePath: path.join(userDataPath, 'connections.json'),
     localName: hostname().trim() || 'This device',
@@ -189,7 +193,8 @@ async function initializeConnections(): Promise<void> {
       endpoint,
       (input, init) => net.fetch(String(input), init),
       { bootstrapTailscale: true }
-    )
+    ),
+    shortDns: dnsSetup
   });
   await connectionRegistry.init();
   connectionsIpc = new ConnectionsIpc({

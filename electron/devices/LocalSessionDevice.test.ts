@@ -194,6 +194,37 @@ describe('LocalSessionDevice', () => {
     expect(ensure).toHaveBeenCalledWith(3000);
   });
 
+  it('keeps a browser route on its original public port', async () => {
+    const ensure = vi.fn(async (port: number) => ({
+      state: 'ready' as const,
+      message: null,
+      setupUrl: null,
+      dnsName: 'local.tailnet.ts.net',
+      ipAddress: '100.101.102.103',
+      port,
+      forwarded: true
+    }));
+    const ensureBrowserRoute = vi.fn(async () => ({
+      port: 43127,
+      targetPort: 8877,
+      virtualHostname: 'ember-oak.xps'
+    }));
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never,
+      tailscalePorts: { ensure },
+      browserRoutes: { ensure: ensureBrowserRoute, dispose: vi.fn() }
+    });
+
+    await expect(client.ensureTailscalePort(8877, 'ember-oak.xps')).resolves.toMatchObject({
+      port: 8877,
+      targetPort: 8877,
+      virtualHostname: 'ember-oak.xps'
+    });
+    expect(ensure).toHaveBeenCalledWith(8877, 43127);
+  });
+
   it('delegates native clipboard image paste to the local file service', async () => {
     const pasteImagesIntoTerminal = vi.fn(async () => ({
       paths: [],

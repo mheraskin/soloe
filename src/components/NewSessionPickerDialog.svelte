@@ -36,13 +36,13 @@
     workspaceChoices.find((choice) => choice.workspace.key === workspaceKey) ?? null
   );
   let selectedDevice = $derived(
-    deviceSessions.state.devices.find((device) => device.deviceId === deviceId) ?? null
+    deviceSessions.visibleDevices.find((device) => device.deviceId === deviceId) ?? null
   );
   let selectedLocation = $derived(
     selectedChoice?.workspace.locations.find((location) => location.deviceId === deviceId) ?? null
   );
   let placementAvailable = $derived(
-    deviceSessions.supported && deviceSessions.loaded && workspaceChoices.length > 0
+    deviceSessions.multiDeviceActive && deviceSessions.loaded && workspaceChoices.length > 0
   );
 
   function ctxOpts() {
@@ -86,8 +86,8 @@
       return device?.local && location.available;
     }) ?? choice?.workspace.locations.find((location) => location.available);
     deviceId = preferredLocation?.deviceId
-      ?? deviceSessions.state.devices.find((device) => device.local && device.available)?.deviceId
-      ?? deviceSessions.state.devices.find((device) => device.available)?.deviceId
+      ?? deviceSessions.visibleDevices.find((device) => device.local && device.available)?.deviceId
+      ?? deviceSessions.visibleDevices.find((device) => device.available)?.deviceId
       ?? '';
     busy = false;
     error = null;
@@ -268,7 +268,7 @@
             bind:value={deviceId}
             onchange={resetPlan}
           >
-            {#each deviceSessions.state.devices as device (device.deviceId)}
+            {#each deviceSessions.visibleDevices as device (device.deviceId)}
               {@const hasLocation = selectedChoice?.workspace.locations.some((location) => location.deviceId === device.deviceId)}
               <option value={device.deviceId} disabled={!device.available}>
                 {device.name}{device.local ? ' · This device' : ''}{device.available ? '' : ' · Offline'}{hasLocation ? '' : ' · Needs project'}

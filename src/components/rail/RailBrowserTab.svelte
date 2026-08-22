@@ -70,11 +70,14 @@
   let canForward = $derived(activeTab ? browserStore.canGoForward(activeTab.id) : false);
   let device = $derived(activeTab?.device);
   let targetOptions = $derived.by(() => browserTargetOptions());
+  let multiDeviceActive = $derived(
+    targetOptions.some((option) => !option.target.local)
+  );
   let targetDevice = $derived.by(() => {
     const stored = activeTab?.targetDevice;
     if (stored) {
       return targetOptions.find((option) => option.target.deviceId === stored.deviceId)?.target
-        ?? stored;
+        ?? defaultBrowserTarget();
     }
     return targetOptions.find((option) => option.target.local)?.target
       ?? defaultBrowserTarget();
@@ -697,7 +700,7 @@
     navigationPending = true;
     try {
       const resolved = await resolveDeviceBrowserUrl(rawUrl, targetDevice);
-      if (resolved.target) browserStore.setTargetDevice(tab.id, resolved.target);
+      browserStore.setTargetDevice(tab.id, resolved.target);
       browserStore.navigate(tab.id, resolved.url);
       urlInput = resolved.url;
       lastSyncedUrl = resolved.url;
@@ -1499,7 +1502,7 @@
     } catch {
       label ||= url || 'New tab';
     }
-    if (!t.targetDevice) return label;
+    if (!t.targetDevice || !multiDeviceActive) return label;
     let port = '';
     try {
       const parsed = new URL(url);
@@ -1812,6 +1815,7 @@
     >
       <RotateCw class={`size-3.5 ${isLoading ? 'animate-spin' : ''}`} />
     </Button>
+    {#if multiDeviceActive}
     <Popover.Root bind:open={targetMenuOpen}>
       <Popover.Trigger>
         {#snippet child({ props })}
@@ -1864,6 +1868,7 @@
         {/each}
       </Popover.Content>
     </Popover.Root>
+    {/if}
     <div class="relative min-w-0 flex-1">
       <Input
         bind:ref={urlInputEl}

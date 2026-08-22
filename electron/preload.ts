@@ -290,6 +290,7 @@ const soloe: SoloeApi = {
     get: () => ipcRenderer.invoke(IpcChannels.connections.get),
     refresh: () => ipcRenderer.invoke(IpcChannels.connections.refresh),
     configure: (patch) => ipcRenderer.invoke(IpcChannels.connections.configure, patch),
+    setupShortDns: () => ipcRenderer.invoke(IpcChannels.connections.setupShortDns),
     add: (request: AddMachineConnectionRequest) =>
       ipcRenderer.invoke(IpcChannels.connections.add, request),
     remove: (id: ConnectionId) => ipcRenderer.invoke(IpcChannels.connections.remove, id),

@@ -165,7 +165,7 @@
       icon: SettingsIcon,
       run: () => settings.openDialog()
     });
-    if (deviceSessions.supported && deviceSessions.loaded) {
+    if (deviceSessions.multiDeviceActive && deviceSessions.loaded) {
       list.push({
         id: 'device.show-all',
         title: 'Show sessions on all devices',
@@ -173,7 +173,7 @@
         icon: Monitor,
         run: () => deviceSessions.setDeviceFilter(null)
       });
-      for (const device of deviceSessions.state.devices) {
+      for (const device of deviceSessions.visibleDevices) {
         list.push({
           id: `device.show.${device.deviceId}`,
           title: `Show sessions on ${device.name}`,
@@ -410,7 +410,7 @@
   />
   {#if commandPalette.mode === 'open-project'}
     <div class="mobile-command-scope flex items-center gap-1.5 border-b border-border px-3 py-1.5">
-      {#if deviceSessions.supported && deviceSessions.state.devices.length > 0}
+      {#if deviceSessions.multiDeviceActive && deviceSessions.visibleDevices.length > 0}
         <Select.Root
           type="single"
           value={projectDeviceId ?? undefined}
@@ -428,7 +428,7 @@
             </span>
           </Select.Trigger>
           <Select.Content>
-            {#each deviceSessions.state.devices as device (device.deviceId)}
+            {#each deviceSessions.visibleDevices as device (device.deviceId)}
               <Select.Item value={device.deviceId} label={device.name} disabled={!device.available}>
                 <span class="flex items-center gap-2">
                   <span class={`size-2 rounded-full ${device.available ? 'bg-success' : 'bg-muted-foreground/50'}`}></span>

@@ -66,8 +66,12 @@ export class TailscalePortForwardManager {
     this.probe = options.probe ?? probeTcpPort;
   }
 
-  async ensure(rawPort: number): Promise<TailscalePortForwardStatus> {
+  async ensure(
+    rawPort: number,
+    rawTargetPort: number = rawPort,
+  ): Promise<TailscalePortForwardStatus> {
     const port = validPort(rawPort);
+    const targetPort = validPort(rawTargetPort);
     let selfDnsName: string;
     let selfIpAddress: string | null;
     let serveStatus: unknown;
@@ -83,7 +87,7 @@ export class TailscalePortForwardManager {
       return portForwardFailure(commandFailure(error), port);
     }
 
-    const existing = inspectTcpForward(serveStatus, port);
+    const existing = inspectTcpForward(serveStatus, port, targetPort);
     if (existing === "owned") {
       return readyPortForward(selfDnsName, selfIpAddress, port, true);
     }
@@ -99,15 +103,15 @@ export class TailscalePortForwardManager {
       };
     }
 
-    if (await this.probe(selfDnsName, port)) {
+    if (existing === "free" && await this.probe(selfDnsName, port)) {
       return readyPortForward(selfDnsName, selfIpAddress, port, false);
     }
 
-    const loopbackHost = await firstListeningLoopback(this.probe, port);
+    const loopbackHost = await firstListeningLoopback(this.probe, targetPort);
     if (!loopbackHost) {
       return {
         state: "error",
-        message: `Nothing is listening on localhost:${port} on this Device.`,
+        message: `Nothing is listening on localhost:${targetPort} on this Device.`,
         setupUrl: null,
         dnsName: selfDnsName,
         ipAddress: selfIpAddress,
@@ -117,8 +121,8 @@ export class TailscalePortForwardManager {
     }
 
     const target = loopbackHost === "::1"
-      ? `tcp://[::1]:${port}`
-      : `tcp://127.0.0.1:${port}`;
+      ? `tcp://[::1]:${targetPort}`
+      : `tcp://127.0.0.1:${targetPort}`;
     try {
       await this.run([
         "serve",
@@ -280,16 +284,23 @@ function inspectPort(
 function inspectTcpForward(
   raw: unknown,
   port: number,
-): "free" | "owned" | "occupied" {
+  targetPort: number,
+): "free" | "owned" | "stale-owned" | "occupied" {
   if (!isRecord(raw) || !isRecord(raw.TCP)) return "free";
   const handler = raw.TCP[String(port)];
   if (!isRecord(handler)) return "free";
   const target = typeof handler.TCPForward === "string"
     ? normalizeTcpTarget(handler.TCPForward)
     : null;
-  if (target === `127.0.0.1:${port}` || target === `[::1]:${port}`) {
+  if (target === `127.0.0.1:${targetPort}` || target === `[::1]:${targetPort}`) {
     return "owned";
   }
+  // Previous Soloe versions published the same loopback and public port. It
+  // is safe to migrate that route to the private browser proxy listener.
+  if (
+    targetPort !== port
+    && (target === `127.0.0.1:${port}` || target === `[::1]:${port}`)
+  ) return "stale-owned";
   return "occupied";
 }
 

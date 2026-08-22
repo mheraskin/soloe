@@ -140,6 +140,7 @@ function disabledTailscaleDiscovery(): {
     state: "unavailable";
     tailnet: null;
     selfDnsName: null;
+    selfIpAddress: null;
     message: string;
     devices: [];
     sharing: {
@@ -155,6 +156,7 @@ function disabledTailscaleDiscovery(): {
         state: "unavailable",
         tailnet: null,
         selfDnsName: null,
+        selfIpAddress: null,
         message: "Tailscale discovery is disabled for this server.",
         devices: [],
         sharing: {

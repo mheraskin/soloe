@@ -135,11 +135,28 @@ export class DeviceSessionsStore {
 
   get selectedProjection(): MultiDeviceSessionView | null {
     if (!this.selectedSessionKey) return null;
-    return this.sessions.find((session) => session.key === this.selectedSessionKey) ?? null;
+    const projection = this.sessions.find((session) => session.key === this.selectedSessionKey) ?? null;
+    return this.multiDeviceActive ? projection : null;
   }
 
   get localDevice() {
     return this.state.devices.find((device) => device.local) ?? null;
+  }
+
+  /**
+   * Multi-Device UI is progressive: API support and the local Device alone do
+   * not change the local-only experience. The backend removes remote Devices
+   * when Connections are disabled, so a remote Device here is the activation
+   * signal shared by every renderer entry point.
+   */
+  get multiDeviceActive(): boolean {
+    return this.state.devices.some((device) => !device.local);
+  }
+
+  get visibleDevices() {
+    return this.multiDeviceActive
+      ? this.state.devices
+      : this.state.devices.filter((device) => device.local);
   }
 
   device(deviceId: DeviceId) {
@@ -157,6 +174,7 @@ export class DeviceSessionsStore {
   }
 
   includesDevice(deviceId: DeviceId | null): boolean {
+    if (!this.multiDeviceActive) return deviceId === this.localDevice?.deviceId;
     return this.selectedDeviceId === null || this.selectedDeviceId === deviceId;
   }
 

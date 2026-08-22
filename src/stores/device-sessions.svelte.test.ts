@@ -86,6 +86,44 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.reorderOnDevices.mockReset();
   });
 
+  it('keeps the legacy local-only surface until a remote Device exists', () => {
+    const store = new DeviceSessionsStore();
+    store.state = {
+      revision: 1,
+      capturedAt: '2026-08-22T00:00:00.000Z',
+      devices: [{
+        deviceId: 'device-local',
+        name: 'this device',
+        state: 'ready',
+        available: true,
+        local: true
+      }],
+      projects: [],
+      unassigned: [],
+      archivedSessions: []
+    };
+
+    expect(store.multiDeviceActive).toBe(false);
+    expect(store.visibleDevices.map((device) => device.deviceId)).toEqual(['device-local']);
+
+    store.state = {
+      ...store.state,
+      devices: [...store.state.devices, {
+        deviceId: 'device-xps',
+        name: 'xps',
+        state: 'ready',
+        available: true,
+        local: false
+      }]
+    };
+
+    expect(store.multiDeviceActive).toBe(true);
+    expect(store.visibleDevices.map((device) => device.deviceId)).toEqual([
+      'device-local',
+      'device-xps'
+    ]);
+  });
+
   it('preserves the selected Session and announces a Device reconnect', async () => {
     const store = new DeviceSessionsStore();
     await store.load();

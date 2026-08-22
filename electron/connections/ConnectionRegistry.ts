@@ -8,6 +8,7 @@ import type {
   MachineConnection,
   MachineConnectionSource,
   MachineConnectionTrust,
+  ShortDnsInfo,
   TailscaleConnectionInfo
 } from '@shared/types/connections.js';
 import {
@@ -97,6 +98,16 @@ export interface ConnectionRegistryOptions {
   }>;
   now?: () => Date;
   tailscaleHttpsPort?: number;
+  shortDns?: {
+    status(identity: {
+      enabled: boolean;
+      connected: boolean;
+      selfDnsName: string | null;
+      selfIpAddress: string | null;
+    }): Promise<ShortDnsInfo>;
+    setup(): Promise<ShortDnsInfo>;
+    resolvedZones?(zones: Array<{ zone: string; nameserver: string }>): Promise<string[]>;
+  };
 }
 
 const EMPTY_TAILSCALE: TailscaleConnectionInfo = {
@@ -123,10 +134,20 @@ const DISABLED_TAILSCALE: TailscaleConnectionInfo = {
   }
 };
 
+const DISABLED_SHORT_DNS: ShortDnsInfo = {
+  state: 'disabled',
+  zone: null,
+  nameserver: null,
+  message: 'Enable Tailscale connections to use short Device URLs.',
+  setupUrl: null,
+  readyZones: []
+};
+
 export class ConnectionRegistry {
   private activeId: ConnectionId = 'local';
   private machines = new Map<ConnectionId, MachineConnection>();
   private tailscale: TailscaleConnectionInfo = { ...EMPTY_TAILSCALE };
+  private shortDns: ShortDnsInfo = { ...DISABLED_SHORT_DNS };
   private refreshedAt: string | null = null;
   private listeners = new Set<(snapshot: ConnectionSnapshot) => void>();
   private refreshPromise: Promise<ConnectionSnapshot> | null = null;
@@ -215,6 +236,13 @@ export class ConnectionRegistry {
     await this.persist();
     this.publish();
     return this.refresh();
+  }
+
+  async setupShortDns(): Promise<ConnectionSnapshot> {
+    await this.init();
+    if (!this.options.shortDns) return this.snapshot();
+    this.shortDns = await this.options.shortDns.setup();
+    return this.publish();
   }
 
   async add(rawEndpoint: string): Promise<ConnectionSnapshot> {
@@ -428,6 +456,7 @@ export class ConnectionRegistry {
     if (!this.tailscaleEnabled) {
       this.tailscale = { ...DISABLED_TAILSCALE, sharing: { ...DISABLED_TAILSCALE.sharing } };
       this.refreshedAt = this.now().toISOString();
+      this.shortDns = { ...DISABLED_SHORT_DNS };
       return this.publish();
     }
     const discovery = await this.options.discover(this.tailscaleHttpsPort);
@@ -438,6 +467,24 @@ export class ConnectionRegistry {
       message: discovery.message,
       sharing: { ...discovery.sharing }
     };
+    this.shortDns = this.options.shortDns
+      ? await this.options.shortDns.status({
+          enabled: this.tailscaleEnabled,
+          connected: discovery.state === 'connected',
+          selfDnsName: discovery.selfDnsName,
+          selfIpAddress: discovery.selfIpAddress
+        })
+      : { ...DISABLED_SHORT_DNS };
+    if (this.options.shortDns?.resolvedZones && discovery.state === 'connected') {
+      const zones = discovery.devices.flatMap((device) => {
+        const zone = device.dnsName.split('.')[0];
+        return zone && device.ipAddress ? [{ zone, nameserver: device.ipAddress }] : [];
+      });
+      this.shortDns = {
+        ...this.shortDns,
+        readyZones: await this.options.shortDns.resolvedZones(zones)
+      };
+    }
 
     const targets = new Map<string, {
       endpoint: string;
@@ -573,6 +620,7 @@ export class ConnectionRegistry {
         ...this.tailscale,
         sharing: { ...this.tailscale.sharing }
       },
+      shortDns: { ...this.shortDns },
       refreshedAt: this.refreshedAt
     };
   }

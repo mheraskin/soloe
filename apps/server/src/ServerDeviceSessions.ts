@@ -8,6 +8,10 @@ import {
   type TailscaleDiscoveryResult,
 } from "../../../electron/connections/TailscaleDiscovery.js";
 import {
+  DeviceDnsSetup,
+  resolveDeviceDnsHelperPath,
+} from "../../../electron/connections/DeviceDnsSetup.js";
+import {
   describeSoloeEndpoint,
   probeSoloeEndpoint,
 } from "../../../electron/connections/SoloeEndpointProbe.js";
@@ -60,6 +64,9 @@ export class ServerDeviceSessions {
         describeSoloeEndpoint(endpoint, this.fetchImpl, {
           bootstrapTailscale: true,
         }),
+      shortDns: new DeviceDnsSetup({
+        helperPath: resolveDeviceDnsHelperPath(),
+      }),
     });
   }
 

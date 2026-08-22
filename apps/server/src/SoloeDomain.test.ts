@@ -195,7 +195,7 @@ describe("SoloeDomain", () => {
       })).resolves.toMatchObject({
         deviceId: "11111111-1111-4111-8111-111111111111",
         dnsName: "xps.tailnet.ts.net",
-        port: 43127,
+        port: 8877,
         targetPort: 8877,
         virtualHostname: "ember-oak.xps.tailnet.ts.net",
       });
@@ -203,7 +203,7 @@ describe("SoloeDomain", () => {
         targetPort: 8877,
         virtualHostname: "ember-oak.xps.tailnet.ts.net",
       });
-      expect(ensure).toHaveBeenLastCalledWith(43127);
+      expect(ensure).toHaveBeenLastCalledWith(8877, 43127);
       await expect(domain.invoke({
         namespace: "network",
         method: "ensureTailscalePort",

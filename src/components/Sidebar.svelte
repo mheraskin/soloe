@@ -284,7 +284,9 @@
     return rankMulti(q, list, (s) => [s.name, s.cwd, ...(s.tags ?? [])]).map((r) => r.item);
   });
   let showDeviceLabels = $derived(
-    deviceSessions.selectedDeviceId === null && deviceSessions.state.devices.length > 1
+    deviceSessions.multiDeviceActive
+      && deviceSessions.selectedDeviceId === null
+      && deviceSessions.visibleDevices.length > 1
   );
   let deviceProjects = $derived.by(() => {
     const visible = deviceSessions.state.projects.filter((project) => project.workspaces.some((workspace) =>
@@ -465,7 +467,7 @@
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
     <div class="flex flex-col gap-1 p-1.5">
-      {#if deviceSessions.supported && deviceSessions.loaded}
+      {#if deviceSessions.multiDeviceActive && deviceSessions.loaded}
         {#if deviceStandaloneVisible.length > 0}
           <div class="flex flex-col gap-px">
             {#each deviceStandaloneVisible as projection (projection.key)}

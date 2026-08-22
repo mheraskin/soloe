@@ -249,6 +249,7 @@ export const IpcChannels = {
     get: 'connections:get',
     refresh: 'connections:refresh',
     configure: 'connections:configure',
+    setupShortDns: 'connections:setup-short-dns',
     add: 'connections:add',
     remove: 'connections:remove',
     enable: 'connections:enable',
@@ -565,6 +566,7 @@ export interface ConnectionsApi {
   get(): Promise<IpcResult<ConnectionSnapshot>>;
   refresh(): Promise<IpcResult<ConnectionSnapshot>>;
   configure(patch: import('./connections.js').ConnectionPreferencesUpdate): Promise<IpcResult<ConnectionSnapshot>>;
+  setupShortDns?(): Promise<IpcResult<ConnectionSnapshot>>;
   add(request: AddMachineConnectionRequest): Promise<IpcResult<ConnectionSnapshot>>;
   remove(id: ConnectionId): Promise<IpcResult<ConnectionSnapshot>>;
   setEnabled(id: ConnectionId, enabled: boolean): Promise<IpcResult<ConnectionSnapshot>>;
