@@ -537,7 +537,23 @@ export class GhosttyTerminalCore {
       (event.getModifierState("CapsLock") ? 1 << 4 : 0) |
       (event.getModifierState("NumLock") ? 1 << 5 : 0);
     this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
-    this.runtime.call("ghostty_key_event_set_consumed_mods", this.keyEvent, 0);
+    // Browser KeyboardEvent does not expose the platform's consumed-modifier
+    // mask. A lone Shift on a printable key has already done its job by
+    // producing event.key ("?", "*", "A", etc.), so tell Ghostty not to
+    // reinterpret it as a Kitty shortcut modifier. Keep Shift unconsumed when
+    // another shortcut modifier is present so Ctrl/Alt/Meta combinations still
+    // receive their protocol-level modifier encoding.
+    const shiftConsumedByText =
+      event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      [...event.key].length === 1;
+    this.runtime.call(
+      "ghostty_key_event_set_consumed_mods",
+      this.keyEvent,
+      shiftConsumedByText ? 1 : 0,
+    );
     this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
     this.runtime.call(
       "ghostty_key_event_set_unshifted_codepoint",

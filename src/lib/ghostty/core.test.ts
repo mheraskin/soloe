@@ -172,3 +172,63 @@ describe("GhosttyTerminalCore ANSI colors", () => {
     }
   });
 });
+
+describe("GhosttyTerminalCore keyboard encoding", () => {
+  it("keeps shifted printable text consistent across Claude and Codex keyboard modes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const bytes = String(input).includes("write-pty") ? writePtyWasm : ghosttyWasm;
+        return new Response(bytes, { status: 200 });
+      }),
+    );
+
+    const shiftedKey = (code: string, key: string, ctrlKey = false) =>
+      ({
+        code,
+        key,
+        shiftKey: true,
+        ctrlKey,
+        altKey: false,
+        metaKey: false,
+        repeat: false,
+        isComposing: false,
+        getModifierState: () => false,
+      }) as unknown as KeyboardEvent;
+    const modes = [
+      { name: "legacy", sequence: "" },
+      // Captured from Claude Code 2.1.239 in Soloe's Ghostty-backed PTY
+      // (which advertises the compatibility TERM=xterm-256color identity).
+      { name: "Claude", sequence: "\u001b[>1u\u001b[>4;2m" },
+      // Captured from Codex 0.148.0 with Soloe's --no-alt-screen launch flag.
+      { name: "Codex", sequence: "\u001b[>4;0m\u001b[>7u" },
+    ];
+
+    for (const mode of modes) {
+      const core = await GhosttyTerminalCore.create(
+        20,
+        4,
+        8,
+        16,
+        {
+          foreground: { r: 230, g: 230, b: 230 },
+          background: { r: 15, g: 15, b: 16 },
+          cursor: { r: 230, g: 230, b: 230 },
+        },
+        () => undefined,
+      );
+
+      try {
+        if (mode.sequence) core.write(mode.sequence);
+        expect(core.encodeKey(shiftedKey("Slash", "?")), mode.name).toBe("?");
+        expect(core.encodeKey(shiftedKey("Digit8", "*")), mode.name).toBe("*");
+        expect(core.encodeKey(shiftedKey("KeyA", "A")), mode.name).toBe("A");
+        if (mode.name === "Claude") {
+          expect(core.encodeKey(shiftedKey("Slash", "?", true))).toBe("\u001b[47;6u");
+        }
+      } finally {
+        core.dispose();
+      }
+    }
+  });
+});
