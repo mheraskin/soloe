@@ -4,8 +4,23 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 if (process.platform !== 'linux') {
-  console.log('Electron sandbox setup is only required on Linux.');
+  console.log('Linux host setup is only required on Linux.');
   process.exit(0);
+}
+
+const clipboardReader = spawnSync('wl-paste', ['--version'], { stdio: 'ignore' });
+if (clipboardReader.status !== 0) {
+  console.log('Installing wl-clipboard for native Claude Code image paste...');
+  const result = spawnSync(
+    'sudo',
+    ['apt-get', 'install', '-y', 'wl-clipboard'],
+    { stdio: 'inherit' }
+  );
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+} else {
+  console.log('Wayland clipboard reader is already installed.');
 }
 
 const require = createRequire(import.meta.url);

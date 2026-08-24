@@ -10,6 +10,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -40,9 +42,28 @@ trait ClipboardBackend: Send {
     fn write_image(&mut self, mime_type: &str, data: &[u8]) -> Result<(), String>;
 }
 
-#[derive(Default)]
 struct ArboardClipboardBackend {
     clipboard: Option<Clipboard>,
+    encoded_backend: Option<Box<dyn ClipboardBackend>>,
+}
+
+impl Default for ArboardClipboardBackend {
+    fn default() -> Self {
+        Self {
+            clipboard: None,
+            encoded_backend: platform_encoded_backend(),
+        }
+    }
+}
+
+impl ArboardClipboardBackend {
+    #[cfg(test)]
+    fn with_encoded_backend(encoded_backend: Box<dyn ClipboardBackend>) -> Self {
+        Self {
+            clipboard: None,
+            encoded_backend: Some(encoded_backend),
+        }
+    }
 }
 
 impl ClipboardBackend for ArboardClipboardBackend {
@@ -65,6 +86,12 @@ impl ClipboardBackend for ArboardClipboardBackend {
         if pixels == 0 || pixels > MAX_DECODED_PIXELS {
             return Err("clipboard image dimensions exceed the native limit".to_string());
         }
+        if mime_type == "image/png"
+            && let Some(encoded_backend) = self.encoded_backend.as_mut()
+            && encoded_backend.write_image(mime_type, data).is_ok()
+        {
+            return Ok(());
+        }
         let decoded = image::load_from_memory_with_format(data, format)
             .map_err(|error| format!("failed to decode clipboard image: {error}"))?;
         let rgba = decoded.into_rgba8();
@@ -86,6 +113,67 @@ impl ClipboardBackend for ArboardClipboardBackend {
             })
             .map_err(|error| format!("failed to place image on the desktop clipboard: {error}"))
     }
+}
+
+#[cfg(target_os = "linux")]
+struct WlCopyClipboardBackend {
+    command: PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl Default for WlCopyClipboardBackend {
+    fn default() -> Self {
+        Self {
+            command: PathBuf::from("wl-copy"),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl WlCopyClipboardBackend {
+    #[cfg(test)]
+    fn with_command(command: PathBuf) -> Self {
+        Self { command }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ClipboardBackend for WlCopyClipboardBackend {
+    fn write_image(&mut self, mime_type: &str, data: &[u8]) -> Result<(), String> {
+        let mut child = Command::new(&self.command)
+            .args(["--type", mime_type])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("failed to start wl-copy: {error}"))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to open wl-copy input".to_string())?;
+        if let Err(error) = stdin.write_all(data) {
+            let _ = child.kill();
+            return Err(format!("failed to write image to wl-copy: {error}"));
+        }
+        drop(stdin);
+        let status = child
+            .wait()
+            .map_err(|error| format!("failed to wait for wl-copy: {error}"))?;
+        if status.success() {
+            return Ok(());
+        }
+        Err(format!("wl-copy rejected the image with status {status}"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn platform_encoded_backend() -> Option<Box<dyn ClipboardBackend>> {
+    Some(Box::<WlCopyClipboardBackend>::default())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn platform_encoded_backend() -> Option<Box<dyn ClipboardBackend>> {
+    None
 }
 
 pub struct NativeClipboardHost {
@@ -222,16 +310,22 @@ fn parse_request(request_bytes: &[u8]) -> Result<ValidatedClipboardRequest, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{ClipboardBackend, NativeClipboardHost};
+    #[cfg(target_os = "linux")]
+    use super::WlCopyClipboardBackend;
+    use super::{ArboardClipboardBackend, ClipboardBackend, NativeClipboardHost};
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64;
     use std::fs;
     use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixStream;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-    struct RecordingClipboard(Arc<Mutex<Vec<(String, Vec<u8>)>>>);
+    type RecordedWrites = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+
+    struct RecordingClipboard(RecordedWrites);
 
     impl ClipboardBackend for RecordingClipboard {
         fn write_image(&mut self, mime_type: &str, data: &[u8]) -> Result<(), String> {
@@ -241,6 +335,45 @@ mod tests {
                 .push((mime_type.to_string(), data.to_vec()));
             Ok(())
         }
+    }
+
+    #[test]
+    fn png_images_use_the_encoded_clipboard_path() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let mut backend = ArboardClipboardBackend::with_encoded_backend(Box::new(
+            RecordingClipboard(Arc::clone(&writes)),
+        ));
+        let png = BASE64
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+            .unwrap();
+
+        backend.write_image("image/png", &png).unwrap();
+
+        assert_eq!(
+            *writes.lock().unwrap(),
+            vec![("image/png".to_string(), png)]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wl_copy_returns_without_waiting_for_its_background_clipboard_owner() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("soloe-wl-copy-{suffix:x}"));
+        fs::create_dir_all(&directory).unwrap();
+        let command = directory.join("wl-copy-test");
+        fs::write(&command, "#!/bin/sh\ncat >/dev/null\n(sleep 2) &\nexit 0\n").unwrap();
+        fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut backend = WlCopyClipboardBackend::with_command(PathBuf::from(&command));
+
+        let started = Instant::now();
+        backend.write_image("image/png", b"png bytes").unwrap();
+
+        assert!(started.elapsed() < Duration::from_millis(500));
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

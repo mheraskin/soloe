@@ -95,6 +95,9 @@ sudo apt install ./Soloe-*-linux-*.deb
 ```
 
 Install `git` and at least one of `claude` or `codex` on the normal Linux `PATH`. Soloe uses native Linux paths and shells and does not invoke WSL on Linux.
+The Debian package installs `wl-clipboard` so Claude Code can receive native image
+attachments. AppImage users on Wayland should install it separately with
+`sudo apt install wl-clipboard`.
 
 ### macOS
 
@@ -119,9 +122,10 @@ corepack enable
 pnpm install
 ```
 
-On an Ubuntu development host, configure Electron's Chromium sandbox after
-installing or updating dependencies. The command is idempotent and uses `sudo`
-to give the installed helper its required owner and mode:
+On an Ubuntu development host, install the native clipboard helper and configure
+Electron's Chromium sandbox after installing or updating dependencies. The
+command is idempotent and uses `sudo` for the system package and to give the
+installed sandbox helper its required owner and mode:
 
 ```bash
 pnpm setup:linux
