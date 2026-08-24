@@ -106,6 +106,7 @@
     || pendingOperation === 'stopping'
     || pendingOperation === 'restarting'
     || pendingOperation === 'updating'
+    || pendingOperation === 'deleting'
   );
   let showAgentBadge = $derived(
     isAgent && displayedAgentState !== null && pendingOperation === null
@@ -117,7 +118,9 @@
         ? 'Restarting'
         : pendingOperation === 'updating'
           ? 'Saving'
-          : 'Starting'
+          : pendingOperation === 'deleting'
+            ? 'Deleting'
+            : 'Starting'
   );
   let statusPill = $derived(buildStatusPill());
   let remoteLifecycle = $derived(
@@ -141,7 +144,7 @@
   );
 
   function onClick(e: MouseEvent) {
-    if (e.button !== 0 || editing) return;
+    if (e.button !== 0 || editing || pendingOperation) return;
     rightRail.fullscreen = false;
     if (projection) {
       if (status === 'stopped' || status === 'exited' || status === 'error') {
@@ -172,7 +175,7 @@
 
   async function startEditing(e?: Event) {
     e?.stopPropagation();
-    if (editing) return;
+    if (editing || pendingOperation) return;
     editValue = session.name;
     editing = true;
     await tick();
@@ -226,6 +229,7 @@
   }
 
   async function remove() {
+    if (pendingOperation) return;
     const ok = await confirmDeleteSession(session);
     if (!ok) return;
     try {
@@ -337,6 +341,7 @@
     statusOverride={projection ? status : null}
     lifecycle={remoteLifecycle}
     mutations={remoteMutations}
+    disabled={pendingOperation !== null}
     onRename={() => void startEditing()}
   >
     {#snippet trigger({ props })}
@@ -347,6 +352,7 @@
         data-row-color={session.color ?? undefined}
         data-row-selected={isSelected ? 'true' : undefined}
         aria-busy={pendingOperation ? 'true' : undefined}
+        aria-disabled={pendingOperation ? 'true' : undefined}
         class={cn(
           'session-row group relative flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
           !session.color && 'hover:bg-accent/40',
@@ -355,7 +361,7 @@
           isDraggingSelf && 'opacity-40'
         )}
         style={rowStyle}
-        draggable={onSessionDrop ? 'true' : undefined}
+        draggable={onSessionDrop && !pendingOperation ? 'true' : undefined}
         ondragstart={onDragStart}
         ondragover={onDragOver}
         ondrop={onDrop}
@@ -473,10 +479,17 @@
               size="icon-sm"
               class="text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
               onclick={removeFromButton}
-              title="Delete session"
-              aria-label={`Delete ${session.name || 'session'}`}
+              disabled={pendingOperation !== null}
+              title={pendingOperation === 'deleting' ? 'Deleting session…' : 'Delete session'}
+              aria-label={pendingOperation === 'deleting'
+                ? `Deleting ${session.name || 'session'}`
+                : `Delete ${session.name || 'session'}`}
             >
-              <Trash2 />
+              {#if pendingOperation === 'deleting'}
+                <Loader2 class="animate-spin" />
+              {:else}
+                <Trash2 />
+              {/if}
             </Button>
             <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
           </span>

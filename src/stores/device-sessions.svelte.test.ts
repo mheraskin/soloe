@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   refreshDevices: vi.fn(),
   startOnDevice: vi.fn(),
   createOnDevice: vi.fn(),
+  executeCreateOnDevice: vi.fn(),
   deviceTerminalStop: vi.fn(),
   deviceTerminalInputLease: vi.fn(),
   deviceTerminalInput: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('../lib/ipc', () => ({
       refreshDevices: mocks.refreshDevices,
       startOnDevice: mocks.startOnDevice,
       createOnDevice: mocks.createOnDevice,
+      executeCreateOnDevice: mocks.executeCreateOnDevice,
       deviceTerminalStop: mocks.deviceTerminalStop,
       deviceTerminalInputLease: mocks.deviceTerminalInputLease,
       deviceTerminalInput: mocks.deviceTerminalInput,
@@ -71,6 +73,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.refreshDevices.mockReset().mockResolvedValue(state(1, true));
     mocks.startOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
     mocks.createOnDevice.mockReset();
+    mocks.executeCreateOnDevice.mockReset();
     mocks.deviceTerminalStop.mockReset().mockResolvedValue(true);
     mocks.deviceTerminalInputLease.mockReset();
     mocks.deviceTerminalInput.mockReset().mockResolvedValue(true);
@@ -440,7 +443,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     expect(store.sessions[0]?.session.name).toBe('Remote Codex');
   });
 
-  it('optimistically removes a Session and restores selection when deletion fails', async () => {
+  it('keeps a remote Session visible and selected with a deleting state until deletion completes', async () => {
     const request = deferred<MultiDeviceSessionState>();
     mocks.deleteOnDevice.mockReturnValueOnce(request.promise);
     const store = new DeviceSessionsStore();
@@ -448,14 +451,38 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     store.selectSession('device-xps/session-1');
 
     const deletion = store.deleteSession('device-xps/session-1');
-    expect(store.sessions).toHaveLength(0);
-    expect(store.selectedSessionKey).toBeNull();
+    expect(store.sessions).toHaveLength(1);
+    expect(store.selectedSessionKey).toBe('device-xps/session-1');
+    expect(store.pendingOperation('device-xps/session-1')).toBe('deleting');
     expect(() => structuredClone(mocks.deleteOnDevice.mock.calls[0]?.[0])).not.toThrow();
 
     request.reject(new Error('delete rejected'));
     await expect(deletion).rejects.toThrow('delete rejected');
     expect(store.sessions).toHaveLength(1);
     expect(store.selectedSessionKey).toBe('device-xps/session-1');
+    expect(store.pendingOperation('device-xps/session-1')).toBeNull();
+  });
+
+  it('selects a newly created remote Session even when the refresh snapshot is stale', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    await vi.waitFor(() => expect(store.refreshing).toBe(false));
+    const created = {
+      ...state(2, true).unassigned[0]!,
+      ref: { deviceId: 'device-xps', sessionId: 'session-2' },
+      key: 'device-xps/session-2',
+      session: {
+        ...state(2, true).unassigned[0]!.session,
+        id: 'session-2',
+        name: 'New remote Session'
+      }
+    };
+    mocks.executeCreateOnDevice.mockResolvedValueOnce(created);
+    mocks.refreshDevices.mockResolvedValueOnce(state(1, true));
+
+    await store.executeCreate('plan-1');
+
+    expect(store.selectedSessionKey).toBe('device-xps/session-2');
   });
 
   it('creates and continues a Session on the origin Device without using local input', async () => {

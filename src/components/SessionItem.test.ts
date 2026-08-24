@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   selectSession: vi.fn(),
   selectLocalSession: vi.fn(),
   startLocalSession: vi.fn(async () => undefined),
+  pendingOperation: vi.fn((): string | null => null),
   rightRail: { fullscreen: true }
 }));
 
@@ -34,7 +35,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
     device: vi.fn(() => ({ local: false, available: true })),
     isSelected: vi.fn(() => false),
-    pendingOperation: vi.fn(() => null),
+    pendingOperation: mocks.pendingOperation,
     openSession: mocks.openSession,
     selectSession: mocks.selectSession,
     clearSelectedSession: vi.fn(),
@@ -76,6 +77,7 @@ describe('SessionItem lifecycle', () => {
     mounted = null;
     document.body.innerHTML = '';
     vi.clearAllMocks();
+    mocks.pendingOperation.mockReturnValue(null);
     mocks.rightRail.fullscreen = true;
   });
 
@@ -196,5 +198,51 @@ describe('SessionItem lifecycle', () => {
     expect(mocks.openSession).toHaveBeenCalledWith(`device-xps/${session.id}`);
     expect(mocks.selectSession).not.toHaveBeenCalled();
     expect(mocks.rightRail.fullscreen).toBe(false);
+  });
+
+  it('shows and locks a remote Session row while deletion is pending', () => {
+    mocks.pendingOperation.mockReturnValue('deleting');
+    const target = document.createElement('div');
+    document.body.append(target);
+    const session = {
+      id: 'session-deleting',
+      name: 'Remote Claude',
+      cwd: '/home/dev/soloe',
+      runMode: 'linux' as const,
+      launch: { type: 'agent' as const, provider: 'claude_code' as const, resumeMode: 'new' as const },
+      createdAt: '2026-08-16T00:00:00.000Z',
+      lastUsedAt: '2026-08-16T00:00:00.000Z'
+    };
+    mounted = mount(SessionItem, {
+      target,
+      props: {
+        session,
+        projection: {
+          ref: { deviceId: 'device-xps', sessionId: session.id },
+          key: `device-xps/${session.id}`,
+          deviceName: 'xps',
+          available: true,
+          session,
+          lifecycleStatus: 'running',
+          runtime: {
+            sessionId: session.id,
+            terminalId: 'terminal-deleting',
+            status: 'running'
+          },
+          observation: null
+        }
+      }
+    });
+    flushSync();
+
+    const row = target.querySelector<HTMLElement>(`[data-session-id="device-xps/${session.id}"]`)!;
+    const deleteButton = target.querySelector<HTMLButtonElement>(`[aria-label="Deleting ${session.name}"]`)!;
+    row.click();
+
+    expect(row.getAttribute('aria-busy')).toBe('true');
+    expect(row.getAttribute('aria-disabled')).toBe('true');
+    expect(target.querySelector('[aria-label="Deleting"]')).not.toBeNull();
+    expect(deleteButton.disabled).toBe(true);
+    expect(mocks.openSession).not.toHaveBeenCalled();
   });
 });

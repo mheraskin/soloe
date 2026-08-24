@@ -42,17 +42,6 @@ export type DeviceSessionPendingOperation =
   | 'updating'
   | 'deleting';
 
-type ProjectionPlacement =
-  | {
-      kind: 'workspace';
-      projectKey: string;
-      workspaceKey: string;
-      index: number;
-      projection: MultiDeviceSessionView;
-    }
-  | { kind: 'unassigned'; index: number; projection: MultiDeviceSessionView }
-  | { kind: 'archived'; index: number; projection: MultiDeviceSessionView };
-
 interface QueuedSessionUpdate {
   ref: MultiDeviceSessionView['ref'];
   patch: SessionUpdate;
@@ -346,32 +335,11 @@ export class DeviceSessionsStore {
       await localSessions.remove(projection.ref.sessionId);
       return;
     }
-    const placement = this.captureProjectionPlacement(key);
     const ref = $state.snapshot(projection.ref);
-    const authorityAtDelete = this.authoritativeGeneration;
-    const previousSelection = this.selectedSessionKey;
     const pending = this.beginPending(key, 'deleting');
-    this.removeProjection(key);
-    if (this.selectedSessionKey === key) this.clearSelectedSession();
     try {
       const state = await ipc.sessions.deleteOnDevice(ref);
       this.applyState(state);
-    } catch (error) {
-      if (this.isLatestPending(key, pending)) {
-        const restored = authorityAtDelete === this.authoritativeGeneration && placement
-          ? this.restoreProjectionPlacement(placement)
-          : false;
-        if (!restored) void this.refresh().catch(() => undefined);
-        if (
-          restored
-          && previousSelection === key
-          && this.selectedSessionKey === null
-          && localSessions.selectedId === null
-        ) {
-          this.selectedSessionKey = key;
-        }
-      }
-      throw error;
     } finally {
       this.endPending(key, pending);
     }
@@ -474,7 +442,7 @@ export class DeviceSessionsStore {
   ): Promise<MultiDeviceSessionView> {
     const created = await ipc.sessions.createOnDevice(structuredClone(request));
     if (!this.sessions.some((projection) => projection.key === created.key)) await this.refresh();
-    if (select) this.selectSession(created.key);
+    if (select) this.selectCreatedProjection(created);
     return created;
   }
 
@@ -535,7 +503,7 @@ export class DeviceSessionsStore {
   async executeCreate(planId: string): Promise<MultiDeviceSessionView> {
     const created = await ipc.sessions.executeCreateOnDevice(planId);
     if (!this.sessions.some((projection) => projection.key === created.key)) await this.refresh();
-    this.selectSession(created.key);
+    this.selectCreatedProjection(created);
     return created;
   }
 
@@ -969,86 +937,14 @@ export class DeviceSessionsStore {
     }));
   }
 
-  private removeProjection(key: string): void {
-    this.patchAllProjections((projection) => projection, key);
-  }
-
-  private captureProjectionPlacement(key: string): ProjectionPlacement | null {
-    for (const project of this.state.projects) {
-      for (const workspace of project.workspaces) {
-        const index = workspace.sessions.findIndex((projection) => projection.key === key);
-        if (index >= 0) {
-          return {
-            kind: 'workspace',
-            projectKey: project.key,
-            workspaceKey: workspace.key,
-            index,
-            projection: $state.snapshot(workspace.sessions[index]!)
-          };
-        }
-      }
+  private selectCreatedProjection(projection: MultiDeviceSessionView): void {
+    if (this.device(projection.ref.deviceId)?.local) {
+      this.selectedSessionKey = null;
+      localSessions.select(projection.ref.sessionId);
+      return;
     }
-    const unassignedIndex = this.state.unassigned.findIndex((projection) => projection.key === key);
-    if (unassignedIndex >= 0) {
-      return {
-        kind: 'unassigned',
-        index: unassignedIndex,
-        projection: $state.snapshot(this.state.unassigned[unassignedIndex]!)
-      };
-    }
-    const archivedIndex = this.state.archivedSessions.findIndex((projection) => projection.key === key);
-    return archivedIndex >= 0
-      ? {
-          kind: 'archived',
-          index: archivedIndex,
-          projection: $state.snapshot(this.state.archivedSessions[archivedIndex]!)
-        }
-      : null;
-  }
-
-  private restoreProjectionPlacement(placement: ProjectionPlacement): boolean {
-    if (
-      this.sessions.some((projection) => projection.key === placement.projection.key)
-      || this.state.archivedSessions.some((projection) => projection.key === placement.projection.key)
-    ) {
-      return true;
-    }
-    if (placement.kind === 'unassigned') {
-      this.state = {
-        ...this.state,
-        unassigned: insertAt(this.state.unassigned, placement.index, placement.projection)
-      };
-      return true;
-    }
-    if (placement.kind === 'archived') {
-      this.state = {
-        ...this.state,
-        archivedSessions: insertAt(
-          this.state.archivedSessions,
-          placement.index,
-          placement.projection
-        )
-      };
-      return true;
-    }
-    let restored = false;
-    this.state = {
-      ...this.state,
-      projects: this.state.projects.map((project) => project.key !== placement.projectKey
-        ? project
-        : {
-            ...project,
-            workspaces: project.workspaces.map((workspace) => {
-              if (workspace.key !== placement.workspaceKey) return workspace;
-              restored = true;
-              return {
-                ...workspace,
-                sessions: insertAt(workspace.sessions, placement.index, placement.projection)
-              };
-            })
-          })
-    };
-    return restored;
+    localSessions.select(null);
+    this.selectedSessionKey = projection.key;
   }
 
   private patchAllProjections(
@@ -1210,11 +1106,6 @@ function stateWithOptimisticSessionOrder(
   }));
   snapshot.unassigned = reorder(snapshot.unassigned);
   return snapshot;
-}
-
-function insertAt<T>(items: T[], index: number, item: T): T[] {
-  const insertion = Math.max(0, Math.min(index, items.length));
-  return [...items.slice(0, insertion), structuredClone(item), ...items.slice(insertion)];
 }
 
 function terminalRefKey(ref: TerminalRef): string {
