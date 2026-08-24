@@ -9,7 +9,7 @@
   } from '@lucide/svelte';
   import type { BranchStatus } from '@shared/types/features.js';
   import { onMount } from 'svelte';
-  import { sessions } from '../../stores/sessions.svelte';
+  import { deviceSessions } from '../../stores/device-sessions.svelte';
   import {
     createFeatureScope,
     featuresStore,
@@ -27,7 +27,7 @@
   import IssuesSection from './IssuesSection.svelte';
   import SetupCta from './SetupCta.svelte';
 
-  let selected = $derived(sessions.selected);
+  let selected = $derived(deviceSessions.activeSession);
   let activeCwd = $derived.by<string | null>(() => {
     const cwd = selected?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
@@ -36,7 +36,10 @@
     if (!activeCwd || !selected) return null;
     return createFeatureScope(activeCwd, {
       runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
     });
   });
 

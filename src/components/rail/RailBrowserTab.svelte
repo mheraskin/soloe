@@ -28,7 +28,7 @@
   } from '../../stores/browser.svelte';
   import { git } from '../../stores/git.svelte';
   import { projects } from '../../stores/projects.svelte';
-  import { sessions } from '../../stores/sessions.svelte';
+  import { deviceSessions } from '../../stores/device-sessions.svelte';
   import { elementSourceInspector } from '../../stores/element-source-inspector.svelte';
   import { findPreset } from '../../lib/browser-devices';
   import { rightRail } from '../../stores/right-rail.svelte';
@@ -144,11 +144,19 @@
   }
 
   function inspectorContext(tabId: string, pageUrl = activeUrl) {
-    const session = sessions.selected;
+    const session = deviceSessions.activeSession;
     if (!session) return null;
-    const project = session.projectId ? projects.get(session.projectId) : null;
+    const project = deviceSessions.selectedProjection
+      ? null
+      : session.projectId ? projects.get(session.projectId) : null;
     const inventoryRoot = project?.path ?? session.cwd;
-    const worktreeRoots = git.worktreesFor(inventoryRoot, session)?.map((worktree) => worktree.path)
+    const context = {
+      ...session,
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
+    };
+    const worktreeRoots = git.worktreesFor(inventoryRoot, context)?.map((worktree) => worktree.path)
       ?? [session.cwd];
     return {
       tabId,
@@ -156,6 +164,9 @@
       cwd: session.cwd,
       runMode: session.runMode,
       ...(session.wslDistro ? { wslDistro: session.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {}),
       projectRoot: session.cwd,
       worktreeRoots,
       pageUrl
@@ -1779,7 +1790,7 @@
   </div>
 
   <form
-    class="mobile-browser-toolbar relative flex h-8 min-h-8 min-w-0 items-center gap-1 border-b border-border bg-sidebar px-1"
+    class="mobile-browser-toolbar no-scrollbar relative flex h-8 min-h-8 min-w-0 items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border bg-sidebar px-1"
     onsubmit={submitUrl}
   >
     <Button
@@ -1869,40 +1880,50 @@
       </Popover.Content>
     </Popover.Root>
     {/if}
-    <div class="relative min-w-0 flex-1">
-      <Input
-        bind:ref={urlInputEl}
-        bind:value={urlInput}
-        onfocus={() => {
-          urlInputFocused = true;
-          suppressDropdown = false;
-          // Expand to full URL so the user sees the protocol while editing.
-          if (urlInput === stripProtocol(lastSyncedUrl) && urlInput !== lastSyncedUrl) {
-            urlInput = lastSyncedUrl;
-          }
-          // Select all on focus so the next keystroke replaces the URL —
-          // matching Chrome's omnibox behavior. Defer one frame so the value
-          // update above lands first.
-          requestAnimationFrame(() => urlInputEl?.select());
-        }}
-        onblur={() => {
-          urlInputFocused = false;
-          // Collapse back to the stripped form if the user didn't edit.
-          if (urlInput === lastSyncedUrl) {
-            urlInput = stripProtocol(lastSyncedUrl);
-          }
-        }}
-        onkeydown={onUrlKey}
-        placeholder="localhost:3000 or example.com"
-        class="h-7 text-[11px]"
-        disabled={navigationPending}
-        spellcheck={false}
-        autocomplete="off"
-      />
-      {#if dropdownOpen}
-        <ul
-          class="absolute top-full right-0 left-0 z-20 mt-1 max-h-60 overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-md"
+    <Popover.Root open={dropdownOpen}>
+      <div class="relative min-w-40 flex-1">
+        <Input
+          bind:ref={urlInputEl}
+          bind:value={urlInput}
+          onfocus={() => {
+            urlInputFocused = true;
+            suppressDropdown = false;
+            // Expand to full URL so the user sees the protocol while editing.
+            if (urlInput === stripProtocol(lastSyncedUrl) && urlInput !== lastSyncedUrl) {
+              urlInput = lastSyncedUrl;
+            }
+            // Select all on focus so the next keystroke replaces the URL —
+            // matching Chrome's omnibox behavior. Defer one frame so the value
+            // update above lands first.
+            requestAnimationFrame(() => urlInputEl?.select());
+          }}
+          onblur={() => {
+            urlInputFocused = false;
+            // Collapse back to the stripped form if the user didn't edit.
+            if (urlInput === lastSyncedUrl) {
+              urlInput = stripProtocol(lastSyncedUrl);
+            }
+          }}
+          onkeydown={onUrlKey}
+          placeholder="localhost:3000 or example.com"
+          class="h-7 text-[11px]"
+          disabled={navigationPending}
+          spellcheck={false}
+          autocomplete="off"
+        />
+      </div>
+      {#if dropdownOpen && urlInputEl}
+        <Popover.Content
+          customAnchor={urlInputEl}
+          side="bottom"
+          align="start"
+          sideOffset={4}
+          trapFocus={false}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          class="w-[var(--bits-popover-anchor-width)] max-w-[calc(100vw-1rem)] gap-0 overflow-hidden p-0"
         >
+          <ul class="max-h-60 overflow-y-auto">
           {#each suggestions as url, i (url)}
             {@const isFocused = i === suggestionIndex}
             <li>
@@ -1919,9 +1940,10 @@
               </button>
             </li>
           {/each}
-        </ul>
+          </ul>
+        </Popover.Content>
       {/if}
-    </div>
+    </Popover.Root>
     {#if zoomPercent !== 100}
       <Button
         type="button"

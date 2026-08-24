@@ -6,6 +6,7 @@ import type {
   WorkingTreeSnapshot
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import type { DeviceId } from '@shared/types/devices.js';
 import { worktreeIdentityKey, type WorktreeScope } from '@shared/worktree-identity.js';
 import { ipc } from '../lib/ipc';
 import { GroupedTaskPool } from '../lib/grouped-task-pool';
@@ -40,6 +41,7 @@ export interface WorktreePollIntent {
   cadence: GitRefreshCadence;
   runMode?: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 }
 
 export interface ProjectPollIntent {
@@ -47,11 +49,13 @@ export interface ProjectPollIntent {
   cadence: GitRefreshCadence;
   runMode?: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 }
 
 export interface RepoContext {
   runMode?: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 }
 
 export interface WorktreeInventory {
@@ -190,7 +194,8 @@ class GitStore {
         cwd: target,
         force,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       });
       this.rememberContext(target, ctx);
       if (status.repoPath) this.rememberRepoContext(status.repoPath, ctx);
@@ -237,7 +242,8 @@ class GitStore {
         repoPath: target,
         force,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       });
       this.shortstats = {
         ...this.shortstats,
@@ -283,7 +289,8 @@ class GitStore {
         repoPath: target,
         force,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       }),
       {
         // Cached/UI discovery is more urgent than the forced minute cadence.
@@ -381,7 +388,8 @@ class GitStore {
           cwd,
           force: true,
           ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+          ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
         }),
         {
           priority: cause.kind === 'filesystem' || cause.kind === 'manual' ? 20 : 10,
@@ -478,6 +486,7 @@ class GitStore {
       const ctx: RepoContext = {};
       if (intent.runMode) ctx.runMode = intent.runMode;
       if (intent.wslDistro) ctx.wslDistro = intent.wslDistro;
+      if (intent.deviceId) ctx.deviceId = intent.deviceId;
       const key = worktreeIdentityKey(cwd, ctx);
       const prev = next.get(key);
       next.set(key, {
@@ -513,6 +522,7 @@ class GitStore {
       const ctx: RepoContext = {};
       if (intent.runMode) ctx.runMode = intent.runMode;
       if (intent.wslDistro) ctx.wslDistro = intent.wslDistro;
+      if (intent.deviceId) ctx.deviceId = intent.deviceId;
       const key = worktreeIdentityKey(repoPath, ctx);
       const current = desired.get(key);
       desired.set(key, {
@@ -648,7 +658,10 @@ class GitStore {
         const occurredAt = Date.now();
         const eventContext: RepoContext = {
           runMode: event.runMode,
-          ...(event.wslDistro ? { wslDistro: event.wslDistro } : {})
+          ...(event.wslDistro ? { wslDistro: event.wslDistro } : {}),
+          ...('deviceId' in event && typeof event.deviceId === 'string'
+            ? { deviceId: event.deviceId }
+            : {})
         };
         const eventKey = worktreeIdentityKey(event.repoPath, eventContext);
         const identities = new Set<string>([
@@ -698,6 +711,7 @@ class GitStore {
 export const git = new GitStore();
 
 function resourceGroupOption(ctx: RepoContext): { group?: string } {
+  if (ctx.deviceId) return { group: `device:${ctx.deviceId}` };
   if (ctx.runMode !== 'wsl') return {};
   return { group: `wsl:${ctx.wslDistro?.trim() || 'default'}` };
 }

@@ -189,6 +189,16 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     store.selectSession('device-xps/session-1');
 
     expect(store.selectedSessionKey).toBe('device-xps/session-1');
+    expect(store.activeSession).toMatchObject({
+      id: 'session-1',
+      cwd: '/home/me/project',
+      runMode: 'linux'
+    });
+    expect(store.activeWorktreeScope).toEqual({
+      cwd: '/home/me/project',
+      runMode: 'linux',
+      deviceId: 'device-xps'
+    });
     await vi.waitFor(() => expect(mocks.refreshDevices).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(store.selectedProjection?.available).toBe(true));
   });

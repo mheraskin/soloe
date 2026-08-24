@@ -14,6 +14,7 @@
     GitStatus
   } from '@shared/types/git.js';
   import type { RunMode } from '@shared/types/sessions.js';
+  import type { DeviceId } from '@shared/types/devices.js';
   import {
     buildGitHistoryGraph,
     filterGitHistory,
@@ -28,10 +29,11 @@
   import * as Popover from '$lib/components/ui/popover';
   import GitIdentityLabel from './GitIdentityLabel.svelte';
 
-  let { cwd, runMode, wslDistro }: {
+  let { cwd, runMode, wslDistro, deviceId }: {
     cwd: string;
     runMode?: RunMode;
     wslDistro?: string;
+    deviceId?: DeviceId;
   } = $props();
 
   const INITIAL_HISTORY_LIMIT = 100;
@@ -48,7 +50,8 @@
 
   let context = $derived({
     ...(runMode ? { runMode } : {}),
-    ...(wslDistro ? { wslDistro } : {})
+    ...(wslDistro ? { wslDistro } : {}),
+    ...(deviceId ? { deviceId } : {})
   });
   let status = $derived(git.statusFor(cwd, context));
   let shortstat = $derived(git.shortstatFor(cwd, context));
@@ -80,6 +83,7 @@
     void cwd;
     void runMode;
     void wslDistro;
+    void deviceId;
     untrack(() => {
       loadGeneration += 1;
       historyStatus = null;
@@ -125,6 +129,7 @@
     void cwd;
     void runMode;
     void wslDistro;
+    void deviceId;
     if (!open) {
       loadGeneration += 1;
       untrack(() => {

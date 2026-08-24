@@ -12,6 +12,7 @@
   } from '@shared/types/sessions.js';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
   import { sessions } from '../stores/sessions.svelte';
+  import { rightRail } from '../stores/right-rail.svelte';
   import { agentNotifications } from '../stores/agent-notifications.svelte';
   import { nav } from '../stores/nav.svelte';
   import { reportError } from '../stores/toast.svelte';
@@ -141,6 +142,7 @@
 
   function onClick(e: MouseEvent) {
     if (e.button !== 0 || editing) return;
+    rightRail.fullscreen = false;
     if (projection) {
       if (status === 'stopped' || status === 'exited' || status === 'error') {
         if (managedLocally) {
@@ -155,7 +157,8 @@
         if (managedLocally) sessions.select(null);
         else deviceSessions.clearSelectedSession();
       } else {
-        deviceSessions.selectSession(projection.key);
+        if (managedLocally) deviceSessions.selectSession(projection.key);
+        else void deviceSessions.openSession(projection.key).catch(reportError);
       }
       return;
     }

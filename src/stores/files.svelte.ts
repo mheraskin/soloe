@@ -167,6 +167,7 @@ export class FilesStore {
       relativePath,
       runMode: scope.runMode,
       ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+      ...(scope.deviceId ? { deviceId: scope.deviceId } : {}),
       ...(scope.revision ? { revision: scope.revision } : {})
     });
     const source = sourceFileFromRead(scope.cwd, value);
@@ -195,6 +196,7 @@ export class FilesStore {
         cwd: scope.cwd,
         runMode: scope.runMode,
         ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+        ...(scope.deviceId ? { deviceId: scope.deviceId } : {}),
         ...(scope.revision ? { revision: scope.revision } : {}),
         ...(opts.force ? { force: true } : {})
       });
@@ -261,6 +263,7 @@ export class FilesStore {
         relativePath,
         runMode: scope.runMode,
         ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+        ...(scope.deviceId ? { deviceId: scope.deviceId } : {}),
         ...(scope.revision ? { revision: scope.revision } : {})
       });
       // A second openFileAt could land before this one resolves; drop the stale
@@ -340,7 +343,8 @@ export class FilesStore {
         relativePath: open.relativePath,
         content: open.content,
         runMode: scope.runMode,
-        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+        ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+        ...(scope.deviceId ? { deviceId: scope.deviceId } : {})
       });
       // Same staleness guard as openFileAt — user may have switched files mid-save.
       const stillCurrent = this.openFilesByCwd[key]?.relativePath === open.relativePath;

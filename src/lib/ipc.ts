@@ -115,6 +115,7 @@ import type {
 } from '@shared/types/devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
+  DeviceWorktreeInvokeRequest,
   MultiDeviceSessionState
 } from '@shared/types/multi-device-sessions.js';
 import type {
@@ -166,7 +167,7 @@ const terminalSessions = new TerminalSessionRegistry({
   onReconnect: terminalReconnect ? (listener) => terminalReconnect(listener) : undefined
 });
 
-export const backend = {
+const localBackend = {
   connection: {
     onReconnect: (listener: () => void) =>
       terminalReconnect ? terminalReconnect(listener) : () => {}
@@ -335,6 +336,12 @@ export const backend = {
       }
       return unwrap(await c.sessions.deviceTerminalStop(toIpcPayload(ref)));
     },
+    invokeWorktree: async (request: DeviceWorktreeInvokeRequest): Promise<unknown> => {
+      if (!c.sessions.invokeWorktree) {
+        throw new Error('Remote Worktree data is unavailable.');
+      }
+      return unwrap(await c.sessions.invokeWorktree(toIpcPayload(request)));
+    },
     onChange: (cb: (session: Session) => void) => c.sessions.onChange(cb),
     onDelete: (cb: (sessionId: SessionId) => void) => c.sessions.onDelete(cb),
     onDeviceStateChange: (cb: (state: MultiDeviceSessionState) => void) =>
@@ -482,24 +489,41 @@ export const backend = {
     onChange: (cb: (projects: Project[]) => void) => c.projects.onChange(cb)
   },
   notes: {
-    list: async (projectId: ProjectId) => unwrap(await c.notes.list(projectId)),
-    read: async (projectId: ProjectId, filename: string) =>
+    list: async (projectId: ProjectId, _route?: WorktreeRoute) =>
+      unwrap(await c.notes.list(projectId)),
+    read: async (projectId: ProjectId, filename: string, _route?: WorktreeRoute) =>
       unwrap(await c.notes.read(projectId, filename)),
     write: async (
       projectId: ProjectId,
       filename: string,
       content: string,
-      expectedRevision?: string | null
+      expectedRevision?: string | null,
+      _route?: WorktreeRoute
     ) =>
       unwrap(await c.notes.write(projectId, filename, content, expectedRevision)),
-    rename: async (projectId: ProjectId, oldName: string, newName: string) =>
+    rename: async (
+      projectId: ProjectId,
+      oldName: string,
+      newName: string,
+      _route?: WorktreeRoute
+    ) =>
       unwrap(await c.notes.rename(projectId, oldName, newName)),
-    delete: async (projectId: ProjectId, filename: string) =>
+    delete: async (projectId: ProjectId, filename: string, _route?: WorktreeRoute) =>
       unwrap(await c.notes.delete(projectId, filename)),
-    saveImage: async (projectId: ProjectId, mimeType: string, dataBase64: string) =>
+    saveImage: async (
+      projectId: ProjectId,
+      mimeType: string,
+      dataBase64: string,
+      _route?: WorktreeRoute
+    ) =>
       unwrap(await c.notes.saveImage(projectId, mimeType, dataBase64)),
-    readImage: async (absolutePath: string) => unwrap(await c.notes.readImage(absolutePath)),
-    cleanupImages: async (projectId: ProjectId, extraReferences: string[]) =>
+    readImage: async (absolutePath: string, _route?: WorktreeRoute) =>
+      unwrap(await c.notes.readImage(absolutePath)),
+    cleanupImages: async (
+      projectId: ProjectId,
+      extraReferences: string[],
+      _route?: WorktreeRoute
+    ) =>
       unwrap(await c.notes.cleanupImages(projectId, [...extraReferences])),
     onChange: (cb: (event: NotesChangeEvent) => void) => c.notes.onChange(cb)
   },
@@ -614,7 +638,8 @@ export const backend = {
       unwrap(await c.overview.regenerate(toIpcPayload(request))),
     askStart: async (request: AskFollowUpRequest) =>
       unwrap(await c.overview.askStart(toIpcPayload(request))),
-    askCancel: async (requestId: string) => unwrap(await c.overview.askCancel(requestId)),
+    askCancel: async (requestId: string, _route?: WorktreeRoute) =>
+      unwrap(await c.overview.askCancel(requestId)),
     onChunk: (cb: (chunk: AskFollowUpChunk) => void) => c.overview.onChunk(cb)
   },
   comments: {
@@ -660,6 +685,80 @@ export const backend = {
       unwrap(await c.vault.getSecret(toIpcPayload(request))),
     onChange: (cb: (event: VaultChangeEvent) => void) => c.vault.onChange(cb)
   }
+};
+
+interface WorktreeRoute {
+  deviceId?: DeviceId;
+}
+
+const WORKTREE_EVENT_METHODS: Partial<Record<string, Record<string, string>>> = {
+  notes: { onChange: 'notes.change' },
+  git: { onChange: 'git.change' },
+  overview: { onChunk: 'overview.chunk' },
+  features: { onChange: 'features.change' },
+  vault: { onChange: 'vault.change' }
+};
+
+function routedWorktreeNamespace<T extends object>(namespace: string, local: T): T {
+  return new Proxy(local, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof property !== 'string' || typeof value !== 'function') return value;
+      const deviceEvent = WORKTREE_EVENT_METHODS[namespace]?.[property];
+      if (deviceEvent) {
+        return (listener: (payload: unknown) => void) => {
+          const detachLocal = Reflect.apply(value, target, [listener]) as () => void;
+          const detachDevice = localBackend.sessions.onDeviceEvent((event) => {
+            if (event.event !== deviceEvent || !isRecord(event.payload)) return;
+            listener({ ...event.payload, deviceId: event.deviceId });
+          });
+          return () => {
+            detachLocal();
+            detachDevice();
+          };
+        };
+      }
+      return (...input: unknown[]) => {
+        const routed = extractWorktreeRoute(input);
+        if (!routed.deviceId) return Reflect.apply(value, target, routed.args);
+        return localBackend.sessions.invokeWorktree({
+          deviceId: routed.deviceId,
+          namespace: namespace as DeviceWorktreeInvokeRequest['namespace'],
+          method: property,
+          args: routed.args
+        });
+      };
+    }
+  });
+}
+
+function extractWorktreeRoute(input: unknown[]): { deviceId: DeviceId | null; args: unknown[] } {
+  let deviceId: DeviceId | null = null;
+  const args: unknown[] = [];
+  for (const value of input) {
+    if (!isRecord(value) || typeof value['deviceId'] !== 'string') {
+      args.push(value);
+      continue;
+    }
+    deviceId = value['deviceId'];
+    const { deviceId: _deviceId, ...payload } = value;
+    if (Object.keys(payload).length > 0) args.push(payload);
+  }
+  return { deviceId, args };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export const backend: typeof localBackend = {
+  ...localBackend,
+  notes: routedWorktreeNamespace('notes', localBackend.notes),
+  git: routedWorktreeNamespace('git', localBackend.git),
+  files: routedWorktreeNamespace('files', localBackend.files),
+  overview: routedWorktreeNamespace('overview', localBackend.overview),
+  features: routedWorktreeNamespace('features', localBackend.features),
+  vault: routedWorktreeNamespace('vault', localBackend.vault)
 };
 
 /**

@@ -36,11 +36,13 @@ import type {
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { DEVICE_WORKTREE_RPC_METHODS } from '@shared/api-contract.js';
 import type {
   CreateMultiDeviceSessionRequest,
   DeviceProjectInventory,
   DeviceSessionInventory,
   DeviceTerminalHistory,
+  DeviceWorktreeInvokeRequest,
   MultiDeviceSessionCreationPlan,
   MultiDeviceSessionState,
   MultiDeviceSessionView,
@@ -79,6 +81,7 @@ export interface SessionDevice {
   setTerminalOutputDemand(terminalIds: ReadonlySet<string>): Promise<void>;
   terminalInput(terminalId: string, data: string, control: TerminalControlProof): Promise<void>;
   pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult>;
+  invokeWorktree?(request: DeviceWorktreeInvokeRequest): Promise<unknown>;
   terminalAcquireInputLease?(
     terminalId: string,
     takeover?: boolean,
@@ -620,6 +623,18 @@ export class MultiDeviceSessions {
   async terminalInput(ref: TerminalRef, data: string, control: TerminalControlProof): Promise<void> {
     assertControlTargetsDevice(ref, control);
     await this.requireReadyDevice(ref.deviceId).terminalInput(ref.terminalId, data, control);
+  }
+
+  async invokeWorktree(request: DeviceWorktreeInvokeRequest): Promise<unknown> {
+    const key = `${request.namespace}.${request.method}`;
+    if (!DEVICE_WORKTREE_RPC_METHODS.has(key)) {
+      throw new Error(`Worktree RPC ${key} is not supported.`);
+    }
+    const device = this.requireReadyDevice(request.deviceId);
+    if (!device.invokeWorktree) {
+      throw new Error(`Device ${request.deviceId} cannot serve Worktree data.`);
+    }
+    return device.invokeWorktree(structuredClone(request));
   }
 
   async terminalPasteImages(request: DeviceImagePasteRequest): Promise<ImagePasteResult> {

@@ -4,6 +4,7 @@ import type {
   VaultEntryUpdate,
   VaultSecret
 } from '../../shared/types/vault';
+import type { DeviceId } from '../../shared/types/devices';
 import { backend } from '../lib/ipc';
 import type { ScopedVaultEntry } from '../lib/vault-groups';
 
@@ -32,22 +33,33 @@ function normalizeOrigin(input: string): string {
 export class VaultStore {
   private activeCwd = $state<string | null>(null);
   private activeProjectCwd = $state<string | null>(null);
+  private activeDeviceId = $state<DeviceId | null>(null);
   private projectCwds = $state<string[]>([]);
   private byCwd = $state<Record<CwdKey, CwdCache>>({});
   private detachers: Array<() => void> = [];
   private eventVersions = new Map<CwdKey, number>();
   private refreshVersions = new Map<CwdKey, number>();
+  private scopeByKey = new Map<CwdKey, { cwd: string; deviceId: DeviceId | null }>();
 
   attachListeners(): void {
     this.detach();
     this.detachers.push(
       backend.vault.onChange((event) => {
-        const current = this.byCwd[event.cwd];
-        if (!current?.loaded && !this.projectCwds.includes(event.cwd)) return;
-        this.eventVersions.set(event.cwd, (this.eventVersions.get(event.cwd) ?? 0) + 1);
+        const deviceId =
+          'deviceId' in event && typeof event.deviceId === 'string'
+            ? event.deviceId
+            : null;
+        const key = this.scopeKey(event.cwd, deviceId);
+        const current = this.byCwd[key];
+        if (
+          !current?.loaded
+          && !(deviceId === this.activeDeviceId && this.projectCwds.includes(event.cwd))
+        ) return;
+        this.scopeByKey.set(key, { cwd: event.cwd, deviceId });
+        this.eventVersions.set(key, (this.eventVersions.get(key) ?? 0) + 1);
         this.byCwd = {
           ...this.byCwd,
-          [event.cwd]: {
+          [key]: {
             entries: event.entries,
             loaded: true,
             loading: false,
@@ -58,8 +70,9 @@ export class VaultStore {
     );
     this.detachers.push(
       backend.connection.onReconnect(() => {
-        for (const [cwd, cache] of Object.entries(this.byCwd)) {
-          if (cache.loaded) void this.refreshCwd(cwd);
+        for (const [key, cache] of Object.entries(this.byCwd)) {
+          const scope = this.scopeByKey.get(key);
+          if (cache.loaded && scope) void this.refreshCwd(scope.cwd, scope.deviceId);
         }
       })
     );
@@ -77,10 +90,12 @@ export class VaultStore {
     cwd: string | null | undefined;
     projectCwd?: string | null | undefined;
     projectScopeCwds?: Array<string | null | undefined>;
+    deviceId?: DeviceId | null | undefined;
   }): void {
-    const { cwd, projectCwd, projectScopeCwds = [] } = context;
+    const { cwd, projectCwd, projectScopeCwds = [], deviceId = null } = context;
     const next = cwd && cwd.trim().length > 0 ? cwd.trim() : null;
     this.activeCwd = next;
+    this.activeDeviceId = deviceId;
     this.activeProjectCwd =
       projectCwd && projectCwd.trim().length > 0 ? projectCwd.trim() : next;
     this.projectCwds = uniqueCwds([
@@ -88,6 +103,10 @@ export class VaultStore {
       next,
       ...projectScopeCwds
     ]);
+    for (const scopeCwd of this.projectCwds) {
+      const key = this.scopeKey(scopeCwd, deviceId);
+      this.scopeByKey.set(key, { cwd: scopeCwd, deviceId });
+    }
   }
 
   get cwd(): string | null {
@@ -98,8 +117,8 @@ export class VaultStore {
     return this.activeProjectCwd;
   }
 
-  private cache(cwd: string): CwdCache {
-    return this.byCwd[cwd] ?? EMPTY;
+  private cache(cwd: string, deviceId: DeviceId | null = this.activeDeviceId): CwdCache {
+    return this.byCwd[this.scopeKey(cwd, deviceId)] ?? EMPTY;
   }
 
   get entries(): VaultEntry[] {
@@ -177,7 +196,8 @@ export class VaultStore {
   }
 
   async ensureProjectLoaded(): Promise<void> {
-    await Promise.all(this.projectCwds.map((cwd) => this.ensureCwdLoaded(cwd)));
+    const deviceId = this.activeDeviceId;
+    await Promise.all(this.projectCwds.map((cwd) => this.ensureCwdLoaded(cwd, deviceId)));
   }
 
   async refresh(): Promise<void> {
@@ -187,39 +207,48 @@ export class VaultStore {
   }
 
   async refreshProject(): Promise<void> {
-    await Promise.all(this.projectCwds.map((cwd) => this.refreshCwd(cwd)));
+    const deviceId = this.activeDeviceId;
+    await Promise.all(this.projectCwds.map((cwd) => this.refreshCwd(cwd, deviceId)));
   }
 
-  private async ensureCwdLoaded(cwd: string): Promise<void> {
-    const cur = this.cache(cwd);
+  private async ensureCwdLoaded(cwd: string, deviceId: DeviceId | null): Promise<void> {
+    const cur = this.cache(cwd, deviceId);
     if (cur.loaded || cur.loading) return;
-    await this.refreshCwd(cwd);
+    await this.refreshCwd(cwd, deviceId);
   }
 
-  private async refreshCwd(cwd: string): Promise<void> {
-    const eventVersion = this.eventVersions.get(cwd) ?? 0;
-    const refreshVersion = (this.refreshVersions.get(cwd) ?? 0) + 1;
-    this.refreshVersions.set(cwd, refreshVersion);
-    this.byCwd = { ...this.byCwd, [cwd]: { ...this.cache(cwd), loading: true, error: null } };
+  private async refreshCwd(
+    cwd: string,
+    deviceId: DeviceId | null = this.activeDeviceId
+  ): Promise<void> {
+    const key = this.scopeKey(cwd, deviceId);
+    this.scopeByKey.set(key, { cwd, deviceId });
+    const eventVersion = this.eventVersions.get(key) ?? 0;
+    const refreshVersion = (this.refreshVersions.get(key) ?? 0) + 1;
+    this.refreshVersions.set(key, refreshVersion);
+    this.byCwd = {
+      ...this.byCwd,
+      [key]: { ...this.cache(cwd, deviceId), loading: true, error: null }
+    };
     try {
-      const entries = await backend.vault.list({ cwd });
+      const entries = await backend.vault.list({ cwd, ...this.route(deviceId) });
       if (
-        this.refreshVersions.get(cwd) !== refreshVersion
-        || (this.eventVersions.get(cwd) ?? 0) !== eventVersion
+        this.refreshVersions.get(key) !== refreshVersion
+        || (this.eventVersions.get(key) ?? 0) !== eventVersion
       ) return;
       this.byCwd = {
         ...this.byCwd,
-        [cwd]: { entries, loaded: true, loading: false, error: null }
+        [key]: { entries, loaded: true, loading: false, error: null }
       };
     } catch (err) {
       if (
-        this.refreshVersions.get(cwd) !== refreshVersion
-        || (this.eventVersions.get(cwd) ?? 0) !== eventVersion
+        this.refreshVersions.get(key) !== refreshVersion
+        || (this.eventVersions.get(key) ?? 0) !== eventVersion
       ) return;
       this.byCwd = {
         ...this.byCwd,
-        [cwd]: {
-          ...this.cache(cwd),
+        [key]: {
+          ...this.cache(cwd, deviceId),
           loading: false,
           error: err instanceof Error ? err.message : String(err)
         }
@@ -229,31 +258,37 @@ export class VaultStore {
 
   async save(draft: VaultEntryDraft, vaultCwd?: string): Promise<VaultEntry> {
     const cwd = vaultCwd ?? this.requireCwd();
-    const entry = await backend.vault.save({ cwd, draft });
+    const entry = await backend.vault.save({ cwd, draft, ...this.route(this.activeDeviceId) });
     this.upsert(cwd, entry);
     return entry;
   }
 
   async update(id: string, patch: VaultEntryUpdate, vaultCwd?: string): Promise<VaultEntry> {
     const cwd = vaultCwd ?? this.requireCwd();
-    const entry = await backend.vault.update({ cwd, id, patch });
+    const entry = await backend.vault.update({
+      cwd,
+      id,
+      patch,
+      ...this.route(this.activeDeviceId)
+    });
     this.upsert(cwd, entry);
     return entry;
   }
 
   async delete(id: string, vaultCwd?: string): Promise<void> {
     const cwd = vaultCwd ?? this.requireCwd();
-    await backend.vault.delete({ cwd, id });
+    await backend.vault.delete({ cwd, id, ...this.route(this.activeDeviceId) });
     const cur = this.cache(cwd);
+    const key = this.scopeKey(cwd, this.activeDeviceId);
     this.byCwd = {
       ...this.byCwd,
-      [cwd]: { ...cur, entries: cur.entries.filter((e) => e.id !== id) }
+      [key]: { ...cur, entries: cur.entries.filter((e) => e.id !== id) }
     };
   }
 
   async getSecret(id: string, vaultCwd?: string): Promise<VaultSecret> {
     const cwd = vaultCwd ?? this.requireCwd();
-    return backend.vault.getSecret({ cwd, id });
+    return backend.vault.getSecret({ cwd, id, ...this.route(this.activeDeviceId) });
   }
 
   saveTarget(scope: 'project' | 'worktree'): string {
@@ -263,19 +298,28 @@ export class VaultStore {
 
   private upsert(cwd: string, entry: VaultEntry): void {
     const cur = this.cache(cwd);
+    const key = this.scopeKey(cwd, this.activeDeviceId);
     const without = cur.entries.filter((e) => e.id !== entry.id);
     const next = [...without, entry].sort(
       (a, b) => a.origin.localeCompare(b.origin) || a.username.localeCompare(b.username)
     );
     this.byCwd = {
       ...this.byCwd,
-      [cwd]: { entries: next, loaded: true, loading: false, error: null }
+      [key]: { entries: next, loaded: true, loading: false, error: null }
     };
   }
 
   private requireCwd(): string {
     if (!this.activeCwd) throw new Error('vault: no active worktree');
     return this.activeCwd;
+  }
+
+  private scopeKey(cwd: string, deviceId: DeviceId | null): CwdKey {
+    return deviceId ? `${deviceId}\u0000${cwd}` : cwd;
+  }
+
+  private route(deviceId: DeviceId | null): { deviceId: DeviceId } | Record<string, never> {
+    return deviceId ? { deviceId } : {};
   }
 }
 

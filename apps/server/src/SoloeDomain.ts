@@ -35,6 +35,7 @@ import type {
 } from "../../../shared/types/devices.js";
 import type {
   CreateMultiDeviceSessionRequest,
+  DeviceWorktreeInvokeRequest,
 } from "../../../shared/types/multi-device-sessions.js";
 import type {
   AddMachineConnectionRequest,
@@ -2310,6 +2311,10 @@ export class SoloeDomain extends EventEmitter {
           structuredClone(args[0] as TerminalRef),
         );
         return true;
+      case "invokeWorktree":
+        return this.requireMultiDeviceSessions(deviceSessions).invokeWorktree(
+          structuredClone(args[0] as DeviceWorktreeInvokeRequest),
+        );
       default:
         throw unsupportedRpc("sessions", method);
     }

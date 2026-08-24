@@ -5,6 +5,7 @@ import type {
   FeatureSnapshot
 } from '@shared/types/features.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import type { DeviceId } from '@shared/types/devices.js';
 import {
   worktreeScope,
   worktreeScopeKey,
@@ -16,6 +17,7 @@ import { hasBackendTransport, ipc } from '../lib/ipc';
 export interface FeatureContext {
   runMode: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 }
 
 export type FeatureScope = WorktreeScope & { runMode: RunMode };
@@ -196,6 +198,7 @@ class FeaturesStore {
         cwd: request.scope.cwd,
         runMode: request.scope.runMode,
         ...(request.scope.wslDistro ? { wslDistro: request.scope.wslDistro } : {}),
+        ...(request.scope.deviceId ? { deviceId: request.scope.deviceId } : {}),
         ...(request.slug ? { slug: request.slug } : {}),
         ...(observedRevision ? { observedRevision } : {})
       });
@@ -255,6 +258,7 @@ class FeaturesStore {
         cwd: state.scope.cwd,
         runMode: state.scope.runMode,
         ...(state.scope.wslDistro ? { wslDistro: state.scope.wslDistro } : {}),
+        ...(state.scope.deviceId ? { deviceId: state.scope.deviceId } : {}),
         slug,
         branchId,
         status
@@ -291,6 +295,7 @@ class FeaturesStore {
         cwd: state.scope.cwd,
         runMode: state.scope.runMode,
         ...(state.scope.wslDistro ? { wslDistro: state.scope.wslDistro } : {}),
+        ...(state.scope.deviceId ? { deviceId: state.scope.deviceId } : {}),
         relativePath,
         status
       });
@@ -428,11 +433,13 @@ function toSubscriptionRequest(scope: FeatureScope): {
   cwd: string;
   runMode: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 } {
   return {
     cwd: scope.cwd,
     runMode: scope.runMode,
-    ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+    ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+    ...(scope.deviceId ? { deviceId: scope.deviceId } : {})
   };
 }
 

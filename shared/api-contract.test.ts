@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLIENT_NATIVE_METHODS,
   DEVICE_RPC_METHODS,
+  DEVICE_WORKTREE_RPC_METHODS,
   PWA_PANE_REQUIREMENTS,
   REMOTE_ELECTRON_NATIVE_METHODS,
   SERVER_EVENT_METHODS,
@@ -60,6 +61,14 @@ describe("Soloe API compatibility matrix", () => {
       for (const key of collection) {
         expect(apiKeys, key).toContain(key);
       }
+    }
+  });
+
+  it("keeps remote Worktree forwarding bounded to renderer-visible server RPCs", () => {
+    for (const key of DEVICE_WORKTREE_RPC_METHODS) {
+      expect(apiKeys, key).toContain(key);
+      expect(SERVER_RPC_METHODS, key).toContain(key);
+      expect(SERVER_EVENT_METHODS, key).not.toContain(key);
     }
   });
 

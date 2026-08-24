@@ -11,7 +11,7 @@
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
-  import { sessions } from '../stores/sessions.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { sidebar } from '../stores/sidebar.svelte';
   import { createFeatureScope, featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
@@ -141,15 +141,18 @@
   let notesMountedHere = $derived(tabVisible('notes'));
 
   let activeCwd = $derived.by<string | null>(() => {
-    const cwd = sessions.selected?.cwd?.trim();
+    const cwd = deviceSessions.activeSession?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
   });
   let featureNeedsSetup = $derived.by<boolean>(() => {
-    const selected = sessions.selected;
+    const selected = deviceSessions.activeSession;
     if (!activeCwd || !selected) return false;
     const scope = createFeatureScope(activeCwd, {
       runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
     });
     const snap = featuresStore.stateFor(scope)?.snapshot;
     return snap ? !snap.setup.hasAgentSkillsBlock : false;

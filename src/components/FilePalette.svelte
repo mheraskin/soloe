@@ -3,6 +3,7 @@
   import type { FileSearchResult } from '@shared/types/files.js';
   import { filePalette } from '../stores/file-palette.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { settings } from '../stores/settings.svelte';
   import { filesStore } from '../stores/files.svelte';
@@ -19,12 +20,15 @@
   let searchSeq = 0;
 
   let fileScope = $derived.by(() => {
-    const selected = sessions.selected;
+    const selected = deviceSessions.activeSession;
     if (selected?.cwd) {
       return {
         cwd: selected.cwd,
         runMode: selected.runMode,
-        ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+        ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+        ...(deviceSessions.activeRemoteDeviceId
+          ? { deviceId: deviceSessions.activeRemoteDeviceId }
+          : {})
       };
     }
     const selectedProject = selected?.projectId ? projects.get(selected.projectId) : null;
@@ -79,7 +83,7 @@
   }
 
   async function pasteResult(result: FileSearchResult): Promise<void> {
-    const selected = sessions.selected;
+    const selected = deviceSessions.selectedProjection ? null : sessions.selected;
     const terminalId = selected ? sessions.terminalIdFor(selected.id) : null;
     const lease = terminalId ? terminalControl.lease(terminalId) : null;
     if (!terminalId || !terminalControl.owns(terminalId) || !lease) {

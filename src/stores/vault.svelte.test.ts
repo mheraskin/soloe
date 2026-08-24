@@ -54,6 +54,29 @@ describe('VaultStore project scopes', () => {
     expect(vaultApi.list).toHaveBeenCalledTimes(3);
   });
 
+  it('routes remote Vault requests and isolates identical paths by Device', async () => {
+    const store = new VaultStore();
+    vaultApi.list.mockImplementation(async (
+      { cwd, deviceId }: { cwd: string; deviceId?: string }
+    ) => [entry(`${deviceId ?? 'local'}:${cwd}`, deviceId ?? 'local')]);
+
+    store.setActiveContext({ cwd: '/repo', deviceId: 'device-xps' });
+    await store.ensureLoaded();
+    expect(store.entries[0]?.username).toBe('device-xps');
+
+    store.setActiveContext({ cwd: '/repo', deviceId: 'device-mba' });
+    await store.ensureLoaded();
+    expect(store.entries[0]?.username).toBe('device-mba');
+
+    store.setActiveContext({ cwd: '/repo', deviceId: 'device-xps' });
+    await store.ensureLoaded();
+    expect(store.entries[0]?.username).toBe('device-xps');
+    expect(vaultApi.list.mock.calls.map(([request]) => request)).toEqual([
+      { cwd: '/repo', deviceId: 'device-xps' },
+      { cwd: '/repo', deviceId: 'device-mba' }
+    ]);
+  });
+
   it('routes fill, delete, and project saves to the credential owner', async () => {
     const store = new VaultStore();
     store.setActiveContext({ cwd: '/repo/worktree', projectCwd: '/repo' });

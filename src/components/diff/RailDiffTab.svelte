@@ -29,7 +29,7 @@
   import { onMount, untrack } from 'svelte';
   import type { DiffHunk } from '@shared/types/git.js';
   import { worktreeScopeKey } from '@shared/worktree-identity.js';
-  import { sessions } from '../../stores/sessions.svelte';
+  import { deviceSessions } from '../../stores/device-sessions.svelte';
   import {
     createReviewScope,
     workingDiff,
@@ -106,7 +106,7 @@
     { id: 'committed', label: 'Commits' }
   ];
 
-  let selected = $derived(sessions.selected);
+  let selected = $derived(deviceSessions.activeSession);
 
   // The selected session supplies the repository/runtime context. A branch
   // chosen in the review picker may point at another checkout of that same
@@ -121,7 +121,10 @@
     if (!selectedCwd || !selected) return null;
     return createReviewScope(selectedCwd, {
       runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
     });
   });
   let selectedReviewScopeKey = $derived(

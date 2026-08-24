@@ -52,6 +52,7 @@ describe('MultiDeviceSessionsIpc', () => {
         forwarded: true
       })),
       previewSessionCommand: vi.fn(async () => ({ description: 'pnpm codex' })),
+      invokeWorktree: vi.fn(async () => ({ branch: 'remote-main' })),
       terminalPasteImages: vi.fn(async () => ({
         paths: [],
         insertedText: '\x16'
@@ -90,6 +91,7 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(electronMocks.handlers.has(
       IpcChannels.sessions.deviceTerminalPasteImages
     )).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.invokeWorktree)).toBe(true);
     await expect(invoke(IpcChannels.sessions.deviceState)).resolves.toEqual({
       ok: true,
       value: state
@@ -122,6 +124,18 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(sessions.updateSession).toHaveBeenCalledWith(sessionRef, { name: 'Renamed' });
     expect(sessions.deleteSession).toHaveBeenCalledWith(sessionRef);
     expect(sessions.previewSessionCommand).toHaveBeenCalledWith(sessionRef);
+
+    const worktreeRequest = {
+      deviceId: 'device-1',
+      namespace: 'git' as const,
+      method: 'status',
+      args: [{ cwd: '/srv/app', force: true }]
+    };
+    await expect(invoke(
+      IpcChannels.sessions.invokeWorktree,
+      worktreeRequest
+    )).resolves.toEqual({ ok: true, value: { branch: 'remote-main' } });
+    expect(sessions.invokeWorktree).toHaveBeenCalledWith(worktreeRequest);
 
     await expect(invoke(IpcChannels.sessions.ensureDeviceTailscalePort, {
       deviceId: 'device-1',

@@ -58,7 +58,7 @@
   import { toggleRailTabAndFocus } from './lib/rail-focus';
   import { buildWorktreeGroups } from './lib/worktree-groups';
   import { sameWorktreePath, worktreeBasename, worktreeLabel } from './lib/worktree-path';
-  import { worktreeScope } from '@shared/worktree-identity.js';
+  import { worktreeScope, worktreeScopeKey } from '@shared/worktree-identity.js';
   import { sessionRefreshIntents } from './lib/worktree-polling-policy';
   import { displaySessionKind } from './lib/session-agent';
   import { usesMacosNativeWindowControls } from './lib/platform-ui';
@@ -580,22 +580,53 @@
   // selected session, so its per-worktree open/fullscreen/tab state can be
   // recalled when bouncing between worktrees.
   $effect(() => {
-    const selected = sessions.selected;
+    const selected = deviceSessions.activeSession;
     const cwd = selected?.cwd ?? null;
-    const project = selected?.projectId ? projects.get(selected.projectId) : null;
-    const projectSessions = selected?.projectId
+    const deviceId = deviceSessions.activeRemoteDeviceId;
+    const scope = selected
+      ? worktreeScope(selected.cwd, {
+          ...selected,
+          ...(deviceId ? { deviceId } : {})
+        })
+      : null;
+    const localProject = !deviceId && selected?.projectId
+      ? projects.get(selected.projectId)
+      : null;
+    const localProjectSessions = !deviceId && selected?.projectId
       ? sessions.byProject[selected.projectId] ?? []
       : [];
-    rightRail.setActiveCwd(cwd);
-    browserStore.setActiveScope(selected ? worktreeScope(selected.cwd, selected) : null);
+    const remoteProjectLocations = deviceId
+      ? deviceSessions.activeProject?.workspaces
+          .flatMap((workspace) => workspace.locations)
+          .filter((location) => location.deviceId === deviceId) ?? []
+      : [];
+    const projectCwd = deviceId
+      ? remoteProjectLocations.find((location) => location.isMain)?.path ?? cwd
+      : localProject?.path ?? cwd;
+    const projectScopeCwds = deviceId
+      ? remoteProjectLocations.flatMap((location) => {
+          const context = selected
+            ? {
+                runMode: selected.runMode,
+                ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+                deviceId
+              }
+            : { deviceId };
+          const repoPath = git.statusFor(location.path, context)?.repoPath;
+          return repoPath ? [location.path, repoPath] : [location.path];
+        })
+      : localProjectSessions.flatMap((session) => {
+          const repoPath = git.statusFor(session.cwd, session)?.repoPath;
+          return repoPath ? [session.cwd, repoPath] : [session.cwd];
+        });
+    rightRail.setActiveCwd(scope?.deviceId ? worktreeScopeKey(scope) : cwd);
+    browserStore.setActiveScope(scope);
     elementSourceInspector.setActiveScope(selected ? browserStore.activeWorktreeKey : null);
     vaultStore.setActiveContext({
       cwd,
-      projectCwd: project?.path ?? cwd,
-      projectScopeCwds: projectSessions.flatMap((session) => {
-        const repoPath = git.statusFor(session.cwd, session)?.repoPath;
-        return repoPath ? [session.cwd, repoPath] : [session.cwd];
-      })
+      projectCwd,
+      projectScopeCwds,
+      deviceId
     });
   });
 
@@ -620,7 +651,21 @@
   // Git process churn merely because its terminal remains open in the
   // background.
   $effect(() => {
-    git.setWorktreePolling(sessionRefreshIntents(sessions.sessions, sessions.selectedId));
+    const intents = sessionRefreshIntents(sessions.sessions, sessions.selectedId);
+    const projection = deviceSessions.selectedProjection;
+    const deviceId = deviceSessions.activeRemoteDeviceId;
+    if (projection && deviceId) {
+      intents.push({
+        cwd: projection.session.cwd,
+        cadence: 'foreground',
+        runMode: projection.session.runMode,
+        ...(projection.session.wslDistro
+          ? { wslDistro: projection.session.wslDistro }
+          : {}),
+        deviceId
+      });
+    }
+    git.setWorktreePolling(intents);
   });
 
   function consume(e: KeyboardEvent): void {
@@ -719,7 +764,7 @@
   }
 
   function selectedSessionContext(): { projectId?: string; cwd?: string; branch?: string } {
-    const sel = sessions.selected;
+    const sel = deviceSessions.activeSession;
     return {
       ...(sel?.projectId ? { projectId: sel.projectId } : {}),
       ...(sel?.cwd ? { cwd: sel.cwd } : {}),

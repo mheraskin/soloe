@@ -19,6 +19,7 @@
   import { notes } from '../../stores/notes.svelte';
   import { projects } from '../../stores/projects.svelte';
   import { sessions } from '../../stores/sessions.svelte';
+  import { deviceSessions } from '../../stores/device-sessions.svelte';
   import { confirmStore } from '../../stores/confirm.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
@@ -45,9 +46,14 @@
   let hasSelection = $state(false);
 
   let activeProjectId = $derived(notes.activeProjectId);
-  let activeProject = $derived(activeProjectId ? projects.get(activeProjectId) : null);
+  let activeProject = $derived(
+    deviceSessions.selectedProjection
+      ? deviceSessions.activeProject
+      : activeProjectId ? projects.get(activeProjectId) : null
+  );
 
   let activeTerminalId = $derived.by<string | null>(() => {
+    if (deviceSessions.selectedProjection) return null;
     const sel = sessions.selected;
     if (!sel) return null;
     return sessions.terminalIdFor(sel.id);
@@ -148,8 +154,11 @@
       if (imageDataUrls[ref] || imageRequests.has(ref)) continue;
       const request = ++nextImageRequest;
       imageRequests.set(ref, request);
-      void ipc.notes
-        .readImage(ref)
+      const deviceId = deviceSessions.activeRemoteDeviceId;
+      const image = deviceId
+        ? ipc.notes.readImage(ref, { deviceId })
+        : ipc.notes.readImage(ref);
+      void image
         .then((img) => {
           if (imageRequests.get(ref) !== request || !activeImageRefs.has(ref)) return;
           imageRequests.delete(ref);
@@ -222,7 +231,7 @@
     if (!text) return;
     const id = activeTerminalId;
     if (!id) return;
-    const sel = sessions.selected;
+    const sel = deviceSessions.selectedProjection ? null : sessions.selected;
     try {
       await sendBracketedPaste(id, text, submit, sel ? sessions.providerFor(sel.id) : null);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));

@@ -1,4 +1,5 @@
 import type { RunMode } from '@shared/types/sessions.js';
+import type { DeviceId } from '@shared/types/devices.js';
 import {
   ELEMENT_SOURCE_INSPECTOR_VIEWER_GRACE,
   formatElementLabel,
@@ -18,6 +19,7 @@ export interface InspectorTabContext {
   cwd: string;
   runMode: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
   projectRoot: string;
   worktreeRoots?: readonly string[];
   pageUrl: string;
@@ -38,6 +40,7 @@ export interface ElementSourceViewer {
   cwd: string;
   runMode: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
   projectRoot: string;
   pinned: boolean;
   tagName: string;
@@ -349,6 +352,7 @@ export class ElementSourceInspectorStore {
       cwd: sourceWorktreeRoot,
       runMode: context.runMode,
       ...(context.wslDistro ? { wslDistro: context.wslDistro } : {}),
+      ...(context.deviceId ? { deviceId: context.deviceId } : {}),
       projectRoot: sourceWorktreeRoot,
       pinned: false,
       tagName: payload.tagName?.toLowerCase() ?? 'element',

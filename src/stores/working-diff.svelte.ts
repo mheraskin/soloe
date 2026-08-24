@@ -7,6 +7,7 @@ import type {
   WorkingChangesResult
 } from '@shared/types/git.js';
 import type { RunMode } from '@shared/types/sessions.js';
+import type { DeviceId } from '@shared/types/devices.js';
 import { untrack } from 'svelte';
 import {
   worktreeIdentityKey,
@@ -54,6 +55,7 @@ export type ReviewMode =
 interface RepoContext {
   runMode?: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 }
 
 /** Immutable runtime-qualified scope for one review surface or action. */
@@ -457,7 +459,8 @@ export class WorkingDiffStore {
         : ipc.git.workingChanges({
           cwd: trimmed,
           ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+          ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
           })
       : Promise.resolve<WorkingChangesResult>({
           repoPath: previous?.result?.repoPath ?? null,
@@ -470,7 +473,8 @@ export class WorkingDiffStore {
           base: mode.base,
           head: mode.head,
           ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+          ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+          ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
         })
       : null;
 
@@ -635,7 +639,8 @@ export class WorkingDiffStore {
         ...(base ? { base } : {}),
         ...(head ? { head } : {}),
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       });
       const current = this.diffsByKey[key];
       if (current?.generation !== generation) return diff;
@@ -727,7 +732,8 @@ export class WorkingDiffStore {
         ...(base ? { base } : {}),
         ...(head ? { head } : {}),
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       });
       // Register each batch member before yielding. Overlapping viewport
       // effects now join these promises, and a direct selected-file request
@@ -881,7 +887,8 @@ export class WorkingDiffStore {
         startLine,
         endLine,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       })
       .then((result): FileLinesEntry => {
         const entry: FileLinesEntry = {
@@ -966,7 +973,8 @@ export class WorkingDiffStore {
         path: filePath,
         head,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       })
       .then((result): BlameEntry => {
         const byLine: (BlameLine | undefined)[] = [];
@@ -1076,7 +1084,8 @@ export class WorkingDiffStore {
         cwd: trimmed,
         paths,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       });
     } catch (err) {
       if (previous) this.restoreStagedLocally(identity, previous);
@@ -1100,7 +1109,8 @@ export class WorkingDiffStore {
         cwd: trimmed,
         paths,
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       });
     } catch (err) {
       if (previous) this.restoreStagedLocally(identity, previous);
@@ -1135,7 +1145,8 @@ export class WorkingDiffStore {
           ...(f.fromPath ? { fromPath: f.fromPath } : {})
         })),
         ...(ctx.runMode ? { runMode: ctx.runMode } : {}),
-        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {})
+        ...(ctx.wslDistro ? { wslDistro: ctx.wslDistro } : {}),
+        ...(ctx.deviceId ? { deviceId: ctx.deviceId } : {})
       });
     } finally {
       this.markPending(identity, paths, false);

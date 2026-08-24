@@ -1,8 +1,10 @@
 import type { RunMode } from './types/sessions.js';
+import type { DeviceId } from './types/devices.js';
 
 export interface WorktreeRuntimeContext {
   runMode?: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 }
 
 /** Immutable address for operations and state owned by one Worktree. */
@@ -16,6 +18,7 @@ export interface WorktreeIdentity {
   pathKey: string;
   runMode: RunMode | null;
   wslDistro: string | null;
+  deviceId?: DeviceId;
 }
 
 /**
@@ -37,12 +40,16 @@ export function worktreeIdentity(
     : normalizedPath;
   const wslDistro = runMode === 'wsl' ? context.wslDistro?.trim() || null : null;
   const distroKey = wslDistro?.toLocaleLowerCase('en-US') ?? '';
+  const deviceId = context.deviceId?.trim() || null;
   return {
-    key: JSON.stringify([runMode ?? '', distroKey, pathKey]),
+    key: deviceId
+      ? JSON.stringify([deviceId, runMode ?? '', distroKey, pathKey])
+      : JSON.stringify([runMode ?? '', distroKey, pathKey]),
     path: normalizedPath,
     pathKey,
     runMode,
-    wslDistro
+    wslDistro,
+    ...(deviceId ? { deviceId } : {})
   };
 }
 
@@ -60,7 +67,8 @@ export function worktreeScope(
   return {
     cwd: cwd.trim(),
     ...(context.runMode ? { runMode: context.runMode } : {}),
-    ...(context.wslDistro ? { wslDistro: context.wslDistro } : {})
+    ...(context.wslDistro ? { wslDistro: context.wslDistro } : {}),
+    ...(context.deviceId ? { deviceId: context.deviceId } : {})
   };
 }
 
@@ -71,7 +79,8 @@ export function worktreeScopeKey(scope: WorktreeScope): string {
 export function worktreeRuntimeContext(scope: WorktreeScope): WorktreeRuntimeContext {
   return {
     ...(scope.runMode ? { runMode: scope.runMode } : {}),
-    ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {})
+    ...(scope.wslDistro ? { wslDistro: scope.wslDistro } : {}),
+    ...(scope.deviceId ? { deviceId: scope.deviceId } : {})
   };
 }
 
@@ -89,7 +98,10 @@ export function worktreeRuntimeKey(context: WorktreeRuntimeContext = {}): string
   const distro = runMode === 'wsl'
     ? context.wslDistro?.trim().toLocaleLowerCase('en-US') ?? ''
     : '';
-  return JSON.stringify([runMode, distro]);
+  const deviceId = context.deviceId?.trim() ?? '';
+  return deviceId
+    ? JSON.stringify([deviceId, runMode, distro])
+    : JSON.stringify([runMode, distro]);
 }
 
 export function normalizeWorktreeDisplayPath(path: string, windows: boolean): string {

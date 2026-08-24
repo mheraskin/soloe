@@ -1,3 +1,4 @@
+import type { DeviceId } from '@shared/types/devices.js';
 import type { ProjectId } from '@shared/types/projects.js';
 import type { NoteImage, NoteImagePayload, NoteSummary } from '@shared/types/notes.js';
 import {
@@ -6,7 +7,7 @@ import {
   type WorktreeScope
 } from '@shared/worktree-identity.js';
 import { ipc } from '../lib/ipc';
-import { sessions } from './sessions.svelte';
+import { deviceSessions } from './device-sessions.svelte';
 import { settings } from './settings.svelte';
 import {
   NotesDraftPersistence,
@@ -140,14 +141,17 @@ export class NotesStore {
   statusByProject = $state<Record<ProjectId, NotesStatus>>({});
   errorMessageByProject = $state<Record<ProjectId, string | null>>({});
 
-  activeProjectId = $derived<ProjectId | null>(sessions.selected?.projectId ?? null);
-  activeWorktreeCwd = $derived<string | null>(sessions.selected?.cwd ?? null);
+  activeProjectId = $derived<ProjectId | null>(deviceSessions.activeSession?.projectId ?? null);
+  activeWorktreeCwd = $derived<string | null>(deviceSessions.activeSession?.cwd ?? null);
   activeWorktreeScope = $derived.by<WorktreeScope | null>(() => {
-    const selected = sessions.selected;
+    const selected = deviceSessions.activeSession;
     if (!selected) return null;
     return worktreeScope(selected.cwd, {
       runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
     });
   });
   activeWorktreeKey = $derived<string | null>(
@@ -196,6 +200,8 @@ export class NotesStore {
   private savedFlushRequests = new Map<ProjectId, Promise<void>>();
   private selectionGeneration = new Map<ProjectId, number>();
   private listChangeVersions = new Map<ProjectId, number>();
+  private remoteDeviceByProject = new Map<ProjectId, DeviceId>();
+  private routeMarkerByProject = new Map<ProjectId, string>();
   private reconnectRecovery: Promise<void> | null = null;
 
   constructor(
@@ -219,6 +225,21 @@ export class NotesStore {
     this.detach();
     this.detachers.push(
       ipc.notes.onChange((event) => {
+        const eventDeviceId =
+          'deviceId' in event && typeof event.deviceId === 'string'
+            ? event.deviceId
+            : null;
+        if (
+          deviceSessions.activeSession?.projectId === event.projectId
+          && deviceSessions.activeRemoteDeviceId !== eventDeviceId
+        ) return;
+        const routedDeviceId = this.remoteDeviceByProject.get(event.projectId) ?? null;
+        if (routedDeviceId !== eventDeviceId && this.loadedProjects[event.projectId]) return;
+        if (eventDeviceId) {
+          this.remoteDeviceByProject.set(event.projectId, eventDeviceId);
+        } else {
+          this.remoteDeviceByProject.delete(event.projectId);
+        }
         this.listChangeVersions.set(
           event.projectId,
           (this.listChangeVersions.get(event.projectId) ?? 0) + 1
@@ -257,13 +278,17 @@ export class NotesStore {
   }
 
   async ensureLoaded(projectId: ProjectId): Promise<void> {
+    this.activateProjectRoute(projectId);
     if (this.loadedProjects[projectId]) return;
     await this.refresh(projectId);
   }
 
   async refresh(projectId: ProjectId): Promise<void> {
     const changeVersion = this.listChangeVersions.get(projectId) ?? 0;
-    const list = await ipc.notes.list(projectId);
+    const route = this.routeForProject(projectId);
+    const list = route
+      ? await ipc.notes.list(projectId, route)
+      : await ipc.notes.list(projectId);
     if ((this.listChangeVersions.get(projectId) ?? 0) === changeVersion) {
       this.applyNoteList(projectId, list);
     }
@@ -357,7 +382,10 @@ export class NotesStore {
     this.errorMessageByProject = { ...this.errorMessageByProject, [id]: null };
     this.rememberSelection(filename);
     try {
-      const note = await ipc.notes.read(id, filename);
+      const route = this.routeForProject(id);
+      const note = route
+        ? await ipc.notes.read(id, filename, route)
+        : await ipc.notes.read(id, filename);
       if (!this.isCurrentSelection(id, filename, generation)) return;
       const recovery = this.savedRecoveryByNote[savedNoteRecoveryKey(id, filename)];
       const content = recovery ?? note.content;
@@ -387,7 +415,10 @@ export class NotesStore {
     const content = this.readDraftAt(draftLocation);
     this.statusByProject = { ...this.statusByProject, [id]: 'saving' };
     try {
-      const note = await ipc.notes.write(id, filename, content, null);
+      const route = this.routeForProject(id);
+      const note = route
+        ? await ipc.notes.write(id, filename, content, null, route)
+        : await ipc.notes.write(id, filename, content, null);
       const draftUnchanged = this.readDraftAt(draftLocation) === content;
       if (draftUnchanged) this.clearDraftAt(draftLocation);
       await this.refresh(id);
@@ -467,12 +498,11 @@ export class NotesStore {
     if (content === (this.savedDiskByProject[projectId] ?? '')) return;
     this.statusByProject = { ...this.statusByProject, [projectId]: 'saving' };
     try {
-      const note = await ipc.notes.write(
-        projectId,
-        filename,
-        content,
-        this.savedRevisionByProject[projectId]
-      );
+      const expectedRevision = this.savedRevisionByProject[projectId];
+      const route = this.routeForProject(projectId);
+      const note = route
+        ? await ipc.notes.write(projectId, filename, content, expectedRevision, route)
+        : await ipc.notes.write(projectId, filename, content, expectedRevision);
       this.savedDiskByProject = { ...this.savedDiskByProject, [projectId]: note.content };
       this.savedRevisionByProject = {
         ...this.savedRevisionByProject,
@@ -504,7 +534,10 @@ export class NotesStore {
     const id = this.activeProjectId;
     if (!id) return;
     if (this.viewByProject[id] === oldName) await this.flushSaved(id);
-    const summary = await ipc.notes.rename(id, oldName, newName);
+    const route = this.routeForProject(id);
+    const summary = route
+      ? await ipc.notes.rename(id, oldName, newName, route)
+      : await ipc.notes.rename(id, oldName, newName);
     if (this.viewByProject[id] === oldName) {
       this.invalidateSelection(id);
       this.viewByProject = { ...this.viewByProject, [id]: summary.filename };
@@ -516,7 +549,9 @@ export class NotesStore {
     const id = this.activeProjectId;
     if (!id) return;
     if (this.viewByProject[id] === filename) await this.flushSaved(id);
-    await ipc.notes.delete(id, filename);
+    const route = this.routeForProject(id);
+    if (route) await ipc.notes.delete(id, filename, route);
+    else await ipc.notes.delete(id, filename);
     this.removeSavedRecovery(id, filename);
     if (this.viewByProject[id] === filename) {
       this.invalidateSelection(id);
@@ -537,6 +572,7 @@ export class NotesStore {
     const id = this.activeProjectId;
     const scope = this.activeWorktreeScope;
     if (!id || !scope) return;
+    this.activateProjectRoute(id);
     const identityKey = worktreeScopeKey(scope);
     this.migrateLegacyDraft(id, scope);
     let entry = this.viewByWorktree[identityKey];
@@ -647,7 +683,10 @@ export class NotesStore {
     if (!id) return [];
     const saved: NoteImage[] = [];
     for (const p of payloads) {
-      const image = await ipc.notes.saveImage(id, p.mimeType, p.dataBase64);
+      const route = this.routeForProject(id);
+      const image = route
+        ? await ipc.notes.saveImage(id, p.mimeType, p.dataBase64, route)
+        : await ipc.notes.saveImage(id, p.mimeType, p.dataBase64);
       saved.push(image);
     }
     return saved;
@@ -669,7 +708,9 @@ export class NotesStore {
       if (content && content.length > 0) extras.push(content);
     }
     try {
-      await ipc.notes.cleanupImages(id, extras);
+      const route = this.routeForProject(id);
+      if (route) await ipc.notes.cleanupImages(id, extras, route);
+      else await ipc.notes.cleanupImages(id, extras);
     } catch {
       // best-effort — leaving an orphan is harmless
     }
@@ -677,6 +718,38 @@ export class NotesStore {
 
   private get draftsPerWorktreeEnabled(): boolean {
     return settings.current.notes?.draftsPerWorktree === true;
+  }
+
+  private routeForProject(projectId: ProjectId): { deviceId: DeviceId } | undefined {
+    if (deviceSessions.activeSession?.projectId === projectId) {
+      const activeDeviceId = deviceSessions.activeRemoteDeviceId;
+      if (activeDeviceId) {
+        this.remoteDeviceByProject.set(projectId, activeDeviceId);
+        return { deviceId: activeDeviceId };
+      }
+      this.remoteDeviceByProject.delete(projectId);
+      return undefined;
+    }
+    const deviceId = this.remoteDeviceByProject.get(projectId);
+    return deviceId ? { deviceId } : undefined;
+  }
+
+  private activateProjectRoute(projectId: ProjectId): void {
+    if (deviceSessions.activeSession?.projectId !== projectId) return;
+    const deviceId = deviceSessions.activeRemoteDeviceId;
+    const marker = deviceId ?? 'local';
+    const previous = this.routeMarkerByProject.get(projectId);
+    this.routeMarkerByProject.set(projectId, marker);
+    if (deviceId) this.remoteDeviceByProject.set(projectId, deviceId);
+    else this.remoteDeviceByProject.delete(projectId);
+    if (!previous || previous === marker) return;
+    this.invalidateSelection(projectId);
+    this.listsByProject = { ...this.listsByProject, [projectId]: [] };
+    this.loadedProjects = { ...this.loadedProjects, [projectId]: false };
+    this.viewByProject = { ...this.viewByProject, [projectId]: null };
+    this.savedContentByProject = { ...this.savedContentByProject, [projectId]: '' };
+    this.savedDiskByProject = { ...this.savedDiskByProject, [projectId]: '' };
+    this.savedRevisionByProject = { ...this.savedRevisionByProject, [projectId]: '' };
   }
 
   private activeDraftLocation(): DraftLocation | null {

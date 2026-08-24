@@ -35,6 +35,23 @@ describe('Worktree Identity', () => {
     )).toBe(true);
   });
 
+  it('isolates identical Worktree paths owned by different Devices', () => {
+    const first = worktreeScope('/home/me/repo', {
+      runMode: 'linux',
+      deviceId: 'device-first'
+    });
+    const second = worktreeScope('/home/me/repo', {
+      runMode: 'linux',
+      deviceId: 'device-second'
+    });
+
+    expect(worktreeScopeKey(first)).not.toBe(worktreeScopeKey(second));
+    expect(worktreeRuntimeContext(first)).toEqual({
+      runMode: 'linux',
+      deviceId: 'device-first'
+    });
+  });
+
   it('projects an immutable scope into identity and execution context', () => {
     const scope = worktreeScope('/home/me/repo/', {
       runMode: 'wsl',

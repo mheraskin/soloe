@@ -17,7 +17,7 @@
   import type { GitStatusEntry } from '@pierre/trees';
   import type { GitBranch as GitBranchInfo, WorkingChange } from '@shared/types/git.js';
   import { worktreeRuntimeContext, worktreeScopeKey } from '@shared/worktree-identity.js';
-  import { sessions } from '../../stores/sessions.svelte';
+  import { deviceSessions } from '../../stores/device-sessions.svelte';
   import {
     createFilesScope,
     filesStore,
@@ -91,7 +91,7 @@
     return () => ro.disconnect();
   });
 
-  let selected = $derived(sessions.selected);
+  let selected = $derived(deviceSessions.activeSession);
   let activeCwd = $derived.by<string | null>(() => {
     const cwd = selected?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
@@ -100,14 +100,20 @@
     if (!activeCwd || !selected) return null;
     return createReviewScope(activeCwd, {
       runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
     });
   });
   let worktreeFilesScope = $derived.by<FilesScope | null>(() => {
     if (!activeCwd || !selected) return null;
     return createFilesScope(activeCwd, {
       runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
     });
   });
   let selectedRevision = $state<string | null>(null);
@@ -125,7 +131,8 @@
         runMode: worktreeFilesScope.runMode,
         ...(worktreeFilesScope.wslDistro
           ? { wslDistro: worktreeFilesScope.wslDistro }
-          : {})
+          : {}),
+        ...(worktreeFilesScope.deviceId ? { deviceId: worktreeFilesScope.deviceId } : {})
       },
       selectedRevision ?? undefined
     );

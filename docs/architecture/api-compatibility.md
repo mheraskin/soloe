@@ -54,7 +54,7 @@ In the table below:
 | `features` | `scan`, `setBranchStatus`, `setIssueStatus`, `subscribe`, `unsubscribe`, `onChange` | IPC | Server | Server | Application Server |
 | `vault` | `list`, `save`, `update`, `delete`, `getSecret`, `onChange` | IPC | Server | Server | Application Server |
 | `browser` | `enableDeviceEmulation`, `disableDeviceEmulation`, `setUserAgent`, `openDevTools`, `setDevToolsLayout`, `closeDevTools` | Native | Native | Unavailable | Electron WebContents |
-| `sessions` multi-Device extension | Device inventory state/refresh, plan+confirm creation, composite terminal demand/input/image-paste/takeover/replay/resize/stop, Device events | Server | Server | Server | Application Server Sessions module, with effects delegated to the owning Device/Runtime |
+| `sessions` multi-Device extension | Device inventory state/refresh, plan+confirm creation, composite terminal demand/input/image-paste/takeover/replay/resize/stop, allowlisted Worktree-pane routing, Device events | Server | Server | Server | Application Server Sessions module, with effects delegated to the owning Device/Runtime |
 
 Multi-Device image paste sends clipboard bytes to the Device that owns the
 Claude Code or Codex process. That Device saves the image and inserts its local
@@ -73,9 +73,12 @@ renderer code does not own those operations.
 
 ## Device protocol extensions
 
-The renderer does not receive generic Git or arbitrary RPC forwarding. The
-host-private `SessionDevice` negotiates the authenticated Device descriptor, then
-uses the following typed server capabilities:
+The renderer does not receive arbitrary RPC forwarding. Worktree panes use a
+bounded `sessions.invokeWorktree` route whose namespace and method must be in
+`DEVICE_WORKTREE_RPC_METHODS`; the host then sends the request to the Device
+that owns the selected Workspace Location. The host-private `SessionDevice`
+negotiates the authenticated Device descriptor, then uses the following typed
+server capabilities:
 
 | Capability | Device RPCs | Authority |
 | --- | --- | --- |
@@ -84,6 +87,7 @@ uses the following typed server capabilities:
 | Workspace device state | `workspaceDevice.snapshot`, `plan`, `execute`, `getCommand` | Application Server and Device operation journal |
 | Placed Sessions | preallocated create and optimistic Session Source binding | Application Server Session store |
 | Terminal control | acquire/current/release identity-qualified Session Control plus lease-authorized input/resize and ordinary replay/stop | Environment Runtime |
+| Worktree panes | allowlisted Notes, Git, Files, Overview, Features, and Vault RPCs plus Device-qualified change events | Owning Device's Application Server |
 | GitHub publication | provider status/owners, repository plan/execute/getCommand | Device-local provider adapter and journal |
 
 `DeviceCommandEnvelope` binds a UUID command to client, actor client, target

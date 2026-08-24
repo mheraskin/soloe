@@ -120,6 +120,25 @@ export interface BrowseDeviceWorkspaceDirectoriesRequest {
   path?: string;
 }
 
+export type DeviceWorktreeNamespace =
+  | 'notes'
+  | 'git'
+  | 'files'
+  | 'overview'
+  | 'features'
+  | 'vault';
+
+/**
+ * A bounded request routed to the Device that owns a physical Workspace
+ * Location. The host validates namespace and method before forwarding it.
+ */
+export interface DeviceWorktreeInvokeRequest {
+  deviceId: DeviceId;
+  namespace: DeviceWorktreeNamespace;
+  method: string;
+  args: unknown[];
+}
+
 export interface MultiDeviceSessionCreationPlan {
   planId: string;
   workspaceKey: string | null;

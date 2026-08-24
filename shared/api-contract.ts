@@ -34,6 +34,7 @@ export const SOLOE_API_METHODS = {
     "deviceTerminalResize",
     "deviceTerminalHistory",
     "deviceTerminalStop",
+    "invokeWorktree",
     "onChange",
     "onDelete",
     "onDeviceStateChange",
@@ -248,6 +249,26 @@ export const DEVICE_RPC_METHODS = new Set<string>([
   "workspaceDevice.getCommand",
   "sessions.createPlaced",
   "sessions.bindSource",
+]);
+
+/** Renderer-visible Worktree operations that a multi-Device host may forward. */
+export const DEVICE_WORKTREE_RPC_METHODS = new Set<string>([
+  ...SOLOE_API_METHODS.notes
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `notes.${method}`),
+  ...SOLOE_API_METHODS.git
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `git.${method}`),
+  ...SOLOE_API_METHODS.files.map((method) => `files.${method}`),
+  ...SOLOE_API_METHODS.overview
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `overview.${method}`),
+  ...SOLOE_API_METHODS.features
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `features.${method}`),
+  ...SOLOE_API_METHODS.vault
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `vault.${method}`),
 ]);
 
 export const SERVER_RPC_METHODS = new Set<string>([

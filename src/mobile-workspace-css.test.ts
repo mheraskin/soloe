@@ -15,3 +15,23 @@ describe('mobile workspace terminal clearance', () => {
     );
   });
 });
+
+describe('narrow pane toolbars', () => {
+  it('keeps shared pane headers on one horizontally scrollable row', () => {
+    expect(css).toMatch(
+      /\.soloe-pane-header\s*\{[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*hidden/s
+    );
+  });
+
+  it('scrolls the Browser controls horizontally instead of wrapping them', () => {
+    expect(css).toMatch(
+      /\.mobile-browser-toolbar\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/s
+    );
+  });
+
+  it('keeps terminal branch and action controls available on narrow screens', () => {
+    expect(css).not.toMatch(
+      /\.session-toolbar-branch,\s*\.session-toolbar-actions\s*>\s*:not\(:last-child\)\s*\{[^}]*display:\s*none/s
+    );
+  });
+});

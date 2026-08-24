@@ -3,7 +3,8 @@ import { WebSocket } from 'ws';
 
 import type {
   SessionDeviceSnapshot,
-  DeviceTerminalHistory
+  DeviceTerminalHistory,
+  DeviceWorktreeInvokeRequest
 } from '@shared/types/multi-device-sessions.js';
 import type {
   DeviceDescriptor,
@@ -285,6 +286,13 @@ export class RemoteSessionDevice implements SessionDevice {
 
   pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult> {
     return this.rpc('files', 'pasteImagesIntoTerminal', [structuredClone(request)]);
+  }
+
+  invokeWorktree(request: DeviceWorktreeInvokeRequest): Promise<unknown> {
+    if (request.deviceId !== this.deviceId) {
+      return Promise.reject(new Error(`Worktree request targets Device ${request.deviceId}.`));
+    }
+    return this.rpc(request.namespace, request.method, structuredClone(request.args));
   }
 
   terminalAcquireInputLease(

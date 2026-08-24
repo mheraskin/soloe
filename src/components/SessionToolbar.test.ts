@@ -70,6 +70,7 @@ describe('SessionToolbar', () => {
     expect(target.querySelector('.session-toolbar')).not.toBeNull();
     expect(target.textContent).toContain('Remote terminal');
     expect(target.textContent).toContain('xps');
+    expect(target.querySelector('.session-toolbar-branch')).not.toBeNull();
     expect(target.querySelector('[aria-label="More actions"]')).not.toBeNull();
     const close = target.querySelector<HTMLButtonElement>('[aria-label="Close remote terminal"]');
     expect(close).not.toBeNull();

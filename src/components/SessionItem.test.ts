@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   openSession: vi.fn(async () => undefined),
   selectSession: vi.fn(),
   selectLocalSession: vi.fn(),
-  startLocalSession: vi.fn(async () => undefined)
+  startLocalSession: vi.fn(async () => undefined),
+  rightRail: { fullscreen: true }
 }));
 
 vi.mock('../stores/sessions.svelte', () => ({
@@ -56,6 +57,7 @@ vi.mock('../stores/session-context-menus.svelte', () => ({
 }));
 vi.mock('../stores/session-handoff.svelte', () => ({ sessionHandoff: { open: vi.fn() } }));
 vi.mock('../stores/modal.svelte', () => ({ modal: { openEdit: vi.fn() } }));
+vi.mock('../stores/right-rail.svelte', () => ({ rightRail: mocks.rightRail }));
 vi.mock('../stores/toast.svelte', () => ({ reportError: vi.fn() }));
 vi.mock('../lib/ipc', () => ({
   ipc: { system: { openPath: vi.fn() }, sessions: { previewCommand: vi.fn() } }
@@ -74,6 +76,7 @@ describe('SessionItem lifecycle', () => {
     mounted = null;
     document.body.innerHTML = '';
     vi.clearAllMocks();
+    mocks.rightRail.fullscreen = true;
   });
 
   it.each(['stopped', 'exited'] as const)(
@@ -152,5 +155,46 @@ describe('SessionItem lifecycle', () => {
 
     expect(mocks.selectLocalSession).toHaveBeenCalledWith('session-local');
     expect(mocks.startLocalSession).toHaveBeenCalledWith('session-local');
+  });
+
+  it('activates a running remote Session through the same restoration path as Resume', () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    const session = {
+      id: 'session-running',
+      name: 'Remote Codex',
+      cwd: '/home/dev/soloe',
+      runMode: 'linux' as const,
+      launch: { type: 'agent' as const, provider: 'codex' as const, resumeMode: 'new' as const },
+      createdAt: '2026-08-16T00:00:00.000Z',
+      lastUsedAt: '2026-08-16T00:00:00.000Z'
+    };
+    mounted = mount(SessionItem, {
+      target,
+      props: {
+        session,
+        projection: {
+          ref: { deviceId: 'device-xps', sessionId: session.id },
+          key: `device-xps/${session.id}`,
+          deviceName: 'xps',
+          available: true,
+          session,
+          lifecycleStatus: 'running',
+          runtime: {
+            sessionId: session.id,
+            terminalId: 'terminal-running',
+            status: 'running'
+          },
+          observation: null
+        }
+      }
+    });
+    flushSync();
+
+    target.querySelector<HTMLElement>(`[data-session-id="device-xps/${session.id}"]`)?.click();
+
+    expect(mocks.openSession).toHaveBeenCalledWith(`device-xps/${session.id}`);
+    expect(mocks.selectSession).not.toHaveBeenCalled();
+    expect(mocks.rightRail.fullscreen).toBe(false);
   });
 });

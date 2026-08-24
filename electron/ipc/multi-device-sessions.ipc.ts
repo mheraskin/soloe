@@ -1,6 +1,9 @@
 import { ipcMain, type BrowserWindow } from 'electron';
 import { IpcChannels } from '@shared/types/ipc.js';
-import type { CreateMultiDeviceSessionRequest } from '@shared/types/multi-device-sessions.js';
+import type {
+  CreateMultiDeviceSessionRequest,
+  DeviceWorktreeInvokeRequest
+} from '@shared/types/multi-device-sessions.js';
 import type { MultiDeviceSessions } from '../sessions/MultiDeviceSessions.js';
 import type { SessionRef, TerminalRef } from '@shared/types/devices.js';
 import type { TerminalControlProof } from '@shared/types/terminal.js';
@@ -36,6 +39,7 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'terminalResize'
     | 'terminalHistory'
     | 'terminalStop'
+    | 'invokeWorktree'
   >;
   getWindows: () => BrowserWindow[];
 }
@@ -198,6 +202,11 @@ export class MultiDeviceSessionsIpc {
         await this.options.sessions.terminalStop(structuredClone(ref));
         return true as const;
       })
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.invokeWorktree,
+      (_event, request: DeviceWorktreeInvokeRequest) =>
+        ipcInvoke(() => this.options.sessions.invokeWorktree(structuredClone(request)))
     );
     this.detachState = this.options.sessions.onState((state) => {
       for (const win of this.options.getWindows()) {

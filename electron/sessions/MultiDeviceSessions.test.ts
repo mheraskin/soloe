@@ -424,6 +424,48 @@ describe('MultiDeviceSessions', () => {
     await expect(sessions.terminalCurrentInputLease(ref)).resolves.toBeNull();
   });
 
+  it('routes Worktree pane requests to the Device that owns the selected Location', async () => {
+    const mac = fakeDevice({
+      deviceId: MAC_ID,
+      name: 'MacBook',
+      projectId: 'mac-soloe',
+      projectPath: '/Users/me/soloe',
+      workspacePath: '/Users/me/soloe',
+      branch: 'main',
+      sessions: [],
+      local: true
+    });
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    const sessions = new MultiDeviceSessions({ devices: [mac, laptop] });
+    await sessions.refresh();
+    const request = {
+      deviceId: LAPTOP_ID,
+      namespace: 'git' as const,
+      method: 'workingTreeSnapshot',
+      args: [{
+        cwd: 'C:\\src\\soloe-feature',
+        force: true,
+        runMode: 'windows'
+      }]
+    };
+
+    await expect(sessions.invokeWorktree(request)).resolves.toEqual({
+      branch: 'feature/multi-device',
+      changes: []
+    });
+
+    expect(mac.worktreeRequests).toEqual([]);
+    expect(laptop.worktreeRequests).toEqual([request]);
+  });
+
   it('starts a stopped Session on its owning Device before opening it', async () => {
     const laptop = fakeDevice({
       deviceId: LAPTOP_ID,
@@ -670,6 +712,12 @@ function fakeDevice(input: {
   startedSessionIds: string[];
   terminalInputs: Array<{ terminalId: string; data: string }>;
   imagePastes: ImagePasteRequest[];
+  worktreeRequests: Array<{
+    deviceId: string;
+    namespace: string;
+    method: string;
+    args: unknown[];
+  }>;
   readonly disposed: boolean;
   plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[];
   openedProjectPaths: string[];
@@ -722,6 +770,12 @@ function fakeDevice(input: {
   const startedSessionIds: string[] = [];
   const terminalInputs: Array<{ terminalId: string; data: string }> = [];
   const imagePastes: ImagePasteRequest[] = [];
+  const worktreeRequests: Array<{
+    deviceId: string;
+    namespace: string;
+    method: string;
+    args: unknown[];
+  }> = [];
   const terminalLeases = new Map<string, import('@shared/types/terminal.js').TerminalInputLease>();
   const plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[] = [];
   const openedProjectPaths: string[] = [];
@@ -776,6 +830,13 @@ function fakeDevice(input: {
       return {
         paths: [],
         insertedText: '\x16'
+      };
+    },
+    invokeWorktree: async (request) => {
+      worktreeRequests.push(structuredClone(request));
+      return {
+        branch: input.branch,
+        changes: []
       };
     },
     terminalAcquireInputLease: async (
@@ -945,6 +1006,7 @@ function fakeDevice(input: {
     openedProjectPaths,
     terminalInputs,
     imagePastes,
+    worktreeRequests,
     reorderRequests,
     updateRequests,
     deletedSessionIds,

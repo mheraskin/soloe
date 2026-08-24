@@ -16,9 +16,18 @@
     min-height: 2rem;
     align-items: center;
     gap: 0.375rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
     border-bottom: 1px solid var(--border);
     background: color-mix(in oklab, var(--card) 72%, transparent);
     padding-inline: 0.5rem;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .soloe-pane-header::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -407,11 +416,6 @@
     max-width: min(48vw, 18rem) !important;
   }
 
-  .session-toolbar-branch,
-  .session-toolbar-actions > :not(:last-child) {
-    display: none;
-  }
-
   .session-toolbar-actions [data-slot='button'] {
     width: 2.75rem;
     height: 2.75rem;
@@ -785,7 +789,7 @@
 
   .mobile-rail-header {
     min-height: 3.5rem;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     padding: 0.5rem;
   }
 
@@ -818,14 +822,24 @@
   }
 
   .mobile-browser-toolbar {
-    flex-wrap: wrap;
-    justify-content: center;
+    min-height: 3.5rem;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
     padding: 0.375rem 0.5rem;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .mobile-browser-toolbar > .relative.min-w-0.flex-1 {
-    order: -1;
-    flex-basis: 100%;
+  .mobile-browser-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mobile-browser-toolbar > .relative.flex-1 {
+    min-width: min(18rem, 65vw);
+    flex: 0 0 min(18rem, 65vw);
   }
 
   .mobile-browser-toolbar [data-slot='button'] {

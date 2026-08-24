@@ -19,7 +19,7 @@
     createFilesScope,
     filesStore
   } from '../stores/files.svelte';
-  import { sessions } from '../stores/sessions.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { rightRail } from '../stores/right-rail.svelte';
   import { elementSourceInspector, type ElementSourceViewer, type SourceHistoryEntry } from '../stores/element-source-inspector.svelte';
   import { worktreeScopeKey } from '@shared/worktree-identity.js';
@@ -260,7 +260,8 @@
     }
     const scope = createFilesScope(viewer.cwd, {
       runMode: viewer.runMode,
-      ...(viewer.wslDistro ? { wslDistro: viewer.wslDistro } : {})
+      ...(viewer.wslDistro ? { wslDistro: viewer.wslDistro } : {}),
+      ...(viewer.deviceId ? { deviceId: viewer.deviceId } : {})
     });
     const requestedPath = frame.filePath;
     const previewKey = sourcePreviewKey(viewer, requestedPath);
@@ -345,14 +346,18 @@
     const entry = currentEntry(viewer);
     const frame = entry?.frame;
     if (!frame) return;
-    const selected = sessions.selected;
+    const selected = deviceSessions.activeSession;
     const scope = createFilesScope(viewer.cwd, {
       runMode: viewer.runMode,
-      ...(viewer.wslDistro ? { wslDistro: viewer.wslDistro } : {})
+      ...(viewer.wslDistro ? { wslDistro: viewer.wslDistro } : {}),
+      ...(viewer.deviceId ? { deviceId: viewer.deviceId } : {})
     });
     if (!selected || worktreeScopeKey(createFilesScope(selected.cwd, {
       runMode: selected.runMode,
-      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+      ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+      ...(deviceSessions.activeRemoteDeviceId
+        ? { deviceId: deviceSessions.activeRemoteDeviceId }
+        : {})
     })) !== worktreeScopeKey(scope)) {
       elementSourceInspector.updateViewer(viewer.id, {
         status: 'error',

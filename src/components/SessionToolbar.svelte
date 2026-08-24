@@ -35,6 +35,12 @@
 
   let { onOpenNavigation, projection = null, onClose = null }: Props = $props();
   let selected = $derived(projection?.session ?? sessions.selected);
+  let worktreeDeviceId = $derived(
+    projection && deviceSessions.state?.devices
+      ?.find((device) => device.deviceId === projection.ref.deviceId)?.local !== true
+      ? projection.ref.deviceId
+      : undefined
+  );
   let status = $derived(
     projection
       ? deviceSessionStatus(projection)
@@ -73,7 +79,8 @@
         absolutePath: selected.cwd,
         cwd: selected.cwd,
         runMode: selected.runMode,
-        ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {})
+        ...(selected.wslDistro ? { wslDistro: selected.wslDistro } : {}),
+        ...(worktreeDeviceId ? { deviceId: worktreeDeviceId } : {})
       });
       toasts.push('Opened cwd in editor', 'info');
     } catch (e) {
@@ -110,7 +117,7 @@
     </Button>
   {/if}
   {#if selected}
-    <div class="flex min-w-0 flex-1 items-center gap-1.5">
+    <div class="session-toolbar-content flex min-w-max flex-1 shrink-0 items-center gap-1.5">
       <StatusDot {status} />
       <KindIcon kind={displayKind} size={13} />
       <span class="session-toolbar-title max-w-44 shrink truncate text-xs font-medium text-foreground">
@@ -140,13 +147,14 @@
           </Tooltip.Content>
         </Tooltip.Root>
       </Tooltip.Provider>
-      {#if !projection}<div class="session-toolbar-branch">
+      <div class="session-toolbar-branch">
         <GitBranchWidget
           cwd={selected.cwd}
           runMode={selected.runMode}
           wslDistro={selected.wslDistro}
+          deviceId={worktreeDeviceId}
         />
-      </div>{/if}
+      </div>
     </div>
 
     <Tooltip.Provider delayDuration={250}>

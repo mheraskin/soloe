@@ -204,6 +204,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalHistory, ref),
     deviceTerminalStop: (ref: TerminalRef) =>
       ipcRenderer.invoke(IpcChannels.sessions.deviceTerminalStop, ref),
+    invokeWorktree: (request) =>
+      ipcRenderer.invoke(IpcChannels.sessions.invokeWorktree, request),
     onChange: (cb: (session: Session) => void) =>
       subscribe<Session>(IpcChannels.sessions.changed, cb),
     onDelete: (cb: (sessionId: SessionId) => void) =>

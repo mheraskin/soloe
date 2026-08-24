@@ -157,6 +157,7 @@ import type {
 } from './devices.js';
 import type {
   CreateMultiDeviceSessionRequest,
+  DeviceWorktreeInvokeRequest,
   DeviceTerminalHistory,
   MultiDeviceSessionCreationPlan,
   MultiDeviceSessionState,
@@ -197,6 +198,7 @@ export const IpcChannels = {
     deviceTerminalResize: 'sessions:device-terminal-resize',
     deviceTerminalHistory: 'sessions:device-terminal-history',
     deviceTerminalStop: 'sessions:device-terminal-stop',
+    invokeWorktree: 'sessions:invoke-worktree',
     changed: 'sessions:changed',
     deleted: 'sessions:deleted',
     deviceStateChanged: 'sessions:device-state-changed',
@@ -475,6 +477,7 @@ export interface SessionsApi {
   ): Promise<IpcResult<true>>;
   deviceTerminalHistory?(ref: TerminalRef): Promise<IpcResult<DeviceTerminalHistory>>;
   deviceTerminalStop?(ref: TerminalRef): Promise<IpcResult<true>>;
+  invokeWorktree?(request: DeviceWorktreeInvokeRequest): Promise<IpcResult<unknown>>;
 
   onChange(listener: (session: Session) => void): () => void;
   onDelete(listener: (sessionId: SessionId) => void): () => void;

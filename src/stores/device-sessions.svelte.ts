@@ -12,6 +12,7 @@ import type {
 } from '@shared/types/multi-device-sessions.js';
 import type {
   AgentRuntimeProvider,
+  Session,
   SessionLaunch,
   SessionRuntimeState,
   SessionUpdate
@@ -29,6 +30,7 @@ import type {
   TerminalStatusEvent
 } from '@shared/types/terminal.js';
 import { terminalControlProof } from '@shared/types/terminal.js';
+import { worktreeScope, type WorktreeScope } from '@shared/worktree-identity.js';
 import { ipc } from '../lib/ipc';
 import { sendBracketedPasteWithInput } from '../lib/terminal-paste';
 import { sessions as localSessions } from './sessions.svelte';
@@ -93,7 +95,7 @@ const EMPTY_STATE: MultiDeviceSessionState = {
 };
 
 export class DeviceSessionsStore {
-  readonly supported = ipc.sessions.devicesSupported;
+  readonly supported = ipc.sessions?.devicesSupported ?? false;
   state = $state<MultiDeviceSessionState>(structuredClone(EMPTY_STATE));
   loaded = $state(false);
   refreshing = $state(false);
@@ -137,6 +139,47 @@ export class DeviceSessionsStore {
     if (!this.selectedSessionKey) return null;
     const projection = this.sessions.find((session) => session.key === this.selectedSessionKey) ?? null;
     return this.multiDeviceActive ? projection : null;
+  }
+
+  get activeSession(): Session | null {
+    return this.selectedProjection?.session ?? localSessions.selected;
+  }
+
+  get activeDeviceId(): DeviceId | null {
+    const projection = this.selectedProjection;
+    if (projection) return projection.ref.deviceId;
+    return localSessions.selected ? this.localDevice?.deviceId ?? null : null;
+  }
+
+  get activeRemoteDeviceId(): DeviceId | null {
+    const projection = this.selectedProjection;
+    if (!projection) return null;
+    return this.device(projection.ref.deviceId)?.local ? null : projection.ref.deviceId;
+  }
+
+  get activeWorktreeScope(): WorktreeScope | null {
+    const session = this.activeSession;
+    if (!session?.cwd?.trim()) return null;
+    return worktreeScope(session.cwd, {
+      runMode: session.runMode,
+      ...(session.wslDistro ? { wslDistro: session.wslDistro } : {}),
+      ...(this.activeRemoteDeviceId ? { deviceId: this.activeRemoteDeviceId } : {})
+    });
+  }
+
+  get activeWorkspace() {
+    const projection = this.selectedProjection;
+    if (!projection) return null;
+    return this.state.projects
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.sessions.some((session) => session.key === projection.key))
+      ?? null;
+  }
+
+  get activeProject() {
+    const workspace = this.activeWorkspace;
+    if (!workspace) return null;
+    return this.state.projects.find((project) => project.workspaces.includes(workspace)) ?? null;
   }
 
   get localDevice() {

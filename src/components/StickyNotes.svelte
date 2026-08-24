@@ -14,6 +14,7 @@
   } from '@lucide/svelte';
   import { notes } from '../stores/notes.svelte';
   import { sessions } from '../stores/sessions.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { sendBracketedPaste } from '../lib/terminal-paste';
   import { pasteImagesIntoNote } from '../lib/note-image-paste';
@@ -103,6 +104,7 @@
 
   let activeProjectId = $derived(notes.activeProjectId);
   let activeTerminalId = $derived.by<string | null>(() => {
+    if (deviceSessions.selectedProjection) return null;
     const selected = sessions.selected;
     return selected ? sessions.terminalIdFor(selected.id) : null;
   });
@@ -312,7 +314,7 @@
 
   async function sendText(text: string, submit: boolean): Promise<boolean> {
     if (!text.trim() || !activeTerminalId) return false;
-    const selected = sessions.selected;
+    const selected = deviceSessions.selectedProjection ? null : sessions.selected;
     try {
       await sendBracketedPaste(
         activeTerminalId,
