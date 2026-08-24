@@ -488,8 +488,15 @@ describe("SoloeDomain", () => {
 
       const deviceId = "11111111-1111-4111-8111-111111111111";
       const deviceDomain = new SoloeDomain({ dataDirectory: directory, runtime, deviceId });
+      const workspaceRevisions: number[] = [];
+      deviceDomain.on("event", (event, payload: { revision?: number }) => {
+        if (event === "workspaceDevice.change" && payload.revision !== undefined) {
+          workspaceRevisions.push(payload.revision);
+        }
+      });
       try {
         await deviceDomain.init();
+        expect(workspaceRevisions).toEqual([1]);
         const snapshot = await deviceDomain.invoke({
           namespace: "workspaceDevice",
           method: "snapshot",
@@ -527,6 +534,7 @@ describe("SoloeDomain", () => {
           kind: "existing-checkout",
           adopted: true,
         }));
+        expect(workspaceRevisions).toEqual([1, 2]);
         await expect(deviceDomain.invoke({
           namespace: "workspaceDevice",
           method: "snapshot",

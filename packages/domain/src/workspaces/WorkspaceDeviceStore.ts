@@ -36,6 +36,7 @@ export class WorkspaceDeviceStore {
   private state: PersistedDeviceWorkspaceState;
   private initialized = false;
   private writeQueue: Promise<unknown> = Promise.resolve();
+  private readonly listeners = new Set<(snapshot: DeviceWorkspaceSnapshot) => void>();
   private readonly now: () => Date;
   private readonly idFactory: () => string;
 
@@ -66,6 +67,11 @@ export class WorkspaceDeviceStore {
   snapshot(): DeviceWorkspaceSnapshot {
     this.assertInitialized();
     return publicSnapshot(this.state);
+  }
+
+  onChange(listener: (snapshot: DeviceWorkspaceSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   adoptLegacy(
@@ -129,6 +135,7 @@ export class WorkspaceDeviceStore {
     validateState(next, this.deviceId);
     await this.writeState(next);
     this.state = next;
+    this.publishChange(next);
     return migrationResult(next, migration);
   }
 
@@ -149,6 +156,7 @@ export class WorkspaceDeviceStore {
       validateState(next, this.deviceId);
       await this.writeState(next);
       this.state = next;
+      this.publishChange(next);
     }
     return {
       snapshot: publicSnapshot(this.state),
@@ -297,6 +305,7 @@ export class WorkspaceDeviceStore {
     validateState(next, this.deviceId);
     await this.writeState(next);
     this.state = next;
+    this.publishChange(next);
     return publicSnapshot(next);
   }
 
@@ -340,6 +349,7 @@ export class WorkspaceDeviceStore {
     validateState(next, this.deviceId);
     await this.writeState(next);
     this.state = next;
+    this.publishChange(next);
     return publicSnapshot(next);
   }
 
@@ -385,7 +395,13 @@ export class WorkspaceDeviceStore {
     validateState(next, this.deviceId);
     await this.writeState(next);
     this.state = next;
+    this.publishChange(next);
     return publicSnapshot(next);
+  }
+
+  private publishChange(state: PersistedDeviceWorkspaceState): void {
+    const snapshot = publicSnapshot(state);
+    for (const listener of this.listeners) listener(structuredClone(snapshot));
   }
 
   private newId(label: string): string {

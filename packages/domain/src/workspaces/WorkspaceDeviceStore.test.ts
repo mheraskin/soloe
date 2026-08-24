@@ -219,6 +219,47 @@ describe('WorkspaceDeviceStore', () => {
       }]
     });
   });
+
+  it('publishes each durable Workspace inventory revision and skips no-op reconciliation', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'soloe-device-workspaces-'));
+    directories.push(directory);
+    const store = new WorkspaceDeviceStore(
+      path.join(directory, 'device-workspaces.json'),
+      DEVICE_ID
+    );
+    await store.init();
+    const revisions: number[] = [];
+    store.onChange((snapshot) => revisions.push(snapshot.revision));
+
+    await store.adoptLegacy({
+      migrationKey: 'legacy-v1',
+      projects: [legacyProject()],
+      sessions: []
+    });
+    await store.reconcileLegacy({
+      projects: [legacyProject()],
+      sessions: []
+    });
+    const registered = await store.registerCheckout({
+      expectedRevision: 1,
+      checkout: {
+        id: '99999999-9999-4999-8999-999999999999',
+        repositoryId: store.snapshot().repositories[0]!.id,
+        path: '/repo-feature',
+        runMode: 'linux',
+        role: 'workspace',
+        lifecycle: 'pending'
+      }
+    });
+    await store.updateCheckout({
+      expectedRevision: registered.revision,
+      checkoutId: '99999999-9999-4999-8999-999999999999',
+      expectedVersion: 1,
+      lifecycle: 'ready'
+    });
+
+    expect(revisions).toEqual([1, 2, 3]);
+  });
 });
 
 function legacyProject(): Project {

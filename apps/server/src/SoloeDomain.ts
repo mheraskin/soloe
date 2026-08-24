@@ -315,6 +315,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly settings: SettingsStore;
   private readonly projects: ProjectStore;
   private readonly workspaceDevice: WorkspaceDeviceStore | null;
+  private readonly detachWorkspaceDeviceChange: (() => void) | null;
   private readonly workspaceOperations: DeviceOperationStore | null;
   private readonly workspaceService: WorkspaceDeviceService | null;
   private githubProviderService: GitHubProviderService | null = null;
@@ -425,6 +426,9 @@ export class SoloeDomain extends EventEmitter {
           options.deviceId,
         )
       : null;
+    this.detachWorkspaceDeviceChange = this.workspaceDevice?.onChange((snapshot) => {
+      this.emit("event", "workspaceDevice.change", snapshot);
+    }) ?? null;
     this.workspaceOperations = options.deviceId
       ? new DeviceOperationStore(
           path.join(options.dataDirectory, "device-operations.json"),
@@ -637,6 +641,7 @@ export class SoloeDomain extends EventEmitter {
 
   async dispose(): Promise<void> {
     this.detachServerDeviceSessions();
+    this.detachWorkspaceDeviceChange?.();
     this.options.runtime.off?.("output", this.handleRuntimeOutput);
     this.terminalAgentSignals.clear();
     this.usage.reset();

@@ -80,6 +80,7 @@ export class RemoteSessionDevice implements SessionDevice {
   private readonly eventListeners = new Set<(event: DeviceEventEnvelope) => void>();
   private readonly statusListeners = new Set<(status: SessionDeviceStatus) => void>();
   private demandedTerminals = new Set<string>();
+  private readonly worktreeSubscriptions = new Map<string, DeviceWorktreeInvokeRequest>();
   private currentStatus: SessionDeviceStatus;
   private detachTransportEvent: () => void;
   private detachTransportStatus: () => void;
@@ -152,6 +153,7 @@ export class RemoteSessionDevice implements SessionDevice {
         this.publishStatus();
       } else {
         await this.reassertTerminalOutputDemand();
+        await this.reassertWorktreeSubscriptions();
         this.currentStatus = {
           deviceId: this.deviceId,
           state: 'ready',
@@ -288,11 +290,17 @@ export class RemoteSessionDevice implements SessionDevice {
     return this.rpc('files', 'pasteImagesIntoTerminal', [structuredClone(request)]);
   }
 
-  invokeWorktree(request: DeviceWorktreeInvokeRequest): Promise<unknown> {
+  async invokeWorktree(request: DeviceWorktreeInvokeRequest): Promise<unknown> {
     if (request.deviceId !== this.deviceId) {
-      return Promise.reject(new Error(`Worktree request targets Device ${request.deviceId}.`));
+      throw new Error(`Worktree request targets Device ${request.deviceId}.`);
     }
-    return this.rpc(request.namespace, request.method, structuredClone(request.args));
+    const result = await this.rpc(
+      request.namespace,
+      request.method,
+      structuredClone(request.args)
+    );
+    this.rememberWorktreeSubscription(request);
+    return result;
   }
 
   terminalAcquireInputLease(
@@ -468,6 +476,7 @@ export class RemoteSessionDevice implements SessionDevice {
     this.detachTransportStatus();
     this.detachTransportRepair();
     this.transport.dispose();
+    this.worktreeSubscriptions.clear();
     this.eventListeners.clear();
     this.currentStatus = {
       deviceId: this.deviceId,
@@ -538,6 +547,23 @@ export class RemoteSessionDevice implements SessionDevice {
     return response;
   }
 
+  private rememberWorktreeSubscription(request: DeviceWorktreeInvokeRequest): void {
+    const key = worktreeSubscriptionKey(request);
+    if (!key) return;
+    const input = request.args[0];
+    const active = request.namespace === 'git'
+      ? isRecord(input) && input['active'] === true
+      : request.method === 'subscribe';
+    if (active) this.worktreeSubscriptions.set(key, structuredClone(request));
+    else this.worktreeSubscriptions.delete(key);
+  }
+
+  private async reassertWorktreeSubscriptions(): Promise<void> {
+    for (const request of this.worktreeSubscriptions.values()) {
+      await this.rpc(request.namespace, request.method, structuredClone(request.args));
+    }
+  }
+
   private updateTransportStatus(status: DeviceTransportStatus): void {
     const state: SessionDeviceStatus['state'] = status.state === 'disposed'
       ? 'disposed'
@@ -593,6 +619,22 @@ export class RemoteSessionDevice implements SessionDevice {
 function reconnectDelay(attempt: number): number {
   const base = Math.min(30_000, 500 * 2 ** Math.min(attempt, 6));
   return Math.round(base * (0.8 + Math.random() * 0.4));
+}
+
+function worktreeSubscriptionKey(request: DeviceWorktreeInvokeRequest): string | null {
+  const tracksGitDemand = request.namespace === 'git'
+    && request.method === 'setObservationDemand';
+  const tracksFeatures = request.namespace === 'features'
+    && (request.method === 'subscribe' || request.method === 'unsubscribe');
+  if (!tracksGitDemand && !tracksFeatures) return null;
+  const input = request.args[0];
+  if (!isRecord(input) || typeof input['cwd'] !== 'string') return null;
+  return JSON.stringify([
+    request.namespace,
+    input['cwd'],
+    typeof input['runMode'] === 'string' ? input['runMode'] : '',
+    typeof input['wslDistro'] === 'string' ? input['wslDistro'] : ''
+  ]);
 }
 
 function createNodeSocket(url: string): {

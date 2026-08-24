@@ -470,6 +470,62 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('reasserts remote Git observation and Feature subscriptions after reconnect', async () => {
+    const sockets: FakeSocket[] = [];
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') {
+          return jsonResponse(descriptor(FIRST_EPOCH));
+        }
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+          args: unknown[];
+        };
+        calls.push(request);
+        return jsonResponse({ ok: true, value: true });
+      },
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelay: () => 0
+    });
+    const gitRequest = {
+      deviceId: DEVICE_ID,
+      namespace: 'git' as const,
+      method: 'setObservationDemand',
+      args: [{ cwd: '/repo', runMode: 'linux', active: true }]
+    };
+    const featureRequest = {
+      deviceId: DEVICE_ID,
+      namespace: 'features' as const,
+      method: 'subscribe',
+      args: [{ cwd: '/repo', runMode: 'linux' }]
+    };
+
+    await client.connect();
+    await client.invokeWorktree(gitRequest);
+    await client.invokeWorktree(featureRequest);
+    sockets[0]!.disconnect();
+
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    await vi.waitFor(() => {
+      expect(calls.filter(({ namespace, method }) =>
+        namespace === 'git' && method === 'setObservationDemand'
+      )).toHaveLength(2);
+      expect(calls.filter(({ namespace, method }) =>
+        namespace === 'features' && method === 'subscribe'
+      )).toHaveLength(2);
+    });
+    client.dispose();
+  });
+
   it('retries an initially offline Device until the descriptor becomes reachable', async () => {
     let attempts = 0;
     const client = new RemoteSessionDevice({

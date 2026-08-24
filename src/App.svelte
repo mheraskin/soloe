@@ -626,7 +626,9 @@
       cwd,
       projectCwd,
       projectScopeCwds,
-      deviceId
+      deviceId,
+      ...(selected ? { runMode: selected.runMode } : {}),
+      ...(selected?.wslDistro ? { wslDistro: selected.wslDistro } : {})
     });
   });
 

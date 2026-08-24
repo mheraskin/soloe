@@ -201,6 +201,27 @@ describe('NotesStore durability', () => {
     expect(store.listsByProject.project).toEqual([summary('newer.md')]);
     store.detach();
   });
+
+  it('ignores a remote list response after the Project route changes Devices', async () => {
+    const store = createStore();
+    const routing = store as unknown as {
+      remoteDeviceByProject: Map<string, string>;
+      routeMarkerByProject: Map<string, string>;
+    };
+    routing.remoteDeviceByProject.set('inactive-project', 'device-xps');
+    routing.routeMarkerByProject.set('inactive-project', 'device-xps');
+    const pending = deferred<Array<ReturnType<typeof summary>>>();
+    mocks.list.mockReturnValueOnce(pending.promise);
+
+    const refreshing = store.refresh('inactive-project');
+    routing.remoteDeviceByProject.set('inactive-project', 'device-mba');
+    routing.routeMarkerByProject.set('inactive-project', 'device-mba');
+    pending.resolve([summary('xps-only.md')]);
+    await refreshing;
+
+    expect(store.loadedProjects['inactive-project']).not.toBe(true);
+    expect(store.listsByProject['inactive-project']).toBeUndefined();
+  });
 });
 
 function createStore(): NotesStore {

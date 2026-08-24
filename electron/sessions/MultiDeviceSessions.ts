@@ -133,6 +133,8 @@ export class MultiDeviceSessions {
   private readonly creationPlans = new Map<string, StoredSessionCreationPlan>();
   private readonly clientId = randomUUID();
   private refreshRequest: Promise<MultiDeviceSessionState> | null = null;
+  private eventRefreshScheduled = false;
+  private refreshAfterCurrent = false;
   private revision = 0;
   private currentState: MultiDeviceSessionState;
 
@@ -158,7 +160,12 @@ export class MultiDeviceSessions {
   async refresh(): Promise<MultiDeviceSessionState> {
     if (this.refreshRequest) return this.refreshRequest;
     const request = this.refreshNow().finally(() => {
-      if (this.refreshRequest === request) this.refreshRequest = null;
+      if (this.refreshRequest !== request) return;
+      this.refreshRequest = null;
+      if (this.refreshAfterCurrent) {
+        this.refreshAfterCurrent = false;
+        this.requestInventoryRefresh();
+      }
     });
     this.refreshRequest = request;
     return request;
@@ -750,9 +757,10 @@ export class MultiDeviceSessions {
             if (
               event.event === 'sessions.change'
               || event.event === 'sessions.delete'
+              || event.event === 'workspaceDevice.change'
               || event.event === 'transport.repair'
             ) {
-              void this.refresh().catch(() => undefined);
+              this.requestInventoryRefresh();
             }
           }),
           device.onStatus((status) => {
@@ -764,6 +772,19 @@ export class MultiDeviceSessions {
         ]
       });
     }
+  }
+
+  private requestInventoryRefresh(): void {
+    if (this.eventRefreshScheduled) return;
+    this.eventRefreshScheduled = true;
+    queueMicrotask(() => {
+      this.eventRefreshScheduled = false;
+      if (this.refreshRequest) {
+        this.refreshAfterCurrent = true;
+        return;
+      }
+      void this.refresh().catch(() => undefined);
+    });
   }
 
   private detachDevice(deviceId: DeviceId): void {

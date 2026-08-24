@@ -693,6 +693,59 @@ describe('MultiDeviceSessions', () => {
     expect(state.projects[0]?.workspaces[0]?.sessions[0]?.session.name).toBe('Changed elsewhere');
     expect(laptop.readInventoryCalls).toBe(2);
   });
+
+  it('removes a remote Workspace after its Device publishes an inventory change', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    const multiDevice = new MultiDeviceSessions({ devices: [laptop] });
+    await multiDevice.refresh();
+    expect(multiDevice.state().projects[0]?.workspaces).toHaveLength(1);
+
+    laptop.removeWorktree();
+    const changed = new Promise<import('@shared/types/multi-device-sessions.js').MultiDeviceSessionState>(
+      (resolve) => {
+        const detach = multiDevice.onState((state) => {
+          detach();
+          resolve(state);
+        });
+      }
+    );
+    laptop.emitEvent('workspaceDevice.change', { revision: 2 });
+
+    await expect(changed).resolves.toMatchObject({
+      projects: [expect.objectContaining({ workspaces: [] })]
+    });
+    expect(laptop.readInventoryCalls).toBe(2);
+  });
+
+  it('coalesces a burst of remote Workspace inventory events into one refresh', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    const multiDevice = new MultiDeviceSessions({ devices: [laptop] });
+    await multiDevice.refresh();
+
+    laptop.emitEvent('workspaceDevice.change', { revision: 2 });
+    laptop.emitEvent('workspaceDevice.change', { revision: 3 });
+    laptop.emitEvent('workspaceDevice.change', { revision: 4 });
+
+    await vi.waitFor(() => expect(laptop.readInventoryCalls).toBe(2));
+    await Promise.resolve();
+    expect(laptop.readInventoryCalls).toBe(2);
+  });
 });
 
 function fakeDevice(input: {
@@ -722,6 +775,7 @@ function fakeDevice(input: {
   plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[];
   openedProjectPaths: string[];
   readonly readInventoryCalls: number;
+  removeWorktree(): void;
   reorderRequests: string[][];
   updateRequests: Array<{
     sessionId: string;
@@ -1021,6 +1075,12 @@ function fakeDevice(input: {
         payload
       };
       for (const listener of eventListeners) listener(envelope);
+    },
+    removeWorktree: () => {
+      inventory.projects = inventory.projects.map((candidate) => ({
+        ...candidate,
+        worktrees: []
+      }));
     },
     get disposed() {
       return disposed;

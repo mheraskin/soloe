@@ -251,6 +251,11 @@ export const DEVICE_RPC_METHODS = new Set<string>([
   "sessions.bindSource",
 ]);
 
+/** Server events consumed only by the host-private multi-Device adapter. */
+export const DEVICE_EVENT_METHODS = new Set<string>([
+  "workspaceDevice.onChange",
+]);
+
 /** Renderer-visible Worktree operations that a multi-Device host may forward. */
 export const DEVICE_WORKTREE_RPC_METHODS = new Set<string>([
   ...SOLOE_API_METHODS.notes
@@ -417,6 +422,7 @@ export const CLIENT_NATIVE_METHODS = new Set<string>([
 ]);
 
 export const SERVER_EVENT_METHODS = new Set<string>([
+  ...DEVICE_EVENT_METHODS,
   "sessions.onChange",
   "sessions.onDelete",
   "sessions.onDeviceStateChange",

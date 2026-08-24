@@ -33,11 +33,11 @@ One coherent generation containing repository status, line totals, and working c
 _Avoid_: Git poll result, status bundle
 
 **Worktree Identity**:
-The canonical path, runtime mode, and—under WSL—distribution that uniquely identify one Worktree across renderer and main-process state.
+The owning Device ID, canonical path, runtime mode, and—under WSL—distribution that uniquely identify one Worktree across renderer and Application Server state. A single-Device caller may omit Device ID only while its local Device is implicit.
 _Avoid_: cwd key, repository string
 
 **Worktree Scope**:
-An immutable operation address containing a Worktree path, runtime mode, and—under WSL—distribution; it resolves to exactly one Worktree Identity.
+An immutable operation address containing an owning Device ID, Worktree path, runtime mode, and—under WSL—distribution; it resolves to exactly one Worktree Identity. A single-Device caller may omit Device ID only while its local Device is implicit.
 _Avoid_: Current context, cwd plus options
 
 **Refresh Intent**:

@@ -1,7 +1,8 @@
 # API compatibility
 
 `shared/api-contract.ts` is the authoritative compatibility declaration. It
-enumerates every `SoloeApi` method, host-private `DEVICE_RPC_METHODS`, the
+enumerates every `SoloeApi` method, host-private `DEVICE_RPC_METHODS` and
+`DEVICE_EVENT_METHODS`, the
 Application Server RPC handlers, server events, runtime-owned methods,
 browser-native helpers, and the only methods that remote Electron may override
 locally. Contract tests compare that
@@ -85,6 +86,7 @@ server capabilities:
 | Description/snapshot | bounded descriptor plus epoch/sequence-qualified snapshot | Application Server |
 | Sessions inventory | Projects, canonical Git remote, Worktrees, Sessions, and running terminals | Application Server and Environment Runtime |
 | Workspace device state | `workspaceDevice.snapshot`, `plan`, `execute`, `getCommand` | Application Server and Device operation journal |
+| Workspace inventory events | `workspaceDevice.change` after each durable registry revision | Owning Device's Application Server |
 | Placed Sessions | preallocated create and optimistic Session Source binding | Application Server Session store |
 | Terminal control | acquire/current/release identity-qualified Session Control plus lease-authorized input/resize and ordinary replay/stop | Environment Runtime |
 | Worktree panes | allowlisted Notes, Git, Files, Overview, Features, and Vault RPCs plus Device-qualified change events | Owning Device's Application Server |
@@ -128,6 +130,7 @@ The Server publishes:
 - terminal output, status, exit, and location;
 - Terminal Control Lease acquisition, renewal, canonical resize, expiry, release, and takeover;
 - Notes, Git, Feature Lab, and Vault changes;
+- Device Workspace inventory revisions;
 - Worktree Overview chunks;
 - agent-integration changes;
 - comments and diff bridge requests.

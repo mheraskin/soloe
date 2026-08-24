@@ -286,10 +286,15 @@ export class NotesStore {
   async refresh(projectId: ProjectId): Promise<void> {
     const changeVersion = this.listChangeVersions.get(projectId) ?? 0;
     const route = this.routeForProject(projectId);
+    const routeMarker = route?.deviceId ?? 'local';
+    this.routeMarkerByProject.set(projectId, routeMarker);
     const list = route
       ? await ipc.notes.list(projectId, route)
       : await ipc.notes.list(projectId);
-    if ((this.listChangeVersions.get(projectId) ?? 0) === changeVersion) {
+    if (
+      this.routeMarkerByProject.get(projectId) === routeMarker
+      && (this.listChangeVersions.get(projectId) ?? 0) === changeVersion
+    ) {
       this.applyNoteList(projectId, list);
     }
   }

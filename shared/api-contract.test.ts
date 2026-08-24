@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CLIENT_NATIVE_METHODS,
+  DEVICE_EVENT_METHODS,
   DEVICE_RPC_METHODS,
   DEVICE_WORKTREE_RPC_METHODS,
   PWA_PANE_REQUIREMENTS,
@@ -53,8 +54,17 @@ describe("Soloe API compatibility matrix", () => {
       expect(SERVER_RPC_METHODS, key).toContain(key);
       expect(apiKeys, `${key} must stay behind the host Sessions API`).not.toContain(key);
     }
+    for (const key of SERVER_EVENT_METHODS) {
+      expect(
+        apiKeys.has(key) || DEVICE_EVENT_METHODS.has(key),
+        `${key} is neither renderer-visible nor a host-private Device event`,
+      ).toBe(true);
+    }
+    for (const key of DEVICE_EVENT_METHODS) {
+      expect(SERVER_EVENT_METHODS, key).toContain(key);
+      expect(apiKeys, `${key} must stay behind the host Sessions API`).not.toContain(key);
+    }
     for (const collection of [
-      SERVER_EVENT_METHODS,
       CLIENT_NATIVE_METHODS,
       REMOTE_ELECTRON_NATIVE_METHODS,
     ]) {

@@ -5,6 +5,12 @@ import type {
   VaultSecret
 } from '../../shared/types/vault';
 import type { DeviceId } from '../../shared/types/devices';
+import type { RunMode } from '../../shared/types/sessions';
+import {
+  worktreeScope,
+  worktreeScopeKey,
+  type WorktreeScope
+} from '../../shared/worktree-identity';
 import { backend } from '../lib/ipc';
 import type { ScopedVaultEntry } from '../lib/vault-groups';
 
@@ -34,12 +40,14 @@ export class VaultStore {
   private activeCwd = $state<string | null>(null);
   private activeProjectCwd = $state<string | null>(null);
   private activeDeviceId = $state<DeviceId | null>(null);
+  private activeRunMode = $state<RunMode | undefined>(undefined);
+  private activeWslDistro = $state<string | undefined>(undefined);
   private projectCwds = $state<string[]>([]);
   private byCwd = $state<Record<CwdKey, CwdCache>>({});
   private detachers: Array<() => void> = [];
   private eventVersions = new Map<CwdKey, number>();
   private refreshVersions = new Map<CwdKey, number>();
-  private scopeByKey = new Map<CwdKey, { cwd: string; deviceId: DeviceId | null }>();
+  private scopeByKey = new Map<CwdKey, WorktreeScope>();
 
   attachListeners(): void {
     this.detach();
@@ -49,30 +57,43 @@ export class VaultStore {
           'deviceId' in event && typeof event.deviceId === 'string'
             ? event.deviceId
             : null;
-        const key = this.scopeKey(event.cwd, deviceId);
-        const current = this.byCwd[key];
-        if (
-          !current?.loaded
-          && !(deviceId === this.activeDeviceId && this.projectCwds.includes(event.cwd))
-        ) return;
-        this.scopeByKey.set(key, { cwd: event.cwd, deviceId });
-        this.eventVersions.set(key, (this.eventVersions.get(key) ?? 0) + 1);
-        this.byCwd = {
-          ...this.byCwd,
-          [key]: {
-            entries: event.entries,
-            loaded: true,
-            loading: false,
-            error: null
-          }
-        };
+        const matchingScopes = [...this.scopeByKey.values()].filter((scope) =>
+          scope.cwd === event.cwd && (scope.deviceId ?? null) === deviceId
+        );
+        const scopes = matchingScopes.length > 0
+          ? matchingScopes
+          : [this.scopeFor(event.cwd, deviceId)];
+        let next = this.byCwd;
+        for (const scope of scopes) {
+          const key = worktreeScopeKey(scope);
+          const current = this.byCwd[key];
+          if (
+            !current?.loaded
+            && !(
+              deviceId === this.activeDeviceId
+              && this.projectCwds.includes(event.cwd)
+            )
+          ) continue;
+          this.scopeByKey.set(key, scope);
+          this.eventVersions.set(key, (this.eventVersions.get(key) ?? 0) + 1);
+          next = {
+            ...next,
+            [key]: {
+              entries: event.entries,
+              loaded: true,
+              loading: false,
+              error: null
+            }
+          };
+        }
+        this.byCwd = next;
       })
     );
     this.detachers.push(
       backend.connection.onReconnect(() => {
         for (const [key, cache] of Object.entries(this.byCwd)) {
           const scope = this.scopeByKey.get(key);
-          if (cache.loaded && scope) void this.refreshCwd(scope.cwd, scope.deviceId);
+          if (cache.loaded && scope) void this.refreshCwd(scope);
         }
       })
     );
@@ -91,11 +112,22 @@ export class VaultStore {
     projectCwd?: string | null | undefined;
     projectScopeCwds?: Array<string | null | undefined>;
     deviceId?: DeviceId | null | undefined;
+    runMode?: RunMode | undefined;
+    wslDistro?: string | null | undefined;
   }): void {
-    const { cwd, projectCwd, projectScopeCwds = [], deviceId = null } = context;
+    const {
+      cwd,
+      projectCwd,
+      projectScopeCwds = [],
+      deviceId = null,
+      runMode,
+      wslDistro
+    } = context;
     const next = cwd && cwd.trim().length > 0 ? cwd.trim() : null;
     this.activeCwd = next;
     this.activeDeviceId = deviceId;
+    this.activeRunMode = runMode;
+    this.activeWslDistro = wslDistro?.trim() || undefined;
     this.activeProjectCwd =
       projectCwd && projectCwd.trim().length > 0 ? projectCwd.trim() : next;
     this.projectCwds = uniqueCwds([
@@ -104,8 +136,8 @@ export class VaultStore {
       ...projectScopeCwds
     ]);
     for (const scopeCwd of this.projectCwds) {
-      const key = this.scopeKey(scopeCwd, deviceId);
-      this.scopeByKey.set(key, { cwd: scopeCwd, deviceId });
+      const scope = this.scopeFor(scopeCwd, deviceId);
+      this.scopeByKey.set(worktreeScopeKey(scope), scope);
     }
   }
 
@@ -118,7 +150,7 @@ export class VaultStore {
   }
 
   private cache(cwd: string, deviceId: DeviceId | null = this.activeDeviceId): CwdCache {
-    return this.byCwd[this.scopeKey(cwd, deviceId)] ?? EMPTY;
+    return this.cacheForScope(this.scopeFor(cwd, deviceId));
   }
 
   get entries(): VaultEntry[] {
@@ -196,42 +228,42 @@ export class VaultStore {
   }
 
   async ensureProjectLoaded(): Promise<void> {
-    const deviceId = this.activeDeviceId;
-    await Promise.all(this.projectCwds.map((cwd) => this.ensureCwdLoaded(cwd, deviceId)));
+    const scopes = this.projectCwds.map((cwd) => this.scopeFor(cwd));
+    await Promise.all(scopes.map((scope) => this.ensureCwdLoaded(scope)));
   }
 
   async refresh(): Promise<void> {
     const cwd = this.activeCwd;
     if (!cwd) return;
-    await this.refreshCwd(cwd);
+    await this.refreshCwd(this.scopeFor(cwd));
   }
 
   async refreshProject(): Promise<void> {
-    const deviceId = this.activeDeviceId;
-    await Promise.all(this.projectCwds.map((cwd) => this.refreshCwd(cwd, deviceId)));
+    const scopes = this.projectCwds.map((cwd) => this.scopeFor(cwd));
+    await Promise.all(scopes.map((scope) => this.refreshCwd(scope)));
   }
 
-  private async ensureCwdLoaded(cwd: string, deviceId: DeviceId | null): Promise<void> {
-    const cur = this.cache(cwd, deviceId);
+  private async ensureCwdLoaded(scope: WorktreeScope): Promise<void> {
+    const cur = this.cacheForScope(scope);
     if (cur.loaded || cur.loading) return;
-    await this.refreshCwd(cwd, deviceId);
+    await this.refreshCwd(scope);
   }
 
-  private async refreshCwd(
-    cwd: string,
-    deviceId: DeviceId | null = this.activeDeviceId
-  ): Promise<void> {
-    const key = this.scopeKey(cwd, deviceId);
-    this.scopeByKey.set(key, { cwd, deviceId });
+  private async refreshCwd(scope: WorktreeScope): Promise<void> {
+    const key = worktreeScopeKey(scope);
+    this.scopeByKey.set(key, scope);
     const eventVersion = this.eventVersions.get(key) ?? 0;
     const refreshVersion = (this.refreshVersions.get(key) ?? 0) + 1;
     this.refreshVersions.set(key, refreshVersion);
     this.byCwd = {
       ...this.byCwd,
-      [key]: { ...this.cache(cwd, deviceId), loading: true, error: null }
+      [key]: { ...this.cacheForScope(scope), loading: true, error: null }
     };
     try {
-      const entries = await backend.vault.list({ cwd, ...this.route(deviceId) });
+      const entries = await backend.vault.list({
+        cwd: scope.cwd,
+        ...this.route(scope.deviceId ?? null)
+      });
       if (
         this.refreshVersions.get(key) !== refreshVersion
         || (this.eventVersions.get(key) ?? 0) !== eventVersion
@@ -248,7 +280,7 @@ export class VaultStore {
       this.byCwd = {
         ...this.byCwd,
         [key]: {
-          ...this.cache(cwd, deviceId),
+          ...this.cacheForScope(scope),
           loading: false,
           error: err instanceof Error ? err.message : String(err)
         }
@@ -258,28 +290,35 @@ export class VaultStore {
 
   async save(draft: VaultEntryDraft, vaultCwd?: string): Promise<VaultEntry> {
     const cwd = vaultCwd ?? this.requireCwd();
-    const entry = await backend.vault.save({ cwd, draft, ...this.route(this.activeDeviceId) });
-    this.upsert(cwd, entry);
+    const scope = this.scopeFor(cwd);
+    const entry = await backend.vault.save({
+      cwd,
+      draft,
+      ...this.route(scope.deviceId ?? null)
+    });
+    this.upsert(scope, entry);
     return entry;
   }
 
   async update(id: string, patch: VaultEntryUpdate, vaultCwd?: string): Promise<VaultEntry> {
     const cwd = vaultCwd ?? this.requireCwd();
+    const scope = this.scopeFor(cwd);
     const entry = await backend.vault.update({
       cwd,
       id,
       patch,
-      ...this.route(this.activeDeviceId)
+      ...this.route(scope.deviceId ?? null)
     });
-    this.upsert(cwd, entry);
+    this.upsert(scope, entry);
     return entry;
   }
 
   async delete(id: string, vaultCwd?: string): Promise<void> {
     const cwd = vaultCwd ?? this.requireCwd();
-    await backend.vault.delete({ cwd, id, ...this.route(this.activeDeviceId) });
-    const cur = this.cache(cwd);
-    const key = this.scopeKey(cwd, this.activeDeviceId);
+    const scope = this.scopeFor(cwd);
+    await backend.vault.delete({ cwd, id, ...this.route(scope.deviceId ?? null) });
+    const cur = this.cacheForScope(scope);
+    const key = worktreeScopeKey(scope);
     this.byCwd = {
       ...this.byCwd,
       [key]: { ...cur, entries: cur.entries.filter((e) => e.id !== id) }
@@ -288,7 +327,8 @@ export class VaultStore {
 
   async getSecret(id: string, vaultCwd?: string): Promise<VaultSecret> {
     const cwd = vaultCwd ?? this.requireCwd();
-    return backend.vault.getSecret({ cwd, id, ...this.route(this.activeDeviceId) });
+    const scope = this.scopeFor(cwd);
+    return backend.vault.getSecret({ cwd, id, ...this.route(scope.deviceId ?? null) });
   }
 
   saveTarget(scope: 'project' | 'worktree'): string {
@@ -296,9 +336,9 @@ export class VaultStore {
     return this.requireCwd();
   }
 
-  private upsert(cwd: string, entry: VaultEntry): void {
-    const cur = this.cache(cwd);
-    const key = this.scopeKey(cwd, this.activeDeviceId);
+  private upsert(scope: WorktreeScope, entry: VaultEntry): void {
+    const cur = this.cacheForScope(scope);
+    const key = worktreeScopeKey(scope);
     const without = cur.entries.filter((e) => e.id !== entry.id);
     const next = [...without, entry].sort(
       (a, b) => a.origin.localeCompare(b.origin) || a.username.localeCompare(b.username)
@@ -314,8 +354,19 @@ export class VaultStore {
     return this.activeCwd;
   }
 
-  private scopeKey(cwd: string, deviceId: DeviceId | null): CwdKey {
-    return deviceId ? `${deviceId}\u0000${cwd}` : cwd;
+  private cacheForScope(scope: WorktreeScope): CwdCache {
+    return this.byCwd[worktreeScopeKey(scope)] ?? EMPTY;
+  }
+
+  private scopeFor(
+    cwd: string,
+    deviceId: DeviceId | null = this.activeDeviceId
+  ): WorktreeScope {
+    return worktreeScope(cwd, {
+      ...(this.activeRunMode ? { runMode: this.activeRunMode } : {}),
+      ...(this.activeWslDistro ? { wslDistro: this.activeWslDistro } : {}),
+      ...(deviceId ? { deviceId } : {})
+    });
   }
 
   private route(deviceId: DeviceId | null): { deviceId: DeviceId } | Record<string, never> {

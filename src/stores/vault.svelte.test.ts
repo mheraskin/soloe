@@ -77,6 +77,71 @@ describe('VaultStore project scopes', () => {
     ]);
   });
 
+  it('isolates identical remote paths by runtime and WSL distribution', async () => {
+    const store = new VaultStore();
+    vaultApi.list.mockImplementation(async (
+      { cwd }: { cwd: string }
+    ) => [entry(cwd, `${vaultApi.list.mock.calls.length}`)]);
+
+    store.setActiveContext({
+      cwd: '/repo',
+      deviceId: 'device-xps',
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu'
+    });
+    await store.ensureLoaded();
+    expect(store.entries[0]?.username).toBe('1');
+
+    store.setActiveContext({
+      cwd: '/repo',
+      deviceId: 'device-xps',
+      runMode: 'wsl',
+      wslDistro: 'Debian'
+    });
+    await store.ensureLoaded();
+    expect(store.entries[0]?.username).toBe('2');
+
+    store.setActiveContext({
+      cwd: '/repo',
+      deviceId: 'device-xps',
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu'
+    });
+    expect(store.entries[0]?.username).toBe('1');
+  });
+
+  it('applies a completed remote mutation to the immutable request scope', async () => {
+    const store = new VaultStore();
+    const pending = deferred<VaultEntry>();
+    vaultApi.save.mockReturnValueOnce(pending.promise);
+    store.setActiveContext({
+      cwd: '/repo',
+      deviceId: 'device-xps',
+      runMode: 'windows'
+    });
+
+    const saving = store.save({
+      origin: 'https://example.test',
+      username: 'xps-user',
+      password: 'secret'
+    });
+    store.setActiveContext({
+      cwd: '/repo',
+      deviceId: 'device-mba',
+      runMode: 'macos'
+    });
+    pending.resolve(entry('saved-on-xps', 'xps-user'));
+    await saving;
+
+    expect(store.entries).toEqual([]);
+    store.setActiveContext({
+      cwd: '/repo',
+      deviceId: 'device-xps',
+      runMode: 'windows'
+    });
+    expect(store.entries).toEqual([entry('saved-on-xps', 'xps-user')]);
+  });
+
   it('routes fill, delete, and project saves to the credential owner', async () => {
     const store = new VaultStore();
     store.setActiveContext({ cwd: '/repo/worktree', projectCwd: '/repo' });
