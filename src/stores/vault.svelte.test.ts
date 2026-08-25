@@ -1,4 +1,8 @@
+/**
+ * @vitest-environment jsdom
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushSync } from 'svelte';
 
 const vaultApi = vi.hoisted(() => ({
   list: vi.fn(),
@@ -27,6 +31,29 @@ describe('VaultStore project scopes', () => {
     vaultApi.list.mockImplementation(async ({ cwd }: { cwd: string }) => [
       entry(`${cwd}-credential`, `user@${cwd}`)
     ]);
+  });
+
+  it('does not recursively retrigger an effect for an equivalent active context', () => {
+    const store = new VaultStore();
+    let retrigger = () => undefined;
+    const cleanup = $effect.root(() => {
+      let generation = $state(0);
+      retrigger = () => {
+        generation += 1;
+      };
+      $effect(() => {
+        generation;
+        store.setActiveContext({ cwd: '/repo/worktree-a' });
+      });
+    });
+
+    try {
+      flushSync();
+      retrigger();
+      expect(() => flushSync()).not.toThrow();
+    } finally {
+      cleanup();
+    }
   });
 
   it('loads and aggregates project root and known worktree vaults once', async () => {

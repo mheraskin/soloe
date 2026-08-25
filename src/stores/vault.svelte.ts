@@ -6,6 +6,7 @@ import type {
 } from '../../shared/types/vault';
 import type { DeviceId } from '../../shared/types/devices';
 import type { RunMode } from '../../shared/types/sessions';
+import { untrack } from 'svelte';
 import {
   worktreeScope,
   worktreeScopeKey,
@@ -124,21 +125,27 @@ export class VaultStore {
       wslDistro
     } = context;
     const next = cwd && cwd.trim().length > 0 ? cwd.trim() : null;
-    this.activeCwd = next;
-    this.activeDeviceId = deviceId;
-    this.activeRunMode = runMode;
-    this.activeWslDistro = wslDistro?.trim() || undefined;
-    this.activeProjectCwd =
+    const nextProjectCwd =
       projectCwd && projectCwd.trim().length > 0 ? projectCwd.trim() : next;
-    this.projectCwds = uniqueCwds([
-      this.activeProjectCwd,
+    const nextProjectCwds = uniqueCwds([
+      nextProjectCwd,
       next,
       ...projectScopeCwds
     ]);
-    for (const scopeCwd of this.projectCwds) {
-      const scope = this.scopeFor(scopeCwd, deviceId);
-      this.scopeByKey.set(worktreeScopeKey(scope), scope);
-    }
+    untrack(() => {
+      this.activeCwd = next;
+      this.activeDeviceId = deviceId;
+      this.activeRunMode = runMode;
+      this.activeWslDistro = wslDistro?.trim() || undefined;
+      this.activeProjectCwd = nextProjectCwd;
+      if (!sameCwds(this.projectCwds, nextProjectCwds)) {
+        this.projectCwds = nextProjectCwds;
+      }
+      for (const scopeCwd of nextProjectCwds) {
+        const scope = this.scopeFor(scopeCwd, deviceId);
+        this.scopeByKey.set(worktreeScopeKey(scope), scope);
+      }
+    });
   }
 
   get cwd(): string | null {
@@ -384,4 +391,8 @@ function uniqueCwds(values: Array<string | null | undefined>): string[] {
     if (cwd) seen.add(cwd);
   }
   return [...seen];
+}
+
+function sameCwds(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((cwd, index) => cwd === right[index]);
 }
