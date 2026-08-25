@@ -6,6 +6,7 @@
     Folder,
     FolderTree,
     FolderPlus,
+    LoaderCircle,
     Pencil,
     RefreshCcw,
     Trash2
@@ -15,6 +16,7 @@
   import type { Project, ProjectFavicon } from '@shared/types/projects.js';
   import type {
     MultiDeviceSessionView,
+    ProjectPresenceView,
     ProjectView
   } from '@shared/types/multi-device-sessions.js';
   import type { DeviceId } from '@shared/types/devices.js';
@@ -85,6 +87,40 @@
   });
   let deviceItems = $derived<MultiDeviceSessionView[]>(
     deviceWorkspaces.flatMap((workspace) => workspace.sessions)
+  );
+  let remoteProjectPresences = $derived.by<ProjectPresenceView[]>(() => {
+    if (!deviceProject) return [];
+    const explicit = (deviceProject.presences ?? []).filter((presence) =>
+      (deviceFilter === null || presence.ref.deviceId === deviceFilter)
+      && deviceSessions.device(presence.ref.deviceId)?.local !== true
+    );
+    if (explicit.length > 0) return explicit;
+
+    const fallback: ProjectPresenceView[] = [];
+    for (const workspace of deviceWorkspaces) {
+      for (const location of workspace.locations) {
+        if (deviceSessions.device(location.deviceId)?.local === true) continue;
+        const key = `${location.deviceId}/${encodeURIComponent(location.projectId)}`;
+        if (fallback.some((presence) => presence.key === key)) continue;
+        fallback.push({
+          ref: { deviceId: location.deviceId, projectId: location.projectId },
+          key,
+          deviceName: location.deviceName,
+          available: location.available,
+          project: {
+            ...project,
+            id: location.projectId,
+            path: location.path
+          }
+        });
+      }
+    }
+    return fallback;
+  });
+  let remoteProjectOperation = $derived.by(() =>
+    remoteProjectPresences
+      .map((presence) => deviceSessions.projectPendingOperation(presence.ref))
+      .find((operation) => operation !== null) ?? null
   );
   let gitContext = $derived({
     ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
@@ -217,6 +253,11 @@
     projectModal.openEdit(project);
   }
 
+  function editRemoteProject(presence: ProjectPresenceView) {
+    if (!presence.available || deviceSessions.projectPendingOperation(presence.ref)) return;
+    projectModal.openEdit(presence.project, presence.ref, presence.deviceName);
+  }
+
   async function refreshFavicons() {
     if (!allowLocalActions || faviconsLoading) return;
     faviconsRequested = true;
@@ -257,6 +298,26 @@
         await sessions.remove(session.id);
       }
       await projects.remove(project.id);
+    } catch (err) {
+      reportError(err);
+    }
+  }
+
+  async function removeRemoteProject(presence: ProjectPresenceView) {
+    if (!presence.available || deviceSessions.projectPendingOperation(presence.ref)) return;
+    const remoteSessions = deviceItems.filter((projection) =>
+      projection.ref.deviceId === presence.ref.deviceId
+      && projection.session.projectId === presence.ref.projectId
+    );
+    const ok = await confirmStore.ask({
+      title: 'Delete remote project',
+      message: `Delete project "${presence.project.name}" and its ${remoteSessions.length} session${remoteSessions.length === 1 ? '' : 's'} from Soloe on ${presence.deviceName}? Files on disk will not be touched.`,
+      confirmLabel: 'Delete',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    try {
+      await deviceSessions.deleteProjectOnDevice(presence.ref);
     } catch (err) {
       reportError(err);
     }
@@ -483,6 +544,12 @@
               </DropdownMenu.Content>
             </DropdownMenu.Root>
           </span>
+          {#if remoteProjectOperation}
+            <LoaderCircle
+              class="size-3.5 shrink-0 animate-spin text-muted-foreground"
+              aria-label={remoteProjectOperation === 'deleting' ? 'Deleting remote project' : 'Updating remote project'}
+            />
+          {/if}
           {#if !showWorktreeGroups && (allowLocalActions || deviceProject)}
             {@const primaryWorkspace = deviceProject?.workspaces[0]}
             {@const primaryLocation = primaryWorkspace?.locations.find((candidate) => candidate.deviceId === deviceFilter)
@@ -501,13 +568,77 @@
       {/snippet}
     </ContextMenu.Trigger>
     <ContextMenu.Content class="w-56">
-      <ContextMenu.Item disabled={!allowLocalActions} onSelect={edit}>
-        <Pencil /> <span>Edit project</span>
-      </ContextMenu.Item>
-      <ContextMenu.Separator />
-      <ContextMenu.Item disabled={!allowLocalActions} variant="destructive" onSelect={removeProject}>
-        <Trash2 /> <span>Delete project</span>
-      </ContextMenu.Item>
+      {#if !allowLocalActions && remoteProjectPresences.length === 1}
+        {@const presence = remoteProjectPresences[0]!}
+        {@const pending = deviceSessions.projectPendingOperation(presence.ref)}
+        <ContextMenu.Item
+          disabled={!presence.available || pending !== null}
+          onSelect={() => editRemoteProject(presence)}
+        >
+          {#if pending === 'updating'}<LoaderCircle class="animate-spin" />{:else}<Pencil />{/if}
+          <span>Edit project</span>
+        </ContextMenu.Item>
+        <ContextMenu.Separator />
+        <ContextMenu.Item
+          disabled={!presence.available || pending !== null}
+          variant="destructive"
+          onSelect={() => void removeRemoteProject(presence)}
+        >
+          {#if pending === 'deleting'}<LoaderCircle class="animate-spin" />{:else}<Trash2 />{/if}
+          <span>{pending === 'deleting' ? 'Deleting project...' : 'Delete project'}</span>
+        </ContextMenu.Item>
+      {:else}
+        {#if allowLocalActions}
+          <ContextMenu.Item onSelect={edit}>
+            <Pencil /> <span>Edit project on this device</span>
+          </ContextMenu.Item>
+        {/if}
+        {#if remoteProjectPresences.length > 0}
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger>
+              <Pencil /> <span>Edit project on...</span>
+            </ContextMenu.SubTrigger>
+            <ContextMenu.SubContent class="w-52">
+              {#each remoteProjectPresences as presence (presence.key)}
+                {@const pending = deviceSessions.projectPendingOperation(presence.ref)}
+                <ContextMenu.Item
+                  disabled={!presence.available || pending !== null}
+                  onSelect={() => editRemoteProject(presence)}
+                >
+                  {#if pending === 'updating'}<LoaderCircle class="animate-spin" />{:else}<Pencil />{/if}
+                  <span>{presence.deviceName}</span>
+                </ContextMenu.Item>
+              {/each}
+            </ContextMenu.SubContent>
+          </ContextMenu.Sub>
+        {/if}
+        <ContextMenu.Separator />
+        {#if allowLocalActions}
+          <ContextMenu.Item variant="destructive" onSelect={removeProject}>
+            <Trash2 /> <span>Delete project on this device</span>
+          </ContextMenu.Item>
+        {/if}
+        {#if remoteProjectPresences.length > 0}
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger>
+              <Trash2 /> <span>Delete project on...</span>
+            </ContextMenu.SubTrigger>
+            <ContextMenu.SubContent class="w-52">
+              {#each remoteProjectPresences as presence (presence.key)}
+                {@const pending = deviceSessions.projectPendingOperation(presence.ref)}
+                <ContextMenu.Item
+                  disabled={!presence.available || pending !== null}
+                  variant="destructive"
+                  onSelect={() => void removeRemoteProject(presence)}
+                >
+                  {#if pending === 'deleting'}<LoaderCircle class="animate-spin" />{:else}<Trash2 />{/if}
+                  <span>{pending === 'deleting' ? `Deleting on ${presence.deviceName}...` : presence.deviceName}</span>
+                </ContextMenu.Item>
+              {/each}
+            </ContextMenu.SubContent>
+          </ContextMenu.Sub>
+        {/if}
+      {/if}
     </ContextMenu.Content>
   </ContextMenu.Root>
 

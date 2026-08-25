@@ -269,6 +269,46 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('routes Project metadata updates and deletion to the owning remote Device', async () => {
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') return jsonResponse(descriptor(FIRST_EPOCH));
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+          args: unknown[];
+        };
+        calls.push(request);
+        return jsonResponse({ ok: true, value: request.method === 'delete' ? true : {} });
+      },
+      socketFactory: () => new FakeSocket()
+    });
+
+    await client.updateProject('remote-project', {
+      name: 'Remote Project',
+      accentColor: undefined
+    });
+    await client.deleteProject('remote-project');
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        namespace: 'projects',
+        method: 'update',
+        args: ['remote-project', { name: 'Remote Project', accentColor: null }]
+      }),
+      expect.objectContaining({
+        namespace: 'projects',
+        method: 'delete',
+        args: ['remote-project']
+      })
+    ]);
+    client.dispose();
+  });
+
   it('rejects malformed repository identity returned by a remote Device', async () => {
     const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,

@@ -161,6 +161,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.sessions.browseDeviceWorkspaceDirectories, request),
     openProjectOnDevice: (request) =>
       ipcRenderer.invoke(IpcChannels.sessions.openProjectOnDevice, request),
+    updateProjectOnDevice: (request) =>
+      ipcRenderer.invoke(IpcChannels.sessions.updateProjectOnDevice, request),
+    deleteProjectOnDevice: (ref) =>
+      ipcRenderer.invoke(IpcChannels.sessions.deleteProjectOnDevice, ref),
     executeDevicePreparation: (planId) =>
       ipcRenderer.invoke(IpcChannels.sessions.executeDevicePreparation, planId),
     startOnDevice: (ref: SessionRef) =>

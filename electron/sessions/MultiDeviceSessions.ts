@@ -3,6 +3,7 @@ import type {
   DeviceEventEnvelope,
   DeviceId,
   DevicePortForwardResult,
+  ProjectRef,
   SessionRef,
   TerminalRef
 } from '@shared/types/devices.js';
@@ -12,7 +13,7 @@ import type {
   ImagePasteRequest,
   ImagePasteResult
 } from '@shared/types/files.js';
-import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
+import type { Project, ProjectOpenRequest, ProjectUpdate } from '@shared/types/projects.js';
 import type {
   Session,
   SessionDraft,
@@ -49,6 +50,7 @@ import type {
   ProjectView,
   SessionDeviceView,
   WorkspaceLocationView,
+  ProjectPresenceView,
   WorkspaceView
 } from '@shared/types/multi-device-sessions.js';
 export type {
@@ -61,6 +63,7 @@ export type {
   ProjectView,
   SessionDeviceView,
   WorkspaceLocationView,
+  ProjectPresenceView,
   WorkspaceView
 } from '@shared/types/multi-device-sessions.js';
 
@@ -110,6 +113,8 @@ export interface SessionDevice {
   ): Promise<DeviceOperationReceipt>;
   browseWorkspaceDirectories?(path?: string): Promise<WorkspaceDirectoryListing>;
   openProject?(request: ProjectOpenRequest): Promise<Project>;
+  updateProject?(projectId: string, patch: ProjectUpdate): Promise<Project>;
+  deleteProject?(projectId: string): Promise<void>;
   onEvent(listener: (event: DeviceEventEnvelope) => void): () => void;
   onStatus(listener: (status: SessionDeviceStatus) => void): () => void;
   dispose(): void | Promise<void>;
@@ -404,6 +409,48 @@ export class MultiDeviceSessions {
     const device = this.requireReadyDevice(deviceId);
     if (!device.openProject) throw new Error('The selected Device cannot open Projects.');
     await device.openProject(structuredClone(request));
+    return this.refresh();
+  }
+
+  async updateProject(
+    ref: ProjectRef,
+    patch: ProjectUpdate
+  ): Promise<MultiDeviceSessionState> {
+    const current = findProjectPresence(this.currentState, ref);
+    if (!current) throw new Error('Project is unavailable.');
+    if (!current.available) throw new Error(`Device ${current.deviceName} is offline.`);
+    const device = this.requireReadyDevice(ref.deviceId);
+    if (!device.updateProject) throw new Error('The selected Device cannot update Projects.');
+    await device.updateProject(ref.projectId, structuredClone(patch));
+    return this.refresh();
+  }
+
+  async deleteProject(ref: ProjectRef): Promise<MultiDeviceSessionState> {
+    const current = findProjectPresence(this.currentState, ref);
+    if (!current) throw new Error('Project is unavailable.');
+    if (!current.available) throw new Error(`Device ${current.deviceName} is offline.`);
+    const device = this.requireReadyDevice(ref.deviceId);
+    if (!device.deleteProject) throw new Error('The selected Device cannot delete Projects.');
+    if (!device.deleteSession) throw new Error('The selected Device cannot delete Project Sessions.');
+
+    const inventory = this.inventories.get(ref.deviceId);
+    for (const session of inventory?.sessions.filter(
+      (candidate) => candidate.projectId === ref.projectId
+    ) ?? []) {
+      const runtime = inventory?.runtimes.find((candidate) => candidate.sessionId === session.id);
+      if (
+        runtime?.terminalId
+        && (runtime.status === 'running' || runtime.status === 'starting')
+      ) {
+        try {
+          await device.terminalStop(runtime.terminalId);
+        } catch {
+          // Continue when the Device already stopped the Terminal.
+        }
+      }
+      await device.deleteSession(session.id);
+    }
+    await device.deleteProject(ref.projectId);
     return this.refresh();
   }
 
@@ -757,6 +804,7 @@ export class MultiDeviceSessions {
             if (
               event.event === 'sessions.change'
               || event.event === 'sessions.delete'
+              || event.event === 'projects.change'
               || event.event === 'workspaceDevice.change'
               || event.event === 'transport.repair'
             ) {
@@ -851,6 +899,7 @@ interface ProjectBuilder {
   key: string;
   name: string;
   repository: RepositoryIdentity | null;
+  presences: ProjectPresenceView[];
   workspaces: Map<string, WorkspaceBuilder>;
 }
 
@@ -883,10 +932,18 @@ function projectState(
           key: projectKey,
           name: projectInventory.project.name,
           repository: structuredClone(projectInventory.repository),
+          presences: [],
           workspaces: new Map()
         };
         projects.set(projectKey, project);
       }
+      project.presences.push({
+        ref: { deviceId: device.deviceId, projectId: projectInventory.project.id },
+        key: `${device.deviceId}/${encodeURIComponent(projectInventory.project.id)}`,
+        deviceName,
+        available: device.status.state === 'ready',
+        project: structuredClone(projectInventory.project)
+      });
       for (const worktree of projectInventory.worktrees) {
         const workspaceKey = `${projectKey}/${worktreeSourceKey(worktree, device.deviceId)}`;
         let workspace = project.workspaces.get(workspaceKey);
@@ -934,6 +991,7 @@ function projectState(
       key: project.key,
       name: project.name,
       repository: structuredClone(project.repository),
+      presences: project.presences.sort(compareProjectPresences),
       workspaces: [...project.workspaces.values()]
         .map((workspace): WorkspaceView => ({
           key: workspace.key,
@@ -956,6 +1014,22 @@ function projectState(
     unassigned: unassigned.sort(compareSessions),
     archivedSessions: archivedSessions.sort(compareSessions)
   };
+}
+
+function compareProjectPresences(left: ProjectPresenceView, right: ProjectPresenceView): number {
+  return left.deviceName.localeCompare(right.deviceName)
+    || left.project.name.localeCompare(right.project.name);
+}
+
+function findProjectPresence(
+  state: MultiDeviceSessionState,
+  ref: ProjectRef
+): ProjectPresenceView | null {
+  return state.projects
+    .flatMap((project) => project.presences ?? [])
+    .find((presence) =>
+      presence.ref.deviceId === ref.deviceId && presence.ref.projectId === ref.projectId
+    ) ?? null;
 }
 
 function deviceView(device: SessionDevice): SessionDeviceView {

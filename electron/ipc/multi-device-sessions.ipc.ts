@@ -5,7 +5,7 @@ import type {
   DeviceWorktreeInvokeRequest
 } from '@shared/types/multi-device-sessions.js';
 import type { MultiDeviceSessions } from '../sessions/MultiDeviceSessions.js';
-import type { SessionRef, TerminalRef } from '@shared/types/devices.js';
+import type { ProjectRef, SessionRef, TerminalRef } from '@shared/types/devices.js';
 import type { TerminalControlProof } from '@shared/types/terminal.js';
 import type { DeviceImagePasteRequest } from '@shared/types/files.js';
 import { ipcInvoke } from './result.js';
@@ -21,6 +21,8 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'executeCreate'
     | 'browseWorkspaceDirectories'
     | 'openProjectOnDevice'
+    | 'updateProject'
+    | 'deleteProject'
     | 'executePreparation'
     | 'startSession'
     | 'updateSession'
@@ -93,6 +95,17 @@ export class MultiDeviceSessionsIpc {
           request.deviceId,
           request.project
         ))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.updateProjectOnDevice,
+      (_event, request: { ref: ProjectRef; patch: import('@shared/types/projects.js').ProjectUpdate }) =>
+        ipcInvoke(() => this.options.sessions.updateProject(
+          structuredClone(request.ref),
+          structuredClone(request.patch)
+        ))
+    );
+    ipcMain.handle(IpcChannels.sessions.deleteProjectOnDevice, (_event, ref: ProjectRef) =>
+      ipcInvoke(() => this.options.sessions.deleteProject(structuredClone(ref)))
     );
     ipcMain.handle(
       IpcChannels.sessions.executeDevicePreparation,
@@ -237,6 +250,8 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.executeCreateOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.browseDeviceWorkspaceDirectories);
     ipcMain.removeHandler(IpcChannels.sessions.openProjectOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.updateProjectOnDevice);
+    ipcMain.removeHandler(IpcChannels.sessions.deleteProjectOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.executeDevicePreparation);
     ipcMain.removeHandler(IpcChannels.sessions.startOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.updateOnDevice);

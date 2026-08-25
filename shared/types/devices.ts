@@ -11,6 +11,10 @@ export interface SessionRef extends DeviceRef {
   sessionId: string;
 }
 
+export interface ProjectRef extends DeviceRef {
+  projectId: string;
+}
+
 export interface TerminalRef extends DeviceRef {
   terminalId: string;
 }

@@ -152,6 +152,7 @@ import type {
   DeviceEventEnvelope,
   DeviceId,
   DevicePortForwardResult,
+  ProjectRef,
   SessionRef,
   TerminalRef
 } from './devices.js';
@@ -182,6 +183,8 @@ export const IpcChannels = {
     executeCreateOnDevice: 'sessions:execute-create-on-device',
     browseDeviceWorkspaceDirectories: 'sessions:browse-device-workspace-directories',
     openProjectOnDevice: 'sessions:open-project-on-device',
+    updateProjectOnDevice: 'sessions:update-project-on-device',
+    deleteProjectOnDevice: 'sessions:delete-project-on-device',
     executeDevicePreparation: 'sessions:execute-device-preparation',
     startOnDevice: 'sessions:start-on-device',
     updateOnDevice: 'sessions:update-on-device',
@@ -445,6 +448,10 @@ export interface SessionsApi {
   openProjectOnDevice?(
     request: { deviceId: import('./devices.js').DeviceId; project: ProjectOpenRequest }
   ): Promise<IpcResult<MultiDeviceSessionState>>;
+  updateProjectOnDevice?(
+    request: { ref: ProjectRef; patch: ProjectUpdate }
+  ): Promise<IpcResult<MultiDeviceSessionState>>;
+  deleteProjectOnDevice?(ref: ProjectRef): Promise<IpcResult<MultiDeviceSessionState>>;
   executeDevicePreparation?(planId: string): Promise<IpcResult<MultiDeviceSessionState>>;
   startOnDevice?(ref: SessionRef): Promise<IpcResult<MultiDeviceSessionView>>;
   updateOnDevice?(

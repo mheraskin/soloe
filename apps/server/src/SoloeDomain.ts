@@ -30,6 +30,7 @@ import type {
 } from "../../../shared/types/sessions.js";
 import type {
   DeviceId,
+  ProjectRef,
   SessionRef,
   TerminalRef,
 } from "../../../shared/types/devices.js";
@@ -2069,8 +2070,18 @@ export class SoloeDomain extends EventEmitter {
         await this.reconcileLegacyWorkspaceState();
         return project;
       }
-      case "update":
-        return this.projects.update(args[0] as ProjectId, args[1] as ProjectUpdate);
+      case "update": {
+        const wirePatch = args[1] as ProjectUpdate & {
+          defaultRunMode?: ProjectUpdate["defaultRunMode"] | null;
+          defaultWslDistro?: string | null;
+          accentColor?: string | null;
+        };
+        const patch: ProjectUpdate = { ...wirePatch };
+        if (wirePatch?.defaultRunMode === null) patch.defaultRunMode = undefined;
+        if (wirePatch?.defaultWslDistro === null) patch.defaultWslDistro = undefined;
+        if (wirePatch?.accentColor === null) patch.accentColor = undefined;
+        return this.projects.update(args[0] as ProjectId, patch);
+      }
       case "delete":
         await this.projects.delete(args[0] as ProjectId);
         return true;
@@ -2203,6 +2214,17 @@ export class SoloeDomain extends EventEmitter {
           structuredClone(request.project),
         );
       }
+      case "updateProjectOnDevice": {
+        const request = args[0] as { ref: ProjectRef; patch: ProjectUpdate };
+        return this.requireMultiDeviceSessions(deviceSessions).updateProject(
+          structuredClone(request.ref),
+          structuredClone(request.patch),
+        );
+      }
+      case "deleteProjectOnDevice":
+        return this.requireMultiDeviceSessions(deviceSessions).deleteProject(
+          structuredClone(args[0] as ProjectRef),
+        );
       case "executeDevicePreparation":
         return this.requireMultiDeviceSessions(deviceSessions).executePreparation(
           String(args[0] ?? ""),

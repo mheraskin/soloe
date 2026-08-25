@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   setDeviceTerminalDemand: vi.fn(),
   updateOnDevice: vi.fn(),
   deleteOnDevice: vi.fn(),
+  updateProjectOnDevice: vi.fn(),
+  deleteProjectOnDevice: vi.fn(),
   reorderOnDevices: vi.fn()
 }));
 
@@ -48,6 +50,8 @@ vi.mock('../lib/ipc', () => ({
       deviceTerminalParkInputLease: mocks.deviceTerminalParkInputLease,
       updateOnDevice: mocks.updateOnDevice,
       deleteOnDevice: mocks.deleteOnDevice,
+      updateProjectOnDevice: mocks.updateProjectOnDevice,
+      deleteProjectOnDevice: mocks.deleteProjectOnDevice,
       reorderOnDevices: mocks.reorderOnDevices,
       onDeviceStateChange: vi.fn((listener) => {
         mocks.stateChange = listener;
@@ -94,6 +98,8 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.setDeviceTerminalDemand.mockReset().mockResolvedValue(undefined);
     mocks.updateOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
     mocks.deleteOnDevice.mockReset().mockResolvedValue({ ...state(2, true), unassigned: [] });
+    mocks.updateProjectOnDevice.mockReset();
+    mocks.deleteProjectOnDevice.mockReset();
     mocks.reorderOnDevices.mockReset();
   });
 
@@ -492,6 +498,32 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     expect(store.pendingOperation('device-xps/session-1')).toBeNull();
   });
 
+  it('applies remote Project updates and keeps deletion pending until the Device confirms it', async () => {
+    const initial = stateWithProject(1, 'Remote Project');
+    mocks.deviceState.mockResolvedValueOnce(initial);
+    mocks.refreshDevices.mockResolvedValueOnce(initial);
+    mocks.updateProjectOnDevice.mockResolvedValueOnce(stateWithProject(2, 'Renamed Project'));
+    const deletion = deferred<MultiDeviceSessionState>();
+    mocks.deleteProjectOnDevice.mockReturnValueOnce(deletion.promise);
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', projectId: 'project-1' };
+
+    await store.updateProjectOnDevice(ref, { name: 'Renamed Project' });
+
+    expect(mocks.updateProjectOnDevice).toHaveBeenCalledWith(ref, { name: 'Renamed Project' });
+    expect(store.state.projects[0]?.presences?.[0]?.project.name).toBe('Renamed Project');
+
+    const request = store.deleteProjectOnDevice(ref);
+    expect(store.projectPendingOperation(ref)).toBe('deleting');
+    expect(store.state.projects).toHaveLength(1);
+
+    deletion.resolve({ ...state(3, true), projects: [] });
+    await request;
+    expect(store.state.projects).toHaveLength(0);
+    expect(store.projectPendingOperation(ref)).toBeNull();
+  });
+
   it('selects a newly created remote Session even when the refresh snapshot is stale', async () => {
     const store = new DeviceSessionsStore();
     await store.load();
@@ -806,6 +838,30 @@ function state(
     }],
     archivedSessions: []
   };
+}
+
+function stateWithProject(revision: number, name: string): MultiDeviceSessionState {
+  const snapshot = state(revision, true);
+  snapshot.projects = [{
+    key: 'git:example/project',
+    name,
+    repository: { kind: 'git', canonicalUrl: 'https://github.com/example/project.git' },
+    presences: [{
+      ref: { deviceId: 'device-xps', projectId: 'project-1' },
+      key: 'device-xps/project-1',
+      deviceName: 'xps',
+      available: true,
+      project: {
+        id: 'project-1',
+        name,
+        path: '/home/me/project',
+        createdAt: '2026-08-16T00:00:00.000Z',
+        lastOpenedAt: '2026-08-16T00:00:00.000Z'
+      }
+    }],
+    workspaces: []
+  }];
+  return snapshot;
 }
 
 function deferred<T>(): {

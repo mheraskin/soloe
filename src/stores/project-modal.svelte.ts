@@ -1,4 +1,5 @@
 import type { Project, ProjectDraft } from '@shared/types/projects.js';
+import type { ProjectRef } from '@shared/types/devices.js';
 
 export interface ProjectModalDraft extends ProjectDraft {}
 
@@ -6,10 +7,14 @@ class ProjectModalStore {
   open = $state(false);
   draft = $state<ProjectModalDraft>({ name: '', path: '' });
   editingId = $state<string | null>(null);
+  deviceTarget = $state<ProjectRef | null>(null);
+  deviceName = $state<string | null>(null);
   error = $state<string | null>(null);
 
-  openEdit(project: Project): void {
+  openEdit(project: Project, deviceTarget: ProjectRef | null = null, deviceName: string | null = null): void {
     this.editingId = project.id;
+    this.deviceTarget = deviceTarget ? structuredClone(deviceTarget) : null;
+    this.deviceName = deviceName;
     this.draft = {
       name: project.name,
       path: project.path,
@@ -23,6 +28,8 @@ class ProjectModalStore {
 
   close(): void {
     this.open = false;
+    this.deviceTarget = null;
+    this.deviceName = null;
     this.error = null;
   }
 }

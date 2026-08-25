@@ -1,4 +1,4 @@
-import type { DeviceDescriptor, DeviceId, SessionRef, TerminalRef } from './devices.js';
+import type { DeviceDescriptor, DeviceId, ProjectRef, SessionRef, TerminalRef } from './devices.js';
 import type { GitWorktree } from './git.js';
 import type { Project } from './projects.js';
 import type { Session, SessionDraft, SessionRuntimeState, SessionStatus } from './sessions.js';
@@ -71,6 +71,14 @@ export interface WorkspaceLocationView {
   isMain: boolean;
 }
 
+export interface ProjectPresenceView {
+  ref: ProjectRef;
+  key: string;
+  deviceName: string;
+  available: boolean;
+  project: Project;
+}
+
 export interface WorkspaceView {
   key: string;
   name: string;
@@ -83,6 +91,8 @@ export interface ProjectView {
   key: string;
   name: string;
   repository: RepositoryIdentity | null;
+  /** Physical Project records that contribute to this logical repository view. */
+  presences?: ProjectPresenceView[];
   workspaces: WorkspaceView[];
 }
 

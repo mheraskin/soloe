@@ -18,7 +18,7 @@ import type {
   SessionRuntimeState,
   SessionUpdate
 } from '@shared/types/sessions.js';
-import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
+import type { Project, ProjectOpenRequest, ProjectUpdate } from '@shared/types/projects.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
 import type { ImagePasteRequest, ImagePasteResult } from '@shared/types/files.js';
@@ -424,6 +424,18 @@ export class RemoteSessionDevice implements SessionDevice {
 
   openProject(request: ProjectOpenRequest): Promise<Project> {
     return this.rpc('projects', 'open', [structuredClone(request)]);
+  }
+
+  updateProject(projectId: string, patch: ProjectUpdate): Promise<Project> {
+    const wirePatch: Record<string, unknown> = structuredClone(patch);
+    for (const key of ['defaultRunMode', 'defaultWslDistro', 'accentColor'] as const) {
+      if (key in patch && patch[key] === undefined) wirePatch[key] = null;
+    }
+    return this.rpc('projects', 'update', [requiredId(projectId, 'Project'), wirePatch]);
+  }
+
+  deleteProject(projectId: string): Promise<void> {
+    return this.rpc('projects', 'delete', [requiredId(projectId, 'Project')]).then(() => undefined);
   }
 
   rebindSessionSource(request: DeviceSessionSourceUpdateRequest): Promise<Session> {

@@ -42,6 +42,8 @@ describe('MultiDeviceSessionsIpc', () => {
       planCreate: vi.fn(),
       executeCreate: vi.fn(),
       startSession: vi.fn(),
+      updateProject: vi.fn(async () => structuredClone(state)),
+      deleteProject: vi.fn(async () => structuredClone(state)),
       updateSession: vi.fn(async (_ref, patch) => ({ session: patch })),
       deleteSession: vi.fn(async () => structuredClone(state)),
       ensureTailscalePort: vi.fn(async (deviceId, port) => ({
@@ -76,6 +78,8 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(electronMocks.handlers.has(IpcChannels.sessions.planCreateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.executeCreateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.startOnDevice)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.updateProjectOnDevice)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.deleteProjectOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.updateOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.deleteOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(
@@ -109,6 +113,15 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(sessions.reorderSessions).toHaveBeenCalledWith(orderedRefs);
 
     const sessionRef = { deviceId: 'device-1', sessionId: 'remote-session' };
+    const projectRef = { deviceId: 'device-1', projectId: 'remote-project' };
+    await expect(invoke(IpcChannels.sessions.updateProjectOnDevice, {
+      ref: projectRef,
+      patch: { name: 'Renamed project' }
+    })).resolves.toEqual({ ok: true, value: state });
+    await expect(invoke(IpcChannels.sessions.deleteProjectOnDevice, projectRef)).resolves.toEqual({
+      ok: true,
+      value: state
+    });
     await expect(invoke(IpcChannels.sessions.updateOnDevice, {
       ref: sessionRef,
       patch: { name: 'Renamed' }
@@ -123,6 +136,8 @@ describe('MultiDeviceSessionsIpc', () => {
     )).resolves.toEqual({ ok: true, value: { description: 'pnpm codex' } });
     expect(sessions.updateSession).toHaveBeenCalledWith(sessionRef, { name: 'Renamed' });
     expect(sessions.deleteSession).toHaveBeenCalledWith(sessionRef);
+    expect(sessions.updateProject).toHaveBeenCalledWith(projectRef, { name: 'Renamed project' });
+    expect(sessions.deleteProject).toHaveBeenCalledWith(projectRef);
     expect(sessions.previewSessionCommand).toHaveBeenCalledWith(sessionRef);
 
     const worktreeRequest = {

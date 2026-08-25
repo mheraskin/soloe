@@ -661,6 +661,58 @@ describe('MultiDeviceSessions', () => {
     )).toHaveLength(0);
   });
 
+  it('routes Project metadata updates and deletion to the owning Device', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: [session({
+        id: 'remote-session',
+        projectId: 'windows-soloe',
+        cwd: 'C:\\src\\soloe-feature'
+      })]
+    });
+    const multiDevice = new MultiDeviceSessions({ devices: [laptop] });
+    const initial = await multiDevice.refresh();
+    const ref = { deviceId: LAPTOP_ID, projectId: 'windows-soloe' };
+
+    expect(initial.projects[0]?.presences).toEqual([
+      expect.objectContaining({
+        ref,
+        deviceName: 'LAPTOPLORES',
+        project: expect.objectContaining({ id: 'windows-soloe', path: 'C:\\src\\soloe' })
+      })
+    ]);
+
+    const updated = await multiDevice.updateProject(ref, {
+      name: 'Renamed remotely',
+      accentColor: 'violet'
+    });
+
+    expect(laptop.projectUpdateRequests).toEqual([{
+      projectId: 'windows-soloe',
+      patch: { name: 'Renamed remotely', accentColor: 'violet' }
+    }]);
+    expect(updated.projects[0]?.presences?.[0]?.project).toMatchObject({
+      name: 'Renamed remotely',
+      accentColor: 'violet'
+    });
+
+    await multiDevice.startSession({ deviceId: LAPTOP_ID, sessionId: 'remote-session' });
+    const deleted = await multiDevice.deleteProject(ref);
+
+    expect(laptop.lifecycleRequests).toEqual([
+      'stop:terminal-remote-session',
+      'delete:remote-session',
+      'delete-project:windows-soloe'
+    ]);
+    expect(laptop.deletedProjectIds).toEqual(['windows-soloe']);
+    expect(deleted.projects).toHaveLength(0);
+  });
+
   it('refreshes projections when an owning Device broadcasts a Session change', async () => {
     const laptop = fakeDevice({
       deviceId: LAPTOP_ID,
@@ -691,6 +743,36 @@ describe('MultiDeviceSessions', () => {
     const state = await changed;
 
     expect(state.projects[0]?.workspaces[0]?.sessions[0]?.session.name).toBe('Changed elsewhere');
+    expect(laptop.readInventoryCalls).toBe(2);
+  });
+
+  it('refreshes Project metadata when its Device broadcasts a Project change', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    const multiDevice = new MultiDeviceSessions({ devices: [laptop] });
+    await multiDevice.refresh();
+    await laptop.updateProject?.('windows-soloe', { name: 'Changed elsewhere' });
+    const changed = new Promise<import('@shared/types/multi-device-sessions.js').MultiDeviceSessionState>(
+      (resolve) => {
+        const detach = multiDevice.onState((state) => {
+          detach();
+          resolve(state);
+        });
+      }
+    );
+
+    laptop.emitEvent('projects.change', [{ id: 'windows-soloe' }]);
+    const state = await changed;
+
+    expect(state.projects[0]?.name).toBe('Changed elsewhere');
+    expect(state.projects[0]?.presences?.[0]?.project.name).toBe('Changed elsewhere');
     expect(laptop.readInventoryCalls).toBe(2);
   });
 
@@ -782,6 +864,11 @@ function fakeDevice(input: {
     patch: import('@shared/types/sessions.js').SessionUpdate;
   }>;
   deletedSessionIds: string[];
+  projectUpdateRequests: Array<{
+    projectId: string;
+    patch: import('@shared/types/projects.js').ProjectUpdate;
+  }>;
+  deletedProjectIds: string[];
   lifecycleRequests: string[];
   emitEvent(event: string, payload: unknown): void;
 } {
@@ -839,6 +926,11 @@ function fakeDevice(input: {
     patch: import('@shared/types/sessions.js').SessionUpdate;
   }> = [];
   const deletedSessionIds: string[] = [];
+  const projectUpdateRequests: Array<{
+    projectId: string;
+    patch: import('@shared/types/projects.js').ProjectUpdate;
+  }> = [];
+  const deletedProjectIds: string[] = [];
   const lifecycleRequests: string[] = [];
   let pendingClone: import('@shared/types/workspaces.js').CloneProjectPresenceIntent | null = null;
   let disposed = false;
@@ -874,6 +966,20 @@ function fakeDevice(input: {
       lifecycleRequests.push(`delete:${sessionId}`);
       deletedSessionIds.push(sessionId);
       inventory.sessions = inventory.sessions.filter((item) => item.id !== sessionId);
+    },
+    updateProject: async (projectId, patch) => {
+      projectUpdateRequests.push({ projectId, patch: structuredClone(patch) });
+      const existing = inventory.projects.find((candidate) => candidate.project.id === projectId);
+      if (!existing) throw new Error(`Project not found: ${projectId}`);
+      Object.assign(existing.project, structuredClone(patch));
+      return structuredClone(existing.project);
+    },
+    deleteProject: async (projectId) => {
+      lifecycleRequests.push(`delete-project:${projectId}`);
+      deletedProjectIds.push(projectId);
+      inventory.projects = inventory.projects.filter(
+        (candidate) => candidate.project.id !== projectId
+      );
     },
     setTerminalOutputDemand: async () => undefined,
     terminalInput: async (terminalId, data) => {
@@ -1064,6 +1170,8 @@ function fakeDevice(input: {
     reorderRequests,
     updateRequests,
     deletedSessionIds,
+    projectUpdateRequests,
+    deletedProjectIds,
     lifecycleRequests,
     emitEvent: (event, payload) => {
       const envelope: DeviceEventEnvelope = {

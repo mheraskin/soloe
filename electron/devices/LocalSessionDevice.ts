@@ -22,7 +22,7 @@ import {
   type WorkspaceDeviceStore
 } from '@soloe/domain';
 import type { ProjectStore } from '../projects/ProjectStore.js';
-import type { Project, ProjectOpenRequest } from '@shared/types/projects.js';
+import type { Project, ProjectOpenRequest, ProjectUpdate } from '@shared/types/projects.js';
 import type { GitService } from '../git/GitService.js';
 import type { WorkspaceDeviceService } from '@soloe/domain';
 import type { GitHubProviderService } from '@soloe/domain';
@@ -64,7 +64,7 @@ import type {
 export interface LocalSessionDeviceOptions {
   descriptor: DeviceDescriptor;
   sessions: SessionStore;
-  projects?: Pick<ProjectStore, 'list' | 'open'>;
+  projects?: Pick<ProjectStore, 'list' | 'open' | 'update' | 'delete'>;
   git?: Pick<GitService, 'listWorktrees' | 'getRemoteUrl'>;
   workspaceDevice?: Pick<WorkspaceDeviceStore, 'snapshot' | 'reconcileLegacy'>;
   workspaceService?: Pick<
@@ -424,6 +424,18 @@ export class LocalSessionDevice implements SessionDevice {
     this.assertActive();
     if (!this.options.projects) throw new Error('Local Project registration is unavailable.');
     return this.options.projects.open(structuredClone(request));
+  }
+
+  updateProject(projectId: string, patch: ProjectUpdate): Promise<Project> {
+    this.assertActive();
+    if (!this.options.projects) throw new Error('Local Project updates are unavailable.');
+    return this.options.projects.update(requiredId(projectId), structuredClone(patch));
+  }
+
+  async deleteProject(projectId: string): Promise<void> {
+    this.assertActive();
+    if (!this.options.projects) throw new Error('Local Project deletion is unavailable.');
+    await this.options.projects.delete(requiredId(projectId));
   }
 
   rebindSessionSource(request: DeviceSessionSourceUpdateRequest): Promise<Session> {

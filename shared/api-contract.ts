@@ -18,6 +18,8 @@ export const SOLOE_API_METHODS = {
     "executeCreateOnDevice",
     "browseDeviceWorkspaceDirectories",
     "openProjectOnDevice",
+    "updateProjectOnDevice",
+    "deleteProjectOnDevice",
     "executeDevicePreparation",
     "startOnDevice",
     "updateOnDevice",

@@ -222,6 +222,21 @@ const localBackend = {
       if (!c.sessions.openProjectOnDevice) throw new Error('Opening Projects on Devices is unavailable.');
       return unwrap(await c.sessions.openProjectOnDevice(toIpcPayload(request)));
     },
+    updateProjectOnDevice: async (
+      ref: import('@shared/types/devices.js').ProjectRef,
+      patch: ProjectUpdate
+    ) => {
+      if (!c.sessions.updateProjectOnDevice) {
+        throw new Error('Updating Projects on Devices is unavailable.');
+      }
+      return unwrap(await c.sessions.updateProjectOnDevice(toIpcPayload({ ref, patch })));
+    },
+    deleteProjectOnDevice: async (ref: import('@shared/types/devices.js').ProjectRef) => {
+      if (!c.sessions.deleteProjectOnDevice) {
+        throw new Error('Deleting Projects on Devices is unavailable.');
+      }
+      return unwrap(await c.sessions.deleteProjectOnDevice(toIpcPayload(ref)));
+    },
     executeDevicePreparation: async (planId: string) => {
       if (!c.sessions.executeDevicePreparation) {
         throw new Error('Device Project preparation is unavailable.');

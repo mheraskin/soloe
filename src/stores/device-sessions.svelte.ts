@@ -2,8 +2,10 @@ import type {
   DeviceEventEnvelope,
   DeviceId,
   DevicePortForwardResult,
+  ProjectRef,
   TerminalRef
 } from '@shared/types/devices.js';
+import type { ProjectUpdate } from '@shared/types/projects.js';
 import type {
   CreateMultiDeviceSessionRequest,
   MultiDeviceSessionCreationPlan,
@@ -41,6 +43,8 @@ export type DeviceSessionPendingOperation =
   | 'restarting'
   | 'updating'
   | 'deleting';
+
+export type DeviceProjectPendingOperation = 'updating' | 'deleting';
 
 interface QueuedSessionUpdate {
   ref: MultiDeviceSessionView['ref'];
@@ -93,6 +97,7 @@ export class DeviceSessionsStore {
   inputLeaseEvents = $state<Record<string, TerminalInputLeaseEvent>>({});
   ownedInputLeases = $state<Record<string, TerminalInputLease>>({});
   pendingOperations = $state<Record<string, DeviceSessionPendingOperation>>({});
+  pendingProjectOperations = $state<Record<string, DeviceProjectPendingOperation>>({});
   private detachState: (() => void) | null = null;
   private detachDeviceEvent: (() => void) | null = null;
   private detachReconnect: (() => void) | null = null;
@@ -221,6 +226,10 @@ export class DeviceSessionsStore {
 
   pendingOperation(key: string): DeviceSessionPendingOperation | null {
     return this.pendingOperations[key] ?? null;
+  }
+
+  projectPendingOperation(ref: ProjectRef): DeviceProjectPendingOperation | null {
+    return this.pendingProjectOperations[projectRefKey(ref)] ?? null;
   }
 
   localTerminalRef(terminalId: string): TerminalRef | null {
@@ -524,6 +533,31 @@ export class DeviceSessionsStore {
     project: import('@shared/types/projects.js').ProjectOpenRequest
   ): Promise<void> {
     this.applyState(await ipc.sessions.openProjectOnDevice({ deviceId, project }));
+  }
+
+  async updateProjectOnDevice(ref: ProjectRef, patch: ProjectUpdate): Promise<void> {
+    const key = projectRefKey(ref);
+    if (this.pendingProjectOperations[key]) return;
+    this.pendingProjectOperations[key] = 'updating';
+    try {
+      this.applyState(await ipc.sessions.updateProjectOnDevice(
+        $state.snapshot(ref),
+        $state.snapshot(patch)
+      ));
+    } finally {
+      delete this.pendingProjectOperations[key];
+    }
+  }
+
+  async deleteProjectOnDevice(ref: ProjectRef): Promise<void> {
+    const key = projectRefKey(ref);
+    if (this.pendingProjectOperations[key]) return;
+    this.pendingProjectOperations[key] = 'deleting';
+    try {
+      this.applyState(await ipc.sessions.deleteProjectOnDevice($state.snapshot(ref)));
+    } finally {
+      delete this.pendingProjectOperations[key];
+    }
   }
 
   async executePreparation(planId: string): Promise<void> {
@@ -1136,6 +1170,10 @@ function stateWithOptimisticSessionOrder(
 
 function terminalRefKey(ref: TerminalRef): string {
   return `${ref.deviceId}/${encodeURIComponent(ref.terminalId)}`;
+}
+
+function projectRefKey(ref: ProjectRef): string {
+  return `${ref.deviceId}/${encodeURIComponent(ref.projectId)}`;
 }
 
 function isRecoverableTerminalControlError(error: unknown): boolean {

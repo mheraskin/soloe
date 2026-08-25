@@ -289,12 +289,17 @@
       && deviceSessions.visibleDevices.length > 1
   );
   let deviceProjects = $derived.by(() => {
-    const visible = deviceSessions.state.projects.filter((project) => project.workspaces.some((workspace) =>
-      workspace.locations.some((location) => deviceSessions.includesDevice(location.deviceId))
-      || workspace.sessions.some((projection) =>
-        deviceSessions.includesDevice(projection.ref.deviceId)
+    const visible = deviceSessions.state.projects.filter((project) =>
+      (project.presences ?? []).some((presence) =>
+        deviceSessions.includesDevice(presence.ref.deviceId)
       )
-    ));
+      || project.workspaces.some((workspace) =>
+        workspace.locations.some((location) => deviceSessions.includesDevice(location.deviceId))
+        || workspace.sessions.some((projection) =>
+          deviceSessions.includesDevice(projection.ref.deviceId)
+        )
+      )
+    );
     return [...visible].sort((left, right) => {
       const leftId = localProjectFor(left)?.id;
       const rightId = localProjectFor(right)?.id;
@@ -324,6 +329,11 @@
   });
 
   function localProjectFor(deviceProject: ProjectView): Project | null {
+    for (const presence of deviceProject.presences ?? []) {
+      if (!deviceSessions.device(presence.ref.deviceId)?.local) continue;
+      const project = projects.get(presence.ref.projectId);
+      if (project) return project;
+    }
     for (const workspace of deviceProject.workspaces) {
       for (const location of workspace.locations) {
         if (!deviceSessions.device(location.deviceId)?.local || !location.projectId) continue;
@@ -337,6 +347,10 @@
   function sidebarProject(deviceProject: ProjectView): Project {
     const local = localProjectFor(deviceProject);
     if (local) return local;
+    const presence = (deviceProject.presences ?? []).find((candidate) =>
+      deviceSessions.includesDevice(candidate.ref.deviceId)
+    );
+    if (presence) return structuredClone(presence.project);
     const location = deviceProject.workspaces
       .flatMap((workspace) => workspace.locations)
       .find((candidate) => deviceSessions.includesDevice(candidate.deviceId));
