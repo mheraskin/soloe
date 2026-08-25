@@ -93,11 +93,8 @@
   import AppSkeleton from './components/AppSkeleton.svelte';
   import SettingsDialog from './components/SettingsDialog.svelte';
   import ConnectionMenu from './components/ConnectionMenu.svelte';
-  import DeviceSessionArea from './components/DeviceSessionArea.svelte';
-  import {
-    deviceSessionStatus,
-    deviceTerminalPresentationKey
-  } from './lib/device-terminal-presentation';
+  import DeviceTerminalStage from './components/DeviceTerminalStage.svelte';
+  import { deviceSessionStatus } from './lib/device-terminal-presentation';
   import { deviceSessions } from './stores/device-sessions.svelte';
   import appIconUrl from '../build/favicon.svg';
   import { scheduleMobileWorkspaceRefresh } from './lib/mobile-workspace-layout';
@@ -1785,16 +1782,13 @@
                 onOpenNavigation={() => navigateMobile('navigation')}
               />
             </div>
-            {#if deviceSessions.selectedProjection && mobilePage === 'workspace' && mobileMode === 'terminal'}
-              <div class="h-full">
-                {#key deviceTerminalPresentationKey(deviceSessions.selectedProjection)}
-                  <DeviceSessionArea
-                    projection={deviceSessions.selectedProjection}
-                    onClose={() => deviceSessions.clearSelectedSession()}
-                  />
-                {/key}
-              </div>
-            {/if}
+            <DeviceTerminalStage
+              projections={deviceSessions.sessions}
+              selected={deviceSessions.selectedProjection}
+              active={mobilePage === 'workspace' && mobileMode === 'terminal'}
+              interactive={mobilePage === 'workspace' && mobileMode === 'terminal'}
+              onClose={() => deviceSessions.clearSelectedSession()}
+            />
           </div>
           <div
             class="mobile-workspace-surface mobile-workspace-pane"
@@ -1826,16 +1820,13 @@
         <div class={deviceSessions.selectedProjection ? 'hidden' : 'contents'}>
           <TerminalArea />
         </div>
-        {#if deviceSessions.selectedProjection && !railFullscreen}
-          <div class="min-w-0 flex-1">
-            {#key deviceTerminalPresentationKey(deviceSessions.selectedProjection)}
-              <DeviceSessionArea
-                projection={deviceSessions.selectedProjection}
-                onClose={() => deviceSessions.clearSelectedSession()}
-              />
-            {/key}
-          </div>
-        {/if}
+        <DeviceTerminalStage
+          projections={deviceSessions.sessions}
+          selected={deviceSessions.selectedProjection}
+          active={!railFullscreen}
+          interactive={!railFullscreen}
+          onClose={() => deviceSessions.clearSelectedSession()}
+        />
       </div>
       <RightRail fullscreen={railFullscreen} />
     </div>

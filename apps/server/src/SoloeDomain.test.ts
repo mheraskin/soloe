@@ -101,7 +101,7 @@ describe("SoloeDomain", () => {
     }
   });
 
-  it("applies the configured Terminal history retention to Runtime", async () => {
+  it("keeps Runtime history complete when a legacy client writes bounded retention", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-replay-retention-"));
     const setHistoryUnbounded = vi.fn(async () => true);
     const domain = new SoloeDomain({
@@ -128,7 +128,7 @@ describe("SoloeDomain", () => {
         args: [{ terminal: { keepFullHistory: false } }],
       });
 
-      expect(setHistoryUnbounded).toHaveBeenCalledWith(false);
+      expect(setHistoryUnbounded).toHaveBeenCalledWith(true);
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

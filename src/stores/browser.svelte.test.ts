@@ -255,6 +255,25 @@ describe('BrowserStore residency', () => {
     expect(store.residentTabs(1)).toHaveLength(1);
   });
 
+  it('repairs a persisted single-label Device address before loading it', () => {
+    localStorage.setItem('soloe.browser.v2', JSON.stringify({
+      __none__: {
+        tabs: [{
+          id: 'remote-app',
+          title: 'Remote app',
+          history: ['xps:8877'],
+          historyIndex: 0
+        }],
+        activeTabId: 'remote-app'
+      }
+    }));
+
+    const store = new BrowserStore();
+
+    expect(store.activeUrl()).toBe('http://xps:8877');
+    expect(store.activeTab?.history).toEqual(['http://xps:8877']);
+  });
+
   it('batches frequent tab mutations into one exact-scope persistence write', () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
     const store = new BrowserStore();

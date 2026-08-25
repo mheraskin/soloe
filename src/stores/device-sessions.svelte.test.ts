@@ -7,6 +7,7 @@ import type { MultiDeviceSessionState } from '@shared/types/multi-device-session
 const mocks = vi.hoisted(() => ({
   stateChange: null as null | ((state: MultiDeviceSessionState) => void),
   deviceEvent: null as null | ((event: unknown) => void),
+  reconnect: null as null | (() => void),
   deviceState: vi.fn(),
   refreshDevices: vi.fn(),
   startOnDevice: vi.fn(),
@@ -26,6 +27,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../lib/ipc', () => ({
   ipc: {
+    connection: {
+      onReconnect: vi.fn((listener) => {
+        mocks.reconnect = listener;
+        return () => undefined;
+      })
+    },
     sessions: {
       devicesSupported: true,
       deviceState: mocks.deviceState,
@@ -69,6 +76,7 @@ describe('DeviceSessionsStore reconnect recovery', () => {
   beforeEach(() => {
     mocks.stateChange = null;
     mocks.deviceEvent = null;
+    mocks.reconnect = null;
     mocks.deviceState.mockReset().mockResolvedValue(state(1, true));
     mocks.refreshDevices.mockReset().mockResolvedValue(state(1, true));
     mocks.startOnDevice.mockReset().mockResolvedValue(state(2, true).unassigned[0]);
@@ -141,6 +149,27 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     mocks.stateChange?.(state(3, true));
     expect(store.selectedSessionKey).toBe('device-xps/session-1');
     expect(reconnected).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes remote state, demand, and listeners after the renderer reconnects', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const reconnected = vi.fn();
+    store.onDeviceReconnect('device-xps', reconnected);
+    const output = store.acquireTerminalOutput(
+      { deviceId: 'device-xps', terminalId: 'terminal-1' },
+      vi.fn()
+    );
+    await output.ready;
+    mocks.refreshDevices.mockClear();
+    mocks.setDeviceTerminalDemand.mockClear();
+
+    mocks.reconnect?.();
+
+    await vi.waitFor(() => expect(mocks.refreshDevices).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(mocks.setDeviceTerminalDemand).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(reconnected).toHaveBeenCalledOnce());
+    output.dispose();
   });
 
   it('reorders remote Sessions immediately and rolls back when persistence fails', async () => {

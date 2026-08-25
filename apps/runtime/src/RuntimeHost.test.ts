@@ -209,7 +209,8 @@ describe('Environment Runtime lifecycle', () => {
         fromSeq: 1,
         toSeq: 2,
         truncated: false,
-        byteLength: 36
+        byteLength: 36,
+        replay: { cols: 100, rows: 30, resizes: [] }
       });
       secondClient.disconnect();
     } finally {

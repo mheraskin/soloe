@@ -1,4 +1,5 @@
 import type {
+  TerminalHistoryReplayPlan,
   TerminalHistorySnapshot,
   TerminalId,
   TerminalOutputEvent
@@ -9,6 +10,7 @@ export interface TerminalSessionState {
   terminalId: TerminalId;
   sessionId: SessionId;
   buffer: string;
+  replay: TerminalHistoryReplayPlan;
   fromSeq: number;
   toSeq: number;
   cols: number;
@@ -177,6 +179,11 @@ export class TerminalHistorySession {
       terminalId: snapshot.terminalId,
       sessionId: snapshot.sessionId,
       buffer: snapshot.data,
+      replay: snapshot.replay ?? {
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+        resizes: []
+      },
       fromSeq: snapshot.fromSeq,
       toSeq: snapshot.toSeq,
       cols: snapshot.cols,
@@ -267,6 +274,7 @@ function emptyState(terminalId: TerminalId, sessionId: SessionId): TerminalSessi
     terminalId,
     sessionId,
     buffer: '',
+    replay: { cols: 1, rows: 1, resizes: [] },
     fromSeq: 1,
     toSeq: 0,
     cols: 1,

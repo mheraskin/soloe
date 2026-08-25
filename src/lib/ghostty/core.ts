@@ -127,6 +127,12 @@ export interface GhosttyScrollbar {
   readonly len: number;
 }
 
+export interface GhosttyReplayPlan {
+  readonly cols: number;
+  readonly rows: number;
+  readonly resizes: readonly { offset: number; cols: number; rows: number }[];
+}
+
 /** Grid position tagged with its Ghostty coordinate space: 1 viewport, 2 screen. */
 export interface GhosttyPointInput {
   readonly x: number;
@@ -213,6 +219,8 @@ export class GhosttyTerminalCore {
   private rows: GhosttyRow[] = [];
   private disposed = false;
   private keyboardLayoutMap: GhosttyKeyboardLayoutMap | undefined;
+  private cellWidth = 1;
+  private cellHeight = 1;
 
   private constructor(runtime: GhosttyRuntime) {
     this.runtime = runtime;
@@ -327,19 +335,44 @@ export class GhosttyTerminalCore {
 
   resetAndWrite(data: string): void {
     this.ensureActive();
+    this.replayWithoutPtyReplies(() => {
+      this.resetTerminal();
+      this.write(data);
+    });
+  }
+
+  resetAndReplay(data: string, plan: GhosttyReplayPlan): void {
+    this.ensureActive();
+    this.replayWithoutPtyReplies(() => {
+      this.resetTerminal();
+      this.resize(plan.cols, plan.rows, this.cellWidth, this.cellHeight);
+      let offset = 0;
+      for (const resize of [...plan.resizes].sort((left, right) => left.offset - right.offset)) {
+        const nextOffset = Math.max(offset, Math.min(data.length, resize.offset));
+        this.write(data.slice(offset, nextOffset));
+        this.resize(resize.cols, resize.rows, this.cellWidth, this.cellHeight);
+        offset = nextOffset;
+      }
+      this.write(data.slice(offset));
+    });
+  }
+
+  private resetTerminal(): void {
     this.runtime.call("ghostty_terminal_reset", this.terminal);
     // RIS returns the cursor to Ghostty's built-in steady default, so the
     // embedder default has to be applied again before the replay runs.
     this.applyDefaultCursorBlink();
     this.rows = [];
-    if (data.length === 0) return;
+  }
+
+  private replayWithoutPtyReplies(replay: () => void): void {
     const writer = this.ptyWriter;
     if (this.ptyWriterId !== 0) {
       this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
       this.ptyWriterId = 0;
     }
     try {
-      this.write(data);
+      replay();
     } finally {
       if (writer !== null && !this.disposed) {
         this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
@@ -349,6 +382,8 @@ export class GhosttyTerminalCore {
 
   resize(cols: number, rows: number, cellWidth: number, cellHeight: number): void {
     this.ensureActive();
+    this.cellWidth = Math.max(1, Math.round(cellWidth));
+    this.cellHeight = Math.max(1, Math.round(cellHeight));
     this.assertSuccess(
       "ghostty_terminal_resize",
       this.runtime.call(
@@ -356,8 +391,8 @@ export class GhosttyTerminalCore {
         this.terminal,
         Math.max(1, Math.min(65_535, cols)),
         Math.max(1, Math.min(65_535, rows)),
-        Math.max(1, Math.round(cellWidth)),
-        Math.max(1, Math.round(cellHeight)),
+        this.cellWidth,
+        this.cellHeight,
       ),
     );
   }

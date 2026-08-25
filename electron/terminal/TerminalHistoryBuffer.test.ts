@@ -16,10 +16,56 @@ describe('TerminalHistoryBuffer', () => {
       cols: 120,
       rows: 30,
       data: 'onetwothree',
+      replay: {
+        cols: 120,
+        rows: 30,
+        resizes: []
+      },
       fromSeq: 1,
       toSeq: 3,
       truncated: false,
       byteLength: 11
+    });
+  });
+
+  it('retains resize chronology beside VT bytes for exact cold replay', () => {
+    const replay = new TerminalHistoryBuffer();
+    replay.register({ terminalId: 't-1', sessionId: 'session-t-1', cols: 10, rows: 4 });
+    replay.append(event('t-1', 1, 'first'));
+    replay.resize('t-1', 20, 6);
+    replay.append(event('t-1', 2, 'second'));
+    replay.resize('t-1', 30, 8);
+
+    expect(replay.snapshot('t-1')).toMatchObject({
+      cols: 30,
+      rows: 8,
+      data: 'firstsecond',
+      replay: {
+        cols: 10,
+        rows: 4,
+        resizes: [
+          { offset: 5, cols: 20, rows: 6 },
+          { offset: 11, cols: 30, rows: 8 }
+        ]
+      }
+    });
+  });
+
+  it('retains intermediate resizes even when no output was emitted between them', () => {
+    const replay = new TerminalHistoryBuffer();
+    replay.register({ terminalId: 't-1', sessionId: 'session-t-1', cols: 10, rows: 4 });
+    replay.append(event('t-1', 1, 'first'));
+    replay.resize('t-1', 5, 2);
+    replay.resize('t-1', 20, 6);
+    replay.append(event('t-1', 2, 'second'));
+
+    expect(replay.snapshot('t-1')?.replay).toEqual({
+      cols: 10,
+      rows: 4,
+      resizes: [
+        { offset: 5, cols: 5, rows: 2 },
+        { offset: 5, cols: 20, rows: 6 }
+      ]
     });
   });
 

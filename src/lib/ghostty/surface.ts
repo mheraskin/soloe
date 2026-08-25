@@ -2,6 +2,7 @@ import { isMacPlatform } from "./platform";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "./links";
 import {
   GhosttyTerminalCore,
+  type GhosttyReplayPlan,
   type GhosttyScrollbar,
   type GhosttySnapshot,
   type GhosttyTheme,
@@ -815,6 +816,19 @@ export class GhosttyTerminalSurface {
     this.core.resetAndWrite(data);
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    this.requestRender();
+  }
+
+  resetAndReplay(data: string, plan: GhosttyReplayPlan): void {
+    if (this.disposed) return;
+    this.core.resetAndReplay(data, plan);
+    const finalDimensions = plan.resizes.at(-1) ?? plan;
+    if (this.cols !== finalDimensions.cols || this.rows !== finalDimensions.rows) {
+      this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
+    }
     this.cursorOn = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;

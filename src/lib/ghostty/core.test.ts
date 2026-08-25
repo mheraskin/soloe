@@ -173,6 +173,43 @@ describe("GhosttyTerminalCore ANSI colors", () => {
   });
 });
 
+describe("GhosttyTerminalCore history replay", () => {
+  it("reconstructs output using the dimensions active throughout the original stream", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const bytes = String(input).includes("write-pty") ? writePtyWasm : ghosttyWasm;
+        return new Response(bytes, { status: 200 });
+      }),
+    );
+    const theme = {
+      foreground: { r: 230, g: 230, b: 230 },
+      background: { r: 15, g: 15, b: 16 },
+      cursor: { r: 230, g: 230, b: 230 },
+    };
+    const output = "ABCDEFGHIJKLMNO\u001b[1BSTATUS";
+    const original = await GhosttyTerminalCore.create(10, 4, 8, 16, theme, () => undefined);
+    const restored = await GhosttyTerminalCore.create(20, 6, 8, 16, theme, () => undefined);
+
+    try {
+      original.write(output);
+      original.resize(20, 6, 8, 16);
+      restored.resetAndReplay(output, {
+        cols: 10,
+        rows: 4,
+        resizes: [{ offset: output.length, cols: 20, rows: 6 }],
+      });
+      const text = (core: GhosttyTerminalCore) =>
+        core.snapshot().rowData.map((row) => row.text).join("\n");
+
+      expect(text(restored)).toBe(text(original));
+    } finally {
+      original.dispose();
+      restored.dispose();
+    }
+  });
+});
+
 describe("GhosttyTerminalCore keyboard encoding", () => {
   it("keeps shifted printable text consistent across Claude and Codex keyboard modes", async () => {
     vi.stubGlobal(

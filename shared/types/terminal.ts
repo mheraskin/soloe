@@ -34,6 +34,16 @@ export interface TerminalOutputEvent {
   seq: number;
 }
 
+export interface TerminalHistoryResize {
+  offset: number;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalHistoryReplayPlan extends TerminalDimensions {
+  resizes: TerminalHistoryResize[];
+}
+
 /** Renderer-neutral VT history reconstructed by Ghostty in each web surface. */
 export interface TerminalHistorySnapshot {
   kind: 'ghostty-vt-history-v1';
@@ -46,6 +56,8 @@ export interface TerminalHistorySnapshot {
   toSeq: number;
   truncated: boolean;
   byteLength: number;
+  /** Dimensions active while each retained VT segment was originally emitted. */
+  replay?: TerminalHistoryReplayPlan;
 }
 
 export interface TerminalExitEvent {

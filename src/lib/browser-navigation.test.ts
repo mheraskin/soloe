@@ -10,6 +10,7 @@ describe('normalizeBrowserUrl', () => {
     ['localhost:3000', 'http://localhost:3000'],
     ['localhost:3000/login', 'http://localhost:3000/login'],
     [':5173', 'http://localhost:5173'],
+    ['xps:8877', 'http://xps:8877'],
     ['127.0.0.1:4173', 'http://127.0.0.1:4173'],
     ['[::1]:8080', 'http://[::1]:8080'],
     ['192.168.1.20:8080', 'http://192.168.1.20:8080']

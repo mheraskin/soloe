@@ -25,7 +25,7 @@ export function normalizeBrowserUrl(input: string): string {
   if (trimmed.startsWith(':')) return `http://localhost${trimmed}`;
   const hostPart = trimmed.split(/[\/?#]/, 1)[0] ?? '';
   if (looksLocalBrowserHost(hostPart)) return `http://${trimmed}`;
-  if (/^(?:[a-z0-9-]+\.)+[a-z0-9-]+:\d{1,5}$/iu.test(hostPart)) {
+  if (/^[a-z0-9-]+(?:(?:\.[a-z0-9-]+)+)?:\d{1,5}$/iu.test(hostPart)) {
     return `http://${trimmed}`;
   }
 

@@ -19,10 +19,14 @@
 
   let {
     projection,
-    onClose
+    onClose,
+    active = true,
+    interactive = active
   }: {
     projection: MultiDeviceSessionView;
     onClose: () => void;
+    active?: boolean;
+    interactive?: boolean;
   } = $props();
 
   interface GhosttyTerminalHandle {
@@ -98,7 +102,7 @@
         terminalState = next;
         error = next.error;
       },
-      true
+      false
     );
     connection = attached;
     return () => {
@@ -108,10 +112,22 @@
   });
 
   $effect(() => {
+    connection?.setVisible(active);
+  });
+
+  $effect(() => {
     const ref = terminalRef;
-    if (!ref || !pageVisible) return;
-    void deviceSessions.claimTerminalInputControl(ref).then((claimed) => {
-      if (claimed) void prepareInteractive(true);
+    if (!ref || !active || !interactive || !pageVisible) return;
+    void reclaimInputControl(ref);
+  });
+
+  $effect(() => {
+    const ref = terminalRef;
+    if (!ref) return;
+    return deviceSessions.onDeviceReconnect(ref.deviceId, () => {
+      if (active && interactive && pageVisible && terminalRef?.terminalId === ref.terminalId) {
+        void reclaimInputControl(ref);
+      }
     });
   });
 
@@ -139,9 +155,14 @@
     }
   }
 
+  async function reclaimInputControl(ref: TerminalRef): Promise<void> {
+    const claimed = await deviceSessions.claimTerminalInputControl(ref);
+    if (claimed) await prepareInteractive(true);
+  }
+
   function sendData(data: string): void {
     const ref = terminalRef;
-    if (!ref || !ownsInput) return;
+    if (!ref || !active || !interactive || !ownsInput) return;
     void deviceSessions.terminalInput(ref, data).then(
       () => (error = null),
       (cause) => (error = cause instanceof Error ? cause.message : String(cause))
@@ -150,7 +171,7 @@
 
   async function resize(cols: number, rows: number, force = false): Promise<void> {
     const ref = terminalRef;
-    if (!ref || !ownsInput || cols < 1 || rows < 1) return;
+    if (!ref || !active || !interactive || !ownsInput || cols < 1 || rows < 1) return;
     if (!force && lastSize?.cols === cols && lastSize.rows === rows) return;
     lastSize = { cols, rows };
     try {
@@ -163,7 +184,7 @@
   }
 
   async function prepareInteractive(force = false): Promise<void> {
-    if (!terminal || !ownsInput) return;
+    if (!terminal || !active || !interactive || !ownsInput) return;
     terminal.fit();
     const dimensions = terminal.getDimensions();
     if (!dimensions) return;
@@ -173,7 +194,7 @@
 
   function surfaceDidLoad(): void {
     surfaceReady = true;
-    if (ownsInput) void prepareInteractive(true);
+    if (active && interactive && ownsInput) void prepareInteractive(true);
   }
 
   function beforeKey(event: KeyboardEvent): boolean {
@@ -187,7 +208,7 @@
 
   async function pasteFromClipboard(): Promise<void> {
     const ref = terminalRef;
-    if (!ref || !terminal || !ownsInput) return;
+    if (!ref || !terminal || !active || !interactive || !ownsInput) return;
     if (projection.session && effectiveAgentProvider(projection.session)) {
       const images = await readClipboardImages().catch(() => []);
       if (images.length > 0) {
@@ -236,8 +257,8 @@
         bind:this={terminal}
         state={terminalState}
         visible={true}
-        focused={pageVisible}
-        interactive={ownsInput && pageVisible}
+        focused={active && pageVisible}
+        interactive={active && interactive && ownsInput && pageVisible}
         {theme}
         {font}
         onData={sendData}
@@ -256,6 +277,11 @@
   {#if error}
     <div class="flex items-center gap-2 border-t border-border bg-destructive/10 px-3 py-1.5 text-[10px] text-destructive">
       <p class="m-0 min-w-0 flex-1">{error}</p>
+    </div>
+  {/if}
+  {#if terminalState?.truncated}
+    <div class="border-t border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] text-amber-200">
+      Earlier terminal output was discarded before this Device connected. New output is retained in full.
     </div>
   {/if}
 </section>

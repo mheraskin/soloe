@@ -249,6 +249,7 @@ async function initializeConnections(): Promise<void> {
 
 let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
+let browserPreloadRegistered = false;
 let cleanedUp = false;
 let remoteWindowIpc: WindowIpc | null = null;
 let remoteBrowserIpc: BrowserIpc | null = null;
@@ -956,7 +957,14 @@ async function createWindow(): Promise<BrowserWindow> {
   // renderer; keep this in sync if that partition name ever changes.
   try {
     const browserSession = session.fromPartition('persist:soloe-browser');
-    browserSession.setPreloads([path.join(__dirname, '../preload/preload-webview.js')]);
+    if (!browserPreloadRegistered) {
+      browserSession.registerPreloadScript({
+        type: 'frame',
+        id: 'soloe-browser-shortcuts',
+        filePath: path.join(__dirname, '../preload/preload-webview.js')
+      });
+      browserPreloadRegistered = true;
+    }
   } catch {
     // Session API can throw if the partition name is malformed; in that
     // case shortcut forwarding is just inoperative — not fatal.

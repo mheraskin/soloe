@@ -14,7 +14,9 @@ describe('Ghostty terminal presentation', () => {
 
   it('renders read-only terminals through the same Ghostty grid', () => {
     expect(source).toContain('interactive={ownsInput}');
-    expect(deviceViewerSource).toContain('interactive={ownsInput && pageVisible}');
+    expect(deviceViewerSource).toContain(
+      'interactive={active && interactive && ownsInput && pageVisible}'
+    );
     expect(`${source}\n${deviceViewerSource}`).not.toContain('TerminalTranscript');
   });
 
@@ -27,7 +29,7 @@ describe('Ghostty terminal presentation', () => {
   it('applies incremental history bytes and resets only when the prefix changes', () => {
     expect(surfaceSource).toContain('terminalState.buffer.startsWith(appliedBuffer)');
     expect(surfaceSource).toContain('current.write(terminalState.buffer.slice(appliedBuffer.length))');
-    expect(surfaceSource).toContain('current.resetAndWrite(terminalState.buffer)');
+    expect(surfaceSource).toContain('current.resetAndReplay(terminalState.buffer, terminalState.replay)');
   });
 
   it('refits Ghostty after the mobile keyboard changes the visible viewport', () => {

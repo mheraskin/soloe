@@ -377,6 +377,7 @@
       terminalId: id,
       sessionId: ownerSessionId,
       buffer: '',
+      replay: { cols: 1, rows: 1, resizes: [] },
       fromSeq: 1,
       toSeq: 0,
       cols: 1,

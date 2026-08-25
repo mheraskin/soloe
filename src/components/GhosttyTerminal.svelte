@@ -68,7 +68,7 @@
       surface = created;
       mount.dataset.ghosttyReady = 'true';
       const current = untrack(() => terminalState);
-      created.resetAndWrite(current.buffer);
+      created.resetAndReplay(current.buffer, current.replay);
       appliedBuffer = current.buffer;
       onReady();
       if (untrack(() => focused)) created.focus();
@@ -94,7 +94,7 @@
     if (terminalState.buffer.startsWith(appliedBuffer)) {
       current.write(terminalState.buffer.slice(appliedBuffer.length));
     } else {
-      current.resetAndWrite(terminalState.buffer);
+      current.resetAndReplay(terminalState.buffer, terminalState.replay);
     }
     appliedBuffer = terminalState.buffer;
   });

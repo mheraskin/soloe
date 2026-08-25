@@ -18,6 +18,14 @@ interface HistoryChunk {
   seq: number;
   data: string;
   bytes: number;
+  cols: number;
+  rows: number;
+}
+
+interface HistoryResize {
+  afterSeq: number;
+  cols: number;
+  rows: number;
 }
 
 interface HistoryState {
@@ -25,6 +33,7 @@ interface HistoryState {
   cols: number;
   rows: number;
   chunks: Set<HistoryChunk>;
+  resizes: HistoryResize[];
   bytes: number;
   lastSeq: number;
   truncated: boolean;
@@ -72,8 +81,7 @@ export class TerminalHistoryBuffer {
   }): void {
     const existing = this.states.get(input.terminalId);
     if (existing?.sessionId === input.sessionId) {
-      existing.cols = positiveInteger(input.cols, existing.cols);
-      existing.rows = positiveInteger(input.rows, existing.rows);
+      this.resize(input.terminalId, input.cols, input.rows);
       return;
     }
     if (existing) this.remove(input.terminalId);
@@ -82,6 +90,7 @@ export class TerminalHistoryBuffer {
       cols: positiveInteger(input.cols, 1),
       rows: positiveInteger(input.rows, 1),
       chunks: new Set(),
+      resizes: [],
       bytes: 0,
       lastSeq: 0,
       truncated: false,
@@ -92,8 +101,14 @@ export class TerminalHistoryBuffer {
   resize(terminalId: string, cols: number, rows: number): void {
     const state = this.states.get(terminalId);
     if (!state) return;
-    state.cols = positiveInteger(cols, state.cols);
-    state.rows = positiveInteger(rows, state.rows);
+    const nextCols = positiveInteger(cols, state.cols);
+    const nextRows = positiveInteger(rows, state.rows);
+    if (nextCols === state.cols && nextRows === state.rows) return;
+    state.cols = nextCols;
+    state.rows = nextRows;
+    if (state.chunks.size > 0) {
+      state.resizes.push({ afterSeq: state.lastSeq, cols: nextCols, rows: nextRows });
+    }
   }
 
   setUnbounded(unbounded: boolean): void {
@@ -130,7 +145,9 @@ export class TerminalHistoryBuffer {
       terminalId: event.terminalId,
       seq: event.seq,
       data: sanitized.visibleText,
-      bytes
+      bytes,
+      cols: state.cols,
+      rows: state.rows
     };
     state.chunks.add(chunk);
     state.bytes += bytes;
@@ -146,6 +163,7 @@ export class TerminalHistoryBuffer {
     const state = this.states.get(terminalId);
     if (!state) return null;
     const chunks = [...state.chunks];
+    const replay = replayPlan(chunks, state.resizes, state.cols, state.rows);
     return {
       kind: 'ghostty-vt-history-v1',
       terminalId,
@@ -156,7 +174,8 @@ export class TerminalHistoryBuffer {
       fromSeq: chunks[0]?.seq ?? state.lastSeq + 1,
       toSeq: state.lastSeq,
       truncated: state.truncated,
-      byteLength: state.bytes
+      byteLength: state.bytes,
+      replay
     };
   }
 
@@ -168,6 +187,7 @@ export class TerminalHistoryBuffer {
       this.totalBytes = Math.max(0, this.totalBytes - chunk.bytes);
     }
     state.chunks.clear();
+    state.resizes = [];
     this.states.delete(terminalId);
   }
 
@@ -212,7 +232,55 @@ export class TerminalHistoryBuffer {
     state.bytes = Math.max(0, state.bytes - chunk.bytes);
     this.totalBytes = Math.max(0, this.totalBytes - chunk.bytes);
     state.truncated = true;
+    const firstRetained = firstOf(state.chunks);
+    state.resizes = firstRetained
+      ? state.resizes.filter((resize) => resize.afterSeq >= firstRetained.seq)
+      : [];
   }
+}
+
+function replayPlan(
+  chunks: HistoryChunk[],
+  resizes: HistoryResize[],
+  finalCols: number,
+  finalRows: number
+): { cols: number; rows: number; resizes: Array<{ offset: number; cols: number; rows: number }> } {
+  const first = chunks[0];
+  const plan = {
+    cols: first?.cols ?? finalCols,
+    rows: first?.rows ?? finalRows,
+    resizes: [] as Array<{ offset: number; cols: number; rows: number }>
+  };
+  let cols = plan.cols;
+  let rows = plan.rows;
+  let offset = 0;
+  let resizeIndex = 0;
+  for (const chunk of chunks) {
+    if (chunk.cols !== cols || chunk.rows !== rows) {
+      plan.resizes.push({ offset, cols: chunk.cols, rows: chunk.rows });
+      cols = chunk.cols;
+      rows = chunk.rows;
+    }
+    offset += chunk.data.length;
+    while (resizeIndex < resizes.length && resizes[resizeIndex]!.afterSeq <= chunk.seq) {
+      const resize = resizes[resizeIndex++]!;
+      if (resize.cols === cols && resize.rows === rows) continue;
+      plan.resizes.push({ offset, cols: resize.cols, rows: resize.rows });
+      cols = resize.cols;
+      rows = resize.rows;
+    }
+  }
+  while (resizeIndex < resizes.length) {
+    const resize = resizes[resizeIndex++]!;
+    if (resize.cols === cols && resize.rows === rows) continue;
+    plan.resizes.push({ offset, cols: resize.cols, rows: resize.rows });
+    cols = resize.cols;
+    rows = resize.rows;
+  }
+  if (cols !== finalCols || rows !== finalRows) {
+    plan.resizes.push({ offset, cols: finalCols, rows: finalRows });
+  }
+  return plan;
 }
 
 function firstOf<T>(values: Set<T>): T | null {

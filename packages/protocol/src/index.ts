@@ -47,6 +47,12 @@ export interface RuntimeLocationEvent {
   cwd: string;
 }
 
+export interface RuntimeHistoryReplayPlan {
+  cols: number;
+  rows: number;
+  resizes: Array<{ offset: number; cols: number; rows: number }>;
+}
+
 export interface RuntimeHistorySnapshot {
   kind: 'ghostty-vt-history-v1';
   terminalId: string;
@@ -58,6 +64,7 @@ export interface RuntimeHistorySnapshot {
   toSeq: number;
   truncated: boolean;
   byteLength: number;
+  replay?: RuntimeHistoryReplayPlan;
 }
 
 export type RuntimeUsageAvailability =

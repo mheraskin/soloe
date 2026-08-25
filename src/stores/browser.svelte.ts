@@ -12,6 +12,7 @@ import type {
   BrowserTargetDevice as SharedBrowserTargetDevice
 } from '@shared/types/browser-sessions.js';
 import { ipc } from '../lib/ipc';
+import { normalizeBrowserUrl } from '../lib/browser-navigation';
 
 export type BrowserTabDevice = SharedBrowserTabDevice;
 export type BrowserTargetDevice = SharedBrowserTargetDevice;
@@ -100,7 +101,7 @@ function sanitize(value: unknown): BrowserCwdState {
         const historyStart = Math.max(0, tab.history.length - MAX_HISTORY);
         const history = tab.history
           .slice(historyStart)
-          .map((url) => url.slice(0, MAX_URL_CHARS));
+          .map((url) => normalizeBrowserUrl(url.slice(0, MAX_URL_CHARS)));
         return {
         id: tab.id,
         title: tab.title.slice(0, MAX_TITLE_CHARS),

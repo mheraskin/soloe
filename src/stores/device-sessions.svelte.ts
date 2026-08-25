@@ -95,8 +95,10 @@ export class DeviceSessionsStore {
   pendingOperations = $state<Record<string, DeviceSessionPendingOperation>>({});
   private detachState: (() => void) | null = null;
   private detachDeviceEvent: (() => void) | null = null;
+  private detachReconnect: (() => void) | null = null;
   private loadRequest: Promise<void> | null = null;
   private refreshRequest: Promise<void> | null = null;
+  private rendererReconnectRequest: Promise<void> | null = null;
   private readonly terminalOutputListeners = new Map<
     string,
     { ref: TerminalRef; listeners: Set<(event: TerminalOutputEvent) => void> }
@@ -778,6 +780,8 @@ export class DeviceSessionsStore {
     this.detachState = null;
     this.detachDeviceEvent?.();
     this.detachDeviceEvent = null;
+    this.detachReconnect?.();
+    this.detachReconnect = null;
   }
 
   private syncTerminalDemand(): Promise<void> {
@@ -795,6 +799,28 @@ export class DeviceSessionsStore {
       this.applyState(state);
     });
     this.detachDeviceEvent = ipc.sessions.onDeviceEvent((event) => this.applyDeviceEvent(event));
+    this.detachReconnect = ipc.connection.onReconnect(() => {
+      void this.recoverAfterRendererReconnect();
+    });
+  }
+
+  private recoverAfterRendererReconnect(): Promise<void> {
+    if (this.rendererReconnectRequest) return this.rendererReconnectRequest;
+    const request = Promise.allSettled([
+      this.refresh(),
+      this.syncTerminalDemand()
+    ]).then(() => {
+      for (const device of this.state.devices) {
+        if (!device.available) continue;
+        for (const listener of [...(this.deviceReconnectListeners.get(device.deviceId) ?? [])]) {
+          listener();
+        }
+      }
+    }).finally(() => {
+      if (this.rendererReconnectRequest === request) this.rendererReconnectRequest = null;
+    });
+    this.rendererReconnectRequest = request;
+    return request;
   }
 
   private applyState(state: MultiDeviceSessionState): void {

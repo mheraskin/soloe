@@ -15,10 +15,14 @@
 
   let {
     projection,
-    onClose
+    onClose,
+    active = true,
+    interactive = active
   }: {
     projection: MultiDeviceSessionView;
     onClose: () => void;
+    active?: boolean;
+    interactive?: boolean;
   } = $props();
 
   let pendingOperation = $derived(deviceSessions.pendingOperation(projection.key));
@@ -71,7 +75,7 @@
 </script>
 
 {#if surface === 'terminal'}
-  <DeviceTerminalViewer {projection} {onClose} />
+  <DeviceTerminalViewer {projection} {onClose} {active} {interactive} />
 {:else}
   <section class="flex h-full min-h-0 flex-col overflow-hidden bg-background">
     <SessionToolbar {projection} {onClose} />

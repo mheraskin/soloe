@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   surfaceCreates: 0,
   surfaceDisposes: 0,
   outputSubscriptions: 0,
-  historyRequests: 0
+  historyRequests: 0,
+  reconnect: null as null | (() => void),
+  claimTerminalInputControl: vi.fn(async () => false)
 }));
 
 vi.mock('../lib/ghostty/surface', () => ({
@@ -20,6 +22,7 @@ vi.mock('../lib/ghostty/surface', () => ({
         rows: 30,
         dispose: () => { mocks.surfaceDisposes += 1; },
         resetAndWrite: vi.fn(),
+        resetAndReplay: vi.fn(),
         write: vi.fn(),
         focus: vi.fn(),
         fit: vi.fn(() => true),
@@ -35,7 +38,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
     terminalInputLeaseEvent: vi.fn(() => null),
     ownsTerminalInput: vi.fn(() => false),
-    claimTerminalInputControl: vi.fn(async () => false),
+    claimTerminalInputControl: mocks.claimTerminalInputControl,
     acquireTerminalOutput: vi.fn(() => {
       mocks.outputSubscriptions += 1;
       return { ready: Promise.resolve(), dispose: vi.fn() };
@@ -57,7 +60,10 @@ vi.mock('../stores/device-sessions.svelte', () => ({
         }
       };
     }),
-    onDeviceReconnect: vi.fn(() => () => undefined),
+    onDeviceReconnect: vi.fn((_deviceId, listener) => {
+      mocks.reconnect = listener;
+      return () => { mocks.reconnect = null; };
+    }),
     terminalResize: vi.fn(async () => undefined),
     terminalInput: vi.fn(async () => undefined),
     pasteImagesIntoTerminal: vi.fn(async () => undefined),
@@ -76,6 +82,8 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.surfaceDisposes = 0;
     mocks.outputSubscriptions = 0;
     mocks.historyRequests = 0;
+    mocks.reconnect = null;
+    mocks.claimTerminalInputControl.mockClear();
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: false,
       media: query,
@@ -114,5 +122,17 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     expect(mocks.surfaceDisposes).toBe(0);
     expect(mocks.outputSubscriptions).toBe(1);
     expect(mocks.historyRequests).toBe(1);
+  });
+
+  it('reclaims input control when the renderer reconnects to a selected terminal', async () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.claimTerminalInputControl).toHaveBeenCalledOnce());
+
+    mocks.reconnect?.();
+
+    await vi.waitFor(() => expect(mocks.claimTerminalInputControl).toHaveBeenCalledTimes(2));
   });
 });
