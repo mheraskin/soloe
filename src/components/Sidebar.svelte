@@ -350,7 +350,7 @@
     const presence = (deviceProject.presences ?? []).find((candidate) =>
       deviceSessions.includesDevice(candidate.ref.deviceId)
     );
-    if (presence) return structuredClone(presence.project);
+    if (presence) return $state.snapshot(presence.project);
     const location = deviceProject.workspaces
       .flatMap((workspace) => workspace.locations)
       .find((candidate) => deviceSessions.includesDevice(candidate.deviceId));

@@ -18,7 +18,11 @@ const nativeRunMode = process.platform === 'win32'
     ? 'macos'
     : 'linux';
 const config = parseArgs(process.argv.slice(2));
-const token = config.serverToken ?? `browser-integration-${process.pid}`;
+const serverRecord = config.serverRecord
+  ? JSON.parse(await fs.readFile(config.serverRecord, 'utf8'))
+  : null;
+const configuredServerUrl = config.serverUrl ?? serverRecord?.address;
+const token = config.serverToken ?? serverRecord?.token ?? `browser-integration-${process.pid}`;
 const children = new Set();
 const browsers = new Set();
 let scratchRoot;
@@ -26,11 +30,15 @@ let runtime;
 let server;
 
 async function main() {
+  if (config.liveInventory) {
+    await runLiveMultiDeviceInventorySmoke();
+    return;
+  }
   if (config.liveSessionId) {
     await runLiveSessionControlSmoke();
     return;
   }
-  if (config.serverUrl) {
+  if (configuredServerUrl) {
     await runExistingServerSmoke();
     return;
   }
@@ -266,6 +274,163 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
+async function runLiveMultiDeviceInventorySmoke() {
+  assert(configuredServerUrl, '--server-url or --server-record is required with --live-inventory');
+  assert(
+    config.serverToken || serverRecord?.token,
+    '--server-token or --server-record is required with --live-inventory'
+  );
+  scratchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-live-inventory-'));
+  const client = await launchRemoteElectron(configuredServerUrl, 'live-inventory');
+  browsers.add(client);
+  await delay(5_000);
+  await client.cdp.evaluate(`(() => {
+    window.__soloeLiveInventoryErrors = [];
+    window.addEventListener('error', (event) => {
+      window.__soloeLiveInventoryErrors.push(event.error?.stack ?? event.message);
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      window.__soloeLiveInventoryErrors.push(event.reason?.stack ?? String(event.reason));
+    });
+    return true;
+  })()`);
+  await client.cdp.evaluate(`(() => {
+    const button = document.querySelector('button[aria-label="Show sidebar"]');
+    button?.click();
+    return true;
+  })()`);
+  await delay(1_000);
+  const result = await client.cdp.evaluate(`(async () => {
+    const api = window.soloe;
+    const unwrap = async (promise, label) => {
+      const result = await promise;
+      if (!result.ok) throw new Error(\`\${label}: \${result.code ?? 'error'} \${result.error}\`);
+      return result.value;
+    };
+    const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+    const state = await unwrap(api.sessions.refreshDevices(), 'sessions.refreshDevices');
+    const expectedProjects = state.projects.filter((project) =>
+      (project.presences ?? []).some((presence) => presence.available)
+      || project.workspaces.some((workspace) =>
+        workspace.locations.some((location) => location.available)
+      )
+    );
+    const deadline = performance.now() + 10_000;
+    while (performance.now() < deadline) {
+      if (document.querySelectorAll('[data-project-id]').length >= expectedProjects.length) break;
+      await sleep(50);
+    }
+    const renderedProjects = [...document.querySelectorAll('[data-project-id]')].map((element) => ({
+      id: element.getAttribute('data-project-id'),
+      text: element.textContent?.trim() ?? ''
+    }));
+    const missingProjects = expectedProjects.filter((project) =>
+      !renderedProjects.some((rendered) => rendered.text.includes(project.name))
+    );
+    const remoteDevice = state.devices.find((device) =>
+      device.available && !device.local && device.name.toLowerCase() === 'xps'
+    ) ?? state.devices.find((device) => device.available && !device.local);
+    if (!remoteDevice) throw new Error('No available remote Device can verify Worktree data');
+    const remoteWorktree = state.projects.flatMap((project) =>
+      project.workspaces.flatMap((workspace) =>
+        workspace.locations
+          .filter((location) =>
+            location.available && location.deviceId === remoteDevice.deviceId
+          )
+          .map((location) => ({ project, workspace, location }))
+      )
+    )[0];
+    if (!remoteWorktree) {
+      throw new Error('No available Worktree was projected for ' + remoteDevice.name);
+    }
+    const worktreeSession = remoteWorktree.workspace.sessions.find((projection) =>
+      projection.ref.deviceId === remoteDevice.deviceId
+      && projection.session.cwd === remoteWorktree.location.path
+    );
+    const defaultRunMode = remoteDevice.platform === 'win32'
+      ? 'windows'
+      : remoteDevice.platform === 'darwin'
+        ? 'macos'
+        : 'linux';
+    const scope = {
+      cwd: remoteWorktree.location.path,
+      runMode: worktreeSession?.session.runMode ?? defaultRunMode,
+      ...(worktreeSession?.session.wslDistro
+        ? { wslDistro: worktreeSession.session.wslDistro }
+        : {})
+    };
+    const invokeWorktree = (namespace, method, args) => unwrap(
+      api.sessions.invokeWorktree({
+        deviceId: remoteDevice.deviceId,
+        namespace,
+        method,
+        args
+      }),
+      remoteDevice.name + ' ' + namespace + '.' + method
+    );
+    const [files, workingTree, features, notes, vault] = await Promise.all([
+      invokeWorktree('files', 'listTree', [{ ...scope, force: true }]),
+      invokeWorktree('git', 'workingTreeSnapshot', [{ ...scope, force: true }]),
+      invokeWorktree('features', 'scan', [scope]),
+      invokeWorktree('notes', 'list', [remoteWorktree.location.projectId]),
+      invokeWorktree('vault', 'list', [{ cwd: remoteWorktree.location.path }])
+    ]);
+    if (!Array.isArray(files.paths)) throw new Error('Remote Files response is invalid');
+    if (!Array.isArray(workingTree.workingChanges?.changes)) {
+      throw new Error('Remote Working diff response is invalid');
+    }
+    if (!Array.isArray(features.features)) throw new Error('Remote Feature Lab response is invalid');
+    if (!Array.isArray(notes)) throw new Error('Remote Notes response is invalid');
+    if (!Array.isArray(vault)) throw new Error('Remote Vault response is invalid');
+    const projectBoundUnassigned = state.unassigned.filter(
+      (projection) => projection.session.projectId
+    );
+    return {
+      transport: api.transport.kind,
+      devices: state.devices.map((device) => ({
+        deviceId: device.deviceId,
+        name: device.name,
+        state: device.state
+      })),
+      projectedProjects: expectedProjects.map((project) => project.name),
+      renderedProjects: renderedProjects.map((project) => project.text.split('\\n')[0]?.trim()),
+      missingProjects: missingProjects.map((project) => project.name),
+      deviceFilterLabels: [...document.querySelectorAll('button[aria-label^="Show devices:"]')]
+        .map((button) => button.getAttribute('aria-label')),
+      filterValue: document.querySelector('input[aria-label="Filter sessions"]')?.value ?? null,
+      renderedSessionCount: document.querySelectorAll('[data-session-id]').length,
+      rendererErrors: window.__soloeLiveInventoryErrors ?? [],
+      remoteWorktree: {
+        deviceName: remoteDevice.name,
+        projectName: remoteWorktree.project.name,
+        cwd: remoteWorktree.location.path,
+        files: files.paths.length,
+        gitBranch: workingTree.status?.branch ?? null,
+        workingChanges: workingTree.workingChanges.changes.length,
+        features: features.features.length,
+        notes: notes.length,
+        vaultEntries: vault.length
+      },
+      projectBoundUnassigned: projectBoundUnassigned.map((projection) => ({
+        name: projection.session.name,
+        deviceName: projection.deviceName,
+        projectId: projection.session.projectId,
+        cwd: projection.session.cwd
+      }))
+    };
+  })()`);
+  process.stdout.write(`${JSON.stringify({
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    liveMultiDeviceInventory: result
+  }, null, 2)}\n`);
+  assert(
+    result.missingProjects.length === 0,
+    `Sidebar omitted projected Projects: ${result.missingProjects.join(', ')}`
+  );
+  assert(result.rendererErrors.length === 0, 'Renderer reported errors during live inventory smoke');
+}
+
 async function runLiveSessionControlSmoke() {
   assert(config.webUrl, '--web-url is required with --live-session-id');
   assert(config.serverToken, '--server-token is required with --live-session-id');
@@ -490,7 +655,7 @@ async function runExistingServerSmoke() {
     throw new Error('Browser bundle is missing; run pnpm --filter @soloe/web build first');
   });
   scratchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-browser-integration-'));
-  const baseUrl = config.serverUrl;
+  const baseUrl = configuredServerUrl;
   const fixtureRoot = path.posix.join(
     config.smokeCwd,
     `soloe-browser-integration-${process.pid}-${Date.now()}`
@@ -1182,11 +1347,13 @@ function parseArgs(args) {
     largeFiles: positiveInteger(values.get('large-files') ?? '4000', 'large-files'),
     largeChanges: positiveInteger(values.get('large-changes') ?? '160', 'large-changes'),
     serverUrl: values.get('server-url'),
+    serverRecord: values.get('server-record'),
     webUrl: values.get('web-url'),
     serverToken: values.get('server-token'),
     smokeCwd: values.get('smoke-cwd'),
     serviceDataDir: values.get('service-data-dir'),
     wslDistro: values.get('wsl-distro'),
+    liveInventory: values.get('live-inventory') === '1',
     liveSessionId: values.get('live-session-id'),
     liveBackend: values.get('live-backend'),
     runMode: values.get('run-mode') ?? nativeRunMode
