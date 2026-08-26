@@ -2,142 +2,163 @@
 
 # Soloe
 
-A local-first Agent Development Environment (ADE) for solo developers using the CLI agents they already trust.
+A local-first agent development environment for solo developers who use CLI agents.
 
-Soloe helps one developer plan features, run long-lived agent sessions, manage serious worktrees, and review changes across many commits without giving up the terminal workflow. It drives installed **Claude Code**, **Codex CLI**, and **Cursor Agent CLI** binaries in interactive mode, then adds the planning, memory, review, and project-management surfaces that the CLIs do not provide by themselves.
+Soloe keeps projects, worktrees, terminals, plans, and code review in one place. It runs the
+installed Claude Code, Codex CLI, and Cursor Agent CLI in interactive mode, with their normal
+authentication and terminal behavior intact.
 
 [![CI](https://github.com/mheraskin/soloe/actions/workflows/ci.yml/badge.svg)](https://github.com/mheraskin/soloe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-> **Pre-release development.** Soloe is preparing for its first public alpha on macOS, native Linux, and Windows + WSL. There is no Soloe-hosted cloud or telemetry. macOS release builds are configured for Developer ID signing and notarization.
+> **Public source preview.** The repository is public, but there is no binary release yet. Run
+> Soloe from source and expect breaking changes. Soloe has no hosted cloud, analytics, or
+> telemetry.
 
-_A clean public demo is being prepared. The previous development screenshot was removed from this page because it contained private project context._
+[Run from source](#run-from-source) · [Roadmap](./ROADMAP.md) ·
+[Security](./SECURITY.md) · [Privacy](./PRIVACY.md) · [Contributing](./CONTRIBUTING.md)
 
-[**Download for macOS, Windows, or Linux**](https://github.com/mheraskin/soloe/releases) · [Why Soloe](#why-i-built-this) · [Feature Lab](#feature-lab-experimental) · [Roadmap](./ROADMAP.md)
+## Why I built it
 
-## Why I built this
+I started Soloe on Windows with my development environment inside WSL. The agent tools I could
+find treated that setup as an edge case, and stitching together terminals, worktrees, plans, and
+review took more effort than the work itself.
 
-Soloe started on a Windows machine running WSL, before the current wave of tools such as [T3 Code](https://github.com/pingdotgg/t3code) and [Orca](https://github.com/stablyai/orca) was publicly available. At the time, the agent-development environments I could find were Mac-focused, while Windows + WSL support felt incidental or required too much glue. I wanted the development environment itself to work the way I worked, so I built my own.
+My normal setup has a few long-running feature worktrees. Each may have Claude Code, Codex, or
+Cursor running in a real terminal. I want to see what is active, return to a session days later,
+review the feature across its full commit history, and send a precise comment back to the agent.
+Soloe grew around that loop.
 
-I usually have a few long-lived feature worktrees, each with Claude Code, Codex, or Cursor running in a real terminal. I need one place to see what is active, plan a feature, review the feature across a stack of commits, leave line comments for an agent, and return days later without reconstructing the whole story.
+Soloe is named for this way of working. Agents help me take on more, but I still decide what to
+build and what is safe to ship.
 
-The name **Soloe** describes that operating model. It is not an argument against teams or collaboration. It is an environment optimized around the solo developer as the decision-maker and review bottleneck: agents extend what one person can plan and deliver, while that person keeps control of the work.
+## What works today
 
-## What Soloe does today
+- **Interactive CLI agents.** Soloe runs installed `claude`, `codex`, and Cursor `agent` binaries
+  on macOS, Linux, native Windows, or inside WSL.
+- **Project and worktree organization.** Sessions stay attached to the checkout where their work
+  belongs. A logical workspace can have independent checkouts on more than one device.
+- **Long-lived terminals.** The Environment Runtime owns PTYs. Closing a client or restarting the
+  Application Server does not kill the agents running inside them.
+- **Desktop, browser, and mobile access.** The Electron client and locally hosted PWA use the same
+  authenticated server. Tailscale can connect Soloe environments on trusted devices.
+- **Multi-device control.** One client can browse projects and sessions on connected devices,
+  prepare a checkout, start or resume work there, and take terminal input control when needed.
+- **Ghostty terminal rendering.** The client uses Ghostty's VT core compiled to WebAssembly and a
+  Canvas2D renderer. Terminal history can be replayed after a client or device reconnects.
+- **Feature-level review.** Pick a commit range, inspect the combined diff, and see which commit
+  last touched each line. Working-tree review is available too.
+- **Comments agents can act on.** An authenticated MCP bridge lets running agents read and resolve
+  line comments left in Soloe.
+- **Repository-native planning.** Feature Lab reads Markdown plans, coverage maps, local issues,
+  and agent setup files from the repository.
+- **Worktree tools.** Files, notes, browser tabs, worktree summaries, agent notifications, and
+  process diagnostics stay beside the active sessions.
 
-- **Drives the CLIs you already use.** Runs installed `claude`, `codex`, and Cursor's `agent` binaries in interactive mode—natively on macOS, Linux, and Windows, or inside WSL on Windows.
-- **Organizes project → worktree → session.** Keeps terminal, Claude Code, Codex, and Cursor sessions attached to the worktree where the work belongs.
-- **Keeps agents alive outside the UI.** The Environment Runtime owns PTYs independently from the replaceable server, browser, and Electron clients.
-- **Reviews whole features.** Select a commit range, inspect a multi-commit diff, and see line-level commit attribution instead of reviewing only uncommitted changes.
-- **Routes review comments back to agents.** An authenticated MCP bridge lets running agents read and resolve line comments.
-- **Supports repository-native planning.** Experimental Feature Lab reads plans, coverage maps, and issue artifacts stored as Markdown alongside the code.
-- **Keeps working context together.** Files, persistent notes, worktree overviews, browser tooling, agent notifications, and process diagnostics live beside the sessions.
-- **Runs on infrastructure you control.** There is no Soloe cloud or telemetry. Browser/PWA access is served locally; after you install and sign in to Tailscale, Soloe can configure its own Serve route for Device connections.
+## Multi-device work
 
-## Feature Lab (experimental)
+Each Soloe Device owns its repositories, PTYs, credentials, and agent integrations. Soloe
+publishes that device's project, worktree, and session inventory to authenticated clients. From
+another connected device you can add, edit, or remove a project registration, prepare a workspace
+location, and operate the sessions that run there.
 
-Feature Lab is the beginning of Soloe's planning system. It discovers repository-scoped planning artifacts, connects them to a feature, and lets the developer move between plans, coverage, issues, files, worktrees, and active agents without moving project state into a proprietary cloud.
+Terminal control is explicit. Several clients may watch the same session, but only one controls
+keyboard input at a time. Another client can take control without stopping the PTY.
 
-The current implementation recognizes:
+The Browser rail can open a web server running on a selected device. Soloe routes localhost ports
+and subdomains through Tailscale and can use short device hostnames once local DNS is configured.
+
+Soloe does not copy working directories between machines. Checkouts remain independent and Git
+alignment uses explicit push, fetch, and fast-forward operations with revision checks. Uncommitted
+files do not move between devices. Continuing on another device creates a successor session
+instead of moving the original PTY.
+
+## Process model
+
+Soloe separates process lifetime from UI lifetime:
+
+- the **Environment Runtime** owns PTYs, replay history, and terminal control;
+- the **Application Server** owns domain state and authenticated HTTP, RPC, and WebSocket
+  transports;
+- the **Tray Host** starts and stops the Runtime, Server, and clients;
+- the **Electron client** and **browser/PWA client** can disconnect and reconnect without owning
+  agent processes.
+
+On Windows, the Runtime and Server can run natively or together inside one selected WSL
+distribution. On macOS and Linux they run natively.
+
+## Feature Lab
+
+Feature Lab is an experimental view over planning files in a repository opened with Soloe. It
+recognizes:
 
 - `docs/plans/*.md` feature plans;
-- `docs/grill/<feature>/coverage-map.md` planning and decision coverage;
-- `.scratch/<feature>/issues/*.md` local issue artifacts;
+- `docs/grill/<feature>/coverage-map.md` planning coverage;
+- `.scratch/<feature>/issues/*.md` local issues;
 - `docs/agents/issue-tracker.md`, `AGENTS.md`, and `CLAUDE.md` setup metadata.
 
-This workflow is inspired by and currently shaped around [Matt Pocock](https://www.mattpocock.com/)'s open-source [Skills for Real Engineers](https://github.com/mattpocock/skills), including the grilling, triage, issue-slicing, and repository-context conventions. Soloe is an independent project and is not affiliated with or endorsed by Matt Pocock.
+The workflow follows conventions from [Matt Pocock's Skills for Real
+Engineers](https://github.com/mattpocock/skills). Soloe can browse these artifacts and update some
+branch and local-issue state. It does not bundle the skills or provide the visual planning canvas
+described in the [roadmap](./ROADMAP.md). Soloe is independent and is not endorsed by Matt Pocock.
 
-Feature Lab is intentionally marked experimental: it can browse these artifacts and update branch or local-issue status today, but it is not yet the visual project-management system described in the [roadmap](./ROADMAP.md).
+## Platform status
 
-## How Soloe differs
-
-Soloe is built around a **solo developer workflow**, not a pitch to replace a team and not an infinite swarm of disposable branches. The target is one person coordinating a manageable set of serious, long-lived worktrees and retaining enough evidence to review what the agents produced.
-
-It is also terminal-first. Many products lead with a GUI chat or drive agents through a programmatic SDK path. Soloe drives the installed interactive CLIs, preserving their native harness, authentication, hooks, and terminal behavior, then builds planning and review around them.
-
-Windows + WSL remains part of the product's foundation rather than a compatibility afterthought. Native Linux is also supported in the current alpha.
-
-## Current platform support
-
-| Platform or client | Status |
+| Platform or client | Current status |
 | --- | --- |
-| Windows + WSL backend | Public alpha |
-| Native Windows backend | Public alpha |
-| Native Linux | Public alpha |
-| Browser/PWA client | Public alpha, locally hosted |
-| Electron client | Public alpha |
-| macOS Intel (`x64`) | Public-alpha source build; locally verified |
-| macOS Apple silicon (`arm64`) | Public-alpha native CI build; hardware smoke pending |
+| Windows + WSL | Runs from source; installer packaging exists; clean-machine validation pending |
+| Native Windows | Runs from source; installer packaging exists; clean-machine validation pending |
+| Native Linux | Runs from source; AppImage and DEB packaging exists; clean-machine validation pending |
+| macOS Intel | Runs from source; DMG packaging locally verified |
+| macOS Apple silicon | Source and CI packaging supported; physical clean-machine smoke pending |
+| Electron client | Available from source on desktop platforms |
+| Browser/PWA client | Locally hosted; optional access through Tailscale |
 
-## Install
+## Current limitations
 
-Soloe does not have a public binary release yet. Until the first alpha is published, contributors can run it from source using the setup below. The release links in the platform sections will become active with that alpha.
+- There is no binary release, stable channel, or auto-update support.
+- Windows and Linux installers have not completed clean-machine installation, upgrade, and
+  uninstall tests.
+- Intel macOS packages have been tested locally. Apple-silicon packages build in CI, but the
+  physical clean-machine smoke test is still pending.
+- Local macOS builds are not notarized. Early Windows installers will be unsigned.
+- The legacy Electron MCP path binds beyond loopback so WSL can reach it. Its Windows Firewall and
+  network exposure still need focused validation.
+- Electron uses an unsandboxed preload and a browser webview. Context isolation is enabled, but
+  this boundary still needs an audit.
+- Tailscale access is remote access. Tailnet membership and policy decide who can reach Soloe.
+- Devices keep independent Git checkouts. Soloe does not transfer uncommitted files or move a
+  running session between machines.
+- GitHub is the only repository provider adapter. Creating a GitHub repository requires an
+  authenticated `gh` installation on the device performing the operation.
+- Physical iPhone and multi-computer Tailscale testing is incomplete.
+- Feature Lab supports a narrow set of plans, coverage maps, local issues, and agent setup files.
+- Logs and diagnostics can contain source paths, prompts, and other development context. Review
+  them before sharing.
 
-### Windows
+## Run from source
 
-1. When the first alpha is available, download the latest `.exe` from [Releases](https://github.com/mheraskin/soloe/releases).
-2. Run it. SmartScreen may require **More info → Run anyway** while builds are unsigned.
-3. Add a Git repository from Windows or WSL and launch a session.
-
-For WSL sessions, install `claude` or `codex` inside the selected distribution. Native Windows sessions use Windows-side binaries. Soloe uses the CLI's existing authentication; it does not require a separate provider API key.
-
-### Linux
-
-When the first alpha is available, choose the `.AppImage` or `.deb` from [Releases](https://github.com/mheraskin/soloe/releases):
-
-```bash
-# AppImage
-chmod +x Soloe-*-linux-*.AppImage
-./Soloe-*-linux-*.AppImage
-
-# Debian/Ubuntu
-sudo apt install ./Soloe-*-linux-*.deb
-```
-
-Install `git` and at least one of `claude` or `codex` on the normal Linux `PATH`. Soloe uses native Linux paths and shells and does not invoke WSL on Linux.
-The Debian package installs `wl-clipboard` so Claude Code can receive native image
-attachments. AppImage users on Wayland should install it separately with
-`sudo apt install wl-clipboard`.
-
-### macOS
-
-When the first alpha is available, download the DMG matching the Mac: `x64` for Intel or `arm64` for Apple silicon. Drag the single `Soloe.app` to Applications and launch it normally. Soloe then lives in the menu bar: its separate Runtime and Application Server remain available to **Open in browser** and the on-demand Electron/Svelte **Open Soloe** client. Closing Electron releases only that UI process; **Quit Soloe** stops the tray, server, runtime, clients, PTYs, and agents. There is no separately installed service application. Release artifacts require Developer ID signing and Apple notarization; unsigned local builds are for development only.
-
-Install Git and at least one of `claude` or `codex`. Soloe resolves the user's macOS login-shell `PATH`, so Homebrew installations work for both Intel and Apple-silicon locations. See the [macOS development and release guide](./docs/development/macos.md).
-
-## Roadmap
-
-The next planning and review surfaces include a visual canvas generated from Markdown plans, a Kanban view of issues and tasks, Wayfinder support, broader Matt Pocock skills compatibility, and AI-assisted summaries for very large commit ranges. Multi-commit review already exists; the planned intelligence layer will help a developer understand which changes in a history of tens or hundreds of commits deserve attention.
-
-See the full [product roadmap](./ROADMAP.md) and the evidence-based [public launch checklist](./docs/public-launch-checklist.md). Roadmap items describe direction, not promised dates.
-
-## Contributing
-
-Issues are welcome, especially for Linux and Windows + WSL edge cases. Please read [Contributing](./CONTRIBUTING.md) and open an issue before a large pull request while the architecture is still settling.
-
-Soloe is a PNPM workspace monorepo. Install the pinned toolchain and dependencies with:
+You need Node.js 22 or newer, Corepack, Git, a stable Rust toolchain, the platform dependencies for
+Tauri, and at least one authenticated agent CLI.
 
 ```bash
+git clone https://github.com/mheraskin/soloe.git
+cd soloe
 corepack enable
-pnpm install
+corepack prepare pnpm@10.34.5 --activate
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-On an Ubuntu development host, install the native clipboard helper and configure
-Electron's Chromium sandbox after installing or updating dependencies. The
-command is idempotent and uses `sudo` for the system package and to give the
-installed sandbox helper its required owner and mode:
+On Ubuntu, run this once after installing dependencies. It installs `wl-clipboard` and configures
+Electron's Chromium sandbox:
 
 ```bash
 pnpm setup:linux
 ```
 
-One command starts the tray, the selected native or Windows/WSL backend, and the locally hosted PWA development server:
-
-```bash
-pnpm dev
-```
-
-The long-lived runtime, replaceable server, browser/PWA, optional Electron client, and windowless tray host are also independently runnable:
+The tray starts the Runtime, Application Server, web client, and desktop client. To run them
+individually:
 
 ```bash
 pnpm dev:runtime
@@ -147,8 +168,46 @@ pnpm dev:desktop
 pnpm dev:tray
 ```
 
-Start the runtime before the server when launching them manually. Rebuilding or stopping a client or the server does not stop runtime-owned agent PTYs. Exiting the tray does stop all owned clients, services, PTYs, and agents. See [the process architecture](./docs/architecture/process-model.md) and the [Windows/WSL backend guide](./docs/development/windows-backends.md).
+Start the Runtime before the Server when launching components manually.
+
+## Agent integrations
+
+Soloe uses each agent CLI's existing installation and authentication on the device that owns the
+session. Integration setup can update:
+
+- `~/.claude/settings.json` for Claude Code hooks;
+- `~/.claude.json` for the Claude Code MCP entry;
+- `~/.codex/config.toml` for Codex MCP configuration;
+- `~/.cursor/mcp.json` for Cursor MCP configuration.
+
+Soloe creates a timestamped `.soloe-backup-<timestamp>` copy before changing an existing file.
+Setup writes files atomically and uses restrictive permissions where the platform supports them.
+Remove integrations through Soloe when possible. Installing an integration on one device does not
+install it elsewhere or copy provider credentials between devices.
+
+## Troubleshooting
+
+- Start Soloe with `pnpm dev` so the tray supervises the Runtime and Application Server. When
+  starting components manually, start the Runtime first.
+- If WSL is unavailable, check `wsl.exe --status` and `wsl.exe --list --quiet`. Install the agent
+  CLI inside the selected distribution.
+- Soloe resolves commands on the device and environment that owns the session. A CLI installed on
+  Windows is not available inside WSL, and the reverse is also true.
+- If a device is offline, refresh **Settings > Connections** and confirm that Tailscale is installed
+  and signed in. A device marked **Update Soloe** needs a compatible version.
+- If another client controls terminal input, use **Take input control**. Taking control does not
+  stop the PTY.
+- Before filing a bug, remove credentials, prompts, source text, usernames, and unrelated paths
+  from logs and diagnostics.
+
+## Contributing
+
+Focused bug reports, platform reproductions, documentation, tests, and small UI improvements are
+useful while the architecture is still changing. Open an issue before a large feature or
+architectural change. See [Contributing](./CONTRIBUTING.md) for setup and checks.
 
 ## License
 
-[MIT](./LICENSE). Third-party components retain their own terms; see [Third-Party Licenses](./THIRD_PARTY_LICENSES.md). The Soloe name and logo are not granted under the code license.
+[MIT](./LICENSE). Third-party components keep their own licenses. See
+[Third-Party Licenses](./THIRD_PARTY_LICENSES.md). The Soloe name and logo are not granted under
+the code license.

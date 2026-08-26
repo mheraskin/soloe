@@ -1,59 +1,84 @@
-# Soloe Roadmap
+# Soloe roadmap
 
-Soloe is building an Agent Development Environment for a solo developer who wants to plan, run, understand, and review more work without handing control to a cloud service or an opaque swarm.
+Soloe is an agent development environment for one developer coordinating several long-running
+worktrees. This roadmap records direction, not release dates.
 
-This roadmap records product direction. It does not promise release dates, and ambitious items stay visible even when their shape is still being explored.
+## Available in the source preview
 
-## Available in the public alpha
-
-- Native Linux, native Windows, and Windows + WSL agent sessions.
-- Interactive Claude Code, Codex CLI, and standard terminal sessions.
-- Long-lived runtime-owned PTYs that survive client and application-server restarts.
-- Project, worktree, and session organization.
-- Multi-commit and working-tree diff review with line attribution.
+- Interactive Claude Code, Codex CLI, Cursor Agent CLI, and ordinary terminal sessions.
+- Native macOS, native Linux, native Windows, and Windows + WSL execution.
+- A Runtime that keeps PTYs alive when the Server or a client restarts.
+- Electron and browser/PWA clients over authenticated local transports.
+- Tailscale discovery for trusted Soloe Devices.
+- Project, workspace, worktree, and session inventories across connected devices.
+- Remote project registration, checkout preparation, and session control.
+- One terminal input controller with spectator clients and explicit takeover.
+- A Ghostty WebAssembly terminal renderer with reconnectable history.
+- Device-aware localhost and subdomain routing in the Browser rail.
+- Multi-commit and working-tree review with line attribution.
 - Line comments that agents can read and resolve through the authenticated MCP bridge.
-- Files, persistent notes, browser tooling, worktree overviews, notifications, and diagnostics.
-- Experimental Feature Lab support for repository-native plans, coverage maps, and local issue artifacts.
-- Browser/PWA and Electron clients over local authenticated transports.
+- Files, notes, browser tools, worktree summaries, notifications, and diagnostics.
+- Experimental Feature Lab support for repository plans, coverage maps, and local issues.
 
-## Public-launch hardening
+## First binary alpha
 
-- Complete security, privacy, contribution, and support documentation.
-- Make CI and release automation use the pinned PNPM toolchain consistently.
-- Verify clean-machine install and packaging on native Linux, native Windows, and Windows + WSL.
-- Add release checksums and document unsigned-build verification.
-- Audit the MCP/WSL network boundary, external URL handling, hook installation, and diagnostic redaction.
-- Add a short product demo and clean public fixtures.
+- Build Windows, Linux, Intel macOS, and Apple-silicon macOS artifacts on clean runners.
+- Test install, upgrade, uninstall, and rollback on clean machines.
+- Complete a physical Apple-silicon smoke test and a multi-computer Tailscale test matrix.
+- Publish SHA-256 checksums and known issues with every artifact.
+- Audit the MCP and WSL network boundary, hooks, token rotation, and diagnostic redaction.
+- Add a short demo made with public fixtures.
+- Keep unsigned artifacts clearly labeled until platform signing is in place.
 
 ## Planning and navigation
 
-- **Visual canvas.** Convert Markdown plans into a scalable visual map while keeping Markdown as the portable source of truth.
-- **Comprehensible drawings.** Show dependencies, decisions, issues, worktrees, agents, and review state in a form that is faster to understand than a directory of documents.
-- **Kanban view.** Present tasks and issues as a board without forcing projects into a Soloe-hosted tracker.
-- **Wayfinder support.** Visualize large initiatives and the decision tickets that make work safe to split across many agent sessions.
-- **Broader skills support.** Track new releases and more artifact conventions from [Matt Pocock's skills](https://github.com/mattpocock/skills) while keeping the integration explicit and adaptable.
-- **Planning-to-execution loop.** Move from a plan to issues, worktrees, active sessions, and review without losing the relationships between them.
+- **Visual plan map.** Turn Markdown plans into a navigable drawing while keeping Markdown as the
+  source of truth.
+- **Decision and dependency views.** Connect plans, decisions, issues, worktrees, agents, and review
+  state without hiding the files behind a proprietary format.
+- **Kanban view.** Present tasks and issues as a board without requiring a Soloe-hosted tracker.
+- **Wayfinder support.** Read and display large initiatives and their decision tickets.
+- **Broader skills support.** Follow more artifact conventions from
+  [Matt Pocock's skills](https://github.com/mattpocock/skills).
+- **Planning to execution.** Keep the relationship between a plan, its issues, worktrees, active
+  sessions, and final review.
 
 ## Review intelligence
 
-- **Large-history summarization.** Analyze tens or hundreds of commits and explain the feature-level story rather than presenting an undifferentiated log.
-- **Attention guidance.** Surface risky, surprising, cross-cutting, or unresolved changes that deserve a developer's review.
-- **Commit clustering.** Group mechanical, corrective, and feature-bearing commits so the raw history remains available but becomes navigable.
-- **Multi-commit review improvements.** Extend the current range review with saved review scopes, stronger attribution, progress state, and links back to plans and issues.
-- **Evidence, not magic.** Every summary should remain traceable to commits, diffs, issues, and agent sessions so AI guidance never replaces inspectable source material.
+- Summarize the feature story across tens or hundreds of commits.
+- Point to risky, surprising, cross-cutting, or unresolved changes that need review.
+- Group mechanical, corrective, and feature commits without hiding the raw history.
+- Save review scopes and progress.
+- Link summaries to the exact commits, diffs, issues, comments, worktrees, and sessions behind
+  them.
+
+AI summaries should shorten the search for evidence. They should not replace the evidence.
 
 ## Solo-developer scale
 
 - Cross-project and cross-worktree attention views.
-- Better feature and session memory across long-running efforts.
-- A clear inbox for approvals, failed tasks, unresolved comments, and work that needs human judgment.
-- More robust background work with explicit ownership, cancellation, and review boundaries.
-- Optional macOS support when it can be tested and maintained properly.
+- Better memory for long-running features and sessions.
+- One inbox for approvals, failed tasks, unresolved comments, and work that needs a person.
+- Background work with explicit ownership, cancellation, and review boundaries.
+- Better recovery when a device, client, or server disappears during an operation.
 
-## Deliberate non-goals for now
+## Release channels
+
+| Channel | Purpose | Expected stability |
+| --- | --- | --- |
+| Nightly | Optional manual or main-branch artifacts | May be broken; no migration guarantee |
+| Alpha | Public workflow and platform validation | Incomplete; breaking changes possible |
+| Beta | Installer and core workflow validation | Fewer breaking changes; still pre-release |
+| Stable | Signed and validated supported-platform release | Not available |
+
+During the initial public release period, only the newest alpha will receive fixes. Release notes
+will list platform requirements, security changes, migration steps, known issues, and rollback
+instructions. Checksums verify download integrity but do not replace platform code signing.
+
+## Deliberate non-goals
 
 - Replacing teams or human collaboration.
 - Claiming fully autonomous software delivery.
 - Hiding changes behind AI summaries.
-- Making a Soloe cloud account mandatory.
-- Optimizing primarily for an unlimited swarm of disposable worktrees.
+- Requiring a Soloe cloud account.
+- Optimizing for an unlimited swarm of disposable worktrees.

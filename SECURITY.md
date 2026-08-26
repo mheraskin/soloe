@@ -1,10 +1,12 @@
-# Security Policy
+# Security policy
 
 Soloe launches terminals and coding agents, reads repositories, installs optional agent hooks, and exposes authenticated local services. Please treat suspected vulnerabilities as private until they have been investigated and a fix or mitigation is available.
 
 ## Supported versions
 
-Soloe has not published its first alpha. During the alpha period, only the newest release will receive security fixes. Older pre-release builds may be superseded rather than patched individually.
+Soloe has not published a binary alpha. Security fixes land on `main` during the source preview.
+Once binary releases begin, only the newest pre-release will receive security fixes. Older builds
+may be superseded instead of patched individually.
 
 ## Reporting a vulnerability
 
@@ -22,4 +24,14 @@ The project will acknowledge reports and coordinate next steps as maintainer ava
 - MCP and application transports require authentication tokens, but a token does not make an intentionally exposed service safe for an untrusted network.
 - Repositories and terminal commands remain potentially untrusted input. Review agent-produced changes before running or publishing them.
 
-See [MCP security](./docs/mcp-security.md), [privacy](./PRIVACY.md), and [known limitations](./docs/known-limitations.md) for the current model and open hardening work.
+The Application Server binds its MCP service to loopback. The legacy Electron path uses a broader
+Windows bind so integrations inside WSL can reach it. Do not expose that port through router
+forwarding, a public tunnel, or a permissive firewall rule. Treat its bearer token as a secret and
+reinstall integrations if the token is disclosed.
+
+Each device keeps its own MCP token, vault, Git credentials, provider login, and integration
+files. Connecting a client to several devices does not merge or copy those credentials. Soloe pins
+the durable device identity reported by an authenticated endpoint and blocks later identity
+mismatches.
+
+See [Privacy](./PRIVACY.md) for stored data and deletion instructions.

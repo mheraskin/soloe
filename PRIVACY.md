@@ -6,7 +6,10 @@ That does not mean all activity is offline. Claude Code, Codex CLI, Git remotes,
 
 ## Stored data
 
-Depending on the features used, Soloe may store project and worktree references, terminal session metadata, settings, browser-session metadata, notes, worktree overviews, summaries, comment state, logs, crash information, MCP connection details, and encrypted vault entries.
+Depending on the features used, Soloe may store project and worktree references, device and
+workspace catalogs, operation receipts, terminal session metadata, settings, browser-session
+metadata, notes, worktree overviews, summaries, comment state, logs, crash information, MCP
+connection details, and encrypted vault entries.
 
 The default data directory is:
 
@@ -26,9 +29,11 @@ When integrations are installed, Soloe can update:
 
 - `~/.claude/settings.json` for Claude Code hooks;
 - `~/.claude.json` for the Claude Code MCP entry;
-- `~/.codex/config.toml` for Codex MCP configuration.
+- `~/.codex/config.toml` for Codex MCP configuration;
+- `~/.cursor/mcp.json` for Cursor MCP configuration.
 
-Soloe creates timestamped backups before changing existing integration files. See [Agent integrations](./docs/agent-integrations.md) before installing or removing them.
+Soloe creates timestamped backups before changing existing integration files. Remove integrations
+through Soloe when possible, and keep the newest backup until removal has been verified.
 
 ## Removing local data
 

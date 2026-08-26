@@ -21,15 +21,21 @@ configuration, documentation, string literals, or when the graph is insufficient
 
 ### Issue tracker
 
-Issues are tracked in this repository's GitHub Issues. See
-`docs/agents/issue-tracker.md`.
+Issues and PRDs are tracked in this repository's GitHub Issues. Infer the repository from the
+current Git remote. Read issues with their comments and labels. Publishing an issue or PRD means
+creating a GitHub issue.
 
 ### Triage labels
 
-The canonical five-role label vocabulary is used. See
-`docs/agents/triage-labels.md`.
+Use the canonical five-role label vocabulary:
+
+- `needs-triage`: maintainer evaluation is required
+- `needs-info`: more information is required from the reporter
+- `ready-for-agent`: fully specified and ready for an agent
+- `ready-for-human`: human implementation is required
+- `wontfix`: the issue will not be actioned
 
 ### Domain docs
 
-This repository currently uses a single root domain context. See
-`docs/agents/domain.md`.
+This repository uses the single root `CONTEXT.md` domain glossary. Read it before changing
+behavior and use its vocabulary in tests, code, and public writing.

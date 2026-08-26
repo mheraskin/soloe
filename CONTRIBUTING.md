@@ -1,6 +1,8 @@
 # Contributing to Soloe
 
-Soloe is preparing for its first public alpha. Focused bug reports, platform reproduction cases, documentation, tests, and small UI improvements are the most useful early contributions.
+Soloe is a public source preview with no binary release yet. Focused bug reports, platform
+reproductions, documentation, tests, and small UI improvements are the most useful early
+contributions.
 
 Open an issue before starting a large feature, dependency migration, or architectural change. Security-sensitive changes to the MCP bridge, remote access, hooks, terminal execution, or vault need maintainer discussion first.
 
@@ -22,7 +24,10 @@ corepack prepare pnpm@10.34.5 --activate
 pnpm install --frozen-lockfile
 ```
 
-Start the tray-managed development environment with `pnpm dev`. See the [process model](./docs/architecture/process-model.md) and [Windows backend guide](./docs/development/windows-backends.md) for the individual runtime, server, web, Electron, and tray processes.
+Start the tray-managed development environment with `pnpm dev`. The individual processes are
+available through `pnpm dev:runtime`, `pnpm dev:server`, `pnpm dev:web`,
+`pnpm dev:desktop`, and `pnpm dev:tray`. Start the Runtime before the Server when running them
+manually.
 
 ## Checks
 
