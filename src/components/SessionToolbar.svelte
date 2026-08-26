@@ -104,7 +104,7 @@
   }
 </script>
 
-<div class="session-toolbar soloe-pane-header justify-between">
+<div class="session-toolbar soloe-pane-header">
   {#if onOpenNavigation}
     <Button
       variant="ghost"
@@ -117,66 +117,50 @@
     </Button>
   {/if}
   {#if selected}
-    <div class="session-toolbar-content flex min-w-max flex-1 shrink-0 items-center gap-1.5">
-      <StatusDot {status} />
-      <KindIcon kind={displayKind} size={13} />
-      <span class="session-toolbar-title max-w-44 shrink truncate text-xs font-medium text-foreground">
-        {selected.name}
-      </span>
-      {#if projection}
-        <span class="inline-flex min-w-0 shrink items-center gap-1 text-[10px] text-muted-foreground">
-          <Monitor class="size-3" />
-          <span class="max-w-28 truncate">{projection.deviceName}</span>
+    <div class="session-toolbar-scroll no-scrollbar min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain">
+      <div class="session-toolbar-content flex min-w-max items-center gap-1.5">
+        <StatusDot {status} />
+        <KindIcon kind={displayKind} size={13} />
+        <span class="session-toolbar-title max-w-44 shrink truncate text-xs font-medium text-foreground">
+          {selected.name}
         </span>
-      {/if}
-      <span class="shrink-0 text-muted-foreground/35" aria-hidden="true">·</span>
-      <Tooltip.Provider delayDuration={250}>
-        <Tooltip.Root>
-          <Tooltip.Trigger>
-            {#snippet child({ props })}
-              <span
-                {...props}
-                class="block min-w-0 max-w-[min(32vw,30rem)] flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-[10px] text-muted-foreground [direction:rtl]"
-              >
-                <bdi dir="ltr">{currentCwd ?? selected.cwd}</bdi>
-              </span>
-            {/snippet}
-          </Tooltip.Trigger>
-          <Tooltip.Content class="max-w-[min(90vw,40rem)] break-all font-mono text-[11px]">
-            {currentCwd ?? selected.cwd}
-          </Tooltip.Content>
-        </Tooltip.Root>
-      </Tooltip.Provider>
-      <div class="session-toolbar-branch">
-        <GitBranchWidget
-          cwd={selected.cwd}
-          runMode={selected.runMode}
-          wslDistro={selected.wslDistro}
-          deviceId={worktreeDeviceId}
-        />
+        {#if projection}
+          <span class="inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+            <Monitor class="size-3" />
+            <span class="max-w-28 truncate">{projection.deviceName}</span>
+          </span>
+        {/if}
+        <span class="shrink-0 text-muted-foreground/35" aria-hidden="true">·</span>
+        <Tooltip.Provider delayDuration={250}>
+          <Tooltip.Root>
+            <Tooltip.Trigger>
+              {#snippet child({ props })}
+                <span
+                  {...props}
+                  class="block shrink-0 whitespace-nowrap font-mono text-[10px] text-muted-foreground"
+                >
+                  {currentCwd ?? selected.cwd}
+                </span>
+              {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content class="max-w-[min(90vw,40rem)] break-all font-mono text-[11px]">
+              {currentCwd ?? selected.cwd}
+            </Tooltip.Content>
+          </Tooltip.Root>
+        </Tooltip.Provider>
       </div>
     </div>
 
     <Tooltip.Provider delayDuration={250}>
       <div class="session-toolbar-actions flex shrink-0 items-center gap-0.5">
-        {#if projection && onClose}
-            <Tooltip.Root>
-              <Tooltip.Trigger>
-                {#snippet child({ props })}
-                  <Button
-                    {...props}
-                    variant="ghost"
-                    size="icon-xs"
-                    onclick={onClose}
-                    aria-label="Close remote terminal"
-                  >
-                    <X />
-                  </Button>
-                {/snippet}
-              </Tooltip.Trigger>
-              <Tooltip.Content>Close remote terminal</Tooltip.Content>
-            </Tooltip.Root>
-        {/if}
+        <div class="session-toolbar-branch shrink-0">
+          <GitBranchWidget
+            cwd={selected.cwd}
+            runMode={selected.runMode}
+            wslDistro={selected.wslDistro}
+            deviceId={worktreeDeviceId}
+          />
+        </div>
         {#if !projection}
         <Tooltip.Root>
           <Tooltip.Trigger>
@@ -213,6 +197,11 @@
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="end" class="w-56">
             <DropdownMenu.Label>Session</DropdownMenu.Label>
+            {#if projection && onClose}
+              <DropdownMenu.Item onSelect={onClose}>
+                <X /> <span>Close remote terminal</span>
+              </DropdownMenu.Item>
+            {/if}
             <DropdownMenu.Item onSelect={edit}>
               <Pencil /> <span>Edit session…</span>
             </DropdownMenu.Item>

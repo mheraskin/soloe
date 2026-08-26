@@ -32,10 +32,11 @@ describe('SessionToolbar', () => {
   afterEach(async () => {
     if (mounted) await unmount(mounted);
     mounted = null;
+    await new Promise((resolve) => setTimeout(resolve, 50));
     document.body.innerHTML = '';
   });
 
-  it('uses the established terminal toolbar for a remote Session projection', () => {
+  it('keeps remote metadata scrollable while actions stay fixed', async () => {
     const onClose = vi.fn();
     const target = document.createElement('div');
     document.body.append(target);
@@ -70,9 +71,18 @@ describe('SessionToolbar', () => {
     expect(target.querySelector('.session-toolbar')).not.toBeNull();
     expect(target.textContent).toContain('Remote terminal');
     expect(target.textContent).toContain('xps');
-    expect(target.querySelector('.session-toolbar-branch')).not.toBeNull();
-    expect(target.querySelector('[aria-label="More actions"]')).not.toBeNull();
-    const close = target.querySelector<HTMLButtonElement>('[aria-label="Close remote terminal"]');
+    const scroll = target.querySelector('.session-toolbar-scroll');
+    const actions = target.querySelector('.session-toolbar-actions');
+    expect(scroll).not.toBeNull();
+    expect(scroll?.querySelector('.session-toolbar-branch')).toBeNull();
+    expect(actions?.querySelector('.session-toolbar-branch')).not.toBeNull();
+    expect(actions?.querySelector('[aria-label="More actions"]')).not.toBeNull();
+    expect(actions?.querySelector('[aria-label="Close remote terminal"]')).toBeNull();
+
+    actions?.querySelector<HTMLButtonElement>('[aria-label="More actions"]')?.click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Close remote terminal'));
+    const close = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find((item) => item.textContent?.includes('Close remote terminal'));
     expect(close).not.toBeNull();
     close?.click();
     expect(onClose).toHaveBeenCalledOnce();

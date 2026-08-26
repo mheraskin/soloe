@@ -29,6 +29,11 @@
   .soloe-pane-header::-webkit-scrollbar {
     display: none;
   }
+
+  .session-toolbar {
+    overflow-x: hidden;
+    overscroll-behavior-x: auto;
+  }
 }
 
 :root {
