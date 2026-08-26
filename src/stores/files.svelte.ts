@@ -1,4 +1,5 @@
 import type { RunMode } from '@shared/types/sessions.js';
+import type { DeviceId } from '@shared/types/devices.js';
 import type { FileReadResult } from '@shared/types/files.js';
 import {
   worktreeScope,
@@ -10,6 +11,7 @@ import { ipc } from '../lib/ipc';
 export interface FilesContext {
   runMode: RunMode;
   wslDistro?: string;
+  deviceId?: DeviceId;
 }
 
 export type FilesScope = WorktreeScope & { runMode: RunMode; revision?: string };

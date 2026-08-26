@@ -11,6 +11,7 @@ import type { DeviceId } from '@shared/types/devices.js';
 import { untrack } from 'svelte';
 import {
   worktreeIdentityKey,
+  worktreeRuntimeContext,
   worktreeScope,
   type WorktreeScope
 } from '@shared/worktree-identity.js';
@@ -1365,10 +1366,7 @@ export class WorkingDiffStore {
   } {
     if (typeof target !== 'string') {
       const cwd = target.cwd.trim();
-      const context: RepoContext = {
-        ...(target.runMode ? { runMode: target.runMode } : {}),
-        ...(target.wslDistro ? { wslDistro: target.wslDistro } : {})
-      };
+      const context = worktreeRuntimeContext(target);
       return { cwd, identity: worktreeIdentityKey(cwd, context), context };
     }
     const cwd = target.trim();

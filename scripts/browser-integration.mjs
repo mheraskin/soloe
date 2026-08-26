@@ -382,6 +382,54 @@ async function runLiveMultiDeviceInventorySmoke() {
     if (!Array.isArray(features.features)) throw new Error('Remote Feature Lab response is invalid');
     if (!Array.isArray(notes)) throw new Error('Remote Notes response is invalid');
     if (!Array.isArray(vault)) throw new Error('Remote Vault response is invalid');
+    if (!worktreeSession) {
+      throw new Error('No rendered Session owns the selected remote Worktree');
+    }
+    const sessionRow = [...document.querySelectorAll('[data-session-id]')].find(
+      (element) => element.getAttribute('data-session-id') === worktreeSession.key
+    );
+    if (!sessionRow) {
+      throw new Error('The remote Worktree Session is missing from the rendered sidebar');
+    }
+    sessionRow.click();
+    const selectionDeadline = performance.now() + 10_000;
+    while (performance.now() < selectionDeadline) {
+      if (document.querySelector('.session-toolbar')?.textContent?.includes(
+        worktreeSession.session.name
+      )) break;
+      await sleep(50);
+    }
+    const diffButton = document.querySelector('button[aria-label="Working diff"]');
+    if (!diffButton) throw new Error('Working diff rail action is unavailable');
+    if (diffButton.getAttribute('aria-pressed') !== 'true') diffButton.click();
+    const diffDeadline = performance.now() + 10_000;
+    let renderedWorkingDiff = null;
+    while (performance.now() < diffDeadline) {
+      const pane = [...document.querySelectorAll('[data-pane-slot]')].find((element) =>
+        element.textContent?.includes('Uncommitted changes')
+      );
+      const paneText = pane?.textContent ?? '';
+      if (paneText.includes('The requested Git Worktree is not registered')) {
+        throw new Error('Rendered Working diff routed the remote Worktree to the wrong backend');
+      }
+      if (pane && !paneText.includes('Loading…')) {
+        await sleep(250);
+        const settledText = pane.textContent ?? '';
+        if (settledText.includes('The requested Git Worktree is not registered')) {
+          throw new Error('Rendered Working diff routed the remote Worktree to the wrong backend');
+        }
+        if (!settledText.includes('Loading…')) {
+          renderedWorkingDiff = {
+            sessionName: worktreeSession.session.name,
+            cwd: worktreeSession.session.cwd,
+            clean: settledText.includes('Working tree is clean.')
+          };
+          break;
+        }
+      }
+      await sleep(50);
+    }
+    if (!renderedWorkingDiff) throw new Error('Rendered Working diff did not settle');
     const projectBoundUnassigned = state.unassigned.filter(
       (projection) => projection.session.projectId
     );
@@ -400,6 +448,7 @@ async function runLiveMultiDeviceInventorySmoke() {
       filterValue: document.querySelector('input[aria-label="Filter sessions"]')?.value ?? null,
       renderedSessionCount: document.querySelectorAll('[data-session-id]').length,
       rendererErrors: window.__soloeLiveInventoryErrors ?? [],
+      renderedWorkingDiff,
       remoteWorktree: {
         deviceName: remoteDevice.name,
         projectName: remoteWorktree.project.name,

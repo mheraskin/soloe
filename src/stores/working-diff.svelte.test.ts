@@ -145,6 +145,27 @@ describe('WorkingDiffStore review freshness', () => {
     ]);
   });
 
+  it('keeps the remote Device in Review Scope identity and Git requests', async () => {
+    mocks.workingChanges.mockResolvedValue(changesResult('remote.ts'));
+    const store = new WorkingDiffStore();
+    const remote = createReviewScope('/home/me/repo', {
+      runMode: 'linux',
+      deviceId: 'device-xps'
+    });
+
+    await store.loadChanges(remote);
+
+    expect(mocks.workingChanges).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/home/me/repo',
+      runMode: 'linux',
+      deviceId: 'device-xps'
+    }));
+    expect(store.changesFor(remote).result?.changes[0]?.path).toBe('remote.ts');
+    expect(store.changesFor(createReviewScope('/home/me/repo', {
+      runMode: 'linux'
+    })).result).toBeNull();
+  });
+
   it('coalesces callers that share the same immutable review identity', async () => {
     const response = deferred<WorkingChangesResult>();
     mocks.workingChanges.mockReturnValueOnce(response.promise);

@@ -90,7 +90,8 @@
     if (!activeCwd || !activeScope) return;
     const filesScope = createFilesScope(activeCwd, {
       runMode: activeScope.runMode,
-      ...(activeScope.wslDistro ? { wslDistro: activeScope.wslDistro } : {})
+      ...(activeScope.wslDistro ? { wslDistro: activeScope.wslDistro } : {}),
+      ...(activeScope.deviceId ? { deviceId: activeScope.deviceId } : {})
     });
     const current = filesStore.openFileFor(filesScope);
     const discardingDirty = Boolean(

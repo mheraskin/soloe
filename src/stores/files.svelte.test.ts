@@ -67,6 +67,24 @@ describe('FilesStore Worktree Identity', () => {
     }));
   });
 
+  it('keeps remote file payloads isolated and routes them to the owning Device', async () => {
+    const remote = createFilesScope(cwd, {
+      runMode: 'linux',
+      deviceId: 'device-xps'
+    });
+    const local = createFilesScope(cwd, { runMode: 'linux' });
+
+    await store.loadTree(remote);
+
+    expect(listTree).toHaveBeenCalledWith(expect.objectContaining({
+      cwd,
+      runMode: 'linux',
+      deviceId: 'device-xps'
+    }));
+    expect(store.treeFor(remote).paths).toEqual(['native.txt']);
+    expect(store.treeFor(local).paths).toEqual([]);
+  });
+
   it('isolates read-only branch snapshots from the editable working tree', async () => {
     const working = createFilesScope(cwd, { runMode: 'linux' });
     const branch = createFilesScope(cwd, { runMode: 'linux' }, 'feature/files');
