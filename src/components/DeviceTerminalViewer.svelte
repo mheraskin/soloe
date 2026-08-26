@@ -11,6 +11,7 @@
   import { terminalFontFamily, terminalThemeFor } from '../lib/terminal-theme';
   import { appearanceTheme } from '../stores/appearance-theme.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { settings } from '../stores/settings.svelte';
   import { readClipboardImages } from '../lib/clipboard-images';
   import { isClipboardPasteShortcut } from '../lib/terminal-input';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
@@ -69,7 +70,10 @@
   let readOnly = $derived(Boolean(inputLease?.lease && !ownsInput));
   let ready = $derived(Boolean(surfaceReady && terminalState?.status === 'ready'));
   let theme = $derived(terminalThemeFor(appearanceTheme.resolved));
-  const font = { family: terminalFontFamily, size: 12 };
+  let font = $derived({
+    family: terminalFontFamily,
+    size: settings.current.terminal.fontSize
+  });
 
   $effect(() => {
     const deviceId = terminalDeviceId;

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   ownsInput: false,
   surfaceOptions: null as null | {
     predictiveInput?: boolean;
+    font?: { family: string; size: number };
     onData(data: string, priority: 'text' | 'immediate' | 'protocol'): void;
     onInputBoundary?(): void;
   },
@@ -83,6 +84,14 @@ vi.mock('../stores/device-sessions.svelte', () => ({
     pasteImagesIntoTerminal: vi.fn(async () => undefined),
     updateSession: vi.fn(async () => undefined),
     previewCommand: vi.fn(async () => ({ description: '' }))
+  }
+}));
+
+vi.mock('../stores/settings.svelte', () => ({
+  settings: {
+    current: {
+      terminal: { fontSize: 14 }
+    }
   }
 }));
 
@@ -197,5 +206,15 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
       { deviceId: 'device-xps', terminalId: 'terminal-1' },
       'a'
     );
+  });
+
+  it('uses the controlling Device terminal font size for a remote surface', async () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.surfaceOptions).not.toBeNull());
+
+    expect(mocks.surfaceOptions?.font).toEqual(expect.objectContaining({ size: 14 }));
   });
 });
