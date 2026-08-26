@@ -55,7 +55,8 @@ export interface TailscalePortForwardManagerOptions {
 
 /**
  * Publishes one loopback TCP listener on the Device's Tailscale address.
- * Existing direct listeners and unrelated Serve routes are never replaced.
+ * A direct listener satisfies the request only when it is also the requested
+ * target. Unrelated Serve routes are never replaced.
  */
 export class TailscalePortForwardManager {
   private readonly run: TailscaleCommandRunner;
@@ -103,7 +104,11 @@ export class TailscalePortForwardManager {
       };
     }
 
-    if (existing === "free" && await this.probe(selfDnsName, port)) {
+    if (
+      existing === "free"
+      && targetPort === port
+      && await this.probe(selfDnsName, port)
+    ) {
       return readyPortForward(selfDnsName, selfIpAddress, port, false);
     }
 

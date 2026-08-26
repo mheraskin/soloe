@@ -239,6 +239,39 @@ describe("TailscalePortForwardManager", () => {
     expect(run).toHaveBeenCalledTimes(3);
   });
 
+  it(
+    "does not bypass a private browser proxy when the public port is already reachable",
+    async () => {
+      const run = vi.fn(async (args: readonly string[]) => {
+        if (args[0] === "status") return selfStatus();
+        if (args[1] === "status") return "{}";
+        expect(args).toEqual([
+          "serve",
+          "--bg",
+          "--yes",
+          "--tcp=8877",
+          "tcp://127.0.0.1:43127",
+        ]);
+        return "Available within your tailnet";
+      });
+      const probe = vi.fn(
+        async (host: string, port: number) =>
+          (host === "workstation.tail1234.ts.net" && port === 8877)
+          || (host === "127.0.0.1" && port === 43127),
+      );
+
+      await expect(
+        new TailscalePortForwardManager({ run, probe }).ensure(8877, 43127),
+      ).resolves.toMatchObject({
+        state: "ready",
+        dnsName: "workstation.tail1234.ts.net",
+        port: 8877,
+        forwarded: true,
+      });
+      expect(run).toHaveBeenCalledTimes(3);
+    },
+  );
+
   it("reuses its exact existing forward without overwriting Serve", async () => {
     const run = vi.fn(async (args: readonly string[]) => {
       if (args[0] === "status") return selfStatus();
