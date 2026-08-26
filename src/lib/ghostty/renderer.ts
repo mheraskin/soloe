@@ -5,6 +5,7 @@ import {
   type GhosttyColor,
   type GhosttySnapshot,
 } from "./core";
+import type { TerminalPredictionOverlay } from "./prediction";
 
 export interface GhosttyCellMetrics {
   readonly width: number;
@@ -104,6 +105,7 @@ export function renderGhosttySnapshot(options: {
   readonly focused?: boolean;
   readonly selectionBackground?: string;
   readonly hoveredLinkRange?: GhosttyCellRange | null;
+  readonly prediction?: TerminalPredictionOverlay;
   /** Vertical origin of row 0; defaults to the horizontal padding. */
   readonly originY?: number;
 }): void {
@@ -121,6 +123,8 @@ export function renderGhosttySnapshot(options: {
   const focused = options.focused ?? true;
   const selectionBackground = options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
   const hoveredLinkRange = options.hoveredLinkRange ?? null;
+  const prediction = options.prediction ?? { cells: [], cursor: null };
+  const hasPrediction = prediction.cells.length > 0;
   const originY = options.originY ?? padding;
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
@@ -244,7 +248,13 @@ export function renderGhosttySnapshot(options: {
     }
   }
 
-  if (cursorOn && snapshot.cursorVisible && snapshot.cursorX >= 0 && snapshot.cursorY >= 0) {
+  if (
+    !hasPrediction
+    && cursorOn
+    && snapshot.cursorVisible
+    && snapshot.cursorX >= 0
+    && snapshot.cursorY >= 0
+  ) {
     const left = padding + snapshot.cursorX * metrics.width;
     const top = originY + snapshot.cursorY * metrics.height;
     context.fillStyle = cssColor(snapshot.cursor);
@@ -268,5 +278,28 @@ export function renderGhosttySnapshot(options: {
         context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
       }
     }
+  }
+
+  for (const predicted of prediction.cells) {
+    const cell = snapshot.rowData[predicted.y]?.cells[predicted.x];
+    const left = padding + predicted.x * metrics.width;
+    const top = originY + predicted.y * metrics.height;
+    context.fillStyle = cssColor(cell?.background ?? snapshot.background);
+    context.fillRect(left, top, metrics.width, metrics.height);
+    context.font = cell
+      ? fontForCell(cell, fontSize, fontFamily)
+      : `${fontSize}px ${fontFamily}`;
+    context.fillStyle = cssColor(cell?.foreground ?? snapshot.foreground);
+    context.fillText(predicted.text, left, top + metrics.baseline, metrics.width);
+    context.globalAlpha = 0.75;
+    context.fillRect(left, top + metrics.height - 1, metrics.width, 1);
+    context.globalAlpha = 1;
+  }
+
+  if (hasPrediction && cursorOn && prediction.cursor) {
+    const left = padding + prediction.cursor.x * metrics.width;
+    const top = originY + prediction.cursor.y * metrics.height;
+    context.fillStyle = cssColor(snapshot.cursor);
+    context.fillRect(left, top, 2, metrics.height);
   }
 }

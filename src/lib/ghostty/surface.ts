@@ -16,6 +16,8 @@ import {
 } from "./renderer";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "./font";
+import { TerminalPredictionModel } from "./prediction";
+import type { RemoteTerminalInputPriority } from "../remote-terminal-input";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -387,6 +389,16 @@ export function isTerminalAltGraphText(
   return event.getModifierState("AltGraph") && [...event.key].length === 1;
 }
 
+export function terminalPrintableKeyText(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey">,
+  alternateScreen = false,
+): string | null {
+  if (alternateScreen) return null;
+  if (event.altKey || event.ctrlKey || event.metaKey) return null;
+  if ([...event.key].length !== 1 || event.key < " " || event.key === "\u007f") return null;
+  return event.key;
+}
+
 export function shouldReportTerminalMouse(
   tracking: boolean,
   event: Pick<MouseEvent, "ctrlKey" | "metaKey" | "shiftKey">,
@@ -590,7 +602,9 @@ interface TerminalTouchMomentum {
 export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
-  readonly onData: (data: string) => void;
+  readonly onData: (data: string, priority: RemoteTerminalInputPriority) => void;
+  readonly onInputBoundary?: () => void;
+  readonly predictiveInput?: boolean;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
@@ -681,6 +695,7 @@ export class GhosttyTerminalSurface {
   private inputLeft = -1;
   private inputTop = -1;
   private searchCursor: { query: string; row: number; column: number } | null = null;
+  private readonly prediction: TerminalPredictionModel | null;
 
   private constructor(
     mount: HTMLElement,
@@ -703,6 +718,7 @@ export class GhosttyTerminalSurface {
     this.core = core;
     this.metrics = metrics;
     this.options = options;
+    this.prediction = options.predictiveInput ? new TerminalPredictionModel() : null;
     this.interactiveWheel = new TerminalInteractiveWheelFrameCoalescer(
       (callback) => window.requestAnimationFrame(callback),
       (frame) => window.cancelAnimationFrame(frame),
@@ -782,7 +798,7 @@ export class GhosttyTerminalSurface {
       metrics.width,
       metrics.height,
       options.theme,
-      options.onData,
+      (data) => options.onData(data, "protocol"),
     );
     const surface = new GhosttyTerminalSurface(
       mount,
@@ -803,7 +819,14 @@ export class GhosttyTerminalSurface {
 
   write(data: string | Uint8Array): void {
     if (this.disposed) return;
+    const hadPrediction = this.prediction?.hasPending() ?? false;
     this.core.write(data);
+    if (hadPrediction) {
+      const snapshot = this.core.snapshot();
+      this.snapshot = snapshot;
+      this.prediction?.reconcile(snapshot);
+      this.forceFullRender = true;
+    }
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -813,6 +836,7 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    this.clearPrediction();
     this.core.resetAndWrite(data);
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
@@ -824,6 +848,7 @@ export class GhosttyTerminalSurface {
 
   resetAndReplay(data: string, plan: GhosttyReplayPlan): void {
     if (this.disposed) return;
+    this.clearPrediction();
     this.core.resetAndReplay(data, plan);
     const finalDimensions = plan.resizes.at(-1) ?? plan;
     if (this.cols !== finalDimensions.cols || this.rows !== finalDimensions.rows) {
@@ -832,6 +857,38 @@ export class GhosttyTerminalSurface {
     this.cursorOn = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
+    this.requestRender();
+  }
+
+  private sendUserInput(
+    data: string,
+    priority: RemoteTerminalInputPriority,
+    predictedText?: string,
+  ): void {
+    if (data.length === 0) return;
+    if (priority === "immediate") {
+      this.clearPrediction();
+    } else if (this.prediction) {
+      const snapshot = this.core.snapshot();
+      this.snapshot = snapshot;
+      this.prediction.type(predictedText ?? data, snapshot);
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    this.options.onData(data, priority);
+  }
+
+  private inputBoundary(): void {
+    this.clearPrediction();
+    this.options.onInputBoundary?.();
+  }
+
+  private clearPrediction(): void {
+    if (!this.prediction) return;
+    const hadPending = this.prediction.hasPending();
+    this.prediction.boundary();
+    if (!hadPending) return;
+    this.forceFullRender = true;
     this.requestRender();
   }
 
@@ -988,7 +1045,7 @@ export class GhosttyTerminalSurface {
     this.pasteShortcutToken += 1;
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
-    if (encoded.length > 0) this.options.onData(encoded);
+    if (encoded.length > 0) this.sendUserInput(encoded, "immediate");
   }
 
   hasSelection(): boolean {
@@ -1218,11 +1275,17 @@ export class GhosttyTerminalSurface {
     // beforeKey runs side effects (keybindings, navigation sends), so it cannot
     // be consulted again on keyup, and Kitty report-event-types sessions would
     // otherwise receive a release for a press the shell never saw.
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
+    if (isTerminalAltGraphText(event)) {
+      this.suppressedKeyCodes.add(event.code);
+      return;
+    }
+    if (!this.options.beforeKey(event)) {
+      this.inputBoundary();
       this.suppressedKeyCodes.add(event.code);
       return;
     }
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
+      this.inputBoundary();
       // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
       // onCopyEvent; not preventing the default keeps that path alive. WebKit
       // omits the keyboard copy event without a DOM selection, so race the
@@ -1278,6 +1341,7 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (isTerminalPasteShortcut(event)) {
+      this.inputBoundary();
       this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
@@ -1291,7 +1355,9 @@ export class GhosttyTerminalSurface {
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
             this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            if (text.length > 0) {
+              this.sendUserInput(this.core.encodePaste(text), "immediate");
+            }
           },
           () => {
             // Clipboard read denied; the native paste event remains the path.
@@ -1310,7 +1376,10 @@ export class GhosttyTerminalSurface {
     this.suppressedKeyCodes.delete(event.code);
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData(data);
+    // Printable keys are commands in alternate-screen TUIs, so they must not
+    // wait for the shell-oriented text micro-batch or render speculatively.
+    const text = terminalPrintableKeyText(event, this.core.isAlternateScreen());
+    this.sendUserInput(data, text === null ? "immediate" : "text", text ?? undefined);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
@@ -1325,7 +1394,7 @@ export class GhosttyTerminalSurface {
     if (data.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData(data);
+    this.sendUserInput(data, "immediate");
   };
 
   private readonly onFocus = () => {
@@ -1335,6 +1404,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onBlur = () => {
+    this.inputBoundary();
     this.focused = false;
     this.linkModifierActive = false;
     this.refreshHoveredLink();
@@ -1382,7 +1452,7 @@ export class GhosttyTerminalSurface {
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
-    this.options.onData(this.core.encodePaste(data));
+    this.sendUserInput(this.core.encodePaste(data), "immediate");
   };
 
   private readonly onCompositionStart = () => {
@@ -1393,7 +1463,9 @@ export class GhosttyTerminalSurface {
   private readonly onCompositionEnd = (event: CompositionEvent) => {
     this.composing = false;
     const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) {
+      this.sendUserInput(data, this.core.isAlternateScreen() ? "immediate" : "text", data);
+    }
     this.input.value = "";
     this.compositionInputToSuppress = data;
     this.compositionSuppressionTimer = window.setTimeout(() => {
@@ -1412,7 +1484,9 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) {
+      this.sendUserInput(data, this.core.isAlternateScreen() ? "immediate" : "text", data);
+    }
     this.input.value = "";
   };
 
@@ -1823,7 +1897,10 @@ export class GhosttyTerminalSurface {
     if (this.core.isAlternateScreen()) {
       // The alternate screen has no scrollback: translate motion into arrow
       // keys so full-screen apps like vim and less scroll, matching wheel input.
-      this.options.onData(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
+      this.sendUserInput(
+        terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()),
+        "immediate",
+      );
       return true;
     }
     return this.scrollViewport(rows) !== 0;
@@ -2051,6 +2128,7 @@ export class GhosttyTerminalSurface {
       this.forceFullRender = true;
     }
     this.refreshHoveredLink();
+    const prediction = this.prediction?.overlay(this.snapshot) ?? undefined;
     renderGhosttySnapshot({
       context: this.context,
       snapshot: this.snapshot,
@@ -2064,6 +2142,7 @@ export class GhosttyTerminalSurface {
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
       hoveredLinkRange: this.hoveredLink?.range ?? null,
+      ...(prediction ? { prediction } : {}),
       ...(this.theme.selectionBackground !== undefined
         ? { selectionBackground: this.theme.selectionBackground }
         : {}),
@@ -2229,7 +2308,7 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) this.sendUserInput(data, "immediate");
   }
 
   private buttonFromButtons(buttons: number): number | null {

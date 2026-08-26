@@ -10,13 +10,22 @@ const mocks = vi.hoisted(() => ({
   outputSubscriptions: 0,
   historyRequests: 0,
   reconnect: null as null | (() => void),
+  localDeviceId: null as string | null,
+  ownsInput: false,
+  surfaceOptions: null as null | {
+    predictiveInput?: boolean;
+    onData(data: string, priority: 'text' | 'immediate' | 'protocol'): void;
+    onInputBoundary?(): void;
+  },
+  terminalInput: vi.fn(async () => undefined),
   claimTerminalInputControl: vi.fn(async () => false)
 }));
 
 vi.mock('../lib/ghostty/surface', () => ({
   GhosttyTerminalSurface: {
-    create: vi.fn(async () => {
+    create: vi.fn(async (_mount, options) => {
       mocks.surfaceCreates += 1;
+      mocks.surfaceOptions = options;
       return {
         cols: 120,
         rows: 30,
@@ -36,8 +45,13 @@ vi.mock('../lib/ghostty/surface', () => ({
 
 vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
+    get localDevice() {
+      return mocks.localDeviceId
+        ? { deviceId: mocks.localDeviceId, name: 'local' }
+        : null;
+    },
     terminalInputLeaseEvent: vi.fn(() => null),
-    ownsTerminalInput: vi.fn(() => false),
+    ownsTerminalInput: vi.fn(() => mocks.ownsInput),
     claimTerminalInputControl: mocks.claimTerminalInputControl,
     acquireTerminalOutput: vi.fn(() => {
       mocks.outputSubscriptions += 1;
@@ -65,7 +79,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
       return () => { mocks.reconnect = null; };
     }),
     terminalResize: vi.fn(async () => undefined),
-    terminalInput: vi.fn(async () => undefined),
+    terminalInput: mocks.terminalInput,
     pasteImagesIntoTerminal: vi.fn(async () => undefined),
     updateSession: vi.fn(async () => undefined),
     previewCommand: vi.fn(async () => ({ description: '' }))
@@ -83,6 +97,10 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.outputSubscriptions = 0;
     mocks.historyRequests = 0;
     mocks.reconnect = null;
+    mocks.localDeviceId = null;
+    mocks.ownsInput = false;
+    mocks.surfaceOptions = null;
+    mocks.terminalInput.mockClear();
     mocks.claimTerminalInputControl.mockClear();
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: false,
@@ -134,5 +152,50 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.reconnect?.();
 
     await vi.waitFor(() => expect(mocks.claimTerminalInputControl).toHaveBeenCalledTimes(2));
+  });
+
+  it('batches remote text while flushing controls and TUI scrolling immediately', async () => {
+    mocks.ownsInput = true;
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.surfaceOptions).not.toBeNull());
+    expect(mocks.surfaceOptions?.predictiveInput).toBe(true);
+
+    mocks.surfaceOptions?.onData('h', 'text');
+    mocks.surfaceOptions?.onData('i', 'text');
+    expect(mocks.terminalInput).not.toHaveBeenCalled();
+
+    mocks.surfaceOptions?.onData('\r', 'immediate');
+    expect(mocks.terminalInput).toHaveBeenNthCalledWith(
+      1,
+      { deviceId: 'device-xps', terminalId: 'terminal-1' },
+      'hi\r'
+    );
+
+    mocks.surfaceOptions?.onData('\u001b[B', 'immediate');
+    expect(mocks.terminalInput).toHaveBeenNthCalledWith(
+      2,
+      { deviceId: 'device-xps', terminalId: 'terminal-1' },
+      '\u001b[B'
+    );
+  });
+
+  it('keeps same-device terminal input unbatched', async () => {
+    mocks.localDeviceId = 'device-xps';
+    mocks.ownsInput = true;
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.surfaceOptions).not.toBeNull());
+
+    expect(mocks.surfaceOptions?.predictiveInput).toBe(false);
+    mocks.surfaceOptions?.onData('a', 'text');
+    expect(mocks.terminalInput).toHaveBeenCalledWith(
+      { deviceId: 'device-xps', terminalId: 'terminal-1' },
+      'a'
+    );
   });
 });

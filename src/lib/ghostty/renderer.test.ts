@@ -282,4 +282,62 @@ describe("renderGhosttySnapshot", () => {
 
     expect(clearedRows).toEqual([4, 36, 36]);
   });
+
+  it("draws outstanding predictions underlined with an optimistic cursor", () => {
+    const fillRectCalls: number[][] = [];
+    const fillTextCalls: unknown[][] = [];
+    const context = {
+      canvas: { width: 200, height: 40 },
+      beginPath: () => {},
+      clip: () => {},
+      fillRect: (...args: number[]) => fillRectCalls.push(args),
+      fillText: (...args: unknown[]) => fillTextCalls.push(args),
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      set fillStyle(_value: string) {},
+      set font(_value: string) {},
+      set globalAlpha(_value: number) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: 0,
+      cursorY: 0,
+      cursorVisible: true,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [{
+        cells: [cell(""), cell(""), cell("")],
+        text: "",
+        isWrapContinuation: false,
+        wrapsToNext: false,
+      }],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 10, height: 16, baseline: 11 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: true,
+      prediction: {
+        cells: [{ x: 0, y: 0, text: "h" }],
+        cursor: { x: 1, y: 0 },
+      },
+    });
+
+    expect(fillTextCalls).toContainEqual(["h", 4, 15, 10]);
+    expect(fillRectCalls).toContainEqual([4, 19, 10, 1]);
+    expect(fillRectCalls).toContainEqual([14, 4, 2, 16]);
+  });
 });

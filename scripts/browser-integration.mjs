@@ -432,23 +432,53 @@ async function runLiveMultiDeviceInventorySmoke() {
 }
 
 async function runLiveSessionControlSmoke() {
-  assert(config.webUrl, '--web-url is required with --live-session-id');
-  assert(config.serverToken, '--server-token is required with --live-session-id');
+  const webUrl = config.webUrl ?? configuredServerUrl;
+  assert(webUrl, '--web-url or --server-record is required with --live-session-id');
+  assert(
+    config.serverToken || serverRecord?.token,
+    '--server-token or --server-record is required with --live-session-id'
+  );
   scratchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-live-control-'));
-  const url = `${config.webUrl}/?token=${encodeURIComponent(config.serverToken)}`;
-  const first = await launchBrowser(url, 'live-mac-one');
+  const url = `${webUrl}/?token=${encodeURIComponent(token)}`;
+  const launchClient = config.webUrl
+    ? (name) => launchBrowser(url, name)
+    : (name) => launchRemoteElectron(webUrl, name);
+  const first = await launchClient('live-mac-one');
   browsers.add(first);
   const firstState = await first.cdp.evaluate(
     `(${prepareLiveSessionClient.toString()})(${JSON.stringify({
       sessionId: config.liveSessionId,
-      expectReadOnly: false
+      expectReadOnly: false,
+      forceTakeover: !config.webUrl
     })})`
   );
   const firstMarker = `macbook-first-${Date.now()}`;
   await typeTerminalCommand(first.cdp, `printf '${firstMarker}\\n'\n`);
-  await waitForTerminalMarker(first.cdp, firstState.terminalId, firstMarker);
+  await waitForTerminalMarker(first.cdp, firstState, firstMarker);
 
-  const second = await launchBrowser(url, 'live-mac-two');
+  // macOS enforces Soloe's single-instance lock even with a separate Chromium
+  // profile. A server-record smoke therefore verifies the real remote-Electron
+  // controller once; explicit browser mode remains the two-client takeover test.
+  if (!config.webUrl) {
+    process.stdout.write(`${JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      environment: {
+        platform: process.platform,
+        backend: config.liveBackend ?? 'remote-electron',
+        webUrl
+      },
+      sessionId: config.liveSessionId,
+      terminalId: firstState.terminalId,
+      liveSessionControl: {
+        firstControllerInputObserved: true,
+        authoritativeRemoteHistoryObserved: true
+      }
+    }, null, 2)}\n`);
+    return;
+  }
+
+  const second = await launchClient('live-mac-two');
   browsers.add(second);
   const secondState = await second.cdp.evaluate(
     `(${prepareLiveSessionClient.toString()})(${JSON.stringify({
@@ -463,7 +493,7 @@ async function runLiveSessionControlSmoke() {
   const stability = await second.cdp.evaluate(`(async () => {
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
     const row = document.querySelector(${JSON.stringify(
-      `[data-session-id="${config.liveSessionId}"]`
+      `[data-session-id="${firstState.sessionKey}"]`
     )});
     const takeover = [...document.querySelectorAll('button')].find(
       (button) => button.textContent?.trim() === 'Take Over'
@@ -489,7 +519,7 @@ async function runLiveSessionControlSmoke() {
     return {
       sessionRowStable: row?.isConnected === true
         && document.querySelector(${JSON.stringify(
-          `[data-session-id="${config.liveSessionId}"]`
+          `[data-session-id="${firstState.sessionKey}"]`
         )}) === row,
       takeoverStable: takeover?.isConnected === true,
       newSessionFound: Boolean(newSession),
@@ -536,14 +566,14 @@ async function runLiveSessionControlSmoke() {
 
   const secondMarker = `macbook-takeover-${Date.now()}`;
   await typeTerminalCommand(second.cdp, `printf '${secondMarker}\\n'\n`);
-  await waitForTerminalMarker(second.cdp, secondState.terminalId, secondMarker);
+  await waitForTerminalMarker(second.cdp, secondState, secondMarker);
   process.stdout.write(`${JSON.stringify({
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     environment: {
       platform: process.platform,
-      backend: config.liveBackend ?? 'remote',
-      webUrl: config.webUrl
+      backend: config.liveBackend ?? (config.webUrl ? 'browser' : 'remote-electron'),
+      webUrl
     },
     sessionId: config.liveSessionId,
     terminalId: firstState.terminalId,
@@ -562,6 +592,8 @@ async function typeTerminalCommand(cdp, command) {
   await cdp.evaluate(`(() => {
     const textarea = document.querySelector(
       '.terminal-surface[data-terminal-pane-role="full"] .t3-ghostty-input'
+    ) ?? [...document.querySelectorAll('.t3-ghostty-input')].find(
+      (candidate) => candidate.getClientRects().length > 0 && !candidate.disabled
     );
     if (!textarea) throw new Error('Interactive Ghostty input is unavailable');
     textarea.focus();
@@ -589,25 +621,46 @@ async function typeTerminalCommand(cdp, command) {
   }
 }
 
-async function waitForTerminalMarker(cdp, terminalId, marker) {
+async function waitForTerminalMarker(cdp, terminalState, marker) {
   await waitFor(async () => cdp.evaluate(`(async () => {
-    const result = await window.soloe.terminal.historySnapshot(
-      ${JSON.stringify(terminalId)}
-    );
-    return Boolean(result.ok && result.value?.data?.includes(${JSON.stringify(marker)}));
+    const state = ${JSON.stringify(terminalState)};
+    const result = state.deviceId
+      ? await window.soloe.sessions.deviceTerminalHistory({
+          deviceId: state.deviceId,
+          terminalId: state.terminalId
+        })
+      : await window.soloe.terminal.historySnapshot(state.terminalId);
+    const snapshot = state.deviceId ? result.value?.snapshot : result.value;
+    return Boolean(result.ok && snapshot?.data?.includes(${JSON.stringify(marker)}));
   })()`), 10_000, `terminal marker ${marker}`);
 }
 
 async function prepareLiveSessionClient(input) {
   const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
   const visible = (element) => Boolean(element && element.getClientRects().length > 0);
+  const refreshed = await window.soloe.sessions.refreshDevices();
+  if (!refreshed.ok) throw new Error(`Could not refresh Devices: ${refreshed.error}`);
+  const projected = refreshed.value.projects.flatMap((project) => project.workspaces)
+    .flatMap((workspace) => workspace.sessions)
+    .concat(refreshed.value.unassigned)
+    .find((candidate) => candidate.ref.sessionId === input.sessionId);
   const deadline = performance.now() + 15_000;
   let row = null;
   while (performance.now() < deadline) {
-    row = document.querySelector(`[data-session-id="${CSS.escape(input.sessionId)}"]`);
+    row = [...document.querySelectorAll('[data-session-id]')].find((candidate) => {
+      const key = candidate.getAttribute('data-session-id') ?? '';
+      return key === input.sessionId || key.endsWith('/' + input.sessionId);
+    }) ?? null;
     if (row) break;
-    for (const project of document.querySelectorAll('[data-project-id]')) {
-      project.querySelector('button')?.click();
+    for (const toggle of document.querySelectorAll(
+      'button[aria-label^="Toggle "][aria-label$=" project"], button[aria-label^="Toggle worktree "]'
+    )) {
+      if (
+        toggle.getAttribute('aria-expanded') === 'false'
+        || toggle.getAttribute('data-state') === 'closed'
+      ) {
+        toggle.click();
+      }
     }
     await sleep(100);
   }
@@ -617,18 +670,34 @@ async function prepareLiveSessionClient(input) {
     await sleep(50);
   }
   const terminalDeadline = performance.now() + 15_000;
-  let terminalId = null;
+  let terminalId = projected?.runtime?.terminalId ?? null;
+  const deviceId = projected?.ref.deviceId ?? null;
+  if (input.forceTakeover && terminalId && deviceId) {
+    const takeover = await window.soloe.sessions.deviceTerminalInputLease({
+      ref: { deviceId, terminalId },
+      takeover: true
+    });
+    if (!takeover.ok) throw new Error(`Could not take terminal input: ${takeover.error}`);
+  }
   while (performance.now() < terminalDeadline) {
-    const running = await window.soloe.terminal.listRunning();
-    if (running.ok) {
-      terminalId = running.value.find((terminal) => terminal.sessionId === input.sessionId)?.terminalId;
+    if (!terminalId) {
+      const running = await window.soloe.terminal.listRunning();
+      if (running.ok) {
+        terminalId = running.value.find(
+          (terminal) => terminal.sessionId === input.sessionId
+        )?.terminalId;
+      }
     }
     const takeover = [...document.querySelectorAll('button')].find(
       (button) => button.textContent?.trim() === 'Take Over'
     );
-    if (terminalId && (input.expectReadOnly ? visible(takeover) : visible(
-      document.querySelector('.t3-ghostty-input')
-    ))) break;
+    const terminalInput = [...document.querySelectorAll('.t3-ghostty-input')].find(visible);
+    if (!input.expectReadOnly && visible(takeover)) takeover.click();
+    if (terminalId && (
+      input.expectReadOnly
+        ? visible(takeover)
+        : terminalInput && document.activeElement === terminalInput
+    )) break;
     await sleep(50);
   }
   if (!terminalId) throw new Error('The live Session has no running terminal');
@@ -640,7 +709,12 @@ async function prepareLiveSessionClient(input) {
       ? 'Second MacBook client did not enter read-only mode'
       : 'First MacBook client unexpectedly entered read-only mode');
   }
-  return { terminalId, readOnly: takeoverVisible };
+  return {
+    terminalId,
+    deviceId,
+    readOnly: takeoverVisible,
+    sessionKey: row.getAttribute('data-session-id')
+  };
 }
 
 async function runExistingServerSmoke() {

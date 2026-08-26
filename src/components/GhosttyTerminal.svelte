@@ -6,12 +6,14 @@
     type GhosttyTerminalFont
   } from '../lib/ghostty/surface';
   import type { TerminalSessionState } from '../lib/terminal-session';
+  import { RemoteTerminalInputBatcher } from '../lib/remote-terminal-input';
 
   let {
     state: terminalState,
     visible,
     focused,
     interactive = true,
+    predictiveInput = false,
     theme,
     font,
     onData,
@@ -26,6 +28,7 @@
     visible: boolean;
     focused: boolean;
     interactive?: boolean;
+    predictiveInput?: boolean;
     theme: GhosttyTheme;
     font: GhosttyTerminalFont;
     onData: (data: string) => void;
@@ -39,6 +42,7 @@
 
   let host: HTMLDivElement | undefined = $state();
   let surface = $state.raw<GhosttyTerminalSurface | null>(null);
+  let inputBatcher: RemoteTerminalInputBatcher | null = null;
   let appliedBuffer = '';
 
   $effect(() => {
@@ -48,13 +52,19 @@
     let cancelled = false;
     const initialTheme = untrack(() => theme);
     const initialFont = untrack(() => font);
+    const batcher = predictiveInput ? new RemoteTerminalInputBatcher((data) => onData(data)) : null;
+    inputBatcher = batcher;
 
     void GhosttyTerminalSurface.create(mount, {
       theme: initialTheme,
       font: initialFont,
-      onData: (data) => {
-        if (interactive) onData(data);
+      predictiveInput,
+      onData: (data, priority) => {
+        if (!interactive) return;
+        if (batcher) batcher.submit(data, priority);
+        else onData(data);
       },
+      onInputBoundary: () => batcher?.flush(),
       onResize: (cols, rows) => onResize(cols, rows),
       onSelectionChange: () => onSelectionChange(),
       beforeKey: (event) => interactive && beforeKey(event),
@@ -80,6 +90,8 @@
       cancelled = true;
       const current = surface;
       surface = null;
+      if (inputBatcher === batcher) inputBatcher = null;
+      batcher?.dispose();
       appliedBuffer = '';
       delete mount.dataset.ghosttyReady;
       current?.dispose();
@@ -113,6 +125,10 @@
 
   $effect(() => {
     if (visible && focused) surface?.focus();
+  });
+
+  $effect(() => {
+    if (!interactive) inputBatcher?.flush();
   });
 
   export function focus(): void {
@@ -153,6 +169,10 @@
 
   export function scrollToBottom(): void {
     surface?.scrollToBottom();
+  }
+
+  export function flushInput(): void {
+    inputBatcher?.flush();
   }
 
   export function pasteFromClipboard(

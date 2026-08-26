@@ -52,6 +52,9 @@
   let terminalDeviceId = $derived(projection.ref.deviceId);
   let terminalSessionId = $derived(projection.ref.sessionId);
   let terminalRuntimeId = $derived(projection.runtime?.terminalId ?? null);
+  let predictiveInput = $derived(
+    deviceSessions.localDevice?.deviceId !== terminalDeviceId
+  );
   let terminalRef = $derived<TerminalRef | null>(
     terminalRuntimeId
       ? { deviceId: terminalDeviceId, terminalId: terminalRuntimeId }
@@ -259,6 +262,7 @@
         visible={true}
         focused={active && pageVisible}
         interactive={active && interactive && ownsInput && pageVisible}
+        {predictiveInput}
         {theme}
         {font}
         onData={sendData}

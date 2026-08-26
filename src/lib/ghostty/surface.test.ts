@@ -23,6 +23,7 @@ import {
   terminalLinkAtColumn,
   terminalLinkAtPosition,
   terminalLinkAtPositionWithRange,
+  terminalPrintableKeyText,
   terminalContentOriginY,
   terminalFontFamily,
   terminalFontSize,
@@ -61,6 +62,41 @@ describe("isTerminalAltGraphText", () => {
         getModifierState: (modifier) => modifier === "AltGraph",
       }),
     ).toBe(false);
+  });
+});
+
+describe("terminalPrintableKeyText", () => {
+  it("batches ordinary and shifted printable keys", () => {
+    expect(terminalPrintableKeyText({ key: "a", altKey: false, ctrlKey: false, metaKey: false }))
+      .toBe("a");
+    expect(terminalPrintableKeyText({ key: "?", altKey: false, ctrlKey: false, metaKey: false }))
+      .toBe("?");
+    expect(terminalPrintableKeyText({ key: "*", altKey: false, ctrlKey: false, metaKey: false }))
+      .toBe("*");
+  });
+
+  it("keeps controls and hotkeys out of the printable batch", () => {
+    expect(terminalPrintableKeyText({ key: "Enter", altKey: false, ctrlKey: false, metaKey: false }))
+      .toBeNull();
+    expect(terminalPrintableKeyText({ key: "c", altKey: false, ctrlKey: true, metaKey: false }))
+      .toBeNull();
+    expect(terminalPrintableKeyText({ key: "ArrowDown", altKey: false, ctrlKey: false, metaKey: false }))
+      .toBeNull();
+  });
+
+  it("keeps every key immediate while an alternate-screen TUI is active", () => {
+    expect(
+      terminalPrintableKeyText(
+        { key: "j", altKey: false, ctrlKey: false, metaKey: false },
+        true,
+      ),
+    ).toBeNull();
+    expect(
+      terminalPrintableKeyText(
+        { key: "?", altKey: false, ctrlKey: false, metaKey: false },
+        true,
+      ),
+    ).toBeNull();
   });
 });
 
