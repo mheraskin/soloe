@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BookOpen, ChevronDown, ChevronRight, FolderGit2 } from '@lucide/svelte';
+  import { BookOpen, ChevronRight, FolderGit2 } from '@lucide/svelte';
   import type { RunMode, Session, SessionId } from '@shared/types/sessions.js';
   import type { ProjectId } from '@shared/types/projects.js';
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
@@ -12,12 +12,12 @@
   import { reportError } from '../stores/toast.svelte';
   import { rankMulti, score } from '../lib/fuzzy';
   import { cn } from '$lib/utils';
-  import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
   import SessionItem from './SessionItem.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
+  import KbdHint from './KbdHint.svelte';
   import WorktreeOverviewDialog from './WorktreeOverviewDialog.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
 
@@ -231,82 +231,82 @@
     {#if dropPosition === 'after'}
       <div class="pointer-events-none absolute -bottom-0.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
     {/if}
-  <Collapsible.Root open={effectiveExpanded} onOpenChange={onGroupOpenChange} class="flex flex-col gap-1">
+  <Collapsible.Root open={effectiveExpanded} onOpenChange={onGroupOpenChange} class="flex flex-col">
     <div
       role="group"
-      class={cn('flex items-center gap-1 px-0.5 py-0.5', isDraggingSelf && 'opacity-40')}
+      data-sb-active={highlightWhenCollapsed ? 'true' : undefined}
+      class={cn('sb-row sb-group', isDraggingSelf && 'opacity-40')}
     >
       <Collapsible.Trigger
-        class={cn(
-          'relative flex flex-1 items-center gap-2 overflow-hidden rounded-md border border-transparent px-2 py-1 text-left transition-colors',
-          highlightWhenCollapsed
-            ? 'bg-accent/60 border-border text-foreground'
-            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-        )}
+        class="flex min-w-0 flex-1 items-center gap-2 rounded-[inherit] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         aria-label={`Toggle worktree ${title}`}
         draggable={onWorktreeDrop ? 'true' : undefined}
         ondragstart={onHeaderDragStart}
         ondragend={onHeaderDragEnd}
       >
-        {#if kbdIndex !== null}
-          <span
-            class="pointer-events-none absolute top-0.5 left-0.5 font-mono text-[9px] leading-none text-muted-foreground/55"
-            title={`Ctrl/Cmd+Shift+${kbdIndex}`}
-            aria-label={`Ctrl or Command plus Shift plus ${kbdIndex}`}
-          >
-            {kbdIndex}
-          </span>
-        {/if}
-        {#if effectiveExpanded}
-          <ChevronDown class="size-3 shrink-0" />
-        {:else}
-          <ChevronRight class="size-3 shrink-0" />
-        {/if}
-        <FolderGit2 class="size-3.5 shrink-0" />
-        <span class="flex-1 truncate font-mono text-xs leading-4" title={cwd}>{title}</span>
-        {#if hasDiff && shortstat}
-          <span
-            class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums"
-            title={diffTitle}
-            aria-label={diffTitle}
-          >
-            {#if shortstat.insertions > 0}
-              <span class="text-emerald-500">+{shortstat.insertions}</span>
-            {/if}
-            {#if shortstat.deletions > 0}
-              <span class="text-rose-500">−{shortstat.deletions}</span>
-            {/if}
-          </span>
-        {/if}
-        {#if isMain}
-          <Badge variant="outline" class="h-4 rounded-full px-1.5 text-[9px] font-medium tracking-wider uppercase">main</Badge>
-        {/if}
-        <Badge variant="secondary" class="h-4 rounded-full bg-muted px-1.5 text-[10px] font-medium text-muted-foreground">
-          {projections?.length ?? items.length}
-        </Badge>
+        <span class="sb-chevron" data-open={effectiveExpanded ? 'true' : 'false'}>
+          <ChevronRight class="size-3" />
+        </span>
+        <span class="sb-icon">
+          <FolderGit2 class="size-3.5" />
+        </span>
+        <span class="sb-title truncate font-mono" title={cwd}>{title}</span>
       </Collapsible.Trigger>
-      {#if allowLocalActions}<Button
-        variant="ghost"
-        size="icon-sm"
-        class="shrink-0"
-        title="Worktree overview"
-        aria-label="Worktree overview"
-        onclick={() => (overviewOpen = true)}
-      >
-        <BookOpen />
-      </Button>
+      {#if kbdIndex !== null}
+        <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
       {/if}
-      <AgentLaunchPopover
-        {projectId}
-        {cwd}
-        branch={title}
-        {workspaceKey}
-        {defaultDeviceId}
-        title="New session in this worktree"
-        ariaLabel="New session in this worktree"
-      />
+      <div class="sb-gutter min-w-14">
+        <span class="sb-gutter-rest flex items-center gap-1.5">
+          {#if hasDiff && shortstat}
+            <span
+              class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums"
+              title={diffTitle}
+              aria-label={diffTitle}
+            >
+              {#if shortstat.insertions > 0}
+                <span class="text-success">+{shortstat.insertions}</span>
+              {/if}
+              {#if shortstat.deletions > 0}
+                <span class="text-destructive">−{shortstat.deletions}</span>
+              {/if}
+            </span>
+          {/if}
+          {#if isMain}
+            <span class="sb-meta sb-meta-faint shrink-0 text-[9px] tracking-[0.08em] uppercase">
+              main
+            </span>
+          {/if}
+          <span class="sb-meta sb-meta-faint shrink-0 tabular-nums">
+            {projections?.length ?? items.length}
+          </span>
+        </span>
+        <span class="sb-gutter-hover flex items-center gap-0.5">
+          {#if allowLocalActions}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              class="size-6 text-muted-foreground hover:text-foreground"
+              title="Worktree overview"
+              aria-label="Worktree overview"
+              onclick={() => (overviewOpen = true)}
+            >
+              <BookOpen />
+            </Button>
+          {/if}
+          <AgentLaunchPopover
+            {projectId}
+            {cwd}
+            branch={title}
+            {workspaceKey}
+            {defaultDeviceId}
+            class="size-6"
+            title="New session in this worktree"
+            ariaLabel="New session in this worktree"
+          />
+        </span>
+      </div>
     </div>
-    <Collapsible.Content class="flex flex-col gap-px pl-4">
+    <Collapsible.Content class="sb-children flex flex-col">
       {#if visibleProjections}
         {#each visibleProjections as projection (projection.key)}
           <SessionItem
@@ -314,12 +314,13 @@
             branch={title}
             {projection}
             {showDevice}
+            inGroup
             {onSessionDrop}
           />
         {/each}
       {:else}
         {#each visible as session (session.id)}
-          <SessionItem {session} branch={title} {onSessionDrop} />
+          <SessionItem {session} branch={title} inGroup {onSessionDrop} />
         {/each}
       {/if}
     </Collapsible.Content>

@@ -1,6 +1,5 @@
 <script lang="ts">
   import {
-    ChevronDown,
     ChevronRight,
     Check,
     Folder,
@@ -32,6 +31,7 @@
   import { worktreeCreateModal } from '../stores/worktree-create-modal.svelte';
   import { ipc } from '../lib/ipc';
   import { rankMulti, score } from '../lib/fuzzy';
+  import { displayPath } from '../lib/display-path';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as Collapsible from '$lib/components/ui/collapsible';
@@ -43,6 +43,7 @@
   import SessionItem from './SessionItem.svelte';
   import WorktreeGroup from './WorktreeGroup.svelte';
   import AgentLaunchPopover from './AgentLaunchPopover.svelte';
+  import KbdHint from './KbdHint.svelte';
 
   let {
     project,
@@ -432,7 +433,7 @@
 <div
   bind:this={wrapperEl}
   role="group"
-  class="relative"
+  class="sb-section relative"
   ondragover={onProjectDragOver}
   ondrop={onProjectDropEvent}
 >
@@ -442,108 +443,88 @@
   {#if dropPosition === 'after'}
     <div class="pointer-events-none absolute -bottom-0.5 right-1 left-1 z-10 h-0.5 rounded-full bg-primary"></div>
   {/if}
-<Collapsible.Root open={effectiveExpanded} onOpenChange={onProjectOpenChange} class="flex flex-col gap-1">
+<Collapsible.Root open={effectiveExpanded} onOpenChange={onProjectOpenChange} class="flex flex-col">
   <ContextMenu.Root>
     <ContextMenu.Trigger>
       {#snippet child({ props })}
         <div
           {...props}
           data-project-id={project.id}
-          class={cn('flex items-center gap-1', isDraggingSelf && 'opacity-40')}
+          data-sb-active={isActiveProject ? 'true' : undefined}
+          class={cn('sb-row sb-group', isDraggingSelf && 'opacity-40')}
         >
-          <span class="relative flex min-w-0 flex-1">
-            <Collapsible.Trigger
-              class={cn(
-                'group relative flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-1.5 py-1 text-left text-foreground transition-colors',
-                isActiveProject ? 'bg-accent/60 border-border' : 'hover:bg-muted'
-              )}
-              aria-label={`Toggle ${project.name} project`}
-              draggable={onProjectDrop ? 'true' : undefined}
-              ondragstart={onProjectDragStart}
-              ondragend={onProjectDragEnd}
-            >
-              {#if kbdIndex !== null}
-                <span
-                  class="pointer-events-none absolute top-0.5 left-0.5 font-mono text-[9px] leading-none text-muted-foreground/55"
-                  title={`Ctrl/Cmd+Shift+${kbdIndex}`}
-                  aria-label={`Ctrl or Command plus Shift plus ${kbdIndex}`}
-                >
-                  {kbdIndex}
-                </span>
-              {/if}
-              {#if effectiveExpanded}
-                <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
-              {:else}
-                <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" />
-              {/if}
+          <Collapsible.Trigger
+            class="flex min-w-0 flex-1 items-center gap-2 rounded-[inherit] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            aria-label={`Toggle ${project.name} project`}
+            draggable={onProjectDrop ? 'true' : undefined}
+            ondragstart={onProjectDragStart}
+            ondragend={onProjectDragEnd}
+          >
+            <span class="sb-chevron" data-open={effectiveExpanded ? 'true' : 'false'}>
+              <ChevronRight class="size-3" />
+            </span>
+            <span class="sb-icon">
               {#if selectedFavicon}
-                <img
-                  src={selectedFavicon.dataUrl}
-                  alt=""
-                  class="size-3.5 shrink-0 rounded-sm object-contain"
-                />
+                <img src={selectedFavicon.dataUrl} alt="" class="size-4 rounded-sm object-contain" />
               {:else if accent}
-                <span class="size-3 shrink-0 rounded-full" style={`background: ${accent}`}></span>
+                <span class="size-2.5 rounded-full" style={`background: ${accent}`}></span>
               {:else}
-                <Folder class="size-3.5 shrink-0 text-muted-foreground" />
+                <Folder class="size-3.5" />
               {/if}
-              <span class="flex min-w-0 flex-1 flex-col gap-1">
-                <span class="truncate text-sm leading-4 font-semibold">{project.name}</span>
-                <span class="truncate font-mono text-[11px] leading-3.5 text-muted-foreground" title={project.path}>
-                  {project.path}
-                </span>
-              </span>
-            </Collapsible.Trigger>
-            <DropdownMenu.Root onOpenChange={onFaviconMenuOpenChange}>
-              <DropdownMenu.Trigger>
-                {#snippet child({ props })}
-                  <button
-                    {...props}
-                    type="button"
-                    disabled={!allowLocalActions}
-                    class="absolute top-1/2 left-[30px] z-10 flex size-5 -translate-y-1/2 items-center justify-center rounded-sm bg-transparent text-transparent outline-none transition-colors hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring/50"
-                    title="Project icon"
-                    aria-label={`Choose icon for ${project.name}`}
-                  >
-                    <span class="sr-only">Choose project icon</span>
-                  </button>
-                {/snippet}
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Content align="start" side="bottom" class="w-64">
-                <DropdownMenu.Label>Project icon</DropdownMenu.Label>
-                {#if faviconsLoading}
-                  <DropdownMenu.Item disabled>
-                    <RefreshCcw class="animate-spin" />
-                    <span>Scanning...</span>
-                  </DropdownMenu.Item>
-                {:else if favicons && favicons.length > 0}
-                  {#each favicons as favicon (favicon.path)}
-                    <DropdownMenu.Item onSelect={() => selectFavicon(favicon)}>
-                      <img
-                        src={favicon.dataUrl}
-                        alt=""
-                        class="size-4 rounded-sm object-contain"
-                      />
-                      <span class="min-w-0 flex-1 truncate" title={favicon.path}>{favicon.label}</span>
-                      {#if favicon.path === selectedFaviconPath}
-                        <Check class="ml-auto size-3" />
-                      {/if}
-                    </DropdownMenu.Item>
-                  {/each}
-                {:else}
-                  <DropdownMenu.Item disabled>
-                    <Folder />
-                    <span>No favicons found</span>
-                  </DropdownMenu.Item>
-                {/if}
-                <DropdownMenu.Separator />
-                <DropdownMenu.Item onSelect={() => void refreshFavicons()}>
-                  <RefreshCcw />
-                  <span>Refresh favicons</span>
+            </span>
+            <span class="flex min-w-0 flex-1 flex-col">
+              <span class="sb-title" data-strong="true">{project.name}</span>
+              <span class="sb-meta font-mono" title={project.path}>{displayPath(project.path)}</span>
+            </span>
+          </Collapsible.Trigger>
+          <DropdownMenu.Root onOpenChange={onFaviconMenuOpenChange}>
+            <DropdownMenu.Trigger>
+              {#snippet child({ props: faviconProps })}
+                <button
+                  {...faviconProps}
+                  type="button"
+                  disabled={!allowLocalActions}
+                  class="absolute top-1/2 left-7 z-10 flex size-4 -translate-y-1/2 items-center justify-center rounded-sm bg-transparent text-transparent outline-none transition-colors hover:bg-muted/80 focus-visible:ring-2 focus-visible:ring-ring/50"
+                  title="Project icon"
+                  aria-label={`Choose icon for ${project.name}`}
+                >
+                  <span class="sr-only">Choose project icon</span>
+                </button>
+              {/snippet}
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="start" side="bottom" class="w-64">
+              <DropdownMenu.Label>Project icon</DropdownMenu.Label>
+              {#if faviconsLoading}
+                <DropdownMenu.Item disabled>
+                  <RefreshCcw class="animate-spin" />
+                  <span>Scanning...</span>
                 </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Root>
-          </span>
+              {:else if favicons && favicons.length > 0}
+                {#each favicons as favicon (favicon.path)}
+                  <DropdownMenu.Item onSelect={() => selectFavicon(favicon)}>
+                    <img src={favicon.dataUrl} alt="" class="size-4 rounded-sm object-contain" />
+                    <span class="min-w-0 flex-1 truncate" title={favicon.path}>{favicon.label}</span>
+                    {#if favicon.path === selectedFaviconPath}
+                      <Check class="ml-auto size-3" />
+                    {/if}
+                  </DropdownMenu.Item>
+                {/each}
+              {:else}
+                <DropdownMenu.Item disabled>
+                  <Folder />
+                  <span>No favicons found</span>
+                </DropdownMenu.Item>
+              {/if}
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item onSelect={() => void refreshFavicons()}>
+                <RefreshCcw />
+                <span>Refresh favicons</span>
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+          {#if kbdIndex !== null}
+            <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
+          {/if}
           {#if remoteProjectOperation}
             <LoaderCircle
               class="size-3.5 shrink-0 animate-spin text-muted-foreground"
@@ -555,14 +536,17 @@
             {@const primaryLocation = primaryWorkspace?.locations.find((candidate) => candidate.deviceId === deviceFilter)
               ?? primaryWorkspace?.locations.find((candidate) => deviceSessions.device(candidate.deviceId)?.local)
               ?? primaryWorkspace?.locations[0]}
-            <AgentLaunchPopover
-              projectId={allowLocalActions ? project.id : null}
-              cwd={primaryLocation?.path ?? project.path}
-              workspaceKey={primaryWorkspace?.key}
-              defaultDeviceId={primaryLocation?.deviceId ?? null}
-              title="New session"
-              ariaLabel="New session"
-            />
+            <span class="sb-reveal shrink-0">
+              <AgentLaunchPopover
+                projectId={allowLocalActions ? project.id : null}
+                cwd={primaryLocation?.path ?? project.path}
+                workspaceKey={primaryWorkspace?.key}
+                defaultDeviceId={primaryLocation?.deviceId ?? null}
+                class="size-6"
+                title="New session"
+                ariaLabel="New session"
+              />
+            </span>
           {/if}
         </div>
       {/snippet}
@@ -642,7 +626,7 @@
     </ContextMenu.Content>
   </ContextMenu.Root>
 
-  <Collapsible.Content class="ml-3 flex flex-col gap-1.5 border-l border-border pl-2">
+  <Collapsible.Content class="sb-children flex flex-col gap-0.5">
     {#if deviceProject}
       {#each deviceWorkspaces as workspace (workspace.key)}
         {@const location = workspace.locations.find((candidate) => candidate.deviceId === deviceFilter)
@@ -669,24 +653,12 @@
           />
         {/if}
       {:else}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No sessions</p>
+        <p class="sb-row sb-meta sb-meta-faint italic">No sessions</p>
       {/each}
     {:else}
-    <button
-      type="button"
-      class="flex h-6 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      onclick={() =>
-        worktreeCreateModal.openFor(
-          project,
-          git.statusFor(project.path, gitContext)?.branch
-        )}
-    >
-      <FolderPlus class="size-3" />
-      <span>Add worktree…</span>
-    </button>
     {#if isStandaloneWorktreeProject && mainWorktree}
-      <div class="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-        <FolderTree class="size-3 shrink-0" />
+      <div class="sb-row sb-meta gap-2">
+        <span class="sb-icon"><FolderTree class="size-3.5" /></span>
         <span
           class="min-w-0 flex-1 truncate"
           title={otherWorktreeLabels.length > 0
@@ -734,15 +706,27 @@
       </div>
     {:else}
       {#if loadingWorktrees}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">Loading worktrees...</p>
+        <p class="sb-row sb-meta sb-meta-faint italic">Loading worktrees...</p>
       {:else if worktreeLoadFailed}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No worktrees found</p>
+        <p class="sb-row sb-meta sb-meta-faint italic">No worktrees found</p>
       {:else if filter.trim()}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No matching sessions</p>
+        <p class="sb-row sb-meta sb-meta-faint italic">No matching sessions</p>
       {:else}
-        <p class="m-0 px-2.5 py-1 text-[11px] text-muted-foreground italic">No sessions</p>
+        <p class="sb-row sb-meta sb-meta-faint italic">No sessions</p>
       {/if}
     {/if}
+    <button
+      type="button"
+      class="sb-row sb-meta gap-2 hover:text-foreground"
+      onclick={() =>
+        worktreeCreateModal.openFor(
+          project,
+          git.statusFor(project.path, gitContext)?.branch
+        )}
+    >
+      <span class="sb-icon"><FolderPlus class="size-3.5" /></span>
+      <span class="truncate">Add worktree…</span>
+    </button>
     {/if}
   </Collapsible.Content>
 </Collapsible.Root>

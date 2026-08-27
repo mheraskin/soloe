@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { ArrowRight, Search, FolderOpen, X, PanelLeftClose, Settings } from '@lucide/svelte';
+  import {
+    ArrowRight,
+    Search,
+    FolderOpen,
+    X,
+    PanelLeftClose,
+    Settings,
+    LoaderCircle
+  } from '@lucide/svelte';
   import { sessions } from '../stores/sessions.svelte';
   import { projects } from '../stores/projects.svelte';
   import { commandPalette } from '../stores/command-palette.svelte';
@@ -28,6 +36,12 @@
 
   onMount(() => {
     if (!deviceSessions.loaded) void deviceSessions.load().catch(reportError);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'visible' || !deviceSessions.loaded) return;
+      void deviceSessions.refresh().catch(reportError);
+    };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => document.removeEventListener('visibilitychange', refreshWhenVisible);
   });
 
   const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
@@ -411,7 +425,7 @@
           type="search"
           placeholder="Filter sessions"
           bind:value={query}
-          class="h-6 pr-6 pl-6 text-[11px] [&::-webkit-search-cancel-button]:hidden"
+          class="h-7 border-transparent bg-foreground/[0.06] pr-6 pl-6.5 text-xs shadow-none focus-visible:border-transparent focus-visible:bg-foreground/[0.09] [&::-webkit-search-cancel-button]:hidden"
           aria-label="Filter sessions"
         />
         {#if query}
@@ -429,7 +443,7 @@
       <Button
         variant="ghost"
         size="icon-xs"
-        class="size-6 shrink-0"
+        class="size-6 shrink-0 text-muted-foreground hover:text-foreground"
         onclick={() => commandPalette.open('open-project')}
         aria-label="Open project"
         title="Open project"
@@ -449,7 +463,7 @@
       {#if mobileWorkspace}
         <Button
           variant="ghost"
-          class="mobile-workspace-menu-button size-6 shrink-0"
+          class="mobile-workspace-menu-button size-6 shrink-0 text-muted-foreground hover:text-foreground"
           onclick={() => settings.openDialog()}
           aria-label="Settings"
           title="Settings"
@@ -458,7 +472,7 @@
         </Button>
         <Button
           variant="ghost"
-          class="mobile-workspace-menu-button size-6 shrink-0"
+          class="mobile-workspace-menu-button size-6 shrink-0 text-muted-foreground hover:text-foreground"
           onclick={onRequestTerminal}
           aria-label="Return to terminal"
           title="Return to terminal"
@@ -480,10 +494,20 @@
     </div>
   </div>
   <ScrollArea class="flex-1" bind:viewportRef={scrollViewport}>
-    <div class="flex flex-col gap-1 p-1.5">
+    <div class="flex flex-col p-1">
+      {#if deviceSessions.refreshing}
+        <div
+          role="status"
+          aria-live="polite"
+          class="flex h-7 items-center gap-2 px-2 text-xs text-muted-foreground"
+        >
+          <LoaderCircle class="size-3.5 animate-spin" />
+          <span>Refreshing Devices</span>
+        </div>
+      {/if}
       {#if deviceSessions.multiDeviceActive && deviceSessions.loaded}
         {#if deviceStandaloneVisible.length > 0}
-          <div class="flex flex-col gap-px">
+          <div class="sb-section flex flex-col gap-px">
             {#each deviceStandaloneVisible as projection (projection.key)}
               <SessionItem
                 session={projection.session}
@@ -511,7 +535,7 @@
         {/each}
       {:else}
       {#if standaloneVisible.length > 0}
-        <div class="flex flex-col gap-px">
+        <div class="sb-section flex flex-col gap-px">
           {#each standaloneVisible as session (session.id)}
             <SessionItem
               {session}
