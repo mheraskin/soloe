@@ -12,6 +12,10 @@
     };
   }
 
+  export function setAvailable(available: boolean): void {
+    projection = { ...projection, available };
+  }
+
   function createProjection(): MultiDeviceSessionView {
     return {
       ref: { deviceId: 'device-xps', sessionId: 'session-1' },

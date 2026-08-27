@@ -34,6 +34,308 @@
     overflow-x: hidden;
     overscroll-behavior-x: auto;
   }
+
+  /* ── Sidebar ────────────────────────────────────────────────────────────
+     Projects, Worktrees and Sessions all render through one row shape. The
+     list stays quiet at rest — no borders, no boxes, no destructive buttons —
+     so the only loud thing on screen is a Session that actually wants you.
+     Hierarchy is carried by type size and colour, alignment by a single
+     16px icon column that every level shares. */
+
+  .sb-row {
+    position: relative;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 0.375rem;
+    padding: 0.1875rem 0.25rem 0.1875rem 0.375rem;
+    text-align: left;
+    transition: background-color 110ms ease;
+  }
+
+  .sb-row:hover {
+    background-color: var(--sb-hover);
+  }
+
+  .sb-row[data-sb-active='true'] {
+    background-color: var(--sb-active);
+  }
+
+  .sb-row:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+
+  /* Shared 16px icon column. Every level of the tree lands its glyph here so
+     the left edge reads as one straight line instead of a staircase. */
+  .sb-icon {
+    position: relative;
+    display: flex;
+    height: 1rem;
+    width: 1rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    color: var(--sb-faint);
+  }
+
+  .sb-chevron {
+    display: flex;
+    height: 0.875rem;
+    width: 0.875rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    color: var(--sb-faint);
+    transition: transform 140ms ease, color 110ms ease;
+  }
+
+  .sb-row:hover .sb-chevron {
+    color: var(--sb-meta);
+  }
+
+  .sb-chevron[data-open='true'] {
+    transform: rotate(90deg);
+  }
+
+  .sb-title {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+    color: var(--sb-title);
+    transition: color 110ms ease;
+  }
+
+  .sb-row:hover .sb-title,
+  .sb-row[data-sb-active='true'] .sb-title {
+    color: var(--sb-title-strong);
+  }
+
+  .sb-title[data-strong='true'] {
+    font-weight: 600;
+    letter-spacing: -0.006em;
+  }
+
+  .sb-meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.6875rem;
+    line-height: 0.9375rem;
+    color: var(--sb-meta);
+  }
+
+  .sb-meta-faint {
+    color: var(--sb-faint);
+  }
+
+  /* Trailing gutter. Rest state shows when the Session was last touched (or
+     what its agent is doing); hovering swaps in the row's actions in the very
+     same cell, so nothing reflows and no red button sits there at rest. */
+  .sb-gutter {
+    display: grid;
+    grid-template-areas: 'sb-gutter';
+    flex-shrink: 0;
+    align-items: center;
+    justify-items: end;
+  }
+
+  .sb-gutter > * {
+    grid-area: sb-gutter;
+  }
+
+  .sb-gutter-rest,
+  .sb-gutter-hover {
+    transition: opacity 110ms ease;
+  }
+
+  .sb-gutter-hover {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .sb-row:hover .sb-gutter-rest,
+  .sb-row:focus-within .sb-gutter-rest {
+    opacity: 0;
+  }
+
+  .sb-row:hover .sb-gutter-hover,
+  .sb-row:focus-within .sb-gutter-hover {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Header affordances (new session, overview) stay hidden until the group
+     is hovered or keyboard-focused. */
+  .sb-reveal {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 110ms ease;
+  }
+
+  .sb-group:hover .sb-reveal,
+  .sb-group:focus-within .sb-reveal {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Nesting guide, dropped straight down the centre of the parent row's
+     chevron (0.375rem padding + half of a 0.875rem chevron). */
+  .sb-children {
+    position: relative;
+    margin-left: 0.8125rem;
+    padding-left: 0.6875rem;
+  }
+
+  .sb-children::before {
+    content: '';
+    position: absolute;
+    top: 0.0625rem;
+    bottom: 0.0625rem;
+    left: 0;
+    width: 1px;
+    background-color: var(--sb-guide);
+  }
+
+  .sb-divider {
+    height: 1px;
+    margin: 0.375rem 0.5rem;
+    background-color: var(--sb-divider);
+  }
+
+  /* Top-level sections separate themselves, so a Project filtered out of the
+     tree takes its hairline with it instead of leaving an orphan behind. */
+  .sb-section + .sb-section {
+    margin-top: 0.375rem;
+    padding-top: 0.375rem;
+    border-top: 1px solid var(--sb-divider);
+  }
+
+  /* Agent state. Calm states are plain coloured text; only states that want a
+     human get a filled chip, so attention is spendable. */
+  .sb-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    max-width: 8.5rem;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .sb-state[data-chip='true'] {
+    padding-inline: 0.375rem;
+  }
+
+  .sb-state[data-tone='idle'] {
+    color: var(--sb-faint);
+  }
+
+  .sb-state[data-tone='active'] {
+    color: var(--primary);
+  }
+
+  .sb-state[data-tone='done'] {
+    color: var(--success);
+  }
+
+  .sb-state[data-tone='attention'] {
+    color: var(--warning);
+  }
+
+  .sb-state[data-tone='danger'] {
+    color: var(--destructive);
+  }
+
+  .sb-state[data-chip='true'][data-tone='attention'] {
+    background-color: color-mix(in oklab, var(--warning) 16%, transparent);
+  }
+
+  .sb-state[data-chip='true'][data-tone='danger'] {
+    background-color: color-mix(in oklab, var(--destructive) 16%, transparent);
+  }
+
+  .sb-state[data-chip='true'][data-tone='active'] {
+    background-color: color-mix(in oklab, var(--primary) 14%, transparent);
+  }
+
+  /* Live-state dot riding the Session's agent glyph, so state survives the
+     hover swap in the gutter. */
+  .sb-dot {
+    position: absolute;
+    right: -0.125rem;
+    bottom: -0.125rem;
+    height: 0.375rem;
+    width: 0.375rem;
+    border-radius: 9999px;
+    box-shadow: 0 0 0 2px var(--sidebar);
+  }
+
+  .sb-dot[data-tone='idle'] {
+    background-color: var(--sb-faint);
+  }
+
+  .sb-dot[data-tone='active'] {
+    background-color: var(--primary);
+    animation: sb-breathe 2s ease-in-out infinite;
+  }
+
+  .sb-dot[data-tone='done'] {
+    background-color: var(--success);
+  }
+
+  .sb-dot[data-tone='attention'] {
+    background-color: var(--warning);
+  }
+
+  .sb-dot[data-tone='danger'] {
+    background-color: var(--destructive);
+  }
+
+  @keyframes sb-breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sb-dot[data-tone='active'] {
+      animation: none;
+    }
+  }
+
+  /* Session colour: a hairline rail rather than a washed row, so a tagged
+     Session reads as tagged without shouting over its neighbours. */
+  .sb-rail {
+    position: absolute;
+    top: 0.25rem;
+    bottom: 0.25rem;
+    left: 0;
+    width: 2px;
+    border-radius: 9999px;
+    background-color: var(--row-color);
+  }
+
+  .sb-row[data-row-color] {
+    padding-left: 0.5rem;
+  }
+
+  .sb-row[data-row-color]:hover {
+    background-color: color-mix(in oklab, var(--row-color) 10%, transparent);
+  }
+
+  .sb-row[data-row-color][data-sb-active='true'] {
+    background-color: color-mix(in oklab, var(--row-color) 16%, transparent);
+  }
 }
 
 :root {
@@ -105,6 +407,18 @@
   --session-blue: oklch(0.6000 0.1700 255);
   --session-violet: oklch(0.5800 0.1900 295);
   --session-pink: oklch(0.6500 0.1900 345);
+
+  /* Sidebar surface treatment. Mixed from the active theme's own foreground
+     and border so light and dark get matching optical weight from one
+     definition instead of two hand-tuned palettes. */
+  --sb-hover: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --sb-active: color-mix(in oklab, var(--foreground) 11%, transparent);
+  --sb-title: color-mix(in oklab, var(--foreground) 88%, transparent);
+  --sb-title-strong: var(--foreground);
+  --sb-meta: var(--muted-foreground);
+  --sb-faint: color-mix(in oklab, var(--muted-foreground) 68%, transparent);
+  --sb-guide: color-mix(in oklab, var(--border) 85%, transparent);
+  --sb-divider: color-mix(in oklab, var(--border) 60%, transparent);
 }
 
 .dark {

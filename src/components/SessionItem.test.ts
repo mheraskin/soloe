@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   selectLocalSession: vi.fn(),
   startLocalSession: vi.fn(async () => undefined),
   pendingOperation: vi.fn((): string | null => null),
+  deviceAvailable: true,
   rightRail: { fullscreen: true }
 }));
 
@@ -33,7 +34,7 @@ vi.mock('../stores/sessions.svelte', () => ({
 }));
 vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
-    device: vi.fn(() => ({ local: false, available: true })),
+    device: vi.fn(() => ({ local: false, available: mocks.deviceAvailable })),
     isSelected: vi.fn(() => false),
     pendingOperation: mocks.pendingOperation,
     openSession: mocks.openSession,
@@ -78,6 +79,7 @@ describe('SessionItem lifecycle', () => {
     document.body.innerHTML = '';
     vi.clearAllMocks();
     mocks.pendingOperation.mockReturnValue(null);
+    mocks.deviceAvailable = true;
     mocks.rightRail.fullscreen = true;
   });
 
@@ -198,6 +200,49 @@ describe('SessionItem lifecycle', () => {
     expect(mocks.openSession).toHaveBeenCalledWith(`device-xps/${session.id}`);
     expect(mocks.selectSession).not.toHaveBeenCalled();
     expect(mocks.rightRail.fullscreen).toBe(false);
+  });
+
+  it('selects a cached offline Session without trying to start it', () => {
+    mocks.deviceAvailable = false;
+    const target = document.createElement('div');
+    document.body.append(target);
+    const session = {
+      id: 'session-offline',
+      name: 'Remote Codex',
+      cwd: '/home/dev/soloe',
+      runMode: 'linux' as const,
+      launch: { type: 'agent' as const, provider: 'codex' as const, resumeMode: 'new' as const },
+      createdAt: '2026-08-16T00:00:00.000Z',
+      lastUsedAt: '2026-08-16T00:00:00.000Z'
+    };
+    mounted = mount(SessionItem, {
+      target,
+      props: {
+        session,
+        projection: {
+          ref: { deviceId: 'device-xps', sessionId: session.id },
+          key: `device-xps/${session.id}`,
+          deviceName: 'xps',
+          available: false,
+          session,
+          lifecycleStatus: 'running',
+          runtime: {
+            sessionId: session.id,
+            terminalId: 'terminal-offline',
+            status: 'running'
+          },
+          observation: null
+        }
+      }
+    });
+    flushSync();
+
+    target.querySelector<HTMLElement>(`[data-session-id="device-xps/${session.id}"]`)?.click();
+
+    expect(mocks.selectSession).toHaveBeenCalledWith(`device-xps/${session.id}`);
+    expect(mocks.openSession).not.toHaveBeenCalled();
+    expect(mocks.rightRail.fullscreen).toBe(false);
+    expect(target.querySelector('[aria-label="Offline · read-only"]')).not.toBeNull();
   });
 
   it('shows and locks a remote Session row while deletion is pending', () => {

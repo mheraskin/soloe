@@ -20,6 +20,7 @@ import {
   MultiDeviceSessions,
   type SessionDevice,
 } from "../../../electron/sessions/MultiDeviceSessions.js";
+import { isSessionDeviceConnection } from "../../../electron/sessions/session-device-connection.js";
 
 const MAX_SESSION_DEVICES = 10;
 
@@ -130,14 +131,7 @@ export class ServerDeviceSessions {
 
     for (const machine of snapshot.machines) {
       if (
-        machine.id === "local" ||
-        !machine.deviceId ||
-        !machine.endpoint ||
-        !machine.enabled ||
-        machine.status !== "available" ||
-        machine.trust !== "pinned" ||
-        machine.compatibility?.status !== "compatible" ||
-        machine.updateRequired ||
+        !isSessionDeviceConnection(machine) ||
         next.has(machine.deviceId) ||
         next.size >= MAX_SESSION_DEVICES
       ) {

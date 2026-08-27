@@ -53,6 +53,10 @@
   let terminalDeviceId = $derived(projection.ref.deviceId);
   let terminalSessionId = $derived(projection.ref.sessionId);
   let terminalRuntimeId = $derived(projection.runtime?.terminalId ?? null);
+  let offline = $derived(
+    !projection.available
+    || deviceSessions.device(terminalDeviceId)?.available !== true
+  );
   let predictiveInput = $derived(
     deviceSessions.localDevice?.deviceId !== terminalDeviceId
   );
@@ -67,7 +71,8 @@
   let ownsInput = $derived(
     terminalRef ? deviceSessions.ownsTerminalInput(terminalRef) : false
   );
-  let readOnly = $derived(Boolean(inputLease?.lease && !ownsInput));
+  let controlledByOther = $derived(Boolean(inputLease?.lease && !ownsInput));
+  let readOnly = $derived(offline || controlledByOther);
   let ready = $derived(Boolean(surfaceReady && terminalState?.status === 'ready'));
   let theme = $derived(terminalThemeFor(appearanceTheme.resolved));
   let font = $derived({
@@ -119,12 +124,12 @@
   });
 
   $effect(() => {
-    connection?.setVisible(active);
+    connection?.setVisible(active && !offline);
   });
 
   $effect(() => {
     const ref = terminalRef;
-    if (!ref || !active || !interactive || !pageVisible) return;
+    if (!ref || !active || !interactive || !pageVisible || offline) return;
     void reclaimInputControl(ref);
   });
 
@@ -132,7 +137,13 @@
     const ref = terminalRef;
     if (!ref) return;
     return deviceSessions.onDeviceReconnect(ref.deviceId, () => {
-      if (active && interactive && pageVisible && terminalRef?.terminalId === ref.terminalId) {
+      if (
+        active
+        && interactive
+        && pageVisible
+        && !offline
+        && terminalRef?.terminalId === ref.terminalId
+      ) {
         void reclaimInputControl(ref);
       }
     });
@@ -148,7 +159,7 @@
 
   async function takeInputControl(): Promise<void> {
     const ref = terminalRef;
-    if (!ref || takingControl) return;
+    if (!ref || takingControl || offline) return;
     takingControl = true;
     try {
       const claimed = await deviceSessions.claimTerminalInputControl(ref, true);
@@ -163,13 +174,14 @@
   }
 
   async function reclaimInputControl(ref: TerminalRef): Promise<void> {
+    if (offline) return;
     const claimed = await deviceSessions.claimTerminalInputControl(ref);
     if (claimed) await prepareInteractive(true);
   }
 
   function sendData(data: string): void {
     const ref = terminalRef;
-    if (!ref || !active || !interactive || !ownsInput) return;
+    if (!ref || !active || !interactive || !ownsInput || offline) return;
     void deviceSessions.terminalInput(ref, data).then(
       () => (error = null),
       (cause) => (error = cause instanceof Error ? cause.message : String(cause))
@@ -178,7 +190,15 @@
 
   async function resize(cols: number, rows: number, force = false): Promise<void> {
     const ref = terminalRef;
-    if (!ref || !active || !interactive || !ownsInput || cols < 1 || rows < 1) return;
+    if (
+      !ref
+      || !active
+      || !interactive
+      || !ownsInput
+      || offline
+      || cols < 1
+      || rows < 1
+    ) return;
     if (!force && lastSize?.cols === cols && lastSize.rows === rows) return;
     lastSize = { cols, rows };
     try {
@@ -191,7 +211,7 @@
   }
 
   async function prepareInteractive(force = false): Promise<void> {
-    if (!terminal || !active || !interactive || !ownsInput) return;
+    if (!terminal || !active || !interactive || !ownsInput || offline) return;
     terminal.fit();
     const dimensions = terminal.getDimensions();
     if (!dimensions) return;
@@ -215,7 +235,7 @@
 
   async function pasteFromClipboard(): Promise<void> {
     const ref = terminalRef;
-    if (!ref || !terminal || !active || !interactive || !ownsInput) return;
+    if (!ref || !terminal || !active || !interactive || !ownsInput || offline) return;
     if (projection.session && effectiveAgentProvider(projection.session)) {
       const images = await readClipboardImages().catch(() => []);
       if (images.length > 0) {
@@ -230,7 +250,7 @@
   }
 
   function activateLink(text: string): void {
-    if (!/^https?:\/\//i.test(text)) return;
+    if (offline || !/^https?:\/\//i.test(text)) return;
     void openDeviceBrowserUrl(text, projection.ref.deviceId).catch((cause) => {
       error = cause instanceof Error ? cause.message : String(cause);
     });
@@ -244,18 +264,25 @@
 </script>
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--terminal-background)]">
-  <SessionToolbar {projection} {onClose} />
+  <SessionToolbar {projection} {onClose} readOnly={offline} />
   {#if readOnly}
-    <div class="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-2 text-xs text-foreground">
+    <div
+      role="status"
+      class="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-2 text-xs text-foreground"
+    >
       <span class="min-w-0 flex-1 truncate">
-        Read-only — controlled by {inputLease?.lease?.controllerDeviceName ?? 'another client'}
+        {offline
+          ? 'Offline · read-only'
+          : `Read-only · controlled by ${inputLease?.lease?.controllerDeviceName ?? 'another client'}`}
       </span>
-      <button
-        type="button"
-        class="rounded border border-border px-2 py-1 font-medium hover:bg-accent disabled:opacity-50"
-        disabled={takingControl || !terminalRef}
-        onclick={takeInputControl}
-      >Take Over</button>
+      {#if !offline}
+        <button
+          type="button"
+          class="rounded border border-border px-2 py-1 font-medium hover:bg-accent disabled:opacity-50"
+          disabled={takingControl || !terminalRef}
+          onclick={takeInputControl}
+        >Take Over</button>
+      {/if}
     </div>
   {/if}
   <div class="relative min-h-0 flex-1 overflow-hidden">
@@ -264,8 +291,8 @@
         bind:this={terminal}
         state={terminalState}
         visible={true}
-        focused={active && pageVisible}
-        interactive={active && interactive && ownsInput && pageVisible}
+        focused={active && pageVisible && !offline}
+        interactive={active && interactive && ownsInput && pageVisible && !offline}
         {predictiveInput}
         {theme}
         {font}

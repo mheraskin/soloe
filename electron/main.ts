@@ -85,6 +85,7 @@ import {
   MultiDeviceSessions,
   type SessionDevice
 } from './sessions/MultiDeviceSessions.js';
+import { isSessionDeviceConnection } from './sessions/session-device-connection.js';
 import type { ConnectionSnapshot } from '@shared/types/connections.js';
 import { LocalSessionDevice } from './devices/LocalSessionDevice.js';
 import { RemoteSessionDevice } from './devices/RemoteSessionDevice.js';
@@ -380,14 +381,7 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
 
   for (const machine of snapshot.machines) {
     if (
-      machine.id === 'local'
-      || !machine.deviceId
-      || !machine.endpoint
-      || !machine.enabled
-      || machine.status !== 'available'
-      || machine.trust !== 'pinned'
-      || machine.compatibility?.status !== 'compatible'
-      || machine.updateRequired
+      !isSessionDeviceConnection(machine)
       || nextRecords.has(machine.deviceId)
       || nextRecords.size >= 10
     ) continue;

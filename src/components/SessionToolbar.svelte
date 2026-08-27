@@ -31,9 +31,15 @@
     onOpenNavigation?: () => void;
     projection?: MultiDeviceSessionView | null;
     onClose?: (() => void) | null;
+    readOnly?: boolean;
   }
 
-  let { onOpenNavigation, projection = null, onClose = null }: Props = $props();
+  let {
+    onOpenNavigation,
+    projection = null,
+    onClose = null,
+    readOnly = false
+  }: Props = $props();
   let selected = $derived(projection?.session ?? sessions.selected);
   let worktreeDeviceId = $derived(
     projection && deviceSessions.state?.devices
@@ -60,7 +66,7 @@
   let isRunning = $derived(status === 'running' || status === 'starting');
 
   function edit() {
-    if (!selected) return;
+    if (!selected || readOnly) return;
     modal.openEdit(
       selected,
       projection
@@ -88,7 +94,7 @@
     }
   }
   async function copyCmd() {
-    if (!selected) return;
+    if (!selected || readOnly) return;
     try {
       const spec = projection
         ? await deviceSessions.previewCommand(projection.key)
@@ -154,12 +160,14 @@
     <Tooltip.Provider delayDuration={250}>
       <div class="session-toolbar-actions flex shrink-0 items-center gap-0.5">
         <div class="session-toolbar-branch shrink-0">
-          <GitBranchWidget
-            cwd={selected.cwd}
-            runMode={selected.runMode}
-            wslDistro={selected.wslDistro}
-            deviceId={worktreeDeviceId}
-          />
+          {#if !readOnly}
+            <GitBranchWidget
+              cwd={selected.cwd}
+              runMode={selected.runMode}
+              wslDistro={selected.wslDistro}
+              deviceId={worktreeDeviceId}
+            />
+          {/if}
         </div>
         {#if !projection}
         <Tooltip.Root>
@@ -202,10 +210,10 @@
                 <X /> <span>Close remote terminal</span>
               </DropdownMenu.Item>
             {/if}
-            <DropdownMenu.Item onSelect={edit}>
+            <DropdownMenu.Item disabled={readOnly} onSelect={edit}>
               <Pencil /> <span>Edit session…</span>
             </DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={copyCmd}>
+            <DropdownMenu.Item disabled={readOnly} onSelect={copyCmd}>
               <Copy /> <span>Copy launch command</span>
             </DropdownMenu.Item>
             <DropdownMenu.Separator />

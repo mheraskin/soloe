@@ -15,7 +15,7 @@ describe('Ghostty terminal presentation', () => {
   it('renders read-only terminals through the same Ghostty grid', () => {
     expect(source).toContain('interactive={ownsInput}');
     expect(deviceViewerSource).toContain(
-      'interactive={active && interactive && ownsInput && pageVisible}'
+      'interactive={active && interactive && ownsInput && pageVisible && !offline}'
     );
     expect(`${source}\n${deviceViewerSource}`).not.toContain('TerminalTranscript');
   });

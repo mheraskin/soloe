@@ -20,6 +20,10 @@
   import { displaySessionKind } from '../lib/session-agent';
   import { sessionStatusPresentation } from '../lib/session-status-presentation';
   import { deviceSessionStatus } from '../lib/device-terminal-presentation';
+  import { agentStateTone, type AgentStateTone } from '../lib/agent-state-presentation';
+  import { displayPath } from '../lib/display-path';
+  import { shortRelativeTime, fullTimestamp } from '../lib/relative-time';
+  import { clock } from '../stores/clock.svelte';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import { dnd, DND_MIME, dropPositionFromEvent, type DropPosition } from '../stores/dnd.svelte';
@@ -29,12 +33,10 @@
   import SessionContextMenu from './SessionContextMenu.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
 
-  type StatusTone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger';
-
   interface StatusPill {
     label: string;
     title: string;
-    tone: StatusTone;
+    tone: AgentStateTone;
   }
 
   let {
@@ -42,23 +44,34 @@
     branch = null,
     projection = null,
     showDevice = false,
+    inGroup = false,
     onSessionDrop = null
   }: {
     session: Session;
     branch?: string | null;
     projection?: MultiDeviceSessionView | null;
     showDevice?: boolean;
+    // Set by WorktreeGroup: the group header already states the Worktree's
+    // path and branch, so the row drops its meta line and collapses to a
+    // single tight line instead of repeating its parent.
+    inGroup?: boolean;
     onSessionDrop?:
       | ((args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) => void)
       | null;
   } = $props();
 
+  $effect(() => clock.subscribe());
+
   let editing = $state(false);
   let editValue = $state('');
   let nameInput: HTMLInputElement | null = $state(null);
 
-  let managedLocally = $derived(
-    !projection || deviceSessions.device(projection.ref.deviceId)?.local === true
+  let ownerDevice = $derived(
+    projection ? deviceSessions.device(projection.ref.deviceId) : null
+  );
+  let managedLocally = $derived(!projection || ownerDevice?.local === true);
+  let offline = $derived(
+    Boolean(projection && (!projection.available || ownerDevice?.available !== true))
   );
   let isSelected = $derived(
     projection ? deviceSessions.isSelected(projection) : sessions.selectedId === session.id
@@ -101,15 +114,18 @@
   let displayedAgentState = $derived(statusPresentation.agentState);
   let displayedObservedSummary = $derived(statusPresentation.agentSummary);
   let showSpawnSpinner = $derived(
-    status === 'starting'
-    || pendingOperation === 'starting'
-    || pendingOperation === 'stopping'
-    || pendingOperation === 'restarting'
-    || pendingOperation === 'updating'
-    || pendingOperation === 'deleting'
+    !offline
+    && (
+      status === 'starting'
+      || pendingOperation === 'starting'
+      || pendingOperation === 'stopping'
+      || pendingOperation === 'restarting'
+      || pendingOperation === 'updating'
+      || pendingOperation === 'deleting'
+    )
   );
   let showAgentBadge = $derived(
-    isAgent && displayedAgentState !== null && pendingOperation === null
+    isAgent && displayedAgentState !== null && pendingOperation === null && !offline
   );
   let pendingLabel = $derived(
     pendingOperation === 'stopping'
@@ -123,8 +139,36 @@
             : 'Starting'
   );
   let statusPill = $derived(buildStatusPill());
+  // The gutter swaps to row actions on hover, so state also rides the agent
+  // glyph as a dot — that way a Session never goes silent just because the
+  // pointer passed over it.
+  let dotTone = $derived.by<AgentStateTone | null>(() => {
+    if (offline) return 'idle';
+    if (pendingOperation !== null || showSpawnSpinner) return 'active';
+    if (displayedAgentState !== null) return agentStateTone(displayedAgentState);
+    if (statusPill) return statusPill.tone === 'danger' ? 'danger' : 'idle';
+    return null;
+  });
+  let dotTitle = $derived(
+    offline
+      ? 'Offline · read-only'
+      : displayedAgentState ?? (pendingOperation ? pendingLabel.toLowerCase() : statusPill?.title ?? '')
+  );
+  let relativeLabel = $derived(shortRelativeTime(session.lastUsedAt, clock.now));
+  let lastUsedTitle = $derived(fullTimestamp(session.lastUsedAt));
+  // Outside a Worktree group the row has to carry its own context. Inside one
+  // it inherits all of this from the header.
+  let metaParts = $derived.by<{ icon: 'path' | 'branch' | 'device'; text: string }[]>(() => {
+    if (inGroup) return [];
+    const parts: { icon: 'path' | 'branch' | 'device'; text: string }[] = [
+      { icon: 'path', text: displayPath(session.cwd) }
+    ];
+    if (branch) parts.push({ icon: 'branch', text: branch });
+    if (projection && showDevice) parts.push({ icon: 'device', text: projection.deviceName });
+    return parts;
+  });
   let remoteLifecycle = $derived(
-    projection && !managedLocally
+    projection && !managedLocally && !offline
       ? {
           start: () => deviceSessions.openSession(projection!.key),
           stop: () => deviceSessions.stopSession(projection!.key),
@@ -133,7 +177,7 @@
       : null
   );
   let remoteMutations = $derived(
-    projection && !managedLocally
+    projection && !managedLocally && !offline
       ? {
           update: (patch: import('@shared/types/sessions.js').SessionUpdate) =>
             deviceSessions.updateSession(projection!.key, patch),
@@ -147,6 +191,15 @@
     if (e.button !== 0 || editing || pendingOperation) return;
     rightRail.fullscreen = false;
     if (projection) {
+      if (offline) {
+        if (isSelected) {
+          if (managedLocally) sessions.select(null);
+          else deviceSessions.clearSelectedSession();
+        } else {
+          deviceSessions.selectSession(projection.key);
+        }
+        return;
+      }
       if (status === 'stopped' || status === 'exited' || status === 'error') {
         if (managedLocally) {
           deviceSessions.selectSession(projection.key);
@@ -175,7 +228,7 @@
 
   async function startEditing(e?: Event) {
     e?.stopPropagation();
-    if (editing || pendingOperation) return;
+    if (editing || pendingOperation || offline) return;
     editValue = session.name;
     editing = true;
     await tick();
@@ -189,6 +242,10 @@
   }
 
   async function commitEditing() {
+    if (offline) {
+      cancelEditing();
+      return;
+    }
     const trimmed = editValue.trim();
     if (!trimmed || trimmed === session.name) {
       cancelEditing();
@@ -229,7 +286,7 @@
   }
 
   async function remove() {
-    if (pendingOperation) return;
+    if (pendingOperation || offline) return;
     const ok = await confirmDeleteSession(session);
     if (!ok) return;
     try {
@@ -245,6 +302,13 @@
   // Fallback for agents that predate observer snapshots or failed before one
   // was emitted. AgentStateBadge is the primary agent state pill.
   function buildStatusPill(): StatusPill | null {
+    if (offline) {
+      return {
+        label: 'offline',
+        title: 'Offline · read-only',
+        tone: 'idle'
+      };
+    }
     if (!isAgent) return null;
     if (status === 'stopped') return null;
     const showRemoteLifecycle = projection !== null && !managedLocally;
@@ -254,19 +318,8 @@
     return {
       label: status,
       title: status,
-      tone: status === 'error' ? 'danger' : status === 'running' ? 'primary' : 'neutral'
+      tone: status === 'error' ? 'danger' : status === 'running' ? 'active' : 'idle'
     };
-  }
-
-  function pillClass(tone: StatusTone): string {
-    const classes = {
-      neutral: 'border-border bg-muted/40 text-muted-foreground',
-      primary: 'border-primary/40 bg-primary/10 text-primary',
-      success: 'border-success/40 bg-success/10 text-success',
-      warning: 'border-warning/40 bg-warning/10 text-warning',
-      danger: 'border-destructive/40 bg-destructive/10 text-destructive'
-    } satisfies Record<StatusTone, string>;
-    return classes[tone];
   }
 
   let rowEl: HTMLElement | null = $state(null);
@@ -281,7 +334,7 @@
   let isDraggingSelf = $derived(dnd.drag?.kind === 'session' && dnd.drag.id === dragId);
 
   function onDragStart(e: DragEvent) {
-    if (!onSessionDrop || !e.dataTransfer) return;
+    if (!onSessionDrop || !e.dataTransfer || offline) return;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData(DND_MIME.session, dragId);
     dnd.begin({
@@ -293,7 +346,7 @@
   }
 
   function onDragOver(e: DragEvent) {
-    if (!onSessionDrop || !rowEl) return;
+    if (!onSessionDrop || !rowEl || offline) return;
     if (dnd.drag?.kind !== 'session') return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
@@ -308,7 +361,7 @@
   }
 
   function onDrop(e: DragEvent) {
-    if (!onSessionDrop) return;
+    if (!onSessionDrop || offline) return;
     if (dnd.drag?.kind !== 'session') return;
     const draggedId = dnd.drag.id;
     if (draggedId === dragId) return;
@@ -341,7 +394,7 @@
     statusOverride={projection ? status : null}
     lifecycle={remoteLifecycle}
     mutations={remoteMutations}
-    disabled={pendingOperation !== null}
+    disabled={pendingOperation !== null || offline}
     onRename={() => void startEditing()}
   >
     {#snippet trigger({ props })}
@@ -350,18 +403,12 @@
         bind:this={rowEl}
         data-session-id={projection?.key ?? session.id}
         data-row-color={session.color ?? undefined}
-        data-row-selected={isSelected ? 'true' : undefined}
         aria-busy={pendingOperation ? 'true' : undefined}
         aria-disabled={pendingOperation ? 'true' : undefined}
-        class={cn(
-          'session-row group relative flex w-full cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors',
-          !session.color && 'hover:bg-accent/40',
-          !session.color && isSelected && 'bg-accent/60 border-border',
-          session.color && 'pl-2.5',
-          isDraggingSelf && 'opacity-40'
-        )}
+        data-sb-active={isSelected ? 'true' : undefined}
+        class={cn('sb-row sb-group cursor-pointer', isDraggingSelf && 'opacity-40')}
         style={rowStyle}
-        draggable={onSessionDrop && !pendingOperation ? 'true' : undefined}
+        draggable={onSessionDrop && !pendingOperation && !offline ? 'true' : undefined}
         ondragstart={onDragStart}
         ondragover={onDragOver}
         ondrop={onDrop}
@@ -374,10 +421,7 @@
         title={projection ? `${session.cwd} · ${projection.deviceName}` : session.cwd}
       >
         {#if session.color}
-          <span
-            class="color-bar pointer-events-none absolute top-1 bottom-1 left-0 w-[3px] rounded-full"
-            aria-hidden="true"
-          ></span>
+          <span class="sb-rail" aria-hidden="true"></span>
         {/if}
         {#if marker}
           <span
@@ -389,33 +433,60 @@
             aria-hidden="true"
           ></span>
         {/if}
-        {#if kbdIndex !== null}
+        <span class="sb-icon">
+          <KindIcon kind={displayKind} size={14} />
+          {#if dotTone}
+            <span class="sb-dot" data-tone={dotTone} title={dotTitle} aria-hidden="true"></span>
+          {/if}
+        </span>
+        <span class="flex min-w-0 flex-1 flex-col">
+          {#if editing}
+            <input
+              class="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-ring"
+              bind:this={nameInput}
+              bind:value={editValue}
+              onkeydown={onNameKey}
+              onblur={() => void commitEditing()}
+              onclick={(e) => e.stopPropagation()}
+              spellcheck="false"
+              autocomplete="off"
+            />
+          {:else}
+            <span class="sb-title" data-strong={isSelected ? 'true' : undefined}>
+              {session.name || '(unnamed)'}
+            </span>
+          {/if}
+          {#if metaParts.length > 0}
+            <span class="sb-meta flex min-w-0 items-center gap-1">
+              {#each metaParts as part, index (part.icon)}
+                {#if index > 0}
+                  <span class="sb-meta-faint shrink-0">·</span>
+                {/if}
+                <span class={cn('inline-flex items-center gap-1', index === 0 ? 'min-w-0' : 'shrink-0')}>
+                  {#if part.icon === 'branch'}
+                    <GitBranch class="size-2.5 shrink-0" />
+                  {:else if part.icon === 'device'}
+                    <Monitor class="size-2.5 shrink-0" />
+                  {/if}
+                  <span class="truncate {part.icon === 'path' ? 'font-mono' : ''}">{part.text}</span>
+                </span>
+              {/each}
+            </span>
+          {/if}
+        </span>
+        {#if workerCount > 0}
           <span
-            class="pointer-events-none absolute top-0.5 left-0.5 font-mono text-[9px] leading-none text-muted-foreground/55"
-            aria-hidden="true"
+            class="sb-meta shrink-0 tabular-nums"
+            title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}
           >
-            {kbdIndex}
+            {workerCount}w
           </span>
         {/if}
-        <KindIcon kind={displayKind} size={14} />
-        <span class="flex min-w-0 flex-1 flex-col gap-1">
-          <span class="flex min-w-0 items-center gap-1.5">
-            {#if editing}
-              <input
-                class="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-ring"
-                bind:this={nameInput}
-                bind:value={editValue}
-                onkeydown={onNameKey}
-                onblur={() => void commitEditing()}
-                onclick={(e) => e.stopPropagation()}
-                spellcheck="false"
-                autocomplete="off"
-              />
-            {:else}
-              <span class="min-w-0 truncate text-sm leading-4 font-medium text-foreground">
-                {session.name || '(unnamed)'}
-              </span>
-            {/if}
+        {#if kbdIndex !== null}
+          <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
+        {/if}
+        <div class="sb-gutter min-w-9">
+          <span class="sb-gutter-rest flex items-center justify-end">
             {#if showAgentBadge && displayedAgentState}
               <AgentStateBadge
                 state={displayedAgentState}
@@ -423,64 +494,38 @@
               />
             {:else if showSpawnSpinner}
               <span
-                class="inline-flex shrink-0 items-center text-muted-foreground"
+                class="sb-state"
+                data-tone="active"
                 title={`${pendingLabel}…`}
                 aria-label={pendingLabel}
               >
-                <Loader2 class="size-3 animate-spin" />
+                <Loader2 class="size-2.5 shrink-0 animate-spin" />
               </span>
             {:else if statusPill}
               <span
-                class={cn(
-                  'inline-flex max-w-[92px] shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[10px] leading-none font-medium uppercase',
-                  pillClass(statusPill.tone)
-                )}
+                class="sb-state"
+                data-tone={statusPill.tone}
                 title={statusPill.title}
                 aria-label={statusPill.title}
               >
-                <span class="size-1.5 shrink-0 rounded-full bg-current"></span>
                 <span class="truncate">{statusPill.label}</span>
               </span>
-            {/if}
-          </span>
-          <span class="flex min-w-0 items-center gap-1.5 font-mono text-[11px] leading-3.5 text-muted-foreground">
-            <span class="min-w-0 truncate">{session.cwd}</span>
-            {#if branch}
-              <span class="inline-flex min-w-0 shrink-0 items-center gap-0.5">
-                <span class="text-muted-foreground/55">·</span>
-                <GitBranch class="size-2.5" />
-                <span class="max-w-[90px] truncate">{branch}</span>
-              </span>
-            {/if}
-            {#if projection && showDevice}
-              <span class="inline-flex min-w-0 shrink-0 items-center gap-0.5">
-                <span class="text-muted-foreground/55">·</span>
-                <Monitor class="size-2.5" />
-                <span class="max-w-[90px] truncate">{projection.deviceName}</span>
+            {:else if relativeLabel}
+              <span class="sb-meta sb-meta-faint tabular-nums" title={lastUsedTitle}>
+                {relativeLabel}
               </span>
             {/if}
           </span>
-        </span>
-        {#if workerCount > 0}
-          <span
-            class="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full border border-border bg-muted px-1 text-[11px] text-primary"
-            title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}
-          >
-            {workerCount}
-          </span>
-        {/if}
-        {#if kbdIndex !== null}
-          <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
-        {/if}
-        <div class="flex shrink-0 items-center gap-0.5">
-          <span class="relative flex size-7 shrink-0 items-center justify-center">
+          <span class="sb-gutter-hover relative flex size-6 items-center justify-center">
             <Button
               variant="ghost"
-              size="icon-sm"
-              class="text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+              size="icon-xs"
+              class="size-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               onclick={removeFromButton}
-              disabled={pendingOperation !== null}
-              title={pendingOperation === 'deleting' ? 'Deleting session…' : 'Delete session'}
+              disabled={pendingOperation !== null || offline}
+              title={offline
+                ? 'Unavailable while Device is offline'
+                : pendingOperation === 'deleting' ? 'Deleting session…' : 'Delete session'}
               aria-label={pendingOperation === 'deleting'
                 ? `Deleting ${session.name || 'session'}`
                 : `Delete ${session.name || 'session'}`}
@@ -498,19 +543,3 @@
     {/snippet}
   </SessionContextMenu>
 </div>
-
-<style>
-  .session-row[data-row-color] {
-    background-color: color-mix(in oklab, var(--row-color) 9%, transparent);
-  }
-  .session-row[data-row-color]:hover {
-    background-color: color-mix(in oklab, var(--row-color) 16%, transparent);
-  }
-  .session-row[data-row-color][data-row-selected='true'] {
-    background-color: color-mix(in oklab, var(--row-color) 24%, transparent);
-    border-color: color-mix(in oklab, var(--row-color) 50%, transparent);
-  }
-  .color-bar {
-    background-color: var(--row-color);
-  }
-</style>

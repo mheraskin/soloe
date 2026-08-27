@@ -11,15 +11,18 @@ const mocks = vi.hoisted(() => ({
   historyRequests: 0,
   reconnect: null as null | (() => void),
   localDeviceId: null as string | null,
+  deviceAvailable: true,
   ownsInput: false,
   surfaceOptions: null as null | {
     predictiveInput?: boolean;
     font?: { family: string; size: number };
     onData(data: string, priority: 'text' | 'immediate' | 'protocol'): void;
     onInputBoundary?(): void;
+    onLinkActivate?(text: string, event: MouseEvent): void;
   },
   terminalInput: vi.fn(async () => undefined),
-  claimTerminalInputControl: vi.fn(async () => false)
+  claimTerminalInputControl: vi.fn(async () => false),
+  openDeviceBrowserUrl: vi.fn(async () => undefined)
 }));
 
 vi.mock('../lib/ghostty/surface', () => ({
@@ -46,6 +49,7 @@ vi.mock('../lib/ghostty/surface', () => ({
 
 vi.mock('../stores/device-sessions.svelte', () => ({
   deviceSessions: {
+    device: vi.fn(() => ({ available: mocks.deviceAvailable })),
     get localDevice() {
       return mocks.localDeviceId
         ? { deviceId: mocks.localDeviceId, name: 'local' }
@@ -95,6 +99,10 @@ vi.mock('../stores/settings.svelte', () => ({
   }
 }));
 
+vi.mock('../lib/browser-device-navigation', () => ({
+  openDeviceBrowserUrl: mocks.openDeviceBrowserUrl
+}));
+
 import DeviceTerminalViewerHarness from './__fixtures__/DeviceTerminalViewerHarness.svelte';
 
 describe('DeviceTerminalViewer Ghostty lifecycle', () => {
@@ -107,10 +115,12 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.historyRequests = 0;
     mocks.reconnect = null;
     mocks.localDeviceId = null;
+    mocks.deviceAvailable = true;
     mocks.ownsInput = false;
     mocks.surfaceOptions = null;
     mocks.terminalInput.mockClear();
     mocks.claimTerminalInputControl.mockClear();
+    mocks.openDeviceBrowserUrl.mockClear();
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: false,
       media: query,
@@ -206,6 +216,32 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
       { deviceId: 'device-xps', terminalId: 'terminal-1' },
       'a'
     );
+  });
+
+  it('keeps a cached offline terminal visible and blocks all input', async () => {
+    mocks.ownsInput = true;
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.surfaceOptions).not.toBeNull());
+    await vi.waitFor(() => expect(target.textContent).not.toContain('Restoring terminal…'));
+    mocks.terminalInput.mockClear();
+    mocks.claimTerminalInputControl.mockClear();
+
+    const harness = component as typeof component & { setAvailable(available: boolean): void };
+    flushSync(() => harness.setAvailable(false));
+
+    expect(target.textContent).toContain('Offline · read-only');
+    expect(target.textContent).not.toContain('Restoring terminal…');
+    expect(mocks.surfaceCreates).toBe(1);
+    expect(mocks.surfaceDisposes).toBe(0);
+    mocks.surfaceOptions?.onData('x', 'immediate');
+    mocks.surfaceOptions?.onLinkActivate?.('https://example.com', new MouseEvent('click'));
+    expect(mocks.terminalInput).not.toHaveBeenCalled();
+    expect(mocks.claimTerminalInputControl).not.toHaveBeenCalled();
+    expect(mocks.openDeviceBrowserUrl).not.toHaveBeenCalled();
+    expect(target.textContent).not.toContain('Take Over');
   });
 
   it('uses the controlling Device terminal font size for a remote surface', async () => {

@@ -308,7 +308,7 @@ _Avoid_: Sync state, source of truth
 - Every **Workspace Location** and **Session Source** references a **Checkout** owned by exactly one **Soloe Device**
 - Every **Session** remains owned by its Device; opening it routes terminal control to that Device and never migrates its process
 - The Sessions interface derives Project → Workspace → Session navigation from current and last-known Device inventories; it stores no parallel logical catalog or Session membership
-- Offline Device observations remain visible but disabled, and creating work on a different Device requires an explicit preparation review before a **Successor Session** is created
+- Offline Device observations remain visible and their cached Sessions remain selectable as read-only terminal presentations; input and mutations resume only after the owning Device reconnects, and creating work on a different Device requires an explicit preparation review before a **Successor Session** is created
 - The **Device Connection Registry** discovers Tailscale HTTPS endpoints automatically, pins durable Device identities, and stores no bearer tokens
 
 ## Example dialogue

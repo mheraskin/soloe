@@ -1,18 +1,7 @@
 <script lang="ts">
   import type { AgentObservedState } from '@shared/types/sessions.js';
-  import {
-    Wrench,
-    AlertTriangle,
-    CheckCircle2,
-    Gauge,
-    XCircle,
-    Hourglass,
-    Loader2,
-    MessageSquareText,
-    LogOut
-  } from '@lucide/svelte';
+  import { agentStatePresentation } from '../lib/agent-state-presentation';
   import { cn } from '$lib/utils';
-  import type { Component } from 'svelte';
 
   let {
     state,
@@ -24,99 +13,29 @@
     class?: string;
   } = $props();
 
-  type BadgeStyle = {
-    label: string;
-    icon: Component | null;
-    iconClass: string;
-    pillClass: string;
-  };
-
-  const styles: Record<AgentObservedState, BadgeStyle> = {
-    starting: {
-      label: 'starting',
-      icon: Loader2,
-      iconClass: 'animate-spin',
-      pillClass: 'border-warning/40 bg-warning/10 text-warning'
-    },
-    idle: {
-      label: 'idle',
-      icon: null,
-      iconClass: '',
-      pillClass: 'border-border bg-muted/40 text-muted-foreground'
-    },
-    working: {
-      label: 'thinking',
-      icon: Loader2,
-      iconClass: 'animate-spin',
-      pillClass: 'border-primary/40 bg-primary/10 text-primary'
-    },
-    running_tool: {
-      label: 'tool',
-      icon: Wrench,
-      iconClass: '',
-      pillClass: 'border-primary/40 bg-primary/10 text-primary'
-    },
-    waiting_for_input: {
-      label: 'input',
-      icon: MessageSquareText,
-      iconClass: '',
-      pillClass: 'border-warning/40 bg-warning/10 text-warning'
-    },
-    waiting_for_approval: {
-      label: 'approval',
-      icon: AlertTriangle,
-      iconClass: '',
-      pillClass: 'border-destructive/40 bg-destructive/10 text-destructive'
-    },
-    usage_limited: {
-      label: 'limit',
-      icon: Gauge,
-      iconClass: '',
-      pillClass: 'border-warning/50 bg-warning/10 text-warning'
-    },
-    completed: {
-      label: 'done',
-      icon: CheckCircle2,
-      iconClass: '',
-      pillClass: 'border-success/40 bg-success/10 text-success'
-    },
-    failed: {
-      label: 'failed',
-      icon: XCircle,
-      iconClass: '',
-      pillClass: 'border-destructive/40 bg-destructive/10 text-destructive'
-    },
-    exited: {
-      label: 'exited',
-      icon: LogOut,
-      iconClass: '',
-      pillClass: 'border-border bg-muted/40 text-muted-foreground'
-    }
-  };
-
-  const style = $derived(styles[state] ?? {
-    label: state,
-    icon: Hourglass,
-    iconClass: '',
-    pillClass: 'border-border bg-muted/40 text-muted-foreground'
-  });
-
+  const style = $derived(agentStatePresentation(state));
+  // `running_tool` carries the tool name, which is more useful than the word
+  // "tool" — it replaces the label rather than adding a second element.
+  const detail = $derived(
+    state === 'running_tool' && summary ? summary.replace(/^tool:\s*/i, '') : null
+  );
+  const text = $derived(detail ?? style.label);
   const tooltip = $derived(summary ? `${style.label} · ${summary}` : style.label);
+  // Kept lowercase so assistive tech and tests read the canonical state name
+  // while the visible label stays sentence case.
+  const srLabel = $derived(tooltip.toLowerCase());
   const Icon = $derived(style.icon);
-  const detail = $derived(state === 'running_tool' && summary ? summary.replace(/^tool:\s*/i, '') : null);
 </script>
 
 <span
-  class={cn(
-    'inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium uppercase tracking-wide leading-none',
-    style.pillClass,
-    className
-  )}
+  class={cn('sb-state', className)}
+  data-tone={style.tone}
+  data-chip={style.chip ? 'true' : 'false'}
   title={tooltip}
-  aria-label={tooltip}
+  aria-label={srLabel}
 >
   {#if Icon}
-    <Icon class={cn('size-2.5', style.iconClass)} />
+    <Icon class={cn('size-2.5 shrink-0', style.spin && 'animate-spin')} />
   {/if}
-  <span>{detail ?? style.label}</span>
+  <span class="truncate">{text}</span>
 </span>
