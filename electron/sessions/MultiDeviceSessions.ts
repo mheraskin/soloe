@@ -136,6 +136,7 @@ export class MultiDeviceSessions {
     detach: Array<() => void>;
   }>();
   private readonly creationPlans = new Map<string, StoredSessionCreationPlan>();
+  private terminalOutputDemand = new Map<DeviceId, Set<string>>();
   private readonly clientId = randomUUID();
   private refreshRequest: Promise<MultiDeviceSessionState> | null = null;
   private eventRefreshScheduled = false;
@@ -218,6 +219,7 @@ export class MultiDeviceSessions {
     }
     this.devices = [...nextDevices];
     await Promise.allSettled(removed.map((device) => device.dispose()));
+    await this.applyTerminalOutputDemand().catch(() => undefined);
     return this.refresh();
   }
 
@@ -775,8 +777,15 @@ export class MultiDeviceSessions {
       terminals.add(ref.terminalId);
       byDevice.set(ref.deviceId, terminals);
     }
+    this.terminalOutputDemand = byDevice;
+    await this.applyTerminalOutputDemand();
+  }
+
+  private async applyTerminalOutputDemand(): Promise<void> {
     await Promise.all(this.devices.map((device) =>
-      device.setTerminalOutputDemand(byDevice.get(device.deviceId) ?? new Set())
+      device.setTerminalOutputDemand(
+        this.terminalOutputDemand.get(device.deviceId) ?? new Set()
+      )
     ));
   }
 

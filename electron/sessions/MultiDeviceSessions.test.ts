@@ -529,6 +529,38 @@ describe('MultiDeviceSessions', () => {
     expect(laptop.disposed).toBe(true);
   });
 
+  it('reasserts terminal output demand when a Device connection is replaced', async () => {
+    const first = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    const sessions = new MultiDeviceSessions({ devices: [first] });
+    await sessions.refresh();
+    await sessions.setTerminalOutputDemand([{
+      deviceId: LAPTOP_ID,
+      terminalId: 'terminal-remote-session'
+    }]);
+
+    const replacement = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    await sessions.reconcileDevices([replacement]);
+
+    expect(first.terminalOutputDemands).toEqual([['terminal-remote-session']]);
+    expect(replacement.terminalOutputDemands).toEqual([['terminal-remote-session']]);
+  });
+
   it('coalesces concurrent refresh requests into one Device inventory read', async () => {
     const laptop = fakeDevice({
       deviceId: LAPTOP_ID,
@@ -846,6 +878,7 @@ function fakeDevice(input: {
   setState(state: SessionDeviceStatus['state']): void;
   startedSessionIds: string[];
   terminalInputs: Array<{ terminalId: string; data: string }>;
+  terminalOutputDemands: string[][];
   imagePastes: ImagePasteRequest[];
   worktreeRequests: Array<{
     deviceId: string;
@@ -910,6 +943,7 @@ function fakeDevice(input: {
   };
   const startedSessionIds: string[] = [];
   const terminalInputs: Array<{ terminalId: string; data: string }> = [];
+  const terminalOutputDemands: string[][] = [];
   const imagePastes: ImagePasteRequest[] = [];
   const worktreeRequests: Array<{
     deviceId: string;
@@ -981,7 +1015,9 @@ function fakeDevice(input: {
         (candidate) => candidate.project.id !== projectId
       );
     },
-    setTerminalOutputDemand: async () => undefined,
+    setTerminalOutputDemand: async (terminalIds) => {
+      terminalOutputDemands.push([...terminalIds].sort());
+    },
     terminalInput: async (terminalId, data) => {
       terminalInputs.push({ terminalId, data });
     },
@@ -1165,6 +1201,7 @@ function fakeDevice(input: {
     plannedIntents,
     openedProjectPaths,
     terminalInputs,
+    terminalOutputDemands,
     imagePastes,
     worktreeRequests,
     reorderRequests,
