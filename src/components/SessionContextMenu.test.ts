@@ -39,6 +39,9 @@ describe('SessionContextMenu remote Session actions', () => {
   afterEach(async () => {
     if (mounted) await unmount(mounted);
     mounted = null;
+    await vi.waitFor(() => {
+      expect(document.body.style.overflow).toBe('');
+    });
     document.body.innerHTML = '';
   });
 
