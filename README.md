@@ -11,10 +11,11 @@ authentication and terminal behavior intact.
 [![CI](https://github.com/mheraskin/soloe/actions/workflows/ci.yml/badge.svg)](https://github.com/mheraskin/soloe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-> **Public source preview.** The repository is public, but there is no binary release yet. Run
-> Soloe from source and expect breaking changes. Soloe has no hosted cloud, analytics, or
-> telemetry.
+> **Public alpha.** Installable prerelease builds are available for Windows, Linux, macOS Intel,
+> and macOS Apple silicon. The builds are unsigned and intended for early testing, so expect
+> breaking changes. Soloe has no hosted cloud, analytics, or telemetry.
 
+[Download v0.1.0-alpha.2](https://github.com/mheraskin/soloe/releases/tag/v0.1.0-alpha.2) ·
 [Run from source](#run-from-source) · [Roadmap](./ROADMAP.md) ·
 [Security](./SECURITY.md) · [Privacy](./PRIVACY.md) · [Contributing](./CONTRIBUTING.md)
 
@@ -106,22 +107,23 @@ described in the [roadmap](./ROADMAP.md). Soloe is independent and is not endors
 
 | Platform or client | Current status |
 | --- | --- |
-| Windows + WSL | Runs from source; installer packaging exists; clean-machine validation pending |
-| Native Windows | Runs from source; installer packaging exists; clean-machine validation pending |
-| Native Linux | Runs from source; AppImage and DEB packaging exists; clean-machine validation pending |
-| macOS Intel | Runs from source; DMG packaging locally verified |
-| macOS Apple silicon | Source and CI packaging supported; physical clean-machine smoke pending |
-| Electron client | Available from source on desktop platforms |
+| Windows + WSL | Unsigned prerelease installer available; clean-machine validation pending |
+| Native Windows | Unsigned prerelease installer available; clean-machine validation pending |
+| Native Linux | Prerelease AppImage and DEB available; clean-machine validation pending |
+| macOS Intel | Ad-hoc-signed prerelease DMG available; local packaging verified |
+| macOS Apple silicon | Ad-hoc-signed prerelease DMG available; physical clean-machine smoke pending |
+| Electron client | Included in prerelease builds for desktop platforms |
 | Browser/PWA client | Locally hosted; optional access through Tailscale |
 
 ## Current limitations
 
-- There is no binary release, stable channel, or auto-update support.
+- Binary prereleases are available, but there is no stable channel or auto-update support.
 - Windows and Linux installers have not completed clean-machine installation, upgrade, and
   uninstall tests.
 - Intel macOS packages have been tested locally. Apple-silicon packages build in CI, but the
   physical clean-machine smoke test is still pending.
-- Local macOS builds are not notarized. Early Windows installers will be unsigned.
+- macOS prerelease DMGs are ad-hoc signed rather than Developer ID signed or notarized. Windows
+  prerelease installers are unsigned.
 - The legacy Electron MCP path binds beyond loopback so WSL can reach it. Its Windows Firewall and
   network exposure still need focused validation.
 - Electron uses an unsandboxed preload and a browser webview. Context isolation is enabled, but
