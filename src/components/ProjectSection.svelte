@@ -168,6 +168,16 @@
     orderedPaths: project.worktreeOrder ?? []
   }));
 
+  // A Worktree with no Sessions is a container holding nothing — a header, a
+  // chevron and a guide line spent on zero content. They fold behind one line
+  // so the tree spends its vertical space on actual work, and stay one click
+  // away for launching something new in them.
+  let showEmptyWorktrees = $state(false);
+  let occupiedWorktrees = $derived(worktrees.filter((wt) => wt.items.length > 0));
+  let emptyWorktrees = $derived(worktrees.filter((wt) => wt.items.length === 0));
+  let occupiedWorkspaces = $derived(deviceWorkspaces.filter((ws) => ws.sessions.length > 0));
+  let emptyWorkspaces = $derived(deviceWorkspaces.filter((ws) => ws.sessions.length === 0));
+
   let accent = $derived(project.accentColor ?? null);
   let selectedFaviconPath = $derived(project.selectedFaviconPath ?? null);
   let mainWorktree = $derived(gitWorktrees.find((wt) => wt.isMain) ?? null);
@@ -628,33 +638,19 @@
 
   <Collapsible.Content class="sb-children flex flex-col gap-0.5">
     {#if deviceProject}
-      {#each deviceWorkspaces as workspace (workspace.key)}
-        {@const location = workspace.locations.find((candidate) => candidate.deviceId === deviceFilter)
-          ?? workspace.locations.find((candidate) => deviceSessions.device(candidate.deviceId)?.local)
-          ?? workspace.locations.find((candidate) => candidate.isMain)
-          ?? workspace.locations[0]}
-        {#if location}
-          <WorktreeGroup
-            title={workspace.branch ?? workspace.name}
-            cwd={location.path}
-            projectId={allowLocalActions ? project.id : null}
-            items={workspace.sessions.map((projection) => projection.session)}
-            projections={workspace.sessions}
-            workspaceKey={workspace.key}
-            defaultDeviceId={location.deviceId}
-            isMain={location.isMain}
-            {filter}
-            forceShow={projectNameMatches}
-            {showDevice}
-            allowLocalActions={allowLocalActions && deviceSessions.device(location.deviceId)?.local === true}
-            onWorktreeDrop={allowLocalActions && deviceSessions.device(location.deviceId)?.local
-              ? onWorktreeDrop
-              : null}
-          />
-        {/if}
-      {:else}
-        <p class="sb-row sb-meta sb-meta-faint italic">No sessions</p>
+      {#each occupiedWorkspaces as workspace (workspace.key)}
+        {@render deviceWorktree(workspace)}
       {/each}
+      {#if emptyWorkspaces.length > 0}
+        {@render emptyToggle(emptyWorkspaces.length)}
+        {#if showEmptyWorktrees}
+          {#each emptyWorkspaces as workspace (workspace.key)}
+            {@render deviceWorktree(workspace)}
+          {/each}
+        {/if}
+      {:else if occupiedWorkspaces.length === 0}
+        <p class="sb-row sb-meta sb-meta-faint italic">No sessions</p>
+      {/if}
     {:else}
     {#if isStandaloneWorktreeProject && mainWorktree}
       <div class="sb-row sb-meta gap-2">
@@ -680,20 +676,17 @@
     {/if}
 
     {#if showWorktreeGroups}
-      {#each worktrees as wt (wt.cwd)}
-        <WorktreeGroup
-          title={wt.label}
-          cwd={wt.cwd}
-          projectId={project.id}
-          items={wt.items}
-          runMode={project.defaultRunMode}
-          wslDistro={project.defaultWslDistro}
-          isMain={wt.isMain}
-          {filter}
-          forceShow={projectNameMatches}
-          {onWorktreeDrop}
-        />
+      {#each occupiedWorktrees as wt (wt.cwd)}
+        {@render localWorktree(wt)}
       {/each}
+      {#if emptyWorktrees.length > 0}
+        {@render emptyToggle(emptyWorktrees.length)}
+        {#if showEmptyWorktrees}
+          {#each emptyWorktrees as wt (wt.cwd)}
+            {@render localWorktree(wt)}
+          {/each}
+        {/if}
+      {/if}
     {:else if visibleSessions.length > 0}
       <div class="flex flex-col gap-px">
         {#each visibleSessions as session (session.id)}
@@ -731,4 +724,58 @@
   </Collapsible.Content>
 </Collapsible.Root>
 </div>
+{#snippet localWorktree(wt: (typeof worktrees)[number])}
+  <WorktreeGroup
+    title={wt.label}
+    cwd={wt.cwd}
+    projectId={project.id}
+    items={wt.items}
+    runMode={project.defaultRunMode}
+    wslDistro={project.defaultWslDistro}
+    isMain={wt.isMain}
+    {filter}
+    forceShow={projectNameMatches}
+    {onWorktreeDrop}
+  />
+{/snippet}
+
+{#snippet deviceWorktree(workspace: (typeof deviceWorkspaces)[number])}
+  {@const location = workspace.locations.find((candidate) => candidate.deviceId === deviceFilter)
+    ?? workspace.locations.find((candidate) => deviceSessions.device(candidate.deviceId)?.local)
+    ?? workspace.locations.find((candidate) => candidate.isMain)
+    ?? workspace.locations[0]}
+  {#if location}
+    <WorktreeGroup
+      title={workspace.branch ?? workspace.name}
+      cwd={location.path}
+      projectId={allowLocalActions ? project.id : null}
+      items={workspace.sessions.map((projection) => projection.session)}
+      projections={workspace.sessions}
+      workspaceKey={workspace.key}
+      defaultDeviceId={location.deviceId}
+      isMain={location.isMain}
+      {filter}
+      forceShow={projectNameMatches}
+      {showDevice}
+      allowLocalActions={allowLocalActions && deviceSessions.device(location.deviceId)?.local === true}
+      onWorktreeDrop={allowLocalActions && deviceSessions.device(location.deviceId)?.local
+        ? onWorktreeDrop
+        : null}
+    />
+  {/if}
+{/snippet}
+
+{#snippet emptyToggle(count: number)}
+  <button
+    type="button"
+    class="sb-row sb-meta gap-2 hover:text-foreground"
+    aria-expanded={showEmptyWorktrees}
+    onclick={() => (showEmptyWorktrees = !showEmptyWorktrees)}
+  >
+    <span class="sb-chevron" data-open={showEmptyWorktrees ? 'true' : 'false'}>
+      <ChevronRight class="size-3" />
+    </span>
+    <span class="truncate">{count} empty worktree{count === 1 ? '' : 's'}</span>
+  </button>
+{/snippet}
 {/if}

@@ -121,6 +121,15 @@
     letter-spacing: -0.006em;
   }
 
+  /* The lead line of a row that *is* content rather than a container. Session
+     names get this; Project and Worktree headers deliberately do not, so the
+     thing you came to read outranks the scaffolding holding it. */
+  .sb-title[data-lead='true'] {
+    font-size: 0.9375rem;
+    line-height: 1.25rem;
+    letter-spacing: -0.01em;
+  }
+
   .sb-meta {
     min-width: 0;
     overflow: hidden;
@@ -135,44 +144,8 @@
     color: var(--sb-faint);
   }
 
-  /* Trailing gutter. Rest state shows when the Session was last touched (or
-     what its agent is doing); hovering swaps in the row's actions in the very
-     same cell, so nothing reflows and no red button sits there at rest. */
-  .sb-gutter {
-    display: grid;
-    grid-template-areas: 'sb-gutter';
-    flex-shrink: 0;
-    align-items: center;
-    justify-items: end;
-  }
-
-  .sb-gutter > * {
-    grid-area: sb-gutter;
-  }
-
-  .sb-gutter-rest,
-  .sb-gutter-hover {
-    transition: opacity 110ms ease;
-  }
-
-  .sb-gutter-hover {
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .sb-row:hover .sb-gutter-rest,
-  .sb-row:focus-within .sb-gutter-rest {
-    opacity: 0;
-  }
-
-  .sb-row:hover .sb-gutter-hover,
-  .sb-row:focus-within .sb-gutter-hover {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* Header affordances (new session, overview) stay hidden until the group
-     is hovered or keyboard-focused. */
+  /* Row actions. They hold their space at rest and only fade in, so revealing
+     them never displaces the metadata sitting beside them. */
   .sb-reveal {
     opacity: 0;
     pointer-events: none;
@@ -269,8 +242,8 @@
     background-color: color-mix(in oklab, var(--primary) 14%, transparent);
   }
 
-  /* Live-state dot riding the Session's agent glyph, so state survives the
-     hover swap in the gutter. */
+  /* Liveness dot riding the Session's agent glyph. Same colours as the tab
+     strip's dot, because it answers the same question. */
   .sb-dot {
     position: absolute;
     right: -0.125rem;
@@ -281,17 +254,21 @@
     box-shadow: 0 0 0 2px var(--sidebar);
   }
 
-  .sb-dot[data-tone='idle'] {
-    background-color: var(--sb-faint);
+  .sb-dot[data-tone='live'] {
+    background-color: var(--success);
   }
 
-  .sb-dot[data-tone='active'] {
-    background-color: var(--primary);
+  .sb-dot[data-tone='starting'] {
+    background-color: var(--warning);
     animation: sb-breathe 2s ease-in-out infinite;
   }
 
-  .sb-dot[data-tone='done'] {
-    background-color: var(--success);
+  /* Offline is not "not running" — it's "no reading". The Session may well be
+     alive on a Device we can't reach. Mixed most of the way back into the
+     sidebar so it stays a dot you can find but never competes with a Session
+     we actually have a signal from. */
+  .sb-dot[data-tone='unknown'] {
+    background-color: color-mix(in oklab, var(--sb-faint) 45%, var(--sidebar));
   }
 
   .sb-dot[data-tone='attention'] {
@@ -308,7 +285,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .sb-dot[data-tone='active'] {
+    .sb-dot[data-tone='starting'] {
       animation: none;
     }
   }

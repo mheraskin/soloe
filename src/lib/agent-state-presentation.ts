@@ -61,7 +61,3 @@ const FALLBACK: AgentStatePresentation = {
 export function agentStatePresentation(state: AgentObservedState): AgentStatePresentation {
   return PRESENTATION[state] ?? { ...FALLBACK, label: state };
 }
-
-export function agentStateTone(state: AgentObservedState): AgentStateTone {
-  return agentStatePresentation(state).tone;
-}

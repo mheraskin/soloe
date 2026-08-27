@@ -255,32 +255,32 @@
       {#if kbdIndex !== null}
         <KbdHint keys={['Ctrl', 'Shift', String(kbdIndex)]} class="shrink-0" />
       {/if}
-      <div class="sb-gutter min-w-14">
-        <span class="sb-gutter-rest flex items-center gap-1.5">
-          {#if hasDiff && shortstat}
-            <span
-              class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums"
-              title={diffTitle}
-              aria-label={diffTitle}
-            >
-              {#if shortstat.insertions > 0}
-                <span class="text-success">+{shortstat.insertions}</span>
-              {/if}
-              {#if shortstat.deletions > 0}
-                <span class="text-destructive">−{shortstat.deletions}</span>
-              {/if}
-            </span>
-          {/if}
-          {#if isMain}
-            <span class="sb-meta sb-meta-faint shrink-0 text-[9px] tracking-[0.08em] uppercase">
-              main
-            </span>
-          {/if}
-          <span class="sb-meta sb-meta-faint shrink-0 tabular-nums">
-            {projections?.length ?? items.length}
+      <div class="flex shrink-0 items-center gap-1.5">
+        {#if hasDiff && shortstat}
+          <span
+            class="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums"
+            title={diffTitle}
+            aria-label={diffTitle}
+          >
+            {#if shortstat.insertions > 0}
+              <span class="text-success">+{shortstat.insertions}</span>
+            {/if}
+            {#if shortstat.deletions > 0}
+              <span class="text-destructive">−{shortstat.deletions}</span>
+            {/if}
           </span>
+        {/if}
+        {#if isMain}
+          <span class="sb-meta sb-meta-faint shrink-0 text-[9px] tracking-[0.08em] uppercase">
+            main
+          </span>
+        {/if}
+        <span class="sb-meta sb-meta-faint shrink-0 tabular-nums">
+          {projections?.length ?? items.length}
         </span>
-        <span class="sb-gutter-hover flex items-center gap-0.5">
+        <!-- Actions reserve their space at rest and only fade in, so the diff
+             stat and Session count beside them never get displaced. -->
+        <span class="sb-reveal flex items-center gap-0.5">
           {#if allowLocalActions}
             <Button
               variant="ghost"
@@ -314,13 +314,12 @@
             branch={title}
             {projection}
             {showDevice}
-            inGroup
             {onSessionDrop}
           />
         {/each}
       {:else}
         {#each visible as session (session.id)}
-          <SessionItem {session} branch={title} inGroup {onSessionDrop} />
+          <SessionItem {session} branch={title} {onSessionDrop} />
         {/each}
       {/if}
     </Collapsible.Content>

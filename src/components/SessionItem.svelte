@@ -20,7 +20,7 @@
   import { displaySessionKind } from '../lib/session-agent';
   import { sessionStatusPresentation } from '../lib/session-status-presentation';
   import { deviceSessionStatus } from '../lib/device-terminal-presentation';
-  import { agentStateTone, type AgentStateTone } from '../lib/agent-state-presentation';
+  import type { AgentStateTone } from '../lib/agent-state-presentation';
   import { displayPath } from '../lib/display-path';
   import { shortRelativeTime, fullTimestamp } from '../lib/relative-time';
   import { clock } from '../stores/clock.svelte';
@@ -33,6 +33,8 @@
   import SessionContextMenu from './SessionContextMenu.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
 
+  type DotTone = 'live' | 'starting' | 'unknown' | 'attention' | 'danger';
+
   interface StatusPill {
     label: string;
     title: string;
@@ -44,17 +46,12 @@
     branch = null,
     projection = null,
     showDevice = false,
-    inGroup = false,
     onSessionDrop = null
   }: {
     session: Session;
     branch?: string | null;
     projection?: MultiDeviceSessionView | null;
     showDevice?: boolean;
-    // Set by WorktreeGroup: the group header already states the Worktree's
-    // path and branch, so the row drops its meta line and collapses to a
-    // single tight line instead of repeating its parent.
-    inGroup?: boolean;
     onSessionDrop?:
       | ((args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) => void)
       | null;
@@ -139,27 +136,44 @@
             : 'Starting'
   );
   let statusPill = $derived(buildStatusPill());
-  // The gutter swaps to row actions on hover, so state also rides the agent
-  // glyph as a dot — that way a Session never goes silent just because the
-  // pointer passed over it.
-  let dotTone = $derived.by<AgentStateTone | null>(() => {
-    if (offline) return 'idle';
-    if (pendingOperation !== null || showSpawnSpinner) return 'active';
-    if (displayedAgentState !== null) return agentStateTone(displayedAgentState);
-    if (statusPill) return statusPill.tone === 'danger' ? 'danger' : 'idle';
+  // The dot answers "is this alive?" — the same question the Session tab
+  // strip's dot answers, in the same colours. A dot means we have a reading:
+  // green running, amber starting, red crashed. No dot means there is no
+  // process, which covers both `stopped` and `exited` — a distinction that
+  // matters to the launcher, not to the eye, and one the label already draws
+  // when there's an exit code to show. A dimmed dot means we can't get a
+  // reading at all, which is what offline is. What the agent is *doing* stays
+  // the label's job, so the two never encode the same axis twice. The single
+  // override is a Session that wants a human, which outranks liveness because
+  // that's the thing you scan the list for.
+  let dotTone = $derived.by<DotTone | null>(() => {
+    if (offline) return 'unknown';
+    if (pendingOperation !== null || showSpawnSpinner) return 'starting';
+    if (
+      displayedAgentState === 'waiting_for_approval'
+      || displayedAgentState === 'waiting_for_input'
+      || displayedAgentState === 'usage_limited'
+    ) {
+      return 'attention';
+    }
+    if (status === 'error') return 'danger';
+    if (status === 'starting') return 'starting';
+    if (status === 'running') return 'live';
     return null;
   });
   let dotTitle = $derived(
     offline
       ? 'Offline · read-only'
-      : displayedAgentState ?? (pendingOperation ? pendingLabel.toLowerCase() : statusPill?.title ?? '')
+      : displayedAgentState
+        ? `${status} · ${displayedAgentState}`
+        : status
   );
   let relativeLabel = $derived(shortRelativeTime(session.lastUsedAt, clock.now));
   let lastUsedTitle = $derived(fullTimestamp(session.lastUsedAt));
-  // Outside a Worktree group the row has to carry its own context. Inside one
-  // it inherits all of this from the header.
+  // Every row states its own working directory, branch and Device, group or
+  // not. Repeating the parent's context is the point: you can read a row
+  // without first reading the header it sits under.
   let metaParts = $derived.by<{ icon: 'path' | 'branch' | 'device'; text: string }[]>(() => {
-    if (inGroup) return [];
     const parts: { icon: 'path' | 'branch' | 'device'; text: string }[] = [
       { icon: 'path', text: displayPath(session.cwd) }
     ];
@@ -440,61 +454,39 @@
           {/if}
         </span>
         <span class="flex min-w-0 flex-1 flex-col">
-          {#if editing}
-            <input
-              class="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-ring"
-              bind:this={nameInput}
-              bind:value={editValue}
-              onkeydown={onNameKey}
-              onblur={() => void commitEditing()}
-              onclick={(e) => e.stopPropagation()}
-              spellcheck="false"
-              autocomplete="off"
-            />
-          {:else}
-            <span class="sb-title" data-strong={isSelected ? 'true' : undefined}>
-              {session.name || '(unnamed)'}
-            </span>
-          {/if}
-          {#if metaParts.length > 0}
-            <span class="sb-meta flex min-w-0 items-center gap-1">
-              {#each metaParts as part, index (part.icon)}
-                {#if index > 0}
-                  <span class="sb-meta-faint shrink-0">·</span>
-                {/if}
-                <span class={cn('inline-flex items-center gap-1', index === 0 ? 'min-w-0' : 'shrink-0')}>
-                  {#if part.icon === 'branch'}
-                    <GitBranch class="size-2.5 shrink-0" />
-                  {:else if part.icon === 'device'}
-                    <Monitor class="size-2.5 shrink-0" />
-                  {/if}
-                  <span class="truncate {part.icon === 'path' ? 'font-mono' : ''}">{part.text}</span>
-                </span>
-              {/each}
-            </span>
-          {/if}
-        </span>
-        {#if workerCount > 0}
-          <span
-            class="sb-meta shrink-0 tabular-nums"
-            title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}
-          >
-            {workerCount}w
-          </span>
-        {/if}
-        {#if kbdIndex !== null}
-          <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
-        {/if}
-        <div class="sb-gutter min-w-9">
-          <span class="sb-gutter-rest flex items-center justify-end">
+          <span class="flex min-w-0 items-center gap-2">
+            {#if editing}
+              <input
+                class="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-sm outline-none focus:border-ring"
+                bind:this={nameInput}
+                bind:value={editValue}
+                onkeydown={onNameKey}
+                onblur={() => void commitEditing()}
+                onclick={(e) => e.stopPropagation()}
+                spellcheck="false"
+                autocomplete="off"
+              />
+            {:else}
+              <span
+                class="sb-title"
+                data-lead="true"
+                data-strong={isSelected ? 'true' : undefined}
+              >
+                {session.name || '(unnamed)'}
+              </span>
+            {/if}
+            {#if kbdIndex !== null}
+              <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
+            {/if}
             {#if showAgentBadge && displayedAgentState}
               <AgentStateBadge
                 state={displayedAgentState}
                 summary={displayedObservedSummary}
+                class="shrink-0"
               />
             {:else if showSpawnSpinner}
               <span
-                class="sb-state"
+                class="sb-state shrink-0"
                 data-tone="active"
                 title={`${pendingLabel}…`}
                 aria-label={pendingLabel}
@@ -503,7 +495,7 @@
               </span>
             {:else if statusPill}
               <span
-                class="sb-state"
+                class="sb-state shrink-0"
                 data-tone={statusPill.tone}
                 title={statusPill.title}
                 aria-label={statusPill.title}
@@ -511,34 +503,65 @@
                 <span class="truncate">{statusPill.label}</span>
               </span>
             {:else if relativeLabel}
-              <span class="sb-meta sb-meta-faint tabular-nums" title={lastUsedTitle}>
+              <span class="sb-meta sb-meta-faint shrink-0 tabular-nums" title={lastUsedTitle}>
                 {relativeLabel}
               </span>
             {/if}
           </span>
-          <span class="sb-gutter-hover relative flex size-6 items-center justify-center">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              class="size-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              onclick={removeFromButton}
-              disabled={pendingOperation !== null || offline}
-              title={offline
-                ? 'Unavailable while Device is offline'
-                : pendingOperation === 'deleting' ? 'Deleting session…' : 'Delete session'}
-              aria-label={pendingOperation === 'deleting'
-                ? `Deleting ${session.name || 'session'}`
-                : `Delete ${session.name || 'session'}`}
-            >
-              {#if pendingOperation === 'deleting'}
-                <Loader2 class="animate-spin" />
-              {:else}
-                <Trash2 />
-              {/if}
-            </Button>
-            <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
+          <span class="flex min-w-0 items-center gap-2">
+            {#if metaParts.length > 0}
+              <span class="sb-meta flex min-w-0 flex-1 items-center gap-1">
+                {#each metaParts as part, index (part.icon)}
+                  {#if index > 0}
+                    <span class="sb-meta-faint shrink-0">·</span>
+                  {/if}
+                  <span class={cn('inline-flex items-center gap-1', index === 0 ? 'min-w-0' : 'shrink-0')}>
+                    {#if part.icon === 'branch'}
+                      <GitBranch class="size-2.5 shrink-0" />
+                    {:else if part.icon === 'device'}
+                      <Monitor class="size-2.5 shrink-0" />
+                    {/if}
+                    <span class="truncate {part.icon === 'path' ? 'font-mono' : ''}">{part.text}</span>
+                  </span>
+                {/each}
+              </span>
+            {:else}
+              <span class="min-w-0 flex-1"></span>
+            {/if}
+            {#if workerCount > 0}
+              <span
+                class="sb-meta shrink-0 tabular-nums"
+                title={`${workerCount} background worker${workerCount === 1 ? '' : 's'}`}
+              >
+                {workerCount}w
+              </span>
+            {/if}
+            <!-- Row actions reserve their space at rest and only fade in, so
+                 revealing them never displaces the metadata beside them. -->
+            <span class="sb-reveal relative -my-0.5 flex size-5 shrink-0 items-center justify-center">
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                class="size-5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                onclick={removeFromButton}
+                disabled={pendingOperation !== null || offline}
+                title={offline
+                  ? 'Unavailable while Device is offline'
+                  : pendingOperation === 'deleting' ? 'Deleting session…' : 'Delete session'}
+                aria-label={pendingOperation === 'deleting'
+                  ? `Deleting ${session.name || 'session'}`
+                  : `Delete ${session.name || 'session'}`}
+              >
+                {#if pendingOperation === 'deleting'}
+                  <Loader2 class="size-3 animate-spin" />
+                {:else}
+                  <Trash2 class="size-3" />
+                {/if}
+              </Button>
+              <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
+            </span>
           </span>
-        </div>
+        </span>
       </div>
     {/snippet}
   </SessionContextMenu>
