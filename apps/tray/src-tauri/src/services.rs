@@ -180,19 +180,11 @@ struct StoredSettings {
     startup: StartupSettings,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct StartupSettings {
     #[serde(default)]
     launch_soloe_client: bool,
-}
-
-impl Default for StartupSettings {
-    fn default() -> Self {
-        Self {
-            launch_soloe_client: false,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

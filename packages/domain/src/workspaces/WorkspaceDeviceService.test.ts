@@ -128,7 +128,10 @@ describe('WorkspaceDeviceService', () => {
     const plan = await fixture.service.plan(intent);
 
     expect(plan.executable).toBe(true);
-    expect(plan.intent.path).toBe(path.join(fixture.managedRoot, CHECKOUT_ID));
+    expect(plan.intent).toMatchObject({
+      kind: 'prepare-workspace-location',
+      path: path.join(fixture.managedRoot, CHECKOUT_ID)
+    });
     expect(plan.preview.targetPath).toBe(path.join(fixture.managedRoot, CHECKOUT_ID));
   });
 

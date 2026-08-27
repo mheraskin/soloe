@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FeatureArtifactObservation, HookInstaller } from "@soloe/domain";
-import { TerminalInputLeaseManager } from "@soloe/runtime";
+import { TerminalInputLeaseManager, type RuntimeSpawnSpec } from "@soloe/runtime";
 import { hostPlatform } from "../../../shared/platform.js";
 import { SERVER_RPC_METHODS } from "../../../shared/api-contract.js";
 import { terminalControlProof, type TerminalInputLease } from "../../../shared/types/terminal.js";
@@ -29,7 +29,7 @@ describe("SoloeDomain", () => {
       sessionId: string;
       cols: number;
       rows: number;
-      spec: { file: string; args: string[] };
+      spec: RuntimeSpawnSpec;
     }) => ({
       terminalId: "terminal-new",
       sessionId: input.sessionId,
@@ -142,6 +142,7 @@ describe("SoloeDomain", () => {
       message: null,
       setupUrl: null,
       dnsName: "xps.tailnet.ts.net",
+      ipAddress: "100.64.0.1",
       port,
       forwarded: true,
     }));
@@ -181,6 +182,7 @@ describe("SoloeDomain", () => {
         message: null,
         setupUrl: null,
         dnsName: "xps.tailnet.ts.net",
+        ipAddress: "100.64.0.1",
         port: 3000,
         forwarded: true,
       });
@@ -489,9 +491,12 @@ describe("SoloeDomain", () => {
       const deviceId = "11111111-1111-4111-8111-111111111111";
       const deviceDomain = new SoloeDomain({ dataDirectory: directory, runtime, deviceId });
       const workspaceRevisions: number[] = [];
-      deviceDomain.on("event", (event, payload: { revision?: number }) => {
-        if (event === "workspaceDevice.change" && payload.revision !== undefined) {
-          workspaceRevisions.push(payload.revision);
+      deviceDomain.on("event", (event, payload) => {
+        const revision = typeof payload === "object" && payload !== null && "revision" in payload
+          ? payload.revision
+          : undefined;
+        if (event === "workspaceDevice.change" && typeof revision === "number") {
+          workspaceRevisions.push(revision);
         }
       });
       try {
@@ -573,6 +578,7 @@ describe("SoloeDomain", () => {
           },
           claude: { installed: false, current: false },
           codex: { installed: false, current: false },
+          cursor: { installed: false, current: false },
         },
       ],
     };
@@ -586,6 +592,8 @@ describe("SoloeDomain", () => {
         uninstallClaude: vi.fn(),
         installCodex: vi.fn(),
         uninstallCodex: vi.fn(),
+        installCursor: vi.fn(),
+        uninstallCursor: vi.fn(),
       },
     });
     try {
@@ -640,6 +648,8 @@ describe("SoloeDomain", () => {
         uninstallClaude: vi.fn(),
         installCodex: vi.fn(),
         uninstallCodex: vi.fn(),
+        installCursor: vi.fn(),
+        uninstallCursor: vi.fn(),
       },
       pathService: { openSessionPath: vi.fn(async () => true as const) },
       fileEditorLauncher: vi.fn(async () => {}),
@@ -684,6 +694,8 @@ describe("SoloeDomain", () => {
         uninstallClaude: vi.fn(),
         installCodex: vi.fn(),
         uninstallCodex: vi.fn(),
+        installCursor: vi.fn(),
+        uninstallCursor: vi.fn(),
       },
     });
     const requestId = "123e4567-e89b-42d3-a456-426614174000";

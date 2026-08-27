@@ -1304,7 +1304,9 @@ describe('Soloe Server lifecycle', () => {
         claudeInstalled = false;
       }),
       installCodex: vi.fn(),
-      uninstallCodex: vi.fn()
+      uninstallCodex: vi.fn(),
+      installCursor: vi.fn(),
+      uninstallCursor: vi.fn()
     };
     const pathService = {
       openSessionPath: vi.fn(async () => true as const)
@@ -1846,7 +1848,7 @@ async function nextEvent(socket: WebSocket, eventName: string): Promise<unknown>
       socket.removeEventListener('message', onMessage);
       reject(new Error(`WebSocket event ${eventName} timed out`));
     }, 500);
-    const onMessage = (event: MessageEvent) => {
+    const onMessage = (event: WebSocket.MessageEvent) => {
       const message = JSON.parse(String(event.data)) as { event?: unknown };
       if (message.event !== eventName) return;
       clearTimeout(timeout);

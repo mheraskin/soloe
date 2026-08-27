@@ -256,7 +256,7 @@ describe('Environment Runtime lifecycle', () => {
         rows: 28,
         toSeq: 1
       });
-      expect(snapshot.data).toContain('restored viewport');
+      expect(snapshot?.data).toContain('restored viewport');
       client.disconnect();
     } finally {
       await host.shutdown();
@@ -500,7 +500,7 @@ describe('Environment Runtime lifecycle', () => {
         started.terminalId,
         'client-a',
         false,
-        { deviceId: 'device-a', deviceName: 'MacBook Pro' }
+        { deviceId: 'device-a', deviceName: 'MacBook Pro', ownerDeviceId: 'device-owner' }
       );
 
       await expect(firstClient.parkInputLease(
@@ -513,7 +513,7 @@ describe('Environment Runtime lifecycle', () => {
         started.terminalId,
         'client-b',
         false,
-        { deviceId: 'device-b', deviceName: 'iPad' }
+        { deviceId: 'device-b', deviceName: 'iPad', ownerDeviceId: 'device-owner' }
       );
       expect(secondLease.controllerDeviceId).toBe('device-b');
       firstClient.disconnect();
@@ -546,7 +546,7 @@ describe('Environment Runtime lifecycle', () => {
         started.terminalId,
         'client-a',
         false,
-        { deviceId: 'device-a', deviceName: 'MacBook Pro' }
+        { deviceId: 'device-a', deviceName: 'MacBook Pro', ownerDeviceId: 'device-owner' }
       );
 
       controller.disconnect();
@@ -559,7 +559,7 @@ describe('Environment Runtime lifecycle', () => {
         started.terminalId,
         'client-b',
         false,
-        { deviceId: 'device-b', deviceName: 'iPad' }
+        { deviceId: 'device-b', deviceName: 'iPad', ownerDeviceId: 'device-owner' }
       )).rejects.toThrow(/controlled by MacBook Pro/u);
       spectator.disconnect();
     } finally {
