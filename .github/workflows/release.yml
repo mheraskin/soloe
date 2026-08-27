@@ -48,56 +48,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Package unsigned platform build
-        if: ${{ !startsWith(matrix.platform, 'macos-') }}
+      - name: Package platform build
         run: ${{ matrix.command }}
-
-      - name: Verify macOS signing and notarization credentials
-        if: ${{ startsWith(matrix.platform, 'macos-') }}
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: test -n "$MACOS_CERTIFICATE" -a -n "$MACOS_CERTIFICATE_PASSWORD" -a -n "$APPLE_ID" -a -n "$APPLE_APP_SPECIFIC_PASSWORD" -a -n "$APPLE_TEAM_ID"
-
-      - name: Import Apple Developer certificate
-        if: ${{ startsWith(matrix.platform, 'macos-') }}
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          set -eu
-          certificate_path="$RUNNER_TEMP/soloe-certificate.p12"
-          keychain_path="$RUNNER_TEMP/soloe-signing.keychain-db"
-          keychain_password="$(openssl rand -base64 32)"
-          printf '%s' "$MACOS_CERTIFICATE" | base64 -D > "$certificate_path"
-          security create-keychain -p "$keychain_password" "$keychain_path"
-          security default-keychain -s "$keychain_path"
-          security unlock-keychain -p "$keychain_password" "$keychain_path"
-          security set-keychain-settings -t 3600 -u "$keychain_path"
-          security import "$certificate_path" -k "$keychain_path" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
-          signing_identity="$(security find-identity -v -p codesigning "$keychain_path" | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
-          test -n "$signing_identity"
-          echo "APPLE_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
-          echo "SOLOE_SIGNING_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
-
-      - name: Package, sign, and notarize macOS build
-        if: ${{ startsWith(matrix.platform, 'macos-') }}
-        env:
-          CSC_NAME: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: ${{ matrix.command }}
-
-      - name: Remove signing keychain
-        if: ${{ always() && startsWith(matrix.platform, 'macos-') }}
-        run: security delete-keychain "$SOLOE_SIGNING_KEYCHAIN" || true
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v5

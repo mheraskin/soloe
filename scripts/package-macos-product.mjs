@@ -1,9 +1,16 @@
 import { spawnSync } from 'node:child_process';
+import { renameSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const requestedArch = process.argv[2] ?? process.arch;
+const embeddedOutputRoot = path.join(root, 'release', 'embedded');
+const electronOutputDirectory = path.join(
+  embeddedOutputRoot,
+  requestedArch === 'arm64' ? 'mac-arm64' : 'mac'
+);
+const tauriElectronDirectory = path.join(embeddedOutputRoot, 'mac');
 
 if (process.platform !== 'darwin') {
   throw new Error('The macOS product must be built on macOS');
@@ -45,4 +52,8 @@ runTool('electron-builder', [
   '-c.directories.output=release/embedded',
   '-c.appId=com.soloe.ui'
 ]);
+if (electronOutputDirectory !== tauriElectronDirectory) {
+  rmSync(tauriElectronDirectory, { recursive: true, force: true });
+  renameSync(electronOutputDirectory, tauriElectronDirectory);
+}
 runTool('tauri', ['build'], path.join(root, 'apps', 'tray'));

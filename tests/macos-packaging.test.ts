@@ -53,6 +53,16 @@ describe('macOS package contract', () => {
     );
   });
 
+  it('publishes unsigned macOS preview builds without requiring signing secrets', () => {
+    const workflow = readFileSync(new URL('.github/workflows/release.yml', root), 'utf8');
+
+    expect(workflow).toContain('platform: macos-x64');
+    expect(workflow).toContain('platform: macos-arm64');
+    expect(workflow).toContain('name: Package platform build');
+    expect(workflow).not.toContain('MACOS_CERTIFICATE');
+    expect(workflow).not.toContain('APPLE_APP_SPECIFIC_PASSWORD');
+  });
+
   it('ships one Soloe app with the Electron UI embedded inside it', () => {
     const trayConfig = JSON.parse(
       readFileSync(new URL('apps/tray/src-tauri/tauri.conf.json', root), 'utf8')
@@ -74,6 +84,10 @@ describe('macOS package contract', () => {
     expect(trayConfig.bundle.macOS?.signingIdentity).toBe('-');
     expect(packageScript).toContain("'--dir'");
     expect(packageScript).toContain("'-c.appId=com.soloe.ui'");
+    expect(packageScript).toContain("requestedArch === 'arm64' ? 'mac-arm64' : 'mac'");
+    expect(packageScript).toContain(
+      'renameSync(electronOutputDirectory, tauriElectronDirectory)'
+    );
     expect(packageScript).toContain("runTool('tauri', ['build']");
   });
 
