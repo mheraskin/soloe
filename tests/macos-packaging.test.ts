@@ -84,6 +84,7 @@ describe('macOS package contract', () => {
     expect(trayConfig.bundle.macOS?.signingIdentity).toBe('-');
     expect(packageScript).toContain("'--dir'");
     expect(packageScript).toContain("'-c.appId=com.soloe.ui'");
+    expect(packageScript).toContain("CSC_IDENTITY_AUTO_DISCOVERY: 'false'");
     expect(packageScript).toContain("requestedArch === 'arm64' ? 'mac-arm64' : 'mac'");
     expect(packageScript).toContain(
       'renameSync(electronOutputDirectory, tauriElectronDirectory)'

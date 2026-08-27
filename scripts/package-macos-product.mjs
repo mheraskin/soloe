@@ -11,6 +11,10 @@ const electronOutputDirectory = path.join(
   requestedArch === 'arm64' ? 'mac-arm64' : 'mac'
 );
 const tauriElectronDirectory = path.join(embeddedOutputRoot, 'mac');
+const packagingEnvironment = {
+  ...process.env,
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+};
 
 if (process.platform !== 'darwin') {
   throw new Error('The macOS product must be built on macOS');
@@ -32,7 +36,7 @@ function runTool(name, args, cwd = root) {
 function runCommand(executable, args, cwd = root) {
   const result = spawnSync(executable, args, {
     cwd,
-    env: process.env,
+    env: packagingEnvironment,
     stdio: 'inherit'
   });
   if (result.error) throw result.error;
