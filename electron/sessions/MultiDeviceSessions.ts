@@ -8,6 +8,7 @@ import type {
   TerminalRef
 } from '@shared/types/devices.js';
 import type { GitWorktree } from '@shared/types/git.js';
+import type { ShortDnsInfo } from '@shared/types/connections.js';
 import type {
   DeviceImagePasteRequest,
   ImagePasteRequest,
@@ -76,6 +77,7 @@ export interface SessionDeviceStatus {
 
 export interface SessionDevice {
   readonly deviceId: DeviceId;
+  readonly displayName?: string;
   readonly local: boolean;
   readonly status: SessionDeviceStatus;
   connect(): Promise<SessionDeviceStatus>;
@@ -107,6 +109,8 @@ export interface SessionDevice {
   deleteSession?(sessionId: string): Promise<void>;
   previewSessionCommand?(sessionId: string): Promise<SpawnSpec>;
   ensureTailscalePort?(port: number, virtualHostname?: string): Promise<DevicePortForwardResult>;
+  setupShortDns?(): Promise<ShortDnsInfo>;
+  removeShortDns?(): Promise<ShortDnsInfo>;
   workspacePlan?(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan>;
   workspaceExecute?(
     command: DeviceCommandEnvelope<DeviceWorkspaceIntent>
@@ -612,6 +616,22 @@ export class MultiDeviceSessions {
       : await device.ensureTailscalePort(port));
   }
 
+  async setupShortDns(deviceId: DeviceId): Promise<ShortDnsInfo> {
+    const device = this.requireReadyDevice(deviceId);
+    if (!device.setupShortDns) {
+      throw new Error('The selected Device cannot install Soloe DNS.');
+    }
+    return structuredClone(await device.setupShortDns());
+  }
+
+  async removeShortDns(deviceId: DeviceId): Promise<ShortDnsInfo> {
+    const device = this.requireReadyDevice(deviceId);
+    if (!device.removeShortDns) {
+      throw new Error('The selected Device cannot uninstall Soloe DNS.');
+    }
+    return structuredClone(await device.removeShortDns());
+  }
+
   async updateSession(ref: SessionRef, patch: SessionUpdate): Promise<MultiDeviceSessionView> {
     const current = findSession(this.currentState, ref);
     if (!current) throw new Error('Session is unavailable.');
@@ -1045,7 +1065,7 @@ function deviceView(device: SessionDevice): SessionDeviceView {
   const descriptor = device.status.descriptor;
   return {
     deviceId: device.deviceId,
-    name: descriptor?.name ?? `Device ${device.deviceId.slice(0, 8)}`,
+    name: descriptor?.name ?? device.displayName ?? `Device ${device.deviceId.slice(0, 8)}`,
     state: device.status.state,
     available: device.status.state === 'ready',
     local: device.local,

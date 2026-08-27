@@ -77,6 +77,17 @@ describe('connection device presentation', () => {
     });
   });
 
+  it('shows the remote DNS setup action reported by that Device', () => {
+    expect(connectionShortUrlPresentation(machine({
+      endpoint: 'https://xps.tailnet.ts.net:443',
+      shortDns: shortDns({ state: 'setup-required', zone: 'xps', readyZones: [] })
+    }), shortDns())).toEqual({
+      status: 'Install DNS',
+      tone: 'attention',
+      zone: 'xps'
+    });
+  });
+
   it('shows the local DNS setup action', () => {
     expect(connectionShortUrlPresentation(machine({
       id: 'local',

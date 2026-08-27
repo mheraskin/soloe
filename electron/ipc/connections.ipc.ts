@@ -36,11 +36,11 @@ export class ConnectionsIpc {
       (_event, patch: ConnectionPreferencesUpdate) =>
         ipcInvoke(() => this.options.registry.configureTailscale(patch))
     );
-    ipcMain.handle(IpcChannels.connections.setupShortDns, () =>
-      ipcInvoke(() => this.options.registry.setupShortDns())
+    ipcMain.handle(IpcChannels.connections.setupShortDns, (_event, targetId?: ConnectionId) =>
+      ipcInvoke(() => this.options.registry.setupShortDns(targetId))
     );
-    ipcMain.handle(IpcChannels.connections.removeShortDns, () =>
-      ipcInvoke(() => this.options.registry.removeShortDns())
+    ipcMain.handle(IpcChannels.connections.removeShortDns, (_event, targetId?: ConnectionId) =>
+      ipcInvoke(() => this.options.registry.removeShortDns(targetId))
     );
     ipcMain.handle(
       IpcChannels.connections.add,

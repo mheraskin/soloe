@@ -15,6 +15,11 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Switch } from '$lib/components/ui/switch';
+  import type {
+    ConnectionId,
+    MachineConnection,
+    ShortDnsInfo
+  } from '@shared/types/connections.js';
 
   onMount(() => {
     if (!connections.loaded) void connections.load().catch(reportError);
@@ -26,9 +31,10 @@
   );
   let portDraft = $state('443');
   let savingPreferences = $state(false);
-  let settingUpDns = $state(false);
-  let removingDns = $state(false);
+  let settingUpDns = $state<ConnectionId | null>(null);
+  let removingDns = $state<ConnectionId | null>(null);
   let removeDnsOpen = $state(false);
+  let removeDnsTargetId = $state<ConnectionId | null>(null);
 
   $effect(() => {
     if (!savingPreferences) {
@@ -89,37 +95,60 @@
     }
   }
 
-  async function setupShortDns(): Promise<void> {
-    settingUpDns = true;
+  async function setupShortDns(targetId: ConnectionId = 'local'): Promise<void> {
+    settingUpDns = targetId;
     try {
-      await connections.setupShortDns();
+      await connections.setupShortDns(targetId);
     } finally {
-      settingUpDns = false;
+      settingUpDns = null;
     }
   }
 
-  async function openShortDnsApproval(): Promise<void> {
-    const url = connections.snapshot.shortDns.setupUrl;
+  async function openShortDnsApproval(
+    shortDns: ShortDnsInfo = connections.snapshot.shortDns
+  ): Promise<void> {
+    const url = shortDns.setupUrl;
     if (url) await ipc.system.openExternal(url);
   }
 
-  async function removeShortDns(): Promise<void> {
-    removingDns = true;
+  async function removeShortDns(targetId: ConnectionId): Promise<void> {
+    removingDns = targetId;
     try {
-      await connections.removeShortDns();
+      await connections.removeShortDns(targetId);
     } finally {
-      removingDns = false;
+      removingDns = null;
     }
   }
 
   async function confirmShortDnsRemoval(): Promise<void> {
-    if (connections.snapshot.shortDns.state === 'ready') {
-      await openShortDnsApproval();
+    const targetId = removeDnsTargetId;
+    const shortDns = removalShortDns();
+    if (!targetId || !shortDns) return;
+    if (shortDns.state === 'ready') {
+      await openShortDnsApproval(shortDns);
       return;
     }
-    if (connections.snapshot.shortDns.state === 'route-required') {
-      await removeShortDns();
+    if (shortDns.state === 'route-required') {
+      await removeShortDns(targetId);
     }
+  }
+
+  function requestDnsRemoval(targetId: ConnectionId): void {
+    removeDnsTargetId = targetId;
+    removeDnsOpen = true;
+  }
+
+  function shortDnsForMachine(machine: MachineConnection): ShortDnsInfo | null {
+    return machine.id === 'local' ? connections.snapshot.shortDns : machine.shortDns ?? null;
+  }
+
+  function removalMachine(): MachineConnection | null {
+    return connections.snapshot.machines.find((machine) => machine.id === removeDnsTargetId) ?? null;
+  }
+
+  function removalShortDns(): ShortDnsInfo | null {
+    const machine = removalMachine();
+    return machine ? shortDnsForMachine(machine) : null;
   }
 
   function shortDnsTitle(): string {
@@ -215,10 +244,10 @@
             <Button
               variant="outline"
               size="sm"
-              disabled={settingUpDns}
+              disabled={settingUpDns !== null}
               onclick={() => void setupShortDns().catch(reportError)}
             >
-              {settingUpDns ? 'Installing…' : 'Install DNS'}
+              {settingUpDns === 'local' ? 'Installing…' : 'Install DNS'}
             </Button>
           {/if}
         {:else if connections.snapshot.shortDns.state === 'route-required'}
@@ -228,14 +257,14 @@
               Open Tailscale DNS
             </Button>
             {#if connections.shortDnsRemovalSupported}
-              <Button variant="outline" size="sm" onclick={() => { removeDnsOpen = true; }}>
+              <Button variant="outline" size="sm" onclick={() => requestDnsRemoval('local')}>
                 <Trash2 data-icon="inline-start" />
                 Remove DNS
               </Button>
             {/if}
           </div>
         {:else if connections.snapshot.shortDns.state === 'ready' && connections.shortDnsRemovalSupported}
-          <Button variant="outline" size="sm" onclick={() => { removeDnsOpen = true; }}>
+          <Button variant="outline" size="sm" onclick={() => requestDnsRemoval('local')}>
             <Trash2 data-icon="inline-start" />
             Remove DNS
           </Button>
@@ -247,25 +276,26 @@
           <AlertDialog.Header>
             <AlertDialog.Title>Remove short Device URLs?</AlertDialog.Title>
             <AlertDialog.Description>
-              {#if connections.snapshot.shortDns.state === 'ready'}
-                First remove the restricted nameserver for {connections.snapshot.shortDns.zone} in Tailscale DNS.
+              {#if removalShortDns()?.state === 'ready'}
+                First remove the restricted nameserver for {removalShortDns()?.zone} in Tailscale DNS.
                 Then return here, refresh, and choose Remove DNS again to uninstall the helper.
               {:else}
-                The private DNS route is no longer active. This will uninstall the Soloe DNS helper from this Device.
+                The private DNS route is no longer active. This will uninstall the Soloe DNS helper from
+                {removalMachine()?.name ?? 'this Device'}.
               {/if}
             </AlertDialog.Description>
           </AlertDialog.Header>
           <AlertDialog.Footer>
-            <AlertDialog.Cancel disabled={removingDns}>Cancel</AlertDialog.Cancel>
+            <AlertDialog.Cancel disabled={removingDns !== null}>Cancel</AlertDialog.Cancel>
             <AlertDialog.Action
-              variant={connections.snapshot.shortDns.state === 'ready' ? 'default' : 'destructive'}
-              disabled={removingDns}
+              variant={removalShortDns()?.state === 'ready' ? 'default' : 'destructive'}
+              disabled={removingDns !== null}
               onclick={() => void confirmShortDnsRemoval().catch(reportError)}
             >
-              {#if connections.snapshot.shortDns.state === 'ready'}
+              {#if removalShortDns()?.state === 'ready'}
                 Open Tailscale DNS
               {:else}
-                {removingDns ? 'Uninstalling…' : 'Uninstall DNS'}
+                {removingDns !== null ? 'Uninstalling…' : 'Uninstall DNS'}
               {/if}
             </AlertDialog.Action>
           </AlertDialog.Footer>
@@ -317,6 +347,7 @@
         {#each visibleMachines as machine (machine.id)}
           {@const presentation = connectionDevicePresentation(machine)}
           {@const shortUrl = connectionShortUrlPresentation(machine, connections.snapshot.shortDns)}
+          {@const deviceDns = shortDnsForMachine(machine)}
           <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md border border-border px-3 py-2.5">
             <span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
               <Monitor class="size-4" />
@@ -332,15 +363,46 @@
                 {shortUrl.status}{shortUrl.zone ? ` · ${shortUrl.zone}` : ''}
               </Badge>
             </div>
-            <span
-              class={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                presentation.tone === 'online'
-                  ? 'border-success/25 bg-success/10 text-success'
-                  : presentation.tone === 'update'
-                    ? 'border-warning/25 bg-warning/10 text-warning'
-                    : 'border-border bg-muted text-muted-foreground'
-              }`}
-            >
+            <div class="flex shrink-0 items-center justify-end gap-2">
+              {#if presentation.tone === 'online' && deviceDns?.state === 'setup-required' && connections.shortDnsSetupSupported}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={settingUpDns !== null}
+                  onclick={() => void setupShortDns(machine.id).catch(reportError)}
+                >
+                  {settingUpDns === machine.id ? 'Installing…' : 'Install DNS'}
+                </Button>
+              {:else if presentation.tone === 'online' && deviceDns?.state === 'route-required'}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => void openShortDnsApproval(deviceDns).catch(reportError)}
+                >
+                  <ExternalLink data-icon="inline-start" />
+                  Open DNS
+                </Button>
+                {#if connections.shortDnsRemovalSupported}
+                  <Button variant="outline" size="sm" onclick={() => requestDnsRemoval(machine.id)}>
+                    <Trash2 data-icon="inline-start" />
+                    Remove DNS
+                  </Button>
+                {/if}
+              {:else if presentation.tone === 'online' && deviceDns?.state === 'ready' && connections.shortDnsRemovalSupported}
+                <Button variant="outline" size="sm" onclick={() => requestDnsRemoval(machine.id)}>
+                  <Trash2 data-icon="inline-start" />
+                  Remove DNS
+                </Button>
+              {/if}
+              <span
+                class={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                  presentation.tone === 'online'
+                    ? 'border-success/25 bg-success/10 text-success'
+                    : presentation.tone === 'update'
+                      ? 'border-warning/25 bg-warning/10 text-warning'
+                      : 'border-border bg-muted text-muted-foreground'
+                }`}
+              >
               <span
                 class={`size-2 rounded-full ${
                   presentation.tone === 'online'
@@ -352,7 +414,8 @@
                 aria-hidden="true"
               ></span>
               {presentation.status}
-            </span>
+              </span>
+            </div>
           </div>
         {:else}
           <div class="rounded-md border border-dashed border-border p-4 text-center text-[11px] text-muted-foreground">

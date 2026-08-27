@@ -1,7 +1,11 @@
 import path from "node:path";
 import { hostname } from "node:os";
 import type { DeviceDescriptor } from "../../../shared/types/devices.js";
-import type { ConnectionSnapshot } from "../../../shared/types/connections.js";
+import type {
+  ConnectionSnapshot,
+  MachineConnection,
+  ShortDnsInfo,
+} from "../../../shared/types/connections.js";
 import { ConnectionRegistry } from "../../../electron/connections/ConnectionRegistry.js";
 import {
   TailscaleDiscovery,
@@ -68,6 +72,10 @@ export class ServerDeviceSessions {
       shortDns: new DeviceDnsSetup({
         helperPath: resolveDeviceDnsHelperPath(),
       }),
+      remoteShortDns: {
+        setup: (machine) => this.runRemoteShortDns(machine, "setup"),
+        remove: (machine) => this.runRemoteShortDns(machine, "remove"),
+      },
     });
   }
 
@@ -112,6 +120,18 @@ export class ServerDeviceSessions {
     this.records.clear();
   }
 
+  private runRemoteShortDns(
+    machine: MachineConnection,
+    operation: "setup" | "remove",
+  ): Promise<ShortDnsInfo> {
+    if (!machine.deviceId) {
+      throw new Error("The selected Device has no trusted identity.");
+    }
+    return operation === "setup"
+      ? this.sessions.setupShortDns(machine.deviceId)
+      : this.sessions.removeShortDns(machine.deviceId);
+  }
+
   private resolveDevices(snapshot: ConnectionSnapshot): SessionDevice[] {
     const next = new Map<string, { key: string; device: SessionDevice }>();
     const localKey = `local:${this.options.localEndpoint}`;
@@ -122,6 +142,7 @@ export class ServerDeviceSessions {
           ? this.records.get(this.options.localDescriptor.deviceId)!.device
           : new RemoteSessionDevice({
               deviceId: this.options.localDescriptor.deviceId,
+              displayName: this.options.localDescriptor.name,
               endpoint: this.options.localEndpoint,
               local: true,
               token: this.options.localToken,
@@ -145,6 +166,7 @@ export class ServerDeviceSessions {
             ? this.records.get(machine.deviceId)!.device
             : new RemoteSessionDevice({
                 deviceId: machine.deviceId,
+                displayName: machine.name,
                 endpoint: machine.endpoint,
                 fetchImpl: this.fetchImpl,
                 bootstrapTailscale: true,

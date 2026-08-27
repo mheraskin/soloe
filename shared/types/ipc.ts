@@ -577,8 +577,8 @@ export interface ConnectionsApi {
   get(): Promise<IpcResult<ConnectionSnapshot>>;
   refresh(): Promise<IpcResult<ConnectionSnapshot>>;
   configure(patch: import('./connections.js').ConnectionPreferencesUpdate): Promise<IpcResult<ConnectionSnapshot>>;
-  setupShortDns?(): Promise<IpcResult<ConnectionSnapshot>>;
-  removeShortDns?(): Promise<IpcResult<ConnectionSnapshot>>;
+  setupShortDns?(targetId?: ConnectionId): Promise<IpcResult<ConnectionSnapshot>>;
+  removeShortDns?(targetId?: ConnectionId): Promise<IpcResult<ConnectionSnapshot>>;
   add(request: AddMachineConnectionRequest): Promise<IpcResult<ConnectionSnapshot>>;
   remove(id: ConnectionId): Promise<IpcResult<ConnectionSnapshot>>;
   setEnabled(id: ConnectionId, enabled: boolean): Promise<IpcResult<ConnectionSnapshot>>;

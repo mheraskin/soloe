@@ -72,6 +72,22 @@ export class DeviceDnsSetup {
         readyZones: []
       };
     }
+    return this.statusFor(zone, nameserver);
+  }
+
+  async statusFor(rawZone: string, rawNameserver: string): Promise<ShortDnsInfo> {
+    const zone = deviceZone(`${rawZone}.invalid`) === rawZone ? rawZone : null;
+    const nameserver = validTailscaleIpv4(rawNameserver);
+    if (!zone || !nameserver) {
+      return {
+        state: 'error',
+        zone,
+        nameserver,
+        message: 'Tailscale did not report a usable Device name and IPv4 address.',
+        setupUrl: null,
+        readyZones: []
+      };
+    }
     const probe = `soloe-dns-check.${zone}`;
     const direct = await withTimeout(this.options.resolveDirect
       ? this.options.resolveDirect(probe, nameserver)

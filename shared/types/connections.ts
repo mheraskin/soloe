@@ -35,6 +35,7 @@ export interface MachineConnection {
   serverEpoch?: string;
   lastSeenAt?: string;
   updateRequired?: boolean;
+  shortDns?: ShortDnsInfo;
 }
 
 export type TailscaleConnectionState =

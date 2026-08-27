@@ -466,17 +466,17 @@ const localBackend = {
     refresh: async () => unwrap(await c.connections.refresh()),
     configure: async (patch: import('@shared/types/connections.js').ConnectionPreferencesUpdate) =>
       unwrap(await c.connections.configure(toIpcPayload(patch))),
-    setupShortDns: async () => {
+    setupShortDns: async (targetId?: import('@shared/types/connections.js').ConnectionId) => {
       if (!c.connections.setupShortDns) {
         throw new Error('Short DNS setup must be run from Soloe on that Device.');
       }
-      return unwrap(await c.connections.setupShortDns());
+      return unwrap(await c.connections.setupShortDns(targetId));
     },
-    removeShortDns: async () => {
+    removeShortDns: async (targetId?: import('@shared/types/connections.js').ConnectionId) => {
       if (!c.connections.removeShortDns) {
         throw new Error('Short DNS removal must be run from Soloe on that Device.');
       }
-      return unwrap(await c.connections.removeShortDns());
+      return unwrap(await c.connections.removeShortDns(targetId));
     },
     add: async (request: Parameters<typeof c.connections.add>[0]) =>
       unwrap(await c.connections.add(toIpcPayload(request))),

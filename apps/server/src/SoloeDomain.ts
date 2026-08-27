@@ -2372,6 +2372,10 @@ export class SoloeDomain extends EventEmitter {
         return connections.refresh();
       case "configure":
         return connections.configureTailscale(args[0] as ConnectionPreferencesUpdate);
+      case "setupShortDns":
+        return connections.setupShortDns(args[0] as ConnectionId | undefined);
+      case "removeShortDns":
+        return connections.removeShortDns(args[0] as ConnectionId | undefined);
       case "add":
         return connections.add((args[0] as AddMachineConnectionRequest).endpoint);
       case "remove":

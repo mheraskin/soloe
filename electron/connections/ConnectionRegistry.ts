@@ -105,9 +105,14 @@ export interface ConnectionRegistryOptions {
       selfDnsName: string | null;
       selfIpAddress: string | null;
     }): Promise<ShortDnsInfo>;
+    statusFor?(zone: string, nameserver: string): Promise<ShortDnsInfo>;
     setup(): Promise<ShortDnsInfo>;
     remove(): Promise<ShortDnsInfo>;
     resolvedZones?(zones: Array<{ zone: string; nameserver: string }>): Promise<string[]>;
+  };
+  remoteShortDns?: {
+    setup(machine: MachineConnection): Promise<ShortDnsInfo>;
+    remove(machine: MachineConnection): Promise<ShortDnsInfo>;
   };
 }
 
@@ -239,15 +244,27 @@ export class ConnectionRegistry {
     return this.refresh();
   }
 
-  async setupShortDns(): Promise<ConnectionSnapshot> {
+  async setupShortDns(targetId: ConnectionId = 'local'): Promise<ConnectionSnapshot> {
     await this.init();
+    if (targetId !== 'local') {
+      const machine = this.remoteShortDnsTarget(targetId);
+      const shortDns = await this.options.remoteShortDns!.setup(cloneMachine(machine));
+      this.machines.set(targetId, { ...machine, shortDns });
+      return this.publish();
+    }
     if (!this.options.shortDns) return this.snapshot();
     this.shortDns = await this.options.shortDns.setup();
     return this.publish();
   }
 
-  async removeShortDns(): Promise<ConnectionSnapshot> {
+  async removeShortDns(targetId: ConnectionId = 'local'): Promise<ConnectionSnapshot> {
     await this.init();
+    if (targetId !== 'local') {
+      const machine = this.remoteShortDnsTarget(targetId);
+      const shortDns = await this.options.remoteShortDns!.remove(cloneMachine(machine));
+      this.machines.set(targetId, { ...machine, shortDns });
+      return this.publish();
+    }
     if (!this.options.shortDns) return this.snapshot();
     this.shortDns = await this.options.shortDns.remove();
     return this.publish();
@@ -500,6 +517,7 @@ export class ConnectionRegistry {
       source: Exclude<MachineConnectionSource, 'local'>;
       os?: string;
       existingId?: ConnectionId;
+      shortDns?: { zone: string; nameserver: string };
     }>();
     for (const machine of this.machines.values()) {
       if (machine.id === 'local' || !machine.endpoint) continue;
@@ -523,7 +541,15 @@ export class ConnectionRegistry {
           name: existing?.[1].trust === 'pinned' ? existing[1].name : device.name,
           source: existing?.[1].source === 'manual' ? 'manual' : 'discovered',
           ...(device.os ? { os: device.os } : {}),
-          existingId: existing?.[0] ?? connectionIdForEndpoint(endpoint)
+          existingId: existing?.[0] ?? connectionIdForEndpoint(endpoint),
+          ...(device.ipAddress && device.dnsName.split('.')[0]
+            ? {
+                shortDns: {
+                  zone: device.dnsName.split('.')[0]!,
+                  nameserver: device.ipAddress
+                }
+              }
+            : {})
         });
       }
     }
@@ -534,11 +560,17 @@ export class ConnectionRegistry {
         const described = available && this.options.describe
           ? await this.options.describe(target.endpoint).catch(() => undefined)
           : undefined;
-        return { target, available, described };
+        const shortDns = available && target.shortDns && this.options.shortDns?.statusFor
+          ? await this.options.shortDns.statusFor(
+              target.shortDns.zone,
+              target.shortDns.nameserver
+            )
+          : undefined;
+        return { target, available, described, shortDns };
       })
     );
     const seenAt = this.now().toISOString();
-    for (const { target, available } of results) {
+    for (const { target, available, shortDns } of results) {
       const id = target.existingId ?? connectionIdForEndpoint(target.endpoint);
       const existing = this.machines.get(id);
       if (!available && !existing) continue;
@@ -553,6 +585,11 @@ export class ConnectionRegistry {
         active: id === this.activeId,
         isSelf: false,
         ...(target.os && existing?.trust !== 'pinned' ? { os: target.os } : {}),
+        ...(shortDns
+          ? { shortDns }
+          : existing?.shortDns
+            ? { shortDns: existing.shortDns }
+            : {}),
         ...(available
           ? { lastSeenAt: seenAt }
           : existing?.lastSeenAt
@@ -609,7 +646,9 @@ export class ConnectionRegistry {
 
   private snapshot(): ConnectionSnapshot {
     const machines = [...this.machines.values()]
-      .map((machine) => cloneMachine(machine))
+      .map((machine) => cloneMachine(
+        machine.id === 'local' ? { ...machine, shortDns: this.shortDns } : machine
+      ))
       .sort((left, right) => {
         if (left.id === 'local') return -1;
         if (right.id === 'local') return 1;
@@ -631,6 +670,17 @@ export class ConnectionRegistry {
       shortDns: { ...this.shortDns },
       refreshedAt: this.refreshedAt
     };
+  }
+
+  private remoteShortDnsTarget(targetId: ConnectionId): MachineConnection {
+    const machine = this.machines.get(targetId);
+    if (!machine?.deviceId || !machine.endpoint || machine.status !== 'available') {
+      throw new Error('The selected Device is not available for DNS setup.');
+    }
+    if (!this.options.remoteShortDns) {
+      throw new Error('Remote DNS setup is unavailable in this Soloe Client.');
+    }
+    return machine;
   }
 
   private publish(): ConnectionSnapshot {
@@ -869,7 +919,10 @@ function cloneMachine(machine: MachineConnection): MachineConnection {
     endpointAliases: [...machine.endpointAliases],
     ...(machine.capabilities ? { capabilities: [...machine.capabilities] } : {}),
     ...(machine.protocol ? { protocol: { ...machine.protocol } } : {}),
-    ...(machine.compatibility ? { compatibility: { ...machine.compatibility } } : {})
+    ...(machine.compatibility ? { compatibility: { ...machine.compatibility } } : {}),
+    ...(machine.shortDns
+      ? { shortDns: { ...machine.shortDns, readyZones: [...machine.shortDns.readyZones] } }
+      : {})
   };
 }
 

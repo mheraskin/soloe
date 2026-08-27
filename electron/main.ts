@@ -195,7 +195,21 @@ async function initializeConnections(): Promise<void> {
       (input, init) => net.fetch(String(input), init),
       { bootstrapTailscale: true }
     ),
-    shortDns: dnsSetup
+    shortDns: dnsSetup,
+    remoteShortDns: {
+      setup: (machine) => {
+        if (!machine.deviceId || !multiDeviceSessions) {
+          throw new Error('Remote Device DNS setup is not ready.');
+        }
+        return multiDeviceSessions.setupShortDns(machine.deviceId);
+      },
+      remove: (machine) => {
+        if (!machine.deviceId || !multiDeviceSessions) {
+          throw new Error('Remote Device DNS removal is not ready.');
+        }
+        return multiDeviceSessions.removeShortDns(machine.deviceId);
+      }
+    }
   });
   await connectionRegistry.init();
   connectionsIpc = new ConnectionsIpc({
@@ -310,6 +324,7 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
         ? sessionDeviceRecords.get(localConnection.deviceId)!.device
         : new RemoteSessionDevice({
             deviceId: localConnection.deviceId,
+            displayName: localConnection.name,
             endpoint: localServerUrl,
             local: true,
             fetchImpl: (input, init) => net.fetch(String(input), init),
@@ -392,6 +407,7 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
         ? sessionDeviceRecords.get(machine.deviceId)!.device
         : new RemoteSessionDevice({
             deviceId: machine.deviceId,
+            displayName: machine.name,
             endpoint: machine.endpoint,
             fetchImpl: (input, init) => net.fetch(String(input), init),
             bootstrapTailscale: true

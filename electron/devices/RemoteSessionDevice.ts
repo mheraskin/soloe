@@ -19,6 +19,7 @@ import type {
   SessionUpdate
 } from '@shared/types/sessions.js';
 import type { Project, ProjectOpenRequest, ProjectUpdate } from '@shared/types/projects.js';
+import type { ConnectionSnapshot, ShortDnsInfo } from '@shared/types/connections.js';
 import type { GitWorktree } from '@shared/types/git.js';
 import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
 import type { ImagePasteRequest, ImagePasteResult } from '@shared/types/files.js';
@@ -62,6 +63,7 @@ const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 export interface RemoteSessionDeviceOptions {
   deviceId: DeviceId;
+  displayName?: string;
   endpoint: string;
   fetchImpl: FetchLike;
   socketFactory?: ConstructorParameters<typeof DeviceTransport>[0]['socketFactory'];
@@ -74,6 +76,7 @@ export interface RemoteSessionDeviceOptions {
 
 export class RemoteSessionDevice implements SessionDevice {
   readonly deviceId: DeviceId;
+  readonly displayName?: string;
   readonly local: boolean;
   private readonly clientId: string;
   private readonly transport: DeviceTransport;
@@ -92,6 +95,7 @@ export class RemoteSessionDevice implements SessionDevice {
 
   constructor(private readonly options: RemoteSessionDeviceOptions) {
     this.deviceId = options.deviceId;
+    this.displayName = options.displayName?.trim() || undefined;
     this.local = options.local ?? false;
     this.clientId = options.clientId ?? `sessions-${randomUUID()}`;
     this.currentStatus = {
@@ -167,7 +171,7 @@ export class RemoteSessionDevice implements SessionDevice {
       this.currentStatus = {
         deviceId: this.deviceId,
         state: 'offline',
-        descriptor: this.transport.status.descriptor,
+        descriptor: this.transport.status.descriptor ?? this.currentStatus.descriptor,
         error: error instanceof Error ? error.message : String(error)
       };
       this.publishStatus();
@@ -374,6 +378,16 @@ export class RemoteSessionDevice implements SessionDevice {
     return this.rpc('network', 'ensureTailscalePort', [virtualHostname
       ? { port: validPort, virtualHostname }
       : validPort]);
+  }
+
+  async setupShortDns(): Promise<ShortDnsInfo> {
+    const snapshot = await this.rpc<ConnectionSnapshot>('connections', 'setupShortDns', []);
+    return structuredClone(snapshot.shortDns);
+  }
+
+  async removeShortDns(): Promise<ShortDnsInfo> {
+    const snapshot = await this.rpc<ConnectionSnapshot>('connections', 'removeShortDns', []);
+    return structuredClone(snapshot.shortDns);
   }
 
   workspacePlan(intent: DeviceWorkspaceIntent): Promise<DeviceWorkspacePlan> {
@@ -591,7 +605,7 @@ export class RemoteSessionDevice implements SessionDevice {
     this.currentStatus = {
       deviceId: this.deviceId,
       state,
-      descriptor: status.descriptor
+      descriptor: status.descriptor ?? this.currentStatus.descriptor
     };
     this.publishStatus();
     if (state === 'offline') this.scheduleReconnect();

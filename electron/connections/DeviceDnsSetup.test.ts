@@ -93,6 +93,23 @@ describe('DeviceDnsSetup', () => {
     ])).resolves.toEqual(['xps']);
   });
 
+  it('reports setup state for a remote Device nameserver', async () => {
+    const setup = new DeviceDnsSetup({
+      helperPath: '/tmp/soloe-device-dns',
+      resolveDirect: async (hostname, nameserver) =>
+        hostname === 'soloe-dns-check.xps' && nameserver === '100.64.0.2'
+          ? []
+          : ['100.64.0.2'],
+      resolveSystem: async () => []
+    });
+
+    await expect(setup.statusFor('xps', '100.64.0.2')).resolves.toMatchObject({
+      state: 'setup-required',
+      zone: 'xps',
+      nameserver: '100.64.0.2'
+    });
+  });
+
   it('normalizes only safe single-label zones and Tailscale IPv4 addresses', () => {
     expect(deviceZone('MBP.tail.ts.net')).toBe('mbp');
     expect(deviceZone('-bad.tail.ts.net')).toBeNull();

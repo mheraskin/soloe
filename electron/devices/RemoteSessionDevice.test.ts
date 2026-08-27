@@ -223,6 +223,60 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('installs and removes short DNS through the owning remote Device', async () => {
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/api/device/describe') return jsonResponse(descriptor(FIRST_EPOCH));
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+          args: unknown[];
+        };
+        calls.push(request);
+        return jsonResponse({
+          ok: true,
+          value: {
+            activeId: 'local',
+            machines: [],
+            preferences: { tailscaleEnabled: true, tailscaleHttpsPort: 443 },
+            tailscale: {
+              state: 'connected',
+              tailnet: 'example.com',
+              selfDnsName: 'alpha.tailnet.ts.net',
+              message: null,
+              sharing: { state: 'ready', message: null, setupUrl: null }
+            },
+            shortDns: {
+              state: request.method === 'setupShortDns' ? 'ready' : 'setup-required',
+              zone: 'alpha',
+              nameserver: '100.64.0.2',
+              message: null,
+              setupUrl: null,
+              readyZones: request.method === 'setupShortDns' ? ['alpha'] : []
+            },
+            refreshedAt: '2026-08-27T10:00:00.000Z'
+          }
+        });
+      },
+      socketFactory: () => new FakeSocket()
+    });
+
+    await expect(client.setupShortDns()).resolves.toMatchObject({ state: 'ready', zone: 'alpha' });
+    await expect(client.removeShortDns()).resolves.toMatchObject({
+      state: 'setup-required',
+      zone: 'alpha'
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({ namespace: 'connections', method: 'setupShortDns', args: [] }),
+      expect.objectContaining({ namespace: 'connections', method: 'removeShortDns', args: [] })
+    ]);
+    client.dispose();
+  });
+
   it('routes Session metadata, deletion, and command preview to the owning remote Device', async () => {
     const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
     const client = new RemoteSessionDevice({

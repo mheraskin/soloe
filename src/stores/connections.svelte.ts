@@ -99,12 +99,12 @@ export class ConnectionsStore {
     this.snapshot = await ipc.connections.configure(patch);
   }
 
-  async setupShortDns(): Promise<void> {
-    this.snapshot = await ipc.connections.setupShortDns();
+  async setupShortDns(targetId: ConnectionId = 'local'): Promise<void> {
+    this.snapshot = await ipc.connections.setupShortDns(targetId);
   }
 
-  async removeShortDns(): Promise<void> {
-    this.snapshot = await ipc.connections.removeShortDns();
+  async removeShortDns(targetId: ConnectionId = 'local'): Promise<void> {
+    this.snapshot = await ipc.connections.removeShortDns(targetId);
   }
 
   async remove(id: ConnectionId): Promise<void> {

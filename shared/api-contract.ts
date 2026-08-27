@@ -84,6 +84,8 @@ export const SOLOE_API_METHODS = {
     "get",
     "refresh",
     "configure",
+    "setupShortDns",
+    "removeShortDns",
     "add",
     "remove",
     "setEnabled",

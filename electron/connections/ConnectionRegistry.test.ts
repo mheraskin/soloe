@@ -373,6 +373,74 @@ describe('ConnectionRegistry', () => {
     expect(snapshot.shortDns).toEqual(removed);
   });
 
+  it('reports each reachable Device DNS helper state independently', async () => {
+    const local = {
+      state: 'ready' as const,
+      zone: 'client',
+      nameserver: '100.64.0.1',
+      message: null,
+      setupUrl: 'https://login.tailscale.com/admin/dns',
+      readyZones: ['client']
+    };
+    const remote = {
+      state: 'setup-required' as const,
+      zone: 'alpha',
+      nameserver: '100.64.0.2',
+      message: 'Install Soloe DNS on this Device.',
+      setupUrl: null,
+      readyZones: []
+    };
+    const statusFor = vi.fn(async () => remote);
+    const registry = createRegistry({
+      discover: async () => CONNECTED,
+      probe: async () => true,
+      shortDns: {
+        status: vi.fn(async () => local),
+        statusFor,
+        setup: vi.fn(async () => local),
+        remove: vi.fn(async () => local)
+      }
+    });
+
+    const snapshot = await registry.refresh();
+
+    expect(statusFor).toHaveBeenCalledWith('alpha', '100.64.0.2');
+    expect(snapshot.machines.find((machine) => machine.endpoint?.includes('alpha'))?.shortDns)
+      .toEqual(remote);
+  });
+
+  it('routes DNS setup to the selected remote Device', async () => {
+    const installed = {
+      state: 'route-required' as const,
+      zone: 'alpha',
+      nameserver: '100.64.0.2',
+      message: 'Approve the route.',
+      setupUrl: 'https://login.tailscale.com/admin/dns',
+      readyZones: []
+    };
+    const setup = vi.fn(async () => installed);
+    const registry = createRegistry({
+      probe: async () => true,
+      remoteShortDns: { setup, remove: vi.fn() }
+    });
+    await registry.add('https://alpha.tail1234.ts.net');
+    const bound = await registry.bindDescriptor(
+      'https://alpha.tail1234.ts.net',
+      descriptor(DEVICE_A, 'Alpha')
+    );
+    const target = bound.machines.find((machine) => machine.deviceId === DEVICE_A)!;
+
+    const snapshot = await registry.setupShortDns(target.id);
+
+    expect(setup).toHaveBeenCalledWith(expect.objectContaining({
+      id: target.id,
+      deviceId: DEVICE_A,
+      name: 'Alpha'
+    }));
+    expect(snapshot.machines.find((machine) => machine.id === target.id)?.shortDns)
+      .toEqual(installed);
+  });
+
   it('blocks an endpoint that changes its pinned Device identity', async () => {
     const registry = createRegistry({ probe: async () => true });
     await registry.add('https://alpha.tail1234.ts.net');
@@ -466,6 +534,7 @@ describe('ConnectionRegistry', () => {
     probe?: (endpoint: string) => Promise<boolean>;
     describe?: ConstructorParameters<typeof ConnectionRegistry>[0]['describe'];
     shortDns?: NonNullable<ConstructorParameters<typeof ConnectionRegistry>[0]['shortDns']>;
+    remoteShortDns?: NonNullable<ConstructorParameters<typeof ConnectionRegistry>[0]['remoteShortDns']>;
   } = {}): ConnectionRegistry {
     return new ConnectionRegistry({
       filePath,
@@ -486,6 +555,7 @@ describe('ConnectionRegistry', () => {
       probe: overrides.probe ?? (async () => false),
       ...(overrides.describe ? { describe: overrides.describe } : {}),
       ...(overrides.shortDns ? { shortDns: overrides.shortDns } : {}),
+      ...(overrides.remoteShortDns ? { remoteShortDns: overrides.remoteShortDns } : {}),
       now: () => new Date('2026-08-12T12:00:00.000Z')
     });
   }

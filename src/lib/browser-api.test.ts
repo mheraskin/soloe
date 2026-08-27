@@ -8,6 +8,31 @@ import {
 import { createBrowserApi } from "./browser-api.js";
 
 describe("browser API", () => {
+  it("exposes short DNS setup and removal through the browser backend", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true, value: { machines: [] } }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "browser-test",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+
+    expect(api.transport?.supports("connections", "setupShortDns")).toBe(true);
+    expect(api.transport?.supports("connections", "removeShortDns")).toBe(true);
+
+    await api.connections.setupShortDns?.("device:11111111-1111-4111-8111-111111111111");
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "connections",
+      method: "setupShortDns",
+      args: ["device:11111111-1111-4111-8111-111111111111"],
+      clientId: "browser-test",
+    });
+  });
+
   it("exposes the Device Session contract in standalone web clients", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>

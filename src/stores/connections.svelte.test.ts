@@ -4,8 +4,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectionSnapshot } from '@shared/types/connections.js';
 
-const { refresh, removeShortDns, onChange, off } = vi.hoisted(() => ({
+const { refresh, setupShortDns, removeShortDns, onChange, off } = vi.hoisted(() => ({
   refresh: vi.fn(),
+  setupShortDns: vi.fn(),
   removeShortDns: vi.fn(),
   onChange: vi.fn(),
   off: vi.fn()
@@ -17,6 +18,7 @@ vi.mock('../lib/ipc', () => ({
     connections: {
       get: vi.fn(),
       refresh,
+      setupShortDns,
       removeShortDns,
       add: vi.fn(),
       remove: vi.fn(),
@@ -136,5 +138,40 @@ describe('ConnectionsStore discovery lifecycle', () => {
 
     expect(removeShortDns).toHaveBeenCalledOnce();
     expect(store.snapshot.shortDns.state).toBe('setup-required');
+  });
+
+  it('targets the selected remote Device when installing short DNS', async () => {
+    const installed = structuredClone(SNAPSHOT);
+    installed.machines.push({
+      id: 'device:22222222-2222-4222-8222-222222222222',
+      deviceId: '22222222-2222-4222-8222-222222222222',
+      name: 'xps',
+      endpoint: 'https://xps.example.test',
+      endpointAliases: [],
+      source: 'discovered',
+      status: 'available',
+      trust: 'pinned',
+      enabled: true,
+      active: false,
+      isSelf: false,
+      lastSeenAt: '2026-08-27T10:00:00.000Z',
+      shortDns: {
+        state: 'ready',
+        zone: 'xps',
+        nameserver: '100.64.0.2',
+        message: null,
+        setupUrl: null,
+        readyZones: ['xps']
+      }
+    });
+    setupShortDns.mockResolvedValue(installed);
+    const store = new ConnectionsStore();
+
+    await store.setupShortDns('device:22222222-2222-4222-8222-222222222222');
+
+    expect(setupShortDns).toHaveBeenCalledWith(
+      'device:22222222-2222-4222-8222-222222222222'
+    );
+    expect(store.snapshot.machines[1]?.shortDns?.state).toBe('ready');
   });
 });

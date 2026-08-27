@@ -41,18 +41,18 @@ export function connectionShortUrlPresentation(
   shortDns: ShortDnsInfo
 ): ConnectionShortUrlPresentation {
   const isLocal = isLocalMachine(machine);
-  const zone = isLocal
-    ? normalizeDnsZone(shortDns.zone)
-    : shortDnsZoneFromEndpoint(machine.endpoint);
+  const deviceDns = isLocal ? shortDns : machine.shortDns;
+  const zone = normalizeDnsZone(deviceDns?.zone ?? null)
+    ?? shortDnsZoneFromEndpoint(machine.endpoint);
 
-  if (isLocal) {
-    if (shortDns.state === 'ready' && zone) {
+  if (deviceDns) {
+    if (deviceDns.state === 'ready' && zone) {
       return { status: 'Short URL ready', tone: 'ready', zone };
     }
-    if (shortDns.state === 'setup-required') {
+    if (deviceDns.state === 'setup-required') {
       return { status: 'Install DNS', tone: 'attention', zone };
     }
-    if (shortDns.state === 'route-required') {
+    if (deviceDns.state === 'route-required') {
       return { status: 'Approve DNS route', tone: 'attention', zone };
     }
     return { status: 'Short URL unavailable', tone: 'unavailable', zone };

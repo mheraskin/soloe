@@ -139,6 +139,28 @@ describe('MultiDeviceSessions', () => {
     });
   });
 
+  it('uses the remembered Device name before an offline Device can provide a descriptor', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    laptop.clearDescriptor();
+    laptop.setState('offline');
+
+    const state = await new MultiDeviceSessions({ devices: [laptop] }).refresh();
+
+    expect(state.devices[0]).toMatchObject({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      available: false
+    });
+  });
+
   it('refreshes authoritative observations when an offline Device reconnects', async () => {
     const laptop = fakeDevice({
       deviceId: LAPTOP_ID,
@@ -875,7 +897,9 @@ function fakeDevice(input: {
   local?: boolean;
   hasProject?: boolean;
 }): SessionDevice & {
+  readonly displayName: string;
   setState(state: SessionDeviceStatus['state']): void;
+  clearDescriptor(): void;
   startedSessionIds: string[];
   terminalInputs: Array<{ terminalId: string; data: string }>;
   terminalOutputDemands: string[][];
@@ -973,6 +997,7 @@ function fakeDevice(input: {
   const statusListeners = new Set<(next: SessionDeviceStatus) => void>();
   return {
     deviceId: input.deviceId,
+    displayName: input.name,
     local: input.local ?? false,
     status,
     connect: async () => status,
@@ -1196,6 +1221,9 @@ function fakeDevice(input: {
     setState: (state) => {
       status.state = state;
       for (const listener of statusListeners) listener(structuredClone(status));
+    },
+    clearDescriptor: () => {
+      status.descriptor = null;
     },
     startedSessionIds,
     plannedIntents,
