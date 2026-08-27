@@ -349,6 +349,30 @@ describe('ConnectionRegistry', () => {
     });
   });
 
+  it('publishes the short DNS state returned after helper removal', async () => {
+    const removed = {
+      state: 'setup-required' as const,
+      zone: 'client',
+      nameserver: '100.64.0.1',
+      message: 'Install Soloe DNS on this Device.',
+      setupUrl: null,
+      readyZones: []
+    };
+    const remove = vi.fn(async () => removed);
+    const registry = createRegistry({
+      shortDns: {
+        status: vi.fn(async () => removed),
+        setup: vi.fn(async () => removed),
+        remove
+      }
+    });
+
+    const snapshot = await registry.removeShortDns();
+
+    expect(remove).toHaveBeenCalledOnce();
+    expect(snapshot.shortDns).toEqual(removed);
+  });
+
   it('blocks an endpoint that changes its pinned Device identity', async () => {
     const registry = createRegistry({ probe: async () => true });
     await registry.add('https://alpha.tail1234.ts.net');
@@ -441,6 +465,7 @@ describe('ConnectionRegistry', () => {
     discover?: () => Promise<TailscaleDiscoveryResult>;
     probe?: (endpoint: string) => Promise<boolean>;
     describe?: ConstructorParameters<typeof ConnectionRegistry>[0]['describe'];
+    shortDns?: NonNullable<ConstructorParameters<typeof ConnectionRegistry>[0]['shortDns']>;
   } = {}): ConnectionRegistry {
     return new ConnectionRegistry({
       filePath,
@@ -460,6 +485,7 @@ describe('ConnectionRegistry', () => {
       })),
       probe: overrides.probe ?? (async () => false),
       ...(overrides.describe ? { describe: overrides.describe } : {}),
+      ...(overrides.shortDns ? { shortDns: overrides.shortDns } : {}),
       now: () => new Date('2026-08-12T12:00:00.000Z')
     });
   }

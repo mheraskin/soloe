@@ -39,6 +39,7 @@ const EMPTY_SNAPSHOT: ConnectionSnapshot = {
 export class ConnectionsStore {
   readonly supported = supportsBackendOperation('connections', 'get');
   readonly shortDnsSetupSupported = supportsBackendOperation('connections', 'setupShortDns');
+  readonly shortDnsRemovalSupported = supportsBackendOperation('connections', 'removeShortDns');
   snapshot = $state<ConnectionSnapshot>(structuredClone(EMPTY_SNAPSHOT));
   loaded = $state(false);
   refreshing = $state(false);
@@ -100,6 +101,10 @@ export class ConnectionsStore {
 
   async setupShortDns(): Promise<void> {
     this.snapshot = await ipc.connections.setupShortDns();
+  }
+
+  async removeShortDns(): Promise<void> {
+    this.snapshot = await ipc.connections.removeShortDns();
   }
 
   async remove(id: ConnectionId): Promise<void> {

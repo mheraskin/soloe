@@ -106,6 +106,7 @@ export interface ConnectionRegistryOptions {
       selfIpAddress: string | null;
     }): Promise<ShortDnsInfo>;
     setup(): Promise<ShortDnsInfo>;
+    remove(): Promise<ShortDnsInfo>;
     resolvedZones?(zones: Array<{ zone: string; nameserver: string }>): Promise<string[]>;
   };
 }
@@ -242,6 +243,13 @@ export class ConnectionRegistry {
     await this.init();
     if (!this.options.shortDns) return this.snapshot();
     this.shortDns = await this.options.shortDns.setup();
+    return this.publish();
+  }
+
+  async removeShortDns(): Promise<ConnectionSnapshot> {
+    await this.init();
+    if (!this.options.shortDns) return this.snapshot();
+    this.shortDns = await this.options.shortDns.remove();
     return this.publish();
   }
 

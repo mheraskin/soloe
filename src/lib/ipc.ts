@@ -472,6 +472,12 @@ const localBackend = {
       }
       return unwrap(await c.connections.setupShortDns());
     },
+    removeShortDns: async () => {
+      if (!c.connections.removeShortDns) {
+        throw new Error('Short DNS removal must be run from Soloe on that Device.');
+      }
+      return unwrap(await c.connections.removeShortDns());
+    },
     add: async (request: Parameters<typeof c.connections.add>[0]) =>
       unwrap(await c.connections.add(toIpcPayload(request))),
     remove: async (id: Parameters<typeof c.connections.remove>[0]) =>

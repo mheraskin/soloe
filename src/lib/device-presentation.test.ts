@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { MachineConnection } from '@shared/types/connections.js';
+import type { MachineConnection, ShortDnsInfo } from '@shared/types/connections.js';
 import {
   connectionDevicePresentation,
   connectionDevices,
-  connectionDiscoverySummary
+  connectionDiscoverySummary,
+  connectionShortUrlPresentation
 } from './device-presentation.js';
 
 describe('connection device presentation', () => {
@@ -55,6 +56,50 @@ describe('connection device presentation', () => {
       status: 'unavailable'
     }))).toMatchObject({ status: 'Offline', tone: 'offline', isLocal: false });
   });
+
+  it('shows a verified short URL for a discovered Device zone', () => {
+    expect(connectionShortUrlPresentation(machine({
+      endpoint: 'https://xps.tailnet.ts.net:443'
+    }), shortDns({ readyZones: ['xps'] }))).toEqual({
+      status: 'Short URL ready',
+      tone: 'ready',
+      zone: 'xps'
+    });
+  });
+
+  it('shows the nip.io fallback when a discovered Device zone is not ready', () => {
+    expect(connectionShortUrlPresentation(machine({
+      endpoint: 'https://xps.tailnet.ts.net:443'
+    }), shortDns())).toEqual({
+      status: 'nip.io fallback',
+      tone: 'attention',
+      zone: 'xps'
+    });
+  });
+
+  it('shows the local DNS setup action', () => {
+    expect(connectionShortUrlPresentation(machine({
+      id: 'local',
+      source: 'local',
+      isSelf: true
+    }), shortDns({ state: 'setup-required', zone: 'macbook' }))).toEqual({
+      status: 'Install DNS',
+      tone: 'attention',
+      zone: 'macbook'
+    });
+  });
+
+  it('shows the local Tailscale route action', () => {
+    expect(connectionShortUrlPresentation(machine({
+      id: 'local',
+      source: 'local',
+      isSelf: true
+    }), shortDns({ state: 'route-required', zone: 'macbook' }))).toEqual({
+      status: 'Approve DNS route',
+      tone: 'attention',
+      zone: 'macbook'
+    });
+  });
 });
 
 function machine(overrides: Partial<MachineConnection>): MachineConnection {
@@ -69,6 +114,18 @@ function machine(overrides: Partial<MachineConnection>): MachineConnection {
     source: 'discovered',
     status: 'unavailable',
     trust: 'provisional',
+    ...overrides
+  };
+}
+
+function shortDns(overrides: Partial<ShortDnsInfo> = {}): ShortDnsInfo {
+  return {
+    state: 'ready',
+    zone: 'macbook',
+    nameserver: '100.64.0.1',
+    message: null,
+    setupUrl: null,
+    readyZones: [],
     ...overrides
   };
 }

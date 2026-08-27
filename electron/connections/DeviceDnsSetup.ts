@@ -23,6 +23,7 @@ export interface DeviceDnsSetupOptions {
   resolveDirect?: (hostname: string, nameserver: string) => Promise<string[]>;
   resolveSystem?: (hostname: string) => Promise<string[]>;
   install?: (request: DeviceDnsInstallRequest) => Promise<void>;
+  remove?: () => Promise<void>;
 }
 
 export interface DeviceDnsInstallRequest {
@@ -103,7 +104,7 @@ export class DeviceDnsSetup {
       zone,
       nameserver,
       message: `${zone} and *.${zone} resolve to this Device across the tailnet.`,
-      setupUrl: null,
+      setupUrl: DNS_ADMIN_URL,
       readyZones: [zone]
     };
   }
@@ -136,6 +137,29 @@ export class DeviceDnsSetup {
       await delay(200);
     }
     return this.status(this.identity);
+  }
+
+  async remove(): Promise<ShortDnsInfo> {
+    const current = await this.status(this.identity);
+    if (current.state === 'setup-required') return current;
+    if (current.state === 'ready') {
+      throw new Error(`Remove the restricted DNS route for ${current.zone} in Tailscale before uninstalling Soloe DNS.`);
+    }
+    if (current.state !== 'route-required') {
+      throw new Error(current.message ?? 'Soloe DNS cannot be removed in its current state.');
+    }
+    const remove = this.options.remove ?? (() => removeDeviceDns(this.options.platform));
+    await remove();
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const next = await this.status(this.identity);
+      if (next.state === 'setup-required') return next;
+      await delay(200);
+    }
+    const final = await this.status(this.identity);
+    if (final.state !== 'setup-required') {
+      throw new Error('Soloe DNS is still running after the uninstall command completed.');
+    }
+    return final;
   }
 }
 
@@ -194,12 +218,30 @@ async function installDeviceDns(
   }
 }
 
+async function removeDeviceDns(platform = process.platform): Promise<void> {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'soloe-device-dns-remove-'));
+  try {
+    if (platform === 'darwin') await removeMacos();
+    else if (platform === 'linux') await removeLinux(temporaryDirectory);
+    else if (platform === 'win32') await removeWindows(temporaryDirectory);
+    else throw new Error(`Soloe DNS removal is not supported on ${platform}.`);
+  } finally {
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 async function installLinux(request: DeviceDnsInstallRequest, directory: string): Promise<void> {
   const service = `[Unit]\nDescription=Soloe Device DNS\nAfter=network-online.target\n\n[Service]\nExecStart=/usr/local/libexec/soloe-device-dns --zone ${request.zone} --address ${request.nameserver}\nRestart=on-failure\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\n\n[Install]\nWantedBy=multi-user.target\n`;
   const servicePath = path.join(directory, 'soloe-device-dns.service');
   const scriptPath = path.join(directory, 'install.sh');
   await fs.writeFile(servicePath, service, { encoding: 'utf8', mode: 0o600 });
   await fs.writeFile(scriptPath, `#!/bin/sh\nset -eu\ninstall -d -m 0755 /usr/local/libexec\ninstall -m 0755 ${shellQuote(request.helperPath)} /usr/local/libexec/soloe-device-dns\ninstall -m 0644 ${shellQuote(servicePath)} /etc/systemd/system/soloe-device-dns.service\nsystemctl daemon-reload\nsystemctl enable --now soloe-device-dns.service\nsystemctl restart soloe-device-dns.service\n`, { encoding: 'utf8', mode: 0o700 });
+  await execFileAsync('pkexec', [scriptPath]);
+}
+
+async function removeLinux(directory: string): Promise<void> {
+  const scriptPath = path.join(directory, 'remove.sh');
+  await fs.writeFile(scriptPath, linuxDeviceDnsRemovalScript(), { encoding: 'utf8', mode: 0o700 });
   await execFileAsync('pkexec', [scriptPath]);
 }
 
@@ -220,6 +262,13 @@ async function installMacos(request: DeviceDnsInstallRequest, directory: string)
   await execFileAsync('osascript', ['-e', `do shell script ${appleScriptString(command)} with administrator privileges`]);
 }
 
+async function removeMacos(): Promise<void> {
+  await execFileAsync('osascript', [
+    '-e',
+    `do shell script ${appleScriptString(macosDeviceDnsRemovalCommand())} with administrator privileges`
+  ]);
+}
+
 async function installWindows(request: DeviceDnsInstallRequest, directory: string): Promise<void> {
   const scriptPath = path.join(directory, 'install.ps1');
   const source = powershellString(request.helperPath);
@@ -229,6 +278,47 @@ async function installWindows(request: DeviceDnsInstallRequest, directory: strin
   await fs.writeFile(scriptPath, script, { encoding: 'utf8', mode: 0o600 });
   const elevated = `Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',${powershellString(scriptPath)})`;
   await execFileAsync('powershell.exe', ['-NoProfile', '-Command', elevated]);
+}
+
+async function removeWindows(directory: string): Promise<void> {
+  const scriptPath = path.join(directory, 'remove.ps1');
+  await fs.writeFile(scriptPath, windowsDeviceDnsRemovalScript(), { encoding: 'utf8', mode: 0o600 });
+  const elevated = `Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',${powershellString(scriptPath)})`;
+  await execFileAsync('powershell.exe', ['-NoProfile', '-Command', elevated]);
+}
+
+export function linuxDeviceDnsRemovalScript(): string {
+  return `#!/bin/sh
+set -eu
+systemctl disable --now soloe-device-dns.service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/soloe-device-dns.service
+rm -f /usr/local/libexec/soloe-device-dns
+systemctl daemon-reload
+`;
+}
+
+export function macosDeviceDnsRemovalCommand(): string {
+  const label = 'com.soloe.device-dns';
+  const destination = '/Library/Application Support/Soloe/soloe-device-dns';
+  const plist = `/Library/LaunchDaemons/${label}.plist`;
+  return [
+    `(launchctl bootout system/${label} >/dev/null 2>&1 || true)`,
+    `rm -f ${shellQuote(plist)}`,
+    `rm -f ${shellQuote(destination)}`,
+    `rm -f /var/log/soloe-device-dns.log`,
+    `(rmdir ${shellQuote(path.dirname(destination))} >/dev/null 2>&1 || true)`
+  ].join(' && ');
+}
+
+export function windowsDeviceDnsRemovalScript(): string {
+  return `$ErrorActionPreference = 'Stop'
+$directory = Join-Path $env:ProgramFiles 'Soloe'
+$destination = Join-Path $directory 'soloe-device-dns.exe'
+& sc.exe stop SoloeDeviceDns 2>$null | Out-Null
+& sc.exe delete SoloeDeviceDns 2>$null | Out-Null
+Remove-Item -Force -LiteralPath $destination -ErrorAction SilentlyContinue
+Remove-Item -Force -LiteralPath $directory -ErrorAction SilentlyContinue
+`;
 }
 
 function disabledStatus(): ShortDnsInfo {

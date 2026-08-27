@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { CircleAlert, ExternalLink, Globe2, Monitor, RefreshCw, Wifi, WifiOff } from '@lucide/svelte';
+  import { CircleAlert, ExternalLink, Globe2, Monitor, RefreshCw, Trash2, Wifi, WifiOff } from '@lucide/svelte';
   import { connections } from '../../stores/connections.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
   import {
     connectionDiscoverySummary,
     connectionDevicePresentation,
-    connectionDevices
+    connectionDevices,
+    connectionShortUrlPresentation
   } from '../../lib/device-presentation.js';
+  import { Badge } from '$lib/components/ui/badge';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Switch } from '$lib/components/ui/switch';
@@ -24,6 +27,8 @@
   let portDraft = $state('443');
   let savingPreferences = $state(false);
   let settingUpDns = $state(false);
+  let removingDns = $state(false);
+  let removeDnsOpen = $state(false);
 
   $effect(() => {
     if (!savingPreferences) {
@@ -96,6 +101,25 @@
   async function openShortDnsApproval(): Promise<void> {
     const url = connections.snapshot.shortDns.setupUrl;
     if (url) await ipc.system.openExternal(url);
+  }
+
+  async function removeShortDns(): Promise<void> {
+    removingDns = true;
+    try {
+      await connections.removeShortDns();
+    } finally {
+      removingDns = false;
+    }
+  }
+
+  async function confirmShortDnsRemoval(): Promise<void> {
+    if (connections.snapshot.shortDns.state === 'ready') {
+      await openShortDnsApproval();
+      return;
+    }
+    if (connections.snapshot.shortDns.state === 'route-required') {
+      await removeShortDns();
+    }
   }
 
   function shortDnsTitle(): string {
@@ -198,12 +222,55 @@
             </Button>
           {/if}
         {:else if connections.snapshot.shortDns.state === 'route-required'}
-          <Button variant="outline" size="sm" class="gap-1.5" onclick={() => void openShortDnsApproval().catch(reportError)}>
-            <ExternalLink class="size-3.5" />
-            Open Tailscale DNS
+          <div class="flex shrink-0 flex-wrap justify-end gap-2">
+            <Button variant="outline" size="sm" onclick={() => void openShortDnsApproval().catch(reportError)}>
+              <ExternalLink data-icon="inline-start" />
+              Open Tailscale DNS
+            </Button>
+            {#if connections.shortDnsRemovalSupported}
+              <Button variant="outline" size="sm" onclick={() => { removeDnsOpen = true; }}>
+                <Trash2 data-icon="inline-start" />
+                Remove DNS
+              </Button>
+            {/if}
+          </div>
+        {:else if connections.snapshot.shortDns.state === 'ready' && connections.shortDnsRemovalSupported}
+          <Button variant="outline" size="sm" onclick={() => { removeDnsOpen = true; }}>
+            <Trash2 data-icon="inline-start" />
+            Remove DNS
           </Button>
         {/if}
       </div>
+
+      <AlertDialog.Root bind:open={removeDnsOpen}>
+        <AlertDialog.Content>
+          <AlertDialog.Header>
+            <AlertDialog.Title>Remove short Device URLs?</AlertDialog.Title>
+            <AlertDialog.Description>
+              {#if connections.snapshot.shortDns.state === 'ready'}
+                First remove the restricted nameserver for {connections.snapshot.shortDns.zone} in Tailscale DNS.
+                Then return here, refresh, and choose Remove DNS again to uninstall the helper.
+              {:else}
+                The private DNS route is no longer active. This will uninstall the Soloe DNS helper from this Device.
+              {/if}
+            </AlertDialog.Description>
+          </AlertDialog.Header>
+          <AlertDialog.Footer>
+            <AlertDialog.Cancel disabled={removingDns}>Cancel</AlertDialog.Cancel>
+            <AlertDialog.Action
+              variant={connections.snapshot.shortDns.state === 'ready' ? 'default' : 'destructive'}
+              disabled={removingDns}
+              onclick={() => void confirmShortDnsRemoval().catch(reportError)}
+            >
+              {#if connections.snapshot.shortDns.state === 'ready'}
+                Open Tailscale DNS
+              {:else}
+                {removingDns ? 'Uninstalling…' : 'Uninstall DNS'}
+              {/if}
+            </AlertDialog.Action>
+          </AlertDialog.Footer>
+        </AlertDialog.Content>
+      </AlertDialog.Root>
     {/if}
 
     <div class="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/20 p-3">
@@ -249,15 +316,21 @@
         <h3 class="m-0 text-xs font-medium">Devices</h3>
         {#each visibleMachines as machine (machine.id)}
           {@const presentation = connectionDevicePresentation(machine)}
+          {@const shortUrl = connectionShortUrlPresentation(machine, connections.snapshot.shortDns)}
           <div class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md border border-border px-3 py-2.5">
             <span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
               <Monitor class="size-4" />
             </span>
-            <div class="flex min-w-0 items-center gap-2">
-              <span class="truncate text-xs font-medium">{presentation.name}</span>
-              {#if presentation.isLocal}
-                <span class="shrink-0 text-[10px] text-muted-foreground">This device</span>
-              {/if}
+            <div class="flex min-w-0 flex-col items-start gap-1.5">
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="truncate text-xs font-medium">{presentation.name}</span>
+                {#if presentation.isLocal}
+                  <span class="shrink-0 text-[10px] text-muted-foreground">This device</span>
+                {/if}
+              </div>
+              <Badge variant={shortUrl.tone === 'ready' ? 'secondary' : 'outline'}>
+                {shortUrl.status}{shortUrl.zone ? ` · ${shortUrl.zone}` : ''}
+              </Badge>
             </div>
             <span
               class={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${

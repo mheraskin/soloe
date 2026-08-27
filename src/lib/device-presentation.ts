@@ -1,10 +1,16 @@
-import type { MachineConnection } from '@shared/types/connections.js';
+import type { MachineConnection, ShortDnsInfo } from '@shared/types/connections.js';
 
 export interface ConnectionDevicePresentation {
   name: string;
   status: 'Online' | 'Offline' | 'Update Soloe';
   tone: 'online' | 'offline' | 'update';
   isLocal: boolean;
+}
+
+export interface ConnectionShortUrlPresentation {
+  status: 'Short URL ready' | 'Install DNS' | 'Approve DNS route' | 'nip.io fallback' | 'Short URL unavailable';
+  tone: 'ready' | 'attention' | 'unavailable';
+  zone: string | null;
 }
 
 export function connectionDevicePresentation(
@@ -28,6 +34,37 @@ export function connectionDevicePresentation(
     return { name: machine.name, status: 'Online', tone: 'online', isLocal };
   }
   return { name: machine.name, status: 'Offline', tone: 'offline', isLocal };
+}
+
+export function connectionShortUrlPresentation(
+  machine: MachineConnection,
+  shortDns: ShortDnsInfo
+): ConnectionShortUrlPresentation {
+  const isLocal = isLocalMachine(machine);
+  const zone = isLocal
+    ? normalizeDnsZone(shortDns.zone)
+    : shortDnsZoneFromEndpoint(machine.endpoint);
+
+  if (isLocal) {
+    if (shortDns.state === 'ready' && zone) {
+      return { status: 'Short URL ready', tone: 'ready', zone };
+    }
+    if (shortDns.state === 'setup-required') {
+      return { status: 'Install DNS', tone: 'attention', zone };
+    }
+    if (shortDns.state === 'route-required') {
+      return { status: 'Approve DNS route', tone: 'attention', zone };
+    }
+    return { status: 'Short URL unavailable', tone: 'unavailable', zone };
+  }
+
+  if (!zone) {
+    return { status: 'Short URL unavailable', tone: 'unavailable', zone: null };
+  }
+  const ready = shortDns.readyZones.some((candidate) => normalizeDnsZone(candidate) === zone);
+  return ready
+    ? { status: 'Short URL ready', tone: 'ready', zone }
+    : { status: 'nip.io fallback', tone: 'attention', zone };
 }
 
 export function connectionDevices(
@@ -72,4 +109,20 @@ export function connectionDiscoverySummary(
 
 function isLocalMachine(machine: MachineConnection): boolean {
   return machine.id === 'local' || machine.source === 'local' || machine.isSelf;
+}
+
+function shortDnsZoneFromEndpoint(endpoint: string | null): string | null {
+  if (!endpoint) return null;
+  try {
+    return normalizeDnsZone(new URL(endpoint).hostname.split('.')[0] ?? null);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDnsZone(zone: string | null): string | null {
+  const normalized = zone?.trim().toLowerCase().replace(/\.$/u, '') ?? '';
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(normalized)
+    ? normalized
+    : null;
 }

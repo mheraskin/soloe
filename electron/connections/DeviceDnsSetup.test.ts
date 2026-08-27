@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DeviceDnsSetup, deviceZone, validTailscaleIpv4 } from './DeviceDnsSetup.js';
+import {
+  DeviceDnsSetup,
+  deviceZone,
+  linuxDeviceDnsRemovalScript,
+  macosDeviceDnsRemovalCommand,
+  validTailscaleIpv4,
+  windowsDeviceDnsRemovalScript
+} from './DeviceDnsSetup.js';
 
 const identity = {
   enabled: true,
@@ -33,6 +40,44 @@ describe('DeviceDnsSetup', () => {
     await expect(setup.status({ ...identity, connected: false })).resolves.toMatchObject({ state: 'unavailable' });
     await expect(setup.setup()).resolves.toMatchObject({ state: 'unavailable' });
     expect(install).not.toHaveBeenCalled();
+  });
+
+  it('removes the helper only after the restricted DNS route is absent', async () => {
+    let serviceReady = true;
+    let routeReady = true;
+    const remove = vi.fn(async () => { serviceReady = false; });
+    const setup = new DeviceDnsSetup({
+      helperPath: '/tmp/soloe-device-dns',
+      resolveDirect: async () => serviceReady ? ['100.99.182.95'] : [],
+      resolveSystem: async () => routeReady ? ['100.99.182.95'] : [],
+      remove
+    });
+
+    await setup.status(identity);
+    await expect(setup.remove()).rejects.toThrow(/restricted DNS route/i);
+    expect(remove).not.toHaveBeenCalled();
+
+    routeReady = false;
+    await expect(setup.remove()).resolves.toMatchObject({ state: 'setup-required' });
+    expect(remove).toHaveBeenCalledOnce();
+
+    await expect(setup.remove()).resolves.toMatchObject({ state: 'setup-required' });
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it('builds idempotent removal commands for every supported platform', () => {
+    expect(linuxDeviceDnsRemovalScript()).toContain('systemctl disable --now soloe-device-dns.service');
+    expect(linuxDeviceDnsRemovalScript()).toContain('rm -f /etc/systemd/system/soloe-device-dns.service');
+    expect(linuxDeviceDnsRemovalScript()).toContain('rm -f /usr/local/libexec/soloe-device-dns');
+    expect(linuxDeviceDnsRemovalScript()).toContain('systemctl daemon-reload');
+
+    expect(macosDeviceDnsRemovalCommand()).toContain('launchctl bootout system/com.soloe.device-dns');
+    expect(macosDeviceDnsRemovalCommand()).toContain("rm -f '/Library/LaunchDaemons/com.soloe.device-dns.plist'");
+    expect(macosDeviceDnsRemovalCommand()).toContain("rm -f '/Library/Application Support/Soloe/soloe-device-dns'");
+
+    expect(windowsDeviceDnsRemovalScript()).toContain('sc.exe stop SoloeDeviceDns');
+    expect(windowsDeviceDnsRemovalScript()).toContain('sc.exe delete SoloeDeviceDns');
+    expect(windowsDeviceDnsRemovalScript()).toContain("Remove-Item -Force -LiteralPath $destination");
   });
 
   it('verifies private routes independently for every Device zone', async () => {

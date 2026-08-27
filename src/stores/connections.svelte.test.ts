@@ -4,8 +4,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectionSnapshot } from '@shared/types/connections.js';
 
-const { refresh, onChange, off } = vi.hoisted(() => ({
+const { refresh, removeShortDns, onChange, off } = vi.hoisted(() => ({
   refresh: vi.fn(),
+  removeShortDns: vi.fn(),
   onChange: vi.fn(),
   off: vi.fn()
 }));
@@ -16,6 +17,7 @@ vi.mock('../lib/ipc', () => ({
     connections: {
       get: vi.fn(),
       refresh,
+      removeShortDns,
       add: vi.fn(),
       remove: vi.fn(),
       setEnabled: vi.fn(),
@@ -115,5 +117,24 @@ describe('ConnectionsStore discovery lifecycle', () => {
     publish?.(refreshed);
 
     expect(store.snapshot).toBe(renderedSnapshot);
+  });
+
+  it('updates the snapshot after removing the local DNS helper', async () => {
+    const removed = structuredClone(SNAPSHOT);
+    removed.shortDns = {
+      state: 'setup-required',
+      zone: 'client',
+      nameserver: '100.64.0.1',
+      message: 'Install Soloe DNS on this Device.',
+      setupUrl: null,
+      readyZones: []
+    };
+    removeShortDns.mockResolvedValue(removed);
+    const store = new ConnectionsStore();
+
+    await store.removeShortDns();
+
+    expect(removeShortDns).toHaveBeenCalledOnce();
+    expect(store.snapshot.shortDns.state).toBe('setup-required');
   });
 });
