@@ -174,9 +174,12 @@
   // not. Repeating the parent's context is the point: you can read a row
   // without first reading the header it sits under.
   let metaParts = $derived.by<{ icon: 'path' | 'branch' | 'device'; text: string }[]>(() => {
-    const parts: { icon: 'path' | 'branch' | 'device'; text: string }[] = [
-      { icon: 'path', text: displayPath(session.cwd) }
-    ];
+    const parts: { icon: 'path' | 'branch' | 'device'; text: string }[] = [];
+    // A Session without a cwd contributes nothing rather than an empty part,
+    // which would still print its separator and leave the line opening on a
+    // stray dot.
+    const path = displayPath(session.cwd);
+    if (path) parts.push({ icon: 'path', text: path });
     if (branch) parts.push({ icon: 'branch', text: branch });
     if (projection && showDevice) parts.push({ icon: 'device', text: projection.deviceName });
     return parts;
@@ -510,12 +513,20 @@
           </span>
           <span class="flex min-w-0 items-center gap-2">
             {#if metaParts.length > 0}
-              <span class="sb-meta flex min-w-0 flex-1 items-center gap-1">
-                {#each metaParts as part, index (part.icon)}
-                  {#if index > 0}
-                    <span class="sb-meta-faint shrink-0">·</span>
-                  {/if}
-                  <span class={cn('inline-flex items-center gap-1', index === 0 ? 'min-w-0' : 'shrink-0')}>
+              <!-- The metadata wraps rather than competing for one line, so a
+                   row grows to three lines exactly when its own values need
+                   the room and stays at two when they don't. A Session with
+                   no cwd never pays for a blank line it isn't using. The
+                   separators are the icons and the gap; a `·` would strand
+                   itself at the end of a wrapped line. -->
+              <span class="sb-meta flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+                {#each metaParts as part (part.icon)}
+                  <span
+                    class={cn(
+                      'inline-flex items-center gap-1',
+                      part.icon === 'device' ? 'shrink-0' : 'min-w-0 max-w-full'
+                    )}
+                  >
                     {#if part.icon === 'branch'}
                       <GitBranch class="size-2.5 shrink-0" />
                     {:else if part.icon === 'device'}
