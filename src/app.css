@@ -158,6 +158,17 @@
     pointer-events: auto;
   }
 
+  .sb-rest-indicator {
+    opacity: 1;
+    transition: opacity 110ms ease;
+  }
+
+  .sb-group:hover .sb-rest-indicator,
+  .sb-group:focus-within .sb-rest-indicator {
+    opacity: 0;
+    pointer-events: none;
+  }
+
   /* Nesting guide, dropped straight down the centre of the parent row's
      chevron (0.375rem padding + half of a 0.875rem chevron). */
   .sb-children {

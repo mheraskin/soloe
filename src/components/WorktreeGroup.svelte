@@ -36,7 +36,8 @@
     isMain = false,
     filter = '',
     forceShow = false,
-    onWorktreeDrop = null
+    onWorktreeDrop = null,
+    onSessionCreated = null
   }: {
     title: string;
     cwd: string;
@@ -55,6 +56,7 @@
     onWorktreeDrop?:
       | ((args: { draggedCwd: string; targetCwd: string; position: DropPosition }) => void)
       | null;
+    onSessionCreated?: ((rowId: string) => void) | null;
   } = $props();
 
   let expanded = $derived(sidebarExpansion.isExpanded(cwd));
@@ -121,6 +123,11 @@
   function onGroupOpenChange(open: boolean) {
     if (isFiltering) return;
     sidebarExpansion.setExpanded(cwd, open);
+  }
+
+  function revealCreatedSession(rowId: string): void {
+    sidebarExpansion.setExpanded(cwd, true);
+    onSessionCreated?.(rowId);
   }
 
   function onSessionDrop(args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) {
@@ -299,6 +306,7 @@
             branch={title}
             {workspaceKey}
             {defaultDeviceId}
+            onSessionCreated={revealCreatedSession}
             class="size-6"
             title="New session in this worktree"
             ariaLabel="New session in this worktree"

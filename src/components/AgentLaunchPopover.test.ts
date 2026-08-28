@@ -331,6 +331,62 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(document.body.querySelector('[aria-label="Choose device"]')).not.toBeNull();
   });
 
+  it('reports the created Session row after a Device launch completes', async () => {
+    const onSessionCreated = vi.fn();
+    deviceSessionMocks.executeCreate.mockImplementationOnce(async () => ({
+      key: 'local-device/created-session'
+    }) as never);
+    const target = mountComponent(AgentLaunchPopover, { onSessionCreated });
+
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+    document.body.querySelector<HTMLButtonElement>('[aria-label="New terminal"]')!.click();
+
+    await vi.waitFor(() => expect(onSessionCreated).toHaveBeenCalledWith(
+      'local-device/created-session'
+    ));
+  });
+
+  it('defaults the global picker to no project when Workspaces are available', async () => {
+    deviceSessionState.projects = [{
+      key: 'project-soloe',
+      name: 'Soloe',
+      repository: { kind: 'git', canonicalUrl: 'https://example.test/soloe.git' },
+      presences: [],
+      workspaces: [{
+        key: 'workspace-main',
+        name: 'main',
+        branch: 'main',
+        locations: [{
+          key: 'remote-device:/srv/soloe',
+          deviceId: 'remote-device',
+          deviceName: 'Remote Device',
+          projectId: 'remote-project',
+          path: '/srv/soloe',
+          available: true,
+          isMain: true
+        }],
+        sessions: []
+      }]
+    }];
+    const target = mountComponent(AgentLaunchPopover, { level: 'global' });
+
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => expect(deviceSessionMocks.planCreate).toHaveBeenCalled());
+    const worktreeTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Choose worktree"]'
+    );
+    expect(worktreeTrigger?.textContent).toContain('No project');
+    expect(deviceSessionMocks.planCreate).toHaveBeenLastCalledWith(expect.objectContaining({
+      workspaceKey: null
+    }));
+    expect(document.body.textContent).not.toContain('Project is not initialized on this device');
+    expect(document.body.textContent).not.toContain('Choose workspace location');
+  });
+
   it('puts the Device-aware project action first and labels worktrees with their Devices', async () => {
     deviceSessionState.projects = [{
       key: 'project-soloe',

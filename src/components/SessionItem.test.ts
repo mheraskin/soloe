@@ -330,7 +330,11 @@ describe('SessionItem lifecycle', () => {
     const metadata = target.querySelector<HTMLElement>('[data-session-metadata="compact"]');
     const path = target.querySelector<HTMLElement>('[data-session-meta="path"]');
     const branch = target.querySelector<HTMLElement>('[data-session-meta="branch"]');
-    const device = target.querySelector<HTMLElement>('[data-session-meta="device"]');
+    const metadataDevice = metadata?.querySelector<HTMLElement>('[data-session-meta="device"]');
+    const cornerDevice = target.querySelector<HTMLElement>('[data-session-device="corner"]');
+    const actionSlot = target.querySelector<HTMLElement>('[data-session-primary-action]');
+    const restIndicator = actionSlot?.querySelector<HTMLElement>('[data-session-rest-indicator]');
+    const deleteAction = actionSlot?.querySelector<HTMLElement>('[data-session-hover-action="delete"]');
 
     expect(metadata?.className).toContain('overflow-hidden');
     expect(metadata?.className).toContain('whitespace-nowrap');
@@ -341,6 +345,10 @@ describe('SessionItem lifecycle', () => {
     expect(branch?.getAttribute('title')).toBe(
       'fix/order-ahead-storefront-followups-with-a-long-branch-name'
     );
-    expect(device?.getAttribute('title')).toBe('xps');
+    expect(metadataDevice).toBeNull();
+    expect(cornerDevice?.getAttribute('title')).toBe('xps');
+    expect(cornerDevice?.className).toContain('ml-auto');
+    expect(restIndicator).not.toBeNull();
+    expect(deleteAction).not.toBeNull();
   });
 });

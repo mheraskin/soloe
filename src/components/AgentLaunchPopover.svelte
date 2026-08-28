@@ -52,6 +52,7 @@
     projectKey,
     level,
     defaultDeviceId = null,
+    onSessionCreated,
     title = 'New session',
     ariaLabel = 'New session',
     class: className = '',
@@ -65,6 +66,7 @@
     projectKey?: string;
     level?: PickerLevel;
     defaultDeviceId?: DeviceId | null;
+    onSessionCreated?: (rowId: string) => void;
     title?: string;
     ariaLabel?: string;
     class?: string;
@@ -205,12 +207,14 @@
     // the popover visibly jump before it closes.
     if (!open || !usesDevicePlacement || launchingDevice) return;
     if (!placementInitialized) {
-      const contextualWorkspace = workspaceKey
-        ? workspaceChoices.find((workspace) => workspace.key === workspaceKey)
-        : workspaceChoices.find((workspace) => workspace.locations.some((location) =>
-            (projectId ? location.projectId === projectId : true)
-            && (cwd ? location.path === cwd : true)
-          ));
+      const contextualWorkspace = pickerLevel === 'global'
+        ? undefined
+        : workspaceKey
+          ? workspaceChoices.find((workspace) => workspace.key === workspaceKey)
+          : workspaceChoices.find((workspace) => workspace.locations.some((location) =>
+              (projectId ? location.projectId === projectId : true)
+              && (cwd ? location.path === cwd : true)
+            ));
       selectedWorkspaceKey = contextualWorkspace?.key
         ?? (pickerLevel === 'project' ? workspaceChoices[0]?.key : null)
         ?? null;
@@ -521,6 +525,7 @@
     selectedDeviceId = targetDeviceId;
     launchingDevice = true;
     devicePlanError = null;
+    const notifyCreated = onSessionCreated;
     try {
       const plan = await deviceSessions.planCreate(deviceRequest(
         option,
@@ -530,7 +535,8 @@
       devicePlan = plan;
       pendingDeviceOption = option;
       if (plan.action !== 'use-existing-location' && plan.action !== 'use-device-directory') return;
-      await deviceSessions.executeCreate(plan.planId);
+      const created = await deviceSessions.executeCreate(plan.planId);
+      notifyCreated?.(created.key);
       open = false;
     } catch (error) {
       devicePlanError = error instanceof Error ? error.message : String(error);
@@ -542,8 +548,10 @@
   async function prepareAndLaunch(): Promise<void> {
     if (!devicePlan || !pendingDeviceOption || launchingDevice) return;
     launchingDevice = true;
+    const notifyCreated = onSessionCreated;
     try {
-      await deviceSessions.executeCreate(devicePlan.planId);
+      const created = await deviceSessions.executeCreate(devicePlan.planId);
+      notifyCreated?.(created.key);
       open = false;
     } catch (error) {
       devicePlanError = error instanceof Error ? error.message : String(error);
@@ -577,12 +585,14 @@
       return;
     }
     open = false;
+    const notifyCreated = onSessionCreated;
     void sessions
       .createWithDefaults({
         ...(projectId ? { projectId } : {}),
         ...(cwd ? { cwd } : {}),
         ...(branch ? { branch } : {})
       })
+      .then((created) => notifyCreated?.(created.id))
       .catch(reportError);
   }
 
@@ -593,12 +603,14 @@
       return;
     }
     open = false;
+    const notifyCreated = onSessionCreated;
     void sessions
       .createPreferredWithDefaults({
         ...(projectId ? { projectId } : {}),
         ...(cwd ? { cwd } : {}),
         ...(branch ? { branch } : {})
       })
+      .then((created) => notifyCreated?.(created.id))
       .catch(reportError);
   }
 
@@ -608,12 +620,14 @@
       return;
     }
     open = false;
+    const notifyCreated = onSessionCreated;
     void sessions
       .createAgentWithDefaults(kind, {
         ...(projectId ? { projectId } : {}),
         ...(cwd ? { cwd } : {}),
         ...(branch ? { branch } : {})
       })
+      .then((created) => notifyCreated?.(created.id))
       .catch(reportError);
   }
 
@@ -624,6 +638,7 @@
     }
     open = false;
     const args = quickLaunchExtraArgs(preset);
+    const notifyCreated = onSessionCreated;
     void sessions
       .createAgentWithDefaults(preset.provider, {
         ...(projectId ? { projectId } : {}),
@@ -632,6 +647,7 @@
         ...(preset.model ? { model: preset.model } : {}),
         ...(args.length ? { extraArgs: args } : {})
       })
+      .then((created) => notifyCreated?.(created.id))
       .catch(reportError);
   }
 

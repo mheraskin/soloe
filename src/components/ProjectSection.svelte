@@ -53,7 +53,8 @@
     deviceFilter = null,
     showDevice = false,
     allowLocalActions = true,
-    onProjectDrop = null
+    onProjectDrop = null,
+    onSessionCreated = null
   }: {
     project: Project;
     sessions: Session[];
@@ -65,6 +66,7 @@
     onProjectDrop?:
       | ((args: { draggedId: string; targetId: string; position: DropPosition }) => void)
       | null;
+    onSessionCreated?: ((rowId: string) => void) | null;
   } = $props();
 
   let expanded = $state(true);
@@ -245,6 +247,11 @@
   function onProjectOpenChange(open: boolean) {
     if (isFiltering) return;
     expanded = open;
+  }
+
+  function revealCreatedSession(rowId: string): void {
+    expanded = true;
+    onSessionCreated?.(rowId);
   }
   let projectNameMatches = $derived.by(() => {
     if (!trimmedFilter) return false;
@@ -572,6 +579,7 @@
                 cwd={primaryLocation?.path ?? project.path}
                 workspaceKey={primaryWorkspace?.key}
                 level="project"
+                onSessionCreated={revealCreatedSession}
                 defaultDeviceId={primaryLocation?.deviceId ?? null}
                 class="size-6"
                 title="New session"
@@ -757,6 +765,7 @@
     {filter}
     forceShow={projectNameMatches}
     {onWorktreeDrop}
+    onSessionCreated={revealCreatedSession}
   />
 {/snippet}
 
@@ -782,6 +791,7 @@
       onWorktreeDrop={allowLocalActions && deviceSessions.device(location.deviceId)?.local
         ? onWorktreeDrop
         : null}
+      onSessionCreated={revealCreatedSession}
     />
   {/if}
 {/snippet}

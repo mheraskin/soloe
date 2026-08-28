@@ -170,18 +170,16 @@
   );
   let relativeLabel = $derived(shortRelativeTime(session.lastUsedAt, clock.now));
   let lastUsedTitle = $derived(fullTimestamp(session.lastUsedAt));
-  // Every row states its own working directory, branch and Device, group or
-  // not. Repeating the parent's context is the point: you can read a row
-  // without first reading the header it sits under.
-  let metaParts = $derived.by<{ icon: 'path' | 'branch' | 'device'; text: string }[]>(() => {
-    const parts: { icon: 'path' | 'branch' | 'device'; text: string }[] = [];
+  // Every row states its own working directory and branch, group or not. The
+  // Device remains a separate, fixed-position label at the end of the row.
+  let metaParts = $derived.by<{ icon: 'path' | 'branch'; text: string }[]>(() => {
+    const parts: { icon: 'path' | 'branch'; text: string }[] = [];
     // A Session without a cwd contributes nothing rather than an empty part,
     // which would still print its separator and leave the line opening on a
     // stray dot.
     const path = displayPath(session.cwd);
     if (path) parts.push({ icon: 'path', text: path });
     if (branch) parts.push({ icon: 'branch', text: branch });
-    if (projection && showDevice) parts.push({ icon: 'device', text: projection.deviceName });
     return parts;
   });
   let remoteLifecycle = $derived(
@@ -481,35 +479,67 @@
             {#if kbdIndex !== null}
               <KbdHint keys={['Ctrl', String(kbdIndex)]} class="shrink-0" />
             {/if}
-            {#if showAgentBadge && displayedAgentState}
-              <AgentStateBadge
-                state={displayedAgentState}
-                summary={displayedObservedSummary}
-                class="shrink-0"
-              />
-            {:else if showSpawnSpinner}
+            <span
+              class="relative flex min-h-5 shrink-0 items-center justify-end"
+              data-session-primary-action
+            >
+              <span class="sb-rest-indicator flex min-w-0 justify-end" data-session-rest-indicator>
+                {#if showAgentBadge && displayedAgentState}
+                  <AgentStateBadge
+                    state={displayedAgentState}
+                    summary={displayedObservedSummary}
+                    class="shrink-0"
+                  />
+                {:else if showSpawnSpinner}
+                  <span
+                    class="sb-state shrink-0"
+                    data-tone="active"
+                    title={`${pendingLabel}…`}
+                    aria-label={pendingLabel}
+                  >
+                    <Loader2 class="size-2.5 shrink-0 animate-spin" />
+                  </span>
+                {:else if statusPill}
+                  <span
+                    class="sb-state shrink-0"
+                    data-tone={statusPill.tone}
+                    title={statusPill.title}
+                    aria-label={statusPill.title}
+                  >
+                    <span class="truncate">{statusPill.label}</span>
+                  </span>
+                {:else if relativeLabel}
+                  <span class="sb-meta sb-meta-faint shrink-0 tabular-nums" title={lastUsedTitle}>
+                    {relativeLabel}
+                  </span>
+                {/if}
+              </span>
               <span
-                class="sb-state shrink-0"
-                data-tone="active"
-                title={`${pendingLabel}…`}
-                aria-label={pendingLabel}
+                class="sb-reveal absolute right-0 -my-0.5 flex size-5 items-center justify-center"
+                data-session-hover-action="delete"
               >
-                <Loader2 class="size-2.5 shrink-0 animate-spin" />
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  class="size-5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  onclick={removeFromButton}
+                  disabled={pendingOperation !== null || offline}
+                  title={offline
+                    ? 'Unavailable while Device is offline'
+                    : pendingOperation === 'deleting' ? 'Deleting session…' : 'Delete session'}
+                  aria-label={pendingOperation === 'deleting'
+                    ? `Deleting ${session.name || 'session'}`
+                    : `Delete ${session.name || 'session'}`}
+                >
+                  {#if pendingOperation === 'deleting'}
+                    <Loader2 class="size-3 animate-spin" />
+                  {:else}
+                    <Trash2 class="size-3" />
+                  {/if}
+                </Button>
+                <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
               </span>
-            {:else if statusPill}
-              <span
-                class="sb-state shrink-0"
-                data-tone={statusPill.tone}
-                title={statusPill.title}
-                aria-label={statusPill.title}
-              >
-                <span class="truncate">{statusPill.label}</span>
-              </span>
-            {:else if relativeLabel}
-              <span class="sb-meta sb-meta-faint shrink-0 tabular-nums" title={lastUsedTitle}>
-                {relativeLabel}
-              </span>
-            {/if}
+            </span>
           </span>
           <span class="flex min-w-0 items-center gap-2">
             {#if metaParts.length > 0}
@@ -525,15 +555,11 @@
                       'inline-flex min-w-0 items-center gap-1 overflow-hidden',
                       part.icon === 'path'
                         ? 'flex-1'
-                        : part.icon === 'branch'
-                          ? 'max-w-40 shrink'
-                          : 'max-w-24 shrink-0'
+                        : 'max-w-40 shrink'
                     )}
                   >
                     {#if part.icon === 'branch'}
                       <GitBranch class="size-2.5 shrink-0" />
-                    {:else if part.icon === 'device'}
-                      <Monitor class="size-2.5 shrink-0" />
                     {/if}
                     <span class="truncate {part.icon === 'path' ? 'font-mono' : ''}">{part.text}</span>
                   </span>
@@ -550,30 +576,16 @@
                 {workerCount}w
               </span>
             {/if}
-            <!-- Row actions reserve their space at rest and only fade in, so
-                 revealing them never displaces the metadata beside them. -->
-            <span class="sb-reveal relative -my-0.5 flex size-5 shrink-0 items-center justify-center">
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                class="size-5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                onclick={removeFromButton}
-                disabled={pendingOperation !== null || offline}
-                title={offline
-                  ? 'Unavailable while Device is offline'
-                  : pendingOperation === 'deleting' ? 'Deleting session…' : 'Delete session'}
-                aria-label={pendingOperation === 'deleting'
-                  ? `Deleting ${session.name || 'session'}`
-                  : `Delete ${session.name || 'session'}`}
+            {#if projection && showDevice}
+              <span
+                class="sb-meta ml-auto inline-flex max-w-24 shrink-0 items-center gap-1"
+                data-session-device="corner"
+                title={projection.deviceName}
               >
-                {#if pendingOperation === 'deleting'}
-                  <Loader2 class="size-3 animate-spin" />
-                {:else}
-                  <Trash2 class="size-3" />
-                {/if}
-              </Button>
-              <KbdHint keys={['Ctrl', 'Del']} class="pointer-events-none absolute -top-1 -right-1 z-10" />
-            </span>
+                <Monitor class="size-2.5 shrink-0" />
+                <span class="truncate">{projection.deviceName}</span>
+              </span>
+            {/if}
           </span>
         </span>
       </div>

@@ -118,6 +118,16 @@
     }
   }
 
+  function revealCreatedSession(rowId: string): void {
+    query = '';
+    lastScrolledId = rowId;
+    void tick().then(() => {
+      requestAnimationFrame(() => {
+        scrollAndSettle(`[data-session-id="${CSS.escape(rowId)}"]`);
+      });
+    });
+  }
+
   // Keep the selected row visible. Runs on initial restore (when localStorage
   // brings back a selectedId) and whenever selection changes programmatically
   // — clicking a row that's already visible is a no-op for the centred scroll.
@@ -455,6 +465,7 @@
         cwd={newSessionContext.cwd}
         branch={newSessionContext.branch}
         level="global"
+        onSessionCreated={revealCreatedSession}
         side="bottom"
         align="start"
         class="size-6"
@@ -532,6 +543,7 @@
             showDevice={showDeviceLabels}
             allowLocalActions={localProject !== null}
             onProjectDrop={localProject ? onProjectDrop : null}
+            onSessionCreated={revealCreatedSession}
           />
         {/each}
       {:else}
@@ -554,6 +566,7 @@
             sessions={sessions.byProject[id] ?? []}
             filter={query}
             {onProjectDrop}
+            onSessionCreated={revealCreatedSession}
           />
         {/if}
       {/each}
