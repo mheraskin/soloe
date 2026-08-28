@@ -1,21 +1,39 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { ChevronLeft, Folder, LoaderCircle, Monitor, Plus } from '@lucide/svelte';
+  import {
+    Check,
+    ChevronDown,
+    ChevronLeft,
+    Folder,
+    FolderGit2,
+    FolderOpen,
+    FolderPlus,
+    LoaderCircle,
+    Monitor,
+    Plus
+  } from '@lucide/svelte';
   import type { DeviceId } from '@shared/types/devices.js';
-  import type { MultiDeviceSessionCreationPlan } from '@shared/types/multi-device-sessions.js';
+  import type {
+    MultiDeviceSessionCreationPlan,
+    ProjectView
+  } from '@shared/types/multi-device-sessions.js';
   import type { SessionLaunch } from '@shared/types/sessions.js';
   import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
-  import type { ProjectId } from '@shared/types/projects.js';
+  import type { Project, ProjectId } from '@shared/types/projects.js';
   import type { AgentRuntimeProvider } from '@shared/types/sessions.js';
   import type { QuickLaunchPreset } from '@shared/types/settings.js';
   import { sessions } from '../stores/sessions.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { projects } from '../stores/projects.svelte';
+  import { commandPalette } from '../stores/command-palette.svelte';
+  import { worktreeCreateModal } from '../stores/worktree-create-modal.svelte';
   import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { quickLaunchExtraArgs } from '../lib/quick-launch';
   import { Button } from '$lib/components/ui/button';
   import * as Popover from '$lib/components/ui/popover';
   import * as Select from '$lib/components/ui/select';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Input } from '$lib/components/ui/input';
   import KindIcon from './KindIcon.svelte';
 
@@ -24,13 +42,15 @@
   const TOUCH_HOLD_OPEN_DELAY_MS = 350;
 
   type LaunchOption = AgentRuntimeProvider | 'terminal' | `preset:${string}`;
-  const NO_PROJECT_VALUE = '__no_project__';
+  type PickerLevel = 'global' | 'project' | 'worktree';
 
   let {
     projectId = null,
     cwd = undefined,
     branch,
     workspaceKey,
+    projectKey,
+    level,
     defaultDeviceId = null,
     title = 'New session',
     ariaLabel = 'New session',
@@ -42,6 +62,8 @@
     cwd?: string;
     branch?: string;
     workspaceKey?: string;
+    projectKey?: string;
+    level?: PickerLevel;
     defaultDeviceId?: DeviceId | null;
     title?: string;
     ariaLabel?: string;
@@ -75,17 +97,41 @@
   let worktreeSelectOpen = $state(false);
   let deviceSelectOpen = $state(false);
   let planRequest = 0;
+  let deviceRefreshOpen = false;
 
   let usesDevicePlacement = $derived(deviceSessions.multiDeviceActive);
-  let effectiveWorkspaceKey = $derived(workspaceKey ?? selectedWorkspaceKey);
-  let workspaceChoices = $derived.by(() => deviceSessions.state.projects.flatMap((project) =>
-    project.workspaces.map((workspace) => ({
+  let pickerLevel = $derived<PickerLevel>(
+    level ?? (workspaceKey !== undefined ? 'worktree' : projectId ? 'project' : 'global')
+  );
+  let contextualProject = $derived.by<ProjectView | null>(() => {
+    if (projectKey) {
+      const byKey = deviceSessions.state.projects.find((project) => project.key === projectKey);
+      if (byKey) return byKey;
+    }
+    if (!projectId) return null;
+    return deviceSessions.state.projects.find((project) =>
+      (project.presences ?? []).some((presence) => presence.ref.projectId === projectId)
+      || project.workspaces.some((workspace) =>
+        workspace.locations.some((location) => location.projectId === projectId)
+      )
+    ) ?? null;
+  });
+  let effectiveWorkspaceKey = $derived(
+    pickerLevel === 'worktree' ? workspaceKey ?? selectedWorkspaceKey : selectedWorkspaceKey
+  );
+  let workspaceChoices = $derived.by(() => deviceSessions.state.projects
+    .filter((project) => pickerLevel !== 'project' || project.key === contextualProject?.key)
+    .flatMap((project) => project.workspaces.map((workspace) => ({
       key: workspace.key,
       label: workspace.branch ?? workspace.name,
+      branch: workspace.branch,
+      projectKey: project.key,
       projectName: project.name,
-      locations: workspace.locations
-    }))
-  ));
+      locations: workspace.locations,
+      deviceSummary: Array.from(new Set(workspace.locations.map((location) => location.deviceName)))
+        .join(', ')
+    })))
+  );
   let selectedWorkspace = $derived(
     effectiveWorkspaceKey
       ? workspaceChoices.find((workspace) => workspace.key === effectiveWorkspaceKey) ?? null
@@ -94,9 +140,63 @@
   let selectedDevice = $derived(
     selectedDeviceId ? deviceSessions.device(selectedDeviceId) : null
   );
+  let worktreeProject = $derived.by<ProjectView | null>(() => {
+    if (pickerLevel === 'project') return contextualProject;
+    if (!selectedWorkspace) return null;
+    return deviceSessions.state.projects.find((project) =>
+      project.key === selectedWorkspace.projectKey
+    ) ?? null;
+  });
+  let worktreeTarget = $derived.by<{
+    project: Project;
+    deviceId?: DeviceId;
+    deviceName?: string;
+  } | null>(() => {
+    if (pickerLevel === 'worktree') return null;
+    if (!usesDevicePlacement) {
+      const project = projectId ? projects.get(projectId) : null;
+      return project ? { project } : null;
+    }
+    const targetDevice = selectedDevice;
+    const logicalProject = worktreeProject;
+    if (!targetDevice || !logicalProject) return null;
+    const target = targetDevice.local
+      ? { deviceName: targetDevice.name }
+      : { deviceId: targetDevice.deviceId, deviceName: targetDevice.name };
+    const presence = (logicalProject.presences ?? []).find((candidate) =>
+      candidate.ref.deviceId === targetDevice.deviceId
+    );
+    if (presence) return { project: presence.project, ...target };
+    const location = logicalProject.workspaces
+      .flatMap((workspace) => workspace.locations)
+      .find((candidate) => candidate.deviceId === targetDevice.deviceId);
+    if (!location) return null;
+    const localProject = targetDevice.local ? projects.get(location.projectId) : null;
+    if (localProject) return { project: localProject, ...target };
+    const observedAt = deviceSessions.state.capturedAt;
+    return {
+      project: {
+        id: location.projectId,
+        name: logicalProject.name,
+        path: location.path,
+        ...(targetDevice.platform ? { defaultRunMode: targetDevice.platform } : {}),
+        createdAt: observedAt,
+        lastOpenedAt: observedAt
+      },
+      ...target
+    };
+  });
   let customTargetPath = $derived.by(() => {
     if (!directoryListing || !folderName.trim()) return undefined;
     return `${directoryListing.path}${directoryListing.path.endsWith(directoryListing.separator) ? '' : directoryListing.separator}${folderName.trim()}`;
+  });
+
+  $effect(() => {
+    const nextOpen = open;
+    if (nextOpen && !deviceRefreshOpen) {
+      void deviceSessions.refresh().catch(reportError);
+    }
+    deviceRefreshOpen = nextOpen;
   });
 
   $effect(() => {
@@ -111,7 +211,9 @@
             (projectId ? location.projectId === projectId : true)
             && (cwd ? location.path === cwd : true)
           ));
-      selectedWorkspaceKey = contextualWorkspace?.key ?? null;
+      selectedWorkspaceKey = contextualWorkspace?.key
+        ?? (pickerLevel === 'project' ? workspaceChoices[0]?.key : null)
+        ?? null;
       placementInitialized = true;
     }
     const availableIds = new Set(deviceSessions.visibleDevices.map((device) => device.deviceId));
@@ -298,6 +400,36 @@
       worktreeSelectOpen = false;
       deviceSelectOpen = false;
     }
+  }
+
+  function selectWorkspace(key: string | null): void {
+    selectedWorkspaceKey = key;
+    pendingDeviceOption = null;
+    directoryListing = null;
+    showLocationBrowser = false;
+    folderName = '';
+  }
+
+  function openProjectOnSelectedDevice(): void {
+    const deviceId = selectedDeviceId
+      ?? deviceSessions.localDevice?.deviceId
+      ?? null;
+    open = false;
+    commandPalette.openProject(deviceId);
+  }
+
+  function openWorktreeCreator(): void {
+    const target = worktreeTarget;
+    if (!target) return;
+    open = false;
+    worktreeCreateModal.openFor(
+      target.project,
+      selectedWorkspace?.branch ?? branch,
+      {
+        ...(target.deviceId ? { deviceId: target.deviceId } : {}),
+        ...(target.deviceName ? { deviceName: target.deviceName } : {})
+      }
+    );
   }
 
   function launchForOption(option: LaunchOption): SessionLaunch {
@@ -573,47 +705,88 @@
     <div bind:this={pickerEl}>
       {#if usesDevicePlacement}
         <div class="mb-1.5 flex flex-col gap-1.5 border-b border-border px-1 pb-2">
-          {#if workspaceKey === undefined}
+          {#if pickerLevel !== 'worktree'}
             <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Worktree</span>
-            <Select.Root
-              type="single"
-              bind:open={worktreeSelectOpen}
-              value={effectiveWorkspaceKey ?? NO_PROJECT_VALUE}
-              onValueChange={(value) => {
-                selectedWorkspaceKey = value === NO_PROJECT_VALUE ? null : value;
-                pendingDeviceOption = null;
-                directoryListing = null;
-                showLocationBrowser = false;
-                folderName = '';
-              }}
-            >
-              <Select.Trigger class="h-8 w-full text-xs" aria-label="Choose worktree">
-                <span class="flex min-w-0 items-center gap-2">
-                  <Folder class="size-3.5 shrink-0" />
-                  <span class="truncate">
-                    {selectedWorkspace
-                      ? `${selectedWorkspace.projectName} · ${selectedWorkspace.label}`
-                      : 'No project'}
-                  </span>
-                </span>
-              </Select.Trigger>
-              <Select.Content onpointerenter={clearCloseTimer} onpointerleave={scheduleClose}>
-                <Select.Item value={NO_PROJECT_VALUE} label="No project">
-                  <span class="flex flex-col">
-                    <span>No project</span>
-                    <span class="text-[10px] text-muted-foreground">Open in the Device home folder</span>
-                  </span>
-                </Select.Item>
-                {#each workspaceChoices as workspace (workspace.key)}
-                  <Select.Item value={workspace.key} label={`${workspace.projectName} · ${workspace.label}`}>
-                    <span class="flex min-w-0 flex-col">
-                      <span class="truncate">{workspace.label}</span>
-                      <span class="truncate text-[10px] text-muted-foreground">{workspace.projectName}</span>
+            <DropdownMenu.Root bind:open={worktreeSelectOpen}>
+              <DropdownMenu.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    variant="outline"
+                    class="h-8 w-full min-w-0 justify-start gap-2 px-2 text-xs font-normal"
+                    aria-label="Choose worktree"
+                  >
+                    <FolderGit2 class="size-3.5 shrink-0" />
+                    <span class="min-w-0 flex-1 truncate text-left">
+                      {selectedWorkspace
+                        ? `${selectedWorkspace.projectName} · ${selectedWorkspace.label}`
+                        : pickerLevel === 'global' ? 'No project' : 'Choose worktree'}
                     </span>
-                  </Select.Item>
+                    {#if selectedWorkspace?.deviceSummary}
+                      <span class="max-w-24 truncate text-[10px] text-muted-foreground">
+                        {selectedWorkspace.deviceSummary}
+                      </span>
+                    {/if}
+                    <ChevronDown class="size-3 shrink-0 opacity-60" />
+                  </Button>
+                {/snippet}
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content
+                align="start"
+                class="w-80"
+                onpointerenter={clearCloseTimer}
+                onpointerleave={scheduleClose}
+              >
+                <DropdownMenu.Label>Worktree</DropdownMenu.Label>
+                {#if pickerLevel === 'global'}
+                  <DropdownMenu.Item onSelect={openProjectOnSelectedDevice}>
+                    <FolderOpen />
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="truncate">Open a project on {selectedDevice?.name ?? 'selected device'}</span>
+                      <span class="truncate text-[10px] text-muted-foreground">Browse folders on this Device</span>
+                    </span>
+                  </DropdownMenu.Item>
+                {/if}
+                <DropdownMenu.Item disabled={!worktreeTarget} onSelect={openWorktreeCreator}>
+                  <FolderPlus />
+                  <span class="flex min-w-0 flex-1 flex-col">
+                    <span class="truncate">Add worktree{selectedDevice ? ` on ${selectedDevice.name}` : ''}</span>
+                    {#if !worktreeTarget}
+                      <span class="truncate text-[10px] text-muted-foreground">Choose a project available on this Device</span>
+                    {/if}
+                  </span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator />
+                {#if pickerLevel === 'global'}
+                  <DropdownMenu.Item
+                    class={!selectedWorkspace ? 'bg-accent text-accent-foreground' : ''}
+                    onSelect={() => selectWorkspace(null)}
+                  >
+                    <Folder />
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span>No project</span>
+                      <span class="text-[10px] text-muted-foreground">Open in the Device home folder</span>
+                    </span>
+                    {#if !selectedWorkspace}<Check class="ml-auto size-3" />{/if}
+                  </DropdownMenu.Item>
+                {/if}
+                {#each workspaceChoices as workspace (workspace.key)}
+                  <DropdownMenu.Item
+                    class={workspace.key === effectiveWorkspaceKey ? 'bg-accent text-accent-foreground' : ''}
+                    onSelect={() => selectWorkspace(workspace.key)}
+                  >
+                    <FolderGit2 />
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="truncate">{workspace.label}</span>
+                      <span class="truncate text-[10px] text-muted-foreground">
+                        {workspace.projectName}{workspace.deviceSummary ? ` · ${workspace.deviceSummary}` : ''}
+                      </span>
+                    </span>
+                    {#if workspace.key === effectiveWorkspaceKey}<Check class="ml-auto size-3" />{/if}
+                  </DropdownMenu.Item>
                 {/each}
-              </Select.Content>
-            </Select.Root>
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
           {/if}
           <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Run on device</span>
           <Select.Root
@@ -719,6 +892,17 @@
               </label>
             </div>
           {/if}
+        </div>
+      {:else if pickerLevel === 'project' && worktreeTarget}
+        <div class="mb-1.5 border-b border-border px-1 pb-2">
+          <Button
+            variant="ghost"
+            class="h-8 w-full justify-start gap-2 px-2 text-xs"
+            onclick={openWorktreeCreator}
+          >
+            <FolderPlus class="size-3.5" />
+            Add worktree
+          </Button>
         </div>
       {/if}
       <div class="mobile-session-picker grid grid-cols-4 gap-1">

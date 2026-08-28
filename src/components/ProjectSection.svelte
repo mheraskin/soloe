@@ -178,6 +178,25 @@
   let occupiedWorkspaces = $derived(deviceWorkspaces.filter((ws) => ws.sessions.length > 0));
   let emptyWorkspaces = $derived(deviceWorkspaces.filter((ws) => ws.sessions.length === 0));
 
+  $effect(() => {
+    const created = worktreeCreateModal.created;
+    if (!created) return;
+    const belongsToProject = created.projectId === project.id
+      || (deviceProject?.presences ?? []).some((presence) =>
+        presence.ref.projectId === created.projectId
+        && (!created.deviceId || presence.ref.deviceId === created.deviceId)
+      )
+      || (deviceProject?.workspaces ?? []).some((workspace) =>
+        workspace.locations.some((location) =>
+          location.projectId === created.projectId
+          && (!created.deviceId || location.deviceId === created.deviceId)
+        )
+      );
+    if (!belongsToProject) return;
+    expanded = true;
+    showEmptyWorktrees = true;
+  });
+
   let accent = $derived(project.accentColor ?? null);
   let selectedFaviconPath = $derived(project.selectedFaviconPath ?? null);
   let mainWorktree = $derived(gitWorktrees.find((wt) => wt.isMain) ?? null);
@@ -541,7 +560,7 @@
               aria-label={remoteProjectOperation === 'deleting' ? 'Deleting remote project' : 'Updating remote project'}
             />
           {/if}
-          {#if !showWorktreeGroups && (allowLocalActions || deviceProject)}
+          {#if allowLocalActions || deviceProject}
             {@const primaryWorkspace = deviceProject?.workspaces[0]}
             {@const primaryLocation = primaryWorkspace?.locations.find((candidate) => candidate.deviceId === deviceFilter)
               ?? primaryWorkspace?.locations.find((candidate) => deviceSessions.device(candidate.deviceId)?.local)
@@ -549,8 +568,10 @@
             <span class="sb-reveal shrink-0">
               <AgentLaunchPopover
                 projectId={allowLocalActions ? project.id : null}
+                projectKey={deviceProject?.key}
                 cwd={primaryLocation?.path ?? project.path}
                 workspaceKey={primaryWorkspace?.key}
+                level="project"
                 defaultDeviceId={primaryLocation?.deviceId ?? null}
                 class="size-6"
                 title="New session"

@@ -1,10 +1,18 @@
 import type { Project } from '@shared/types/projects.js';
+import type { DeviceId } from '@shared/types/devices.js';
 import type { RunMode } from '@shared/types/sessions.js';
+
+export interface WorktreeCreateTarget {
+  deviceId?: DeviceId;
+  deviceName?: string;
+}
 
 export interface WorktreeCreateDraft {
   projectId: string;
   projectName: string;
   repoPath: string;
+  deviceId?: DeviceId;
+  deviceName?: string;
   runMode?: RunMode;
   wslDistro?: string;
   baseRef: string;
@@ -12,19 +20,32 @@ export interface WorktreeCreateDraft {
   path: string;
 }
 
+export interface CreatedWorktreeNotice {
+  projectId: string;
+  path: string;
+  deviceId?: DeviceId;
+}
+
 class WorktreeCreateModalStore {
   open = $state(false);
   draft = $state<WorktreeCreateDraft | null>(null);
+  created = $state<CreatedWorktreeNotice | null>(null);
   error = $state<string | null>(null);
   private pathEdited = false;
 
-  openFor(project: Project, baseRef?: string | null): void {
+  openFor(
+    project: Project,
+    baseRef?: string | null,
+    target: WorktreeCreateTarget = {}
+  ): void {
     this.pathEdited = false;
     this.error = null;
     this.draft = {
       projectId: project.id,
       projectName: project.name,
       repoPath: project.path,
+      ...(target.deviceId ? { deviceId: target.deviceId } : {}),
+      ...(target.deviceName ? { deviceName: target.deviceName } : {}),
       ...(project.defaultRunMode ? { runMode: project.defaultRunMode } : {}),
       ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {}),
       baseRef: baseRef?.trim() || 'HEAD',
@@ -32,6 +53,15 @@ class WorktreeCreateModalStore {
       path: suggestedWorktreePath(project.path, '')
     };
     this.open = true;
+  }
+
+  recordCreated(path: string): void {
+    if (!this.draft) return;
+    this.created = {
+      projectId: this.draft.projectId,
+      path,
+      ...(this.draft.deviceId ? { deviceId: this.draft.deviceId } : {})
+    };
   }
 
   setBaseRef(baseRef: string): void {

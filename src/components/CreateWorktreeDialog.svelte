@@ -3,6 +3,7 @@
   import type { GitBranch } from '@shared/types/git.js';
   import { worktreeCreateModal } from '../stores/worktree-create-modal.svelte';
   import { git } from '../stores/git.svelte';
+  import { deviceSessions } from '../stores/device-sessions.svelte';
   import { ipc } from '../lib/ipc';
   import { reportError, toasts } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -22,7 +23,8 @@
       repoPath: draft.repoPath,
       force: true,
       ...(draft.runMode ? { runMode: draft.runMode } : {}),
-      ...(draft.wslDistro ? { wslDistro: draft.wslDistro } : {})
+      ...(draft.wslDistro ? { wslDistro: draft.wslDistro } : {}),
+      ...(draft.deviceId ? { deviceId: draft.deviceId } : {})
     }).then((result) => {
       branches = result;
       if (draft.baseRef === 'HEAD') {
@@ -63,12 +65,16 @@
         branch: draft.branch,
         baseRef: draft.baseRef,
         ...(draft.runMode ? { runMode: draft.runMode } : {}),
-        ...(draft.wslDistro ? { wslDistro: draft.wslDistro } : {})
+        ...(draft.wslDistro ? { wslDistro: draft.wslDistro } : {}),
+        ...(draft.deviceId ? { deviceId: draft.deviceId } : {})
       });
       await git.loadWorktrees(draft.repoPath, true, {
         ...(draft.runMode ? { runMode: draft.runMode } : {}),
-        ...(draft.wslDistro ? { wslDistro: draft.wslDistro } : {})
+        ...(draft.wslDistro ? { wslDistro: draft.wslDistro } : {}),
+        ...(draft.deviceId ? { deviceId: draft.deviceId } : {})
       });
+      if (deviceSessions.multiDeviceActive) await deviceSessions.refresh().catch(reportError);
+      worktreeCreateModal.recordCreated(created.path);
       worktreeCreateModal.close();
       toasts.push(`Created ${created.branch ?? draft.branch}`, 'info');
     } catch (error) {
@@ -90,7 +96,9 @@
       <Dialog.Title>Create worktree</Dialog.Title>
       <Dialog.Description>
         Create a sibling working directory and a new branch for
-        {worktreeCreateModal.draft?.projectName ?? 'this project'}.
+        {worktreeCreateModal.draft?.projectName ?? 'this project'}{worktreeCreateModal.draft?.deviceName
+          ? ` on ${worktreeCreateModal.draft.deviceName}`
+          : ''}.
       </Dialog.Description>
     </Dialog.Header>
 

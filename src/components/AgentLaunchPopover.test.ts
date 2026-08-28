@@ -20,6 +20,7 @@ const deviceSessionMocks = vi.hoisted(() => ({
   clearSelectedSession: vi.fn(),
   isSelected: vi.fn(() => false),
   pendingOperation: vi.fn(() => null),
+  refresh: vi.fn(async () => undefined),
   planCreate: vi.fn(async () => ({
     planId: 'plan-1',
     workspaceKey: null,
@@ -35,7 +36,30 @@ const deviceSessionMocks = vi.hoisted(() => ({
   executeCreate: vi.fn(async () => undefined)
 }));
 
-const deviceSessionState = vi.hoisted(() => ({ multiDeviceActive: true }));
+const deviceSessionState = vi.hoisted(() => ({
+  multiDeviceActive: true,
+  projects: [] as Array<Record<string, unknown>>
+}));
+
+const commandPaletteMocks = vi.hoisted(() => ({
+  openProject: vi.fn()
+}));
+
+const worktreeCreateMocks = vi.hoisted(() => ({
+  openFor: vi.fn()
+}));
+
+vi.mock('../stores/command-palette.svelte', () => ({
+  commandPalette: commandPaletteMocks
+}));
+
+vi.mock('../stores/projects.svelte', () => ({
+  projects: { get: vi.fn(() => null) }
+}));
+
+vi.mock('../stores/worktree-create-modal.svelte', () => ({
+  worktreeCreateModal: worktreeCreateMocks
+}));
 
 vi.mock('../stores/sessions.svelte', () => ({
   sessions: {
@@ -74,7 +98,10 @@ vi.mock('../stores/device-sessions.svelte', () => ({
           state: 'ready'
         }
       ],
-      projects: []
+      get projects() {
+        return deviceSessionState.projects;
+      },
+      capturedAt: '2026-08-28T09:00:00.000Z'
     },
     visibleDevices: [
       {
@@ -208,6 +235,9 @@ describe('AgentLaunchPopover touch gestures', () => {
     for (const mock of Object.values(deviceSessionMocks)) mock.mockClear();
     deviceSessionMocks.isSelected.mockReturnValue(false);
     deviceSessionState.multiDeviceActive = true;
+    deviceSessionState.projects = [];
+    commandPaletteMocks.openProject.mockClear();
+    worktreeCreateMocks.openFor.mockClear();
   });
 
   afterEach(async () => {
@@ -291,12 +321,140 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(document.body.textContent).toContain('No project');
   });
 
+  it('refreshes the shared Device state as soon as the popover opens', async () => {
+    const target = mountComponent(AgentLaunchPopover, {});
+    const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
+
+    trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(deviceSessionMocks.refresh).toHaveBeenCalledOnce());
+
+    expect(document.body.querySelector('[aria-label="Choose device"]')).not.toBeNull();
+  });
+
+  it('puts the Device-aware project action first and labels worktrees with their Devices', async () => {
+    deviceSessionState.projects = [{
+      key: 'project-soloe',
+      name: 'Soloe',
+      repository: { kind: 'git', canonicalUrl: 'https://example.test/soloe.git' },
+      presences: [],
+      workspaces: [{
+        key: 'workspace-main',
+        name: 'main',
+        branch: 'main',
+        locations: [{
+          key: 'remote-device:/srv/soloe',
+          deviceId: 'remote-device',
+          deviceName: 'Remote Device',
+          projectId: 'remote-project',
+          path: '/srv/soloe',
+          available: true,
+          isMain: true
+        }],
+        sessions: []
+      }]
+    }];
+    const target = mountComponent(AgentLaunchPopover, { level: 'global' });
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const worktreeTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Choose worktree"]'
+    );
+    worktreeTrigger!.dispatchEvent(pointerEvent('pointerdown', {
+      pointerId: 21,
+      pointerType: 'mouse',
+      clientX: 100,
+      clientY: 100
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+
+    const items = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    expect(items[0]?.textContent).toContain('Open a project on This Mac');
+    expect(document.body.textContent).toContain('Soloe · Remote Device');
+
+    items[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(commandPaletteMocks.openProject).toHaveBeenCalledWith('local-device');
+  });
+
+  it('opens Device-aware worktree creation from a Project-level plus', async () => {
+    const remoteProject = {
+      id: 'remote-project',
+      name: 'Soloe',
+      path: '/srv/soloe',
+      defaultRunMode: 'linux',
+      createdAt: '2026-08-28T09:00:00.000Z',
+      lastOpenedAt: '2026-08-28T09:00:00.000Z'
+    };
+    deviceSessionState.projects = [{
+      key: 'project-soloe',
+      name: 'Soloe',
+      repository: { kind: 'git', canonicalUrl: 'https://example.test/soloe.git' },
+      presences: [{
+        ref: { deviceId: 'remote-device', projectId: remoteProject.id },
+        key: 'remote-device:remote-project',
+        deviceName: 'Remote Device',
+        available: true,
+        project: remoteProject
+      }],
+      workspaces: [{
+        key: 'workspace-main',
+        name: 'main',
+        branch: 'main',
+        locations: [{
+          key: 'remote-device:/srv/soloe',
+          deviceId: 'remote-device',
+          deviceName: 'Remote Device',
+          projectId: remoteProject.id,
+          path: remoteProject.path,
+          available: true,
+          isMain: true
+        }],
+        sessions: []
+      }]
+    }];
+    const target = mountComponent(AgentLaunchPopover, {
+      level: 'project',
+      projectKey: 'project-soloe',
+      workspaceKey: 'workspace-main',
+      defaultDeviceId: 'remote-device'
+    });
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const worktreeTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Choose worktree"]'
+    );
+    worktreeTrigger!.dispatchEvent(pointerEvent('pointerdown', {
+      pointerId: 22,
+      pointerType: 'mouse',
+      clientX: 100,
+      clientY: 100
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+
+    const addWorktree = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.includes('Add worktree on Remote Device'));
+    expect(addWorktree).toBeDefined();
+
+    addWorktree!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(worktreeCreateMocks.openFor).toHaveBeenCalledWith(
+      remoteProject,
+      'main',
+      { deviceId: 'remote-device', deviceName: 'Remote Device' }
+    );
+  });
+
   it('keeps the legacy local launch flow when no remote Device exists', async () => {
     deviceSessionState.multiDeviceActive = false;
     const target = mountComponent(AgentLaunchPopover, {});
     const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
     trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    flushSync();
+    await vi.waitFor(() => expect(deviceSessionMocks.refresh).toHaveBeenCalledOnce());
 
     expect(document.body.textContent).not.toContain('Run on device');
     const terminal = document.body.querySelector<HTMLButtonElement>('[aria-label="New terminal"]');

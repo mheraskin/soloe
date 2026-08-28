@@ -70,7 +70,8 @@
     const defaults = settings.current.defaults;
     scope = defaults.runMode;
     wslDistro = defaults.wslDistro?.trim() || 'Ubuntu';
-    projectDeviceId = deviceSessions.selectedDeviceId
+    projectDeviceId = commandPalette.projectDeviceId
+      ?? deviceSessions.selectedDeviceId
       ?? deviceSessions.localDevice?.deviceId
       ?? null;
     remoteDirectory = null;

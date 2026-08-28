@@ -454,6 +454,7 @@
         projectId={newSessionContext.projectId ?? null}
         cwd={newSessionContext.cwd}
         branch={newSessionContext.branch}
+        level="global"
         side="bottom"
         align="start"
         class="size-6"
