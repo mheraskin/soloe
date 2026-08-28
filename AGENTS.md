@@ -23,7 +23,7 @@ configuration, documentation, string literals, or when the graph is insufficient
 
 Issues and PRDs are tracked in this repository's GitHub Issues. Infer the repository from the
 current Git remote. Read issues with their comments and labels. Publishing an issue or PRD means
-creating a GitHub issue.
+creating a GitHub issue. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
@@ -35,7 +35,9 @@ Use the canonical five-role label vocabulary:
 - `ready-for-human`: human implementation is required
 - `wontfix`: the issue will not be actioned
 
+See `docs/agents/triage-labels.md`.
+
 ### Domain docs
 
 This repository uses the single root `CONTEXT.md` domain glossary. Read it before changing
-behavior and use its vocabulary in tests, code, and public writing.
+behavior and use its vocabulary in tests, code, and public writing. See `docs/agents/domain.md`.

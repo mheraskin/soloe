@@ -73,6 +73,10 @@ jobs:
       - name: Package Windows build
         run: pnpm package:windows
 
+      - name: Smoke test Windows installer
+        shell: pwsh
+        run: ./scripts/smoke-windows-installer.ps1
+
   linux-package:
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +95,9 @@ jobs:
 
       - name: Package Linux builds
         run: pnpm package:linux
+
+      - name: Smoke test Linux packages
+        run: bash scripts/smoke-linux-packages.sh
 
   macos-package:
     strategy:

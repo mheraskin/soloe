@@ -51,6 +51,15 @@ jobs:
       - name: Package platform build
         run: ${{ matrix.command }}
 
+      - name: Smoke test Windows installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: ./scripts/smoke-windows-installer.ps1
+
+      - name: Smoke test Linux packages
+        if: matrix.platform == 'linux'
+        run: bash scripts/smoke-linux-packages.sh
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v5
         with:
