@@ -49,14 +49,21 @@ assert_stays_running() {
   local label="$1"
   shift
   local log="$smoke_root/$label.log"
+  local smoke_seconds=10
+  local started_at
+  started_at="$(date +%s)"
 
   set +e
-  xvfb-run -a timeout --kill-after=5s 10s "$@" >"$log" 2>&1
+  xvfb-run -a timeout --kill-after=5s "${smoke_seconds}s" "$@" >"$log" 2>&1
   local status=$?
   set -e
 
-  if [[ $status -ne 124 ]]; then
-    echo "$label exited before the smoke window with status $status" >&2
+  local finished_at
+  finished_at="$(date +%s)"
+  local elapsed=$((finished_at - started_at))
+
+  if [[ $status -ne 124 && $status -ne 137 ]] || (( elapsed < smoke_seconds )); then
+    echo "$label exited before the ${smoke_seconds}s smoke window with status $status after ${elapsed}s" >&2
     cat "$log" >&2
     exit 1
   fi

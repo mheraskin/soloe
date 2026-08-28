@@ -46,6 +46,8 @@ describe('installer CI contract', () => {
     );
     expect(smoke).toContain('APPIMAGE_EXTRACT_AND_RUN=1');
     expect(smoke).toContain('assert_stays_running');
+    expect(smoke).toContain('[[ $status -ne 124 && $status -ne 137 ]]');
+    expect(smoke).toContain('(( elapsed < smoke_seconds ))');
     expect(smoke).toContain('sudo apt-get install -y "$deb"');
     expect(smoke).toContain('sudo apt-get remove -y "$package_name"');
     expect(smoke).toContain('assert_package_missing');
