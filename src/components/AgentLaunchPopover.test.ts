@@ -326,7 +326,9 @@ describe('AgentLaunchPopover touch gestures', () => {
     const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
 
     trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    await vi.waitFor(() => expect(deviceSessionMocks.refresh).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(deviceSessionMocks.refresh).toHaveBeenCalledWith({
+      background: true
+    }));
 
     expect(document.body.querySelector('[aria-label="Choose device"]')).not.toBeNull();
   });
@@ -383,6 +385,7 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(deviceSessionMocks.planCreate).toHaveBeenLastCalledWith(expect.objectContaining({
       workspaceKey: null
     }));
+    expect(document.body.textContent).not.toContain('No project · Device home folder');
     expect(document.body.textContent).not.toContain('Project is not initialized on this device');
     expect(document.body.textContent).not.toContain('Choose workspace location');
   });
@@ -427,8 +430,18 @@ describe('AgentLaunchPopover touch gestures', () => {
     flushSync();
 
     const items = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    const worktreeMenu = document.body.querySelector<HTMLElement>(
+      '[data-slot="dropdown-menu-content"]'
+    );
+    expect(worktreeMenu?.className).toContain('bg-card');
+    expect(worktreeMenu?.className).toContain('w-(--bits-dropdown-menu-anchor-width)');
+    expect(worktreeMenu?.className).not.toContain('w-80');
     expect(items[0]?.textContent).toContain('Open a project on This Mac');
-    expect(document.body.textContent).toContain('Soloe · Remote Device');
+    const workspaceItem = items.find((item) =>
+      item.textContent?.includes('main') && item.textContent.includes('Soloe')
+    );
+    expect(workspaceItem?.querySelector('[data-slot="device-chip"]')?.textContent)
+      .toContain('Remote Device');
 
     items[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(commandPaletteMocks.openProject).toHaveBeenCalledWith('local-device');
@@ -483,6 +496,8 @@ describe('AgentLaunchPopover touch gestures', () => {
     const worktreeTrigger = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Choose worktree"]'
     );
+    expect(worktreeTrigger?.querySelector('[data-slot="device-chip"]')?.textContent)
+      .toContain('Remote Device');
     worktreeTrigger!.dispatchEvent(pointerEvent('pointerdown', {
       pointerId: 22,
       pointerType: 'mouse',
@@ -494,8 +509,11 @@ describe('AgentLaunchPopover touch gestures', () => {
 
     const addWorktree = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).find((item) => item.textContent?.includes('Add worktree on Remote Device'));
+    ).find((item) => item.textContent?.includes('Add worktree'));
     expect(addWorktree).toBeDefined();
+    expect(addWorktree?.textContent).not.toContain('on Remote Device');
+    expect(addWorktree?.querySelector('[data-slot="device-chip"]')?.textContent)
+      .toContain('Remote Device');
 
     addWorktree!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(worktreeCreateMocks.openFor).toHaveBeenCalledWith(
@@ -571,7 +589,10 @@ describe('AgentLaunchPopover touch gestures', () => {
     });
     deviceSessionMocks.executeCreate.mockImplementation(() => execution);
 
-    const target = mountComponent(AgentLaunchPopover, {});
+    const target = mountComponent(AgentLaunchPopover, {
+      level: 'worktree',
+      workspaceKey: 'workspace-main'
+    });
     const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
     trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(document.body.textContent).toContain('Workspace ready'));
@@ -589,6 +610,67 @@ describe('AgentLaunchPopover touch gestures', () => {
 
     resolveExecution?.();
     resolveUnexpectedPreview?.();
+  });
+
+  it('keeps the workspace card mounted while a Device replan is pending', async () => {
+    const readyPlan = {
+      planId: 'plan-ready',
+      workspaceKey: null,
+      targetDeviceId: 'local-device',
+      deviceName: 'This Mac',
+      action: 'use-existing-location' as const,
+      targetPath: '/repo',
+      executable: true,
+      blockers: [],
+      warnings: [],
+      expiresAt: '2099-01-01T00:00:00.000Z'
+    };
+    deviceSessionMocks.planCreate.mockResolvedValue(readyPlan as never);
+    const target = mountComponent(AgentLaunchPopover, {
+      level: 'worktree',
+      workspaceKey: 'workspace-main'
+    });
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Workspace ready'));
+
+    let resolveReplan: ((value: typeof readyPlan) => void) | undefined;
+    deviceSessionMocks.planCreate.mockClear().mockReturnValueOnce(new Promise((resolve) => {
+      resolveReplan = resolve;
+    }) as never);
+    const deviceTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Choose device"]'
+    );
+    Object.defineProperties(deviceTrigger!, {
+      hasPointerCapture: { value: vi.fn(() => false) },
+      releasePointerCapture: { value: vi.fn() }
+    });
+    deviceTrigger!.dispatchEvent(pointerEvent('pointerdown', {
+      pointerId: 31,
+      pointerType: 'mouse',
+      clientX: 100,
+      clientY: 100
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    const remoteOption = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="select-item"]')
+    ).find((item) => item.textContent?.includes('Remote Device'));
+    expect(remoteOption).toBeDefined();
+    remoteOption!.dispatchEvent(pointerEvent('pointerup', {
+      pointerId: 31,
+      pointerType: 'mouse',
+      clientX: 100,
+      clientY: 120
+    }));
+    await vi.waitFor(() => expect(deviceSessionMocks.planCreate).toHaveBeenCalled());
+    flushSync();
+
+    expect(document.body.querySelector('[data-slot="workspace-plan"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('Workspace ready');
+    expect(document.body.textContent).not.toContain('Checking workspace…');
+
+    resolveReplan?.(readyPlan);
   });
 
   it('keeps the launch popover open while hovering the portalled Device menu', async () => {
@@ -616,6 +698,9 @@ describe('AgentLaunchPopover touch gestures', () => {
     const deviceMenu = document.body.querySelector<HTMLElement>('[data-slot="select-content"]');
     expect(popover).not.toBeNull();
     expect(deviceMenu).not.toBeNull();
+    expect(deviceMenu?.className).toContain('bg-card');
+    expect(deviceMenu?.className).toContain('w-(--bits-select-anchor-width)');
+    expect(deviceTrigger?.textContent).toContain('this device');
 
     popover!.dispatchEvent(pointerEvent('pointerleave', {
       pointerId: 12,

@@ -259,6 +259,24 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     expect(store.device('device-xps')?.available).toBe(true);
   });
 
+  it('refreshes Device inventory in the background without showing global activity', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    await vi.waitFor(() => expect(store.refreshing).toBe(false));
+    let resolveRefresh: ((value: MultiDeviceSessionState) => void) | undefined;
+    mocks.refreshDevices.mockReturnValueOnce(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    const request = store.refresh({ background: true });
+
+    expect(store.refreshing).toBe(false);
+    resolveRefresh?.(state(2, true));
+    await request;
+    expect(store.state.revision).toBe(2);
+    expect(store.refreshing).toBe(false);
+  });
+
   it('projects Exit immediately but lets the next Device inventory remain authoritative', async () => {
     const store = new DeviceSessionsStore();
     await store.load();

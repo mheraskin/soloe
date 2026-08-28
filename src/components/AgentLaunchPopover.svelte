@@ -196,7 +196,7 @@
   $effect(() => {
     const nextOpen = open;
     if (nextOpen && !deviceRefreshOpen) {
-      void deviceSessions.refresh().catch(reportError);
+      void deviceSessions.refresh({ background: true }).catch(reportError);
     }
     deviceRefreshOpen = nextOpen;
   });
@@ -505,7 +505,6 @@
       devicePlan = plan;
     } catch (error) {
       if (requestId !== planRequest) return;
-      devicePlan = null;
       devicePlanError = error instanceof Error ? error.message : String(error);
     } finally {
       if (requestId === planRequest) planningDevice = false;
@@ -739,8 +738,14 @@
                         : pickerLevel === 'global' ? 'No project' : 'Choose worktree'}
                     </span>
                     {#if selectedWorkspace?.deviceSummary}
-                      <span class="max-w-24 truncate text-[10px] text-muted-foreground">
-                        {selectedWorkspace.deviceSummary}
+                      <span
+                        data-slot="device-chip"
+                        class="inline-flex max-w-24 shrink-0 items-center gap-1 rounded-full border border-border bg-muted/60 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                      >
+                        <Monitor class="size-2.5 shrink-0" />
+                        <span class="truncate">
+                          {selectedWorkspace.deviceSummary}
+                        </span>
                       </span>
                     {/if}
                     <ChevronDown class="size-3 shrink-0 opacity-60" />
@@ -749,7 +754,7 @@
               </DropdownMenu.Trigger>
               <DropdownMenu.Content
                 align="start"
-                class="w-80"
+                class="bg-card text-card-foreground"
                 onpointerenter={clearCloseTimer}
                 onpointerleave={scheduleClose}
               >
@@ -766,7 +771,18 @@
                 <DropdownMenu.Item disabled={!worktreeTarget} onSelect={openWorktreeCreator}>
                   <FolderPlus />
                   <span class="flex min-w-0 flex-1 flex-col">
-                    <span class="truncate">Add worktree{selectedDevice ? ` on ${selectedDevice.name}` : ''}</span>
+                    <span class="flex min-w-0 items-center gap-1.5">
+                      <span class="truncate">Add worktree</span>
+                      {#if selectedDevice}
+                        <span
+                          data-slot="device-chip"
+                          class="inline-flex max-w-32 shrink-0 items-center gap-1 rounded-full border border-border bg-muted/60 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                        >
+                          <Monitor class="size-2.5 shrink-0" />
+                          <span class="truncate">{selectedDevice.name}</span>
+                        </span>
+                      {/if}
+                    </span>
                     {#if !worktreeTarget}
                       <span class="truncate text-[10px] text-muted-foreground">Choose a project available on this Device</span>
                     {/if}
@@ -795,10 +811,19 @@
                     <span class="flex min-w-0 flex-1 flex-col">
                       <span class="truncate">{workspace.label}</span>
                       <span class="truncate text-[10px] text-muted-foreground">
-                        {workspace.projectName}{workspace.deviceSummary ? ` · ${workspace.deviceSummary}` : ''}
+                        {workspace.projectName}
                       </span>
                     </span>
-                    {#if workspace.key === effectiveWorkspaceKey}<Check class="ml-auto size-3" />{/if}
+                    {#if workspace.deviceSummary}
+                      <span
+                        data-slot="device-chip"
+                        class="ml-auto inline-flex max-w-28 shrink-0 items-center gap-1 rounded-full border border-border bg-muted/60 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                      >
+                        <Monitor class="size-2.5 shrink-0" />
+                        <span class="truncate">{workspace.deviceSummary}</span>
+                      </span>
+                    {/if}
+                    {#if workspace.key === effectiveWorkspaceKey}<Check class="size-3 shrink-0" />{/if}
                   </DropdownMenu.Item>
                 {/each}
               </DropdownMenu.Content>
@@ -822,11 +847,20 @@
                 <Monitor class="size-3.5 shrink-0" />
                 <span class="truncate">{selectedDevice?.name ?? 'Choose device'}</span>
                 {#if selectedDevice}
-                  <span class={`ml-auto size-2 rounded-full ${selectedDevice.available ? 'bg-success' : 'bg-muted-foreground/50'}`}></span>
+                  {#if selectedDevice.local}
+                    <span class="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                      this device
+                    </span>
+                  {/if}
+                  <span class={`ml-auto size-2 shrink-0 rounded-full ${selectedDevice.available ? 'bg-success' : 'bg-muted-foreground/50'}`}></span>
                 {/if}
               </span>
             </Select.Trigger>
-            <Select.Content onpointerenter={clearCloseTimer} onpointerleave={scheduleClose}>
+            <Select.Content
+              class="w-(--bits-select-anchor-width) bg-card text-card-foreground"
+              onpointerenter={clearCloseTimer}
+              onpointerleave={scheduleClose}
+            >
               {#each deviceSessions.visibleDevices as device (device.deviceId)}
                 <Select.Item value={device.deviceId} label={device.name} disabled={!device.available}>
                   <span class="flex w-full items-center gap-2">
@@ -839,27 +873,40 @@
             </Select.Content>
           </Select.Root>
 
-          {#if planningDevice}
-            <p class="m-0 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <LoaderCircle class="size-3 animate-spin" /> Checking workspace…
-            </p>
-          {:else if devicePlan}
-            <div class="rounded border border-border bg-muted/25 p-2 text-[11px]">
-              <p class="m-0 font-medium">
-                {devicePlan.action === 'use-existing-location'
-                  ? 'Workspace ready'
-                  : devicePlan.action === 'use-device-directory'
-                    ? 'No project · Device home folder'
-                  : devicePlan.action === 'clone-project'
-                    ? 'Project is not initialized on this device'
-                    : 'This checkout is not on this device'}
-              </p>
-              {#if devicePlan.targetPath}
-                <p class="mt-1 mb-0 truncate font-mono text-[10px] text-muted-foreground" title={devicePlan.targetPath}>{devicePlan.targetPath}</p>
+          {#if effectiveWorkspaceKey && (devicePlan || planningDevice || devicePlanError)}
+            <div
+              data-slot="workspace-plan"
+              class="relative min-h-12 rounded border border-border bg-muted/25 p-2 pr-7 text-[11px]"
+            >
+              {#if devicePlanError}
+                <p class="m-0 text-destructive">{devicePlanError}</p>
+              {:else if devicePlan}
+                <p class="m-0 font-medium">
+                  {devicePlan.action === 'use-existing-location'
+                    ? 'Workspace ready'
+                    : devicePlan.action === 'use-device-directory'
+                      ? 'Device folder ready'
+                    : devicePlan.action === 'clone-project'
+                      ? 'Project is not initialized on this device'
+                      : 'This checkout is not on this device'}
+                </p>
+                {#if devicePlan.targetPath}
+                  <p class="mt-1 mb-0 truncate font-mono text-[10px] text-muted-foreground" title={devicePlan.targetPath}>{devicePlan.targetPath}</p>
+                {/if}
+                {#each devicePlan.blockers as blocker (blocker)}
+                  <p class="mt-1 mb-0 text-destructive">{blocker}</p>
+                {/each}
+              {:else}
+                <p class="m-0 flex items-center gap-1.5 text-muted-foreground">
+                  <LoaderCircle class="size-3 animate-spin" /> Checking workspace…
+                </p>
               {/if}
-              {#each devicePlan.blockers as blocker (blocker)}
-                <p class="mt-1 mb-0 text-destructive">{blocker}</p>
-              {/each}
+              {#if planningDevice && devicePlan}
+                <LoaderCircle
+                  class="absolute top-2 right-2 size-3 animate-spin text-muted-foreground"
+                  aria-label="Refreshing workspace"
+                />
+              {/if}
             </div>
           {:else if devicePlanError}
             <p class="m-0 text-[11px] text-destructive">{devicePlanError}</p>

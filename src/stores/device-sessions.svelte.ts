@@ -401,17 +401,23 @@ export class DeviceSessionsStore {
     return this.loadRequest;
   }
 
-  refresh(): Promise<void> {
+  refresh({ background = false }: { background?: boolean } = {}): Promise<void> {
     if (!this.supported) return Promise.resolve();
-    if (this.refreshRequest) return this.refreshRequest;
-    this.refreshing = true;
+    if (this.refreshRequest) {
+      if (background) return this.refreshRequest;
+      this.refreshing = true;
+      return this.refreshRequest.finally(() => {
+        this.refreshing = false;
+      });
+    }
+    if (!background) this.refreshing = true;
     const request = ipc.sessions.refreshDevices()
       .then((state) => {
         if (state.revision < this.state.revision) return;
         this.applyState(state);
       })
       .finally(() => {
-        this.refreshing = false;
+        if (!background) this.refreshing = false;
         if (this.refreshRequest === request) this.refreshRequest = null;
       });
     this.refreshRequest = request;
