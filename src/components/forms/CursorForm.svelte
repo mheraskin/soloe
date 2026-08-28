@@ -4,6 +4,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
+  import ProviderModelPicker from '../ProviderModelPicker.svelte';
 
   let draft = $derived(modal.draft.launch as AgentLaunch);
   function update<K extends keyof AgentLaunch>(key: K, value: AgentLaunch[K]) {
@@ -38,6 +39,12 @@
   </Select.Root>
 </div>
 <div class="flex flex-col gap-1.5">
-  <Label class="text-xs text-muted-foreground" for="cursor-model">Model (optional)</Label>
-  <Input id="cursor-model" placeholder="auto" value={draft.model ?? ''} oninput={(e) => update('model', e.currentTarget.value.trim() || undefined)} />
+  <Label class="text-xs text-muted-foreground">Model</Label>
+  <ProviderModelPicker
+    provider="cursor"
+    model={draft.model}
+    providerLocked
+    ariaLabel="Cursor model"
+    onchange={(_provider, model) => update('model', model)}
+  />
 </div>

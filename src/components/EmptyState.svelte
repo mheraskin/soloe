@@ -62,7 +62,13 @@
   let canContinueAcrossAgents = $derived(
     (useLocalActionFallbacks || onContinueWith !== undefined)
       && session !== null
-      && (displayKind === 'claude_code' || displayKind === 'codex' || displayKind === 'cursor')
+      && (
+        displayKind === 'claude_code'
+        || displayKind === 'codex'
+        || displayKind === 'cursor'
+        || displayKind === 'opencode'
+        || displayKind === 'grok_build'
+      )
   );
   let quickLaunchPresets = $derived(
     exitedSessionQuickLaunchPresets(settings.current.quickLaunch)
@@ -108,6 +114,32 @@
         ?? null
       );
     }
+    if (displayKind === 'opencode') {
+      return (
+        (session.currentAgentRuntime?.provider === 'opencode'
+          ? session.currentAgentRuntime.providerThreadId
+          : undefined)
+        ?? session.providerThreadId
+        ?? observed?.providerThreadId
+        ?? (session.launch.type === 'agent' && session.launch.provider === 'opencode'
+          ? session.launch.openCodeSessionId
+          : undefined)
+        ?? null
+      );
+    }
+    if (displayKind === 'grok_build') {
+      return (
+        (session.currentAgentRuntime?.provider === 'grok_build'
+          ? session.currentAgentRuntime.providerThreadId
+          : undefined)
+        ?? session.providerThreadId
+        ?? observed?.providerThreadId
+        ?? (session.launch.type === 'agent' && session.launch.provider === 'grok_build'
+          ? session.launch.grokSessionId
+          : undefined)
+        ?? null
+      );
+    }
     return null;
   });
   let providerResumeCommand = $derived.by(() => {
@@ -115,6 +147,8 @@
     if (displayKind === 'claude_code') return `claude --resume ${providerSessionId}`;
     if (displayKind === 'codex') return `codex resume ${providerSessionId}`;
     if (displayKind === 'cursor') return `agent --resume ${providerSessionId}`;
+    if (displayKind === 'opencode') return `opencode --session ${providerSessionId}`;
+    if (displayKind === 'grok_build') return `grok --resume ${providerSessionId}`;
     return null;
   });
 
@@ -326,7 +360,7 @@
             <span class="text-[11px] font-medium text-muted-foreground">Provider session ID</span>
             <code class="min-w-0 font-mono text-[11px] break-all text-foreground">{providerSessionId}</code>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center justify-center gap-2">
             <code class="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1.5 font-mono text-[11px] break-all text-foreground">
               {providerResumeCommand}
             </code>
@@ -345,6 +379,34 @@
         <div class="mt-2 flex flex-col items-center gap-1.5">
           <span class="text-[11px] leading-4 text-muted-foreground">Continue in another agent</span>
           <div class="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              class="gap-2"
+              onclick={() => void continueWith('opencode')}
+              disabled={busyProvider !== null}
+            >
+              {#if busyProvider === 'opencode'}
+                <Loader2 class="size-3.5 animate-spin" />
+              {:else}
+                <KindIcon kind="opencode" size={14} />
+              {/if}
+              <span>OpenCode</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              class="gap-2"
+              onclick={() => void continueWith('grok_build')}
+              disabled={busyProvider !== null}
+            >
+              {#if busyProvider === 'grok_build'}
+                <Loader2 class="size-3.5 animate-spin" />
+              {:else}
+                <KindIcon kind="grok_build" size={14} />
+              {/if}
+              <span>Grok Build</span>
+            </Button>
             <Button
               size="sm"
               variant="outline"

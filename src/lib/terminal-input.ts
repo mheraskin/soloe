@@ -48,7 +48,11 @@ function isAgentSession(session: AltEditSession): boolean {
   if (!session) return false;
   if (session.launch?.type === 'agent') return true;
   const provider = session.currentAgentRuntime?.provider;
-  return provider === 'claude_code' || provider === 'codex' || provider === 'cursor';
+  return provider === 'claude_code'
+    || provider === 'codex'
+    || provider === 'cursor'
+    || provider === 'opencode'
+    || provider === 'grok_build';
 }
 
 export function altWordEditSequence(

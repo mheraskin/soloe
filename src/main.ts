@@ -14,11 +14,12 @@ import { usesMacosNativeWindowControls } from './lib/platform-ui';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('Missing #app root element');
+const rendererView = new URLSearchParams(window.location.search).get('view');
 
 const bootstrapSkeleton = mount(AppSkeleton, {
   target,
   props: {
-    label: 'Starting Soloe',
+    label: rendererView === 'session-events' ? 'Loading Session events' : 'Starting Soloe',
     macosWindowControls: usesMacosNativeWindowControls()
   }
 });
@@ -37,17 +38,25 @@ if (
     { once: true }
   );
 }
-const [
-  { default: App },
-  { initCommentsBridge },
-  { initDiffBridge }
-] = await Promise.all([
-  import('./App.svelte'),
-  import('./lib/comments-bridge'),
-  import('./lib/diff-bridge-handler')
-]);
-initCommentsBridge();
-initDiffBridge();
-await unmount(bootstrapSkeleton);
-mount(App, { target });
+if (rendererView === 'session-events') {
+  const { default: SessionEventsDebugView } = await import(
+    './components/SessionEventsDebugView.svelte'
+  );
+  await unmount(bootstrapSkeleton);
+  mount(SessionEventsDebugView, { target });
+} else {
+  const [
+    { default: App },
+    { initCommentsBridge },
+    { initDiffBridge }
+  ] = await Promise.all([
+    import('./App.svelte'),
+    import('./lib/comments-bridge'),
+    import('./lib/diff-bridge-handler')
+  ]);
+  initCommentsBridge();
+  initDiffBridge();
+  await unmount(bootstrapSkeleton);
+  mount(App, { target });
+}
 performance.mark('soloe:renderer-mounted');

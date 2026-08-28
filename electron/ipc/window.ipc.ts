@@ -9,6 +9,10 @@ const MAX_ZOOM = 1.8;
 export class WindowIpc {
   private registered = false;
 
+  constructor(private readonly opts: {
+    openSessionEventsDebug?: () => void | Promise<void>;
+  } = {}) {}
+
   register(): void {
     if (this.registered) return;
     this.registered = true;
@@ -36,6 +40,12 @@ export class WindowIpc {
     ipcMain.handle(IpcChannels.window.zoomOut, (event) =>
       ipcInvoke(() => setZoom(event, -ZOOM_STEP))
     );
+    ipcMain.handle(IpcChannels.window.openSessionEventsDebug, () =>
+      ipcInvoke(async () => {
+        await this.opts.openSessionEventsDebug?.();
+        return true;
+      })
+    );
     ipcMain.handle(IpcChannels.window.close, (event) =>
       ipcInvoke(() => {
         BrowserWindow.fromWebContents(event.sender)?.close();
@@ -50,6 +60,7 @@ export class WindowIpc {
     ipcMain.removeHandler(IpcChannels.window.toggleMaximize);
     ipcMain.removeHandler(IpcChannels.window.zoomIn);
     ipcMain.removeHandler(IpcChannels.window.zoomOut);
+    ipcMain.removeHandler(IpcChannels.window.openSessionEventsDebug);
     ipcMain.removeHandler(IpcChannels.window.close);
     this.registered = false;
   }

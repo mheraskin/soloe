@@ -97,6 +97,8 @@ export class SessionCommandBuilder {
           case 'claude_code': return this.buildClaude(session, session.launch, ctx);
           case 'codex': return this.buildCodex(session, session.launch, ctx);
           case 'cursor': return this.buildCursor(session, session.launch, ctx);
+          case 'opencode': return this.buildOpenCode(session, session.launch, ctx);
+          case 'grok_build': return this.buildGrok(session, session.launch, ctx);
         }
     }
   }
@@ -130,6 +132,34 @@ export class SessionCommandBuilder {
         ctx.binaries?.cursor ?? 'agent',
         args,
         buildSoloeEnv(s.id, s.runMode, 'cursor', ctx),
+        s.runMode
+      );
+    }
+
+    if (runtime.provider === 'opencode') {
+      const threadId = runtime.providerThreadId ?? s.providerThreadId;
+      const args = threadId ? ['--session', threadId] : ['--continue'];
+      if (s.launch.type === 'agent' && s.launch.provider === 'opencode') {
+        appendAgentLaunchArgs(args, s.launch, 'opencode');
+      }
+      return buildAgentCommand(
+        ctx.binaries?.opencode ?? 'opencode',
+        args,
+        buildSoloeEnv(s.id, s.runMode, 'opencode', ctx),
+        s.runMode
+      );
+    }
+
+    if (runtime.provider === 'grok_build') {
+      const threadId = runtime.providerThreadId ?? s.providerThreadId;
+      const args = threadId ? ['--resume', threadId] : ['--continue'];
+      if (s.launch.type === 'agent' && s.launch.provider === 'grok_build') {
+        appendAgentLaunchArgs(args, s.launch, 'grok_build');
+      }
+      return buildAgentCommand(
+        ctx.binaries?.grok ?? 'grok',
+        args,
+        buildSoloeEnv(s.id, s.runMode, 'grok_build', ctx),
         s.runMode
       );
     }
@@ -291,6 +321,64 @@ export class SessionCommandBuilder {
       s.runMode
     );
   }
+
+  private buildOpenCode(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
+    const args: string[] = [];
+    switch (launch.resumeMode) {
+      case 'new': {
+        const sessionId = launch.openCodeSessionId ?? s.providerThreadId;
+        if (sessionId) args.push('--session', sessionId);
+        break;
+      }
+      case 'resume_last':
+        args.push('--continue');
+        break;
+      case 'resume_by_id':
+        if (!launch.openCodeSessionId) {
+          throw new Error('openCodeSessionId is required for resume_by_id');
+        }
+        args.push('--session', launch.openCodeSessionId);
+        break;
+      case 'resume_by_name':
+        throw new Error('OpenCode does not support resume_by_name');
+    }
+    appendAgentLaunchArgs(args, launch, 'opencode');
+    return buildAgentCommand(
+      ctx.binaries?.opencode ?? 'opencode',
+      args,
+      buildSoloeEnv(s.id, s.runMode, 'opencode', ctx),
+      s.runMode
+    );
+  }
+
+  private buildGrok(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
+    const args: string[] = [];
+    switch (launch.resumeMode) {
+      case 'new': {
+        const sessionId = launch.grokSessionId ?? s.providerThreadId;
+        if (sessionId) args.push('--resume', sessionId);
+        break;
+      }
+      case 'resume_last':
+        args.push('--continue');
+        break;
+      case 'resume_by_id':
+        if (!launch.grokSessionId) {
+          throw new Error('grokSessionId is required for resume_by_id');
+        }
+        args.push('--resume', launch.grokSessionId);
+        break;
+      case 'resume_by_name':
+        throw new Error('Grok Build does not support resume_by_name');
+    }
+    appendAgentLaunchArgs(args, launch, 'grok_build');
+    return buildAgentCommand(
+      ctx.binaries?.grok ?? 'grok',
+      args,
+      buildSoloeEnv(s.id, s.runMode, 'grok_build', ctx),
+      s.runMode
+    );
+  }
 }
 
 function appendCodexBridgeOverrides(
@@ -313,7 +401,7 @@ function appendCodexBridgeOverrides(
 function appendAgentLaunchArgs(
   args: string[],
   launch: AgentLaunch,
-  provider: 'claude_code' | 'codex' | 'cursor'
+  provider: 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build'
 ): void {
   if (launch.model) {
     if (provider === 'claude_code') args.push('--model', launch.model);
@@ -570,7 +658,7 @@ function buildWslAgentExecLine(
 function buildSoloeEnv(
   sessionId: SessionId,
   runMode: Session['runMode'],
-  provider: 'claude_code' | 'codex' | 'cursor' | undefined,
+  provider: 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build' | undefined,
   ctx: SessionBuildContext
 ): Record<string, string> {
   const inheritedTerm = ctx.baseEnv['TERM']?.trim();
@@ -705,6 +793,8 @@ function buildAgentLaunchFunctions(): string {
     'claude() { __soloe_agent_launch claude claude "$@"; }',
     'codex() { __soloe_agent_launch codex codex "$@"; }',
     'agent() { __soloe_agent_launch cursor agent "$@"; }',
-    'cursor-agent() { __soloe_agent_launch cursor cursor-agent "$@"; }'
+    'cursor-agent() { __soloe_agent_launch cursor cursor-agent "$@"; }',
+    'opencode() { __soloe_agent_launch opencode opencode "$@"; }',
+    'grok() { __soloe_agent_launch grok grok "$@"; }'
   ].join('\n');
 }

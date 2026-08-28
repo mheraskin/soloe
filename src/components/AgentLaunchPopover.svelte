@@ -440,7 +440,13 @@
     if (option === 'terminal') {
       return { type: 'terminal', shell: settings.current.defaults.shell };
     }
-    if (option === 'claude_code' || option === 'codex' || option === 'cursor') {
+    if (
+      option === 'claude_code'
+      || option === 'codex'
+      || option === 'cursor'
+      || option === 'opencode'
+      || option === 'grok_build'
+    ) {
       return {
         type: 'agent',
         provider: option,
@@ -467,6 +473,8 @@
     if (option === 'claude_code') return branch ? `${branch} Claude` : 'Claude';
     if (option === 'codex') return branch ? `${branch} Codex` : 'Codex';
     if (option === 'cursor') return branch ? `${branch} Cursor` : 'Cursor';
+    if (option === 'opencode') return branch ? `${branch} OpenCode` : 'OpenCode';
+    if (option === 'grok_build') return branch ? `${branch} Grok Build` : 'Grok Build';
     return presets.find((candidate) => candidate.id === option.slice('preset:'.length))?.label
       ?? 'Session';
   }
@@ -655,7 +663,13 @@
       launchTerminal();
       return;
     }
-    if (option === 'claude_code' || option === 'codex' || option === 'cursor') {
+    if (
+      option === 'claude_code'
+      || option === 'codex'
+      || option === 'cursor'
+      || option === 'opencode'
+      || option === 'grok_build'
+    ) {
       launchAgent(option);
       return;
     }
@@ -968,7 +982,31 @@
           </Button>
         </div>
       {/if}
-      <div class="mobile-session-picker grid grid-cols-4 gap-1">
+      <div class="mobile-session-picker grid grid-cols-3 gap-1 sm:grid-cols-6">
+        <Button
+          variant="ghost"
+          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'opencode' ? 'bg-muted text-foreground' : ''}`}
+          title="New OpenCode session"
+          aria-label="New OpenCode session"
+          data-launch-option="opencode"
+          data-gesture-selected={selectedLaunchOption === 'opencode' ? 'true' : undefined}
+          onclick={(event) => onLaunchOptionClick(event, 'opencode')}
+        >
+          <KindIcon kind="opencode" size={20} />
+          <span class="truncate leading-none">OpenCode</span>
+        </Button>
+        <Button
+          variant="ghost"
+          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'grok_build' ? 'bg-muted text-foreground' : ''}`}
+          title="New Grok Build session"
+          aria-label="New Grok Build session"
+          data-launch-option="grok_build"
+          data-gesture-selected={selectedLaunchOption === 'grok_build' ? 'true' : undefined}
+          onclick={(event) => onLaunchOptionClick(event, 'grok_build')}
+        >
+          <KindIcon kind="grok_build" size={20} />
+          <span class="truncate leading-none">Grok</span>
+        </Button>
         <Button
           variant="ghost"
           class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'claude_code' ? 'bg-muted text-foreground' : ''}`}

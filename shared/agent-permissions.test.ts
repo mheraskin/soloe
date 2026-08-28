@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { Session } from './types/sessions.js';
+import type { AgentRuntimeProvider, Session } from './types/sessions.js';
 import { sessionAutoApprovesPermissions } from './agent-permissions.js';
 
 function agentSession(
-  provider: 'codex' | 'claude_code' | 'cursor',
+  provider: AgentRuntimeProvider,
   extraArgs: string[]
 ): Session {
   return {
@@ -34,7 +34,11 @@ describe('sessionAutoApprovesPermissions', () => {
     ['claude_code', ['--permission-mode=bypassPermissions']],
     ['cursor', ['--force']],
     ['cursor', ['--yolo']],
-    ['cursor', ['-f']]
+    ['cursor', ['-f']],
+    ['opencode', ['--auto']],
+    ['grok_build', ['--always-approve']],
+    ['grok_build', ['--yolo']],
+    ['grok_build', ['--permission-mode=bypassPermissions']]
   ] as const)('recognizes %s auto-approval arguments', (provider, extraArgs) => {
     expect(sessionAutoApprovesPermissions(agentSession(provider, [...extraArgs]))).toBe(true);
   });

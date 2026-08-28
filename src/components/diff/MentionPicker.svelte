@@ -56,9 +56,12 @@
     items.push({ kind: 'new-provider', provider: 'claude_code', label: 'Claude' });
     items.push({ kind: 'new-provider', provider: 'codex', label: 'Codex' });
     items.push({ kind: 'new-provider', provider: 'cursor', label: 'Cursor' });
+    items.push({ kind: 'new-provider', provider: 'opencode', label: 'OpenCode' });
+    items.push({ kind: 'new-provider', provider: 'grok_build', label: 'Grok Build' });
 
     // 4) Specific models from the catalog.
     for (const entry of settings.availableModels) {
+      if (entry.isDefault) continue;
       items.push({
         kind: 'new-model',
         provider: modelProviderToRuntime(entry.provider),

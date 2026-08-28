@@ -9,6 +9,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Select from '$lib/components/ui/select';
+  import ProviderModelPicker from '../ProviderModelPicker.svelte';
 
   let draft = $derived(modal.draft.launch as AgentLaunch);
 
@@ -70,6 +71,17 @@
     />
   </div>
 {/if}
+
+<div class="flex flex-col gap-1.5">
+  <Label class="text-xs text-muted-foreground">Model</Label>
+  <ProviderModelPicker
+    provider="claude_code"
+    model={draft.model}
+    providerLocked
+    ariaLabel="Claude model"
+    onchange={(_provider, model) => update('model', model)}
+  />
+</div>
 
 <div class="flex items-center gap-2">
   <Checkbox

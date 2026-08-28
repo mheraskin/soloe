@@ -4,7 +4,8 @@ import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
 import {
   buildModelCatalogCommand,
   ModelCatalogService,
-  parseCursorModels
+  parseCursorModels,
+  parseOpenCodeModels
 } from './ModelCatalogService.js';
 
 describe('ModelCatalogService', () => {
@@ -82,6 +83,26 @@ describe('ModelCatalogService', () => {
     expect(parseCursorModels('* auto (current)\nmodel id  label')).toEqual([]);
   });
 
+  it('parses OpenCode provider/model output without guessing decorated rows', () => {
+    expect(parseOpenCodeModels([
+      'anthropic/claude-sonnet-4-6',
+      '\u001b[32mopenai/gpt-5.3-codex\u001b[0m',
+      'model id  label',
+      'anthropic/claude-sonnet-4-6'
+    ].join('\n'))).toEqual([
+      {
+        provider: 'opencode',
+        id: 'anthropic/claude-sonnet-4-6',
+        label: 'Claude Sonnet 4 6 · Anthropic'
+      },
+      {
+        provider: 'opencode',
+        id: 'openai/gpt-5.3-codex',
+        label: 'GPT 5.3 Codex · OpenAI'
+      }
+    ]);
+  });
+
   it('caches discovery until invalidated', async () => {
     const runCommand = vi.fn(async () => ({ exitCode: -1, stdout: '', stderr: '' }));
     const service = new ModelCatalogService({
@@ -91,10 +112,10 @@ describe('ModelCatalogService', () => {
 
     await service.getCatalog();
     await service.getCatalog();
-    expect(runCommand).toHaveBeenCalledTimes(5);
+    expect(runCommand).toHaveBeenCalledTimes(7);
     service.invalidate();
     await service.getCatalog();
-    expect(runCommand).toHaveBeenCalledTimes(10);
+    expect(runCommand).toHaveBeenCalledTimes(14);
   });
 });
 

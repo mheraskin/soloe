@@ -731,6 +731,73 @@ describe('SessionCommandBuilder — cursor kind', () => {
   });
 });
 
+describe('SessionCommandBuilder — OpenCode kind', () => {
+  const openCode = (launch: Session['launch']): Session => ({
+    ...baseFields('opencode'),
+    runMode: 'wsl',
+    wslDistro: 'Ubuntu',
+    launch
+  });
+
+  it('launches the configured OpenCode binary with a model', () => {
+    const session = openCode({
+      type: 'agent', provider: 'opencode', resumeMode: 'new', model: 'anthropic/claude-sonnet-4-5'
+    });
+    const script = innerLine(builder.build(session, {
+      ...ctx, binaries: { opencode: '/opt/opencode/bin/opencode' }
+    }).args);
+    expect(script).toContain('exec /opt/opencode/bin/opencode');
+    expect(script).toContain('--model anthropic/claude-sonnet-4-5');
+    expect(script).toContain('SOLOE_AGENT_PROVIDER=opencode');
+  });
+
+  it('resumes the latest or an exact OpenCode session with documented flags', () => {
+    const latest = openCode({ type: 'agent', provider: 'opencode', resumeMode: 'resume_last' });
+    const exact = openCode({
+      type: 'agent',
+      provider: 'opencode',
+      resumeMode: 'resume_by_id',
+      openCodeSessionId: 'ses_123'
+    });
+    expect(decodeAgentScript(innerLine(builder.build(latest, ctx).args))).toContain('--continue');
+    expect(decodeAgentScript(innerLine(builder.build(exact, ctx).args))).toContain('--session ses_123');
+  });
+});
+
+describe('SessionCommandBuilder — Grok Build kind', () => {
+  const grok = (launch: Session['launch']): Session => ({
+    ...baseFields('grok_build'),
+    runMode: 'wsl',
+    wslDistro: 'Ubuntu',
+    launch
+  });
+
+  it('launches the configured Grok binary with a model', () => {
+    const session = grok({
+      type: 'agent', provider: 'grok_build', resumeMode: 'new', model: 'grok-build'
+    });
+    const script = innerLine(builder.build(session, {
+      ...ctx, binaries: { grok: '/opt/grok/bin/grok' }
+    }).args);
+    expect(script).toContain('exec /opt/grok/bin/grok');
+    expect(script).toContain('--model grok-build');
+    expect(script).toContain('SOLOE_AGENT_PROVIDER=grok_build');
+  });
+
+  it('resumes the latest or an exact Grok session with documented flags', () => {
+    const latest = grok({ type: 'agent', provider: 'grok_build', resumeMode: 'resume_last' });
+    const exact = grok({
+      type: 'agent',
+      provider: 'grok_build',
+      resumeMode: 'resume_by_id',
+      grokSessionId: 'grok-session-123'
+    });
+    expect(decodeAgentScript(innerLine(builder.build(latest, ctx).args))).toContain('--continue');
+    expect(decodeAgentScript(innerLine(builder.build(exact, ctx).args)))
+      .toContain('--resume grok-session-123');
+  });
+});
+
 describe('SessionCommandBuilder — windows runMode', () => {
   it('uses the inner executable directly without wsl wrapping', () => {
     const s: Session = {

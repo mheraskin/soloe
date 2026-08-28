@@ -13,5 +13,9 @@ export function displaySessionKind(
 }
 
 function isAgentProvider(value: unknown): value is AgentRuntimeProvider {
-  return value === 'claude_code' || value === 'codex' || value === 'cursor';
+  return value === 'claude_code'
+    || value === 'codex'
+    || value === 'cursor'
+    || value === 'opencode'
+    || value === 'grok_build';
 }

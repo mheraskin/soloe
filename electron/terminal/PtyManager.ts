@@ -670,7 +670,15 @@ const USAGE_LIMIT_CANDIDATE = /limit|credit/i;
 
 function legacyAgentProvider(session: Session): AgentRuntimeProvider | null {
   const kind = (session as unknown as { kind?: unknown }).kind;
-  if (kind === 'claude_code' || kind === 'codex' || kind === 'cursor') return kind;
+  if (
+    kind === 'claude_code'
+    || kind === 'codex'
+    || kind === 'cursor'
+    || kind === 'opencode'
+    || kind === 'grok_build'
+  ) {
+    return kind;
+  }
   return null;
 }
 

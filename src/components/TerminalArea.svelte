@@ -42,7 +42,13 @@
     selected !== null
       && handoffKey !== null
       && !dismissedHandoffKeys[handoffKey]
-      && (selectedKind === 'claude_code' || selectedKind === 'codex' || selectedKind === 'cursor')
+      && (
+        selectedKind === 'claude_code'
+        || selectedKind === 'codex'
+        || selectedKind === 'cursor'
+        || selectedKind === 'opencode'
+        || selectedKind === 'grok_build'
+      )
       && (selectedObserved?.state === 'usage_limited' || selectedObserved?.state === 'failed')
   );
   let runningPanes = $derived.by(() => {

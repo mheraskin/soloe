@@ -21,6 +21,8 @@ import { AgentObserverStore } from './agents/AgentObserverStore.js';
 import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
 import { SoloeMcpServer, type SoloeMcpServerInfo } from './agents/SoloeMcpServer.js';
 import { AgentHookDispatcher } from './agents/AgentHookDispatcher.js';
+import { SessionHookTraceBuffer } from './agents/SessionHookTraceBuffer.js';
+import type { SessionHookTraceEvent } from '@shared/types/session-debug.js';
 import {
   CodexShellSnapshotWatcher,
   codexShellSnapshotDirectory
@@ -152,6 +154,7 @@ interface AppServices {
   files: WorktreeFileIndex;
   releaseFileIndexGitChanges: () => void;
   releaseTerminalHistorySettings: () => void;
+  releaseSessionHookTraceSettings: () => void;
   diagnostics: DiagnosticsService;
   sessionsIpc: SessionsIpc;
   terminalIpc: TerminalIpc;
@@ -264,6 +267,7 @@ async function initializeConnections(): Promise<void> {
 
 let services: AppServices | null = null;
 let mainWindow: BrowserWindow | null = null;
+let sessionEventsDebugWindow: BrowserWindow | null = null;
 let browserPreloadRegistered = false;
 let cleanedUp = false;
 let remoteWindowIpc: WindowIpc | null = null;
@@ -524,6 +528,11 @@ async function setupServices(): Promise<AppServices> {
   await store.init();
   const settings = new SettingsStore(settingsFile, hostPlatform());
   await settings.init();
+  const sessionHookTrace = new SessionHookTraceBuffer();
+  sessionHookTrace.setEnabled((await settings.get()).debug.sessionEvents);
+  const releaseSessionHookTraceSettings = settings.onChange((next) => {
+    sessionHookTrace.setEnabled(next.debug.sessionEvents);
+  });
   const modelCatalog = new ModelCatalogService({
     getSettings: () => settings.get()
   });
@@ -630,6 +639,7 @@ async function setupServices(): Promise<AppServices> {
     observer,
     runtime,
     onHookEvent: (event) => hookDispatcher.dispatch(event),
+    onHookTrace: (event) => sessionHookTrace.append(event),
     commentsBridge,
     diffBridge,
     git,
@@ -732,8 +742,14 @@ async function setupServices(): Promise<AppServices> {
     git,
     crashDir
   });
-  const diagnosticsIpc = new DiagnosticsIpc({ service: diagnostics });
-  const windowIpc = new WindowIpc();
+  const diagnosticsIpc = new DiagnosticsIpc({
+    service: diagnostics,
+    sessionHookTrace,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  const windowIpc = new WindowIpc({
+    openSessionEventsDebug: createSessionEventsDebugWindow
+  });
   const hookInstaller = new HookInstaller({
     bridge: effectiveBridgeConfig,
     wslHostnameProbe: probeWslMcpHostname
@@ -838,6 +854,7 @@ async function setupServices(): Promise<AppServices> {
     files,
     releaseFileIndexGitChanges,
     releaseTerminalHistorySettings,
+    releaseSessionHookTraceSettings,
     diagnostics,
     sessionsIpc,
     terminalIpc,
@@ -867,6 +884,7 @@ interface StartMcpDeps {
   observer: AgentObserverManager;
   runtime: AgentRuntimeManager;
   onHookEvent: (event: import('./agents/SoloeMcpServer.js').HookEvent) => void | Promise<void>;
+  onHookTrace: (event: SessionHookTraceEvent) => void;
   commentsBridge: CommentsBridge;
   diffBridge: DiffBridge;
   git: GitService;
@@ -889,6 +907,7 @@ async function startMcp(deps: StartMcpDeps): Promise<StartMcpResult> {
       observer: deps.observer,
       runtime: deps.runtime,
       onHookEvent: deps.onHookEvent,
+      onHookTrace: deps.onHookTrace,
       commentsBridge: deps.commentsBridge,
       diffBridge: deps.diffBridge,
       git: deps.git,
@@ -1030,6 +1049,72 @@ async function createWindow(): Promise<BrowserWindow> {
   return win;
 }
 
+async function createSessionEventsDebugWindow(): Promise<void> {
+  if (sessionEventsDebugWindow && !sessionEventsDebugWindow.isDestroyed()) {
+    if (sessionEventsDebugWindow.isMinimized()) sessionEventsDebugWindow.restore();
+    sessionEventsDebugWindow.show();
+    sessionEventsDebugWindow.focus();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 1180,
+    height: 760,
+    minWidth: 720,
+    minHeight: 440,
+    ...desktopWindowPolicy(),
+    show: false,
+    title: 'Soloe Session Events',
+    icon: resolveAppIcon(),
+    backgroundColor: '#0f0f10',
+    webPreferences: {
+      preload: path.join(
+        __dirname,
+        remoteServerUrl ? '../preload/preload-remote.js' : '../preload/preload.js'
+      ),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+  sessionEventsDebugWindow = win;
+  win.once('closed', () => {
+    if (sessionEventsDebugWindow === win) sessionEventsDebugWindow = null;
+  });
+  win.once('ready-to-show', () => win.show());
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12') {
+      event.preventDefault();
+      win.webContents.toggleDevTools();
+    }
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      void shell.openExternal(assertSafeExternalUrl(url));
+    } catch {
+      // Keep untrusted or unsupported protocols inside Electron's deny path.
+    }
+    return { action: 'deny' };
+  });
+
+  const rendererTarget = desktopRendererTarget({
+    appIsPackaged: app.isPackaged,
+    development: process.env['SOLOE_DESKTOP_DEVELOPMENT'] === '1',
+    ...(process.env['ELECTRON_RENDERER_URL']
+      ? { developmentUrl: process.env['ELECTRON_RENDERER_URL'] }
+      : {})
+  });
+  if (rendererTarget.kind === 'url') {
+    const url = new URL(rendererTarget.value);
+    url.searchParams.set('view', 'session-events');
+    await win.loadURL(url.toString());
+  } else {
+    await win.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      query: { view: 'session-events' }
+    });
+  }
+}
+
 async function toggleFocusedDevTools(win: BrowserWindow): Promise<void> {
   let browserSurfaceFocused = false;
   try {
@@ -1085,6 +1170,7 @@ async function cleanup(): Promise<void> {
     services.browserSessionsIpc.dispose();
     services.releaseFileIndexGitChanges();
     services.releaseTerminalHistorySettings();
+    services.releaseSessionHookTraceSettings();
     services.git.dispose();
     await services.pty.dispose();
     await services.runtime.dispose();
@@ -1190,7 +1276,9 @@ if (ensureSingleInstance()) {
     ensureWindowsDevShellShortcut(resolveAppIcon());
     await initializeConnections();
     if (remoteServerUrl) {
-      remoteWindowIpc = new WindowIpc();
+      remoteWindowIpc = new WindowIpc({
+        openSessionEventsDebug: createSessionEventsDebugWindow
+      });
       remoteBrowserIpc = new BrowserIpc();
       remoteVaultIpc = new VaultIpc({
         createStore: async () => {

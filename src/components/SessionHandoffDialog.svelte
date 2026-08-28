@@ -12,7 +12,13 @@
   import KindIcon from './KindIcon.svelte';
 
   const NEW_TARGET = '__new__';
-  const providers: AgentRuntimeProvider[] = ['claude_code', 'codex', 'cursor'];
+  const providers: AgentRuntimeProvider[] = [
+    'claude_code',
+    'codex',
+    'cursor',
+    'opencode',
+    'grok_build'
+  ];
 
   type TargetId = SessionId | typeof NEW_TARGET;
 
@@ -83,7 +89,11 @@
   }
 
   function providerLabel(provider: AgentRuntimeProvider): string {
-    return provider === 'claude_code' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Cursor';
+    if (provider === 'claude_code') return 'Claude Code';
+    if (provider === 'codex') return 'Codex';
+    if (provider === 'cursor') return 'Cursor';
+    if (provider === 'opencode') return 'OpenCode';
+    return 'Grok Build';
   }
 
   function providerButtonClass(provider: AgentRuntimeProvider): string {

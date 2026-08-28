@@ -12,7 +12,7 @@
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
 
-  type Provider = 'claude' | 'codex' | 'cursor';
+  type Provider = 'claude' | 'codex' | 'cursor' | 'opencode' | 'grok';
 
   let {
     status,
@@ -34,6 +34,8 @@
       if (!entry.claude.current) out.push({ host: entry.host, provider: 'claude' });
       if (!entry.codex.current) out.push({ host: entry.host, provider: 'codex' });
       if (!entry.cursor.current) out.push({ host: entry.host, provider: 'cursor' });
+      if (!entry.opencode.current) out.push({ host: entry.host, provider: 'opencode' });
+      if (!entry.grok.current) out.push({ host: entry.host, provider: 'grok' });
       return out;
     })
   );
@@ -44,6 +46,8 @@
       if (entry.claude.installed) out.push({ host: entry.host, provider: 'claude' });
       if (entry.codex.installed) out.push({ host: entry.host, provider: 'codex' });
       if (entry.cursor.installed) out.push({ host: entry.host, provider: 'cursor' });
+      if (entry.opencode.installed) out.push({ host: entry.host, provider: 'opencode' });
+      if (entry.grok.installed) out.push({ host: entry.host, provider: 'grok' });
       return out;
     })
   );
@@ -55,7 +59,11 @@
           ? availableHosts.find((h) => sameHost(h.host, a.host))?.claude.installed === true
           : a.provider === 'codex'
             ? availableHosts.find((h) => sameHost(h.host, a.host))?.codex.installed === true
-            : availableHosts.find((h) => sameHost(h.host, a.host))?.cursor.installed === true
+            : a.provider === 'cursor'
+              ? availableHosts.find((h) => sameHost(h.host, a.host))?.cursor.installed === true
+              : a.provider === 'opencode'
+                ? availableHosts.find((h) => sameHost(h.host, a.host))?.opencode.installed === true
+                : availableHosts.find((h) => sameHost(h.host, a.host))?.grok.installed === true
       )
   );
 
@@ -89,21 +97,31 @@
   }
 
   function providerLabel(provider: Provider): string {
-    return provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : 'Cursor';
+    return provider === 'claude'
+      ? 'Claude'
+      : provider === 'codex'
+        ? 'Codex'
+        : provider === 'cursor'
+          ? 'Cursor'
+          : provider === 'opencode' ? 'OpenCode' : 'Grok Build';
   }
 
   async function install(host: AgentIntegrationHost, provider: Provider): Promise<AgentIntegrationStatus> {
     const args = { host: hostKey(host) };
     if (provider === 'claude') return ipc.agentIntegration.installClaude(args);
     if (provider === 'codex') return ipc.agentIntegration.installCodex(args);
-    return ipc.agentIntegration.installCursor(args);
+    if (provider === 'cursor') return ipc.agentIntegration.installCursor(args);
+    if (provider === 'opencode') return ipc.agentIntegration.installOpenCode(args);
+    return ipc.agentIntegration.installGrok(args);
   }
 
   async function uninstall(host: AgentIntegrationHost, provider: Provider): Promise<AgentIntegrationStatus> {
     const args = { host: hostKey(host) };
     if (provider === 'claude') return ipc.agentIntegration.uninstallClaude(args);
     if (provider === 'codex') return ipc.agentIntegration.uninstallCodex(args);
-    return ipc.agentIntegration.uninstallCursor(args);
+    if (provider === 'cursor') return ipc.agentIntegration.uninstallCursor(args);
+    if (provider === 'opencode') return ipc.agentIntegration.uninstallOpenCode(args);
+    return ipc.agentIntegration.uninstallGrok(args);
   }
 
   async function toggle(
@@ -216,6 +234,8 @@
           {@render providerButton(entry.host, 'claude', entry.claude)}
           {@render providerButton(entry.host, 'codex', entry.codex)}
           {@render providerButton(entry.host, 'cursor', entry.cursor)}
+          {@render providerButton(entry.host, 'opencode', entry.opencode)}
+          {@render providerButton(entry.host, 'grok', entry.grok)}
           {#if entry.cursor.cli}
             <span
               class={entry.cursor.cli.available ? 'ml-1 text-[10px] text-emerald-500' : 'ml-1 text-[10px] text-amber-500'}

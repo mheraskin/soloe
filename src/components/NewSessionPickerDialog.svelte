@@ -19,6 +19,8 @@
   let claudeButton: HTMLButtonElement | null = $state(null);
   let codexButton: HTMLButtonElement | null = $state(null);
   let cursorButton: HTMLButtonElement | null = $state(null);
+  let openCodeButton: HTMLButtonElement | null = $state(null);
+  let grokButton: HTMLButtonElement | null = $state(null);
   let kind = $state<SessionLaunchKind>('terminal');
   let workspaceKey = $state('');
   let deviceId = $state('');
@@ -68,7 +70,9 @@
     if (value === 'terminal') return terminalButton;
     if (value === 'claude_code') return claudeButton;
     if (value === 'codex') return codexButton;
-    return cursorButton;
+    if (value === 'cursor') return cursorButton;
+    if (value === 'opencode') return openCodeButton;
+    return grokButton;
   }
 
   function initializePlacement(): void {
@@ -111,6 +115,8 @@
     if (value === 'claude_code') return 'Claude';
     if (value === 'codex') return 'Codex';
     if (value === 'cursor') return 'Cursor';
+    if (value === 'opencode') return 'OpenCode';
+    if (value === 'grok_build') return 'Grok Build';
     return 'Terminal';
   }
 
@@ -182,7 +188,7 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="grid grid-cols-4 gap-2" aria-label="Session kind">
+    <div class="grid grid-cols-3 gap-2 sm:grid-cols-6" aria-label="Session kind">
       <Button
         bind:ref={claudeButton}
         variant={kind === 'claude_code' ? 'secondary' : 'ghost'}
@@ -223,6 +229,19 @@
         <span class="leading-none">Codex</span>
       </Button>
       <Button
+        bind:ref={openCodeButton}
+        variant={kind === 'opencode' ? 'secondary' : 'ghost'}
+        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        onclick={() => {
+          if (!placementAvailable) return legacyAgent('opencode');
+          kind = 'opencode';
+          resetPlan();
+        }}
+      >
+        <KindIcon kind="opencode" size={28} />
+        <span class="leading-none">OpenCode</span>
+      </Button>
+      <Button
         bind:ref={terminalButton}
         variant={kind === 'terminal' ? 'secondary' : 'ghost'}
         class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
@@ -234,6 +253,19 @@
       >
         <KindIcon kind="terminal" size={28} />
         <span class="leading-none">Terminal</span>
+      </Button>
+      <Button
+        bind:ref={grokButton}
+        variant={kind === 'grok_build' ? 'secondary' : 'ghost'}
+        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        onclick={() => {
+          if (!placementAvailable) return legacyAgent('grok_build');
+          kind = 'grok_build';
+          resetPlan();
+        }}
+      >
+        <KindIcon kind="grok_build" size={28} />
+        <span class="leading-none">Grok Build</span>
       </Button>
     </div>
 

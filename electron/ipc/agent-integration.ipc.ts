@@ -4,6 +4,8 @@ import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
   AgentIntegrationCursorRequest,
+  AgentIntegrationGrokRequest,
+  AgentIntegrationOpenCodeRequest,
   AgentIntegrationStatus
 } from '@shared/types/ipc.js';
 import { ipcInvoke } from './result.js';
@@ -84,6 +86,34 @@ export class AgentIntegrationIpc {
         return this.broadcastStatus();
       })
     );
+    ipcMain.handle(
+      IpcChannels.agentIntegration.installOpenCode,
+      (_e, request: AgentIntegrationOpenCodeRequest) => ipcInvoke(async () => {
+        await installer.installOpenCode(request.host);
+        return this.broadcastStatus();
+      })
+    );
+    ipcMain.handle(
+      IpcChannels.agentIntegration.uninstallOpenCode,
+      (_e, request: AgentIntegrationOpenCodeRequest) => ipcInvoke(async () => {
+        await installer.uninstallOpenCode(request.host);
+        return this.broadcastStatus();
+      })
+    );
+    ipcMain.handle(
+      IpcChannels.agentIntegration.installGrok,
+      (_e, request: AgentIntegrationGrokRequest) => ipcInvoke(async () => {
+        await installer.installGrok(request.host);
+        return this.broadcastStatus();
+      })
+    );
+    ipcMain.handle(
+      IpcChannels.agentIntegration.uninstallGrok,
+      (_e, request: AgentIntegrationGrokRequest) => ipcInvoke(async () => {
+        await installer.uninstallGrok(request.host);
+        return this.broadcastStatus();
+      })
+    );
   }
 
   dispose(): void {
@@ -95,6 +125,10 @@ export class AgentIntegrationIpc {
     ipcMain.removeHandler(IpcChannels.agentIntegration.uninstallCodex);
     ipcMain.removeHandler(IpcChannels.agentIntegration.installCursor);
     ipcMain.removeHandler(IpcChannels.agentIntegration.uninstallCursor);
+    ipcMain.removeHandler(IpcChannels.agentIntegration.installOpenCode);
+    ipcMain.removeHandler(IpcChannels.agentIntegration.uninstallOpenCode);
+    ipcMain.removeHandler(IpcChannels.agentIntegration.installGrok);
+    ipcMain.removeHandler(IpcChannels.agentIntegration.uninstallGrok);
     this.registered = false;
   }
 

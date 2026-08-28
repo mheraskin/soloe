@@ -113,7 +113,9 @@ function isAgentSession(session: Session, observed: ObservedAgentSnapshot | null
   return session.launch.type === 'agent'
     || observed?.provider === 'claude_code'
     || observed?.provider === 'codex'
-    || observed?.provider === 'cursor';
+    || observed?.provider === 'cursor'
+    || observed?.provider === 'opencode'
+    || observed?.provider === 'grok_build';
 }
 
 function agentStateTone(state: AgentObservedState): SessionStatusTone {

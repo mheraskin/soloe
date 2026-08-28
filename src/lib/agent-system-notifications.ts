@@ -25,6 +25,8 @@ export function agentProviderLabel(kind: AgentToastNotice['sessionKind']): strin
   if (kind === 'codex') return 'Codex';
   if (kind === 'claude_code') return 'Claude Code';
   if (kind === 'cursor') return 'Cursor';
+  if (kind === 'opencode') return 'OpenCode';
+  if (kind === 'grok_build') return 'Grok Build';
   return 'Terminal';
 }
 

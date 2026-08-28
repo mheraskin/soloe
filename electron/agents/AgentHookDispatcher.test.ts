@@ -576,6 +576,164 @@ describe('AgentHookDispatcher', () => {
     });
   });
 
+  describe('OpenCode native events → observed state', () => {
+    it('maps session, tool, permission, and idle events', async () => {
+      const session = await sessionStore.create({
+        name: 'OpenCode',
+        cwd: '/repo',
+        runMode: 'linux',
+        launch: { type: 'agent', provider: 'opencode', resumeMode: 'new' }
+      });
+      await dispatcher.dispatch({
+        provider: 'opencode',
+        soloeSessionId: session.id,
+        payload: {
+          type: 'session.created',
+          properties: { info: { id: 'open-session-1', directory: '/repo' } }
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        provider: 'opencode',
+        providerThreadId: 'open-session-1',
+        state: 'starting'
+      });
+
+      await dispatcher.dispatch({
+        provider: 'opencode',
+        soloeSessionId: session.id,
+        payload: {
+          type: 'message.part.updated',
+          properties: {
+            sessionID: 'open-session-1',
+            part: { type: 'tool', tool: 'bash', callID: 'call-1', state: { status: 'running' } }
+          }
+        }
+      });
+      expect(observer.getSnapshot(session.id)?.state).toBe('running_tool');
+
+      await dispatcher.dispatch({
+        provider: 'opencode',
+        soloeSessionId: session.id,
+        payload: {
+          type: 'permission.asked',
+          properties: { sessionID: 'open-session-1', id: 'permission-1', permission: 'bash' }
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        state: 'waiting_for_approval',
+        interactive: { attention: { kind: 'approval', requestKey: 'permission-1' } }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'opencode',
+        soloeSessionId: session.id,
+        payload: {
+          type: 'permission.replied',
+          properties: { sessionID: 'open-session-1', requestID: 'permission-1', reply: 'once' }
+        }
+      });
+      expect(observer.getSnapshot(session.id)?.interactive?.attention).toEqual({ kind: 'none' });
+
+      await dispatcher.dispatch({
+        provider: 'opencode',
+        soloeSessionId: session.id,
+        payload: {
+          type: 'session.status',
+          properties: { sessionID: 'open-session-1', status: { type: 'idle' } }
+        }
+      });
+      expect(observer.getSnapshot(session.id)?.state).toBe('completed');
+    });
+
+    it('maps questions to input attention', async () => {
+      await dispatcher.dispatch({
+        provider: 'opencode',
+        soloeSessionId: 'sess-opencode',
+        payload: {
+          type: 'question.asked',
+          properties: { sessionID: 'open-session-1', id: 'question-1' }
+        }
+      });
+      expect(observer.getSnapshot('sess-opencode')).toMatchObject({
+        state: 'waiting_for_input',
+        interactive: { attention: { kind: 'user_input', requestKey: 'question-1' } }
+      });
+    });
+  });
+
+  describe('Grok Build native events → observed state', () => {
+    it('maps session, tool, permission notification, and stop events', async () => {
+      const session = await sessionStore.create({
+        name: 'Grok Build',
+        cwd: '/repo',
+        runMode: 'linux',
+        launch: { type: 'agent', provider: 'grok_build', resumeMode: 'new' }
+      });
+      await dispatcher.dispatch({
+        provider: 'grok_build',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'session_start',
+          sessionId: 'grok-session-1',
+          cwd: '/repo'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        provider: 'grok_build',
+        providerThreadId: 'grok-session-1',
+        state: 'starting'
+      });
+
+      await dispatcher.dispatch({
+        provider: 'grok_build',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'pre_tool_use',
+          sessionId: 'grok-session-1',
+          toolUseId: 'tool-1',
+          toolName: 'run_terminal_command'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        state: 'running_tool',
+        interactive: { tool: { id: 'tool-1', name: 'run_terminal_command' } }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'grok_build',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'notification',
+          sessionId: 'grok-session-1',
+          notificationType: 'permission_prompt',
+          message: 'Approve this command?'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        state: 'waiting_for_approval',
+        interactive: { attention: { kind: 'approval' } }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'grok_build',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'stop',
+          sessionId: 'grok-session-1',
+          reason: 'end_turn'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        state: 'completed',
+        interactive: { attention: { kind: 'none' } }
+      });
+      expect(await sessionStore.get(session.id)).toMatchObject({
+        providerThreadId: 'grok-session-1',
+        launch: { provider: 'grok_build', grokSessionId: 'grok-session-1' }
+      });
+    });
+  });
+
   describe('captures provider session id', () => {
     it('stores claude session id on the matching session', async () => {
       const created = await sessionStore.create({

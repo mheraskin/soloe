@@ -1160,6 +1160,21 @@ describe("SoloeDomain", () => {
       expect(JSON.stringify(logs)).not.toContain(directory);
       expect(JSON.stringify(logs)).not.toMatch(/server-secret|crash-secret/u);
 
+      await expect(
+        domain.invoke({
+          namespace: "diagnostics",
+          method: "sessionHookTrace",
+          args: [{ limit: 50 }],
+        }),
+      ).resolves.toEqual([]);
+      await expect(
+        domain.invoke({
+          namespace: "diagnostics",
+          method: "clearSessionHookTrace",
+          args: [],
+        }),
+      ).resolves.toBe(true);
+
       for (const request of [{ tailBytes: 65_537 }, { path: "/etc/passwd" }]) {
         await expect(
           domain.invoke({
@@ -1169,6 +1184,13 @@ describe("SoloeDomain", () => {
           }),
         ).rejects.toMatchObject({ code: "invalid_diagnostics_request" });
       }
+      await expect(
+        domain.invoke({
+          namespace: "diagnostics",
+          method: "sessionHookTrace",
+          args: [{ limit: 5_001 }],
+        }),
+      ).rejects.toMatchObject({ code: "invalid_diagnostics_request" });
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

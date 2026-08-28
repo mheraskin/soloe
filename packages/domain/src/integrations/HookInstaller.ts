@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
+import { applyEdits, modify, parse as parseJsonc, type ParseError } from 'jsonc-parser';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import type {
   AgentIntegrationHost,
@@ -37,6 +38,8 @@ export interface HostInstallStatus {
   claude: AgentIntegrationTargetStatus;
   codex: AgentIntegrationTargetStatus;
   cursor: AgentIntegrationTargetStatus;
+  opencode: AgentIntegrationTargetStatus;
+  grok: AgentIntegrationTargetStatus;
 }
 
 export interface HookInstallStatus {
@@ -121,6 +124,23 @@ const CURSOR_EVENTS = [
   'afterAgentThought'
 ];
 
+const GROK_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'PermissionDenied',
+  'Stop',
+  'StopFailure',
+  'Notification',
+  'SubagentStart',
+  'SubagentStop',
+  'PreCompact',
+  'PostCompact',
+  'SessionEnd'
+];
+
 // Codex's persisted-hook-state keys use lowercase snake_case event labels (see
 // codex-rs/hooks/src/lib.rs::hook_event_key_label). PascalCase is only the
 // TOML event-array key.
@@ -142,18 +162,25 @@ const SOLOE_MARKER = '_soloe';
 const SOLOE_VERSION_KEY = '_soloe_version';
 // Bumping forces a one-time reinstall on next boot. v16 gives local bridge
 // delivery enough time to survive brief Device load without losing terminal
-// events such as Claude Stop; it retains v15's full interactive hook matrices.
-export const SOLOE_HOOK_VERSION = 17;
+// events such as Claude Stop; v18 adds Grok Build's native hook matrix; v19
+// identifies every provider-side delivery in the raw Session hook trace.
+export const SOLOE_HOOK_VERSION = 19;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
+const SOLOE_INTEGRATION_VERSION_HEADER = 'X-Soloe-Integration-Version';
+const SOLOE_INTEGRATION_VERSION_ENV = 'SOLOE_INTEGRATION_VERSION';
+const OPEN_CODE_PLUGIN_MARKER = `// soloe-integration-version: ${SOLOE_HOOK_VERSION}`;
 const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 const HOOK_COMMAND_CURSOR = buildHookCommand('cursor');
+const HOOK_COMMAND_GROK = buildHookCommand('grok');
 
-function buildHookCommand(provider: 'claude' | 'codex' | 'cursor'): string {
+function buildHookCommand(provider: 'claude' | 'codex' | 'cursor' | 'grok'): string {
   const endpoint = provider === 'claude'
     ? '/hook/claude'
-    : provider === 'codex' ? '/hook/codex' : '/hook/cursor';
+    : provider === 'codex'
+      ? '/hook/codex'
+      : provider === 'cursor' ? '/hook/cursor' : '/hook/grok';
   // POSIX sh: bail if no bridge URL; if URL points at host.wsl.internal and that
   // doesn't resolve (NAT-mode WSL2), swap the host for the WSL→Windows gateway
   // IP (or /etc/resolv.conf nameserver as fallback); then POST the payload.
@@ -171,6 +198,7 @@ function buildHookCommand(provider: 'claude' | 'codex' | 'cursor'): string {
     'curl -sS --connect-timeout 0.1 --max-time 1 -X POST ' +
     '-H "Authorization: Bearer $SOLOE_BRIDGE_TOKEN" ' +
     '-H "X-Soloe-Session-Id: $SOLOE_SESSION_ID" ' +
+    `-H "X-Soloe-Integration-Version: ${SOLOE_HOOK_VERSION}" ` +
     '-H "Content-Type: application/json" ' +
     `--data-binary @- "$u${endpoint}" >/dev/null 2>&1 || true`;
   // When running outside Soloe (no bridge URL), drain stdin before exiting —
@@ -242,15 +270,19 @@ export class HookInstaller {
             host: publicHost(host),
             claude: emptyStatus(),
             codex: emptyStatus(),
-            cursor: emptyStatus()
+            cursor: emptyStatus(),
+            opencode: emptyStatus(),
+            grok: emptyStatus()
           };
         }
-        const [claude, codex, cursor] = await Promise.all([
+        const [claude, codex, cursor, opencode, grok] = await Promise.all([
           this.claudeHostSoloeStatus(host),
           this.codexFileSoloeStatus(this.codexConfigPath(host)),
-          this.cursorHostSoloeStatus(host)
+          this.cursorHostSoloeStatus(host),
+          this.openCodeHostSoloeStatus(host),
+          this.grokHostSoloeStatus(host)
         ]);
-        return { host: publicHost(host), claude, codex, cursor };
+        return { host: publicHost(host), claude, codex, cursor, opencode, grok };
       })
     );
     return { hosts };
@@ -385,6 +417,88 @@ export class HookInstaller {
     });
   }
 
+  async installOpenCode(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.installOpenCodeNow(host));
+  }
+
+  private async installOpenCodeNow(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    if (!this.bridge) throw new Error('bridge identity not configured');
+    const configPath = await this.openCodeConfigPath(target);
+    const original = await readTextOrNull(configPath);
+    const url = await this.resolveMcpUrlForHost(target);
+    const updated = updateOpenCodeMcp(original ?? '{}\n', {
+      url,
+      token: this.bridge.token
+    });
+    await this.writeAtomic(configPath, updated, original !== null);
+
+    const pluginPath = this.openCodePluginPath(target);
+    const pluginOriginal = await readTextOrNull(pluginPath);
+    await this.writeAtomic(
+      pluginPath,
+      openCodePluginSource(),
+      pluginOriginal !== null
+    );
+  }
+
+  async uninstallOpenCode(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(async () => {
+      const target = this.requireHost(host);
+      const configPath = await this.openCodeConfigPath(target);
+      const original = await readTextOrNull(configPath);
+      if (original !== null && openCodeMcpStatus(original).installed) {
+        await this.writeAtomic(configPath, removeOpenCodeMcp(original), false);
+      }
+
+      const pluginPath = this.openCodePluginPath(target);
+      const plugin = await readTextOrNull(pluginPath);
+      if (plugin !== null && openCodePluginStatus(plugin).installed) {
+        await fs.unlink(pluginPath);
+      }
+    });
+  }
+
+  async installGrok(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.installGrokNow(host));
+  }
+
+  private async installGrokNow(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    if (!this.bridge) throw new Error('bridge identity not configured');
+    const configPath = this.grokConfigPath(target);
+    const original = await readTomlOrNull(configPath);
+    const url = await this.resolveMcpUrlForHost(target);
+    await this.writeAtomic(
+      configPath,
+      stringifyToml(mergeGrokMcp(original ?? {}, { url, token: this.bridge.token })),
+      original !== null
+    );
+
+    const hooksPath = this.grokHooksPath(target);
+    const hooksOriginal = await readJsonOrNull(hooksPath);
+    await this.writeAtomic(
+      hooksPath,
+      JSON.stringify(buildGrokHooks(HOOK_COMMAND_GROK), null, 2) + '\n',
+      hooksOriginal !== null
+    );
+  }
+
+  async uninstallGrok(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(async () => {
+      const target = this.requireHost(host);
+      const configPath = this.grokConfigPath(target);
+      const original = await readTomlOrNull(configPath);
+      if (original && grokMcpStatus(original).installed) {
+        await this.writeAtomic(configPath, stringifyToml(removeSoloeFromGrok(original)), false);
+      }
+
+      const hooksPath = this.grokHooksPath(target);
+      const hooks = await readJsonOrNull(hooksPath);
+      if (grokHooksStatus(hooks).installed) await fs.unlink(hooksPath);
+    });
+  }
+
   private async uninstallCodexNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
@@ -421,7 +535,11 @@ export class HookInstaller {
         const claudeChanged = await this.refreshClaudeHost(host, key, url);
         const codexChanged = await this.refreshCodexHost(host, key, url);
         const cursorChanged = await this.refreshCursorHost(host, key, url);
-        if (claudeChanged || codexChanged || cursorChanged) result.rewritten.push(key);
+        const openCodeChanged = await this.refreshOpenCodeHost(host, key, url);
+        const grokChanged = await this.refreshGrokHost(host, key, url);
+        if (claudeChanged || codexChanged || cursorChanged || openCodeChanged || grokChanged) {
+          result.rewritten.push(key);
+        }
       } catch (err) {
         result.errors.push({ host: key, error: errorMessage(err) });
       }
@@ -474,6 +592,63 @@ export class HookInstaller {
     const entry = servers && isObject(servers[SOLOE_MCP_NAME]) ? servers[SOLOE_MCP_NAME] : null;
     if (entry && entry['url'] === url && this.bearerHeaderMatches(entry, this.bridge.token)) return false;
     await this.writeAtomic(filePath, JSON.stringify(mergeCursorMcp(original, { url, token: this.bridge.token }), null, 2) + '\n', true);
+    return true;
+  }
+
+  private async refreshOpenCodeHost(
+    host: HookHost,
+    key: HookHostKey,
+    url: string
+  ): Promise<boolean> {
+    if (!this.bridge) return false;
+    const configPath = await this.openCodeConfigPath(host);
+    const original = await readTextOrNull(configPath);
+    const plugin = await readTextOrNull(this.openCodePluginPath(host));
+    const status = combineOpenCodeSoloeStatus(original, plugin);
+    if (!status.installed) return false;
+    if (!status.current) {
+      await this.installOpenCodeNow(key);
+      return true;
+    }
+    const entry = openCodeMcpEntry(original);
+    if (
+      entry?.['url'] === url
+      && this.bearerHeaderMatches(entry, this.bridge.token)
+    ) return false;
+    await this.writeAtomic(
+      configPath,
+      updateOpenCodeMcp(original ?? '{}\n', { url, token: this.bridge.token }),
+      original !== null
+    );
+    return true;
+  }
+
+  private async refreshGrokHost(
+    host: HookHost,
+    key: HookHostKey,
+    url: string
+  ): Promise<boolean> {
+    if (!this.bridge) return false;
+    const configPath = this.grokConfigPath(host);
+    const original = await readTomlOrNull(configPath);
+    const hooks = await readJsonOrNull(this.grokHooksPath(host));
+    const status = combineGrokSoloeStatus(original, hooks);
+    if (!status.installed) return false;
+    if (!status.current) {
+      await this.installGrokNow(key);
+      return true;
+    }
+    const entry = grokMcpEntry(original);
+    if (
+      entry
+      && entry['url'] === url
+      && this.bearerHeaderMatches(entry, this.bridge.token)
+    ) return false;
+    await this.writeAtomic(
+      configPath,
+      stringifyToml(mergeGrokMcp(original ?? {}, { url, token: this.bridge.token })),
+      original !== null
+    );
     return true;
   }
 
@@ -554,6 +729,24 @@ export class HookInstaller {
     return path.join(host.homeDir, '.cursor', 'hooks.json');
   }
 
+  private async openCodeConfigPath(host: HookHost): Promise<string> {
+    const directory = path.join(host.homeDir, '.config', 'opencode');
+    const jsoncPath = path.join(directory, 'opencode.jsonc');
+    return await fileExists(jsoncPath) ? jsoncPath : path.join(directory, 'opencode.json');
+  }
+
+  private openCodePluginPath(host: HookHost): string {
+    return path.join(host.homeDir, '.config', 'opencode', 'plugins', 'soloe.js');
+  }
+
+  private grokConfigPath(host: HookHost): string {
+    return path.join(host.homeDir, '.grok', 'config.toml');
+  }
+
+  private grokHooksPath(host: HookHost): string {
+    return path.join(host.homeDir, '.grok', 'hooks', 'soloe.json');
+  }
+
   private async claudeHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
     const [settings, claudeJson] = await Promise.all([
       readJsonOrNull(this.claudeUserPath(host)),
@@ -582,6 +775,22 @@ export class HookInstaller {
       current: mcp.current && cursorHooksCurrent(hooks),
       ...(mcp.version === undefined ? {} : { version: mcp.version })
     };
+  }
+
+  private async openCodeHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
+    const [config, plugin] = await Promise.all([
+      this.openCodeConfigPath(host).then(readTextOrNull),
+      readTextOrNull(this.openCodePluginPath(host))
+    ]);
+    return combineOpenCodeSoloeStatus(config, plugin);
+  }
+
+  private async grokHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
+    const [config, hooks] = await Promise.all([
+      readTomlOrNull(this.grokConfigPath(host)),
+      readJsonOrNull(this.grokHooksPath(host))
+    ]);
+    return combineGrokSoloeStatus(config, hooks);
   }
 
   private async writeAtomic(filePath: string, content: string, backup: boolean): Promise<void> {
@@ -671,6 +880,34 @@ async function readTomlOrNull(filePath: string): Promise<Record<string, unknown>
   }
 }
 
+async function readTextOrNull(filePath: string): Promise<string | null> {
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+function parseJsoncObject(source: string): Record<string, unknown> {
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(source, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    throw new Error(`OpenCode config contains invalid JSONC at offset ${errors[0]?.offset ?? 0}`);
+  }
+  return isObject(parsed) ? parsed : {};
+}
+
 export function mcpUrlForHost(host: HookHost, port: number): string {
   const hostname = host.kind === 'wsl' ? 'host.wsl.internal' : '127.0.0.1';
   return `http://${hostname}:${port}/mcp`;
@@ -707,6 +944,163 @@ export function mergeCursorMcp(
   };
   next['mcpServers'] = servers;
   return next;
+}
+
+export function updateOpenCodeMcp(
+  original: string,
+  args: { url: string; token: string }
+): string {
+  parseJsoncObject(original);
+  const entry = {
+    type: 'remote',
+    url: args.url,
+    enabled: true,
+    headers: {
+      Authorization: `Bearer ${args.token}`,
+      [SOLOE_INTEGRATION_VERSION_HEADER]: String(SOLOE_HOOK_VERSION)
+    }
+  };
+  return applyEdits(
+    original,
+    modify(original, ['mcp', SOLOE_MCP_NAME], entry, {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' }
+    })
+  );
+}
+
+export function removeOpenCodeMcp(original: string): string {
+  const root = parseJsoncObject(original);
+  const entry = openCodeMcpEntry(original);
+  if (!entry || !openCodeMcpEntryVersion(entry)) return original;
+  let next = applyEdits(
+    original,
+    modify(original, ['mcp', SOLOE_MCP_NAME], undefined, {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' }
+    })
+  );
+  const mcp = isObject(root['mcp']) ? root['mcp'] : null;
+  if (mcp && Object.keys(mcp).length === 1) {
+    next = applyEdits(
+      next,
+      modify(next, ['mcp'], undefined, {
+        formattingOptions: { insertSpaces: true, tabSize: 2, eol: '\n' }
+      })
+    );
+  }
+  return next;
+}
+
+export function mergeGrokMcp(
+  original: Record<string, unknown>,
+  args: { url: string; token: string }
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original };
+  const servers = isObject(next['mcp_servers']) ? { ...next['mcp_servers'] } : {};
+  servers[SOLOE_MCP_NAME] = {
+    url: args.url,
+    enabled: true,
+    headers: {
+      Authorization: `Bearer ${args.token}`,
+      [SOLOE_INTEGRATION_VERSION_HEADER]: String(SOLOE_HOOK_VERSION)
+    }
+  };
+  next['mcp_servers'] = servers;
+  return next;
+}
+
+export function removeSoloeFromGrok(
+  original: Record<string, unknown>
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...original };
+  if (!isObject(next['mcp_servers'])) return next;
+  const servers = { ...next['mcp_servers'] };
+  if (grokMcpEntryVersion(servers[SOLOE_MCP_NAME]) !== null) {
+    delete servers[SOLOE_MCP_NAME];
+  }
+  if (Object.keys(servers).length > 0) next['mcp_servers'] = servers;
+  else delete next['mcp_servers'];
+  return next;
+}
+
+export function buildGrokHooks(command: string): Record<string, unknown> {
+  const hooks: Record<string, unknown> = {};
+  for (const event of GROK_EVENTS) {
+    hooks[event] = [
+      {
+        hooks: [
+          {
+            type: 'command',
+            command,
+            timeout: 5,
+            env: { [SOLOE_INTEGRATION_VERSION_ENV]: String(SOLOE_HOOK_VERSION) }
+          }
+        ]
+      }
+    ];
+  }
+  return { hooks };
+}
+
+export function openCodePluginSource(): string {
+  return `${OPEN_CODE_PLUGIN_MARKER}
+let primarySessionId;
+
+const sendToSoloe = async (payload) => {
+  const baseUrl = process.env.SOLOE_BRIDGE_URL;
+  const token = process.env.SOLOE_BRIDGE_TOKEN;
+  const sessionId = process.env.SOLOE_SESSION_ID;
+  if (!baseUrl || !token || !sessionId) return;
+
+  try {
+    await fetch(\`${'${baseUrl}'}/hook/opencode\`, {
+      method: 'POST',
+      headers: {
+        Authorization: \`Bearer ${'${token}'}\`,
+        'Content-Type': 'application/json',
+        'X-Soloe-Session-Id': sessionId,
+        'X-Soloe-Integration-Version': '${SOLOE_HOOK_VERSION}'
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(1000)
+    });
+  } catch {
+    // The integration must never interrupt OpenCode when Soloe is unavailable.
+  }
+};
+
+const eventSessionId = (event) =>
+  event?.properties?.sessionID
+  ?? event?.properties?.sessionId
+  ?? event?.properties?.part?.sessionID
+  ?? event?.properties?.info?.id;
+
+const belongsToPrimarySession = (event) => {
+  const sessionId = eventSessionId(event);
+  if (event?.type === 'session.created') {
+    if (event?.properties?.info?.parentID) return false;
+    if (sessionId) primarySessionId = sessionId;
+  }
+  if (!primarySessionId && sessionId) primarySessionId = sessionId;
+  return !sessionId || sessionId === primarySessionId;
+};
+
+export const SoloePlugin = async () => ({
+  event: async ({ event }) => {
+    if (belongsToPrimarySession(event)) await sendToSoloe(event);
+  },
+  'chat.message': async (input, output) => {
+    primarySessionId ??= input.sessionID;
+    if (input.sessionID !== primarySessionId) return;
+    await sendToSoloe({
+      type: 'soloe.user_prompt',
+      properties: {
+        sessionID: input.sessionID,
+        parts: output.parts
+      }
+    });
+  }
+});
+`;
 }
 
 export function mergeCursorHooks(
@@ -1115,6 +1509,136 @@ function cursorSoloeStatus(data: Record<string, unknown>): AgentIntegrationTarge
     }
   }
   return statusFromVersions(versions);
+}
+
+function combineOpenCodeSoloeStatus(
+  config: string | null,
+  plugin: string | null
+): AgentIntegrationTargetStatus {
+  const mcp = config === null ? emptyStatus() : openCodeMcpStatus(config);
+  const pluginStatus = plugin === null ? emptyStatus() : openCodePluginStatus(plugin);
+  const versions = [mcp.version, pluginStatus.version]
+    .filter((version): version is number => typeof version === 'number');
+  return {
+    installed: mcp.installed || pluginStatus.installed,
+    current: mcp.current && pluginStatus.current,
+    ...(versions.length > 0 ? { version: Math.min(...versions) } : {})
+  };
+}
+
+function openCodeMcpEntry(config: string | null): Record<string, unknown> | null {
+  if (config === null) return null;
+  const root = parseJsoncObject(config);
+  const mcp = isObject(root['mcp']) ? root['mcp'] : null;
+  const entry = mcp?.[SOLOE_MCP_NAME];
+  return isObject(entry) ? entry : null;
+}
+
+function openCodeMcpStatus(config: string): AgentIntegrationTargetStatus {
+  const version = openCodeMcpEntryVersion(openCodeMcpEntry(config));
+  if (version === null) return emptyStatus();
+  return {
+    installed: true,
+    current: version === SOLOE_HOOK_VERSION,
+    version
+  };
+}
+
+function openCodeMcpEntryVersion(entry: unknown): number | null {
+  if (!isObject(entry) || !isObject(entry['headers'])) return null;
+  const raw = entry['headers'][SOLOE_INTEGRATION_VERSION_HEADER];
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  return Number(raw);
+}
+
+function openCodePluginStatus(plugin: string): AgentIntegrationTargetStatus {
+  const match = plugin.match(/^\/\/ soloe-integration-version: (\d+)$/m);
+  if (!match) return emptyStatus();
+  const version = Number(match[1]);
+  return {
+    installed: true,
+    current: version === SOLOE_HOOK_VERSION,
+    version
+  };
+}
+
+function combineGrokSoloeStatus(
+  config: Record<string, unknown> | null,
+  hooks: Record<string, unknown> | null
+): AgentIntegrationTargetStatus {
+  const mcp = grokMcpStatus(config);
+  const hooksStatus = grokHooksStatus(hooks);
+  const versions = [mcp.version, hooksStatus.version]
+    .filter((version): version is number => typeof version === 'number');
+  return {
+    installed: mcp.installed || hooksStatus.installed,
+    current: mcp.current && hooksStatus.current,
+    ...(versions.length > 0 ? { version: Math.min(...versions) } : {})
+  };
+}
+
+function grokMcpEntry(config: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!config || !isObject(config['mcp_servers'])) return null;
+  const entry = config['mcp_servers'][SOLOE_MCP_NAME];
+  return isObject(entry) ? entry : null;
+}
+
+function grokMcpStatus(
+  config: Record<string, unknown> | null
+): AgentIntegrationTargetStatus {
+  const version = grokMcpEntryVersion(grokMcpEntry(config));
+  if (version === null) return emptyStatus();
+  return { installed: true, current: version === SOLOE_HOOK_VERSION, version };
+}
+
+function grokMcpEntryVersion(entry: unknown): number | null {
+  if (!isObject(entry) || !isObject(entry['headers'])) return null;
+  const raw = entry['headers'][SOLOE_INTEGRATION_VERSION_HEADER];
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  return Number(raw);
+}
+
+function grokHooksStatus(
+  data: Record<string, unknown> | null
+): AgentIntegrationTargetStatus {
+  if (!data || !isObject(data['hooks'])) return emptyStatus();
+  const hooks = data['hooks'];
+  const versions: number[] = [];
+  let allEventsCurrent = true;
+  for (const event of GROK_EVENTS) {
+    const groups = hooks[event];
+    let currentEvent = false;
+    if (Array.isArray(groups)) {
+      for (const group of groups) {
+        if (!isObject(group) || !Array.isArray(group['hooks'])) continue;
+        for (const handler of group['hooks']) {
+          const version = grokHookHandlerVersion(handler);
+          if (version === null) continue;
+          versions.push(version);
+          if (version === SOLOE_HOOK_VERSION) currentEvent = true;
+        }
+      }
+    }
+    if (!currentEvent) allEventsCurrent = false;
+  }
+  if (versions.length === 0) return emptyStatus();
+  return {
+    installed: true,
+    current: allEventsCurrent,
+    version: Math.min(...versions)
+  };
+}
+
+function grokHookHandlerVersion(handler: unknown): number | null {
+  if (!isObject(handler)) return null;
+  const command = handler['command'];
+  const env = handler['env'];
+  if (typeof command !== 'string' || !command.includes('/hook/grok') || !isObject(env)) {
+    return null;
+  }
+  const raw = env[SOLOE_INTEGRATION_VERSION_ENV];
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  return Number(raw);
 }
 
 function soloeMcpEntryVersion(entry: unknown): number | null {

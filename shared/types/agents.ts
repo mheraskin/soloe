@@ -6,6 +6,7 @@ import type {
 } from './sessions.js';
 
 export type AgentProvider = AgentRuntimeProvider;
+export type WorkerAgentProvider = Exclude<AgentProvider, 'opencode' | 'grok_build'>;
 export type ObserverSubjectKind = 'session' | 'worker';
 
 export type InteractiveAgentLifecycle = 'starting' | 'running' | 'exited' | 'failed';
@@ -75,7 +76,7 @@ export interface AgentUsageLimit {
 
 export interface CreateWorkerSessionRequest {
   originSessionId: SessionId;
-  provider: AgentProvider;
+  provider: WorkerAgentProvider;
   cwd?: string;
   promptSummary?: string;
 }

@@ -4,6 +4,8 @@ import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
   AgentIntegrationCursorRequest,
+  AgentIntegrationGrokRequest,
+  AgentIntegrationOpenCodeRequest,
   AgentIntegrationStatus,
   SoloeApi,
   TerminalInputPayload,
@@ -103,6 +105,10 @@ import type {
   FileSearchRequest
 } from '@shared/types/files.js';
 import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
+import type {
+  ListSessionHookTraceRequest,
+  SessionHookTraceEvent
+} from '@shared/types/session-debug.js';
 import type {
   TerminalExitEvent,
   TerminalId,
@@ -421,13 +427,20 @@ const soloe: SoloeApi = {
   diagnostics: {
     list: () => ipcRenderer.invoke(IpcChannels.diagnostics.list),
     crashLogs: (request?: DiagnosticLogsRequest) =>
-      ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs, request)
+      ipcRenderer.invoke(IpcChannels.diagnostics.crashLogs, request),
+    sessionHookTrace: (request?: ListSessionHookTraceRequest) =>
+      ipcRenderer.invoke(IpcChannels.diagnostics.sessionHookTrace, request),
+    clearSessionHookTrace: () =>
+      ipcRenderer.invoke(IpcChannels.diagnostics.clearSessionHookTrace),
+    onSessionHookEvent: (cb: (event: SessionHookTraceEvent) => void) =>
+      subscribe<SessionHookTraceEvent>(IpcChannels.diagnostics.sessionHookEvent, cb)
   },
   window: {
     minimize: () => ipcRenderer.invoke(IpcChannels.window.minimize),
     toggleMaximize: () => ipcRenderer.invoke(IpcChannels.window.toggleMaximize),
     zoomIn: () => ipcRenderer.invoke(IpcChannels.window.zoomIn),
     zoomOut: () => ipcRenderer.invoke(IpcChannels.window.zoomOut),
+    openSessionEventsDebug: () => ipcRenderer.invoke(IpcChannels.window.openSessionEventsDebug),
     close: () => ipcRenderer.invoke(IpcChannels.window.close)
   },
   agentIntegration: {
@@ -444,6 +457,14 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.agentIntegration.installCursor, request),
     uninstallCursor: (request: AgentIntegrationCursorRequest) =>
       ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallCursor, request),
+    installOpenCode: (request: AgentIntegrationOpenCodeRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.installOpenCode, request),
+    uninstallOpenCode: (request: AgentIntegrationOpenCodeRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallOpenCode, request),
+    installGrok: (request: AgentIntegrationGrokRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.installGrok, request),
+    uninstallGrok: (request: AgentIntegrationGrokRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallGrok, request),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       subscribe<AgentIntegrationStatus>(IpcChannels.agentIntegration.changed, cb)
   },

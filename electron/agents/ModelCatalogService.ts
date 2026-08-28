@@ -49,18 +49,22 @@ export class ModelCatalogService {
     const key = JSON.stringify({
       codex: settings.binaries.codex ?? 'codex',
       claude: settings.binaries.claude ?? 'claude',
-      cursor: settings.binaries.cursor ?? 'agent'
+      cursor: settings.binaries.cursor ?? 'agent',
+      opencode: settings.binaries.opencode ?? 'opencode',
+      grok: settings.binaries.grok ?? 'grok'
     });
     if (this.cache?.key === key && this.cache.expiresAt > Date.now()) {
       return this.cache.catalog.map((entry) => ({ ...entry }));
     }
 
-    const [codex, claude, cursor] = await Promise.all([
+    const [codex, claude, cursor, opencode, grok] = await Promise.all([
       this.discoverCodex(settings.binaries),
       this.discoverClaude(settings.binaries),
-      this.discoverCursor(settings.binaries)
+      this.discoverCursor(settings.binaries),
+      this.discoverOpenCode(settings.binaries),
+      this.discoverGrok(settings.binaries)
     ]);
-    const catalog = dedupeCatalog([...codex, ...claude, ...cursor]);
+    const catalog = dedupeCatalog([...codex, ...claude, ...cursor, ...opencode, ...grok]);
     this.cache = {
       key,
       expiresAt: Date.now() + (this.opts.cacheMs ?? CACHE_MS),
@@ -136,9 +140,22 @@ export class ModelCatalogService {
     const models = parseCursorModels(result.stdout);
     return [defaultEntry('cursor'), ...models];
   }
+
+  private async discoverOpenCode(binaries: SettingsBinaries): Promise<ModelCatalogEntry[]> {
+    const executable = binaries.opencode || 'opencode';
+    const result = await this.runCommand(executable, ['models']);
+    if (result.exitCode !== 0) return [];
+    return [defaultEntry('opencode'), ...parseOpenCodeModels(result.stdout)];
+  }
+
+  private async discoverGrok(binaries: SettingsBinaries): Promise<ModelCatalogEntry[]> {
+    const executable = binaries.grok || 'grok';
+    const result = await this.runCommand(executable, ['--version']);
+    return result.exitCode === 0 ? [defaultEntry('grok_build')] : [];
+  }
 }
 
-function defaultEntry(provider: 'codex' | 'claude' | 'cursor'): ModelCatalogEntry {
+function defaultEntry(provider: ModelCatalogEntry['provider']): ModelCatalogEntry {
   return { ...CLI_DEFAULT_MODEL_CATALOG.find((entry) => entry.provider === provider)! };
 }
 
@@ -159,10 +176,28 @@ export function parseCursorModels(stdout: string): ModelCatalogEntry[] {
   return entries;
 }
 
+export function parseOpenCodeModels(stdout: string): ModelCatalogEntry[] {
+  const seen = new Set<string>();
+  const entries: ModelCatalogEntry[] = [];
+  for (const rawLine of stdout.replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, '').split(/\r?\n/u)) {
+    const id = rawLine.trim();
+    if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._/-]*$/iu.test(id) || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    entries.push({ provider: 'opencode', id, label: humanizeOpenCodeModel(id) });
+  }
+  return entries;
+}
+
 function humanizeModelId(id: string): string {
-  return id.split('-').map((part) =>
-    part.toLowerCase() === 'gpt' ? 'GPT' : part.charAt(0).toUpperCase() + part.slice(1)
-  ).join(' ');
+  return id.split('-').map((part) => {
+    const normalized = part.toLowerCase();
+    if (normalized === 'gpt') return 'GPT';
+    if (normalized === 'openai') return 'OpenAI';
+    if (normalized === 'xai') return 'xAI';
+    return part.charAt(0).toUpperCase() + part.slice(1);
+  }).join(' ');
 }
 
 function humanizeClaudeModel(id: string): string {
@@ -170,6 +205,13 @@ function humanizeClaudeModel(id: string): string {
     return `Claude ${id.charAt(0).toUpperCase()}${id.slice(1)} (latest)`;
   }
   return humanizeModelId(id);
+}
+
+function humanizeOpenCodeModel(id: string): string {
+  const separator = id.indexOf('/');
+  const provider = id.slice(0, separator);
+  const model = id.slice(separator + 1);
+  return `${humanizeModelId(model)} · ${humanizeModelId(provider)}`;
 }
 
 function dedupeCatalog(entries: ModelCatalogEntry[]): ModelCatalogEntry[] {

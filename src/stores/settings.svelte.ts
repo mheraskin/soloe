@@ -101,6 +101,7 @@ function withSettingsDefaults(settings: Settings): Settings {
   const shortcuts = settings.shortcuts ?? {};
   const terminal = settings.terminal ?? {};
   const startup = settings.startup ?? {};
+  const debug = settings.debug ?? {};
   return {
     ...settings,
     startup: {
@@ -114,6 +115,10 @@ function withSettingsDefaults(settings: Settings): Settings {
     browser: {
       ...DEFAULT_SETTINGS.browser,
       ...browser
+    },
+    debug: {
+      ...DEFAULT_SETTINGS.debug,
+      ...debug
     },
     shortcuts: {
       ...DEFAULT_SETTINGS.shortcuts,

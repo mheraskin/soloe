@@ -60,6 +60,8 @@ export interface SettingsBinaries {
   claude?: string;
   codex?: string;
   cursor?: string;
+  opencode?: string;
+  grok?: string;
   git?: string;
   gh?: string;
   fd?: string;
@@ -68,6 +70,7 @@ export interface SettingsBinaries {
 }
 
 export type ModelProvider = 'codex' | 'claude' | 'cursor';
+export type ModelCatalogProvider = ModelProvider | 'opencode' | 'grok_build';
 
 export type ModelTask = 'textGeneration' | 'gitCommitGeneration' | 'worktreeOverview';
 
@@ -83,7 +86,7 @@ export interface SettingsModels {
 }
 
 export interface ModelCatalogEntry {
-  provider: ModelProvider;
+  provider: ModelCatalogProvider;
   id: string;
   label: string;
   isDefault?: boolean;
@@ -135,6 +138,12 @@ export interface SettingsIntegrations {
   allowClaudeHeadless: boolean;
 }
 
+export interface SettingsDebug {
+  // Enables the separate Session event timeline. The window reads existing
+  // observer history and then records renderer-visible Session state events.
+  sessionEvents: boolean;
+}
+
 export interface SettingsNotes {
   // When true, both the untitled draft buffer AND the last-open saved note
   // are remembered per-worktree (not per-project). Switching worktrees swaps
@@ -166,6 +175,7 @@ export interface Settings {
   quickLaunch: QuickLaunchPreset[];
   quickLaunchDefaultsSeeded: boolean;
   integrations: SettingsIntegrations;
+  debug: SettingsDebug;
   notes: SettingsNotes;
   shortcuts: SettingsShortcuts;
 }
@@ -183,6 +193,7 @@ export type SettingsUpdate = {
   quickLaunch?: QuickLaunchPreset[];
   quickLaunchDefaultsSeeded?: boolean;
   integrations?: Partial<SettingsIntegrations>;
+  debug?: Partial<SettingsDebug>;
   notes?: Partial<SettingsNotes>;
   shortcuts?: Partial<SettingsShortcuts>;
 };
@@ -215,6 +226,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quickLaunch: DEFAULT_QUICK_LAUNCH_PRESETS,
   quickLaunchDefaultsSeeded: true,
   integrations: { autoRefreshMcpUrl: true, allowClaudeHeadless: false },
+  debug: { sessionEvents: false },
   notes: { draftsPerWorktree: false },
   shortcuts: {
     shiftNumberNavigation: 'worktree',

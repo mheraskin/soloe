@@ -286,7 +286,14 @@
   async function promptForAgentIntegrationSetup(): Promise<void> {
     const status = await ipc.agentIntegration.status();
     const needsSetup = status.hosts.some(
-      (h) => h.host.available && (!h.claude.current || !h.codex.current || !h.cursor.current)
+      (h) => h.host.available
+        && (
+          !h.claude.current
+          || !h.codex.current
+          || !h.cursor.current
+          || !h.opencode.current
+          || !h.grok.current
+        )
     );
     if (!needsSetup) return;
     agentIntegrationSetup.show(status);

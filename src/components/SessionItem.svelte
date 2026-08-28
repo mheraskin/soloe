@@ -97,7 +97,13 @@
   let hasRuntime = $derived(
     projection ? projection.runtime !== null : sessions.runtime[session.id] !== undefined
   );
-  let isAgent = $derived(displayKind === 'claude_code' || displayKind === 'codex' || displayKind === 'cursor');
+  let isAgent = $derived(
+    displayKind === 'claude_code'
+      || displayKind === 'codex'
+      || displayKind === 'cursor'
+      || displayKind === 'opencode'
+      || displayKind === 'grok_build'
+  );
   let statusPresentation = $derived(
     sessionStatusPresentation({
       session,

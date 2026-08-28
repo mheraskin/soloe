@@ -46,8 +46,8 @@ export class AgentHookDispatcher {
 
   async dispatch(event: HookEvent): Promise<void> {
     const hookEvent = hookEventName(event.payload);
-    // Keep the original, device-local provider payload in the Electron log for
-    // diagnostics. Only the normalized projection is persisted or replicated.
+    // The bridge records the provider payload before this dispatcher runs when
+    // raw Session tracing is enabled. Only the normalized projection is durable.
     this.opts.log?.('interactive hook received', {
       provider: event.provider,
       soloeSessionId: event.soloeSessionId,
@@ -64,9 +64,18 @@ export class AgentHookDispatcher {
         await this.dispatchCodex(event.soloeSessionId, event.payload);
         return;
       }
-      await this.dispatchCursor(event.soloeSessionId, event.payload);
+      if (event.provider === 'cursor') {
+        await this.dispatchCursor(event.soloeSessionId, event.payload);
+        return;
+      }
+      if (event.provider === 'opencode') {
+        await this.dispatchOpenCode(event.soloeSessionId, event.payload);
+        return;
+      }
+      await this.dispatchGrok(event.soloeSessionId, event.payload);
     } finally {
-      if (normalizeEventName(hookEvent) === 'sessionend') {
+      const normalizedEvent = normalizeEventName(hookEvent);
+      if (normalizedEvent === 'sessionend' || normalizedEvent === 'sessiondeleted') {
         this.reportedCwds.delete(event.soloeSessionId);
       }
     }
@@ -76,7 +85,10 @@ export class AgentHookDispatcher {
     sessionId: SessionId,
     payload: Record<string, unknown>
   ): Promise<void> {
-    const cwd = stringField(payload, 'cwd')?.trim();
+    const cwd = (
+      stringField(payload, 'cwd')
+      ?? nestedStringField(payload, ['properties', 'info', 'directory'])
+    )?.trim();
     if (!cwd || cwd === this.reportedCwds.get(sessionId)) return;
     this.reportedCwds.set(sessionId, cwd);
     try {
@@ -206,6 +218,78 @@ export class AgentHookDispatcher {
       );
     }
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'cursor', hookEvent);
+  }
+
+  async dispatchOpenCode(
+    soloeSessionId: SessionId,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    const hookEvent = hookEventName(payload);
+    const normalizedEvent = normalizeEventName(hookEvent);
+    if (normalizedEvent === 'sessioncreated' || normalizedEvent === 'sessionstart') {
+      this.pendingAutoRename.add(soloeSessionId);
+    }
+    if (normalizedEvent === 'soloeuserprompt') {
+      this.maybeTriggerAutoRename(soloeSessionId, openCodePrompt(payload));
+    }
+    const mapping = await this.resolvePermissionMapping(
+      soloeSessionId,
+      mapOpenCodeHook(hookEvent, payload),
+      openCodeProperties(payload)
+    );
+    if (mapping) {
+      this.applyMapping(
+        soloeSessionId,
+        mapping,
+        openCodeProperties(payload),
+        interactiveEventForHook('opencode', hookEvent, payload, mapping)
+      );
+    }
+    await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'opencode', hookEvent);
+  }
+
+  async dispatchGrok(
+    soloeSessionId: SessionId,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    const hookEvent = hookEventName(payload);
+    const normalizedEvent = normalizeEventName(hookEvent);
+    if (normalizedEvent === 'sessionstart') this.pendingAutoRename.add(soloeSessionId);
+    if (normalizedEvent === 'userpromptsubmit') {
+      const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'userPrompt');
+      this.maybeTriggerAutoRename(soloeSessionId, prompt);
+    }
+    const usageLimit = detectUsageLimit(payload);
+    if (usageLimit) {
+      await this.logUsageLimitDetection({
+        provider: 'grok_build',
+        soloeSessionId,
+        hookEvent,
+        source: 'hook',
+        usageLimit,
+        payload
+      });
+      this.opts.observer.setTuiUsageLimit(soloeSessionId, {
+        ...usageLimit,
+        detectedAt: new Date().toISOString()
+      });
+      await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'grok_build', hookEvent);
+      return;
+    }
+    const mapping = await this.resolvePermissionMapping(
+      soloeSessionId,
+      mapGrokHook(hookEvent, payload),
+      payload
+    );
+    if (mapping) {
+      this.applyMapping(
+        soloeSessionId,
+        mapping,
+        payload,
+        interactiveEventForHook('grok_build', hookEvent, payload, mapping)
+      );
+    }
+    await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'grok_build', hookEvent);
   }
 
   private maybeTriggerAutoRename(
@@ -358,7 +442,7 @@ export class AgentHookDispatcher {
 
       const existingRuntime = existing.currentAgentRuntime;
       const normalizedEvent = normalizeEventName(hookEvent);
-      const startsRuntime = normalizedEvent === 'sessionstart';
+      const startsRuntime = normalizedEvent === 'sessionstart' || normalizedEvent === 'sessioncreated';
       const canUpdateRuntime =
         startsRuntime || !existingRuntime || existingRuntime.provider === provider;
       if (!canUpdateRuntime) return;
@@ -372,7 +456,9 @@ export class AgentHookDispatcher {
             : undefined;
       const runtime = {
         provider,
-        status: normalizedEvent === 'sessionend' ? 'exited' as const : 'active' as const,
+        status: normalizedEvent === 'sessionend' || normalizedEvent === 'sessiondeleted'
+          ? 'exited' as const
+          : 'active' as const,
         providerThreadId: sessionId ?? priorProviderThreadId,
         startedAt: startsRuntime ? now : existingRuntime?.startedAt,
         lastEventAt: now
@@ -447,13 +533,23 @@ function interactiveEventForHook(
 ): InteractiveAgentEvent | null {
   const event = normalizeEventName(hookEvent);
   const providerSession = providerSessionId(payload, provider);
+  const properties = provider === 'opencode' ? openCodeProperties(payload) : payload;
   const providerTurn = provider === 'cursor'
     ? stringField(payload, 'generation_id')
     : provider === 'codex'
       ? stringField(payload, 'turn_id')
-      : stringField(payload, 'prompt_id');
-  const toolId = stringField(payload, 'tool_use_id') ?? stringField(payload, 'tool_call_id');
-  const toolName = stringField(payload, 'tool_name')
+      : provider === 'opencode'
+        ? stringField(properties, 'messageID') ?? nestedStringField(properties, ['part', 'messageID'])
+        : stringField(payload, 'prompt_id');
+  const toolId = stringField(properties, 'tool_use_id')
+    ?? stringField(properties, 'toolUseId')
+    ?? stringField(properties, 'tool_call_id')
+    ?? nestedStringField(properties, ['part', 'callID'])
+    ?? stringField(properties, 'requestID')
+    ?? stringField(properties, 'id');
+  const toolName = stringField(properties, 'tool_name')
+    ?? stringField(properties, 'toolName')
+    ?? nestedStringField(properties, ['part', 'tool'])
     ?? (event.includes('shell') ? 'Shell' : undefined)
     ?? (event.includes('mcp') ? 'MCP' : undefined)
     ?? (event.includes('readfile') ? 'Read' : undefined)
@@ -461,20 +557,24 @@ function interactiveEventForHook(
     ?? (event.includes('subagent') ? 'Subagent' : undefined)
     ?? 'Tool';
 
-  if (event === 'sessionstart') {
+  if (event === 'sessionstart' || event === 'sessioncreated') {
     return {
       type: 'session.started',
       ...(providerSession ? { providerSessionId: providerSession } : {})
     };
   }
-  if (event === 'sessionend') {
+  if (event === 'sessionend' || event === 'sessiondeleted') {
     return {
       type: 'session.ended',
       outcome: mapping.state === 'failed' ? 'failed' : 'exited',
       summary: mapping.summary
     };
   }
-  if (event === 'userpromptsubmit' || event === 'beforesubmitprompt') {
+  if (
+    event === 'userpromptsubmit'
+    || event === 'beforesubmitprompt'
+    || event === 'soloeuserprompt'
+  ) {
     return {
       type: 'turn.submitted',
       ...(providerTurn ? { providerTurnId: providerTurn } : {})
@@ -488,7 +588,14 @@ function interactiveEventForHook(
     };
   }
   if (mapping.state === 'waiting_for_input') {
-    return { type: 'input.requested', summary: mapping.summary };
+    return {
+      type: 'input.requested',
+      ...(toolId ? { requestKey: toolId } : {}),
+      summary: mapping.summary
+    };
+  }
+  if (mapping.resolvesApproval) {
+    return { type: 'attention.resolved' };
   }
   if (
     event === 'pretooluse'
@@ -496,6 +603,7 @@ function interactiveEventForHook(
     || event === 'beforemcpexecution'
     || event === 'beforereadfile'
     || event === 'subagentstart'
+    || (event === 'messagepartupdated' && mapping.state === 'running_tool')
   ) {
     return {
       type: 'tool.started',
@@ -509,6 +617,7 @@ function interactiveEventForHook(
     || event === 'aftermcpexecution'
     || event === 'afterfileedit'
     || event === 'subagentstop'
+    || (event === 'messagepartupdated' && mapping.state === 'working')
   ) {
     return { type: 'tool.finished' };
   }
@@ -521,7 +630,12 @@ function interactiveEventForHook(
     }
     return { type: 'tool.finished' };
   }
-  if (event === 'stop' || event === 'stopfailure') {
+  if (
+    event === 'stop'
+    || event === 'stopfailure'
+    || event === 'sessionidle'
+    || (event === 'sessionstatus' && mapping.state === 'completed')
+  ) {
     return {
       type: 'turn.stopped',
       outcome: mapping.state === 'failed'
@@ -582,6 +696,8 @@ function buildLaunchPatch(
   if (provider === 'claude_code') {
     delete base.codexSessionId;
     delete base.cursorSessionId;
+    delete base.openCodeSessionId;
+    delete base.grokSessionId;
     delete base.cursorMode;
     delete base.reasoningEffort;
     if (providerSessionId) base.claudeSessionId = providerSessionId;
@@ -592,16 +708,40 @@ function buildLaunchPatch(
     delete base.claudeSessionId;
     delete base.claudeSessionName;
     delete base.cursorSessionId;
+    delete base.openCodeSessionId;
+    delete base.grokSessionId;
     delete base.cursorMode;
     delete base.fullscreenTui;
     if (providerSessionId) base.codexSessionId = providerSessionId;
-  } else {
+  } else if (provider === 'cursor') {
     delete base.claudeSessionId;
     delete base.claudeSessionName;
     delete base.codexSessionId;
     delete base.reasoningEffort;
     delete base.fullscreenTui;
+    delete base.openCodeSessionId;
+    delete base.grokSessionId;
     if (providerSessionId) base.cursorSessionId = providerSessionId;
+  } else if (provider === 'opencode') {
+    delete base.claudeSessionId;
+    delete base.claudeSessionName;
+    delete base.codexSessionId;
+    delete base.cursorSessionId;
+    delete base.cursorMode;
+    delete base.reasoningEffort;
+    delete base.fullscreenTui;
+    delete base.grokSessionId;
+    if (providerSessionId) base.openCodeSessionId = providerSessionId;
+  } else {
+    delete base.claudeSessionId;
+    delete base.claudeSessionName;
+    delete base.codexSessionId;
+    delete base.cursorSessionId;
+    delete base.openCodeSessionId;
+    delete base.cursorMode;
+    delete base.reasoningEffort;
+    delete base.fullscreenTui;
+    if (providerSessionId) base.grokSessionId = providerSessionId;
   }
 
   if (hasCapturedArgs) {
@@ -641,6 +781,14 @@ function providerSessionId(
   payload: Record<string, unknown>,
   provider: HookProvider
 ): string | undefined {
+  if (provider === 'opencode') {
+    const properties = openCodeProperties(payload);
+    const reported = stringField(properties, 'sessionID')
+      ?? stringField(properties, 'sessionId')
+      ?? nestedStringField(properties, ['info', 'id'])
+      ?? nestedStringField(properties, ['part', 'sessionID']);
+    if (reported) return reported;
+  }
   const reported = stringField(payload, 'session_id') ?? stringField(payload, 'sessionId');
   if (reported) return reported;
   const capturedArgs = decodeArgvPayload(payload);
@@ -697,6 +845,30 @@ function parseAgentLaunchArgs(
       continue;
     }
     if (provider === 'cursor' && arg === '--continue') continue;
+    if (provider === 'opencode' && (arg === '--session' || arg === '-s')) {
+      if (next && !next.startsWith('-')) {
+        providerSessionId = next;
+        i += 1;
+      }
+      continue;
+    }
+    if (provider === 'opencode' && arg.startsWith('--session=')) {
+      providerSessionId = arg.slice('--session='.length);
+      continue;
+    }
+    if (provider === 'opencode' && (arg === '--continue' || arg === '-c')) continue;
+    if (provider === 'grok_build' && (arg === '--resume' || arg === '-r')) {
+      if (next && !next.startsWith('-')) {
+        providerSessionId = next;
+        i += 1;
+      }
+      continue;
+    }
+    if (provider === 'grok_build' && arg.startsWith('--resume=')) {
+      providerSessionId = arg.slice('--resume='.length);
+      continue;
+    }
+    if (provider === 'grok_build' && (arg === '--continue' || arg === '-c')) continue;
 
     if (provider === 'cursor' && arg === '--mode') {
       if (next === 'agent' || next === 'plan' || next === 'ask') {
@@ -882,6 +1054,152 @@ function mapCursorHook(
   }
 }
 
+function mapOpenCodeHook(
+  hookEvent: string | undefined,
+  payload: Record<string, unknown>
+): HookMapping | null {
+  const event = normalizeEventName(hookEvent);
+  const properties = openCodeProperties(payload);
+  const status = normalizeEventName(nestedStringField(properties, ['status', 'type']));
+  const partType = normalizeEventName(nestedStringField(properties, ['part', 'type']));
+  const toolStatus = normalizeEventName(
+    nestedStringField(properties, ['part', 'state', 'status'])
+  );
+  const toolName = nestedStringField(properties, ['part', 'tool']);
+
+  switch (event) {
+    case 'sessionstart':
+    case 'sessioncreated':
+      return { state: 'starting', summary: 'session started' };
+    case 'sessionend':
+      return stringField(properties, 'source') === 'shell_launch'
+        ? { state: 'idle', summary: 'idle', resolvesApproval: true }
+        : { state: 'exited', summary: 'session ended', resolvesApproval: true };
+    case 'sessiondeleted':
+      return { state: 'exited', summary: 'session ended', resolvesApproval: true };
+    case 'sessionerror':
+      return { state: 'failed', summary: 'session failed', resolvesApproval: true };
+    case 'sessionidle':
+      return { state: 'completed', summary: 'completed', resolvesApproval: true };
+    case 'sessionstatus':
+      if (status === 'busy' || status === 'retry') {
+        return { state: 'working', summary: status === 'retry' ? 'retrying' : 'thinking' };
+      }
+      if (status === 'idle') {
+        return { state: 'completed', summary: 'completed', resolvesApproval: true };
+      }
+      return null;
+    case 'soloeuserprompt':
+      return { state: 'working', summary: 'thinking' };
+    case 'permissionasked':
+      return {
+        state: 'waiting_for_approval',
+        summary: stringField(properties, 'permission')
+          ? `approval: ${stringField(properties, 'permission')}`
+          : 'waiting for approval'
+      };
+    case 'permissionreplied':
+      return { state: 'working', summary: 'thinking', resolvesApproval: true };
+    case 'questionasked':
+      return { state: 'waiting_for_input', summary: 'waiting for input' };
+    case 'questionreplied':
+    case 'questionrejected':
+      return { state: 'working', summary: 'thinking', resolvesApproval: true };
+    case 'messagepartupdated':
+      if (partType !== 'tool') return null;
+      if (toolStatus === 'pending' || toolStatus === 'running') {
+        return {
+          state: 'running_tool',
+          summary: toolName ? `tool: ${toolName}` : 'running tool'
+        };
+      }
+      if (toolStatus === 'error') {
+        return { state: 'working', summary: 'tool failed' };
+      }
+      if (toolStatus === 'completed') {
+        return { state: 'working', summary: 'thinking' };
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+function mapGrokHook(
+  hookEvent: string | undefined,
+  payload: Record<string, unknown>
+): HookMapping | null {
+  const event = normalizeEventName(hookEvent);
+  const toolName = stringField(payload, 'toolName') ?? stringField(payload, 'tool_name');
+  switch (event) {
+    case 'sessionstart':
+      return { state: 'starting', summary: 'session started' };
+    case 'userpromptsubmit':
+      return { state: 'working', summary: 'thinking' };
+    case 'pretooluse':
+      return {
+        state: 'running_tool',
+        summary: toolName ? `tool: ${toolName}` : 'running tool'
+      };
+    case 'posttooluse':
+      return { state: 'working', summary: 'thinking' };
+    case 'posttoolusefailure':
+      return { state: 'working', summary: 'tool failed' };
+    case 'permissiondenied':
+      return { state: 'working', summary: 'permission denied', resolvesApproval: true };
+    case 'notification': {
+      const message = stringField(payload, 'message') ?? 'waiting for input';
+      const notificationType = normalizeEventName(
+        stringField(payload, 'notificationType') ?? stringField(payload, 'notification_type')
+      );
+      if (notificationType.includes('permission')) {
+        return {
+          state: 'waiting_for_approval',
+          summary: notificationSummary(message, 'waiting for approval')
+        };
+      }
+      if (notificationType === 'idleprompt') return { state: 'idle', summary: 'idle' };
+      return {
+        state: 'waiting_for_input',
+        summary: notificationSummary(message, 'waiting for input')
+      };
+    }
+    case 'stop':
+      return { state: 'completed', summary: 'completed', resolvesApproval: true };
+    case 'stopfailure':
+      return { state: 'failed', summary: 'failed', resolvesApproval: true };
+    case 'precompact':
+      return { state: 'working', summary: 'compacting context' };
+    case 'postcompact':
+      return { state: 'working', summary: 'thinking' };
+    case 'subagentstart':
+      return { state: 'running_tool', summary: 'running subagent' };
+    case 'subagentstop':
+      return { state: 'working', summary: 'thinking' };
+    case 'sessionend':
+      return stringField(payload, 'source') === 'shell_launch'
+        ? { state: 'idle', summary: 'idle', resolvesApproval: true }
+        : { state: 'exited', summary: 'session ended', resolvesApproval: true };
+    default:
+      return null;
+  }
+}
+
+function openCodeProperties(payload: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(payload['properties']) ? payload['properties'] : payload;
+}
+
+function openCodePrompt(payload: Record<string, unknown>): string | undefined {
+  const parts = openCodeProperties(payload)['parts'];
+  if (!Array.isArray(parts)) return undefined;
+  const text = parts
+    .map((part) => isRecord(part) && typeof part['text'] === 'string' ? part['text'] : '')
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  return text || undefined;
+}
+
 function isInterruptedClaudeStop(payload: Record<string, unknown>): boolean {
   const candidates = [
     stringField(payload, 'reason'),
@@ -999,7 +1317,8 @@ function mapCodexHook(
 
 function hookEventName(payload: Record<string, unknown>): string | undefined {
   return (
-    stringField(payload, 'hook_event_name')
+    stringField(payload, 'hookEventName')
+    ?? stringField(payload, 'hook_event_name')
     ?? stringField(payload, 'hook_event')
     ?? stringField(payload, 'event')
     ?? stringField(payload, 'type')

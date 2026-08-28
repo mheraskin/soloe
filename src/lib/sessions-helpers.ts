@@ -15,6 +15,8 @@ export function kindLabel(kind: SessionLaunchKind): string {
     case 'claude_code': return 'Claude';
     case 'codex': return 'Codex';
     case 'cursor': return 'Cursor';
+    case 'opencode': return 'OpenCode';
+    case 'grok_build': return 'Grok Build';
   }
 }
 
@@ -24,6 +26,8 @@ export function kindGlyph(kind: SessionLaunchKind): string {
     case 'claude_code': return 'C';
     case 'codex': return 'X';
     case 'cursor': return 'Cu';
+    case 'opencode': return 'OC';
+    case 'grok_build': return 'G';
   }
 }
 
@@ -56,6 +60,10 @@ export function defaultDraft(kind: SessionLaunchKind, defaults?: SettingsDefault
         ...base,
         launch: { type: 'agent', provider: 'cursor', resumeMode: 'new', cursorMode: 'agent' }
       };
+    case 'opencode':
+      return { ...base, launch: { type: 'agent', provider: 'opencode', resumeMode: 'new' } };
+    case 'grok_build':
+      return { ...base, launch: { type: 'agent', provider: 'grok_build', resumeMode: 'new' } };
   }
 }
 
@@ -102,6 +110,12 @@ export function validateDraft(d: SessionDraft): ValidationError | null {
       }
       if (d.launch.provider === 'cursor' && d.launch.resumeMode === 'resume_by_id' && !d.launch.cursorSessionId?.trim()) {
         return { field: 'cursorSessionId', message: 'Chat id required' };
+      }
+      if (d.launch.provider === 'opencode' && d.launch.resumeMode === 'resume_by_id' && !d.launch.openCodeSessionId?.trim()) {
+        return { field: 'openCodeSessionId', message: 'Session id required' };
+      }
+      if (d.launch.provider === 'grok_build' && d.launch.resumeMode === 'resume_by_id' && !d.launch.grokSessionId?.trim()) {
+        return { field: 'grokSessionId', message: 'Session id required' };
       }
       break;
   }

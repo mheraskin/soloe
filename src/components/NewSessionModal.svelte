@@ -18,6 +18,8 @@
   import ClaudeForm from './forms/ClaudeForm.svelte';
   import CodexForm from './forms/CodexForm.svelte';
   import CursorForm from './forms/CursorForm.svelte';
+  import OpenCodeForm from './forms/OpenCodeForm.svelte';
+  import GrokBuildForm from './forms/GrokBuildForm.svelte';
   import ProjectPicker from './ProjectPicker.svelte';
 
   let submitting = $state(false);
@@ -143,8 +145,12 @@
         <ClaudeForm />
       {:else if modal.draft.launch.provider === 'codex'}
         <CodexForm />
-      {:else}
+      {:else if modal.draft.launch.provider === 'cursor'}
         <CursorForm />
+      {:else if modal.draft.launch.provider === 'opencode'}
+        <OpenCodeForm />
+      {:else}
+        <GrokBuildForm />
       {/if}
 
       {#if modal.error}

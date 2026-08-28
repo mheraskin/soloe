@@ -68,6 +68,10 @@ import type {
   DiagnosticLogsRequest
 } from './diagnostics.js';
 import type {
+  ListSessionHookTraceRequest,
+  SessionHookTraceEvent
+} from './session-debug.js';
+import type {
   CoverageMapSnapshot,
   FeatureChangeEvent,
   FeatureIssueEntry,
@@ -329,13 +333,17 @@ export const IpcChannels = {
   },
   diagnostics: {
     list: 'diagnostics:list',
-    crashLogs: 'diagnostics:crash-logs'
+    crashLogs: 'diagnostics:crash-logs',
+    sessionHookTrace: 'diagnostics:session-hook-trace',
+    clearSessionHookTrace: 'diagnostics:clear-session-hook-trace',
+    sessionHookEvent: 'diagnostics:session-hook-event'
   },
   window: {
     minimize: 'window:minimize',
     toggleMaximize: 'window:toggle-maximize',
     zoomIn: 'window:zoom-in',
     zoomOut: 'window:zoom-out',
+    openSessionEventsDebug: 'window:open-session-events-debug',
     close: 'window:close'
   },
   agentIntegration: {
@@ -346,6 +354,10 @@ export const IpcChannels = {
     uninstallCodex: 'agent-integration:uninstall-codex',
     installCursor: 'agent-integration:install-cursor',
     uninstallCursor: 'agent-integration:uninstall-cursor',
+    installOpenCode: 'agent-integration:install-opencode',
+    uninstallOpenCode: 'agent-integration:uninstall-opencode',
+    installGrok: 'agent-integration:install-grok',
+    uninstallGrok: 'agent-integration:uninstall-grok',
     changed: 'agent-integration:changed'
   },
   notify: {
@@ -679,6 +691,11 @@ export interface FilesApi {
 export interface DiagnosticsApi {
   list(): Promise<IpcResult<DiagnosticItem[]>>;
   crashLogs(request?: DiagnosticLogsRequest): Promise<IpcResult<CrashLogSummary[]>>;
+  sessionHookTrace(
+    request?: ListSessionHookTraceRequest
+  ): Promise<IpcResult<SessionHookTraceEvent[]>>;
+  clearSessionHookTrace(): Promise<IpcResult<true>>;
+  onSessionHookEvent(listener: (event: SessionHookTraceEvent) => void): () => void;
 }
 
 export interface WindowApi {
@@ -686,6 +703,7 @@ export interface WindowApi {
   toggleMaximize(): Promise<IpcResult<true>>;
   zoomIn(): Promise<IpcResult<number>>;
   zoomOut(): Promise<IpcResult<number>>;
+  openSessionEventsDebug(): Promise<IpcResult<true>>;
   close(): Promise<IpcResult<true>>;
 }
 
@@ -724,6 +742,8 @@ export interface AgentIntegrationHostStatus {
   claude: AgentIntegrationTargetStatus;
   codex: AgentIntegrationTargetStatus;
   cursor: AgentIntegrationTargetStatus;
+  opencode: AgentIntegrationTargetStatus;
+  grok: AgentIntegrationTargetStatus;
 }
 
 export interface AgentIntegrationStatus {
@@ -742,6 +762,14 @@ export interface AgentIntegrationCursorRequest {
   host: AgentIntegrationHostKey;
 }
 
+export interface AgentIntegrationOpenCodeRequest {
+  host: AgentIntegrationHostKey;
+}
+
+export interface AgentIntegrationGrokRequest {
+  host: AgentIntegrationHostKey;
+}
+
 export interface AgentIntegrationApi {
   status(): Promise<IpcResult<AgentIntegrationStatus>>;
   installClaude(request: AgentIntegrationClaudeRequest): Promise<IpcResult<AgentIntegrationStatus>>;
@@ -756,6 +784,14 @@ export interface AgentIntegrationApi {
   uninstallCursor(
     request: AgentIntegrationCursorRequest
   ): Promise<IpcResult<AgentIntegrationStatus>>;
+  installOpenCode(
+    request: AgentIntegrationOpenCodeRequest
+  ): Promise<IpcResult<AgentIntegrationStatus>>;
+  uninstallOpenCode(
+    request: AgentIntegrationOpenCodeRequest
+  ): Promise<IpcResult<AgentIntegrationStatus>>;
+  installGrok(request: AgentIntegrationGrokRequest): Promise<IpcResult<AgentIntegrationStatus>>;
+  uninstallGrok(request: AgentIntegrationGrokRequest): Promise<IpcResult<AgentIntegrationStatus>>;
   onChange(listener: (status: AgentIntegrationStatus) => void): () => void;
 }
 

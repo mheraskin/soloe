@@ -1,10 +1,12 @@
 import type {
   ModelCatalogEntry,
+  ModelCatalogProvider,
   ModelProvider,
   ModelSelection,
   ModelTask,
   Settings
 } from './types/settings.js';
+import type { AgentRuntimeProvider } from './types/sessions.js';
 
 export const CLI_DEFAULT_MODEL_ID = '__cli_default__';
 
@@ -26,14 +28,38 @@ export const CLI_DEFAULT_MODEL_CATALOG: ModelCatalogEntry[] = [
     id: CLI_DEFAULT_MODEL_ID,
     label: 'Cursor default',
     isDefault: true
+  },
+  {
+    provider: 'opencode',
+    id: CLI_DEFAULT_MODEL_ID,
+    label: 'OpenCode default',
+    isDefault: true
+  },
+  {
+    provider: 'grok_build',
+    id: CLI_DEFAULT_MODEL_ID,
+    label: 'Grok Build default',
+    isDefault: true
   }
 ];
 
 export function modelCatalogFor(
   catalog: ModelCatalogEntry[],
-  provider: ModelProvider
+  provider: ModelCatalogProvider
 ): ModelCatalogEntry[] {
   return catalog.filter((model) => model.provider === provider);
+}
+
+export function modelCatalogProviderForRuntime(
+  provider: AgentRuntimeProvider
+): ModelCatalogProvider {
+  return provider === 'claude_code' ? 'claude' : provider;
+}
+
+export function runtimeProviderForModelCatalog(
+  provider: ModelCatalogProvider
+): AgentRuntimeProvider {
+  return provider === 'claude' ? 'claude_code' : provider;
 }
 
 export type ModelCandidatePolicy =
@@ -76,7 +102,7 @@ export function modelCandidatesForTask(
       : ['codex', 'claude', 'cursor'];
   for (const provider of providerOrder) {
     const first = allowed.find((model) => model.provider === provider);
-    if (first) add({ provider: first.provider, id: first.id });
+    if (first) add({ provider, id: first.id });
   }
   return { candidates };
 }

@@ -65,7 +65,11 @@ function isPersistedAgent(value: unknown): value is CommentAgent {
           scope.wslDistro.trim())) &&
       typeof candidate.id === 'string' &&
       typeof candidate.name === 'string' &&
-      (candidate.provider === 'claude_code' || candidate.provider === 'codex' || candidate.provider === 'cursor') &&
+      (candidate.provider === 'claude_code'
+        || candidate.provider === 'codex'
+        || candidate.provider === 'cursor'
+        || candidate.provider === 'opencode'
+        || candidate.provider === 'grok_build') &&
       typeof candidate.createdAt === 'number'
   );
 }
@@ -80,7 +84,11 @@ function isLegacyAgent(value: unknown): value is LegacyCommentAgent {
       typeof candidate.cwd === 'string' &&
       candidate.cwd.trim() &&
       typeof candidate.name === 'string' &&
-      (candidate.provider === 'claude_code' || candidate.provider === 'codex' || candidate.provider === 'cursor') &&
+      (candidate.provider === 'claude_code'
+        || candidate.provider === 'codex'
+        || candidate.provider === 'cursor'
+        || candidate.provider === 'opencode'
+        || candidate.provider === 'grok_build') &&
       typeof candidate.createdAt === 'number'
   );
 }

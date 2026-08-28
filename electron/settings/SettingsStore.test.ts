@@ -52,6 +52,11 @@ describe('SettingsStore — defaults', () => {
     expect(settings.appearance.theme).toBe('system');
   });
 
+  it('keeps Session event debugging off by default', async () => {
+    const settings = await new SettingsStore(path.join(tmpDir, 'debug-default.json')).get();
+    expect(settings.debug.sessionEvents).toBe(false);
+  });
+
   it('selects native Linux defaults for the Linux build', async () => {
     const store = new SettingsStore(path.join(tmpDir, 'linux.json'), 'linux');
     const s = await store.get();
@@ -131,6 +136,15 @@ describe('SettingsStore — update', () => {
     await expect(reloaded.get()).resolves.toMatchObject({
       browser: { elementSourceInspectorEnabled: false },
       shortcuts: { elementSourceInspector: ['Ctrl', 'Alt', 'Shift', 'X'] }
+    });
+  });
+
+  it('persists the Session event debugger opt-in', async () => {
+    const store = new SettingsStore(storePath);
+    await store.update({ debug: { sessionEvents: true } });
+
+    await expect(new SettingsStore(storePath).get()).resolves.toMatchObject({
+      debug: { sessionEvents: true }
     });
   });
   it('persists the backend placement independently from session run mode', async () => {
@@ -308,6 +322,7 @@ describe('SettingsStore — migration', () => {
     expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
     expect(s.backend).toEqual(DEFAULT_SETTINGS.backend);
     expect(s.startup.launchSoloeClient).toBe(false);
+    expect(s.debug).toEqual(DEFAULT_SETTINGS.debug);
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 import type {
   AgentUsageLimit,
+  AgentProvider,
   InteractiveAgentProjection,
   ObservedAgentSnapshot,
   ObserverEvent,
@@ -220,7 +221,7 @@ export class AgentObserverManager extends EventEmitter {
 
   updateTuiProviderThread(
     sessionId: SessionId,
-    provider: 'claude_code' | 'codex' | 'cursor',
+    provider: AgentProvider,
     providerThreadId?: string
   ): ObservedAgentSnapshot {
     const existing = this.snapshots.get(sessionId);

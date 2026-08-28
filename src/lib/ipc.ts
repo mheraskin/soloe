@@ -68,9 +68,15 @@ import type {
 } from '@shared/types/files.js';
 import type { DiagnosticLogsRequest } from '@shared/types/diagnostics.js';
 import type {
+  ListSessionHookTraceRequest,
+  SessionHookTraceEvent
+} from '@shared/types/session-debug.js';
+import type {
   AgentIntegrationClaudeRequest,
   AgentIntegrationCodexRequest,
   AgentIntegrationCursorRequest,
+  AgentIntegrationGrokRequest,
+  AgentIntegrationOpenCodeRequest,
   AgentIntegrationStatus,
   ToastNotification
 } from '@shared/types/ipc.js';
@@ -621,13 +627,19 @@ const localBackend = {
   diagnostics: {
     list: async () => unwrap(await c.diagnostics.list()),
     crashLogs: async (request?: DiagnosticLogsRequest) =>
-      unwrap(await c.diagnostics.crashLogs(request ? toIpcPayload(request) : undefined))
+      unwrap(await c.diagnostics.crashLogs(request ? toIpcPayload(request) : undefined)),
+    sessionHookTrace: async (request?: ListSessionHookTraceRequest) =>
+      unwrap(await c.diagnostics.sessionHookTrace(request ? toIpcPayload(request) : undefined)),
+    clearSessionHookTrace: async () => unwrap(await c.diagnostics.clearSessionHookTrace()),
+    onSessionHookEvent: (cb: (event: SessionHookTraceEvent) => void) =>
+      c.diagnostics.onSessionHookEvent(cb)
   },
   window: {
     minimize: async () => unwrap(await c.window.minimize()),
     toggleMaximize: async () => unwrap(await c.window.toggleMaximize()),
     zoomIn: async () => unwrap(await c.window.zoomIn()),
     zoomOut: async () => unwrap(await c.window.zoomOut()),
+    openSessionEventsDebug: async () => unwrap(await c.window.openSessionEventsDebug()),
     close: async () => unwrap(await c.window.close())
   },
   agentIntegration: {
@@ -644,6 +656,14 @@ const localBackend = {
       unwrap(await c.agentIntegration.installCursor(toIpcPayload(request))),
     uninstallCursor: async (request: AgentIntegrationCursorRequest) =>
       unwrap(await c.agentIntegration.uninstallCursor(toIpcPayload(request))),
+    installOpenCode: async (request: AgentIntegrationOpenCodeRequest) =>
+      unwrap(await c.agentIntegration.installOpenCode(toIpcPayload(request))),
+    uninstallOpenCode: async (request: AgentIntegrationOpenCodeRequest) =>
+      unwrap(await c.agentIntegration.uninstallOpenCode(toIpcPayload(request))),
+    installGrok: async (request: AgentIntegrationGrokRequest) =>
+      unwrap(await c.agentIntegration.installGrok(toIpcPayload(request))),
+    uninstallGrok: async (request: AgentIntegrationGrokRequest) =>
+      unwrap(await c.agentIntegration.uninstallGrok(toIpcPayload(request))),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       c.agentIntegration.onChange(cb)
   },

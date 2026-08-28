@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GitService } from '../git/GitService.js';
+import type { SessionHookTraceEvent } from '@shared/types/session-debug.js';
 import { AgentObserverManager } from './AgentObserverManager.js';
 import { AgentRuntimeManager, type WorkerSdkAdapter } from './AgentRuntimeManager.js';
 import {
@@ -117,6 +118,7 @@ describe('SoloeMcpServer — hook endpoints', () => {
   let observer: AgentObserverManager;
   let runtime: AgentRuntimeManager;
   let captured: HookEvent[];
+  let traces: SessionHookTraceEvent[];
   let hookHandler: (event: HookEvent) => void | Promise<void>;
 
   async function post(
@@ -142,6 +144,7 @@ describe('SoloeMcpServer — hook endpoints', () => {
     observer = new AgentObserverManager();
     runtime = new AgentRuntimeManager({ observer });
     captured = [];
+    traces = [];
     hookHandler = (event) => {
       captured.push(event);
     };
@@ -149,7 +152,8 @@ describe('SoloeMcpServer — hook endpoints', () => {
       observer,
       runtime,
       token: 'test-token',
-      onHookEvent: (event) => hookHandler(event)
+      onHookEvent: (event) => hookHandler(event),
+      onHookTrace: (event) => traces.push(event)
     });
     info = await server.start();
   });
@@ -167,6 +171,14 @@ describe('SoloeMcpServer — hook endpoints', () => {
     );
     expect(res.status).toBe(401);
     expect(captured).toHaveLength(0);
+    expect(traces).toEqual([
+      expect.objectContaining({
+        kind: 'hook_rejected',
+        provider: 'claude_code',
+        sessionId: 'sess-1',
+        reason: 'unauthorized'
+      })
+    ]);
   });
 
   it('rejects POSTs missing the X-Soloe-Session-Id header with 400', async () => {
@@ -177,13 +189,25 @@ describe('SoloeMcpServer — hook endpoints', () => {
     );
     expect(res.status).toBe(400);
     expect(captured).toHaveLength(0);
+    expect(traces).toEqual([
+      expect.objectContaining({
+        kind: 'hook_rejected',
+        provider: 'claude_code',
+        sessionId: null,
+        reason: 'missing_session_id'
+      })
+    ]);
   });
 
   it('routes POST /hook/claude with valid auth to onHookEvent', async () => {
     const res = await post(
       '/hook/claude',
       { hook_event_name: 'SessionStart', session_id: 'claude-uuid' },
-      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+      {
+        authorization: `Bearer ${info.token}`,
+        'x-soloe-session-id': 'sess-1',
+        'x-soloe-integration-version': '19'
+      }
     );
     expect(res.status).toBe(200);
     await vi.waitFor(() => expect(captured).toHaveLength(1));
@@ -192,6 +216,63 @@ describe('SoloeMcpServer — hook endpoints', () => {
       soloeSessionId: 'sess-1',
       payload: { hook_event_name: 'SessionStart', session_id: 'claude-uuid' }
     });
+    await vi.waitFor(() => expect(traces).toHaveLength(3));
+    expect(traces.map((trace) => trace.kind)).toEqual([
+      'hook_received',
+      'hook_dispatch_started',
+      'hook_dispatch_completed'
+    ]);
+    expect(traces[0]).toEqual(expect.objectContaining({
+      provider: 'claude_code',
+      sessionId: 'sess-1',
+      hookName: 'SessionStart',
+      integrationVersion: '19',
+      rawBody: '{"hook_event_name":"SessionStart","session_id":"claude-uuid"}',
+      dispatchable: true
+    }));
+    expect(new Set(traces.map((trace) => trace.requestId)).size).toBe(1);
+  });
+
+  it('records malformed provider payloads before rejecting them', async () => {
+    const res = await post(
+      '/hook/codex',
+      '{broken',
+      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+    );
+
+    expect(res.status).toBe(400);
+    expect(traces).toEqual([
+      expect.objectContaining({
+        kind: 'hook_rejected',
+        provider: 'codex',
+        sessionId: 'sess-1',
+        reason: 'invalid_json',
+        rawBody: '{broken'
+      })
+    ]);
+  });
+
+  it('records dispatcher failures against the received hook request', async () => {
+    hookHandler = () => {
+      throw new Error('projection exploded');
+    };
+    const res = await post(
+      '/hook/grok',
+      { hookEventName: 'PostCompact' },
+      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+    );
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(traces.some((trace) => trace.kind === 'hook_dispatch_failed')).toBe(true);
+    });
+    expect(traces.at(-1)).toEqual(expect.objectContaining({
+      kind: 'hook_dispatch_failed',
+      provider: 'grok_build',
+      sessionId: 'sess-1',
+      hookName: 'PostCompact',
+      error: 'projection exploded'
+    }));
   });
 
   it('routes POST /hook/codex with valid auth to onHookEvent', async () => {
@@ -218,6 +299,45 @@ describe('SoloeMcpServer — hook endpoints', () => {
       provider: 'cursor',
       soloeSessionId: 'sess-1',
       payload: { hook_event_name: 'SessionStart', session_id: 'cursor-chat-1' }
+    });
+  });
+
+  it('routes POST /hook/opencode with valid auth to onHookEvent', async () => {
+    const payload = {
+      type: 'session.status',
+      properties: { sessionID: 'open-session-1', status: { type: 'busy' } }
+    };
+    const res = await post(
+      '/hook/opencode',
+      payload,
+      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+    );
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(captured).toHaveLength(1));
+    expect(captured[0]).toEqual({
+      provider: 'opencode',
+      soloeSessionId: 'sess-1',
+      payload
+    });
+  });
+
+  it('routes POST /hook/grok with valid auth to onHookEvent', async () => {
+    const payload = {
+      hookEventName: 'session_start',
+      sessionId: 'grok-session-1',
+      cwd: '/repo'
+    };
+    const res = await post(
+      '/hook/grok',
+      payload,
+      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+    );
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(captured).toHaveLength(1));
+    expect(captured[0]).toEqual({
+      provider: 'grok_build',
+      soloeSessionId: 'sess-1',
+      payload
     });
   });
 

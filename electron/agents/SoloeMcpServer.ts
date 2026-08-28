@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { AgentRuntimeManager } from './AgentRuntimeManager.js';
+import type { WorkerAgentProvider } from '@shared/types/agents.js';
 import type { AgentObserverManager } from './AgentObserverManager.js';
 import type { CommentsRpcResult } from '@shared/types/comments-rpc.js';
 import type {
@@ -10,8 +11,12 @@ import type {
 } from '@shared/types/diff-rpc.js';
 import { worktreeRuntimeContext } from '@shared/worktree-identity.js';
 import type { GitService } from '../git/GitService.js';
+import type {
+  SessionHookProvider,
+  SessionHookTraceEvent
+} from '@shared/types/session-debug.js';
 
-export type HookProvider = 'claude_code' | 'codex' | 'cursor';
+export type HookProvider = SessionHookProvider;
 
 export interface HookEvent {
   provider: HookProvider;
@@ -35,6 +40,7 @@ export interface SoloeMcpServerOptions {
   port?: number;
   token?: string;
   onHookEvent?: (event: HookEvent) => void | Promise<void>;
+  onHookTrace?: (event: SessionHookTraceEvent) => void;
   commentsBridge?: CommentsBridgeLike;
   diffBridge?: DiffBridgeLike;
   git?: GitService;
@@ -202,17 +208,39 @@ export class SoloeMcpServer {
       return;
     }
     const url = req.url ?? '';
-    if (url !== '/mcp' && url !== '/hook/claude' && url !== '/hook/codex' && url !== '/hook/cursor') {
+    if (
+      url !== '/mcp'
+      && url !== '/hook/claude'
+      && url !== '/hook/codex'
+      && url !== '/hook/cursor'
+      && url !== '/hook/opencode'
+      && url !== '/hook/grok'
+    ) {
       writeJson(res, 404, { error: 'not found' });
       return;
     }
+    const hookProvider = hookProviderForUrl(url);
     if (!isAuthorized(req, this.token)) {
+      if (hookProvider) {
+        const sessionId = requestHeader(req, 'x-soloe-session-id');
+        this.trace({
+          kind: 'hook_rejected',
+          id: randomUUID(),
+          requestId: randomUUID(),
+          timestamp: new Date().toISOString(),
+          provider: hookProvider,
+          sessionId,
+          hookName: null,
+          integrationVersion: requestHeader(req, 'x-soloe-integration-version'),
+          reason: 'unauthorized',
+          rawBody: null
+        });
+      }
       writeJson(res, 401, { error: 'unauthorized' });
       return;
     }
-    if (url === '/hook/claude' || url === '/hook/codex' || url === '/hook/cursor') {
-      const provider = url === '/hook/claude' ? 'claude_code' : url === '/hook/cursor' ? 'cursor' : 'codex';
-      await this.handleHookRequest(req, res, provider);
+    if (hookProvider) {
+      await this.handleHookRequest(req, res, hookProvider);
       return;
     }
     let payload: unknown;
@@ -243,29 +271,69 @@ export class SoloeMcpServer {
     res: ServerResponse,
     provider: HookProvider
   ): Promise<void> {
-    const sessionHeader = req.headers['x-soloe-session-id'];
-    const soloeSessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+    const requestId = randomUUID();
+    const timestamp = new Date().toISOString();
+    const integrationVersion = requestHeader(req, 'x-soloe-integration-version');
+    const soloeSessionId = requestHeader(req, 'x-soloe-session-id');
     if (!soloeSessionId) {
+      this.trace({
+        kind: 'hook_rejected',
+        id: randomUUID(),
+        requestId,
+        timestamp,
+        provider,
+        sessionId: null,
+        hookName: null,
+        integrationVersion,
+        reason: 'missing_session_id',
+        rawBody: null
+      });
       console.log('[soloe-hook] hook rejected — missing X-Soloe-Session-Id header', { provider });
       writeJson(res, 400, { error: 'X-Soloe-Session-Id header is required' });
       return;
     }
+    let rawBody = '';
+    let parsed: unknown = {};
     let payload: Record<string, unknown> = {};
     try {
-      const body = await readBody(req);
-      if (body) {
-        const parsed: unknown = JSON.parse(body);
+      rawBody = await readBody(req);
+      if (rawBody) {
+        parsed = JSON.parse(rawBody);
         if (isRecord(parsed)) payload = parsed;
       }
     } catch {
+      this.trace({
+        kind: 'hook_rejected',
+        id: randomUUID(),
+        requestId,
+        timestamp,
+        provider,
+        sessionId: soloeSessionId,
+        hookName: null,
+        integrationVersion,
+        reason: 'invalid_json',
+        rawBody
+      });
       console.log('[soloe-hook] hook rejected — invalid json', { provider, soloeSessionId });
       writeJson(res, 400, { error: 'invalid json' });
       return;
     }
-    const hookEventName =
-      typeof payload['hook_event_name'] === 'string' ? payload['hook_event_name'] : '(missing)';
+    const hookName = providerHookName(parsed);
+    this.trace({
+      kind: 'hook_received',
+      id: randomUUID(),
+      requestId,
+      timestamp,
+      provider,
+      sessionId: soloeSessionId,
+      hookName,
+      integrationVersion,
+      rawBody,
+      payload: parsed,
+      dispatchable: isRecord(parsed)
+    });
     console.log(
-      `[soloe-hook] hook arrived: provider=${provider} session=${soloeSessionId} event=${hookEventName}`
+      `[soloe-hook] hook arrived: provider=${provider} session=${soloeSessionId} event=${hookName ?? '(missing)'}`
     );
     // A hook command runs on the interactive CLI's critical path. Acknowledge
     // as soon as the local bridge owns the payload, then reduce events in
@@ -273,16 +341,56 @@ export class SoloeMcpServer {
     writeJson(res, 200, { ok: true });
     const event = { provider, soloeSessionId, payload } satisfies HookEvent;
     this.hookDispatchQueue = this.hookDispatchQueue
-      .then(async () => this.opts.onHookEvent?.(event))
-      .then(() => undefined)
+      .then(async () => {
+        this.trace({
+          kind: 'hook_dispatch_started',
+          id: randomUUID(),
+          requestId,
+          timestamp: new Date().toISOString(),
+          provider,
+          sessionId: soloeSessionId,
+          hookName,
+          integrationVersion
+        });
+        await this.opts.onHookEvent?.(event);
+        this.trace({
+          kind: 'hook_dispatch_completed',
+          id: randomUUID(),
+          requestId,
+          timestamp: new Date().toISOString(),
+          provider,
+          sessionId: soloeSessionId,
+          hookName,
+          integrationVersion
+        });
+      })
       .catch((error) => {
+        this.trace({
+          kind: 'hook_dispatch_failed',
+          id: randomUUID(),
+          requestId,
+          timestamp: new Date().toISOString(),
+          provider,
+          sessionId: soloeSessionId,
+          hookName,
+          integrationVersion,
+          error: errorMessage(error)
+        });
         console.warn('[soloe-hook] hook dispatch failed', {
           provider,
           soloeSessionId,
-          hookEventName,
+          hookEventName: hookName,
           error: errorMessage(error)
         });
       });
+  }
+
+  private trace(event: SessionHookTraceEvent): void {
+    try {
+      this.opts.onHookTrace?.(event);
+    } catch (error) {
+      console.warn('[soloe-hook] failed to record hook trace', errorMessage(error));
+    }
   }
 
   async handlePayload(payload: unknown): Promise<unknown> {
@@ -457,6 +565,31 @@ export class SoloeMcpServer {
   }
 }
 
+function hookProviderForUrl(url: string): HookProvider | null {
+  switch (url) {
+    case '/hook/claude': return 'claude_code';
+    case '/hook/codex': return 'codex';
+    case '/hook/cursor': return 'cursor';
+    case '/hook/opencode': return 'opencode';
+    case '/hook/grok': return 'grok_build';
+    default: return null;
+  }
+}
+
+function requestHeader(req: IncomingMessage, name: string): string | null {
+  const value = req.headers[name];
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
+function providerHookName(payload: unknown): string | null {
+  if (!isRecord(payload)) return null;
+  for (const key of ['hook_event_name', 'hookEventName', 'hook_event', 'event', 'type']) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return null;
+}
+
 function isAuthorized(req: IncomingMessage, token: string): boolean {
   return isAuthorizedHeaders(req.headers, token);
 }
@@ -498,7 +631,7 @@ function writeJson(res: ServerResponse, status: number, payload: unknown): void 
   res.end(JSON.stringify(payload));
 }
 
-function requiredProvider(args: Record<PropertyKey, unknown>): HookProvider {
+function requiredProvider(args: Record<PropertyKey, unknown>): WorkerAgentProvider {
   const provider = requiredString(args, 'provider');
   if (provider !== 'claude_code' && provider !== 'codex' && provider !== 'cursor') {
     throw new Error('provider must be claude_code, codex, or cursor');

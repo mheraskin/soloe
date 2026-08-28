@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import type {
-  AgentProvider,
   CreateWorkerSessionRequest,
   CreateWorkerSessionResult,
   ObservedAgentSnapshot,
   SendWorkerPromptRequest,
+  WorkerAgentProvider,
   WorkerStatusResult
 } from '@shared/types/agents.js';
 import type { AgentObservedState, SessionId } from '@shared/types/sessions.js';
@@ -20,7 +20,7 @@ export interface WorkerSdkEvent {
 
 export interface WorkerSdkContext {
   workerId: string;
-  provider: AgentProvider;
+  provider: WorkerAgentProvider;
   cwd?: string;
   signal: AbortSignal;
   providerThreadId?: string;
@@ -34,14 +34,14 @@ export interface WorkerSdkAdapter {
 
 export interface AgentRuntimeManagerOptions {
   observer: AgentObserverManager;
-  sdkLoader?: (provider: AgentProvider) => Promise<WorkerSdkAdapter>;
+  sdkLoader?: (provider: WorkerAgentProvider) => Promise<WorkerSdkAdapter>;
   autoApprovesPermissions?: (originSessionId: SessionId) => Promise<boolean> | boolean;
   getCursorBinary?: () => Promise<string | undefined> | string | undefined;
 }
 
 interface WorkerRecord {
   workerId: string;
-  provider: AgentProvider;
+  provider: WorkerAgentProvider;
   originSessionId: string;
   cwd?: string;
   abort?: AbortController;
@@ -52,7 +52,7 @@ interface WorkerRecord {
 
 export class AgentRuntimeManager {
   private readonly workers = new Map<string, WorkerRecord>();
-  private readonly sdkLoader: (provider: AgentProvider) => Promise<WorkerSdkAdapter>;
+  private readonly sdkLoader: (provider: WorkerAgentProvider) => Promise<WorkerSdkAdapter>;
 
   constructor(private readonly opts: AgentRuntimeManagerOptions) {
     this.sdkLoader = opts.sdkLoader ?? ((provider) => loadDefaultSdkAdapter(provider, opts.getCursorBinary));
@@ -200,7 +200,7 @@ export class AgentRuntimeManager {
 }
 
 async function loadDefaultSdkAdapter(
-  provider: AgentProvider,
+  provider: WorkerAgentProvider,
   getCursorBinary?: AgentRuntimeManagerOptions['getCursorBinary']
 ): Promise<WorkerSdkAdapter> {
   if (provider === 'cursor') {
@@ -290,7 +290,7 @@ export function stateFromSdkType(type: string): AgentObservedState {
   return 'working';
 }
 
-function newWorkerId(provider: AgentProvider): string {
+function newWorkerId(provider: WorkerAgentProvider): string {
   const prefix = provider === 'claude_code'
     ? 'claude-worker'
     : provider === 'codex' ? 'codex-worker' : 'cursor-worker';

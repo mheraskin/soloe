@@ -23,6 +23,16 @@ export function sessionAutoApprovesPermissions(
     return hasFlag(args, '--force') || hasFlag(args, '-f') || hasFlag(args, '--yolo');
   }
 
+  if (launch.provider === 'opencode') {
+    return hasFlag(args, '--auto');
+  }
+
+  if (launch.provider === 'grok_build') {
+    return hasFlag(args, '--always-approve')
+      || hasFlag(args, '--yolo')
+      || hasOptionValue(args, ['--permission-mode'], 'bypasspermissions');
+  }
+
   return hasFlag(args, '--dangerously-skip-permissions')
     || hasOptionValue(args, ['--permission-mode'], 'bypasspermissions');
 }

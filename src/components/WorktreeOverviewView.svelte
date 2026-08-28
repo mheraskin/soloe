@@ -13,12 +13,12 @@
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  import * as Select from '$lib/components/ui/select';
   import { type ModelProvider, type ModelSelection } from '@shared/types/settings.js';
   import type { AgentRuntimeProvider } from '@shared/types/sessions.js';
+  import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
   import { renderMarkdown } from '../lib/markdown';
   import ChatPanel, { type ChatPanelMessage } from './ChatPanel.svelte';
-  import KindIcon from './KindIcon.svelte';
+  import ProviderModelPicker from './ProviderModelPicker.svelte';
 
   interface Props {
     cwd: string;
@@ -263,7 +263,11 @@
     if (!overview?.generatedBy) return null;
     const p = overview.generatedBy.provider === 'claude_code'
       ? 'Claude'
-      : overview.generatedBy.provider === 'cursor' ? 'Cursor' : 'Codex';
+      : overview.generatedBy.provider === 'cursor'
+        ? 'Cursor'
+        : overview.generatedBy.provider === 'opencode'
+          ? 'OpenCode'
+          : overview.generatedBy.provider === 'grok_build' ? 'Grok Build' : 'Codex';
     return `${p} · ${overview.generatedBy.model}`;
   });
 
@@ -274,11 +278,13 @@
   // Catalog filtered to what's currently allowed. When Claude headless is
   // off, only Codex entries are pickable; the disabled-state row below the
   // list explains how to re-enable.
-  let allowedCatalog = $derived.by(() =>
-    claudeHeadlessAllowed
-      ? settings.availableModels
-      : settings.availableModels.filter((m) => m.provider !== 'claude')
-  );
+  let overviewModelProviders = $derived.by<AgentRuntimeProvider[]>(() => {
+    const providers = settings.availableModels.flatMap((entry) => {
+      if (entry.provider === 'claude') return claudeHeadlessAllowed ? ['claude_code' as const] : [];
+      return entry.provider === 'codex' || entry.provider === 'cursor' ? [entry.provider] : [];
+    });
+    return [...new Set(providers)];
+  });
 
   // Model the next regenerate will use. Falls back to textGeneration for
   // settings written before worktreeOverview existed (mirrors pickProvider
@@ -295,18 +301,6 @@
     return raw;
   });
 
-  function modelKey(value: ModelSelection | null | undefined): string {
-    return value ? `${value.provider}:${value.id}` : '';
-  }
-  function parseModelKey(value: string): ModelSelection | null {
-    const idx = value.indexOf(':');
-    if (idx <= 0) return null;
-    const provider = value.slice(0, idx);
-    const id = value.slice(idx + 1);
-    if (provider !== 'codex' && provider !== 'claude' && provider !== 'cursor') return null;
-    if (!id) return null;
-    return { provider, id };
-  }
   function modelLabel(value: ModelSelection | null | undefined): string {
     if (!value) return 'Default model';
     const entry = settings.availableModels.find(
@@ -314,14 +308,18 @@
     );
     return entry?.label ?? `${value.provider}: ${value.id}`;
   }
-  function providerKind(provider: ModelProvider): AgentRuntimeProvider {
-    return provider === 'claude' ? 'claude_code' : provider;
+  function selectedRuntimeProvider(value: ModelSelection | null): AgentRuntimeProvider {
+    return value?.provider === 'claude' ? 'claude_code' : value?.provider ?? 'codex';
   }
-  async function setSelectedModel(value: string) {
-    const parsed = parseModelKey(value);
-    if (!parsed) return;
+  async function setSelectedModel(provider: AgentRuntimeProvider, model: string | undefined) {
+    const modelProvider = provider === 'claude_code'
+      ? 'claude'
+      : provider === 'codex' || provider === 'cursor' ? provider : null;
+    if (!modelProvider) return;
     try {
-      await settings.update({ models: { worktreeOverview: parsed } });
+      await settings.update({
+        models: { worktreeOverview: { provider: modelProvider, id: model ?? CLI_DEFAULT_MODEL_ID } }
+      });
     } catch (e) {
       reportError(e);
     }
@@ -333,6 +331,10 @@
   // 'claude_code', so we normalize.
   let modelChangedSinceLastRun = $derived.by(() => {
     if (!selectedModel || !overview?.generatedBy) return false;
+    if (
+      overview.generatedBy.provider === 'opencode'
+      || overview.generatedBy.provider === 'grok_build'
+    ) return true;
     const generatedProvider: ModelProvider =
       overview.generatedBy.provider === 'claude_code' ? 'claude' : overview.generatedBy.provider;
     return (
@@ -368,56 +370,26 @@
         </Badge>
       {/if}
       <div class="flex-1"></div>
-      <Select.Root
-        type="single"
-        value={modelKey(selectedModel)}
-        onValueChange={(v) => void setSelectedModel(v)}
-      >
-        <Select.Trigger
-          class="h-7 w-auto min-w-[150px] gap-1.5 px-2 py-0 text-xs"
-          aria-label="Overview model"
-          onfocus={() => void settings.ensureModelCatalog()}
-          onpointerdown={() => void settings.ensureModelCatalog()}
+      <ProviderModelPicker
+        provider={selectedRuntimeProvider(selectedModel)}
+        model={selectedModel?.id === CLI_DEFAULT_MODEL_ID ? undefined : selectedModel?.id}
+        providers={overviewModelProviders}
+        compact
+        triggerClass="h-7 min-w-[150px]"
+        ariaLabel="Overview provider and model"
+        onchange={(provider, model) => void setSelectedModel(provider, model)}
+      />
+      {#if !claudeHeadlessAllowed}
+        <button
+          type="button"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          onclick={() => settings.openDialog('integration')}
+          title="Claude background tasks are disabled. Open Integration settings."
+          aria-label="Enable Claude background tasks in settings"
         >
-          <span class="flex items-center gap-1.5 truncate">
-            {#if selectedModel}
-              <KindIcon kind={providerKind(selectedModel.provider)} size={12} />
-            {/if}
-            <span class="truncate">{modelLabel(selectedModel)}</span>
-          </span>
-        </Select.Trigger>
-        <Select.Content>
-          {#each allowedCatalog as entry (modelKey(entry))}
-            <Select.Item value={modelKey(entry)} label={entry.label}>
-              <span class="flex items-center gap-2">
-                <KindIcon kind={providerKind(entry.provider)} size={14} />
-                <span>{entry.label}</span>
-              </span>
-            </Select.Item>
-          {/each}
-          {#if !claudeHeadlessAllowed}
-            <div
-              class="mt-1 flex items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] text-muted-foreground"
-            >
-              <KindIcon kind="claude_code" size={12} />
-              <span class="flex-1">Claude is disabled</span>
-              <button
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
-                onclick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  settings.openDialog('integration');
-                }}
-                title="Open Integration settings"
-              >
-                <span>Turn on in settings</span>
-                <ExternalLink class="size-2.5" />
-              </button>
-            </div>
-          {/if}
-        </Select.Content>
-      </Select.Root>
+          <ExternalLink class="size-3" />
+        </button>
+      {/if}
       <Button
         variant="outline"
         size="xs"

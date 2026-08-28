@@ -66,7 +66,9 @@ describe('HookInstaller', () => {
         },
         claude: { installed: false, current: false },
         codex: { installed: false, current: false },
-        cursor: { installed: false, current: false }
+        cursor: { installed: false, current: false },
+        opencode: { installed: false, current: false },
+        grok: { installed: false, current: false }
       }
     ]);
     expect(JSON.stringify(status)).not.toContain(homeDir);
@@ -106,6 +108,9 @@ describe('HookInstaller', () => {
       expect(cmd).toMatch(/;\s*curl /);
       expect(cmd).toContain('--connect-timeout 0.1 --max-time 1');
       expect(cmd).toContain('"$u/hook/claude"');
+      expect(cmd).toContain(
+        `X-Soloe-Integration-Version: ${SOLOE_HOOK_VERSION}`
+      );
       // WSL host resolution: substitute host.wsl.internal when it doesn't resolve
       expect(cmd).toContain('host.wsl.internal');
       expect(cmd).toContain('getent hosts host.wsl.internal');
@@ -842,6 +847,114 @@ describe('HookInstaller with bridge — MCP registration', () => {
       afterFileEdit: [{ command: './hooks/user-format.sh' }]
     });
     expect(removeSoloeFromCursorHooks(config)).toEqual(config);
+  });
+
+  it('installOpenCode preserves JSONC and installs MCP plus the event plugin', async () => {
+    const configPath = join(homeDir, '.config', 'opencode', 'opencode.jsonc');
+    await fs.mkdir(join(homeDir, '.config', 'opencode'), { recursive: true });
+    await fs.writeFile(configPath, '{\n  // keep this comment\n  "theme": "system",\n}\n');
+
+    await installer.installOpenCode(LOCAL);
+
+    const raw = await fs.readFile(configPath, 'utf8');
+    const config = JSON.parse(
+      raw.replace(/^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')
+    );
+    expect(raw).toContain('// keep this comment');
+    expect(config.theme).toBe('system');
+    expect(config.mcp.soloe).toMatchObject({
+      type: 'remote',
+      url: 'http://127.0.0.1:17896/mcp',
+      enabled: true,
+      headers: {
+        Authorization: 'Bearer tok-123',
+        'X-Soloe-Integration-Version': String(SOLOE_HOOK_VERSION)
+      }
+    });
+    const plugin = await fs.readFile(
+      join(homeDir, '.config', 'opencode', 'plugins', 'soloe.js'),
+      'utf8'
+    );
+    expect(plugin).toContain(`soloe-integration-version: ${SOLOE_HOOK_VERSION}`);
+    expect(plugin).toContain(
+      `'X-Soloe-Integration-Version': '${SOLOE_HOOK_VERSION}'`
+    );
+    expect(plugin).toContain("event: async ({ event })");
+    expect(plugin).toContain('/hook/opencode');
+    expect((await installer.status()).hosts[0]?.opencode).toEqual({
+      installed: true,
+      current: true,
+      version: SOLOE_HOOK_VERSION
+    });
+  });
+
+  it('uninstallOpenCode removes only Soloe-owned OpenCode entries', async () => {
+    await installer.installOpenCode(LOCAL);
+    await installer.uninstallOpenCode(LOCAL);
+
+    const configPath = join(homeDir, '.config', 'opencode', 'opencode.json');
+    expect(JSON.parse(await fs.readFile(configPath, 'utf8'))).toEqual({});
+    await expect(
+      fs.access(join(homeDir, '.config', 'opencode', 'plugins', 'soloe.js'))
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('installGrok preserves config and installs native hooks plus MCP', async () => {
+    const configPath = join(homeDir, '.grok', 'config.toml');
+    await fs.mkdir(join(homeDir, '.grok'), { recursive: true });
+    await fs.writeFile(configPath, '[ui]\ntheme = "dark"\n\n[mcp_servers.user]\ncommand = "user-mcp"\n');
+
+    await installer.installGrok(LOCAL);
+
+    const config = parseToml(await fs.readFile(configPath, 'utf8'));
+    expect(config.ui).toEqual({ theme: 'dark' });
+    expect(config.mcp_servers).toMatchObject({
+      user: { command: 'user-mcp' },
+      soloe: {
+        url: 'http://127.0.0.1:17896/mcp',
+        enabled: true,
+        headers: {
+          Authorization: 'Bearer tok-123',
+          'X-Soloe-Integration-Version': String(SOLOE_HOOK_VERSION)
+        }
+      }
+    });
+    const hooks = JSON.parse(
+      await fs.readFile(join(homeDir, '.grok', 'hooks', 'soloe.json'), 'utf8')
+    );
+    expect(Object.keys(hooks.hooks)).toEqual(expect.arrayContaining([
+      'SessionStart',
+      'UserPromptSubmit',
+      'PreToolUse',
+      'PostToolUse',
+      'Stop',
+      'StopFailure',
+      'SessionEnd'
+    ]));
+    expect(hooks.hooks.SessionStart[0].hooks[0]).toMatchObject({
+      type: 'command',
+      env: { SOLOE_INTEGRATION_VERSION: String(SOLOE_HOOK_VERSION) }
+    });
+    expect(hooks.hooks.SessionStart[0].hooks[0].command).toContain('/hook/grok');
+    expect((await installer.status()).hosts[0]?.grok).toEqual({
+      installed: true,
+      current: true,
+      version: SOLOE_HOOK_VERSION
+    });
+  });
+
+  it('uninstallGrok removes only Soloe-owned Grok Build entries', async () => {
+    const configPath = join(homeDir, '.grok', 'config.toml');
+    await fs.mkdir(join(homeDir, '.grok'), { recursive: true });
+    await fs.writeFile(configPath, '[mcp_servers.user]\ncommand = "user-mcp"\n');
+    await installer.installGrok(LOCAL);
+
+    await installer.uninstallGrok(LOCAL);
+
+    const config = parseToml(await fs.readFile(configPath, 'utf8'));
+    expect(config.mcp_servers).toEqual({ user: { command: 'user-mcp' } });
+    await expect(fs.access(join(homeDir, '.grok', 'hooks', 'soloe.json')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('reinstall replaces the MCP entry rather than stacking it', async () => {

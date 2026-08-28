@@ -35,6 +35,7 @@ const windowApi: WindowApi = {
   toggleMaximize: () => ipcRenderer.invoke(IpcChannels.window.toggleMaximize),
   zoomIn: () => ipcRenderer.invoke(IpcChannels.window.zoomIn),
   zoomOut: () => ipcRenderer.invoke(IpcChannels.window.zoomOut),
+  openSessionEventsDebug: () => ipcRenderer.invoke(IpcChannels.window.openSessionEventsDebug),
   close: () => ipcRenderer.invoke(IpcChannels.window.close)
 };
 

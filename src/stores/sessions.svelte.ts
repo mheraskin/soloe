@@ -233,6 +233,8 @@ export class SessionsStore {
     claude: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'claude_code'),
     codex: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'codex'),
     cursor: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'cursor'),
+    opencode: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'opencode'),
+    grok: this.sessions.filter((s) => s.launch.type === 'agent' && s.launch.provider === 'grok_build'),
     terminal: this.sessions.filter((s) => s.launch.type === 'terminal')
   });
 
@@ -913,6 +915,28 @@ export class SessionsStore {
               ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
             }
           };
+        case 'opencode':
+          return {
+            ...base,
+            launch: {
+              type: 'agent',
+              provider: 'opencode',
+              resumeMode: 'new',
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
+            }
+          };
+        case 'grok_build':
+          return {
+            ...base,
+            launch: {
+              type: 'agent',
+              provider: 'grok_build',
+              resumeMode: 'new',
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
+            }
+          };
       }
     })();
     const created = await this.create(draft);
@@ -1123,7 +1147,13 @@ export class SessionsStore {
 
   private agentProviderFor(session: Session): AgentRuntimeProvider | null {
     const observedProvider = this.observationFor(session.id)?.provider;
-    if (observedProvider === 'claude_code' || observedProvider === 'codex' || observedProvider === 'cursor') {
+    if (
+      observedProvider === 'claude_code'
+      || observedProvider === 'codex'
+      || observedProvider === 'cursor'
+      || observedProvider === 'opencode'
+      || observedProvider === 'grok_build'
+    ) {
       return observedProvider;
     }
     return session.currentAgentRuntime?.provider ?? launchProvider(session);
@@ -1309,5 +1339,9 @@ function defaultSessionName(kind: SessionLaunchKind): string {
       return 'Codex';
     case 'cursor':
       return 'Cursor';
+    case 'opencode':
+      return 'OpenCode';
+    case 'grok_build':
+      return 'Grok Build';
   }
 }

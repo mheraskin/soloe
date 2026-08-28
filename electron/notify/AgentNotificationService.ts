@@ -158,5 +158,7 @@ function providerLabel(provider: ObservedAgentSnapshot['provider']): string {
   if (provider === 'claude_code') return 'Claude';
   if (provider === 'codex') return 'Codex';
   if (provider === 'cursor') return 'Cursor';
+  if (provider === 'opencode') return 'OpenCode';
+  if (provider === 'grok_build') return 'Grok Build';
   return 'Agent';
 }

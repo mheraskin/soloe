@@ -22,13 +22,13 @@
     ScanLine,
     Sun,
     Moon,
-    Monitor
+    Monitor,
+    Bug
   } from '@lucide/svelte';
   import { settings } from '../../stores/settings.svelte';
   import { platform } from '../../stores/platform.svelte';
   import type {
     DiffFontSizePref,
-    ModelProvider,
     ModelSelection,
     ModelTask,
     QuickLaunchPreset,
@@ -38,7 +38,10 @@
     ThemePref,
     ShiftNumberNavigationTarget
   } from '@shared/types/settings.js';
-  import { modelCatalogFor } from '@shared/model-catalog.js';
+  import {
+    CLI_DEFAULT_MODEL_ID,
+    runtimeProviderForModelCatalog
+  } from '@shared/model-catalog.js';
   import type { AgentRuntimeProvider, RunMode, SessionLaunchKind, ShellKind } from '@shared/types/sessions.js';
   import { runModeLabel } from '@shared/platform.js';
   import {
@@ -49,6 +52,7 @@
   import { shortcutLabel } from '../../lib/element-source-inspector';
   import { platformBackendOptions, platformShellOptions } from '../../lib/platform-ui';
   import { reportError } from '../../stores/toast.svelte';
+  import { ipc, supportsBackendOperation } from '../../lib/ipc';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
@@ -61,6 +65,7 @@
   import ConnectionsForm from './ConnectionsForm.svelte';
   import VaultManagementForm from './VaultManagementForm.svelte';
   import KindIcon from '../KindIcon.svelte';
+  import ProviderModelPicker from '../ProviderModelPicker.svelte';
   import {
     agentNotificationPermission,
     requestAgentNotificationPermission
@@ -105,12 +110,16 @@
     { value: 'terminal', label: 'Terminal' },
     { value: 'claude_code', label: 'Claude' },
     { value: 'codex', label: 'Codex' },
-    { value: 'cursor', label: 'Cursor' }
+    { value: 'cursor', label: 'Cursor' },
+    { value: 'opencode', label: 'OpenCode' },
+    { value: 'grok_build', label: 'Grok Build' }
   ];
   const binaryKeys: { key: keyof SettingsBinaries; label: string; placeholder: string }[] = [
     { key: 'claude', label: 'Claude binary', placeholder: 'claude' },
     { key: 'codex', label: 'Codex binary', placeholder: 'codex' },
     { key: 'cursor', label: 'Cursor Agent binary', placeholder: 'agent' },
+    { key: 'opencode', label: 'OpenCode binary', placeholder: 'opencode' },
+    { key: 'grok', label: 'Grok Build binary', placeholder: 'grok' },
     { key: 'git', label: 'git', placeholder: 'git' },
     { key: 'gh', label: 'gh', placeholder: 'gh' },
     { key: 'fd', label: 'fd', placeholder: 'fd' },
@@ -156,6 +165,7 @@
     { kind: 'tab', value: 'diff', label: 'Diff', icon: GitCompare },
     { kind: 'tab', value: 'files', label: 'Files', icon: FolderTree },
     { kind: 'tab', value: 'featurelab', label: 'Feature Lab', icon: Microscope },
+    { kind: 'tab', value: 'debug', label: 'Debug', icon: Bug },
     { kind: 'tab', value: 'browser', label: 'Browser', icon: Globe },
     { kind: 'tab', value: 'notes', label: 'Notes', icon: NotebookPen }
   ];
@@ -207,41 +217,32 @@
 
   const contentClass = 'settings-tab-content flex flex-col gap-4 px-5 py-4 outline-none';
 
-  function modelKey(value: ModelSelection | undefined): string {
-    return value ? `${value.provider}:${value.id}` : '';
-  }
-
-  function parseModelKey(value: string): ModelSelection | null {
-    const idx = value.indexOf(':');
-    if (idx <= 0) return null;
-    const provider = value.slice(0, idx);
-    const id = value.slice(idx + 1);
-    if (provider !== 'codex' && provider !== 'claude' && provider !== 'cursor') return null;
-    if (!id) return null;
-    return { provider, id };
-  }
-
-  function modelLabel(value: ModelSelection | undefined): string {
-    if (!value) return 'Select a model';
-    const entry = settings.availableModels.find(
-      (m) => m.provider === value.provider && m.id === value.id
+  let backgroundModelProviders = $derived.by<AgentRuntimeProvider[]>(() => {
+    const providers = settings.availableModels.flatMap((entry) =>
+      entry.provider === 'codex' || entry.provider === 'claude' || entry.provider === 'cursor'
+        ? [runtimeProviderForModelCatalog(entry.provider)]
+        : []
     );
-    return entry?.label ?? `${value.provider}: ${value.id}`;
+    return [...new Set(providers)];
+  });
+
+  function runtimeProviderForSelection(value: ModelSelection | undefined): AgentRuntimeProvider {
+    return value?.provider === 'claude' ? 'claude_code' : value?.provider ?? 'codex';
   }
 
-  function providerKind(provider: ModelProvider): AgentRuntimeProvider {
-    return provider === 'claude' ? 'claude_code' : provider;
-  }
-
-  function presetProviderToModel(provider: AgentRuntimeProvider): ModelProvider {
-    return provider === 'claude_code' ? 'claude' : provider;
-  }
-
-  async function setModel(task: ModelTask, value: string) {
-    const parsed = parseModelKey(value);
-    if (!parsed) return;
+  async function setModel(
+    task: ModelTask,
+    provider: AgentRuntimeProvider,
+    model: string | undefined
+  ) {
+    const modelProvider = provider === 'claude_code'
+      ? 'claude'
+      : provider === 'codex' || provider === 'cursor' ? provider : null;
+    if (!modelProvider) return;
     try {
-      await settings.update({ models: { [task]: parsed } });
+      await settings.update({
+        models: { [task]: { provider: modelProvider, id: model ?? CLI_DEFAULT_MODEL_ID } }
+      });
     } catch (e) { reportError(e); }
   }
 
@@ -361,6 +362,24 @@
     } catch (e) { reportError(e); }
   }
 
+  async function setSessionEventsDebug(value: boolean) {
+    try {
+      await settings.update({ debug: { sessionEvents: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function openSessionEventsDebug(): Promise<void> {
+    try {
+      if (supportsBackendOperation('window', 'openSessionEventsDebug')) {
+        await ipc.window.openSessionEventsDebug();
+        return;
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'session-events');
+      window.open(url, 'soloe-session-events', 'popup,width=1180,height=760');
+    } catch (e) { reportError(e); }
+  }
+
   function startInspectorShortcutRecording(): void {
     recordingInspectorShortcut = true;
     inspectorShortcutError = null;
@@ -406,7 +425,9 @@
   const quickLaunchProviders: { value: AgentRuntimeProvider; label: string }[] = [
     { value: 'claude_code', label: 'Claude' },
     { value: 'codex', label: 'Codex' },
-    { value: 'cursor', label: 'Cursor' }
+    { value: 'cursor', label: 'Cursor' },
+    { value: 'opencode', label: 'OpenCode' },
+    { value: 'grok_build', label: 'Grok Build' }
   ];
 
   function generatePresetId(): string {
@@ -813,30 +834,13 @@
         {@const selected = settings.current.models[task.key]}
         <div class="flex flex-col gap-1.5">
           <Label class="text-xs text-muted-foreground">{task.label}</Label>
-          <Select.Root
-            type="single"
-            value={modelKey(selected)}
-            onValueChange={(v) => setModel(task.key, v)}
-          >
-            <Select.Trigger class="w-full">
-              <span class="flex items-center gap-2">
-                {#if selected}
-                  <KindIcon kind={providerKind(selected.provider)} size={14} />
-                {/if}
-                <span>{modelLabel(selected)}</span>
-              </span>
-            </Select.Trigger>
-            <Select.Content>
-              {#each settings.availableModels as entry (modelKey(entry))}
-                <Select.Item value={modelKey(entry)} label={entry.label}>
-                  <span class="flex items-center gap-2">
-                    <KindIcon kind={providerKind(entry.provider)} size={14} />
-                    <span>{entry.label}</span>
-                  </span>
-                </Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
+          <ProviderModelPicker
+            provider={runtimeProviderForSelection(selected)}
+            model={selected?.id === CLI_DEFAULT_MODEL_ID ? undefined : selected?.id}
+            providers={backgroundModelProviders}
+            ariaLabel={`${task.label} provider and model`}
+            onchange={(provider, model) => void setModel(task.key, provider, model)}
+          />
           <span class="text-[11px] text-muted-foreground">{task.hint}</span>
         </div>
       {/each}
@@ -844,12 +848,10 @@
 
     <Tabs.Content value="quicklaunch" class={contentClass}>
       <p class="m-0 text-[11px] text-muted-foreground">
-        Presets appear below the three main icons in the <b>+</b> popover for quick one-click
+        Presets appear below the provider icons in the <b>+</b> popover for quick one-click
         launching.
       </p>
       {#each settings.current.quickLaunch as preset (preset.id)}
-        {@const presetModelOptions = modelCatalogFor(settings.availableModels, presetProviderToModel(preset.provider))}
-        {@const presetSelectedModel = presetModelOptions.find((m) => m.id === preset.model)}
         <div class="flex flex-col gap-2 rounded-md border border-border p-3">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-2">
@@ -880,53 +882,20 @@
             />
           </div>
           <div class="flex flex-col gap-1.5">
-            <Label class="text-xs text-muted-foreground">Provider</Label>
-            <Select.Root
-              type="single"
-              value={preset.provider}
-              onValueChange={(v) =>
-                updatePreset(preset.id, { provider: v as AgentRuntimeProvider })}
-            >
-              <Select.Trigger class="w-full">
-                {quickLaunchProviders.find((p) => p.value === preset.provider)?.label ?? preset.provider}
-              </Select.Trigger>
-              <Select.Content>
-                {#each quickLaunchProviders as p (p.value)}
-                  <Select.Item value={p.value} label={p.label}>{p.label}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          </div>
-          <div class="flex flex-col gap-1.5">
-            <Label class="text-xs text-muted-foreground">Model</Label>
-            <Select.Root
-              type="single"
-              value={preset.model ?? '__default__'}
-              onValueChange={(v) =>
-                updatePreset(preset.id, { model: v === '__default__' ? undefined : v })}
-            >
-              <Select.Trigger class="w-full">
-                <span class="flex items-center gap-2">
-                  {#if preset.model}
-                    <KindIcon kind={preset.provider} size={14} />
-                  {/if}
-                  <span>{presetSelectedModel?.label ?? (preset.model || '(CLI default)')}</span>
-                </span>
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="__default__" label="(CLI default)">
-                  (CLI default)
-                </Select.Item>
-                {#each presetModelOptions as entry (entry.id)}
-                  <Select.Item value={entry.id} label={entry.label}>
-                    <span class="flex items-center gap-2">
-                      <KindIcon kind={providerKind(entry.provider)} size={14} />
-                      <span>{entry.label}</span>
-                    </span>
-                  </Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
+            <Label class="text-xs text-muted-foreground">Provider and model</Label>
+            <ProviderModelPicker
+              provider={preset.provider}
+              model={preset.model}
+              providers={quickLaunchProviders.map((item) => item.value)}
+              ariaLabel={`Provider and model for ${preset.label}`}
+              onchange={(provider, model) => void updatePreset(preset.id, {
+                provider,
+                model,
+                ...(provider === 'claude_code'
+                  ? {}
+                  : { dangerouslySkipPermissions: undefined })
+              })}
+            />
           </div>
           {#if preset.provider === 'claude_code'}
             <div class="flex items-center gap-2">
@@ -952,7 +921,9 @@
                 ? '--verbose --allowedTools bash,computer'
                 : preset.provider === 'cursor'
                   ? '--force --approve-mcps'
-                  : '--full-auto'}
+                  : preset.provider === 'opencode'
+                    ? '--auto'
+                    : preset.provider === 'grok_build' ? '--always-approve' : '--full-auto'}
               value={preset.extraArgs ?? ''}
               onchange={(e) => {
                 const v = (e.currentTarget as HTMLInputElement).value.trim();
@@ -966,8 +937,6 @@
         </div>
       {/each}
       {#if draftPreset}
-        {@const draftModelOptions = modelCatalogFor(settings.availableModels, presetProviderToModel(draftPreset.provider))}
-        {@const draftSelectedModel = draftModelOptions.find((m) => m.id === draftPreset?.model)}
         <div class="flex flex-col gap-2 rounded-md border border-primary/40 bg-primary/5 p-3">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-2">
@@ -998,57 +967,20 @@
             />
           </div>
           <div class="flex flex-col gap-1.5">
-            <Label class="text-xs text-muted-foreground">Provider</Label>
-            <Select.Root
-              type="single"
-              value={draftPreset.provider}
-              onValueChange={(v) =>
-                updateDraftPreset({
-                  provider: v as AgentRuntimeProvider,
-                  model: undefined,
-                  dangerouslySkipPermissions: undefined
-                })}
-            >
-              <Select.Trigger class="w-full">
-                {quickLaunchProviders.find((p) => p.value === draftPreset?.provider)?.label ?? draftPreset.provider}
-              </Select.Trigger>
-              <Select.Content>
-                {#each quickLaunchProviders as p (p.value)}
-                  <Select.Item value={p.value} label={p.label}>{p.label}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          </div>
-          <div class="flex flex-col gap-1.5">
-            <Label class="text-xs text-muted-foreground">Model</Label>
-            <Select.Root
-              type="single"
-              value={draftPreset.model ?? '__default__'}
-              onValueChange={(v) =>
-                updateDraftPreset({ model: v === '__default__' ? undefined : v })}
-            >
-              <Select.Trigger class="w-full">
-                <span class="flex items-center gap-2">
-                  {#if draftPreset.model}
-                    <KindIcon kind={draftPreset.provider} size={14} />
-                  {/if}
-                  <span>{draftSelectedModel?.label ?? (draftPreset.model || '(CLI default)')}</span>
-                </span>
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="__default__" label="(CLI default)">
-                  (CLI default)
-                </Select.Item>
-                {#each draftModelOptions as entry (entry.id)}
-                  <Select.Item value={entry.id} label={entry.label}>
-                    <span class="flex items-center gap-2">
-                      <KindIcon kind={providerKind(entry.provider)} size={14} />
-                      <span>{entry.label}</span>
-                    </span>
-                  </Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
+            <Label class="text-xs text-muted-foreground">Provider and model</Label>
+            <ProviderModelPicker
+              provider={draftPreset.provider}
+              model={draftPreset.model}
+              providers={quickLaunchProviders.map((item) => item.value)}
+              ariaLabel="Provider and model for the new preset"
+              onchange={(provider, model) => updateDraftPreset({
+                provider,
+                model,
+                ...(provider === 'claude_code'
+                  ? {}
+                  : { dangerouslySkipPermissions: undefined })
+              })}
+            />
           </div>
           {#if draftPreset.provider === 'claude_code'}
             <div class="flex items-center gap-2">
@@ -1074,7 +1006,9 @@
                 ? '--verbose --allowedTools bash,computer'
                 : draftPreset.provider === 'cursor'
                   ? '--force --approve-mcps'
-                  : '--full-auto'}
+                  : draftPreset.provider === 'opencode'
+                    ? '--auto'
+                    : draftPreset.provider === 'grok_build' ? '--always-approve' : '--full-auto'}
               value={draftPreset.extraArgs ?? ''}
               oninput={(e) =>
                 updateDraftPreset({ extraArgs: (e.currentTarget as HTMLInputElement).value })}
@@ -1245,6 +1179,38 @@
 
     <Tabs.Content value="featurelab" class={contentClass}>
       <p class="m-0 text-[11px] text-muted-foreground">No Feature Lab settings yet.</p>
+    </Tabs.Content>
+
+    <Tabs.Content value="debug" class={contentClass}>
+      <div class="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/20 p-3">
+        <div class="min-w-0">
+          <Label for="pref-session-events-debug" class="text-sm font-medium">
+            Session event debugger
+          </Label>
+          <p class="m-0 mt-0.5 text-[11px] leading-4 text-muted-foreground">
+            Capture provider hook requests before Soloe translates them into Observer or sidebar
+            state. Raw bodies can include prompts, tool details, paths, and errors.
+          </p>
+        </div>
+        <Switch
+          id="pref-session-events-debug"
+          checked={settings.current.debug.sessionEvents}
+          onCheckedChange={setSessionEventsDebug}
+        />
+      </div>
+      <Button
+        variant="outline"
+        class="w-full"
+        disabled={!settings.current.debug.sessionEvents}
+        onclick={() => void openSessionEventsDebug()}
+      >
+        <Bug class="size-3.5" />
+        Open Session events window
+      </Button>
+      <p class="m-0 text-[11px] leading-4 text-muted-foreground">
+        The window mirrors the current sidebar state beside hook receipt and dispatch stages. The
+        raw trace stays in memory until Soloe exits or you clear it.
+      </p>
     </Tabs.Content>
 
     <Tabs.Content value="browser" class={contentClass}>

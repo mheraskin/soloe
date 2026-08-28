@@ -8,7 +8,12 @@ export type RunMode = 'windows' | 'linux' | 'macos' | 'wsl';
 
 export type ShellKind = 'auto' | 'bash' | 'zsh' | 'pwsh' | 'cmd' | 'custom';
 
-export type AgentRuntimeProvider = 'claude_code' | 'codex' | 'cursor';
+export type AgentRuntimeProvider =
+  | 'claude_code'
+  | 'codex'
+  | 'cursor'
+  | 'opencode'
+  | 'grok_build';
 export type SessionLaunchKind = 'terminal' | AgentRuntimeProvider;
 export type SessionKind = 'standard_terminal' | AgentRuntimeProvider;
 
@@ -34,17 +39,26 @@ export interface TerminalLaunch {
 export type ClaudeResumeMode = 'new' | 'resume_by_name' | 'resume_by_id' | 'resume_last';
 export type CodexResumeMode = 'new' | 'resume_last' | 'resume_by_id';
 export type CursorResumeMode = 'new' | 'resume_last' | 'resume_by_id';
+export type OpenCodeResumeMode = 'new' | 'resume_last' | 'resume_by_id';
+export type GrokBuildResumeMode = 'new' | 'resume_last' | 'resume_by_id';
 export type CodexReasoningEffort = 'low' | 'medium' | 'high';
 export type CursorMode = 'agent' | 'plan' | 'ask';
 
 export interface AgentLaunch {
   type: 'agent';
   provider: AgentRuntimeProvider;
-  resumeMode: ClaudeResumeMode | CodexResumeMode | CursorResumeMode;
+  resumeMode:
+    | ClaudeResumeMode
+    | CodexResumeMode
+    | CursorResumeMode
+    | OpenCodeResumeMode
+    | GrokBuildResumeMode;
   claudeSessionName?: string;
   claudeSessionId?: string;
   codexSessionId?: string;
   cursorSessionId?: string;
+  openCodeSessionId?: string;
+  grokSessionId?: string;
   cursorMode?: CursorMode;
   fullscreenTui?: boolean;
   model?: string;
@@ -94,7 +108,12 @@ export interface Session {
   source?: SessionSource;
   launch: SessionLaunch;
   kind?: SessionKind;
-  resumeMode?: ClaudeResumeMode | CodexResumeMode | CursorResumeMode;
+  resumeMode?:
+    | ClaudeResumeMode
+    | CodexResumeMode
+    | CursorResumeMode
+    | OpenCodeResumeMode
+    | GrokBuildResumeMode;
   runtimeMode?: SessionRuntimeMode;
   name: string;
   cwd: string;
@@ -151,7 +170,11 @@ export interface SessionRuntimeState {
 }
 
 export function isAgentProvider(value: unknown): value is AgentRuntimeProvider {
-  return value === 'claude_code' || value === 'codex' || value === 'cursor';
+  return value === 'claude_code'
+    || value === 'codex'
+    || value === 'cursor'
+    || value === 'opencode'
+    || value === 'grok_build';
 }
 
 export function launchKind(session: Session | SessionDraft): SessionLaunchKind {

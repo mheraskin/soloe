@@ -9,6 +9,7 @@
   import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
+  import ProviderModelPicker from '../ProviderModelPicker.svelte';
 
   let draft = $derived(modal.draft.launch as AgentLaunch);
 
@@ -62,16 +63,13 @@
 {/if}
 
 <div class="flex flex-col gap-1.5">
-  <Label class="text-xs text-muted-foreground" for="codex-model">Model (optional)</Label>
-  <Input
-    id="codex-model"
-    type="text"
-    placeholder="gpt-5"
-    value={draft.model ?? ''}
-    oninput={(e) => {
-      const v = (e.currentTarget as HTMLInputElement).value.trim();
-      update('model', v ? v : undefined);
-    }}
+  <Label class="text-xs text-muted-foreground">Model</Label>
+  <ProviderModelPicker
+    provider="codex"
+    model={draft.model}
+    providerLocked
+    ariaLabel="Codex model"
+    onchange={(_provider, model) => update('model', model)}
   />
 </div>
 

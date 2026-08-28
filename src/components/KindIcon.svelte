@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { TerminalSquare } from '@lucide/svelte';
+  import { Braces, Sparkles, TerminalSquare } from '@lucide/svelte';
   import type { SessionLaunchKind } from '@shared/types/sessions.js';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexLightUrl from '../lib/icons/codex-light.svg';
@@ -40,6 +40,10 @@
   {/if}
 {:else if kind === 'terminal'}
   <TerminalSquare class="icon" size={size} aria-label="Terminal" />
+{:else if kind === 'opencode'}
+  <Braces class="icon" size={size} aria-label="OpenCode" />
+{:else if kind === 'grok_build'}
+  <Sparkles class="icon" size={size} aria-label="Grok Build" />
 {/if}
 
 <style>

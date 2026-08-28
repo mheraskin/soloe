@@ -48,6 +48,7 @@ import { sessionAutoApprovesPermissions } from "../../../shared/agent-permission
 import type { SettingsUpdate } from "../../../shared/types/settings.js";
 import type { SystemUsageRequest } from "../../../shared/types/system.js";
 import type { DiagnosticLogsRequest } from "../../../shared/types/diagnostics.js";
+import type { ListSessionHookTraceRequest } from "../../../shared/types/session-debug.js";
 import type {
   VaultDeleteRequest,
   VaultGetSecretRequest,
@@ -155,6 +156,7 @@ import { AgentObserverManager } from "../../../electron/agents/AgentObserverMana
 import { AgentObserverStore } from "../../../electron/agents/AgentObserverStore.js";
 import { AgentRuntimeManager } from "../../../electron/agents/AgentRuntimeManager.js";
 import { AgentHookDispatcher } from "../../../electron/agents/AgentHookDispatcher.js";
+import { SessionHookTraceBuffer } from "../../../electron/agents/SessionHookTraceBuffer.js";
 import {
   CodexShellSnapshotWatcher,
   codexShellSnapshotDirectory,
@@ -275,6 +277,10 @@ export interface SoloeDomainOptions {
     | "uninstallCodex"
     | "installCursor"
     | "uninstallCursor"
+    | "installOpenCode"
+    | "uninstallOpenCode"
+    | "installGrok"
+    | "uninstallGrok"
   >;
   cursorDiscovery?: Pick<CursorCliDiscovery, "detect">;
   enableAgentBridge?: boolean;
@@ -357,6 +363,8 @@ export class SoloeDomain extends EventEmitter {
   >;
   private readonly overviewStreams = new Map<string, ActiveOverviewStream>();
   private readonly terminalAgentSignals = new Map<string, TerminalAgentSignalContext>();
+  private readonly sessionHookTrace = new SessionHookTraceBuffer();
+  private readonly detachSessionHookTrace: () => void;
   private multiDeviceSessions: MultiDeviceSessions | null = null;
   private connectionRegistry: ConnectionRegistry | null = null;
   private detachMultiDeviceState: (() => void) | null = null;
@@ -402,6 +410,9 @@ export class SoloeDomain extends EventEmitter {
 
   constructor(private readonly options: SoloeDomainOptions) {
     super();
+    this.detachSessionHookTrace = this.sessionHookTrace.onEvent((event) => {
+      this.emit("event", "diagnostics.sessionHookEvent", event);
+    });
     this.sessions = new SessionStore(
       path.join(options.dataDirectory, "sessions.json"),
       hostPlatform(),
@@ -574,6 +585,7 @@ export class SoloeDomain extends EventEmitter {
       this.emit("event", "projects.change", projects);
     });
     this.settings.onChange((settings) => {
+      this.sessionHookTrace.setEnabled(settings.debug.sessionEvents);
       this.emit("event", "settings.change", settings);
       void this.options.runtime
         .setHistoryUnbounded?.(true)
@@ -615,6 +627,7 @@ export class SoloeDomain extends EventEmitter {
     ]);
     await this.adoptLegacyWorkspaceState();
     const initialSettings = await this.settings.get();
+    this.sessionHookTrace.setEnabled(initialSettings.debug.sessionEvents);
     if (this.options.deviceId && this.workspaceOperations) {
       this.githubProviderService = new GitHubProviderService({
         deviceId: this.options.deviceId,
@@ -641,6 +654,7 @@ export class SoloeDomain extends EventEmitter {
   async dispose(): Promise<void> {
     this.detachServerDeviceSessions();
     this.detachWorkspaceDeviceChange?.();
+    this.detachSessionHookTrace();
     this.options.runtime.off?.("output", this.handleRuntimeOutput);
     this.terminalAgentSignals.clear();
     this.usage.reset();
@@ -789,6 +803,7 @@ export class SoloeDomain extends EventEmitter {
         port,
         token: initial.token,
         onHookEvent: (event) => dispatcher.dispatch(event),
+        onHookTrace: (event) => this.sessionHookTrace.append(event),
         commentsBridge: this.rendererBridge,
         diffBridge: this.rendererBridge,
         git: this.git,
@@ -1191,7 +1206,11 @@ export class SoloeDomain extends EventEmitter {
       method !== "installCodex" &&
       method !== "uninstallCodex" &&
       method !== "installCursor" &&
-      method !== "uninstallCursor"
+      method !== "uninstallCursor" &&
+      method !== "installOpenCode" &&
+      method !== "uninstallOpenCode" &&
+      method !== "installGrok" &&
+      method !== "uninstallGrok"
     ) {
       throw unsupportedRpc("agentIntegration", method);
     }
@@ -1242,6 +1261,20 @@ export class SoloeDomain extends EventEmitter {
         }
         throw error;
       }
+    }
+    if (method === "sessionHookTrace") {
+      if (args.length > 1) {
+        throw new RpcError(
+          "invalid_diagnostics_request",
+          "diagnostics.sessionHookTrace accepts at most one request object",
+        );
+      }
+      return this.sessionHookTrace.list(validateSessionHookTraceRequest(args[0]).limit);
+    }
+    if (method === "clearSessionHookTrace") {
+      requireArgumentCount("diagnostics.clearSessionHookTrace", args, 0);
+      this.sessionHookTrace.clear();
+      return true;
     }
     throw unsupportedRpc("diagnostics", method);
   }
@@ -3088,6 +3121,32 @@ function validateDiagnosticLogsRequest(
     );
   }
   return request as DiagnosticLogsRequest;
+}
+
+function validateSessionHookTraceRequest(
+  value: unknown,
+): Required<ListSessionHookTraceRequest> {
+  if (value === undefined) return { limit: 5_000 };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RpcError(
+      "invalid_diagnostics_request",
+      "diagnostics.sessionHookTrace request must be an object",
+    );
+  }
+  if (!("limit" in value) || Object.keys(value).some((key) => key !== "limit")) {
+    throw new RpcError(
+      "invalid_diagnostics_request",
+      "diagnostics.sessionHookTrace request must contain only limit",
+    );
+  }
+  const limit = value.limit;
+  if (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 5_000) {
+    throw new RpcError(
+      "invalid_diagnostics_request",
+      "session hook trace limit must be an integer between 1 and 5000",
+    );
+  }
+  return { limit };
 }
 
 const VAULT_RPC_METHODS = new Set([
