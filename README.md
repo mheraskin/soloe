@@ -107,9 +107,9 @@ described in the [roadmap](./ROADMAP.md). Soloe is independent and is not endors
 
 | Platform or client | Current status |
 | --- | --- |
-| Windows + WSL | Unsigned prerelease installer available; clean-machine validation pending |
-| Native Windows | Unsigned prerelease installer available; clean-machine validation pending |
-| Native Linux | Prerelease AppImage and DEB available; clean-machine validation pending |
+| Windows + WSL | Unsigned prerelease installer available; host install/uninstall automated; WSL smoke pending |
+| Native Windows | Unsigned prerelease installer available; clean-runner install/uninstall automated |
+| Native Linux | Prerelease AppImage and DEB available; clean-runner launch/install/uninstall automated |
 | macOS Intel | Ad-hoc-signed prerelease DMG available; local packaging verified |
 | macOS Apple silicon | Ad-hoc-signed prerelease DMG available; physical clean-machine smoke pending |
 | Electron client | Included in prerelease builds for desktop platforms |
@@ -118,8 +118,11 @@ described in the [roadmap](./ROADMAP.md). Soloe is independent and is not endors
 ## Current limitations
 
 - Binary prereleases are available, but there is no stable channel or auto-update support.
-- Windows and Linux installers have not completed clean-machine installation, upgrade, and
-  uninstall tests.
+- The Windows installer passes automated clean-runner install and uninstall checks. Physical
+  clean-machine upgrade, rollback, and WSL validation remain pending.
+- The Linux AppImage passes an automated clean-runner launch check. The DEB also passes automated
+  install, launch, and uninstall checks. Physical clean-machine upgrade and rollback remain
+  pending.
 - Intel macOS packages have been tested locally. Apple-silicon packages build in CI, but the
   physical clean-machine smoke test is still pending.
 - macOS prerelease DMGs are ad-hoc signed rather than Developer ID signed or notarized. Windows
