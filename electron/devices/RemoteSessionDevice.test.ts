@@ -468,6 +468,64 @@ describe('RemoteSessionDevice', () => {
     client.dispose();
   });
 
+  it('recovers terminal input after a silent Device sleep without a manual refresh', async () => {
+    let reachable = true;
+    let serverEpoch = FIRST_EPOCH;
+    const sockets: FakeSocket[] = [];
+    const inputs: string[] = [];
+    const client = new RemoteSessionDevice({
+      deviceId: DEVICE_ID,
+      endpoint: 'https://alpha.example.test',
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (!reachable) throw new Error('Device is asleep');
+        if (url.pathname === '/api/device/describe') {
+          return jsonResponse(descriptor(serverEpoch));
+        }
+        const request = JSON.parse(String(init?.body ?? '{}')) as {
+          namespace: string;
+          method: string;
+          args: unknown[];
+        };
+        if (request.namespace === 'terminal' && request.method === 'input') {
+          inputs.push(request.args[1] as string);
+        }
+        return jsonResponse({ ok: true, value: true });
+      },
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelay: () => 0,
+      livenessIntervalMs: 10
+    });
+
+    await client.connect();
+    reachable = false;
+    await vi.waitFor(() => expect(client.status.state).toBe('offline'), { timeout: 1_000 });
+
+    reachable = true;
+    serverEpoch = SECOND_EPOCH;
+    await vi.waitFor(() => {
+      expect(client.status).toMatchObject({
+        state: 'ready',
+        descriptor: { serverEpoch: SECOND_EPOCH }
+      });
+      expect(sockets.length).toBeGreaterThanOrEqual(2);
+    }, { timeout: 1_000 });
+
+    await client.terminalInput('terminal-1', 'echo awake\r', {
+      sessionId: 'session-1',
+      ownerDeviceId: DEVICE_ID,
+      controllerDeviceId: 'controller-device',
+      leaseId: 'lease-1'
+    });
+
+    expect(inputs).toEqual(['echo awake\r']);
+    client.dispose();
+  });
+
   it('returns to ready with a fresh descriptor after its Device server restarts', async () => {
     let serverEpoch = FIRST_EPOCH;
     const sockets: FakeSocket[] = [];

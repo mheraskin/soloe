@@ -60,6 +60,7 @@ import type {
 } from '../sessions/MultiDeviceSessions.js';
 
 const MAX_RPC_RESPONSE_BYTES = 32 * 1024 * 1024;
+const DEFAULT_LIVENESS_INTERVAL_MS = 15_000;
 
 export interface RemoteSessionDeviceOptions {
   deviceId: DeviceId;
@@ -71,6 +72,7 @@ export interface RemoteSessionDeviceOptions {
   bootstrapTailscale?: boolean;
   clientId?: string;
   reconnectDelay?: (attempt: number) => number;
+  livenessIntervalMs?: number;
   local?: boolean;
 }
 
@@ -90,6 +92,7 @@ export class RemoteSessionDevice implements SessionDevice {
   private detachTransportRepair: () => void;
   private connectRequest: Promise<SessionDeviceStatus> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private livenessTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
   private disposed = false;
 
@@ -166,6 +169,7 @@ export class RemoteSessionDevice implements SessionDevice {
         this.publishStatus();
       }
       this.reconnectAttempt = 0;
+      this.scheduleLivenessCheck();
       return this.status;
     } catch (error) {
       this.currentStatus = {
@@ -498,6 +502,10 @@ export class RemoteSessionDevice implements SessionDevice {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.livenessTimer) {
+      clearTimeout(this.livenessTimer);
+      this.livenessTimer = null;
+    }
     this.detachTransportEvent();
     this.detachTransportStatus();
     this.detachTransportRepair();
@@ -608,7 +616,42 @@ export class RemoteSessionDevice implements SessionDevice {
       descriptor: status.descriptor ?? this.currentStatus.descriptor
     };
     this.publishStatus();
-    if (state === 'offline') this.scheduleReconnect();
+    if (state === 'offline') {
+      this.clearLivenessCheck();
+      this.scheduleReconnect();
+    }
+  }
+
+  private scheduleLivenessCheck(): void {
+    if (this.disposed || this.livenessTimer || this.currentStatus.state !== 'ready') return;
+    const interval = this.options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
+    if (!Number.isFinite(interval) || interval <= 0) return;
+    this.livenessTimer = setTimeout(() => {
+      this.livenessTimer = null;
+      void this.checkLiveness();
+    }, interval);
+  }
+
+  private async checkLiveness(): Promise<void> {
+    if (this.disposed || this.currentStatus.state !== 'ready') return;
+    const previousEpoch = this.currentStatus.descriptor?.serverEpoch ?? null;
+    try {
+      const descriptor = await this.transport.probe();
+      if (this.disposed || this.currentStatus.state !== 'ready') return;
+      if (previousEpoch && descriptor.serverEpoch !== previousEpoch) {
+        this.transport.disconnect();
+        return;
+      }
+      this.scheduleLivenessCheck();
+    } catch {
+      if (!this.disposed) this.transport.disconnect();
+    }
+  }
+
+  private clearLivenessCheck(): void {
+    if (!this.livenessTimer) return;
+    clearTimeout(this.livenessTimer);
+    this.livenessTimer = null;
   }
 
   private scheduleReconnect(): void {

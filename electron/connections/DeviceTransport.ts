@@ -84,20 +84,9 @@ export class DeviceTransport {
     this.lastSequence = null;
     this.state = 'connecting';
     this.publishStatus();
-    const describeOptions: DescribeSoloeEndpointOptions = {
-      ...(this.options.token ? { token: this.options.token } : {}),
-      ...(this.options.bootstrapTailscale ? { bootstrapTailscale: true } : {})
-    };
     let described: Awaited<ReturnType<typeof describeSoloeEndpoint>>;
     try {
-      described = await describeSoloeEndpoint(
-        this.endpoint,
-        (input, init) => this.options.fetchImpl(input, {
-          ...init,
-          signal: combineSignals(init?.signal, this.abortController.signal)
-        }),
-        describeOptions
-      );
+      described = await this.describe();
     } catch (error) {
       if (this.statusSnapshot().state !== 'disposed') {
         this.state = 'disconnected';
@@ -106,14 +95,12 @@ export class DeviceTransport {
       throw error;
     }
     this.assertActive();
-    if (
-      this.options.expectedDeviceId
-      && described.descriptor.deviceId !== this.options.expectedDeviceId
-    ) {
+    const unexpectedIdentity = this.unexpectedIdentity(described.descriptor);
+    if (unexpectedIdentity) {
       this.state = 'disconnected';
       this.publishStatus();
       throw new DeviceTransportIdentityError(
-        this.options.expectedDeviceId,
+        unexpectedIdentity,
         described.descriptor.deviceId
       );
     }
@@ -127,6 +114,20 @@ export class DeviceTransport {
     }
     this.publishStatus();
     return this.statusSnapshot();
+  }
+
+  async probe(): Promise<DeviceDescriptor> {
+    this.assertActive();
+    const described = await this.describe();
+    this.assertActive();
+    const unexpectedIdentity = this.unexpectedIdentity(described.descriptor);
+    if (unexpectedIdentity) {
+      throw new DeviceTransportIdentityError(
+        unexpectedIdentity,
+        described.descriptor.deviceId
+      );
+    }
+    return structuredClone(described.descriptor);
   }
 
   async snapshot<T = unknown>(): Promise<DeviceSnapshot<T>> {
@@ -227,6 +228,26 @@ export class DeviceTransport {
       this.state = 'disconnected';
       this.publishStatus();
     });
+  }
+
+  private describe(): ReturnType<typeof describeSoloeEndpoint> {
+    const describeOptions: DescribeSoloeEndpointOptions = {
+      ...(this.options.token ? { token: this.options.token } : {}),
+      ...(this.options.bootstrapTailscale ? { bootstrapTailscale: true } : {})
+    };
+    return describeSoloeEndpoint(
+      this.endpoint,
+      (input, init) => this.options.fetchImpl(input, {
+        ...init,
+        signal: combineSignals(init?.signal, this.abortController.signal)
+      }),
+      describeOptions
+    );
+  }
+
+  private unexpectedIdentity(descriptor: DeviceDescriptor): DeviceId | null {
+    const expected = this.options.expectedDeviceId;
+    return expected && descriptor.deviceId !== expected ? expected : null;
   }
 
   private receiveEvent(rawEvent: MessageEvent): void {
