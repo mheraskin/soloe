@@ -513,18 +513,21 @@
           </span>
           <span class="flex min-w-0 items-center gap-2">
             {#if metaParts.length > 0}
-              <!-- The metadata wraps rather than competing for one line, so a
-                   row grows to three lines exactly when its own values need
-                   the room and stays at two when they don't. A Session with
-                   no cwd never pays for a blank line it isn't using. The
-                   separators are the icons and the gap; a `·` would strand
-                   itself at the end of a wrapped line. -->
-              <span class="sb-meta flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span
+                class="sb-meta flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap"
+                data-session-metadata="compact"
+              >
                 {#each metaParts as part (part.icon)}
                   <span
+                    data-session-meta={part.icon}
+                    title={part.text}
                     class={cn(
-                      'inline-flex items-center gap-1',
-                      part.icon === 'device' ? 'shrink-0' : 'min-w-0 max-w-full'
+                      'inline-flex min-w-0 items-center gap-1 overflow-hidden',
+                      part.icon === 'path'
+                        ? 'flex-1'
+                        : part.icon === 'branch'
+                          ? 'max-w-40 shrink'
+                          : 'max-w-24 shrink-0'
                     )}
                   >
                     {#if part.icon === 'branch'}

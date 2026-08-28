@@ -290,4 +290,57 @@ describe('SessionItem lifecycle', () => {
     expect(deleteButton.disabled).toBe(true);
     expect(mocks.openSession).not.toHaveBeenCalled();
   });
+
+  it('keeps long Session metadata on one ellipsized line with full hover labels', () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    const session = {
+      id: 'session-long-metadata',
+      name: 'continue-codex-task',
+      cwd: '/home/dev/work/saas-platform-order-ahead-with-a-very-long-directory-name',
+      runMode: 'linux' as const,
+      launch: { type: 'agent' as const, provider: 'codex' as const, resumeMode: 'new' as const },
+      createdAt: '2026-08-16T00:00:00.000Z',
+      lastUsedAt: '2026-08-16T00:00:00.000Z'
+    };
+    mounted = mount(SessionItem, {
+      target,
+      props: {
+        session,
+        branch: 'fix/order-ahead-storefront-followups-with-a-long-branch-name',
+        projection: {
+          ref: { deviceId: 'device-xps', sessionId: session.id },
+          key: `device-xps/${session.id}`,
+          deviceName: 'xps',
+          available: true,
+          session,
+          lifecycleStatus: 'running',
+          runtime: {
+            sessionId: session.id,
+            terminalId: 'terminal-long-metadata',
+            status: 'running'
+          },
+          observation: null
+        },
+        showDevice: true
+      }
+    });
+    flushSync();
+
+    const metadata = target.querySelector<HTMLElement>('[data-session-metadata="compact"]');
+    const path = target.querySelector<HTMLElement>('[data-session-meta="path"]');
+    const branch = target.querySelector<HTMLElement>('[data-session-meta="branch"]');
+    const device = target.querySelector<HTMLElement>('[data-session-meta="device"]');
+
+    expect(metadata?.className).toContain('overflow-hidden');
+    expect(metadata?.className).toContain('whitespace-nowrap');
+    expect(metadata?.className).not.toContain('flex-wrap');
+    expect(path?.getAttribute('title')).toContain(
+      'saas-platform-order-ahead-with-a-very-long-directory-name'
+    );
+    expect(branch?.getAttribute('title')).toBe(
+      'fix/order-ahead-storefront-followups-with-a-long-branch-name'
+    );
+    expect(device?.getAttribute('title')).toBe('xps');
+  });
 });
