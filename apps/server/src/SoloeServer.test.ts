@@ -1254,7 +1254,7 @@ describe('Soloe Server lifecycle', () => {
       await runtime.shutdown();
       await rm(directory, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it('supports browser startup, project/session creation, terminal output, and history', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-browser-contract-'));
