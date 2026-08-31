@@ -7,6 +7,7 @@ import type {
 } from '@shared/types/terminal.js';
 import {
   resolveTerminalControllerIdentity,
+  terminalPresentationRedrawSizes,
   TerminalControlCoordinator,
   type TerminalControlBackend
 } from './terminal-control.js';
@@ -89,6 +90,17 @@ const identity: TerminalControllerIdentity = {
 };
 
 describe('TerminalControlCoordinator', () => {
+  it('changes the PTY dimensions before restoring the fitted Terminal Presentation size', () => {
+    expect(terminalPresentationRedrawSizes({ cols: 119, rows: 41 })).toEqual([
+      { cols: 118, rows: 41 },
+      { cols: 119, rows: 41 }
+    ]);
+    expect(terminalPresentationRedrawSizes({ cols: 1, rows: 1 })).toEqual([
+      { cols: 2, rows: 1 },
+      { cols: 1, rows: 1 }
+    ]);
+  });
+
   it('uses the viewing Soloe Device as the durable controller identity', () => {
     expect(resolveTerminalControllerIdentity(
       { deviceId: 'device-mbp', name: 'mbp.local' },
@@ -171,6 +183,18 @@ describe('TerminalControlCoordinator', () => {
 
     expect(control.released).toEqual([]);
     expect(coordinator.owns('terminal-a')).toBe(true);
+  });
+
+  it('can force an authoritative resize when the fitted size is unchanged', async () => {
+    const control = backend();
+    const coordinator = new TerminalControlCoordinator(control, identity);
+    await coordinator.select('terminal-a');
+
+    await coordinator.resize('terminal-a', 120, 30);
+    expect(control.resize).not.toHaveBeenCalled();
+
+    await coordinator.resize('terminal-a', 120, 30, { force: true });
+    expect(control.resize).toHaveBeenCalledOnce();
   });
 
   it('recognizes updated control held by this durable Soloe Device', () => {

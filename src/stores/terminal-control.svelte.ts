@@ -80,8 +80,13 @@ class TerminalControlStore {
     return this.control().input(terminalId, data);
   }
 
-  resize(terminalId: string, cols: number, rows: number): Promise<void> {
-    return this.control().resize(terminalId, cols, rows);
+  resize(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    options: { force?: boolean } = {}
+  ): Promise<void> {
+    return this.control().resize(terminalId, cols, rows, options);
   }
 }
 

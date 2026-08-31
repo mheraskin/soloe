@@ -2,9 +2,19 @@ import {
   terminalControlProof,
   type TerminalControllerIdentity,
   type TerminalControlProof,
+  type TerminalDimensions,
   type TerminalInputLease,
   type TerminalInputLeaseEvent
 } from '@shared/types/terminal.js';
+
+export function terminalPresentationRedrawSizes(
+  dimensions: TerminalDimensions
+): [TerminalDimensions, TerminalDimensions] {
+  return [
+    { cols: dimensions.cols > 1 ? dimensions.cols - 1 : 2, rows: dimensions.rows },
+    { ...dimensions }
+  ];
+}
 
 export interface TerminalControlBackend {
   acquire(
@@ -132,9 +142,14 @@ export class TerminalControlCoordinator {
     }
   }
 
-  async resize(terminalId: string, cols: number, rows: number): Promise<void> {
+  async resize(
+    terminalId: string,
+    cols: number,
+    rows: number,
+    options: { force?: boolean } = {}
+  ): Promise<void> {
     const lease = this.requiredLease(terminalId);
-    if (lease.cols === cols && lease.rows === rows) return;
+    if (!options.force && lease.cols === cols && lease.rows === rows) return;
     try {
       await this.backend.resize(terminalId, cols, rows, terminalControlProof(lease));
     } catch (error) {

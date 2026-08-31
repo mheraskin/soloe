@@ -14,6 +14,7 @@
   import { settings } from '../stores/settings.svelte';
   import { readClipboardImages } from '../lib/clipboard-images';
   import { isClipboardPasteShortcut } from '../lib/terminal-input';
+  import { terminalPresentationRedrawSizes } from '../lib/terminal-control';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import GhosttyTerminal from './GhosttyTerminal.svelte';
   import SessionToolbar from './SessionToolbar.svelte';
@@ -45,6 +46,8 @@
   let takingControl = $state(false);
   let pageVisible = $state(document.visibilityState === 'visible');
   let lastSize: { cols: number; rows: number } | null = null;
+  let lastRedrawnFromSeq: number | null = null;
+  let redrawPromise: Promise<void> | null = null;
 
   // Shield terminal attachment effects from whole-projection replacements. The
   // multi-Device store publishes fresh projection objects for ordinary status
@@ -91,6 +94,8 @@
     }
     const ref: TerminalRef = { deviceId, terminalId };
     surfaceReady = false;
+    lastRedrawnFromSeq = null;
+    redrawPromise = null;
     error = null;
     let outputReady = Promise.resolve();
     const session = new TerminalHistorySession(
@@ -131,6 +136,20 @@
     const ref = terminalRef;
     if (!ref || !active || !interactive || !pageVisible || offline) return;
     void reclaimInputControl(ref);
+  });
+
+  $effect(() => {
+    const redrawFromSeq = terminalState?.truncated ? terminalState.fromSeq : null;
+    if (
+      redrawFromSeq === null
+      || redrawFromSeq === lastRedrawnFromSeq
+      || !surfaceReady
+      || !active
+      || !interactive
+      || !ownsInput
+      || offline
+    ) return;
+    void prepareInteractive(true);
   });
 
   $effect(() => {
@@ -215,7 +234,33 @@
     terminal.fit();
     const dimensions = terminal.getDimensions();
     if (!dimensions) return;
-    await resize(dimensions.cols, dimensions.rows, force);
+    const redrawFromSeq = terminalState?.truncated ? terminalState.fromSeq : null;
+    if (redrawFromSeq !== null && lastRedrawnFromSeq !== redrawFromSeq) {
+      lastRedrawnFromSeq = redrawFromSeq;
+      const redraw = (async () => {
+        const ref = terminalRef;
+        if (!ref) return;
+        for (const size of terminalPresentationRedrawSizes(dimensions)) {
+          await deviceSessions.terminalResize(ref, size.cols, size.rows);
+        }
+      })();
+      redrawPromise = redraw;
+      try {
+        await redraw;
+        lastSize = dimensions;
+        error = null;
+      } catch (cause) {
+        if (lastRedrawnFromSeq === redrawFromSeq) lastRedrawnFromSeq = null;
+        lastSize = null;
+        error = cause instanceof Error ? cause.message : String(cause);
+      } finally {
+        if (redrawPromise === redraw) redrawPromise = null;
+      }
+    } else if (redrawPromise) {
+      await redrawPromise;
+    } else {
+      await resize(dimensions.cols, dimensions.rows, force);
+    }
     if (pageVisible && !compactTouchViewport()) terminal.focus();
   }
 

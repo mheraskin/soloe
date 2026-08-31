@@ -35,6 +35,7 @@
   import { readClipboardImages } from '../lib/clipboard-images';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { resolvePathLinkTarget } from '../lib/ghostty/links';
+  import { terminalPresentationRedrawSizes } from '../lib/terminal-control';
 
   let {
     terminalId,
@@ -67,6 +68,8 @@
   let surfaceReady = $state(false);
   let transitioningControl = $state(false);
   let lastAuthoritativeSize: { cols: number; rows: number } | null = null;
+  let lastRedrawnFromSeq: number | null = null;
+  let redrawPromise: Promise<void> | null = null;
   let chipText = $state('');
   let chipAnchor = $state<{ top: number; left: number } | null>(null);
   let chipEl: HTMLButtonElement | null = $state(null);
@@ -101,6 +104,8 @@
     const id = terminalId;
     const ownerSessionId = sessionId;
     terminalState = emptyTerminalState(id, ownerSessionId);
+    lastRedrawnFromSeq = null;
+    redrawPromise = null;
     const attached = ipc.terminal.attachSession(
       id,
       ownerSessionId,
@@ -133,6 +138,18 @@
       return;
     }
     if (visible && surfaceReady) void prepareInteractiveTerminal(true);
+  });
+
+  $effect(() => {
+    const redrawFromSeq = terminalState.truncated ? terminalState.fromSeq : null;
+    if (
+      redrawFromSeq === null
+      || redrawFromSeq === lastRedrawnFromSeq
+      || !visible
+      || !surfaceReady
+      || !ownsInput
+    ) return;
+    void prepareInteractiveTerminal(true);
   });
 
   $effect(() => {
@@ -195,7 +212,29 @@
     terminal.fit();
     const dimensions = terminal.getDimensions();
     if (!dimensions) return;
-    await sendAuthoritativeResize(dimensions.cols, dimensions.rows, force);
+    const redrawFromSeq = terminalState.truncated ? terminalState.fromSeq : null;
+    if (redrawFromSeq !== null && lastRedrawnFromSeq !== redrawFromSeq) {
+      lastRedrawnFromSeq = redrawFromSeq;
+      const redraw = (async () => {
+        for (const size of terminalPresentationRedrawSizes(dimensions)) {
+          await terminalControl.resize(terminalId, size.cols, size.rows, { force: true });
+        }
+      })();
+      redrawPromise = redraw;
+      try {
+        await redraw;
+        lastAuthoritativeSize = dimensions;
+      } catch {
+        if (lastRedrawnFromSeq === redrawFromSeq) lastRedrawnFromSeq = null;
+        lastAuthoritativeSize = null;
+      } finally {
+        if (redrawPromise === redraw) redrawPromise = null;
+      }
+    } else if (redrawPromise) {
+      await redrawPromise;
+    } else {
+      await sendAuthoritativeResize(dimensions.cols, dimensions.rows, force);
+    }
     if (focused) terminal.focus();
   }
 

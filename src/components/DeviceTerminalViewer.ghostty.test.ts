@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   surfaceDisposes: 0,
   outputSubscriptions: 0,
   historyRequests: 0,
+  historyTruncated: false,
   reconnect: null as null | (() => void),
   localDeviceId: null as string | null,
   deviceAvailable: true,
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     onLinkActivate?(text: string, event: MouseEvent): void;
   },
   terminalInput: vi.fn(async () => undefined),
+  terminalResize: vi.fn(async () => undefined),
   claimTerminalInputControl: vi.fn(async () => false),
   openDeviceBrowserUrl: vi.fn(async () => undefined)
 }));
@@ -74,7 +76,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
           data: 'restored screen',
           fromSeq: 1,
           toSeq: 1,
-          truncated: false,
+          truncated: mocks.historyTruncated,
           byteLength: 15
         }
       };
@@ -83,7 +85,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
       mocks.reconnect = listener;
       return () => { mocks.reconnect = null; };
     }),
-    terminalResize: vi.fn(async () => undefined),
+    terminalResize: mocks.terminalResize,
     terminalInput: mocks.terminalInput,
     pasteImagesIntoTerminal: vi.fn(async () => undefined),
     updateSession: vi.fn(async () => undefined),
@@ -113,12 +115,14 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.surfaceDisposes = 0;
     mocks.outputSubscriptions = 0;
     mocks.historyRequests = 0;
+    mocks.historyTruncated = false;
     mocks.reconnect = null;
     mocks.localDeviceId = null;
     mocks.deviceAvailable = true;
     mocks.ownsInput = false;
     mocks.surfaceOptions = null;
     mocks.terminalInput.mockClear();
+    mocks.terminalResize.mockClear();
     mocks.claimTerminalInputControl.mockClear();
     mocks.openDeviceBrowserUrl.mockClear();
     vi.stubGlobal('matchMedia', (query: string) => ({
@@ -171,6 +175,22 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.reconnect?.();
 
     await vi.waitFor(() => expect(mocks.claimTerminalInputControl).toHaveBeenCalledTimes(2));
+  });
+
+  it('jiggles the PTY size to repaint a truncated Terminal Replay Tail', async () => {
+    mocks.ownsInput = true;
+    mocks.historyTruncated = true;
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+
+    await vi.waitFor(() => {
+      expect(mocks.terminalResize.mock.calls.slice(-2)).toEqual([
+        [{ deviceId: 'device-xps', terminalId: 'terminal-1' }, 119, 30],
+        [{ deviceId: 'device-xps', terminalId: 'terminal-1' }, 120, 30]
+      ]);
+    });
   });
 
   it('batches remote text while flushing controls and TUI scrolling immediately', async () => {

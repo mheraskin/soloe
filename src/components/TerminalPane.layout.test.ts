@@ -32,6 +32,15 @@ describe('Ghostty terminal presentation', () => {
     expect(surfaceSource).toContain('current.resetAndReplay(terminalState.buffer, terminalState.replay)');
   });
 
+  it('requests a real PTY resize cycle after restoring a truncated replay tail', () => {
+    expect(source).toContain('terminalState.truncated ? terminalState.fromSeq : null');
+    expect(deviceViewerSource).toContain(
+      'terminalState?.truncated ? terminalState.fromSeq : null'
+    );
+    expect(source).toContain('terminalPresentationRedrawSizes(dimensions)');
+    expect(deviceViewerSource).toContain('terminalPresentationRedrawSizes(dimensions)');
+  });
+
   it('refits Ghostty after the mobile keyboard changes the visible viewport', () => {
     expect(ghosttySurfaceSource).toContain('window.addEventListener("soloe:rail-layout"');
     expect(ghosttySurfaceSource).toMatch(
