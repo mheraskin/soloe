@@ -51,6 +51,29 @@ describe('TerminalPredictionModel', () => {
     expect(model.overlay(snapshot('ax', 2))).toEqual({ cells: [], cursor: null });
   });
 
+  it('retires a predicted space when a later glyph proves the ordered echo', () => {
+    const model = new TerminalPredictionModel();
+    const initial = snapshot('', 0);
+    model.type('a', initial);
+    model.reconcile(snapshot('a', 1));
+
+    const confirmed = snapshot('a', 1);
+    model.type(' ', confirmed);
+    model.type('m', confirmed);
+    expect(model.overlay(confirmed)).toEqual({
+      cells: [
+        { x: 1, y: 0, text: ' ' },
+        { x: 2, y: 0, text: 'm' }
+      ],
+      cursor: { x: 3, y: 0 }
+    });
+
+    const echoed = snapshot('a m', 3);
+    model.reconcile(echoed);
+
+    expect(model.overlay(echoed)).toEqual({ cells: [], cursor: null });
+  });
+
   it('only predicts safe single-cell printable text into empty cells', () => {
     const model = new TerminalPredictionModel();
 
@@ -67,7 +90,10 @@ function snapshot(
   rows = 1,
   cursorY = 0
 ): GhosttySnapshot {
-  const cells = Array.from({ length: cols }, (_, index) => cell(text[index] ?? ''));
+  const cells = Array.from({ length: cols }, (_, index) => {
+    const value = text[index] ?? '';
+    return cell(value === ' ' ? '' : value);
+  });
   return {
     cols,
     rows,

@@ -291,9 +291,6 @@ export function renderGhosttySnapshot(options: {
       : `${fontSize}px ${fontFamily}`;
     context.fillStyle = cssColor(cell?.foreground ?? snapshot.foreground);
     context.fillText(predicted.text, left, top + metrics.baseline, metrics.width);
-    context.globalAlpha = 0.75;
-    context.fillRect(left, top + metrics.height - 1, metrics.width, 1);
-    context.globalAlpha = 1;
   }
 
   if (hasPrediction && cursorOn && prediction.cursor) {

@@ -283,7 +283,7 @@ describe("renderGhosttySnapshot", () => {
     expect(clearedRows).toEqual([4, 36, 36]);
   });
 
-  it("draws outstanding predictions underlined with an optimistic cursor", () => {
+  it("draws outstanding predictions without decoration and with an optimistic cursor", () => {
     const fillRectCalls: number[][] = [];
     const fillTextCalls: unknown[][] = [];
     const context = {
@@ -337,7 +337,7 @@ describe("renderGhosttySnapshot", () => {
     });
 
     expect(fillTextCalls).toContainEqual(["h", 4, 15, 10]);
-    expect(fillRectCalls).toContainEqual([4, 19, 10, 1]);
+    expect(fillRectCalls).not.toContainEqual([4, 19, 10, 1]);
     expect(fillRectCalls).toContainEqual([14, 4, 2, 16]);
   });
 });

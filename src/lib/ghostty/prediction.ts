@@ -53,21 +53,21 @@ export class TerminalPredictionModel {
 
   reconcile(snapshot: GhosttySnapshot): void {
     if (this.pending.length === 0) return;
-    const remaining: PendingPrediction[] = [];
-    for (const prediction of this.pending) {
+    let lastConfirmedIndex = -1;
+    for (const [index, prediction] of this.pending.entries()) {
       const current = snapshot.rowData[prediction.y]?.cells[prediction.x]?.text ?? '';
       if (current === prediction.text && prediction.baseline !== prediction.text) {
         this.confirmedRow = prediction.y;
+        lastConfirmedIndex = index;
         continue;
       }
-      if (current === prediction.baseline) {
-        remaining.push(prediction);
-        continue;
-      }
+      if (current === prediction.baseline) continue;
       this.boundary();
       return;
     }
-    this.pending = remaining;
+    if (lastConfirmedIndex >= 0) {
+      this.pending = this.pending.slice(lastConfirmedIndex + 1);
+    }
   }
 
   overlay(snapshot: GhosttySnapshot): TerminalPredictionOverlay {
