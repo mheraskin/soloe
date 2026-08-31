@@ -834,6 +834,7 @@ export class MultiDeviceSessions {
               event.event === 'sessions.change'
               || event.event === 'sessions.delete'
               || event.event === 'projects.change'
+              || event.event === 'git.change'
               || event.event === 'workspaceDevice.change'
               || event.event === 'transport.repair'
             ) {

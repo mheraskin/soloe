@@ -66,6 +66,31 @@ describe('LocalSessionDevice', () => {
     });
   });
 
+  it('forces an authoritative Worktree read for Device inventory', async () => {
+    const project = {
+      id: 'project-1',
+      name: 'Soloe',
+      path: '/work/soloe',
+      createdAt: '2026-08-13T08:00:00.000Z',
+      lastOpenedAt: '2026-08-13T09:00:00.000Z'
+    };
+    const listWorktrees = vi.fn(async () => []);
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      projects: { list: vi.fn(async () => [project]) } as never,
+      git: {
+        listWorktrees,
+        getRemoteUrl: vi.fn(async () => null)
+      } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never
+    });
+
+    await client.readInventory();
+
+    expect(listWorktrees).toHaveBeenCalledWith(project.path, true, { runMode: 'linux' });
+  });
+
   it('reconciles legacy records before publishing a Device snapshot', async () => {
     const session = {
       id: 'later',

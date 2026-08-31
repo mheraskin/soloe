@@ -224,7 +224,7 @@ export class RemoteSessionDevice implements SessionDevice {
       const runMode = project.defaultRunMode ?? descriptor.platform;
       const gitRequest = {
         repoPath: project.path,
-        force: false,
+        force: true,
         runMode,
         ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
       };

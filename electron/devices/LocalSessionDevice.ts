@@ -183,7 +183,7 @@ export class LocalSessionDevice implements SessionDevice {
     const projectInventories = await Promise.all(projects.map(async (project) => {
       const runMode = project.defaultRunMode ?? this.options.descriptor.platform;
       const worktrees = this.options.git
-        ? await this.options.git.listWorktrees(project.path, false, {
+        ? await this.options.git.listWorktrees(project.path, true, {
             runMode,
             ...(project.defaultWslDistro ? { wslDistro: project.defaultWslDistro } : {})
           })

@@ -1,4 +1,4 @@
-import { promises as fs, watch, type FSWatcher } from 'node:fs';
+import { promises as fs, unwatchFile, watch, watchFile, type FSWatcher, type Stats } from 'node:fs';
 import * as path from 'node:path';
 import type {
   BlameLine,
@@ -50,6 +50,7 @@ export interface GitServiceOptions {
 interface RepoInfo {
   repoPath: string;
   gitDir: string;
+  commonGitDir: string;
   runMode: 'native' | 'wsl';
   wslDistro?: string;
   identityRunMode: RunMode;
@@ -70,6 +71,10 @@ interface RepoCache {
   workingTreeSnapshot: WorkingTreeSnapshot | null;
   epoch: number;
   watchers: FSWatcher[];
+  worktreeMetadataWatch: {
+    target: string;
+    listener: (current: Stats, previous: Stats) => void;
+  } | null;
   debounce: NodeJS.Timeout | null;
   observationLeaseCount: number;
 }
@@ -1546,10 +1551,16 @@ export class GitService {
     if (gitDirResult.code !== 0) return null;
     const rawGitDir = gitDirResult.stdout.trim();
     const gitDir = path.isAbsolute(rawGitDir) ? rawGitDir : path.resolve(repoPath, rawGitDir);
+    const commonDirFile = await fs.readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => '');
+    const commonDirValue = commonDirFile.trim();
+    const commonGitDir = commonDirValue
+      ? path.resolve(gitDir, commonDirValue)
+      : gitDir;
     const identityRunMode = context.runMode ?? nativeRunMode();
     return {
       repoPath,
       gitDir,
+      commonGitDir,
       runMode: 'native',
       identityRunMode,
       ...(identityRunMode === 'wsl' && context.wslDistro
@@ -1578,6 +1589,7 @@ export class GitService {
     return {
       repoPath,
       gitDir,
+      commonGitDir: gitDir,
       runMode: 'wsl',
       wslDistro: distro,
       identityRunMode: 'wsl',
@@ -1602,6 +1614,7 @@ export class GitService {
       workingTreeSnapshot: null,
       epoch: 0,
       watchers: [],
+      worktreeMetadataWatch: null,
       debounce: null,
       observationLeaseCount: 0
     };
@@ -1638,6 +1651,17 @@ export class GitService {
         // Some repos have no index yet; the next status call will still work.
       }
     }
+    const target = path.join(cache.info.commonGitDir, 'worktrees');
+    const listener = (current: Stats, previous: Stats): void => {
+      if (
+        current.mtimeMs === previous.mtimeMs
+        && current.ctimeMs === previous.ctimeMs
+        && current.ino === previous.ino
+      ) return;
+      this.invalidate(cache.info);
+    };
+    watchFile(target, { persistent: false, interval: 500 }, listener);
+    cache.worktreeMetadataWatch = { target, listener };
   }
 
   private closeWatchers(cache: RepoCache): void {
@@ -1651,6 +1675,13 @@ export class GitService {
       }
     }
     cache.watchers = [];
+    if (cache.worktreeMetadataWatch) {
+      unwatchFile(
+        cache.worktreeMetadataWatch.target,
+        cache.worktreeMetadataWatch.listener
+      );
+      cache.worktreeMetadataWatch = null;
+    }
   }
 
   private invalidate(info: RepoInfo): void {

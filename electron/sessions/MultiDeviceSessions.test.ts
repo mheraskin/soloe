@@ -861,6 +861,48 @@ describe('MultiDeviceSessions', () => {
     expect(laptop.readInventoryCalls).toBe(2);
   });
 
+  it('discovers a remote Worktree after Git changes without restarting the host', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    const multiDevice = new MultiDeviceSessions({ devices: [laptop] });
+    await multiDevice.refresh();
+    expect(multiDevice.state().projects[0]?.workspaces).toHaveLength(1);
+
+    laptop.addWorktree({
+      path: 'C:\\src\\soloe-external',
+      branch: 'feature/external'
+    });
+    const changed = new Promise<import('@shared/types/multi-device-sessions.js').MultiDeviceSessionState>(
+      (resolve) => {
+        const detach = multiDevice.onState((state) => {
+          if (state.projects[0]?.workspaces.length !== 2) return;
+          detach();
+          resolve(state);
+        });
+      }
+    );
+    laptop.emitEvent('git.change', {
+      repoPath: 'C:\\src\\soloe-feature',
+      runMode: 'windows'
+    });
+
+    await expect(changed).resolves.toMatchObject({
+      projects: [expect.objectContaining({
+        workspaces: expect.arrayContaining([
+          expect.objectContaining({ branch: 'feature/external' })
+        ])
+      })]
+    });
+    expect(laptop.readInventoryCalls).toBe(2);
+  });
+
   it('coalesces a burst of remote Workspace inventory events into one refresh', async () => {
     const laptop = fakeDevice({
       deviceId: LAPTOP_ID,
@@ -914,6 +956,7 @@ function fakeDevice(input: {
   plannedIntents: import('@shared/types/workspaces.js').DeviceWorkspaceIntent[];
   openedProjectPaths: string[];
   readonly readInventoryCalls: number;
+  addWorktree(input: { path: string; branch: string }): void;
   removeWorktree(): void;
   reorderRequests: string[][];
   updateRequests: Array<{
@@ -1248,6 +1291,19 @@ function fakeDevice(input: {
         payload
       };
       for (const listener of eventListeners) listener(envelope);
+    },
+    addWorktree: ({ path, branch }) => {
+      inventory.projects = inventory.projects.map((candidate) => ({
+        ...candidate,
+        worktrees: [...candidate.worktrees, {
+          path,
+          branch,
+          head: 'fedcba9876543210fedcba9876543210fedcba98',
+          detached: false,
+          bare: false,
+          isMain: false
+        }]
+      }));
     },
     removeWorktree: () => {
       inventory.projects = inventory.projects.map((candidate) => ({

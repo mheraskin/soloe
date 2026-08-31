@@ -170,16 +170,6 @@
     orderedPaths: project.worktreeOrder ?? []
   }));
 
-  // A Worktree with no Sessions is a container holding nothing — a header, a
-  // chevron and a guide line spent on zero content. They fold behind one line
-  // so the tree spends its vertical space on actual work, and stay one click
-  // away for launching something new in them.
-  let showEmptyWorktrees = $state(false);
-  let occupiedWorktrees = $derived(worktrees.filter((wt) => wt.items.length > 0));
-  let emptyWorktrees = $derived(worktrees.filter((wt) => wt.items.length === 0));
-  let occupiedWorkspaces = $derived(deviceWorkspaces.filter((ws) => ws.sessions.length > 0));
-  let emptyWorkspaces = $derived(deviceWorkspaces.filter((ws) => ws.sessions.length === 0));
-
   $effect(() => {
     const created = worktreeCreateModal.created;
     if (!created) return;
@@ -196,7 +186,6 @@
       );
     if (!belongsToProject) return;
     expanded = true;
-    showEmptyWorktrees = true;
   });
 
   let accent = $derived(project.accentColor ?? null);
@@ -209,7 +198,7 @@
       && !sameWorktreePath(mainWorktree.path, project.path, project.defaultRunMode)
   );
   let showWorktreeGroups = $derived(
-    (hasWorktrees || worktrees.length > 1) && !isStandaloneWorktreeProject
+    worktrees.length > 0 && !isStandaloneWorktreeProject
   );
   let repoName = $derived(mainWorktree ? worktreeBasename(mainWorktree.path) : project.name);
   let otherWorktreeLabels = $derived.by(() =>
@@ -667,19 +656,11 @@
 
   <Collapsible.Content class="sb-children flex flex-col gap-0.5">
     {#if deviceProject}
-      {#each occupiedWorkspaces as workspace (workspace.key)}
+      {#each deviceWorkspaces as workspace (workspace.key)}
         {@render deviceWorktree(workspace)}
-      {/each}
-      {#if emptyWorkspaces.length > 0}
-        {@render emptyToggle(emptyWorkspaces.length)}
-        {#if showEmptyWorktrees}
-          {#each emptyWorkspaces as workspace (workspace.key)}
-            {@render deviceWorktree(workspace)}
-          {/each}
-        {/if}
-      {:else if occupiedWorkspaces.length === 0}
+      {:else}
         <p class="sb-row sb-meta sb-meta-faint italic">No sessions</p>
-      {/if}
+      {/each}
     {:else}
     {#if isStandaloneWorktreeProject && mainWorktree}
       <div class="sb-row sb-meta gap-2">
@@ -705,17 +686,9 @@
     {/if}
 
     {#if showWorktreeGroups}
-      {#each occupiedWorktrees as wt (wt.cwd)}
+      {#each worktrees as wt (wt.cwd)}
         {@render localWorktree(wt)}
       {/each}
-      {#if emptyWorktrees.length > 0}
-        {@render emptyToggle(emptyWorktrees.length)}
-        {#if showEmptyWorktrees}
-          {#each emptyWorktrees as wt (wt.cwd)}
-            {@render localWorktree(wt)}
-          {/each}
-        {/if}
-      {/if}
     {:else if visibleSessions.length > 0}
       <div class="flex flex-col gap-px">
         {#each visibleSessions as session (session.id)}
@@ -796,17 +769,4 @@
   {/if}
 {/snippet}
 
-{#snippet emptyToggle(count: number)}
-  <button
-    type="button"
-    class="sb-row sb-meta gap-2 hover:text-foreground"
-    aria-expanded={showEmptyWorktrees}
-    onclick={() => (showEmptyWorktrees = !showEmptyWorktrees)}
-  >
-    <span class="sb-chevron" data-open={showEmptyWorktrees ? 'true' : 'false'}>
-      <ChevronRight class="size-3" />
-    </span>
-    <span class="truncate">{count} empty worktree{count === 1 ? '' : 's'}</span>
-  </button>
-{/snippet}
 {/if}

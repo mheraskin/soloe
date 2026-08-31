@@ -364,6 +364,7 @@ describe('RemoteSessionDevice', () => {
   });
 
   it('rejects malformed repository identity returned by a remote Device', async () => {
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = [];
     const client = new RemoteSessionDevice({
       deviceId: DEVICE_ID,
       endpoint: 'https://alpha.example.test',
@@ -373,7 +374,9 @@ describe('RemoteSessionDevice', () => {
         const request = JSON.parse(String(init?.body ?? '{}')) as {
           namespace: string;
           method: string;
+          args: unknown[];
         };
+        calls.push(request);
         if (request.namespace === 'workspaceDevice') {
           return jsonResponse({
             ok: true,
@@ -414,6 +417,11 @@ describe('RemoteSessionDevice', () => {
     const inventory = await client.readInventory();
 
     expect(inventory.projects[0]?.repository).toBeNull();
+    expect(calls).toContainEqual(expect.objectContaining({
+      namespace: 'git',
+      method: 'worktrees',
+      args: [expect.objectContaining({ repoPath: '/work/soloe', force: true })]
+    }));
     client.dispose();
   });
 

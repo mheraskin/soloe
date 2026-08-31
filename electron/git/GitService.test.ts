@@ -527,6 +527,94 @@ describe.skipIf(!hasGit)('GitService', () => {
     }
   });
 
+  it('publishes an inventory change when git adds a worktree outside Soloe', async () => {
+    await initRepo(tmpRoot);
+    await svc.listWorktrees(tmpRoot);
+    const release = await svc.acquireObservation(tmpRoot);
+    const worktreePath = path.join(path.dirname(tmpRoot), `${path.basename(tmpRoot)}-external`);
+    let detach = (): void => undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const changed = new Promise<void>((resolve, reject) => {
+      detach = svc.onChange(() => {
+        if (timer) clearTimeout(timer);
+        detach();
+        resolve();
+      });
+      timer = setTimeout(() => {
+        detach();
+        reject(new Error('Timed out waiting for an external Worktree inventory change'));
+      }, 3_000);
+    });
+
+    const added = spawnSync(
+      'git',
+      ['worktree', 'add', '-q', '-b', 'feature/external', worktreePath],
+      { cwd: tmpRoot }
+    );
+    expect(added.status).toBe(0);
+
+    try {
+      await changed;
+      await expect(svc.listWorktrees(tmpRoot)).resolves.toContainEqual(
+        expect.objectContaining({ path: worktreePath, branch: 'feature/external' })
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+      detach();
+      release();
+      spawnSync('git', ['worktree', 'remove', '--force', worktreePath], { cwd: tmpRoot });
+      await fs.rm(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('observes shared Worktree metadata from a linked Worktree Session', async () => {
+    await initRepo(tmpRoot);
+    const sourcePath = path.join(path.dirname(tmpRoot), `${path.basename(tmpRoot)}-source`);
+    const externalPath = path.join(path.dirname(tmpRoot), `${path.basename(tmpRoot)}-linked-external`);
+    expect(spawnSync(
+      'git',
+      ['worktree', 'add', '-q', '-b', 'feature/source', sourcePath],
+      { cwd: tmpRoot }
+    ).status).toBe(0);
+    await svc.listWorktrees(tmpRoot);
+    const release = await svc.acquireObservation(sourcePath);
+    let detach = (): void => undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const changed = new Promise<void>((resolve, reject) => {
+      detach = svc.onChange((event) => {
+        if (event.repoPath !== sourcePath) return;
+        if (timer) clearTimeout(timer);
+        detach();
+        resolve();
+      });
+      timer = setTimeout(() => {
+        detach();
+        reject(new Error('Timed out waiting for linked Worktree metadata'));
+      }, 3_000);
+    });
+
+    expect(spawnSync(
+      'git',
+      ['worktree', 'add', '-q', '-b', 'feature/linked-external', externalPath],
+      { cwd: sourcePath }
+    ).status).toBe(0);
+
+    try {
+      await changed;
+      await expect(svc.listWorktrees(tmpRoot, true)).resolves.toContainEqual(
+        expect.objectContaining({ path: externalPath, branch: 'feature/linked-external' })
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+      detach();
+      release();
+      spawnSync('git', ['worktree', 'remove', '--force', externalPath], { cwd: tmpRoot });
+      spawnSync('git', ['worktree', 'remove', '--force', sourcePath], { cwd: tmpRoot });
+      await fs.rm(externalPath, { recursive: true, force: true });
+      await fs.rm(sourcePath, { recursive: true, force: true });
+    }
+  });
+
   it('createWorktree: creates a new branch and returns the discovered worktree', async () => {
     await initRepo(tmpRoot);
     const worktreePath = path.join(path.dirname(tmpRoot), `${path.basename(tmpRoot)}-created`);

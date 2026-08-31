@@ -188,6 +188,52 @@ describe('GitStore polling', () => {
     expect(workingTreeSnapshot.mock.calls[0]?.[0].wslDistro).toBe('Ubuntu');
   });
 
+  it('refreshes the owning Worktree Inventory when a linked Worktree reports metadata changes', async () => {
+    const repoPath = freshCwd();
+    const sourcePath = `${repoPath}-source`;
+    const initial: GitWorktree[] = [{
+      path: repoPath,
+      branch: 'main',
+      head: 'a'.repeat(40),
+      detached: false,
+      bare: false,
+      isMain: true
+    }, {
+      path: sourcePath,
+      branch: 'feature/source',
+      head: 'b'.repeat(40),
+      detached: false,
+      bare: false,
+      isMain: false
+    }];
+    const external: GitWorktree = {
+      path: `${repoPath}-external`,
+      branch: 'feature/external',
+      head: 'c'.repeat(40),
+      detached: false,
+      bare: false,
+      isMain: false
+    };
+    worktrees.mockResolvedValueOnce(initial).mockResolvedValueOnce([...initial, external]);
+    git.attachListeners();
+    await git.refreshProjectWorktrees([{
+      repoPath,
+      cadence: 'foreground',
+      runMode: 'windows'
+    }]);
+    await settle();
+    expect(git.worktreesFor(repoPath)).toEqual(initial);
+
+    for (const listener of changeListeners) {
+      listener({ repoPath: sourcePath, runMode: 'windows' });
+    }
+    await settle();
+
+    expect(worktrees).toHaveBeenCalledTimes(2);
+    expect(worktrees.mock.calls[1]?.[0]).toMatchObject({ repoPath, force: true });
+    expect(git.worktreesFor(repoPath)).toEqual([...initial, external]);
+  });
+
   it('reacquires observation demand and refreshes active worktrees after reconnect', async () => {
     const cwd = freshCwd();
     git.attachListeners();

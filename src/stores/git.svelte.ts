@@ -671,6 +671,22 @@ class GitStore {
         for (const key of identities) {
           this.refreshCoordinator.request(key, { kind: 'filesystem', occurredAt });
         }
+        const inventoryKeys = new Set<string>([eventKey]);
+        for (const [key, entry] of Object.entries(this.worktrees)) {
+          const context = this.contextByRepoIdentity.get(key) ?? {};
+          if (!sameInventoryRuntime(context, eventContext)) continue;
+          const comparisonContext = context.runMode
+            ? context
+            : { ...context, runMode: event.runMode };
+          if (entry.worktrees?.some((worktree) =>
+            worktreeIdentityKey(worktree.path, comparisonContext) === eventKey
+          )) {
+            inventoryKeys.add(key);
+          }
+        }
+        for (const key of inventoryKeys) {
+          this.inventoryCoordinator.request(key, { kind: 'filesystem', occurredAt });
+        }
       })
     );
     this.detachers.push(
@@ -748,4 +764,14 @@ function sameWorktreeInventory(
       && worktree.isMain === candidate.isMain
     );
   });
+}
+
+function sameInventoryRuntime(a: RepoContext, b: RepoContext): boolean {
+  if ((a.deviceId ?? null) !== (b.deviceId ?? null)) return false;
+  if (a.runMode && a.runMode !== b.runMode) return false;
+  if (a.runMode === 'wsl') {
+    return (a.wslDistro ?? '').trim().toLocaleLowerCase('en-US')
+      === (b.wslDistro ?? '').trim().toLocaleLowerCase('en-US');
+  }
+  return b.runMode !== 'wsl';
 }

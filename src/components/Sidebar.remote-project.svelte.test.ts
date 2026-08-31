@@ -64,6 +64,39 @@ describe('Sidebar remote Projects', () => {
     expect(target.textContent).toContain('~/work/saas-platform');
   });
 
+  it('shows externally discovered Worktrees even before they have Sessions', () => {
+    const state = remoteProjectState([remoteSession('temporary', 'Temporary')]);
+    const project = state.projects[0]!;
+    project.workspaces[0]!.sessions = [];
+    project.workspaces.push({
+      key: 'workspace-external',
+      name: 'feature/external',
+      branch: 'feature/external',
+      locations: [{
+        key: 'device-xps:/home/mhera/work/saas-platform-external',
+        deviceId: 'device-xps',
+        deviceName: 'xps',
+        projectId: 'saas-platform',
+        path: '/home/mhera/work/saas-platform-external',
+        available: true,
+        isMain: false
+      }],
+      sessions: []
+    });
+    deviceSessions.state = state;
+    deviceSessions.loaded = true;
+    deviceSessions.selectedDeviceId = null;
+
+    const target = document.createElement('div');
+    document.body.append(target);
+    mounted = mount(Sidebar, { target });
+    flushSync();
+
+    expect(target.textContent).toContain('main');
+    expect(target.textContent).toContain('feature/external');
+    expect(target.textContent).not.toContain('2 empty worktrees');
+  });
+
   it('refreshes Devices as soon as the sidebar becomes visible after sleep', () => {
     deviceSessions.state = remoteProjectState();
     deviceSessions.loaded = true;

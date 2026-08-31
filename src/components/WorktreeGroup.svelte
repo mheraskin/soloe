@@ -20,6 +20,7 @@
   import KbdHint from './KbdHint.svelte';
   import WorktreeOverviewDialog from './WorktreeOverviewDialog.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { newSessionPicker } from '../stores/new-session-picker.svelte';
 
   let {
     title,
@@ -101,6 +102,7 @@
   // When the worktree group is collapsed but holds the selected session, the
   // header takes on the selected look so the user keeps a visual anchor.
   let highlightWhenCollapsed = $derived(containsSelected && !effectiveExpanded);
+  let sessionCount = $derived(projections?.length ?? items.length);
 
   let shortstat = $derived(allowLocalActions ? git.shortstatFor(cwd, {
     ...(runMode ? { runMode } : {}),
@@ -128,6 +130,11 @@
   function revealCreatedSession(rowId: string): void {
     sidebarExpansion.setExpanded(cwd, true);
     onSessionCreated?.(rowId);
+  }
+
+  function openSessionPicker(): void {
+    if (!projectId) return;
+    newSessionPicker.open({ projectId, cwd, branch: title });
   }
 
   function onSessionDrop(args: { draggedId: SessionId; targetId: SessionId; position: DropPosition }) {
@@ -283,8 +290,19 @@
           </span>
         {/if}
         <span class="sb-meta sb-meta-faint shrink-0 tabular-nums">
-          {projections?.length ?? items.length}
+          {sessionCount}
         </span>
+        {#if allowLocalActions && projectId && sessionCount === 0}
+          <Button
+            variant="ghost"
+            size="xs"
+            class="h-5 shrink-0 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+            aria-label={`Open session in ${title}`}
+            onclick={openSessionPicker}
+          >
+            Open
+          </Button>
+        {/if}
         <!-- Actions reserve their space at rest and only fade in, so the diff
              stat and Session count beside them never get displaced. -->
         <span class="sb-reveal flex items-center gap-0.5">
