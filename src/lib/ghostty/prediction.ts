@@ -18,14 +18,12 @@ interface PendingPrediction extends TerminalPredictedCell {
 const EMPTY_OVERLAY: TerminalPredictionOverlay = { cells: [], cursor: null };
 
 /**
- * Conservative Mosh-style prediction epochs. A row must first prove that the
- * remote application echoes printable text before later input on that row can
- * be drawn speculatively. Controls start a new epoch, which prevents password
- * prompts and non-echoing TUI commands from exposing speculative characters.
+ * Optimistic local echo for remote terminals. Safe printable text is painted
+ * at the authoritative cursor until remote output confirms or contradicts it.
+ * Controls clear the pending sequence because their screen effect is unknown.
  */
 export class TerminalPredictionModel {
   private pending: PendingPrediction[] = [];
-  private confirmedRow: number | null = null;
 
   type(text: string, snapshot: GhosttySnapshot): boolean {
     if (!isSafeSingleCellText(text)) {
@@ -48,7 +46,6 @@ export class TerminalPredictionModel {
 
   boundary(): void {
     this.pending = [];
-    this.confirmedRow = null;
   }
 
   reconcile(snapshot: GhosttySnapshot): void {
@@ -57,7 +54,6 @@ export class TerminalPredictionModel {
     for (const [index, prediction] of this.pending.entries()) {
       const current = snapshot.rowData[prediction.y]?.cells[prediction.x]?.text ?? '';
       if (current === prediction.text && prediction.baseline !== prediction.text) {
-        this.confirmedRow = prediction.y;
         lastConfirmedIndex = index;
         continue;
       }
@@ -71,10 +67,9 @@ export class TerminalPredictionModel {
   }
 
   overlay(snapshot: GhosttySnapshot): TerminalPredictionOverlay {
-    if (this.pending.length === 0 || this.confirmedRow === null) return EMPTY_OVERLAY;
+    if (this.pending.length === 0) return EMPTY_OVERLAY;
     const cells: TerminalPredictedCell[] = [];
     for (const prediction of this.pending) {
-      if (prediction.y !== this.confirmedRow) continue;
       const current = snapshot.rowData[prediction.y]?.cells[prediction.x]?.text ?? '';
       if (current !== prediction.baseline) continue;
       cells.push({ x: prediction.x, y: prediction.y, text: prediction.text });

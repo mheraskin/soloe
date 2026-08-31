@@ -3,6 +3,7 @@
  */
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TerminalInputLeaseEvent } from '@shared/types/terminal.js';
 
 const mocks = vi.hoisted(() => ({
   surfaceCreates: 0,
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   localDeviceId: null as string | null,
   deviceAvailable: true,
   ownsInput: false,
+  inputLeaseEvent: null as TerminalInputLeaseEvent | null,
   surfaceOptions: null as null | {
     predictiveInput?: boolean;
     font?: { family: string; size: number };
@@ -57,7 +59,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
         ? { deviceId: mocks.localDeviceId, name: 'local' }
         : null;
     },
-    terminalInputLeaseEvent: vi.fn(() => null),
+    terminalInputLeaseEvent: vi.fn(() => mocks.inputLeaseEvent),
     ownsTerminalInput: vi.fn(() => mocks.ownsInput),
     claimTerminalInputControl: mocks.claimTerminalInputControl,
     acquireTerminalOutput: vi.fn(() => {
@@ -120,6 +122,7 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.localDeviceId = null;
     mocks.deviceAvailable = true;
     mocks.ownsInput = false;
+    mocks.inputLeaseEvent = null;
     mocks.surfaceOptions = null;
     mocks.terminalInput.mockClear();
     mocks.terminalResize.mockClear();
@@ -238,8 +241,7 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     );
   });
 
-  it('keeps a cached offline terminal visible and blocks all input', async () => {
-    mocks.ownsInput = true;
+  it('keeps a cached offline terminal writable and queues input for reconnect', async () => {
     const target = document.createElement('div');
     document.body.append(target);
     component = mount(DeviceTerminalViewerHarness, { target });
@@ -252,16 +254,52 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     const harness = component as typeof component & { setAvailable(available: boolean): void };
     flushSync(() => harness.setAvailable(false));
 
-    expect(target.textContent).toContain('Offline · read-only');
+    expect(target.textContent).toContain('Offline · input queued until reconnect');
     expect(target.textContent).not.toContain('Restoring terminal…');
     expect(mocks.surfaceCreates).toBe(1);
     expect(mocks.surfaceDisposes).toBe(0);
     mocks.surfaceOptions?.onData('x', 'immediate');
     mocks.surfaceOptions?.onLinkActivate?.('https://example.com', new MouseEvent('click'));
-    expect(mocks.terminalInput).not.toHaveBeenCalled();
+    expect(mocks.terminalInput).toHaveBeenCalledWith(
+      { deviceId: 'device-xps', terminalId: 'terminal-1' },
+      'x'
+    );
     expect(mocks.claimTerminalInputControl).not.toHaveBeenCalled();
     expect(mocks.openDeviceBrowserUrl).not.toHaveBeenCalled();
     expect(target.textContent).not.toContain('Take Over');
+  });
+
+  it('keeps an offline terminal read-only when another client owns control', async () => {
+    mocks.inputLeaseEvent = {
+      type: 'acquired',
+      terminalId: 'terminal-1',
+      lease: {
+        terminalId: 'terminal-1',
+        sessionId: 'session-1',
+        ownerDeviceId: 'device-xps',
+        leaseId: 'lease-other',
+        controllerDeviceId: 'device-other',
+        controllerDeviceName: 'other laptop',
+        generation: 1,
+        cols: 120,
+        rows: 30,
+        acquiredAt: '2026-08-16T00:00:18.000Z'
+      },
+      observedAt: '2026-08-16T00:00:18.000Z'
+    };
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.surfaceOptions).not.toBeNull());
+    mocks.terminalInput.mockClear();
+
+    const harness = component as typeof component & { setAvailable(available: boolean): void };
+    flushSync(() => harness.setAvailable(false));
+    mocks.surfaceOptions?.onData('x', 'immediate');
+
+    expect(target.textContent).toContain('Offline · controlled by other laptop');
+    expect(mocks.terminalInput).not.toHaveBeenCalled();
   });
 
   it('uses the controlling Device terminal font size for a remote surface', async () => {

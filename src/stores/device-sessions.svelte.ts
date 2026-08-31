@@ -66,10 +66,16 @@ interface QueuedTerminalInput {
   reject(error: unknown): void;
 }
 
+type TerminalInputQueueState =
+  | { kind: 'idle' }
+  | { kind: 'scheduled' }
+  | { kind: 'sending'; disconnected: boolean }
+  | { kind: 'waiting-for-device' };
+
 interface TerminalInputQueue {
   ref: TerminalRef;
   entries: QueuedTerminalInput[];
-  running: boolean;
+  state: TerminalInputQueueState;
 }
 
 interface PendingSessionReorder {
@@ -611,22 +617,39 @@ export class DeviceSessionsStore {
     const key = terminalRefKey(terminalRef);
     let queue = this.terminalInputQueues.get(key);
     if (!queue) {
-      queue = { ref: structuredClone(terminalRef), entries: [], running: false };
+      queue = { ref: structuredClone(terminalRef), entries: [], state: { kind: 'idle' } };
       this.terminalInputQueues.set(key, queue);
     }
     const currentQueue = queue;
     const result = new Promise<void>((resolve, reject) => {
       currentQueue.entries.push({ data, resolve, reject });
     });
-    if (!currentQueue.running) {
-      currentQueue.running = true;
-      queueMicrotask(() => void this.drainTerminalInput(key, currentQueue));
-    }
+    this.scheduleTerminalInput(key, currentQueue);
     return result;
   }
 
+  private scheduleTerminalInput(key: string, queue: TerminalInputQueue): void {
+    if (queue.state.kind === 'scheduled' || queue.state.kind === 'sending') return;
+    if (this.device(queue.ref.deviceId)?.available !== true) {
+      queue.state = { kind: 'waiting-for-device' };
+      return;
+    }
+    queue.state = { kind: 'scheduled' };
+    queueMicrotask(() => void this.drainTerminalInput(key, queue));
+  }
+
   private async drainTerminalInput(key: string, queue: TerminalInputQueue): Promise<void> {
+    if (this.terminalInputQueues.get(key) !== queue || queue.state.kind !== 'scheduled') return;
+    if (this.device(queue.ref.deviceId)?.available !== true) {
+      queue.state = { kind: 'waiting-for-device' };
+      return;
+    }
+    queue.state = { kind: 'sending', disconnected: false };
     while (queue.entries.length > 0) {
+      if (this.device(queue.ref.deviceId)?.available !== true) {
+        queue.state = { kind: 'waiting-for-device' };
+        return;
+      }
       const batch = queue.entries.splice(0);
       try {
         await this.sendTerminalInput(
@@ -635,12 +658,44 @@ export class DeviceSessionsStore {
           batch.map((entry) => entry.data).join('')
         );
         for (const entry of batch) entry.resolve();
+        queue.state = { kind: 'sending', disconnected: false };
       } catch (error) {
+        const disconnected = queue.state.kind === 'sending' && queue.state.disconnected;
+        const deviceAvailable = this.device(queue.ref.deviceId)?.available === true;
+        const transportInterrupted = isRecoverableTerminalTransportError(error);
+        if (disconnected || !deviceAvailable || transportInterrupted) {
+          queue.entries.unshift(...batch);
+          queue.state = { kind: 'waiting-for-device' };
+          if (disconnected && deviceAvailable) {
+            this.scheduleTerminalInput(key, queue);
+          } else if (transportInterrupted && deviceAvailable) {
+            void this.refresh({ background: true }).catch(() => undefined);
+          }
+          return;
+        }
         for (const entry of batch) entry.reject(error);
       }
     }
-    queue.running = false;
+    queue.state = { kind: 'idle' };
     if (this.terminalInputQueues.get(key) === queue) this.terminalInputQueues.delete(key);
+  }
+
+  private pauseTerminalInput(deviceId: DeviceId): void {
+    for (const queue of this.terminalInputQueues.values()) {
+      if (queue.ref.deviceId !== deviceId) continue;
+      if (queue.state.kind === 'sending') {
+        queue.state = { kind: 'sending', disconnected: true };
+      } else {
+        queue.state = { kind: 'waiting-for-device' };
+      }
+    }
+  }
+
+  private resumeTerminalInput(deviceId: DeviceId): void {
+    for (const [key, queue] of this.terminalInputQueues) {
+      if (queue.ref.deviceId !== deviceId || queue.entries.length === 0) continue;
+      this.scheduleTerminalInput(key, queue);
+    }
   }
 
   private async sendTerminalInput(
@@ -852,6 +907,7 @@ export class DeviceSessionsStore {
     ]).then(() => {
       for (const device of this.state.devices) {
         if (!device.available) continue;
+        this.resumeTerminalInput(device.deviceId);
         for (const listener of [...(this.deviceReconnectListeners.get(device.deviceId) ?? [])]) {
           listener();
         }
@@ -867,6 +923,9 @@ export class DeviceSessionsStore {
     const previousAvailability = new Map(
       this.state.devices.map((device) => [device.deviceId, device.available] as const)
     );
+    const disconnected = state.devices
+      .filter((device) => !device.available && previousAvailability.get(device.deviceId) === true)
+      .map((device) => device.deviceId);
     const reconnected = state.devices
       .filter((device) => device.available && previousAvailability.get(device.deviceId) === false)
       .map((device) => device.deviceId);
@@ -881,7 +940,9 @@ export class DeviceSessionsStore {
     }
     this.reapplyPendingSessionUpdates();
     this.clearUnavailableSelection();
+    for (const deviceId of disconnected) this.pauseTerminalInput(deviceId);
     for (const deviceId of reconnected) {
+      this.resumeTerminalInput(deviceId);
       for (const listener of [...(this.deviceReconnectListeners.get(deviceId) ?? [])]) {
         listener();
       }
@@ -1186,6 +1247,11 @@ function isRecoverableTerminalControlError(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return code === 'terminal_control_lease_stale'
     || code === 'terminal_input_lease_required';
+}
+
+function isRecoverableTerminalTransportError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\boffline\b|not connected|connection\s+(?:closed|lost)|transport\s+closed/i.test(message);
 }
 
 function terminalEvent<T extends { terminalId: string }>(value: unknown): T | null {

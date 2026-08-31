@@ -4,12 +4,26 @@ import type { GhosttyCell, GhosttySnapshot } from './core';
 import { TerminalPredictionModel } from './prediction';
 
 describe('TerminalPredictionModel', () => {
-  it('proves an epoch before displaying later predictions on the same row', () => {
+  it('shows safe input immediately without waiting for a remote echo', () => {
     const model = new TerminalPredictionModel();
     const initial = snapshot('', 0);
 
     expect(model.type('h', initial)).toBe(true);
-    expect(model.overlay(initial)).toEqual({ cells: [], cursor: null });
+    expect(model.overlay(initial)).toEqual({
+      cells: [{ x: 0, y: 0, text: 'h' }],
+      cursor: { x: 1, y: 0 }
+    });
+  });
+
+  it('reconciles immediate predictions as the remote echo catches up', () => {
+    const model = new TerminalPredictionModel();
+    const initial = snapshot('', 0);
+
+    expect(model.type('h', initial)).toBe(true);
+    expect(model.overlay(initial)).toEqual({
+      cells: [{ x: 0, y: 0, text: 'h' }],
+      cursor: { x: 1, y: 0 }
+    });
 
     const confirmed = snapshot('h', 1);
     model.reconcile(confirmed);
@@ -23,7 +37,7 @@ describe('TerminalPredictionModel', () => {
     expect(model.overlay(snapshot('hi', 2))).toEqual({ cells: [], cursor: null });
   });
 
-  it('requires a new proof after controls or moving to another row', () => {
+  it('starts from the authoritative cursor after controls and row changes', () => {
     const model = new TerminalPredictionModel();
     model.type('a', snapshot('', 0));
     model.reconcile(snapshot('a', 1));
@@ -31,12 +45,18 @@ describe('TerminalPredictionModel', () => {
     model.boundary();
     const next = snapshot('a', 1);
     model.type('b', next);
-    expect(model.overlay(next).cells).toEqual([]);
+    expect(model.overlay(next)).toEqual({
+      cells: [{ x: 1, y: 0, text: 'b' }],
+      cursor: { x: 2, y: 0 }
+    });
 
     model.reconcile(snapshot('ab', 2));
-    const nextRow = snapshot('ab', 4, 4, 2, 1);
+    const nextRow = snapshot('', 0, 4, 2, 1);
     model.type('c', nextRow);
-    expect(model.overlay(nextRow).cells).toEqual([]);
+    expect(model.overlay(nextRow)).toEqual({
+      cells: [{ x: 0, y: 1, text: 'c' }],
+      cursor: { x: 1, y: 1 }
+    });
   });
 
   it('drops an epoch when the authoritative screen contradicts it', () => {

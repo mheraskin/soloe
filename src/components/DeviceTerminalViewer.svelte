@@ -75,7 +75,8 @@
     terminalRef ? deviceSessions.ownsTerminalInput(terminalRef) : false
   );
   let controlledByOther = $derived(Boolean(inputLease?.lease && !ownsInput));
-  let readOnly = $derived(offline || controlledByOther);
+  let acceptsInput = $derived(offline ? !controlledByOther : ownsInput);
+  let readOnly = $derived(controlledByOther);
   let ready = $derived(Boolean(surfaceReady && terminalState?.status === 'ready'));
   let theme = $derived(terminalThemeFor(appearanceTheme.resolved));
   let font = $derived({
@@ -200,7 +201,7 @@
 
   function sendData(data: string): void {
     const ref = terminalRef;
-    if (!ref || !active || !interactive || !ownsInput || offline) return;
+    if (!ref || !active || !interactive || !acceptsInput) return;
     void deviceSessions.terminalInput(ref, data).then(
       () => (error = null),
       (cause) => (error = cause instanceof Error ? cause.message : String(cause))
@@ -280,8 +281,8 @@
 
   async function pasteFromClipboard(): Promise<void> {
     const ref = terminalRef;
-    if (!ref || !terminal || !active || !interactive || !ownsInput || offline) return;
-    if (projection.session && effectiveAgentProvider(projection.session)) {
+    if (!ref || !terminal || !active || !interactive || !acceptsInput) return;
+    if (!offline && projection.session && effectiveAgentProvider(projection.session)) {
       const images = await readClipboardImages().catch(() => []);
       if (images.length > 0) {
         await deviceSessions.pasteImagesIntoTerminal(ref, projection.ref.sessionId, images);
@@ -310,14 +311,16 @@
 
 <section class="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--terminal-background)]">
   <SessionToolbar {projection} {onClose} readOnly={offline} />
-  {#if readOnly}
+  {#if offline || readOnly}
     <div
       role="status"
       class="flex items-center gap-2 border-b border-border bg-background/95 px-3 py-2 text-xs text-foreground"
     >
       <span class="min-w-0 flex-1 truncate">
         {offline
-          ? 'Offline · read-only'
+          ? acceptsInput
+            ? 'Offline · input queued until reconnect'
+            : `Offline · controlled by ${inputLease?.lease?.controllerDeviceName ?? 'another client'}`
           : `Read-only · controlled by ${inputLease?.lease?.controllerDeviceName ?? 'another client'}`}
       </span>
       {#if !offline}
@@ -336,8 +339,8 @@
         bind:this={terminal}
         state={terminalState}
         visible={true}
-        focused={active && pageVisible && !offline}
-        interactive={active && interactive && ownsInput && pageVisible && !offline}
+        focused={active && pageVisible}
+        interactive={active && interactive && acceptsInput && pageVisible}
         {predictiveInput}
         {theme}
         {font}

@@ -785,6 +785,79 @@ describe('DeviceSessionsStore reconnect recovery', () => {
     );
   });
 
+  it('holds terminal input while its Device is offline and sends it after reconnect', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
+    mocks.deviceTerminalInputLease.mockResolvedValueOnce({
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-current',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 1,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:18.000Z'
+    });
+    mocks.stateChange?.(state(2, false));
+
+    const pending = store.terminalInput(ref, 'typed offline');
+    await Promise.resolve();
+
+    expect(mocks.deviceTerminalInput).not.toHaveBeenCalled();
+
+    mocks.stateChange?.(state(3, true));
+    await pending;
+
+    expect(mocks.deviceTerminalInput).toHaveBeenCalledWith(
+      ref,
+      'typed offline',
+      expect.objectContaining({ leaseId: 'lease-current' })
+    );
+  });
+
+  it('retries an interrupted input batch in order after the Device reconnects', async () => {
+    const store = new DeviceSessionsStore();
+    await store.load();
+    const ref = { deviceId: 'device-xps', terminalId: 'terminal-1' };
+    mocks.deviceTerminalInputLease.mockResolvedValueOnce({
+      terminalId: 'terminal-1',
+      sessionId: 'session-1',
+      ownerDeviceId: 'device-xps',
+      leaseId: 'lease-current',
+      controllerDeviceId: 'device-local',
+      controllerDeviceName: 'this device',
+      generation: 1,
+      cols: 120,
+      rows: 30,
+      acquiredAt: '2026-08-16T00:00:18.000Z'
+    });
+    const interruptedWrite = deferred<boolean>();
+    mocks.deviceTerminalInput
+      .mockReturnValueOnce(interruptedWrite.promise)
+      .mockResolvedValueOnce(true);
+    await store.claimTerminalInputControl(ref);
+
+    const first = store.terminalInput(ref, 'a');
+    await vi.waitFor(() => expect(mocks.deviceTerminalInput).toHaveBeenCalledOnce());
+    mocks.stateChange?.(state(2, false));
+    const second = store.terminalInput(ref, 'b');
+    interruptedWrite.reject(new Error('Device xps is offline.'));
+    await Promise.resolve();
+
+    mocks.stateChange?.(state(3, true));
+    await Promise.all([first, second]);
+
+    expect(mocks.deviceTerminalInput).toHaveBeenNthCalledWith(
+      2,
+      ref,
+      'ab',
+      expect.objectContaining({ leaseId: 'lease-current' })
+    );
+  });
+
   it('reclaims an unowned Session Control lease before forwarding terminal input', async () => {
     const store = new DeviceSessionsStore();
     await store.load();
