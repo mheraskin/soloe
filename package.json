@@ -104,7 +104,7 @@
     "electron-vite": "^5.0.0",
     "jsdom": "^29.1.1",
     "mode-watcher": "^1.1.0",
-    "shadcn-svelte": "^1.2.7",
+    "shadcn-svelte": "^1.5.1",
     "svelte": "^5.0.0",
     "svelte-check": "^4.4.8",
     "svelte-sonner": "^1.1.1",
