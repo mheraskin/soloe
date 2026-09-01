@@ -103,8 +103,8 @@ importers:
         specifier: ^8.18.1
         version: 8.18.1
       bits-ui:
-        specifier: ^2.18.1
-        version: 2.18.1(@internationalized/date@3.12.2)(svelte@5.56.8)
+        specifier: ^2.19.0
+        version: 2.19.0(@internationalized/date@3.12.2)(svelte@5.56.8)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -1475,8 +1475,8 @@ packages:
     peerDependencies:
       react: '>=17.0.1'
 
-  bits-ui@2.18.1:
-    resolution: {integrity: sha512-KkemzKFH4T3gt3H+P86JcnAWExjByv/6vlwjm/BoCwTPHu03yiCdxbghdJLvFReQTe0acCAiRcKfmixxD6XvlA==}
+  bits-ui@2.19.0:
+    resolution: {integrity: sha512-dHDm5Jw2NZJgLRvHAwPeuR4BnZij+AqTIq33OqVfo+qiMXontoC/yIvGT5TZaviv7OuBdJ2QUy2JPQ2yKBvF6w==}
     engines: {node: '>=20'}
     peerDependencies:
       '@internationalized/date': ^3.8.1
@@ -4256,7 +4256,7 @@ snapshots:
     dependencies:
       react: 19.2.8
 
-  bits-ui@2.18.1(@internationalized/date@3.12.2)(svelte@5.56.8):
+  bits-ui@2.19.0(@internationalized/date@3.12.2)(svelte@5.56.8):
     dependencies:
       '@floating-ui/core': 1.8.0
       '@floating-ui/dom': 1.8.0
