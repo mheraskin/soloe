@@ -153,6 +153,20 @@ vi.mock('../stores/agent-notifications.svelte', () => ({
 
 vi.mock('../stores/settings.svelte', () => ({
   settings: {
+    availableModels: [
+      {
+        provider: 'codex',
+        id: '__cli_default__',
+        label: 'Codex default',
+        isDefault: true
+      },
+      {
+        provider: 'claude',
+        id: 'claude-opus-4-1',
+        label: 'Claude Opus 4.1'
+      }
+    ],
+    ensureModelCatalog: vi.fn(async () => undefined),
     current: {
       quickLaunch: [],
       defaults: { newSessionKind: 'codex', shell: 'auto' },
@@ -321,18 +335,66 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(document.body.textContent).toContain('No project');
   });
 
-  it('renders full provider names in a two-column launch grid', () => {
+  it('renders providers in a scrollable rail beside the shared model browser', () => {
     const target = mountComponent(AgentLaunchPopover, {});
     target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     flushSync();
 
-    const launchOptions = document.body.querySelector<HTMLElement>('[data-slot="launch-options"]');
-    const buttons = launchOptions?.querySelectorAll<HTMLButtonElement>('[data-launch-option]');
-    expect(launchOptions?.className).toContain('grid-cols-2');
-    expect(buttons).toHaveLength(6);
-    expect(launchOptions?.textContent).toContain('OpenCode');
-    expect(launchOptions?.textContent).toContain('Grok Build');
+    const providerRail = document.body.querySelector<HTMLElement>('[data-slot="provider-rail"]');
+    const modelBrowser = document.body.querySelector<HTMLElement>('[data-slot="model-browser"]');
+    expect(providerRail).not.toBeNull();
+    expect(providerRail?.className).toContain('overflow-y-auto');
+    expect(modelBrowser).not.toBeNull();
+    expect(document.body.textContent).toContain('Codex default');
+    expect(document.body.querySelector('[data-slot="launch-options"]')).toBeNull();
+  });
+
+  it('launches the selected provider with the model chosen in the shared browser', async () => {
+    const target = mountComponent(AgentLaunchPopover, {});
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    document.body.querySelector<HTMLButtonElement>('[aria-label="Browse Claude models"]')!.click();
+    flushSync();
+    const opus = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('Claude Opus 4.1'));
+    expect(opus).toBeDefined();
+    opus!.click();
+
+    await vi.waitFor(() => expect(deviceSessionMocks.planCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetDeviceId: 'local-device',
+        session: expect.objectContaining({
+          launch: expect.objectContaining({
+            type: 'agent',
+            provider: 'claude_code',
+            model: 'claude-opus-4-1'
+          })
+        })
+      })
+    ));
+  });
+
+  it('passes a selected model through the local Session launch path', async () => {
+    deviceSessionState.multiDeviceActive = false;
+    const target = mountComponent(AgentLaunchPopover, {});
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    document.body.querySelector<HTMLButtonElement>('[aria-label="Browse Claude models"]')!.click();
+    flushSync();
+    const opus = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('Claude Opus 4.1'));
+    opus!.click();
+
+    await vi.waitFor(() => expect(sessionMocks.createAgentWithDefaults).toHaveBeenCalledWith(
+      'claude_code',
+      expect.objectContaining({ model: 'claude-opus-4-1' })
+    ));
+    expect(deviceSessionMocks.planCreate).not.toHaveBeenCalled();
   });
 
   it('refreshes the shared Device state as soon as the popover opens', async () => {
@@ -557,9 +619,14 @@ describe('AgentLaunchPopover touch gestures', () => {
     const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
     trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     flushSync();
-    const cursor = document.body.querySelector<HTMLButtonElement>('[aria-label="New Cursor session"]');
+    const cursor = document.body.querySelector<HTMLButtonElement>('[aria-label="Browse Cursor models"]');
     expect(cursor).not.toBeNull();
     cursor!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+    const cursorDefault = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('Cursor default'));
+    expect(cursorDefault).toBeDefined();
+    cursorDefault!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
     await vi.waitFor(() => expect(deviceSessionMocks.planCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -612,8 +679,9 @@ describe('AgentLaunchPopover touch gestures', () => {
     await vi.waitFor(() => expect(document.body.textContent).toContain('Workspace ready'));
     deviceSessionMocks.planCreate.mockClear();
 
-    const codex = document.body.querySelector<HTMLButtonElement>('[aria-label="New Codex session"]');
-    codex!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const codexDefault = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.includes('Codex default'));
+    codexDefault!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(deviceSessionMocks.executeCreate).toHaveBeenCalledWith('plan-ready'));
     await Promise.resolve();
     flushSync();

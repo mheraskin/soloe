@@ -10,14 +10,15 @@
     FolderPlus,
     LoaderCircle,
     Monitor,
-    Plus
+    Plus,
+    Rocket
   } from '@lucide/svelte';
   import type { DeviceId } from '@shared/types/devices.js';
   import type {
     MultiDeviceSessionCreationPlan,
     ProjectView
   } from '@shared/types/multi-device-sessions.js';
-  import type { SessionLaunch } from '@shared/types/sessions.js';
+  import { isAgentProvider, type SessionLaunch } from '@shared/types/sessions.js';
   import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
   import type { Project, ProjectId } from '@shared/types/projects.js';
   import type { AgentRuntimeProvider } from '@shared/types/sessions.js';
@@ -36,6 +37,7 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Input } from '$lib/components/ui/input';
   import KindIcon from './KindIcon.svelte';
+  import ProviderModelBrowser from './ProviderModelBrowser.svelte';
 
   const HOVER_OPEN_DELAY_MS = 250;
   const HOVER_CLOSE_DELAY_MS = 180;
@@ -44,18 +46,13 @@
   type LaunchOption = AgentRuntimeProvider | 'terminal' | `preset:${string}`;
   type PickerLevel = 'global' | 'project' | 'worktree';
 
-  const primaryLaunchOptions = [
-    { value: 'opencode', label: 'OpenCode', ariaLabel: 'New OpenCode session' },
-    { value: 'grok_build', label: 'Grok Build', ariaLabel: 'New Grok Build session' },
-    { value: 'claude_code', label: 'Claude', ariaLabel: 'New Claude session' },
-    { value: 'cursor', label: 'Cursor', ariaLabel: 'New Cursor session' },
-    { value: 'codex', label: 'Codex', ariaLabel: 'New Codex session' },
-    { value: 'terminal', label: 'Terminal', ariaLabel: 'New terminal' }
-  ] as const satisfies ReadonlyArray<{
-    value: AgentRuntimeProvider | 'terminal';
-    label: string;
-    ariaLabel: string;
-  }>;
+  const agentProviders = [
+    'opencode',
+    'grok_build',
+    'claude_code',
+    'cursor',
+    'codex'
+  ] as const satisfies readonly AgentRuntimeProvider[];
 
   let {
     projectId = null,
@@ -115,6 +112,11 @@
   let deviceRefreshOpen = false;
 
   let usesDevicePlacement = $derived(deviceSessions.multiDeviceActive);
+  let defaultBrowseProvider = $derived<AgentRuntimeProvider>(
+    isAgentProvider(settings.current.defaults.newSessionKind)
+      ? settings.current.defaults.newSessionKind
+      : 'codex'
+  );
   let pickerLevel = $derived<PickerLevel>(
     level ?? (workspaceKey !== undefined ? 'worktree' : projectId ? 'project' : 'global')
   );
@@ -449,7 +451,7 @@
     );
   }
 
-  function launchForOption(option: LaunchOption): SessionLaunch {
+  function launchForOption(option: LaunchOption, model?: string): SessionLaunch {
     if (option === 'terminal') {
       return { type: 'terminal', shell: settings.current.defaults.shell };
     }
@@ -465,7 +467,8 @@
         provider: option,
         resumeMode: 'new',
         ...(option === 'claude_code' ? { fullscreenTui: true } : {}),
-        ...(option === 'cursor' ? { cursorMode: 'agent' as const } : {})
+        ...(option === 'cursor' ? { cursorMode: 'agent' as const } : {}),
+        ...(model ? { model } : {})
       };
     }
     const preset = presets.find((candidate) => candidate.id === option.slice('preset:'.length));
@@ -499,7 +502,8 @@
   function deviceRequest(
     option: LaunchOption,
     deviceId: DeviceId,
-    targetPath?: string
+    targetPath?: string,
+    model?: string
   ) {
     return {
       workspaceKey: effectiveWorkspaceKey,
@@ -507,7 +511,7 @@
       ...(targetPath ? { targetPath } : {}),
       session: {
         name: sessionName(option),
-        launch: launchForOption(option)
+        launch: launchForOption(option, model)
       }
     };
   }
@@ -532,7 +536,7 @@
     }
   }
 
-  async function launchOnDevice(option: LaunchOption): Promise<void> {
+  async function launchOnDevice(option: LaunchOption, model?: string): Promise<void> {
     const availableIds = new Set(deviceSessions.visibleDevices
       .filter((device) => device.available)
       .map((device) => device.deviceId));
@@ -550,7 +554,8 @@
       const plan = await deviceSessions.planCreate(deviceRequest(
         option,
         targetDeviceId,
-        customTargetPath
+        customTargetPath,
+        model
       ));
       devicePlan = plan;
       pendingDeviceOption = option;
@@ -616,27 +621,9 @@
       .catch(reportError);
   }
 
-  function launchPreferred(): void {
+  function launchAgent(kind: AgentRuntimeProvider, model?: string): void {
     if (usesDevicePlacement) {
-      open = true;
-      void launchOnDevice(preferredOption());
-      return;
-    }
-    open = false;
-    const notifyCreated = onSessionCreated;
-    void sessions
-      .createPreferredWithDefaults({
-        ...(projectId ? { projectId } : {}),
-        ...(cwd ? { cwd } : {}),
-        ...(branch ? { branch } : {})
-      })
-      .then((created) => notifyCreated?.(created.id))
-      .catch(reportError);
-  }
-
-  function launchAgent(kind: AgentRuntimeProvider): void {
-    if (usesDevicePlacement) {
-      void launchOnDevice(kind);
+      void launchOnDevice(kind, model);
       return;
     }
     open = false;
@@ -645,7 +632,8 @@
       .createAgentWithDefaults(kind, {
         ...(projectId ? { projectId } : {}),
         ...(cwd ? { cwd } : {}),
-        ...(branch ? { branch } : {})
+        ...(branch ? { branch } : {}),
+        ...(model ? { model } : {})
       })
       .then((created) => notifyCreated?.(created.id))
       .catch(reportError);
@@ -740,13 +728,14 @@
     {align}
     {side}
     sideOffset={8}
-    class={`z-40 rounded-md border-border bg-card p-1.5 shadow-md ${usesDevicePlacement ? 'w-80' : 'w-48'}`}
+    class={`z-40 min-h-0 w-[min(36rem,calc(100vw-1rem))] overflow-hidden rounded-md border-border bg-card p-0 shadow-md ${usesDevicePlacement ? 'h-[min(34rem,calc(100vh-2rem))]' : 'h-[min(24rem,calc(100vh-2rem))]'}`}
     onpointerenter={clearCloseTimer}
     onpointerleave={scheduleClose}
   >
-    <div bind:this={pickerEl}>
-      {#if usesDevicePlacement}
-        <div class="mb-1.5 flex flex-col gap-1.5 border-b border-border px-1 pb-2">
+    <div bind:this={pickerEl} class="flex h-full min-h-0">
+      {#snippet launcherHeader()}
+        {#if usesDevicePlacement}
+          <div class="flex max-h-[19rem] flex-col gap-1.5 overflow-y-auto border-b border-border p-2">
           {#if pickerLevel !== 'worktree'}
             <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Worktree</span>
             <DropdownMenu.Root bind:open={worktreeSelectOpen}>
@@ -983,79 +972,78 @@
             </div>
           {/if}
         </div>
-      {:else if pickerLevel === 'project' && worktreeTarget}
-        <div class="mb-1.5 border-b border-border px-1 pb-2">
-          <Button
-            variant="ghost"
-            class="h-8 w-full justify-start gap-2 px-2 text-xs"
-            onclick={openWorktreeCreator}
-          >
-            <FolderPlus class="size-3.5" />
-            Add worktree
-          </Button>
-        </div>
-      {/if}
-      <div class="px-1 pb-1 pt-0.5">
-        <span class="mb-1.5 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          Start a session
-        </span>
-        <div
-          class="mobile-launch-options grid grid-cols-2 gap-1.5"
-          data-slot="launch-options"
-        >
-          {#each primaryLaunchOptions as option (option.value)}
+        {:else if pickerLevel === 'project' && worktreeTarget}
+          <div class="border-b border-border p-2">
             <Button
               variant="ghost"
-              class={`h-11 w-full justify-start gap-2.5 rounded-lg border border-transparent bg-muted/20 px-2.5 text-xs font-medium hover:border-border hover:bg-muted/60 ${selectedLaunchOption === option.value ? 'border-border bg-muted text-foreground ring-1 ring-border' : ''}`}
-              title={option.ariaLabel}
-              aria-label={option.ariaLabel}
-              data-launch-option={option.value}
-              data-gesture-selected={selectedLaunchOption === option.value ? 'true' : undefined}
-              onclick={(event) => onLaunchOptionClick(event, option.value)}
+              class="h-8 w-full justify-start gap-2 px-2 text-xs"
+              onclick={openWorktreeCreator}
             >
-              <KindIcon kind={option.value} size={22} />
-              <span class="min-w-0 truncate leading-none">{option.label}</span>
+              <FolderPlus class="size-3.5" />
+              Add worktree
             </Button>
-          {/each}
-        </div>
-      </div>
-      {#if presets.length > 0}
-        <div class="mx-1 mt-1 border-t border-border px-0 pt-2">
-          <span class="mb-1 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Quick launch
+          </div>
+        {/if}
+      {/snippet}
+      {#snippet launchRailFooter()}
+        <button
+          type="button"
+          class={`relative flex aspect-square w-full shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === 'terminal' ? 'bg-background text-foreground shadow-sm' : ''}`}
+          title="Terminal"
+          aria-label="New terminal"
+          data-launch-option="terminal"
+          data-gesture-selected={selectedLaunchOption === 'terminal' ? 'true' : undefined}
+          onclick={(event) => onLaunchOptionClick(event, 'terminal')}
+        >
+          <KindIcon kind="terminal" size={19} />
+        </button>
+
+        {#if presets.length > 0}
+          <span class="flex h-5 shrink-0 items-center justify-center text-muted-foreground" title="Quick Launch">
+            <Rocket class="size-3" aria-hidden="true" />
+            <span class="sr-only">Quick Launch</span>
           </span>
           {#each presets as preset (preset.id)}
-            <Button
-              variant="ghost"
-              class={`h-7 w-full justify-start gap-2 px-2 text-xs ${selectedLaunchOption === `preset:${preset.id}` ? 'bg-muted text-foreground' : ''}`}
+            <button
+              type="button"
+              class={`relative flex aspect-square w-full shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === `preset:${preset.id}` ? 'bg-background text-foreground shadow-sm' : ''}`}
               title={preset.label}
               aria-label={preset.label}
               data-launch-option={`preset:${preset.id}`}
               data-gesture-selected={selectedLaunchOption === `preset:${preset.id}` ? 'true' : undefined}
               onclick={(event) => onLaunchOptionClick(event, `preset:${preset.id}`)}
             >
-              <KindIcon
-                kind={preset.provider}
-                size={14}
-              />
-              <span class="truncate">{preset.label}</span>
-            </Button>
+              <KindIcon kind={preset.provider} size={17} />
+              <span class="absolute right-1 bottom-1 size-1.5 rounded-full bg-primary/75" aria-hidden="true"></span>
+            </button>
           {/each}
-        </div>
-      {/if}
-      {#if usesDevicePlacement && devicePlan && devicePlan.action !== 'use-existing-location' && devicePlan.action !== 'use-device-directory' && pendingDeviceOption}
-        <div class="mt-1.5 border-t border-border pt-1.5">
-          <Button
-            size="sm"
-            class="h-8 w-full text-xs"
-            disabled={!devicePlan.executable || launchingDevice}
-            onclick={() => void prepareAndLaunch()}
-          >
-            {#if launchingDevice}<LoaderCircle class="size-3 animate-spin" />{/if}
-            {devicePlan.action === 'clone-project' ? 'Clone to this device' : 'Create checkout'}
-          </Button>
-        </div>
-      {/if}
+        {/if}
+      {/snippet}
+
+      {#snippet launcherFooter()}
+        {#if usesDevicePlacement && devicePlan && devicePlan.action !== 'use-existing-location' && devicePlan.action !== 'use-device-directory' && pendingDeviceOption}
+          <div class="border-t border-border p-2">
+            <Button
+              size="sm"
+              class="h-8 w-full text-xs"
+              disabled={!devicePlan.executable || launchingDevice}
+              onclick={() => void prepareAndLaunch()}
+            >
+              {#if launchingDevice}<LoaderCircle class="size-3 animate-spin" />{/if}
+              {devicePlan.action === 'clone-project' ? 'Clone to this device' : 'Create checkout'}
+            </Button>
+          </div>
+        {/if}
+      {/snippet}
+
+      <ProviderModelBrowser
+        provider={defaultBrowseProvider}
+        providers={agentProviders}
+        header={launcherHeader}
+        railFooter={launchRailFooter}
+        footer={launcherFooter}
+        onselect={(provider, model) => launchAgent(provider, model)}
+      />
     </div>
   </Popover.Content>
 </Popover.Root>
