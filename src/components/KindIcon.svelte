@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { Braces, Sparkles, TerminalSquare } from '@lucide/svelte';
+  import { TerminalSquare } from '@lucide/svelte';
   import type { SessionLaunchKind } from '@shared/types/sessions.js';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexLightUrl from '../lib/icons/codex-light.svg';
   import codexUrl from '../lib/icons/codex.svg';
   import cursorLightUrl from '../lib/icons/cursor-light.svg';
   import cursorUrl from '../lib/icons/cursor.svg';
+  import grokDarkUrl from '../lib/icons/grok-dark.svg';
+  import grokLightUrl from '../lib/icons/grok-light.svg';
+  import opencodeDarkUrl from '../lib/icons/opencode-dark.svg';
+  import opencodeLightUrl from '../lib/icons/opencode-light.svg';
 
   let { kind, size = 14 }: { kind: SessionLaunchKind; size?: number } = $props();
 
@@ -14,7 +18,13 @@
   > = {
     claude_code: { lightSrc: claudeUrl, alt: 'Claude' },
     codex: { lightSrc: codexLightUrl, darkSrc: codexUrl, alt: 'Codex' },
-    cursor: { lightSrc: cursorLightUrl, darkSrc: cursorUrl, alt: 'Cursor' }
+    cursor: { lightSrc: cursorLightUrl, darkSrc: cursorUrl, alt: 'Cursor' },
+    grok_build: { lightSrc: grokLightUrl, darkSrc: grokDarkUrl, alt: 'Grok Build' },
+    opencode: {
+      lightSrc: opencodeLightUrl,
+      darkSrc: opencodeDarkUrl,
+      alt: 'OpenCode'
+    }
   };
 
   let entry = $derived(sources[kind]);
@@ -40,10 +50,6 @@
   {/if}
 {:else if kind === 'terminal'}
   <TerminalSquare class="icon" size={size} aria-label="Terminal" />
-{:else if kind === 'opencode'}
-  <Braces class="icon" size={size} aria-label="OpenCode" />
-{:else if kind === 'grok_build'}
-  <Sparkles class="icon" size={size} aria-label="Grok Build" />
 {/if}
 
 <style>

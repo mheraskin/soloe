@@ -1066,13 +1066,16 @@
   }
 
   .mobile-form-grid,
-  .mobile-provider-grid,
-  .mobile-session-picker {
+  .mobile-provider-grid {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
-  .mobile-session-picker [data-slot='button'] {
-    min-height: 4rem;
+  .mobile-launch-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .mobile-launch-options [data-slot='button'] {
+    min-height: 3rem;
   }
 
   .mobile-command-dialog {

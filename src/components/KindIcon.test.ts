@@ -5,7 +5,9 @@ import KindIcon from './KindIcon.svelte';
 describe('KindIcon', () => {
   it.each([
     ['cursor', 'Cursor'],
-    ['codex', 'Codex']
+    ['codex', 'Codex'],
+    ['opencode', 'OpenCode'],
+    ['grok_build', 'Grok Build']
   ] as const)('renders light and dark logo variants for %s', (kind, alt) => {
     const { body } = render(KindIcon, { props: { kind, size: 24 } });
 

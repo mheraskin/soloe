@@ -44,6 +44,19 @@
   type LaunchOption = AgentRuntimeProvider | 'terminal' | `preset:${string}`;
   type PickerLevel = 'global' | 'project' | 'worktree';
 
+  const primaryLaunchOptions = [
+    { value: 'opencode', label: 'OpenCode', ariaLabel: 'New OpenCode session' },
+    { value: 'grok_build', label: 'Grok Build', ariaLabel: 'New Grok Build session' },
+    { value: 'claude_code', label: 'Claude', ariaLabel: 'New Claude session' },
+    { value: 'cursor', label: 'Cursor', ariaLabel: 'New Cursor session' },
+    { value: 'codex', label: 'Codex', ariaLabel: 'New Codex session' },
+    { value: 'terminal', label: 'Terminal', ariaLabel: 'New terminal' }
+  ] as const satisfies ReadonlyArray<{
+    value: AgentRuntimeProvider | 'terminal';
+    label: string;
+    ariaLabel: string;
+  }>;
+
   let {
     projectId = null,
     cwd = undefined,
@@ -982,83 +995,35 @@
           </Button>
         </div>
       {/if}
-      <div class="mobile-session-picker grid grid-cols-3 gap-1 sm:grid-cols-6">
-        <Button
-          variant="ghost"
-          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'opencode' ? 'bg-muted text-foreground' : ''}`}
-          title="New OpenCode session"
-          aria-label="New OpenCode session"
-          data-launch-option="opencode"
-          data-gesture-selected={selectedLaunchOption === 'opencode' ? 'true' : undefined}
-          onclick={(event) => onLaunchOptionClick(event, 'opencode')}
+      <div class="px-1 pb-1 pt-0.5">
+        <span class="mb-1.5 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          Start a session
+        </span>
+        <div
+          class="mobile-launch-options grid grid-cols-2 gap-1.5"
+          data-slot="launch-options"
         >
-          <KindIcon kind="opencode" size={20} />
-          <span class="truncate leading-none">OpenCode</span>
-        </Button>
-        <Button
-          variant="ghost"
-          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'grok_build' ? 'bg-muted text-foreground' : ''}`}
-          title="New Grok Build session"
-          aria-label="New Grok Build session"
-          data-launch-option="grok_build"
-          data-gesture-selected={selectedLaunchOption === 'grok_build' ? 'true' : undefined}
-          onclick={(event) => onLaunchOptionClick(event, 'grok_build')}
-        >
-          <KindIcon kind="grok_build" size={20} />
-          <span class="truncate leading-none">Grok</span>
-        </Button>
-        <Button
-          variant="ghost"
-          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'claude_code' ? 'bg-muted text-foreground' : ''}`}
-          title="New Claude session"
-          aria-label="New Claude session"
-          data-launch-option="claude_code"
-          data-gesture-selected={selectedLaunchOption === 'claude_code' ? 'true' : undefined}
-          onclick={(event) => onLaunchOptionClick(event, 'claude_code')}
-        >
-          <KindIcon kind="claude_code" size={20} />
-          <span class="truncate leading-none">Claude</span>
-        </Button>
-        <Button
-          variant="ghost"
-          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'cursor' ? 'bg-muted text-foreground' : ''}`}
-          title="New Cursor session"
-          aria-label="New Cursor session"
-          data-launch-option="cursor"
-          data-gesture-selected={selectedLaunchOption === 'cursor' ? 'true' : undefined}
-          onclick={(event) => onLaunchOptionClick(event, 'cursor')}
-        >
-          <KindIcon kind="cursor" size={20} />
-          <span class="truncate leading-none">Cursor</span>
-        </Button>
-        <Button
-          variant="ghost"
-          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'codex' ? 'bg-muted text-foreground' : ''}`}
-          title="New Codex session"
-          aria-label="New Codex session"
-          data-launch-option="codex"
-          data-gesture-selected={selectedLaunchOption === 'codex' ? 'true' : undefined}
-          onclick={(event) => onLaunchOptionClick(event, 'codex')}
-        >
-          <KindIcon kind="codex" size={20} />
-          <span class="truncate leading-none">Codex</span>
-        </Button>
-        <Button
-          variant="ghost"
-          class={`h-14 flex-col gap-1 px-1 text-xs ${selectedLaunchOption === 'terminal' ? 'bg-muted text-foreground' : ''}`}
-          title="New terminal"
-          aria-label="New terminal"
-          data-launch-option="terminal"
-          data-gesture-selected={selectedLaunchOption === 'terminal' ? 'true' : undefined}
-          onclick={(event) => onLaunchOptionClick(event, 'terminal')}
-        >
-          <KindIcon kind="terminal" size={20} />
-          <span class="truncate leading-none">Terminal</span>
-        </Button>
+          {#each primaryLaunchOptions as option (option.value)}
+            <Button
+              variant="ghost"
+              class={`h-11 w-full justify-start gap-2.5 rounded-lg border border-transparent bg-muted/20 px-2.5 text-xs font-medium hover:border-border hover:bg-muted/60 ${selectedLaunchOption === option.value ? 'border-border bg-muted text-foreground ring-1 ring-border' : ''}`}
+              title={option.ariaLabel}
+              aria-label={option.ariaLabel}
+              data-launch-option={option.value}
+              data-gesture-selected={selectedLaunchOption === option.value ? 'true' : undefined}
+              onclick={(event) => onLaunchOptionClick(event, option.value)}
+            >
+              <KindIcon kind={option.value} size={22} />
+              <span class="min-w-0 truncate leading-none">{option.label}</span>
+            </Button>
+          {/each}
+        </div>
       </div>
       {#if presets.length > 0}
-        <div class="my-1 border-t border-border"></div>
-        <div class="flex flex-col gap-0.5">
+        <div class="mx-1 mt-1 border-t border-border px-0 pt-2">
+          <span class="mb-1 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Quick launch
+          </span>
           {#each presets as preset (preset.id)}
             <Button
               variant="ghost"

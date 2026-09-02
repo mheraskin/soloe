@@ -321,6 +321,20 @@ describe('AgentLaunchPopover touch gestures', () => {
     expect(document.body.textContent).toContain('No project');
   });
 
+  it('renders full provider names in a two-column launch grid', () => {
+    const target = mountComponent(AgentLaunchPopover, {});
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const launchOptions = document.body.querySelector<HTMLElement>('[data-slot="launch-options"]');
+    const buttons = launchOptions?.querySelectorAll<HTMLButtonElement>('[data-launch-option]');
+    expect(launchOptions?.className).toContain('grid-cols-2');
+    expect(buttons).toHaveLength(6);
+    expect(launchOptions?.textContent).toContain('OpenCode');
+    expect(launchOptions?.textContent).toContain('Grok Build');
+  });
+
   it('refreshes the shared Device state as soon as the popover opens', async () => {
     const target = mountComponent(AgentLaunchPopover, {});
     const trigger = target.querySelector<HTMLButtonElement>('[aria-label="New session"]');
