@@ -14,6 +14,8 @@ import {
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
   shouldBlinkTerminalCursor,
+  shouldPredictTerminalBackspace,
+  shouldPredictTerminalLineBreak,
   shouldReportTerminalMouse,
   shouldShowTerminalLinkHover,
   terminalGridCellAt,
@@ -97,6 +99,53 @@ describe("terminalPrintableKeyText", () => {
         true,
       ),
     ).toBeNull();
+  });
+});
+
+describe("shouldPredictTerminalBackspace", () => {
+  const event = (
+    overrides: Partial<Parameters<typeof shouldPredictTerminalBackspace>[0]> = {},
+  ) => ({
+    altKey: false,
+    ctrlKey: false,
+    key: "Backspace",
+    metaKey: false,
+    ...overrides,
+  });
+
+  it("predicts a plain backspace on the primary screen", () => {
+    expect(shouldPredictTerminalBackspace(event())).toBe(true);
+  });
+
+  it("leaves word deletion, shortcuts, and alternate-screen input authoritative", () => {
+    expect(shouldPredictTerminalBackspace(event({ altKey: true }))).toBe(false);
+    expect(shouldPredictTerminalBackspace(event({ ctrlKey: true }))).toBe(false);
+    expect(shouldPredictTerminalBackspace(event({ metaKey: true }))).toBe(false);
+    expect(shouldPredictTerminalBackspace(event(), true)).toBe(false);
+  });
+});
+
+describe("shouldPredictTerminalLineBreak", () => {
+  const event = (
+    overrides: Partial<Parameters<typeof shouldPredictTerminalLineBreak>[0]> = {},
+  ) => ({
+    altKey: false,
+    ctrlKey: false,
+    key: "Enter",
+    metaKey: false,
+    shiftKey: true,
+    ...overrides,
+  });
+
+  it("predicts plain Shift+Enter on the primary screen", () => {
+    expect(shouldPredictTerminalLineBreak(event())).toBe(true);
+  });
+
+  it("leaves other Enter chords and alternate-screen input authoritative", () => {
+    expect(shouldPredictTerminalLineBreak(event({ shiftKey: false }))).toBe(false);
+    expect(shouldPredictTerminalLineBreak(event({ ctrlKey: true }))).toBe(false);
+    expect(shouldPredictTerminalLineBreak(event({ metaKey: true }))).toBe(false);
+    expect(shouldPredictTerminalLineBreak(event(), true)).toBe(false);
   });
 });
 

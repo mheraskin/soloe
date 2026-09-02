@@ -17,6 +17,7 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "./font";
 import { TerminalPredictionModel } from "./prediction";
+import { TerminalClipboardSequenceParser } from "./clipboard";
 import type { RemoteTerminalInputPriority } from "../remote-terminal-input";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
@@ -399,6 +400,33 @@ export function terminalPrintableKeyText(
   return event.key;
 }
 
+export function shouldPredictTerminalBackspace(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey">,
+  alternateScreen = false,
+): boolean {
+  return (
+    !alternateScreen
+    && event.key === "Backspace"
+    && !event.altKey
+    && !event.ctrlKey
+    && !event.metaKey
+  );
+}
+
+export function shouldPredictTerminalLineBreak(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  alternateScreen = false,
+): boolean {
+  return (
+    !alternateScreen
+    && event.key === "Enter"
+    && event.shiftKey
+    && !event.altKey
+    && !event.ctrlKey
+    && !event.metaKey
+  );
+}
+
 export function shouldReportTerminalMouse(
   tracking: boolean,
   event: Pick<MouseEvent, "ctrlKey" | "metaKey" | "shiftKey">,
@@ -615,6 +643,7 @@ export interface GhosttyTerminalSurfaceOptions {
    * default — whose Paste entry can never reach a canvas terminal.
    */
   readonly onContextMenu?: (event: MouseEvent) => void;
+  readonly onClipboardWrite?: (text: string) => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -696,6 +725,7 @@ export class GhosttyTerminalSurface {
   private inputTop = -1;
   private searchCursor: { query: string; row: number; column: number } | null = null;
   private readonly prediction: TerminalPredictionModel | null;
+  private readonly clipboardParser = new TerminalClipboardSequenceParser();
 
   private constructor(
     mount: HTMLElement,
@@ -820,6 +850,7 @@ export class GhosttyTerminalSurface {
   write(data: string | Uint8Array): void {
     if (this.disposed) return;
     const hadPrediction = this.prediction?.hasPending() ?? false;
+    for (const text of this.clipboardParser.push(data)) this.options.onClipboardWrite?.(text);
     this.core.write(data);
     if (hadPrediction) {
       const snapshot = this.core.snapshot();
@@ -837,6 +868,7 @@ export class GhosttyTerminalSurface {
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.clearPrediction();
+    this.clipboardParser.reset();
     this.core.resetAndWrite(data);
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
@@ -849,6 +881,7 @@ export class GhosttyTerminalSurface {
   resetAndReplay(data: string, plan: GhosttyReplayPlan): void {
     if (this.disposed) return;
     this.clearPrediction();
+    this.clipboardParser.reset();
     this.core.resetAndReplay(data, plan);
     const finalDimensions = plan.resizes.at(-1) ?? plan;
     if (this.cols !== finalDimensions.cols || this.rows !== finalDimensions.rows) {
@@ -876,6 +909,27 @@ export class GhosttyTerminalSurface {
       this.requestRender();
     }
     this.options.onData(data, priority);
+  }
+
+  private sendPredictedBackspace(data: string): void {
+    if (data.length === 0) return;
+    if (this.prediction?.backspace()) {
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    this.options.onData(data, "immediate");
+  }
+
+  private sendPredictedLineBreak(data: string): void {
+    if (data.length === 0) return;
+    if (this.prediction) {
+      const snapshot = this.core.snapshot();
+      this.snapshot = snapshot;
+      this.prediction.lineBreak(snapshot);
+      this.forceFullRender = true;
+      this.requestRender();
+    }
+    this.options.onData(data, "immediate");
   }
 
   private inputBoundary(): void {
@@ -1378,7 +1432,16 @@ export class GhosttyTerminalSurface {
     event.stopPropagation();
     // Printable keys are commands in alternate-screen TUIs, so they must not
     // wait for the shell-oriented text micro-batch or render speculatively.
-    const text = terminalPrintableKeyText(event, this.core.isAlternateScreen());
+    const alternateScreen = this.core.isAlternateScreen();
+    const text = terminalPrintableKeyText(event, alternateScreen);
+    if (shouldPredictTerminalBackspace(event, alternateScreen)) {
+      this.sendPredictedBackspace(data);
+      return;
+    }
+    if (shouldPredictTerminalLineBreak(event, alternateScreen)) {
+      this.sendPredictedLineBreak(data);
+      return;
+    }
     this.sendUserInput(data, text === null ? "immediate" : "text", text ?? undefined);
   };
 

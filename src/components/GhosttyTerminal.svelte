@@ -22,6 +22,13 @@
     onSelectionChange = () => undefined,
     onLinkActivate = () => undefined,
     onContextMenu = () => undefined,
+    onClipboardWrite = (text: string) => {
+      const clipboard = navigator.clipboard;
+      if (typeof clipboard?.writeText !== 'function') return;
+      void clipboard.writeText(text).catch((error) => {
+        console.warn('[ghostty] failed to write terminal clipboard', error);
+      });
+    },
     onReady = () => undefined
   }: {
     state: TerminalSessionState;
@@ -37,6 +44,7 @@
     onSelectionChange?: () => void;
     onLinkActivate?: (text: string, event: MouseEvent) => void;
     onContextMenu?: (event: MouseEvent) => void;
+    onClipboardWrite?: (text: string) => void;
     onReady?: () => void;
   } = $props();
 
@@ -69,7 +77,8 @@
       onSelectionChange: () => onSelectionChange(),
       beforeKey: (event) => interactive && beforeKey(event),
       onLinkActivate: (text, event) => onLinkActivate(text, event),
-      onContextMenu: (event) => onContextMenu(event)
+      onContextMenu: (event) => onContextMenu(event),
+      onClipboardWrite: (text) => onClipboardWrite(text)
     }).then((created) => {
       if (cancelled) {
         created.dispose();

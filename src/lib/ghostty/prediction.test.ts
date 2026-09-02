@@ -15,6 +15,51 @@ describe('TerminalPredictionModel', () => {
     });
   });
 
+  it('removes only the last unconfirmed character on backspace', () => {
+    const model = new TerminalPredictionModel();
+    const initial = snapshot('', 0);
+    model.type('a', initial);
+    model.type('b', initial);
+    model.type('c', initial);
+
+    expect(model.backspace()).toBe(true);
+    expect(model.overlay(initial)).toEqual({
+      cells: [
+        { x: 0, y: 0, text: 'a' },
+        { x: 1, y: 0, text: 'b' }
+      ],
+      cursor: { x: 2, y: 0 }
+    });
+  });
+
+  it('continues prediction on the next input row after Shift+Enter', () => {
+    const model = new TerminalPredictionModel();
+    const initial = snapshot('', 2, 8, 3);
+    model.type('a', initial);
+    model.type('b', initial);
+
+    expect(model.lineBreak(initial)).toBe(true);
+    expect(model.type('c', initial)).toBe(true);
+    expect(model.overlay(initial)).toEqual({
+      cells: [
+        { x: 2, y: 0, text: 'a' },
+        { x: 3, y: 0, text: 'b' },
+        { x: 2, y: 1, text: 'c' }
+      ],
+      cursor: { x: 3, y: 1 }
+    });
+
+    expect(model.backspace()).toBe(true);
+    expect(model.backspace()).toBe(true);
+    expect(model.overlay(initial)).toEqual({
+      cells: [
+        { x: 2, y: 0, text: 'a' },
+        { x: 3, y: 0, text: 'b' }
+      ],
+      cursor: { x: 4, y: 0 }
+    });
+  });
+
   it('reconciles immediate predictions as the remote echo catches up', () => {
     const model = new TerminalPredictionModel();
     const initial = snapshot('', 0);
