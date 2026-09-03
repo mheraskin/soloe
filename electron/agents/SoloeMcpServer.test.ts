@@ -41,6 +41,7 @@ describe('SoloeMcpServer', () => {
     });
     expect(JSON.stringify(tools)).toContain('create_worker_session');
     expect(JSON.stringify(tools)).toContain('cursor');
+    expect(JSON.stringify(tools)).toContain('get_artifact_authoring_guide');
     expect(JSON.stringify(tools)).toContain('list_artifacts');
     expect(JSON.stringify(tools)).toContain('publish_artifact');
     expect(JSON.stringify(tools)).toContain('edit_artifact');
@@ -50,6 +51,15 @@ describe('SoloeMcpServer', () => {
         tools: expect.arrayContaining([
           expect.objectContaining({
             name: 'list_artifacts',
+            annotations: {
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false
+            }
+          }),
+          expect.objectContaining({
+            name: 'get_artifact_authoring_guide',
             annotations: {
               readOnlyHint: true,
               destructiveHint: false,
@@ -66,6 +76,15 @@ describe('SoloeMcpServer', () => {
       arguments: { cwd: '/repo' }
     })).resolves.toMatchObject({ projectId: 'project' });
     expect(listArtifacts).toHaveBeenCalledWith({ cwd: '/repo' });
+
+    await expect(server.handlePayload({
+      tool: 'get_artifact_authoring_guide',
+      arguments: { kind: 'project-status' }
+    })).resolves.toMatchObject({
+      kind: 'project-status',
+      canonicalFormat: 'html',
+      pagePlan: { always: expect.arrayContaining([expect.stringContaining('workstream')]) }
+    });
 
     const created = await server.handlePayload({
       tool: 'create_worker_session',
@@ -88,6 +107,28 @@ describe('SoloeMcpServer', () => {
       arguments: { workerId: created.workerId }
     });
     expect(JSON.stringify(status)).toContain('sdk_worker');
+  });
+
+  it('rejects unknown artifact authoring guide kinds at the MCP boundary', async () => {
+    const observer = new AgentObserverManager();
+    const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
+    const server = new SoloeMcpServer({ observer, runtime, token: 'secret' });
+
+    const response = await server.handlePayload({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'get_artifact_authoring_guide',
+        arguments: { kind: 'copied-template' }
+      }
+    });
+
+    expect(response).toMatchObject({
+      error: {
+        message: 'kind must be one of: general, project-status, software-delivery'
+      }
+    });
   });
 
   it('keeps the exact Worktree Scope through Git resolution and diff transport', async () => {

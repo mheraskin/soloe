@@ -16,6 +16,12 @@ import type {
   SessionHookTraceEvent
 } from '@shared/types/session-debug.js';
 import { MAX_ARTIFACT_HTML_BYTES } from '../artifacts/ArtifactStore.js';
+import {
+  ARTIFACT_GUIDE_KINDS,
+  artifactAuthoringGuide,
+  isArtifactGuideKind,
+  type ArtifactGuideKind
+} from '../artifacts/ArtifactAuthoringGuide.js';
 
 export type HookProvider = SessionHookProvider;
 
@@ -78,9 +84,28 @@ interface McpTool {
 
 const TOOLS: McpTool[] = [
   {
+    name: 'get_artifact_authoring_guide',
+    description:
+      'Read Soloe-native guidance before drafting a substantial artifact. Choose general for reports and specifications, project-status for a multi-workstream Project brief, or software-delivery for branch, pull-request, release, and implementation tracking. The result covers document structure, evidence, responsive HTML, security, Soloe navigation, and the publish/edit flow. This read-only tool returns guidance and does not inspect the repository or publish anything.',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['kind'],
+      properties: {
+        kind: { type: 'string', enum: ARTIFACT_GUIDE_KINDS }
+      }
+    }
+  },
+  {
     name: 'list_artifacts',
     description:
-      'Read lightweight metadata for the Soloe Project resolved from cwd. This operation uses cwd only to identify an already-registered Project and does not read repository files. Call this before publishing when existing context or links matter. Soloe artifacts are permanent HTML documents; list does not return their HTML bodies.',
+      'Read lightweight metadata for the Soloe Project resolved from cwd. This operation uses cwd only to identify an already-registered Project and does not read repository files. Call this before publishing when existing context or links matter. For a substantial new document, call get_artifact_authoring_guide with the closest kind before drafting. Soloe artifacts are permanent HTML documents; list does not return their HTML bodies.',
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -97,7 +122,7 @@ const TOOLS: McpTool[] = [
   {
     name: 'publish_artifact',
     description:
-      'Publish a permanent HTML artifact into the Soloe Project resolved from cwd. Supply exactly one of inline html or a safe local .html path. Markdown may be source material, but published artifacts must be self-contained, visually intentional HTML with a concise meaningful description. Call list_artifacts first when links to existing context matter. A custom home can navigate with window.parent.postMessage({channel:"soloe.artifacts",action:"open",artifactId:"..."}, "*"). Publishing signals activity but does not open the Soloe UI. Set as_home to replace the generated Project home with this user-authored HTML.',
+      'Publish a permanent HTML artifact into the Soloe Project resolved from cwd. For a substantial document, call get_artifact_authoring_guide with the closest kind before drafting. Supply exactly one of inline html or a safe local .html path. Markdown may be source material, but published artifacts must be self-contained, visually intentional HTML with a concise meaningful description. Call list_artifacts first when links to existing context matter. A custom home can navigate with window.parent.postMessage({channel:"soloe.artifacts",action:"open",artifactId:"..."}, "*"). Publishing signals activity but does not open the Soloe UI. Set as_home to replace the generated Project home with this user-authored HTML.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -117,7 +142,7 @@ const TOOLS: McpTool[] = [
   {
     name: 'edit_artifact',
     description:
-      'Replace one existing Soloe HTML artifact while preserving its identity and creation time. Supply cwd, id, and exactly one of inline html or a safe local .html path; title and description are optional replacements. Editing the home artifact makes it user-authored, so later catalog changes preserve its HTML exactly.',
+      'Replace one existing Soloe HTML artifact while preserving its identity and creation time. For a substantial structural rewrite, call get_artifact_authoring_guide with the closest kind before drafting. Supply cwd, id, and exactly one of inline html or a safe local .html path; title and description are optional replacements. Editing the home artifact makes it user-authored, so later catalog changes preserve its HTML exactly.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -534,6 +559,8 @@ export class SoloeMcpServer {
 
   private async callTool(name: string, args: Record<PropertyKey, unknown>): Promise<unknown> {
     switch (name) {
+      case 'get_artifact_authoring_guide':
+        return artifactAuthoringGuide(requiredArtifactGuideKind(args));
       case 'create_worker_session':
         return this.opts.runtime.createWorkerSession({
           originSessionId: requiredString(args, 'originSessionId'),
@@ -660,6 +687,14 @@ export class SoloeMcpServer {
       truncated: between.truncated
     };
   }
+}
+
+function requiredArtifactGuideKind(
+  args: Record<PropertyKey, unknown>
+): ArtifactGuideKind {
+  const value = args['kind'];
+  if (isArtifactGuideKind(value)) return value;
+  throw new Error(`kind must be one of: ${ARTIFACT_GUIDE_KINDS.join(', ')}`);
 }
 
 function hookProviderForUrl(url: string): HookProvider | null {
