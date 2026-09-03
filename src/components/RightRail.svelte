@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import {
     NotebookPen,
+    LibraryBig,
     GitCompare,
     ArrowLeftRight,
     FolderTree,
@@ -12,6 +13,8 @@
   import type { Component } from 'svelte';
   import { rightRail, type RailTabId } from '../stores/right-rail.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
+  import { projects } from '../stores/projects.svelte';
+  import { artifacts } from '../stores/artifacts.svelte';
   import { sidebar } from '../stores/sidebar.svelte';
   import { createFeatureScope, featuresStore } from '../stores/features.svelte';
   import { Keymap } from '../lib/keymap';
@@ -27,6 +30,7 @@
   import LazyRailContent from './rail/LazyRailContent.svelte';
 
   const loadDiffTab = () => import('./diff/RailDiffTab.svelte');
+  const loadArtifactsTab = () => import('./rail/RailArtifactsTab.svelte');
   const loadFilesTab = () => import('./files/RailFilesTab.svelte');
   const loadFeatureTab = () => import('./feature/RailFeatureTab.svelte');
   const loadBrowserTab = () => import('./rail/RailBrowserTab.svelte');
@@ -40,6 +44,7 @@
 
   const browserPaneAvailable = supportsBackendOperation('browser', 'openDevTools');
   const tabs: Tab[] = [
+    { id: 'artifacts', label: 'Artifacts', icon: LibraryBig },
     { id: 'diff', label: 'Working diff', icon: GitCompare, shortcut: Keymap.toggleDiffRail.keys },
     { id: 'files', label: 'Files', icon: FolderTree, shortcut: Keymap.toggleFilesRail.keys },
     { id: 'feature', label: 'Feature Lab', icon: Microscope, shortcut: Keymap.toggleFeatureRail.keys },
@@ -135,6 +140,7 @@
   // unmount, while hidden DOM, observers, timers, editors, and review prefetch
   // release immediately on Worktree switches, close, and fullscreen hiding.
   let diffMountedHere = $derived(tabVisible('diff'));
+  let artifactsMountedHere = $derived(tabVisible('artifacts'));
   let filesMountedHere = $derived(tabVisible('files'));
   let featureMountedHere = $derived(tabVisible('feature'));
   let browserMountedHere = $derived(browserPaneAvailable && tabVisible('browser'));
@@ -144,6 +150,46 @@
     const cwd = deviceSessions.activeSession?.cwd?.trim();
     return cwd && cwd.length > 0 ? cwd : null;
   });
+  let activeArtifactProject = $derived.by(() => {
+    const id = deviceSessions.activeSession?.projectId;
+    if (!id) return null;
+    return {
+      id,
+      name: projects.get(id)?.name ?? deviceSessions.activeProject?.name ?? 'Project'
+    };
+  });
+  let artifactRoute = $derived(
+    deviceSessions.activeRemoteDeviceId
+      ? { deviceId: deviceSessions.activeRemoteDeviceId }
+      : undefined
+  );
+  let artifactsUnread = $derived(artifacts.unread(activeArtifactProject?.id));
+
+  $effect(() => {
+    const project = activeArtifactProject;
+    if (!project) return;
+    void artifacts.ensureCatalog(project, artifactRoute).catch(() => undefined);
+  });
+
+  async function activateTab(tab: RailTabId): Promise<void> {
+    if (tab !== 'artifacts') {
+      await toggleRailTabAndFocus(tab);
+      return;
+    }
+    if (mobileWorkspace) rightRail.openTab(tab);
+    else rightRail.openFullscreenTab(tab);
+    const project = activeArtifactProject;
+    if (project) {
+      try {
+        await artifacts.ensureCatalog(project, artifactRoute, true);
+        await artifacts.openHome(project, artifactRoute);
+        artifacts.markSeen(project.id);
+      } catch {
+        // The pane reports loading failures; opening it remains intentional.
+      }
+    }
+    window.dispatchEvent(new CustomEvent('soloe:focus-pane', { detail: { tabId: tab } }));
+  }
   let featureNeedsSetup = $derived.by<boolean>(() => {
     const selected = deviceSessions.activeSession;
     if (!activeCwd || !selected) return false;
@@ -383,6 +429,12 @@
     </div>
   {/if}
 
+  {#if artifactsMountedHere}
+    <div class={paneClasses('artifacts')} style={paneStyle('artifacts')} data-pane-slot={slotOf('artifacts')}>
+      <LazyRailContent label="artifacts" load={loadArtifactsTab} />
+    </div>
+  {/if}
+
   {#if filesMountedHere}
     <div class={paneClasses('files')} style={paneStyle('files')} data-pane-slot={slotOf('files')}>
       <LazyRailContent label="files" load={loadFilesTab} />
@@ -420,7 +472,7 @@
     <nav class="rail-tabbar order-[99] flex w-10 flex-shrink-0 flex-col items-center gap-1 pt-2" aria-label="Rail tabs">
       {#each tabs as tab (tab.id)}
         {@const isActive = openTabs.includes(tab.id)}
-        {@const showDot = tab.id === 'feature' && featureNeedsSetup && !isActive}
+        {@const showDot = (tab.id === 'feature' && featureNeedsSetup && !isActive) || (tab.id === 'artifacts' && artifactsUnread)}
         <Tooltip.Root disabled={kbdHints.altHeld}>
           <Tooltip.Trigger>
             {#snippet child({ props })}
@@ -433,7 +485,7 @@
                       ? 'bg-muted text-foreground'
                       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                   }`}
-                  onclick={() => toggleRailTabAndFocus(tab.id)}
+                  onclick={() => activateTab(tab.id)}
                   aria-label={tab.label}
                   aria-pressed={isActive}
                 >

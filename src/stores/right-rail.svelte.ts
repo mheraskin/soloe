@@ -1,4 +1,4 @@
-export type RailTabId = 'notes' | 'diff' | 'files' | 'feature' | 'browser';
+export type RailTabId = 'artifacts' | 'notes' | 'diff' | 'files' | 'feature' | 'browser';
 
 // Maximum number of rail panes that can be open simultaneously. Two panes
 // stack side-by-side in the rail; opening a third drops the oldest.
@@ -28,6 +28,7 @@ const DIFF_SCROLL_KEY = 'soloe.diffScroll.v1';
 const FILES_SCROLL_KEY = 'soloe.filesScroll.v1';
 
 const ALL_TABS: ReadonlySet<RailTabId> = new Set([
+  'artifacts',
   'notes',
   'diff',
   'files',
@@ -278,6 +279,13 @@ export class RightRailStore {
     let next = [...state.openTabs, tab];
     if (next.length > this.paneLimit) next = next.slice(-this.paneLimit);
     this.patch({ openTabs: next });
+  }
+
+  openFullscreenTab(tab: RailTabId): void {
+    const state = this.current();
+    const openTabs = [...state.openTabs.filter((candidate) => candidate !== tab), tab]
+      .slice(-this.paneLimit);
+    this.patch({ openTabs, fullscreen: true, fullscreenTab: tab });
   }
 
   toggleTab(tab: RailTabId): void {

@@ -26,6 +26,7 @@
   import { platform } from './stores/platform.svelte';
   import { projects } from './stores/projects.svelte';
   import { notes } from './stores/notes.svelte';
+  import { artifacts } from './stores/artifacts.svelte';
   import { git } from './stores/git.svelte';
   import { workingDiff } from './stores/working-diff.svelte';
   import { nav, type WorktreeIndexTarget } from './stores/nav.svelte';
@@ -164,6 +165,7 @@
     connections.attachListeners();
     projects.attachListeners();
     notes.attachListeners();
+    artifacts.attachListeners();
     git.attachListeners();
     workingDiff.attachListeners();
     vaultStore.attachListeners();
@@ -196,6 +198,7 @@
       connections.detach();
       projects.detach();
       notes.detach();
+      artifacts.detach();
       workingDiff.detach();
       git.detach();
       vaultStore.detach();
