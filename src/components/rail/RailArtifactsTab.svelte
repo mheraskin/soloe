@@ -4,6 +4,8 @@
     ArrowLeft,
     Home,
     Loader2,
+    Maximize2,
+    Minimize2,
     RefreshCw,
     Trash2,
     LibraryBig
@@ -13,11 +15,13 @@
   import { projects } from '../../stores/projects.svelte';
   import { deviceSessions } from '../../stores/device-sessions.svelte';
   import { confirmStore } from '../../stores/confirm.svelte';
+  import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { parseArtifactFrameMessage } from '../../lib/artifact-frame-messages';
   import { Button } from '$lib/components/ui/button';
 
   let frame: HTMLIFrameElement | null = $state(null);
+  let root: HTMLElement | null = $state(null);
   let activeProjectId = $derived(deviceSessions.activeSession?.projectId ?? null);
   let activeProject = $derived.by<ArtifactProjectRef | null>(() => {
     if (!activeProjectId) return null;
@@ -73,8 +77,29 @@
       }
       void confirmAndDelete(project, message.artifactId, member.title);
     };
+    const focusContent = () => (frame ?? root)?.focus();
+    const onRefocus = () => {
+      if (rightRail.activeTab === 'artifacts') focusContent();
+    };
+    const onFocusPane = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail: unknown = event.detail;
+      if (
+        typeof detail !== 'object'
+        || detail === null
+        || !('tabId' in detail)
+        || detail.tabId !== 'artifacts'
+      ) return;
+      focusContent();
+    };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    window.addEventListener('soloe:refocus-rail', onRefocus);
+    window.addEventListener('soloe:focus-pane', onFocusPane);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      window.removeEventListener('soloe:refocus-rail', onRefocus);
+      window.removeEventListener('soloe:focus-pane', onFocusPane);
+    };
   });
 
   function goHome(): void {
@@ -117,59 +142,85 @@
   }
 </script>
 
-<section class="flex h-full min-h-0 flex-col bg-background" aria-label="Artifacts">
-  <header class="flex h-11 flex-none items-center gap-1 border-b border-border px-2">
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      onclick={goBack}
-      disabled={!activeProject || loading}
-      aria-label="Back"
-      title="Back"
-    >
-      <ArrowLeft />
-    </Button>
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      onclick={goHome}
-      disabled={!snapshot?.homeArtifactId || loading}
-      aria-label="Artifact home"
-      title="Artifact home"
-    >
-      <Home />
-    </Button>
-    <div class="min-w-0 flex-1 px-2">
-      <p class="truncate text-sm font-medium">{document?.title ?? 'Artifacts'}</p>
-      {#if document && !document.isHome}
-        <p class="truncate text-[11px] text-muted-foreground">{document.description}</p>
-      {/if}
-    </div>
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      onclick={refresh}
-      disabled={!activeProject || loading}
-      aria-label="Refresh artifacts"
-      title="Refresh"
-    >
-      <RefreshCw class={loading ? 'animate-spin' : undefined} />
-    </Button>
-    {#if canDelete}
+<section
+  bind:this={root}
+  class="mobile-artifacts-surface flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background outline-none"
+  aria-label="Artifacts"
+  tabindex="-1"
+>
+  <header class="mobile-rail-header soloe-pane-header min-w-0 justify-between">
+    <div class="flex min-w-0 flex-1 items-center gap-1">
       <Button
         variant="ghost"
-        size="icon-sm"
-        class="text-muted-foreground hover:text-destructive"
-        onclick={deleteCurrent}
-        aria-label="Delete current artifact"
-        title="Delete artifact"
+        size="icon-xs"
+        onclick={goBack}
+        disabled={!activeProject || loading}
+        aria-label="Back"
+        title="Back"
       >
-        <Trash2 />
+        <ArrowLeft class="size-3" />
       </Button>
-    {/if}
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        onclick={goHome}
+        disabled={!snapshot?.homeArtifactId || loading}
+        aria-label="Artifact home"
+        title="Artifact home"
+      >
+        <Home class="size-3" />
+      </Button>
+      <div class="flex min-w-0 items-center gap-1.5 px-1">
+        <span class="shrink-0 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+          Artifacts
+        </span>
+        <span class="text-muted-foreground/35" aria-hidden="true">·</span>
+        <span class="truncate text-[11px] text-foreground" title={document?.title ?? 'Artifacts'}>
+          {document?.title ?? activeProject?.name ?? 'No project selected'}
+        </span>
+      </div>
+    </div>
+    <div class="flex shrink-0 items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        onclick={refresh}
+        disabled={!activeProject || loading}
+        aria-label="Refresh artifacts"
+        title="Refresh"
+      >
+        <RefreshCw class={loading ? 'size-3 animate-spin' : 'size-3'} />
+      </Button>
+      {#if canDelete}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          class="text-muted-foreground hover:text-destructive"
+          onclick={deleteCurrent}
+          aria-label="Delete current artifact"
+          title="Delete artifact"
+        >
+          <Trash2 class="size-3" />
+        </Button>
+      {/if}
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        onclick={() => rightRail.toggleFullscreen()}
+        aria-label={rightRail.fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        title={rightRail.fullscreen ? 'Exit fullscreen (Ctrl+Shift+M)' : 'Fullscreen (Ctrl+Shift+M)'}
+        aria-pressed={rightRail.fullscreen}
+      >
+        {#if rightRail.fullscreen}
+          <Minimize2 class="size-3" />
+        {:else}
+          <Maximize2 class="size-3" />
+        {/if}
+      </Button>
+    </div>
   </header>
 
-  <div class="relative min-h-0 flex-1 bg-muted/20">
+  <div class="relative min-h-0 flex-1 bg-background">
     {#if !activeProject}
       <div class="flex h-full flex-col items-center justify-center px-8 text-center">
         <LibraryBig class="mb-3 size-8 text-muted-foreground/60" />
@@ -200,7 +251,7 @@
     {:else if document}
       <iframe
         bind:this={frame}
-        class="h-full w-full border-0 bg-white"
+        class="h-full w-full border-0 bg-background"
         title={document.title}
         sandbox="allow-scripts"
         srcdoc={document.html}

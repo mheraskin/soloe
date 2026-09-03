@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     NotebookPen,
     LibraryBig,
@@ -176,8 +176,15 @@
       await toggleRailTabAndFocus(tab);
       return;
     }
-    if (mobileWorkspace) rightRail.openTab(tab);
-    else rightRail.openFullscreenTab(tab);
+    const wasOpen = rightRail.openTabs.includes(tab);
+    if (mobileWorkspace) {
+      rightRail.toggleTab(tab);
+    } else {
+      rightRail.toggleFullscreenTab(tab);
+    }
+    if (wasOpen || !rightRail.openTabs.includes(tab)) return;
+    await tick();
+    window.dispatchEvent(new CustomEvent('soloe:focus-pane', { detail: { tabId: tab } }));
     const project = activeArtifactProject;
     if (project) {
       try {
@@ -188,7 +195,6 @@
         // The pane reports loading failures; opening it remains intentional.
       }
     }
-    window.dispatchEvent(new CustomEvent('soloe:focus-pane', { detail: { tabId: tab } }));
   }
   let featureNeedsSetup = $derived.by<boolean>(() => {
     const selected = deviceSessions.activeSession;

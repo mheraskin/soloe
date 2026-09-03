@@ -288,6 +288,15 @@ export class RightRailStore {
     this.patch({ openTabs, fullscreen: true, fullscreenTab: tab });
   }
 
+  toggleFullscreenTab(tab: RailTabId): void {
+    const state = this.current();
+    if (state.openTabs.includes(tab)) {
+      this.toggleTab(tab);
+      return;
+    }
+    this.openFullscreenTab(tab);
+  }
+
   toggleTab(tab: RailTabId): void {
     const state = this.current();
     // Per user feedback (2026-05-20): clicking any rail icon while a pane

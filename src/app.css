@@ -1306,6 +1306,7 @@
     min-height: 4rem;
   }
 
+  .mobile-artifacts-surface button,
   .mobile-files-surface button,
   .mobile-notes-surface button,
   .mobile-feature-surface button {

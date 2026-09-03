@@ -64,15 +64,35 @@ describe('RightRailStore logical continuity', () => {
     expect(store.fullscreenTab).toBeNull();
   });
 
-  it('opens Artifacts fullscreen in one state transition', () => {
+  it('opens and closes a fullscreen-first tab with the same icon', () => {
     const store = new RightRailStore();
     store.setActiveCwd('/worktrees/alpha');
     store.openTab('diff');
 
-    store.openFullscreenTab('artifacts');
+    store.toggleFullscreenTab('artifacts');
 
     expect(store.openTabs).toEqual(['diff', 'artifacts']);
     expect(store.fullscreen).toBe(true);
     expect(store.fullscreenTab).toBe('artifacts');
+
+    store.toggleFullscreenTab('artifacts');
+
+    expect(store.openTabs).toEqual([]);
+    expect(store.fullscreen).toBe(false);
+    expect(store.fullscreenTab).toBeNull();
+  });
+
+  it('removes a fullscreen-first tab normally after leaving fullscreen', () => {
+    const store = new RightRailStore();
+    store.setActiveCwd('/worktrees/alpha');
+    store.openTab('diff');
+    store.toggleFullscreenTab('artifacts');
+    store.toggleFullscreen();
+
+    store.toggleFullscreenTab('artifacts');
+
+    expect(store.openTabs).toEqual(['diff']);
+    expect(store.fullscreen).toBe(false);
+    expect(store.fullscreenTab).toBeNull();
   });
 });
