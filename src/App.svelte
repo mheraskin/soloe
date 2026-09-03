@@ -701,8 +701,26 @@
       && Boolean(e.target.closest('[data-browser-surface]'));
   }
 
-  function dispatchBrowserZoom(direction: 'in' | 'out' | 'reset'): void {
-    window.dispatchEvent(new CustomEvent('soloe:browser-zoom', { detail: { direction } }));
+  function dispatchRailContentZoom(
+    keyEvent: KeyboardEvent,
+    direction: 'in' | 'out' | 'reset'
+  ): boolean {
+    if (!rightRail.open) return false;
+    const artifactsFocused = keyEvent.target instanceof Element
+      && Boolean(keyEvent.target.closest('[data-artifacts-surface]'));
+    const target = isBrowserKeyTarget(keyEvent)
+      ? 'browser'
+      : artifactsFocused
+        ? 'artifacts'
+        : rightRail.activeTab;
+    const eventName = target === 'browser'
+      ? 'soloe:browser-zoom'
+      : target === 'artifacts'
+        ? 'soloe:artifacts-zoom'
+        : null;
+    if (!eventName) return false;
+    window.dispatchEvent(new CustomEvent(eventName, { detail: { direction } }));
+    return true;
   }
 
   // Ctrl+; cycles focus: terminal → pane slot 0 → pane slot 1 (if open) →
@@ -1241,9 +1259,8 @@
     }
     if (Keymap.zoomIn.match(e)) {
       consume(e);
-      if (isBrowserTabActive()) {
-        dispatchBrowserZoom('in');
-      } else if (!supportsBackendOperation('window', 'zoomIn')) {
+      if (dispatchRailContentZoom(e, 'in')) return;
+      if (!supportsBackendOperation('window', 'zoomIn')) {
         changePageZoom('in');
       } else {
         void ipc.window.zoomIn().catch(reportError);
@@ -1252,9 +1269,8 @@
     }
     if (Keymap.zoomOut.match(e)) {
       consume(e);
-      if (isBrowserTabActive()) {
-        dispatchBrowserZoom('out');
-      } else if (!supportsBackendOperation('window', 'zoomOut')) {
+      if (dispatchRailContentZoom(e, 'out')) return;
+      if (!supportsBackendOperation('window', 'zoomOut')) {
         changePageZoom('out');
       } else {
         void ipc.window.zoomOut().catch(reportError);
@@ -1263,9 +1279,8 @@
     }
     if (Keymap.zoomReset.match(e)) {
       consume(e);
-      if (isBrowserTabActive()) {
-        dispatchBrowserZoom('reset');
-      } else if (!supportsBackendOperation('window', 'zoomIn')) {
+      if (dispatchRailContentZoom(e, 'reset')) return;
+      if (!supportsBackendOperation('window', 'zoomIn')) {
         changePageZoom('reset');
       }
       // Native hosts do not expose a global reset action. Web clients reset

@@ -1,7 +1,8 @@
 import { ipcMain, protocol } from 'electron';
 import {
   ARTIFACT_FRAME_CONTENT_SECURITY_POLICY,
-  ArtifactFrameRegistry
+  ArtifactFrameRegistry,
+  artifactFrameDocument
 } from '@soloe/domain';
 import { IpcChannels } from '@shared/types/ipc.js';
 import { ipcInvoke } from '../ipc/result.js';
@@ -60,7 +61,7 @@ export function artifactFrameResponse(
       headers: { 'content-type': 'text/plain; charset=utf-8' }
     });
   }
-  return new Response(html, {
+  return new Response(artifactFrameDocument(html), {
     status: 200,
     headers: artifactFrameHeaders()
   });

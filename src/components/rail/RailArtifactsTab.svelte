@@ -19,10 +19,20 @@
   import { rightRail } from '../../stores/right-rail.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { parseArtifactFrameMessage } from '../../lib/artifact-frame-messages';
+  import {
+    isContentZoomDirection,
+    nextContentZoomFactor,
+    type ContentZoomDirection
+  } from '../../lib/content-zoom';
   import { Button } from '$lib/components/ui/button';
 
   let frame: HTMLIFrameElement | null = $state(null);
   let root: HTMLElement | null = $state(null);
+  let zoomFactor = $state(1);
+  let zoomPercent = $derived(Math.round(zoomFactor * 100));
+  let frameStyle = $derived(
+    `width: ${100 / zoomFactor}%; height: ${100 / zoomFactor}%; transform: scale(${zoomFactor}); transform-origin: top left;`
+  );
   let activeProjectId = $derived(deviceSessions.activeSession?.projectId ?? null);
   let activeProject = $derived.by<ArtifactProjectRef | null>(() => {
     if (!activeProjectId) return null;
@@ -77,6 +87,10 @@
     const onMessage = (event: MessageEvent) => {
       if (!frame || event.source !== frame.contentWindow) return;
       const message = parseArtifactFrameMessage(event.data);
+      if (message?.action === 'zoom') {
+        applyZoom(message.direction);
+        return;
+      }
       const project = activeProject;
       if (!message || !project) return;
       const member = artifacts.snapshotsByProject[project.id]?.artifacts
@@ -103,15 +117,33 @@
       ) return;
       focusContent();
     };
+    const onZoom = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail: unknown = event.detail;
+      if (
+        typeof detail !== 'object'
+        || detail === null
+        || !('direction' in detail)
+        || !isContentZoomDirection(detail.direction)
+      ) return;
+      applyZoom(detail.direction);
+    };
     window.addEventListener('message', onMessage);
     window.addEventListener('soloe:refocus-rail', onRefocus);
     window.addEventListener('soloe:focus-pane', onFocusPane);
+    window.addEventListener('soloe:artifacts-zoom', onZoom);
     return () => {
       window.removeEventListener('message', onMessage);
       window.removeEventListener('soloe:refocus-rail', onRefocus);
       window.removeEventListener('soloe:focus-pane', onFocusPane);
+      window.removeEventListener('soloe:artifacts-zoom', onZoom);
     };
   });
+
+  function applyZoom(direction: ContentZoomDirection): void {
+    if (!document) return;
+    zoomFactor = nextContentZoomFactor(zoomFactor, direction);
+  }
 
   function goHome(): void {
     if (!activeProject || !snapshot?.homeArtifactId) return;
@@ -161,6 +193,7 @@
 <section
   bind:this={root}
   class="mobile-artifacts-surface flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background outline-none"
+  data-artifacts-surface
   aria-label="Artifacts"
   tabindex="-1"
 >
@@ -217,6 +250,18 @@
       >
         <RefreshCw class={loading ? 'size-3 animate-spin' : 'size-3'} />
       </Button>
+      {#if zoomPercent !== 100}
+        <Button
+          type="button"
+          variant="ghost"
+          class="h-7 shrink-0 px-1.5 font-mono text-[10px] tabular-nums"
+          aria-label="Reset artifact zoom"
+          title={`Artifact zoom ${zoomPercent}% - click to reset`}
+          onclick={() => applyZoom('reset')}
+        >
+          {zoomPercent}%
+        </Button>
+      {/if}
       {#if canDelete}
         <Button
           variant="ghost"
@@ -275,13 +320,16 @@
         </p>
       </div>
     {:else if document && frameSource}
-      <iframe
-        bind:this={frame}
-        class="h-full w-full border-0 bg-background"
-        title={document.title}
-        sandbox="allow-scripts"
-        src={frameSource.url}
-      ></iframe>
+      <div class="h-full w-full overflow-hidden bg-background">
+        <iframe
+          bind:this={frame}
+          class="border-0 bg-background"
+          style={frameStyle}
+          title={document.title}
+          sandbox="allow-scripts"
+          src={frameSource.url}
+        ></iframe>
+      </div>
     {/if}
   </div>
 </section>

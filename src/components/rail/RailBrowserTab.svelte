@@ -62,6 +62,7 @@
     type ElementSourcePayload,
     type ElementSourceRect
   } from '../../lib/element-source-inspector';
+  import { nextContentZoomFactor } from '../../lib/content-zoom';
 
   let activeTab = $derived(browserStore.activeTab);
   let activeId = $derived(browserStore.activeTabId);
@@ -251,28 +252,6 @@
       label: typeof value['label'] === 'string' ? value['label'].slice(0, 320) : null,
       pageUrl: typeof value['pageUrl'] === 'string' ? value['pageUrl'].slice(0, 8192) : activeUrl
     };
-  }
-
-  // Chrome's standard zoom factor list. Both page and canvas zoom step
-  // through these so the user gets familiar increments instead of awkward
-  // 1.2^n values from Electron's native zoom level.
-  const ZOOM_FACTORS = [
-    0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5,
-    3.0, 4.0, 5.0
-  ];
-
-  function nextZoomFactor(current: number, direction: 'in' | 'out' | 'reset'): number {
-    if (direction === 'reset') return 1.0;
-    const tol = 0.001;
-    if (direction === 'in') {
-      for (const f of ZOOM_FACTORS) if (f > current + tol) return f;
-      return ZOOM_FACTORS[ZOOM_FACTORS.length - 1]!;
-    }
-    for (let i = ZOOM_FACTORS.length - 1; i >= 0; i--) {
-      const f = ZOOM_FACTORS[i]!;
-      if (f < current - tol) return f;
-    }
-    return ZOOM_FACTORS[0]!;
   }
 
   // Electron's setZoomLevel uses `factor = 1.2^level`. We track factors
@@ -1095,13 +1074,13 @@
       // user can see the whole emulated device), not the page's own zoom.
       if (tab.device) {
         const current = tab.canvasZoom ?? 1;
-        const next = nextZoomFactor(current, direction);
+        const next = nextContentZoomFactor(current, direction);
         if (next === current) return;
         applyCanvasZoom(tabId, next);
         return;
       }
       const current = tab.pageZoom ?? 1;
-      const next = nextZoomFactor(current, direction);
+      const next = nextContentZoomFactor(current, direction);
       if (next === current) return;
       applyPageZoom(tabId, next);
     };

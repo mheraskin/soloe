@@ -116,7 +116,10 @@ describe('Soloe Server lifecycle', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(await response.text()).toBe(html);
+      const rendered = await response.text();
+      expect(rendered.startsWith('<!doctype html>')).toBe(true);
+      expect(rendered).toContain('data-soloe-artifact-bridge');
+      expect(rendered).toContain('<script>parent.postMessage("ready", "*")</script>');
       expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
       expect(response.headers.get('content-security-policy')).toContain(
         "default-src 'none'; script-src 'unsafe-inline'"

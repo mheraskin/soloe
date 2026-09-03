@@ -61,9 +61,11 @@ describe('ArtifactFrameHost', () => {
 
     const response = handle({ url: value.url });
 
-    expect(await response.text()).toBe(
-      '<script>parent.postMessage("ready", "*")</script>'
-    );
+    const rendered = await response.text();
+    expect(rendered).toContain('data-soloe-artifact-bridge');
+    expect(rendered).toContain('<script>parent.postMessage("ready", "*")</script>');
+    expect(rendered.indexOf('data-soloe-artifact-bridge'))
+      .toBeLessThan(rendered.indexOf('parent.postMessage("ready"'));
     expect(response.headers.get('content-security-policy')).toContain(
       "script-src 'unsafe-inline'"
     );

@@ -14,6 +14,7 @@ export * from "./notes/NotesStore.js";
 export * from "./artifacts/ArtifactStore.js";
 export * from "./artifacts/GeneratedArtifactHome.js";
 export * from "./artifacts/ArtifactFrameRegistry.js";
+export * from "./artifacts/ArtifactFrameDocument.js";
 export {
   NativeGitEvidenceAdapter,
   WslGitEvidenceAdapter,

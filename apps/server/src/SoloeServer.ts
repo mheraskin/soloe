@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { RuntimeClient } from "@soloe/runtime";
 import {
   ARTIFACT_FRAME_CONTENT_SECURITY_POLICY,
+  artifactFrameDocument,
   type ArtifactFrameRegistry,
 } from "@soloe/domain";
 import type { TerminalControlProof } from "@shared/types/terminal.js";
@@ -601,7 +602,7 @@ export class SoloeServer {
         "referrer-policy": "no-referrer",
         "x-content-type-options": "nosniff",
       });
-      response.end(html);
+      response.end(artifactFrameDocument(html));
       return;
     }
 

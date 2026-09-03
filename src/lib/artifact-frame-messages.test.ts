@@ -11,6 +11,11 @@ describe('parseArtifactFrameMessage', () => {
     expect(parseArtifactFrameMessage({
       channel: 'soloe.artifacts', action: 'delete', artifactId: 'design-review'
     })?.action).toBe('delete');
+    expect(parseArtifactFrameMessage({
+      channel: 'soloe.artifacts', action: 'zoom', direction: 'in'
+    })).toEqual({
+      channel: 'soloe.artifacts', action: 'zoom', direction: 'in'
+    });
   });
 
   it('rejects traversal, extra properties, and unrelated messages', () => {
@@ -23,6 +28,8 @@ describe('parseArtifactFrameMessage', () => {
     expect(parseArtifactFrameMessage({
       channel: 'other', action: 'open', artifactId: 'safe'
     })).toBeNull();
+    expect(parseArtifactFrameMessage({
+      channel: 'soloe.artifacts', action: 'zoom', direction: 'maximum'
+    })).toBeNull();
   });
 });
-
