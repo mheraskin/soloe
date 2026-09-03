@@ -45,6 +45,21 @@ describe('SoloeMcpServer', () => {
     expect(JSON.stringify(tools)).toContain('publish_artifact');
     expect(JSON.stringify(tools)).toContain('edit_artifact');
     expect(JSON.stringify(tools)).toContain('delete_artifact');
+    expect(tools).toMatchObject({
+      result: {
+        tools: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'list_artifacts',
+            annotations: {
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false
+            }
+          })
+        ])
+      }
+    });
 
     await expect(server.handlePayload({
       tool: 'list_artifacts',

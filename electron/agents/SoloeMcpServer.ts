@@ -68,13 +68,25 @@ interface McpTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  annotations?: {
+    readOnlyHint: boolean;
+    destructiveHint: boolean;
+    idempotentHint: boolean;
+    openWorldHint: boolean;
+  };
 }
 
 const TOOLS: McpTool[] = [
   {
     name: 'list_artifacts',
     description:
-      'List lightweight metadata for the Soloe Project resolved from cwd. Call this before publishing when existing context or links matter. Soloe artifacts are permanent HTML documents; list does not return their HTML bodies.',
+      'Read lightweight metadata for the Soloe Project resolved from cwd. This operation uses cwd only to identify an already-registered Project and does not read repository files. Call this before publishing when existing context or links matter. Soloe artifacts are permanent HTML documents; list does not return their HTML bodies.',
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
     inputSchema: {
       type: 'object',
       additionalProperties: false,
