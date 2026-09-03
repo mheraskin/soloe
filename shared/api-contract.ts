@@ -118,6 +118,7 @@ export const SOLOE_API_METHODS = {
     "cleanupImages",
     "onChange",
   ],
+  artifacts: ["list", "read", "delete", "onChange"],
   git: [
     "status",
     "aheadBehind",
@@ -237,6 +238,7 @@ export const PWA_PANE_REQUIREMENTS = {
     "notes.rename",
     "notes.delete",
   ],
+  artifacts: ["artifacts.list", "artifacts.read", "artifacts.delete"],
 } as const;
 
 export const UI_STARTUP_RPCS = [
@@ -282,6 +284,9 @@ export const DEVICE_WORKTREE_RPC_METHODS = new Set<string>([
   ...SOLOE_API_METHODS.notes
     .filter((method) => !method.startsWith("on"))
     .map((method) => `notes.${method}`),
+  ...SOLOE_API_METHODS.artifacts
+    .filter((method) => !method.startsWith("on"))
+    .map((method) => `artifacts.${method}`),
   ...SOLOE_API_METHODS.git
     .filter((method) => !method.startsWith("on"))
     .map((method) => `git.${method}`),
@@ -358,6 +363,9 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "notes.saveImage",
   "notes.readImage",
   "notes.cleanupImages",
+  "artifacts.list",
+  "artifacts.read",
+  "artifacts.delete",
   "features.scan",
   "features.setBranchStatus",
   "features.setIssueStatus",
@@ -466,6 +474,7 @@ export const SERVER_EVENT_METHODS = new Set<string>([
   "settings.onChange",
   "projects.onChange",
   "notes.onChange",
+  "artifacts.onChange",
   "git.onChange",
   "agentIntegration.onChange",
   "overview.onChunk",

@@ -132,6 +132,7 @@ export interface BrowseDeviceWorkspaceDirectoriesRequest {
 
 export type DeviceWorktreeNamespace =
   | 'notes'
+  | 'artifacts'
   | 'git'
   | 'files'
   | 'overview'

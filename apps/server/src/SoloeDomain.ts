@@ -121,6 +121,7 @@ import {
   GitService,
   HookInstaller,
   NotesStore,
+  ArtifactStore,
   RendererBridgeService,
   SessionTranscriptReader,
   SummaryCacheStore,
@@ -141,6 +142,11 @@ import {
   type ClipboardImageWriter,
   type FileIndexScope,
 } from "@soloe/domain";
+import {
+  ArtifactMcpTools,
+  type ResolvedArtifactProject,
+} from "../../../electron/artifacts/ArtifactMcpTools.js";
+import type { ArtifactProjectRef } from "../../../shared/types/artifacts.js";
 import { SessionStore } from "../../../electron/sessions/SessionStore.js";
 import {
   codexThreadPersistence,
@@ -339,6 +345,8 @@ export class SoloeDomain extends EventEmitter {
   >;
   private readonly cursorDiscovery: Pick<CursorCliDiscovery, "detect">;
   private readonly notes: NotesStore;
+  private readonly artifacts: ArtifactStore;
+  private readonly artifactMcpTools: ArtifactMcpTools;
   private readonly rendererBridge: RendererBridgeService;
   private readonly vault: VaultStore;
   private readonly featureArtifacts: FeatureArtifactObservation;
@@ -515,6 +523,16 @@ export class SoloeDomain extends EventEmitter {
       logDirectory: options.dataDirectory,
     });
     this.notes = new NotesStore(path.join(options.dataDirectory, "notes"));
+    this.artifacts = new ArtifactStore(path.join(options.dataDirectory, "artifacts"), {
+      assertProject: async ({ id }) => {
+        if (!(await this.projects.get(id))) throw new Error(`Project not found: ${id}`);
+      },
+    });
+    this.artifactMcpTools = new ArtifactMcpTools({
+      store: this.artifacts,
+      projects: this.projects,
+      resolveProject: (cwd) => this.resolveArtifactProject(cwd),
+    });
     this.rendererBridge = new RendererBridgeService({
       publish: (event, payload) => this.emit("event", event, payload),
       ...options.rendererBridgeTimeouts,
@@ -571,6 +589,9 @@ export class SoloeDomain extends EventEmitter {
     });
     this.notes.onChange((event) => {
       this.emit("event", "notes.change", event);
+    });
+    this.artifacts.onChange((event) => {
+      this.emit("event", "artifacts.change", event);
     });
     this.vault.onChange((event) => {
       this.emit("event", "vault.change", event);
@@ -808,6 +829,7 @@ export class SoloeDomain extends EventEmitter {
         diffBridge: this.rendererBridge,
         git: this.git,
         resolveDiffTarget: (input) => this.resolveDiffTarget(input),
+        artifacts: this.artifactMcpTools,
       });
       const info = await bridge.start();
       return { bridge, info };
@@ -1047,6 +1069,9 @@ export class SoloeDomain extends EventEmitter {
     }
     if (call.namespace === "notes") {
       return this.notesCall(call.method, call.args);
+    }
+    if (call.namespace === "artifacts") {
+      return this.artifactsCall(call.method, call.args);
     }
     if (call.namespace === "vault") {
       return this.vaultCall(call.method, call.args);
@@ -1929,6 +1954,72 @@ export class SoloeDomain extends EventEmitter {
         );
       }
     }
+  }
+
+  private async artifactsCall(method: string, args: unknown[]): Promise<unknown> {
+    if (method !== "list" && method !== "read" && method !== "delete") {
+      throw unsupportedRpc("artifacts", method);
+    }
+    const project = await this.requireArtifactProject(args[0]);
+    switch (method) {
+      case "list":
+        return this.artifacts.list(project);
+      case "read":
+        return this.artifacts.read(
+          project,
+          requireNotesString(args[1], "artifactId", 64),
+        );
+      case "delete":
+        return this.artifacts.delete(
+          project,
+          requireNotesString(args[1], "artifactId", 64),
+        );
+      default:
+        throw unsupportedRpc("artifacts", method);
+    }
+  }
+
+  private async requireArtifactProject(value: unknown): Promise<ArtifactProjectRef> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new RpcError("invalid_artifact_request", "Artifact Project is required");
+    }
+    const id = requireNotesString(
+      (value as Record<string, unknown>)["id"],
+      "projectId",
+      256,
+    ) as ProjectId;
+    const project = await this.projects.get(id);
+    if (!project) {
+      throw new RpcError(
+        "project_not_found",
+        "The requested Artifacts Project is not registered with this Soloe backend",
+      );
+    }
+    return { id: project.id, name: project.name };
+  }
+
+  private async resolveArtifactProject(cwd: string): Promise<ResolvedArtifactProject | null> {
+    const detected = await this.projects.detectFromPath(cwd);
+    let projectId = detected.matchedProjectId;
+    if (!projectId) {
+      const sessions = [
+        ...(await this.sessions.list()),
+        ...(await this.sessions.listArchived()),
+      ];
+      const session = sessions.find((candidate) =>
+        candidate.projectId
+        && sameArtifactPath(candidate.cwd, detected.path, candidate.runMode === "windows")
+      );
+      projectId = session?.projectId ?? null;
+    }
+    if (!projectId) return null;
+    const project = await this.projects.get(projectId);
+    if (!project) return null;
+    return {
+      project: { id: project.id, name: project.name },
+      cwd,
+      root: detected.path,
+    };
   }
 
   private async featuresCall(
@@ -4212,4 +4303,12 @@ function mergeEnvironment(
     if (value !== undefined) result[key] = value;
   }
   return { ...result, ...extra };
+}
+
+function sameArtifactPath(left: string, right: string, windows: boolean): boolean {
+  const normalize = (value: string) => {
+    const normalized = value.trim().replace(/[\\/]+$/u, "").replaceAll("\\", "/");
+    return windows ? normalized.toLocaleLowerCase("en-US") : normalized;
+  };
+  return normalize(left) === normalize(right);
 }

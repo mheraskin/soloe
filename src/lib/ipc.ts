@@ -25,6 +25,10 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  ArtifactProjectRef,
+  ArtifactsChangeEvent
+} from '@shared/types/artifacts.js';
+import type {
   FeatureChangeEvent,
   FeatureScanRequest,
   FeatureSetBranchStatusRequest,
@@ -554,6 +558,21 @@ const localBackend = {
       unwrap(await c.notes.cleanupImages(projectId, [...extraReferences])),
     onChange: (cb: (event: NotesChangeEvent) => void) => c.notes.onChange(cb)
   },
+  artifacts: {
+    list: async (project: ArtifactProjectRef, _route?: WorktreeRoute) =>
+      unwrap(await c.artifacts.list(toIpcPayload(project))),
+    read: async (
+      project: ArtifactProjectRef,
+      artifactId: string,
+      _route?: WorktreeRoute
+    ) => unwrap(await c.artifacts.read(toIpcPayload(project), artifactId)),
+    delete: async (
+      project: ArtifactProjectRef,
+      artifactId: string,
+      _route?: WorktreeRoute
+    ) => unwrap(await c.artifacts.delete(toIpcPayload(project), artifactId)),
+    onChange: (cb: (event: ArtifactsChangeEvent) => void) => c.artifacts.onChange(cb)
+  },
   git: {
     status: async (request: GitStatusRequest) => unwrap(await c.git.status(toIpcPayload(request))),
     aheadBehind: async (request: GitRepoRequest) =>
@@ -734,6 +753,7 @@ interface WorktreeRoute {
 
 const WORKTREE_EVENT_METHODS: Partial<Record<string, Record<string, string>>> = {
   notes: { onChange: 'notes.change' },
+  artifacts: { onChange: 'artifacts.change' },
   git: { onChange: 'git.change' },
   overview: { onChunk: 'overview.chunk' },
   features: { onChange: 'features.change' },
@@ -795,6 +815,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export const backend: typeof localBackend = {
   ...localBackend,
   notes: routedWorktreeNamespace('notes', localBackend.notes),
+  artifacts: routedWorktreeNamespace('artifacts', localBackend.artifacts),
   git: routedWorktreeNamespace('git', localBackend.git),
   files: routedWorktreeNamespace('files', localBackend.files),
   overview: routedWorktreeNamespace('overview', localBackend.overview),

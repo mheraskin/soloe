@@ -16,6 +16,11 @@ import { resolveRuntimeEndpoint } from '@soloe/runtime';
 import { SettingsStore } from './settings/SettingsStore.js';
 import { ProjectStore } from './projects/ProjectStore.js';
 import { NotesStore } from './notes/NotesStore.js';
+import { ArtifactStore } from './artifacts/ArtifactStore.js';
+import {
+  ArtifactMcpTools,
+  type ResolvedArtifactProject
+} from './artifacts/ArtifactMcpTools.js';
 import { AgentObserverManager } from './agents/AgentObserverManager.js';
 import { AgentObserverStore } from './agents/AgentObserverStore.js';
 import { AgentRuntimeManager } from './agents/AgentRuntimeManager.js';
@@ -47,6 +52,7 @@ import { SystemIpc } from './ipc/system.ipc.js';
 import { SettingsIpc } from './ipc/settings.ipc.js';
 import { ProjectsIpc } from './ipc/projects.ipc.js';
 import { NotesIpc } from './ipc/notes.ipc.js';
+import { ArtifactsIpc } from './ipc/artifacts.ipc.js';
 import { GitIpc } from './ipc/git.ipc.js';
 import { FilesIpc } from './ipc/files.ipc.js';
 import { DiagnosticsIpc } from './ipc/diagnostics.ipc.js';
@@ -140,6 +146,7 @@ interface AppServices {
   settings: SettingsStore;
   projects: ProjectStore;
   notes: NotesStore;
+  artifacts: ArtifactStore;
   pty: PtyManager;
   terminalInputControl: RemoteRuntimePtyProcessFactory;
   observer: AgentObserverManager;
@@ -163,6 +170,7 @@ interface AppServices {
   settingsIpc: SettingsIpc;
   projectsIpc: ProjectsIpc;
   notesIpc: NotesIpc;
+  artifactsIpc: ArtifactsIpc;
   gitIpc: GitIpc;
   filesIpc: FilesIpc;
   diagnosticsIpc: DiagnosticsIpc;
@@ -518,6 +526,7 @@ async function setupServices(): Promise<AppServices> {
   const projectsFile = path.join(userDataPath, 'projects.json');
   const browserSessionsFile = path.join(userDataPath, 'browser-sessions.json');
   const notesDir = path.join(userDataPath, 'notes');
+  const artifactsDir = path.join(userDataPath, 'artifacts');
   const crashDir = path.join(userDataPath, 'crashes');
   const overviewCacheFile = path.join(userDataPath, 'overview-cache.json');
   const bridgeFile = path.join(userDataPath, 'bridge.json');
@@ -543,6 +552,16 @@ async function setupServices(): Promise<AppServices> {
   });
   await projects.init();
   const notes = new NotesStore(notesDir);
+  const artifacts = new ArtifactStore(artifactsDir, {
+    assertProject: async ({ id }) => {
+      if (!(await projects.get(id))) throw new Error(`Project not found: ${id}`);
+    }
+  });
+  const artifactMcpTools = new ArtifactMcpTools({
+    store: artifacts,
+    projects,
+    resolveProject: (cwd) => resolveArtifactProject(projects, store, cwd)
+  });
   const observerStore = new AgentObserverStore(observerFile);
   const persistedObserverState = await observerStore.load();
   const observer = new AgentObserverManager({
@@ -644,6 +663,7 @@ async function setupServices(): Promise<AppServices> {
     diffBridge,
     git,
     resolveDiffTarget: (input) => resolveDiffTarget(store, input),
+    artifacts: artifactMcpTools,
     initialConfig: initialBridgeConfig
   });
   if (effectiveBridgeConfig.port !== initialBridgeConfig.port) {
@@ -712,6 +732,11 @@ async function setupServices(): Promise<AppServices> {
   });
   const notesIpc = new NotesIpc({
     store: notes,
+    getWindows: () => BrowserWindow.getAllWindows()
+  });
+  const artifactsIpc = new ArtifactsIpc({
+    store: artifacts,
+    projects,
     getWindows: () => BrowserWindow.getAllWindows()
   });
   const gitIpc = new GitIpc({
@@ -824,6 +849,7 @@ async function setupServices(): Promise<AppServices> {
   settingsIpc.register();
   projectsIpc.register();
   notesIpc.register();
+  artifactsIpc.register();
   gitIpc.register();
   filesIpc.register();
   diagnosticsIpc.register();
@@ -840,6 +866,7 @@ async function setupServices(): Promise<AppServices> {
     settings,
     projects,
     notes,
+    artifacts,
     pty: manager,
     terminalInputControl: runtimeProcessFactory,
     observer,
@@ -863,6 +890,7 @@ async function setupServices(): Promise<AppServices> {
     settingsIpc,
     projectsIpc,
     notesIpc,
+    artifactsIpc,
     gitIpc,
     filesIpc,
     diagnosticsIpc,
@@ -889,6 +917,7 @@ interface StartMcpDeps {
   diffBridge: DiffBridge;
   git: GitService;
   resolveDiffTarget: (input: { sessionId?: string; cwd?: string }) => Promise<DiffWorktreeTarget>;
+  artifacts: ArtifactMcpTools;
   initialConfig: BridgeConfig;
 }
 
@@ -896,6 +925,38 @@ interface StartMcpResult {
   mcp: SoloeMcpServer;
   info: SoloeMcpServerInfo;
   config: BridgeConfig;
+}
+
+async function resolveArtifactProject(
+  projects: ProjectStore,
+  sessions: SessionStore,
+  cwd: string
+): Promise<ResolvedArtifactProject | null> {
+  const detected = await projects.detectFromPath(cwd);
+  let projectId = detected.matchedProjectId;
+  if (!projectId) {
+    const session = (await sessions.list()).find((candidate) =>
+      candidate.projectId
+      && sameArtifactPath(candidate.cwd, detected.path, candidate.runMode === 'windows')
+    );
+    projectId = session?.projectId ?? null;
+  }
+  if (!projectId) return null;
+  const project = await projects.get(projectId);
+  if (!project) return null;
+  return {
+    project: { id: project.id, name: project.name },
+    cwd,
+    root: detected.path
+  };
+}
+
+function sameArtifactPath(left: string, right: string, windows: boolean): boolean {
+  const normalize = (value: string) => {
+    const normalized = value.trim().replace(/[\\/]+$/u, '').replaceAll('\\', '/');
+    return windows ? normalized.toLocaleLowerCase('en-US') : normalized;
+  };
+  return normalize(left) === normalize(right);
 }
 
 // Start the MCP bridge using a persisted port. If the saved port is already
@@ -912,6 +973,7 @@ async function startMcp(deps: StartMcpDeps): Promise<StartMcpResult> {
       diffBridge: deps.diffBridge,
       git: deps.git,
       resolveDiffTarget: deps.resolveDiffTarget,
+      artifacts: deps.artifacts,
       port,
       token: deps.initialConfig.token
     });
@@ -1157,6 +1219,7 @@ async function cleanup(): Promise<void> {
     services.settingsIpc.dispose();
     services.projectsIpc.dispose();
     services.notesIpc.dispose();
+    services.artifactsIpc.dispose();
     services.gitIpc.dispose();
     services.filesIpc.dispose();
     services.diagnosticsIpc.dispose();

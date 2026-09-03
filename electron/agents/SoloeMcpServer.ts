@@ -15,6 +15,7 @@ import type {
   SessionHookProvider,
   SessionHookTraceEvent
 } from '@shared/types/session-debug.js';
+import { MAX_ARTIFACT_HTML_BYTES } from '../artifacts/ArtifactStore.js';
 
 export type HookProvider = SessionHookProvider;
 
@@ -33,6 +34,13 @@ export interface DiffBridgeLike {
   openForCommits(args: OpenForCommitsRequest): Promise<DiffRpcResult>;
 }
 
+export interface ArtifactMcpToolsLike {
+  publish(args: Record<PropertyKey, unknown>): Promise<unknown>;
+  edit(args: Record<PropertyKey, unknown>): Promise<unknown>;
+  delete(args: Record<PropertyKey, unknown>): Promise<unknown>;
+  list(args: Record<PropertyKey, unknown>): Promise<unknown>;
+}
+
 export interface SoloeMcpServerOptions {
   observer: AgentObserverManager;
   runtime: AgentRuntimeManager;
@@ -44,6 +52,7 @@ export interface SoloeMcpServerOptions {
   commentsBridge?: CommentsBridgeLike;
   diffBridge?: DiffBridgeLike;
   git?: GitService;
+  artifacts?: ArtifactMcpToolsLike;
   resolveDiffTarget?: (input: {
     sessionId?: string;
     cwd?: string;
@@ -62,6 +71,70 @@ interface McpTool {
 }
 
 const TOOLS: McpTool[] = [
+  {
+    name: 'list_artifacts',
+    description:
+      'List lightweight metadata for the Soloe Project resolved from cwd. Call this before publishing when existing context or links matter. Soloe artifacts are permanent HTML documents; list does not return their HTML bodies.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['cwd'],
+      properties: { cwd: { type: 'string' } }
+    }
+  },
+  {
+    name: 'publish_artifact',
+    description:
+      'Publish a permanent HTML artifact into the Soloe Project resolved from cwd. Supply exactly one of inline html or a safe local .html path. Markdown may be source material, but published artifacts must be self-contained, visually intentional HTML with a concise meaningful description. Call list_artifacts first when links to existing context matter. A custom home can navigate with window.parent.postMessage({channel:"soloe.artifacts",action:"open",artifactId:"..."}, "*"). Publishing signals activity but does not open the Soloe UI. Set as_home to replace the generated Project home with this user-authored HTML.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['cwd', 'title', 'description'],
+      oneOf: [{ required: ['html'] }, { required: ['path'] }],
+      properties: {
+        cwd: { type: 'string' },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        html: { type: 'string' },
+        path: { type: 'string' },
+        id: { type: 'string' },
+        as_home: { type: 'boolean' }
+      }
+    }
+  },
+  {
+    name: 'edit_artifact',
+    description:
+      'Replace one existing Soloe HTML artifact while preserving its identity and creation time. Supply cwd, id, and exactly one of inline html or a safe local .html path; title and description are optional replacements. Editing the home artifact makes it user-authored, so later catalog changes preserve its HTML exactly.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['cwd', 'id'],
+      oneOf: [{ required: ['html'] }, { required: ['path'] }],
+      properties: {
+        cwd: { type: 'string' },
+        id: { type: 'string' },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        html: { type: 'string' },
+        path: { type: 'string' }
+      }
+    }
+  },
+  {
+    name: 'delete_artifact',
+    description:
+      'Delete an artifact from the Soloe Project resolved from cwd. Deleting a custom home restores a system-generated home; deleting an already-missing ID is idempotent.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['cwd', 'id'],
+      properties: {
+        cwd: { type: 'string' },
+        id: { type: 'string' }
+      }
+    }
+  },
   {
     name: 'create_worker_session',
     description: 'Create a background SDK worker attached to a visible Soloe TUI session.',
@@ -245,7 +318,7 @@ export class SoloeMcpServer {
     }
     let payload: unknown;
     try {
-      payload = JSON.parse(await readBody(req));
+      payload = JSON.parse(await readBody(req, MAX_MCP_REQUEST_BYTES));
     } catch {
       writeJson(res, 400, { error: 'invalid json' });
       return;
@@ -484,6 +557,18 @@ export class SoloeMcpServer {
       }
       case 'open_diff_for_commits':
         return this.openDiffForCommits(args);
+      case 'list_artifacts':
+        if (!this.opts.artifacts) throw new Error('artifacts are not available');
+        return this.opts.artifacts.list(args);
+      case 'publish_artifact':
+        if (!this.opts.artifacts) throw new Error('artifacts are not available');
+        return this.opts.artifacts.publish(args);
+      case 'edit_artifact':
+        if (!this.opts.artifacts) throw new Error('artifacts are not available');
+        return this.opts.artifacts.edit(args);
+      case 'delete_artifact':
+        if (!this.opts.artifacts) throw new Error('artifacts are not available');
+        return this.opts.artifacts.delete(args);
       default:
         throw new Error(`unknown tool: ${name}`);
     }
@@ -609,13 +694,17 @@ function isJsonRpcNotification(payload: unknown): boolean {
   return isRecord(payload) && payload['jsonrpc'] === '2.0' && payload['id'] === undefined;
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+export const MAX_MCP_REQUEST_BYTES = MAX_ARTIFACT_HTML_BYTES + (2 * 1024 * 1024);
+
+function readBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = '';
+    let bytes = 0;
     req.setEncoding('utf8');
-    req.on('data', (chunk) => {
+    req.on('data', (chunk: string) => {
+      bytes += Buffer.byteLength(chunk, 'utf8');
       body += chunk;
-      if (body.length > 1024 * 1024) {
+      if (bytes > maxBytes) {
         reject(new Error('request body too large'));
         req.destroy();
       }

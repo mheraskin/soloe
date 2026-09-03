@@ -109,6 +109,13 @@ import type {
   NotesChangeEvent
 } from './notes.js';
 import type {
+  ArtifactCatalogSnapshot,
+  ArtifactDeleteResult,
+  ArtifactDocument,
+  ArtifactProjectRef,
+  ArtifactsChangeEvent
+} from './artifacts.js';
+import type {
   SpawnSpec,
   TerminalDimensions,
   TerminalExitEvent,
@@ -291,6 +298,12 @@ export const IpcChannels = {
     readImage: 'notes:read-image',
     cleanupImages: 'notes:cleanup-images',
     change: 'notes:change'
+  },
+  artifacts: {
+    list: 'artifacts:list',
+    read: 'artifacts:read',
+    delete: 'artifacts:delete',
+    change: 'artifacts:change'
   },
   git: {
     status: 'git:status',
@@ -645,6 +658,16 @@ export interface NotesApi {
   onChange(listener: (event: NotesChangeEvent) => void): () => void;
 }
 
+export interface ArtifactsApi {
+  list(project: ArtifactProjectRef): Promise<IpcResult<ArtifactCatalogSnapshot>>;
+  read(project: ArtifactProjectRef, artifactId: string): Promise<IpcResult<ArtifactDocument>>;
+  delete(
+    project: ArtifactProjectRef,
+    artifactId: string
+  ): Promise<IpcResult<ArtifactDeleteResult>>;
+  onChange(listener: (event: ArtifactsChangeEvent) => void): () => void;
+}
+
 export interface GitApi {
   status(request: GitStatusRequest): Promise<IpcResult<GitStatus>>;
   aheadBehind(request: GitRepoRequest): Promise<IpcResult<GitAheadBehind>>;
@@ -886,6 +909,7 @@ export interface SoloeApi {
   connections: ConnectionsApi;
   projects: ProjectsApi;
   notes: NotesApi;
+  artifacts: ArtifactsApi;
   git: GitApi;
   files: FilesApi;
   diagnostics: DiagnosticsApi;

@@ -221,6 +221,7 @@ export function createBrowserApi(options: BrowserApiOptions = {}): SoloeApi {
     connections: namespace("connections", SOLOE_API_METHODS.connections),
     projects: namespace("projects", SOLOE_API_METHODS.projects),
     notes: namespace("notes", SOLOE_API_METHODS.notes),
+    artifacts: namespace("artifacts", SOLOE_API_METHODS.artifacts),
     git: namespace("git", SOLOE_API_METHODS.git),
     files: namespace("files", SOLOE_API_METHODS.files),
     diagnostics: namespace("diagnostics", SOLOE_API_METHODS.diagnostics),

@@ -50,6 +50,10 @@ import type {
 } from '@shared/types/projects.js';
 import type { NotesChangeEvent } from '@shared/types/notes.js';
 import type {
+  ArtifactProjectRef,
+  ArtifactsChangeEvent
+} from '@shared/types/artifacts.js';
+import type {
   FeatureChangeEvent,
   FeatureScanRequest,
   FeatureSetBranchStatusRequest,
@@ -363,6 +367,16 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.notes.cleanupImages, projectId, extraReferences),
     onChange: (cb: (event: NotesChangeEvent) => void) =>
       subscribe<NotesChangeEvent>(IpcChannels.notes.change, cb)
+  },
+  artifacts: {
+    list: (project: ArtifactProjectRef) =>
+      ipcRenderer.invoke(IpcChannels.artifacts.list, project),
+    read: (project: ArtifactProjectRef, artifactId: string) =>
+      ipcRenderer.invoke(IpcChannels.artifacts.read, project, artifactId),
+    delete: (project: ArtifactProjectRef, artifactId: string) =>
+      ipcRenderer.invoke(IpcChannels.artifacts.delete, project, artifactId),
+    onChange: (cb: (event: ArtifactsChangeEvent) => void) =>
+      subscribe<ArtifactsChangeEvent>(IpcChannels.artifacts.change, cb)
   },
   git: {
     status: (request: GitStatusRequest) => ipcRenderer.invoke(IpcChannels.git.status, request),
