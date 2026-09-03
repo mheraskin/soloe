@@ -53,6 +53,10 @@ export interface RuntimeHistoryReplayPlan {
   resizes: Array<{ offset: number; cols: number; rows: number }>;
 }
 
+export const MIN_RUNTIME_HISTORY_LINE_LIMIT = 1_000;
+export const DEFAULT_RUNTIME_HISTORY_LINE_LIMIT = 10_000;
+export const MAX_RUNTIME_HISTORY_LINE_LIMIT = 50_000;
+
 export interface RuntimeHistorySnapshot {
   kind: 'ghostty-vt-history-v1';
   terminalId: string;

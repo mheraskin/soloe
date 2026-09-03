@@ -697,9 +697,9 @@ async function setupServices(): Promise<AppServices> {
     getBinaries,
     processFactory: runtimeProcessFactory
   });
-  await manager.setKeepFullHistory(true);
-  const releaseTerminalHistorySettings = settings.onChange(() => {
-    void manager?.setKeepFullHistory(true).catch((error) => {
+  await manager.setHistoryLineLimit((await settings.get()).terminal.replayLineLimit);
+  const releaseTerminalHistorySettings = settings.onChange((next) => {
+    void manager?.setHistoryLineLimit(next.terminal.replayLineLimit).catch((error) => {
       console.warn('[terminal] failed to update Runtime history retention', error);
     });
   });

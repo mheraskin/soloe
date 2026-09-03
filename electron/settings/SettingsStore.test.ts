@@ -42,9 +42,9 @@ describe('SettingsStore — defaults', () => {
     expect(settings.startup.launchSoloeClient).toBe(false);
   });
 
-  it('keeps complete terminal history by default', async () => {
+  it('keeps 10,000 terminal replay lines by default', async () => {
     const settings = await new SettingsStore(path.join(tmpDir, 'history-default.json')).get();
-    expect(settings.terminal.keepFullHistory).toBe(true);
+    expect(settings.terminal.replayLineLimit).toBe(10_000);
   });
 
   it('follows the system color scheme by default', async () => {
@@ -198,10 +198,10 @@ describe('SettingsStore — update', () => {
     expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
   });
 
-  it('merges terminal history retention updates', async () => {
+  it('merges terminal replay line limit updates', async () => {
     const store = new SettingsStore(storePath);
-    const updated = await store.update({ terminal: { keepFullHistory: true } });
-    expect(updated.terminal.keepFullHistory).toBe(true);
+    const updated = await store.update({ terminal: { replayLineLimit: 25_000 } });
+    expect(updated.terminal.replayLineLimit).toBe(25_000);
     expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
   });
 
@@ -271,11 +271,11 @@ describe('SettingsStore — update', () => {
     ).rejects.toThrow(/Invalid terminal\.confirmDeleteTabs/);
   });
 
-  it('rejects invalid terminal history retention values', async () => {
+  it('rejects unsupported terminal replay line limits', async () => {
     const store = new SettingsStore(storePath);
     await expect(
-      store.update({ terminal: { keepFullHistory: 'yes' as never } })
-    ).rejects.toThrow(/Invalid terminal\.keepFullHistory/);
+      store.update({ terminal: { replayLineLimit: 1234 as never } })
+    ).rejects.toThrow(/Invalid terminal\.replayLineLimit/);
   });
 
   it('rejects invalid default new session kind', async () => {
@@ -295,7 +295,7 @@ describe('SettingsStore — migration', () => {
     };
     await fs.writeFile(storePath, JSON.stringify(legacy), 'utf8');
     const migrated = await new SettingsStore(storePath).get();
-    expect(migrated.version).toBe(2);
+    expect(migrated.version).toBe(3);
     expect(migrated.browser.pauseAutoResumeMinutes).toBe(30);
 
     await new SettingsStore(storePath).update({ browser: { pauseAutoResumeMinutes: 5 } });
@@ -317,12 +317,25 @@ describe('SettingsStore — migration', () => {
     expect('fontSize' in s.appearance).toBe(false);
     expect(s.terminal.fontSize).toBe(13);
     expect(s.terminal.confirmDeleteTabs).toBe(true);
-    expect(s.terminal.keepFullHistory).toBe(true);
+    expect(s.terminal.replayLineLimit).toBe(10_000);
     expect(s.defaults.newSessionKind).toBe('terminal');
     expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
     expect(s.backend).toEqual(DEFAULT_SETTINGS.backend);
     expect(s.startup.launchSoloeClient).toBe(false);
     expect(s.debug).toEqual(DEFAULT_SETTINGS.debug);
+  });
+
+  it('replaces the hidden version 2 full-history setting with the default line limit', async () => {
+    await fs.writeFile(storePath, JSON.stringify({
+      ...DEFAULT_SETTINGS,
+      version: 2,
+      terminal: { ...DEFAULT_SETTINGS.terminal, keepFullHistory: true }
+    }), 'utf8');
+
+    const migrated = await new SettingsStore(storePath).get();
+
+    expect(migrated.version).toBe(3);
+    expect(migrated.terminal.replayLineLimit).toBe(10_000);
   });
 
   it('migrates legacy appearance.fontSize to terminal.fontSize', async () => {

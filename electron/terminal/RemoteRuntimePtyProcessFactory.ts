@@ -161,8 +161,8 @@ export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
     return this.client.listRunning();
   }
 
-  setHistoryUnbounded(unbounded: boolean): Promise<true> {
-    return this.client.setHistoryUnbounded(unbounded);
+  setHistoryLineLimit(lineLimit: number): Promise<true> {
+    return this.client.setHistoryLineLimit(lineLimit);
   }
 
   acquireInputLease(

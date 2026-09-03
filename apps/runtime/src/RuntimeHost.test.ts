@@ -140,7 +140,7 @@ describe('Environment Runtime lifecycle', () => {
     try {
       await host.listen();
       const firstClient = await RuntimeClient.connect(endpoint);
-      await expect(firstClient.setHistoryUnbounded(true)).resolves.toBe(true);
+      await expect(firstClient.setHistoryLineLimit(5_000)).resolves.toBe(true);
       const started = await firstClient.start({
         sessionId: 'session-1',
         spec: {

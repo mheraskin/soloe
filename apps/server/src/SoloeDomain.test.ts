@@ -139,9 +139,9 @@ describe("SoloeDomain", () => {
     }
   });
 
-  it("keeps Runtime history complete when a legacy client writes bounded retention", async () => {
+  it("applies the configured Runtime replay line limit", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-replay-retention-"));
-    const setHistoryUnbounded = vi.fn(async () => true);
+    const setHistoryLineLimit = vi.fn(async () => true);
     const domain = new SoloeDomain({
       dataDirectory: directory,
       runtime: {
@@ -151,22 +151,22 @@ describe("SoloeDomain", () => {
         write: vi.fn(),
         resize: vi.fn(),
         stop: vi.fn(),
-        setHistoryUnbounded,
+        setHistoryLineLimit,
       },
     });
 
     try {
       await domain.init();
-      expect(setHistoryUnbounded).toHaveBeenLastCalledWith(true);
-      setHistoryUnbounded.mockClear();
+      expect(setHistoryLineLimit).toHaveBeenLastCalledWith(10_000);
+      setHistoryLineLimit.mockClear();
 
       await domain.invoke({
         namespace: "settings",
         method: "update",
-        args: [{ terminal: { keepFullHistory: false } }],
+        args: [{ terminal: { replayLineLimit: 25_000 } }],
       });
 
-      expect(setHistoryUnbounded).toHaveBeenCalledWith(true);
+      expect(setHistoryLineLimit).toHaveBeenCalledWith(25_000);
     } finally {
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });

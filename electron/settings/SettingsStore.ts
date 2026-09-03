@@ -8,13 +8,16 @@ import {
   type QuickLaunchPreset,
   type Settings,
   type SettingsModels,
-  type SettingsUpdate
+  type SettingsUpdate,
+  type TerminalReplayLineLimit,
+  TERMINAL_REPLAY_LINE_LIMITS
 } from '@shared/types/settings.js';
 import { isAgentProvider } from '@shared/types/sessions.js';
 import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.js';
 
 const VALID_THEMES = new Set(['dark', 'light', 'system']);
 const VALID_TERMINAL_FONT_SIZES = new Set([11, 12, 13, 14]);
+const VALID_TERMINAL_REPLAY_LINE_LIMITS = new Set<number>(TERMINAL_REPLAY_LINE_LIMITS);
 const VALID_DIFF_FONT_SIZES = new Set([11, 12, 13, 14, 15, 16]);
 const VALID_RUN_MODES = new Set(['windows', 'linux', 'macos', 'wsl']);
 const VALID_SHELLS = new Set(['auto', 'bash', 'zsh', 'pwsh', 'cmd', 'custom']);
@@ -59,7 +62,7 @@ export class SettingsStore {
   async update(patch: SettingsUpdate): Promise<Settings> {
     await this.ensureLoaded();
     const next: Settings = {
-      version: 2,
+      version: 3,
       backend: { ...this.cache!.backend, ...(patch.backend ?? {}) },
       startup: { ...this.cache!.startup, ...(patch.startup ?? {}) },
       appearance: { ...this.cache!.appearance, ...(patch.appearance ?? {}) },
@@ -227,7 +230,7 @@ function parseSettings(
     ? DEFAULT_SETTINGS.browser.pauseAutoResumeMinutes
     : pickPauseAutoResumeMinutes(browser['pauseAutoResumeMinutes']);
   const out: Settings = {
-    version: 2,
+    version: 3,
     backend: {
       placement: pickEnum(
         backend['placement'],
@@ -258,10 +261,7 @@ function parseSettings(
         terminal['confirmDeleteTabs'],
         DEFAULT_SETTINGS.terminal.confirmDeleteTabs
       ),
-      keepFullHistory: pickBoolean(
-        terminal['keepFullHistory'],
-        DEFAULT_SETTINGS.terminal.keepFullHistory
-      )
+      replayLineLimit: pickTerminalReplayLineLimit(terminal['replayLineLimit'])
     },
     diff: {
       fontSize: pickDiffFontSize(diff['fontSize'])
@@ -363,6 +363,16 @@ function pickTerminalFontSize(value: unknown): Settings['terminal']['fontSize'] 
     : DEFAULT_SETTINGS.terminal.fontSize;
 }
 
+function pickTerminalReplayLineLimit(value: unknown): TerminalReplayLineLimit {
+  return isTerminalReplayLineLimit(value)
+    ? value
+    : DEFAULT_SETTINGS.terminal.replayLineLimit;
+}
+
+function isTerminalReplayLineLimit(value: unknown): value is TerminalReplayLineLimit {
+  return typeof value === 'number' && VALID_TERMINAL_REPLAY_LINE_LIMITS.has(value);
+}
+
 function pickDiffFontSize(value: unknown): Settings['diff']['fontSize'] {
   return VALID_DIFF_FONT_SIZES.has(value as number)
     ? (value as Settings['diff']['fontSize'])
@@ -440,7 +450,7 @@ function parseQuickLaunch(raw: unknown, defaultsSeeded: boolean): QuickLaunchPre
 }
 
 function validateSettings(s: Settings, platform: SupportedHostPlatform = 'windows'): void {
-  if (s.version !== 2) throw new Error(`Unsupported settings version: ${s.version}`);
+  if (s.version !== 3) throw new Error(`Unsupported settings version: ${s.version}`);
   if (!VALID_BACKEND_PLACEMENTS.has(s.backend.placement)) {
     throw new Error(`Invalid backend.placement: ${s.backend.placement}`);
   }
@@ -470,8 +480,8 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   if (typeof s.terminal.confirmDeleteTabs !== 'boolean') {
     throw new Error('Invalid terminal.confirmDeleteTabs');
   }
-  if (typeof s.terminal.keepFullHistory !== 'boolean') {
-    throw new Error('Invalid terminal.keepFullHistory');
+  if (!isTerminalReplayLineLimit(s.terminal.replayLineLimit)) {
+    throw new Error('Invalid terminal.replayLineLimit');
   }
   if (!VALID_DIFF_FONT_SIZES.has(s.diff.fontSize)) {
     throw new Error(`Invalid diff.fontSize: ${s.diff.fontSize}`);

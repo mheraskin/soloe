@@ -1,8 +1,11 @@
 import type { ShellKind, RunMode, SessionLaunchKind, AgentRuntimeProvider } from './sessions.js';
+import { DEFAULT_RUNTIME_HISTORY_LINE_LIMIT } from '@soloe/protocol';
 
 export type ThemePref = 'dark' | 'light' | 'system';
 export type TerminalFontSizePref = 11 | 12 | 13 | 14;
 export type DiffFontSizePref = 11 | 12 | 13 | 14 | 15 | 16;
+export const TERMINAL_REPLAY_LINE_LIMITS = [1_000, 5_000, 10_000, 25_000, 50_000] as const;
+export type TerminalReplayLineLimit = typeof TERMINAL_REPLAY_LINE_LIMITS[number];
 
 export interface SettingsAppearance {
   theme: ThemePref;
@@ -11,9 +14,7 @@ export interface SettingsAppearance {
 export interface SettingsTerminal {
   fontSize: TerminalFontSizePref;
   confirmDeleteTabs: boolean;
-  // Retained in the settings schema for compatibility. Terminal history is
-  // complete by default and clients no longer expose a truncation control.
-  keepFullHistory: boolean;
+  replayLineLimit: TerminalReplayLineLimit;
 }
 
 export interface SettingsDiff {
@@ -162,7 +163,7 @@ export interface SettingsShortcuts {
 }
 
 export interface Settings {
-  version: 2;
+  version: 3;
   backend: SettingsBackend;
   startup: SettingsStartup;
   appearance: SettingsAppearance;
@@ -199,7 +200,7 @@ export type SettingsUpdate = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 2,
+  version: 3,
   backend: {
     placement: 'windows',
     wslDistro: 'Ubuntu',
@@ -207,7 +208,11 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   startup: { launchSoloeClient: false },
   appearance: { theme: 'system' },
-  terminal: { fontSize: 13, confirmDeleteTabs: true, keepFullHistory: true },
+  terminal: {
+    fontSize: 13,
+    confirmDeleteTabs: true,
+    replayLineLimit: DEFAULT_RUNTIME_HISTORY_LINE_LIMIT
+  },
   diff: { fontSize: 13 },
   browser: {
     maxResidentTabs: 2,

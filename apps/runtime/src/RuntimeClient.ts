@@ -64,8 +64,13 @@ export class RuntimeClient extends EventEmitter {
     return this.request('historySnapshot', { terminalId });
   }
 
-  setHistoryUnbounded(unbounded: boolean): Promise<true> {
-    return this.request('setHistoryUnbounded', { unbounded });
+  async setHistoryLineLimit(lineLimit: number): Promise<true> {
+    try {
+      return await this.request('setHistoryLineLimit', { lineLimit });
+    } catch (error) {
+      if (!isUnknownRuntimeMethod(error, 'setHistoryLineLimit')) throw error;
+      return this.request('setHistoryUnbounded', { unbounded: false });
+    }
   }
 
   acquireInputLease(
@@ -161,4 +166,8 @@ export class RuntimeClient extends EventEmitter {
       pending.reject(error);
     }
   }
+}
+
+function isUnknownRuntimeMethod(error: unknown, method: string): boolean {
+  return error instanceof Error && error.message === `Unknown runtime method: ${method}`;
 }

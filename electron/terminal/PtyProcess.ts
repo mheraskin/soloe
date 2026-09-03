@@ -39,6 +39,6 @@ export interface PtyProcessFactory {
   spawn(options: PtyProcessSpawnOptions): Promise<PtyProcess> | PtyProcess;
   listRunning?(): Promise<RuntimeTerminalState[]>;
   attach?(terminal: RuntimeTerminalState): PtyProcess;
-  setHistoryUnbounded?(unbounded: boolean): Promise<unknown> | unknown;
+  setHistoryLineLimit?(lineLimit: number): Promise<unknown> | unknown;
   dispose?(): Promise<void> | void;
 }

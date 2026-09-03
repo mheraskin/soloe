@@ -221,7 +221,7 @@ export interface RuntimeControl {
   start(input: RuntimeTerminalStart): Promise<RuntimeTerminalState>;
   listRunning(): Promise<RuntimeTerminalState[]>;
   historySnapshot(terminalId: string): Promise<RuntimeHistorySnapshot | null>;
-  setHistoryUnbounded?(unbounded: boolean): Promise<unknown>;
+  setHistoryLineLimit?(lineLimit: number): Promise<unknown>;
   acquireInputLease?(
     terminalId: string,
     ownerId: string,
@@ -614,7 +614,7 @@ export class SoloeDomain extends EventEmitter {
       this.sessionHookTrace.setEnabled(settings.debug.sessionEvents);
       this.emit("event", "settings.change", settings);
       void this.options.runtime
-        .setHistoryUnbounded?.(true)
+        .setHistoryLineLimit?.(settings.terminal.replayLineLimit)
         .catch((error) => {
           console.warn("[terminal] failed to update Runtime history retention", error);
         });
@@ -662,7 +662,9 @@ export class SoloeDomain extends EventEmitter {
         adapter: new GhCliGitHubAdapter({ binary: initialSettings.binaries.gh ?? "gh" }),
       });
     }
-    await this.options.runtime.setHistoryUnbounded?.(true);
+    await this.options.runtime.setHistoryLineLimit?.(
+      initialSettings.terminal.replayLineLimit,
+    );
     const sessions = await this.sessions.list();
     for (const session of sessions) {
       this.observer.registerTuiSession(session);

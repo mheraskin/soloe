@@ -35,9 +35,11 @@
     SettingsBinaries,
     BackendPlacement,
     TerminalFontSizePref,
+    TerminalReplayLineLimit,
     ThemePref,
     ShiftNumberNavigationTarget
   } from '@shared/types/settings.js';
+  import { TERMINAL_REPLAY_LINE_LIMITS } from '@shared/types/settings.js';
   import {
     CLI_DEFAULT_MODEL_ID,
     runtimeProviderForModelCatalog
@@ -302,6 +304,16 @@
   async function setConfirmDeleteTabs(value: boolean) {
     try {
       await settings.update({ terminal: { confirmDeleteTabs: value } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setTerminalReplayLineLimit(value: string) {
+    const replayLineLimit = TERMINAL_REPLAY_LINE_LIMITS.find(
+      (candidate): candidate is TerminalReplayLineLimit => candidate === Number(value)
+    );
+    if (!replayLineLimit) return;
+    try {
+      await settings.update({ terminal: { replayLineLimit } });
     } catch (e) { reportError(e); }
   }
 
@@ -1136,6 +1148,29 @@
           checked={settings.current.terminal.confirmDeleteTabs}
           onCheckedChange={setConfirmDeleteTabs}
         />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground">Replay history</Label>
+        <Select.Root
+          type="single"
+          value={String(settings.current.terminal.replayLineLimit)}
+          onValueChange={setTerminalReplayLineLimit}
+        >
+          <Select.Trigger class="w-full">
+            {settings.current.terminal.replayLineLimit.toLocaleString()} lines
+          </Select.Trigger>
+          <Select.Content>
+            {#each TERMINAL_REPLAY_LINE_LIMITS as lineLimit (lineLimit)}
+              <Select.Item value={String(lineLimit)} label={`${lineLimit.toLocaleString()} lines`}>
+                {lineLimit.toLocaleString()} lines
+              </Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <p class="m-0 text-[11px] text-muted-foreground">
+          Soloe replays the newest lines when you reopen an agent. Larger limits use more memory
+          and take longer to open.
+        </p>
       </div>
     </Tabs.Content>
 

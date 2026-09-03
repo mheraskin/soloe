@@ -281,7 +281,12 @@ _Avoid_: Sync state, source of truth
 - The Tray Host remembers the active **Backend Placement** independently from
   the newly selected setting so stop intent always reaches the processes that
   actually own the running agents
-- A **Terminal Replay Tail** is capped at 4 MiB and 4,096 live events per Session, plus 32 MiB and 32,768 live events globally; its chronologies contain only retained chunks, and snapshot overlap is removed before ordered live output is admitted
+- A **Terminal Replay Tail** keeps the newest 10,000 logical output lines per
+  Session by default. The Terminal setting selects 1,000, 5,000, 10,000,
+  25,000, or 50,000 lines. Global line and event retention is eight times the
+  selected per-Session limit. Separate byte ceilings protect against
+  pathological single-line output. The chronology contains only retained
+  chunks. Replay removes snapshot overlap before it admits ordered live output.
 - A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
 - A **Terminal Presentation** is reconstructed when its runtime Terminal identity changes; Session metadata changes such as rename preserve the existing presentation
 - Transient Soloe Device unavailability preserves the selected remote Session; reconnect resumes its visible presentation from the last applied sequence through the owning Device's **Terminal Replay Tail**

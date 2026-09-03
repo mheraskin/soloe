@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
+import {
+  DEFAULT_RUNTIME_HISTORY_LINE_LIMIT,
+  MAX_RUNTIME_HISTORY_LINE_LIMIT,
+  MIN_RUNTIME_HISTORY_LINE_LIMIT
+} from '@soloe/protocol';
 import type {
   RuntimeProcess,
   RuntimeProcessFactory,
@@ -143,12 +148,25 @@ export class RuntimeHost {
         this.requireTerminal(input.terminalId);
         return this.historyBuffer.snapshot(input.terminalId);
       }
+      case 'setHistoryLineLimit': {
+        const input = params as { lineLimit?: unknown };
+        if (
+          typeof input.lineLimit !== 'number'
+          || !Number.isInteger(input.lineLimit)
+          || input.lineLimit < MIN_RUNTIME_HISTORY_LINE_LIMIT
+          || input.lineLimit > MAX_RUNTIME_HISTORY_LINE_LIMIT
+        ) {
+          throw new Error('Invalid terminal history retention setting');
+        }
+        this.historyBuffer.setLineLimit(input.lineLimit);
+        return true;
+      }
       case 'setHistoryUnbounded': {
         const input = params as { unbounded?: unknown };
         if (typeof input.unbounded !== 'boolean') {
           throw new Error('Invalid terminal history retention setting');
         }
-        this.historyBuffer.setUnbounded(input.unbounded);
+        this.historyBuffer.setLineLimit(DEFAULT_RUNTIME_HISTORY_LINE_LIMIT);
         return true;
       }
       case 'acquireInputLease': {

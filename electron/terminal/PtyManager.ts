@@ -148,9 +148,9 @@ export class PtyManager extends EventEmitter {
     return source.historySnapshot?.(terminalId) ?? this.historyBuffer.snapshot(terminalId);
   }
 
-  async setKeepFullHistory(enabled: boolean): Promise<void> {
-    this.historyBuffer.setUnbounded(enabled);
-    await this.processFactory.setHistoryUnbounded?.(enabled);
+  async setHistoryLineLimit(lineLimit: number): Promise<void> {
+    this.historyBuffer.setLineLimit(lineLimit);
+    await this.processFactory.setHistoryLineLimit?.(lineLimit);
   }
 
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {

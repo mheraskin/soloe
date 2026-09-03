@@ -215,33 +215,70 @@ describe('TerminalHistoryBuffer', () => {
     expect(replay.snapshot('t-9')).toMatchObject({ data: '', truncated: false });
   });
 
-  it('retains complete output while unbounded and reapplies limits when disabled', () => {
+  it('retains the newest logical lines and trims inside one output event', () => {
     const replay = new TerminalHistoryBuffer({
-      maxBytesPerTerminal: 6,
-      maxTotalBytes: 6,
-      maxEventsPerTerminal: 2,
-      maxTotalEvents: 2,
-      unbounded: true
+      maxLinesPerTerminal: 2,
+      maxTotalLines: 20
     });
-    replay.append(event('t-1', 1, 'aaa'));
-    replay.append(event('t-1', 2, 'bbb'));
-    replay.append(event('t-1', 3, 'ccc'));
+    replay.append(event('t-1', 1, 'one\ntwo\nthree\n'));
 
     expect(replay.snapshot('t-1')).toMatchObject({
-      data: 'aaabbbccc',
+      data: 'two\nthree\n',
       fromSeq: 1,
-      toSeq: 3,
-      truncated: false
+      toSeq: 1,
+      truncated: true
     });
+    expect(replay.retainedLineCount()).toBe(2);
+  });
 
-    replay.setUnbounded(false);
+  it('applies a lower replay line limit to history already retained', () => {
+    const replay = new TerminalHistoryBuffer({
+      maxLinesPerTerminal: 3,
+      maxTotalLines: 30
+    });
+    replay.append(event('t-1', 1, 'one\n'));
+    replay.append(event('t-1', 2, 'two\n'));
+    replay.append(event('t-1', 3, 'three\n'));
+
+    replay.setLineLimit(2);
 
     expect(replay.snapshot('t-1')).toMatchObject({
-      data: 'bbbccc',
+      data: 'two\nthree\n',
       fromSeq: 2,
       toSeq: 3,
       truncated: true
     });
+    expect(replay.retainedLineCount()).toBe(2);
+  });
+
+  it('counts one logical line across adjacent output events', () => {
+    const replay = new TerminalHistoryBuffer({
+      maxLinesPerTerminal: 1,
+      maxTotalLines: 10
+    });
+    replay.append(event('t-1', 1, 'one'));
+    replay.append(event('t-1', 2, '\ntwo'));
+
+    expect(replay.snapshot('t-1')).toMatchObject({
+      data: 'two',
+      fromSeq: 2,
+      toSeq: 2,
+      truncated: true
+    });
+    expect(replay.retainedLineCount()).toBe(1);
+  });
+
+  it('enforces the global line limit across terminals in arrival order', () => {
+    const replay = new TerminalHistoryBuffer({
+      maxLinesPerTerminal: 10,
+      maxTotalLines: 3
+    });
+    replay.append(event('t-1', 1, 'one\ntwo\n'));
+    replay.append(event('t-2', 1, 'three\nfour\n'));
+
+    expect(replay.snapshot('t-1')).toMatchObject({ data: 'two\n', truncated: true });
+    expect(replay.snapshot('t-2')).toMatchObject({ data: 'three\nfour\n', truncated: false });
+    expect(replay.retainedLineCount()).toBe(3);
   });
 
   it('removes terminal queries without changing visual VT output', () => {
