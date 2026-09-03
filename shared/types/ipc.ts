@@ -112,6 +112,7 @@ import type {
   ArtifactCatalogSnapshot,
   ArtifactDeleteResult,
   ArtifactDocument,
+  ArtifactFrameSource,
   ArtifactProjectRef,
   ArtifactsChangeEvent
 } from './artifacts.js';
@@ -307,6 +308,7 @@ export const IpcChannels = {
   artifacts: {
     list: 'artifacts:list',
     read: 'artifacts:read',
+    prepareFrame: 'artifacts:prepare-frame',
     delete: 'artifacts:delete',
     change: 'artifacts:change'
   },
@@ -671,6 +673,7 @@ export interface NotesApi {
 export interface ArtifactsApi {
   list(project: ArtifactProjectRef): Promise<IpcResult<ArtifactCatalogSnapshot>>;
   read(project: ArtifactProjectRef, artifactId: string): Promise<IpcResult<ArtifactDocument>>;
+  prepareFrame(html: string): Promise<IpcResult<ArtifactFrameSource>>;
   delete(
     project: ArtifactProjectRef,
     artifactId: string

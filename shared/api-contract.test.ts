@@ -87,7 +87,7 @@ describe("Soloe API compatibility matrix", () => {
       const [namespace, method] = key.split(".");
       const owner = operationOwner("remote-electron", namespace!, method!);
       if (owner === "electron-native") {
-        expect(["window", "browser", "vault", "connections"]).toContain(namespace);
+        expect(["window", "browser", "vault", "connections", "artifacts"]).toContain(namespace);
       }
     }
     expect(operationOwner("remote-electron", "vault", "getSecret")).toBe(

@@ -29,6 +29,10 @@ export interface ArtifactDocument extends ArtifactSummary {
   catalogRevision: string;
 }
 
+export interface ArtifactFrameSource {
+  url: string;
+}
+
 export interface ArtifactProjectRef {
   id: ProjectId;
   name: string;

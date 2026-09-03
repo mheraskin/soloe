@@ -18,6 +18,10 @@ import { ProjectStore } from './projects/ProjectStore.js';
 import { NotesStore } from './notes/NotesStore.js';
 import { ArtifactStore } from './artifacts/ArtifactStore.js';
 import {
+  ArtifactFrameHost,
+  registerArtifactFrameScheme
+} from './artifacts/ArtifactFrameHost.js';
+import {
   ArtifactMcpTools,
   type ResolvedArtifactProject
 } from './artifacts/ArtifactMcpTools.js';
@@ -120,6 +124,7 @@ import {
 } from './desktop-platform.js';
 
 const desktopIdentity = desktopApplicationIdentity();
+registerArtifactFrameScheme();
 
 // Changing the development package's productName gives the operating system a
 // real Soloe identity, but Electron also derives userData from that name. Keep
@@ -281,6 +286,7 @@ let cleanedUp = false;
 let remoteWindowIpc: WindowIpc | null = null;
 let remoteBrowserIpc: BrowserIpc | null = null;
 let remoteVaultIpc: VaultIpc | null = null;
+let artifactFrameHost: ArtifactFrameHost | null = null;
 let connectionsIpc: ConnectionsIpc | null = null;
 let connectionRegistry: ConnectionRegistry | null = null;
 let multiDeviceSessions: MultiDeviceSessions | null = null;
@@ -1254,6 +1260,8 @@ async function cleanup(): Promise<void> {
   remoteBrowserIpc = null;
   remoteVaultIpc?.dispose();
   remoteVaultIpc = null;
+  artifactFrameHost?.dispose();
+  artifactFrameHost = null;
   connectionsIpc?.dispose();
   connectionsIpc = null;
   connectionRegistry = null;
@@ -1331,6 +1339,8 @@ app.on('web-contents-created', (_event, contents) => {
 if (ensureSingleInstance()) {
   pendingDiffIntent = parseDiffArgv(process.argv);
   app.whenReady().then(async () => {
+    artifactFrameHost = new ArtifactFrameHost();
+    artifactFrameHost.register();
     if (desktopIdentity.setDockIcon && !app.isPackaged) {
       app.dock?.setIcon(resolveAppIcon());
     }

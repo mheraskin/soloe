@@ -121,7 +121,7 @@ export const SOLOE_API_METHODS = {
     "cleanupImages",
     "onChange",
   ],
-  artifacts: ["list", "read", "delete", "onChange"],
+  artifacts: ["list", "read", "prepareFrame", "delete", "onChange"],
   git: [
     "status",
     "aheadBehind",
@@ -241,7 +241,12 @@ export const PWA_PANE_REQUIREMENTS = {
     "notes.rename",
     "notes.delete",
   ],
-  artifacts: ["artifacts.list", "artifacts.read", "artifacts.delete"],
+  artifacts: [
+    "artifacts.list",
+    "artifacts.read",
+    "artifacts.prepareFrame",
+    "artifacts.delete",
+  ],
 } as const;
 
 export const UI_STARTUP_RPCS = [
@@ -288,7 +293,7 @@ export const DEVICE_WORKTREE_RPC_METHODS = new Set<string>([
     .filter((method) => !method.startsWith("on"))
     .map((method) => `notes.${method}`),
   ...SOLOE_API_METHODS.artifacts
-    .filter((method) => !method.startsWith("on"))
+    .filter((method) => !method.startsWith("on") && method !== "prepareFrame")
     .map((method) => `artifacts.${method}`),
   ...SOLOE_API_METHODS.git
     .filter((method) => !method.startsWith("on"))
@@ -368,6 +373,7 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "notes.cleanupImages",
   "artifacts.list",
   "artifacts.read",
+  "artifacts.prepareFrame",
   "artifacts.delete",
   "features.scan",
   "features.setBranchStatus",
@@ -452,6 +458,7 @@ export const REMOTE_ELECTRON_NATIVE_METHODS = new Set<string>([
   "browser.openDevTools",
   "browser.setDevToolsLayout",
   "browser.closeDevTools",
+  "artifacts.prepareFrame",
   ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`),
 ]);
 

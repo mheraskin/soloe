@@ -42,6 +42,9 @@
   let document = $derived(
     activeProjectId ? artifacts.documentsByProject[activeProjectId] : undefined
   );
+  let frameSource = $derived(
+    activeProjectId ? artifacts.frameSourcesByProject[activeProjectId] : undefined
+  );
   let loading = $derived(
     activeProjectId ? artifacts.loadingByProject[activeProjectId] === true : false
   );
@@ -248,13 +251,13 @@
           Published HTML reports and project documents will appear here.
         </p>
       </div>
-    {:else if document}
+    {:else if document && frameSource}
       <iframe
         bind:this={frame}
         class="h-full w-full border-0 bg-background"
         title={document.title}
         sandbox="allow-scripts"
-        srcdoc={document.html}
+        src={frameSource.url}
       ></iframe>
     {/if}
   </div>

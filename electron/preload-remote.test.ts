@@ -112,6 +112,7 @@ describe('remote Electron preload', () => {
     });
     await exposed.browser.closeDevTools({ webContentsId: 1 });
     await exposed.vault.getSecret({ cwd: 'C:\\repo', id: '0123456789abcdef' });
+    await exposed.artifacts.prepareFrame('<!doctype html><title>Artifact</title>');
 
     expect(mocks.invoke.mock.calls.map(([channel]) => channel)).toEqual([
       IpcChannels.window.minimize,
@@ -125,12 +126,14 @@ describe('remote Electron preload', () => {
       IpcChannels.browser.openDevTools,
       IpcChannels.browser.setDevToolsLayout,
       IpcChannels.browser.closeDevTools,
-      IpcChannels.vault.getSecret
+      IpcChannels.vault.getSecret,
+      IpcChannels.artifacts.prepareFrame
     ]);
     expect(REMOTE_ELECTRON_NATIVE_METHODS).toEqual(new Set([
       ...SOLOE_API_METHODS.window.map((method) => `window.${method}`),
       ...SOLOE_API_METHODS.browser.map((method) => `browser.${method}`),
-      ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`)
+      ...SOLOE_API_METHODS.vault.map((method) => `vault.${method}`),
+      'artifacts.prepareFrame'
     ]));
   });
 

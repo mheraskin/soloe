@@ -31,7 +31,8 @@ describe("Soloe API transport contract", () => {
       method.startsWith("window.") ||
       method.startsWith("browser.") ||
       method.startsWith("connections.") ||
-      method.startsWith("vault.")
+      method.startsWith("vault.") ||
+      method === "artifacts.prepareFrame"
     )).toBe(true);
   });
 

@@ -1,5 +1,6 @@
 import {
   DEFAULT_TAILSCALE_HTTPS_PORT,
+  ArtifactFrameRegistry,
   TailscaleServeManager,
 } from "@soloe/domain";
 import {
@@ -38,10 +39,12 @@ export async function startServerHost(): Promise<RunningServerHost> {
     resolveRuntimeEndpoint({ dataDirectory });
   const webRoot = process.env.SOLOE_WEB_ROOT ?? "";
   const domainRuntime = await RuntimeClient.connect(runtimeEndpoint);
+  const artifactFrames = new ArtifactFrameRegistry();
   const domain = new SoloeDomain({
     dataDirectory,
     deviceId: identity.deviceId,
     runtime: domainRuntime,
+    artifactFrames,
     enableAgentBridge: true,
   });
   const server = new SoloeServer({
@@ -55,6 +58,7 @@ export async function startServerHost(): Promise<RunningServerHost> {
       ? { allowedTailscaleUsers: process.env.SOLOE_TAILSCALE_ALLOWED_USERS }
       : {}),
     rpcHandler: (call) => domain.invoke(call),
+    artifactFrames,
     clientDisconnected: (clientId) => domain.releaseClient(clientId),
     clientReconnected: (clientId) => domain.recoverClient(clientId),
   });

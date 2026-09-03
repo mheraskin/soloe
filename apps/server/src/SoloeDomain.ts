@@ -122,6 +122,8 @@ import {
   HookInstaller,
   NotesStore,
   ArtifactStore,
+  ArtifactFrameRegistry,
+  MAX_ARTIFACT_HTML_BYTES,
   RendererBridgeService,
   SessionTranscriptReader,
   SummaryCacheStore,
@@ -263,6 +265,7 @@ export interface SoloeDomainOptions {
   deviceId?: DeviceId;
   workspaceManagedRoots?: string[];
   runtime: RuntimeControl;
+  artifactFrames?: ArtifactFrameRegistry;
   featureArtifacts?: FeatureArtifactObservation;
   usageObservation?: Pick<BackendUsageObservation, "observe" | "reset">;
   overviewService?: Pick<
@@ -346,6 +349,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly cursorDiscovery: Pick<CursorCliDiscovery, "detect">;
   private readonly notes: NotesStore;
   private readonly artifacts: ArtifactStore;
+  private readonly artifactFrames: ArtifactFrameRegistry;
   private readonly artifactMcpTools: ArtifactMcpTools;
   private readonly rendererBridge: RendererBridgeService;
   private readonly vault: VaultStore;
@@ -528,6 +532,7 @@ export class SoloeDomain extends EventEmitter {
         if (!(await this.projects.get(id))) throw new Error(`Project not found: ${id}`);
       },
     });
+    this.artifactFrames = options.artifactFrames ?? new ArtifactFrameRegistry();
     this.artifactMcpTools = new ArtifactMcpTools({
       store: this.artifacts,
       projects: this.projects,
@@ -1957,6 +1962,15 @@ export class SoloeDomain extends EventEmitter {
   }
 
   private async artifactsCall(method: string, args: unknown[]): Promise<unknown> {
+    if (method === "prepareFrame") {
+      const html = requireNotesString(
+        args[0],
+        "html",
+        MAX_ARTIFACT_HTML_BYTES,
+      );
+      const ticket = this.artifactFrames.issue(html);
+      return { url: `/api/artifact-frames/${ticket.token}` };
+    }
     if (method !== "list" && method !== "read" && method !== "delete") {
       throw unsupportedRpc("artifacts", method);
     }

@@ -379,6 +379,8 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.artifacts.list, project),
     read: (project: ArtifactProjectRef, artifactId: string) =>
       ipcRenderer.invoke(IpcChannels.artifacts.read, project, artifactId),
+    prepareFrame: (html: string) =>
+      ipcRenderer.invoke(IpcChannels.artifacts.prepareFrame, html),
     delete: (project: ArtifactProjectRef, artifactId: string) =>
       ipcRenderer.invoke(IpcChannels.artifacts.delete, project, artifactId),
     onChange: (cb: (event: ArtifactsChangeEvent) => void) =>

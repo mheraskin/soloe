@@ -13,7 +13,11 @@ import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { FeatureArtifactObservation, HookInstaller } from "@soloe/domain";
+import {
+  ArtifactFrameRegistry,
+  FeatureArtifactObservation,
+  HookInstaller,
+} from "@soloe/domain";
 import { TerminalInputLeaseManager, type RuntimeSpawnSpec } from "@soloe/runtime";
 import { hostPlatform } from "../../../shared/platform.js";
 import { SERVER_RPC_METHODS } from "../../../shared/api-contract.js";
@@ -22,6 +26,40 @@ import type { WorktreeOverview } from "../../../shared/types/overview.js";
 import { SoloeDomain } from "./SoloeDomain.js";
 
 describe("SoloeDomain", () => {
+  it("prepares exact artifact HTML for browser frame transport", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-artifact-frame-"));
+    const token = "11111111-1111-4111-8111-111111111111";
+    const artifactFrames = new ArtifactFrameRegistry({ createToken: () => token });
+    const runtime = {
+      start: vi.fn(),
+      listRunning: vi.fn(async () => []),
+      historySnapshot: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      stop: vi.fn(),
+    };
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime,
+      artifactFrames,
+    });
+    const html = '<script>parent.postMessage("ready", "*")</script>';
+
+    try {
+      await domain.init();
+
+      await expect(domain.invoke({
+        namespace: "artifacts",
+        method: "prepareFrame",
+        args: [html],
+      })).resolves.toEqual({ url: `/api/artifact-frames/${token}` });
+      expect(artifactFrames.read(token)).toBe(html);
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("restarts Codex in place after a confirmed thread switch to release the old writer", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-codex-handoff-"));
     const stop = vi.fn(async () => true);

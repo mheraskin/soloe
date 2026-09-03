@@ -2,6 +2,7 @@ import type { DeviceId } from '@shared/types/devices.js';
 import type {
   ArtifactCatalogSnapshot,
   ArtifactDocument,
+  ArtifactFrameSource,
   ArtifactProjectRef,
   ArtifactsChangeEvent
 } from '@shared/types/artifacts.js';
@@ -16,6 +17,7 @@ interface ArtifactRoute {
 export class ArtifactsStore {
   snapshotsByProject = $state<Record<string, ArtifactCatalogSnapshot>>({});
   documentsByProject = $state<Record<string, ArtifactDocument>>({});
+  frameSourcesByProject = $state<Record<string, ArtifactFrameSource>>({});
   loadedByProject = $state<Record<string, boolean>>({});
   loadingByProject = $state<Record<string, boolean>>({});
   errorByProject = $state<Record<string, string | null>>({});
@@ -90,6 +92,7 @@ export class ArtifactsStore {
     const snapshot = await this.ensureCatalog(project, route);
     if (!snapshot.homeArtifactId) {
       delete this.documentsByProject[project.id];
+      delete this.frameSourcesByProject[project.id];
       return null;
     }
     this.historyByProject.set(project.id, []);
@@ -165,7 +168,9 @@ export class ArtifactsStore {
       const document = route?.deviceId
         ? await ipc.artifacts.read(project, artifactId, route)
         : await ipc.artifacts.read(project, artifactId);
+      const frameSource = await ipc.artifacts.prepareFrame(document.html);
       this.documentsByProject[project.id] = document;
+      this.frameSourcesByProject[project.id] = frameSource;
       return document;
     } catch (error) {
       this.errorByProject[project.id] = errorMessage(error);
@@ -188,6 +193,7 @@ export class ArtifactsStore {
     const current = this.documentsByProject[event.projectId];
     if (current && !event.snapshot.artifacts.some((artifact) => artifact.id === current.id)) {
       delete this.documentsByProject[event.projectId];
+      delete this.frameSourcesByProject[event.projectId];
     }
   }
 }

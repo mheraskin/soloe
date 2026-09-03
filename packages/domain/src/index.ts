@@ -13,6 +13,7 @@ export * from "./git/UntrackedFileCounter.js";
 export * from "./notes/NotesStore.js";
 export * from "./artifacts/ArtifactStore.js";
 export * from "./artifacts/GeneratedArtifactHome.js";
+export * from "./artifacts/ArtifactFrameRegistry.js";
 export {
   NativeGitEvidenceAdapter,
   WslGitEvidenceAdapter,

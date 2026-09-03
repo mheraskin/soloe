@@ -11,6 +11,7 @@ import type {
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   read: vi.fn(),
+  prepareFrame: vi.fn(),
   remove: vi.fn(),
   changes: { emit: (_event: ArtifactsChangeEvent): void => {} }
 }));
@@ -20,6 +21,7 @@ vi.mock('../lib/ipc', () => ({
     artifacts: {
       list: mocks.list,
       read: mocks.read,
+      prepareFrame: mocks.prepareFrame,
       delete: mocks.remove,
       onChange: vi.fn((callback: (event: ArtifactsChangeEvent) => void) => {
         mocks.changes.emit = callback;
@@ -58,6 +60,7 @@ beforeEach(() => {
   localStorage.clear();
   mocks.list.mockReset();
   mocks.read.mockReset();
+  mocks.prepareFrame.mockReset();
   mocks.remove.mockReset();
 });
 
@@ -95,14 +98,17 @@ describe('ArtifactsStore', () => {
     };
     mocks.list.mockResolvedValue(catalog);
     mocks.read.mockResolvedValue(document);
+    mocks.prepareFrame.mockResolvedValue({ url: 'soloe-artifact://frame/home-ticket' });
     const store = new ArtifactsStore();
 
     await store.openHome(project);
     store.markSeen(project.id);
 
     expect(store.documentsByProject[project.id]?.html).toBe('<main>Home</main>');
+    expect(store.frameSourcesByProject[project.id]?.url)
+      .toBe('soloe-artifact://frame/home-ticket');
+    expect(mocks.prepareFrame).toHaveBeenCalledWith('<main>Home</main>');
     expect(store.unread(project.id)).toBe(false);
     expect(store.unread('another-project')).toBe(false);
   });
 });
-

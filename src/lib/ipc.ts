@@ -590,6 +590,7 @@ const localBackend = {
       artifactId: string,
       _route?: WorktreeRoute
     ) => unwrap(await c.artifacts.read(toIpcPayload(project), artifactId)),
+    prepareFrame: async (html: string) => unwrap(await c.artifacts.prepareFrame(html)),
     delete: async (
       project: ArtifactProjectRef,
       artifactId: string,

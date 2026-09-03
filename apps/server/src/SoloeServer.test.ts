@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
+import { ArtifactFrameRegistry } from '@soloe/domain';
 import type { DeviceDescriptor } from '@shared/types/devices.js';
 import { terminalControlProof, type TerminalInputLease } from '@shared/types/terminal.js';
 import type {
@@ -78,6 +79,58 @@ class PersistentProcess extends EventEmitter implements RuntimeProcess {
 }
 
 describe('Soloe Server lifecycle', () => {
+  it('serves authenticated artifact frames with an isolated document policy', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-server-artifact-frame-'));
+    const runtimeEndpoint = testRuntimeEndpoint(directory);
+    const runtime = new RuntimeHost({
+      endpoint: runtimeEndpoint,
+      processFactory: { spawn: () => new PersistentProcess() }
+    });
+    const frames = new ArtifactFrameRegistry({
+      createToken: () => '11111111-1111-4111-8111-111111111111'
+    });
+    const html = '<!doctype html><script>parent.postMessage("ready", "*")</script>';
+    const ticket = frames.issue(html);
+    let server: SoloeServer | undefined;
+
+    try {
+      await runtime.listen();
+      server = new SoloeServer({
+        runtimeEndpoint,
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        artifactFrames: frames
+      });
+      const baseUrl = await server.listen();
+      const pathname = `/api/artifact-frames/${ticket.token}`;
+
+      expect((await fetch(new URL(pathname, baseUrl))).status).toBe(401);
+      const bootstrap = await fetch(new URL('/?token=test-token', baseUrl), {
+        redirect: 'manual'
+      });
+      const cookie = bootstrap.headers.get('set-cookie')?.split(';')[0];
+      if (!cookie) throw new Error('Soloe session cookie was not issued');
+      const response = await fetch(new URL(pathname, baseUrl), {
+        headers: { cookie }
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(html);
+      expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+      expect(response.headers.get('content-security-policy')).toContain(
+        "default-src 'none'; script-src 'unsafe-inline'"
+      );
+      expect(response.headers.get('content-security-policy')).toContain(
+        'sandbox allow-scripts'
+      );
+    } finally {
+      await server?.close();
+      await runtime.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('disconnects WebSocket clients whose outbound event queue exceeds the cap', () => {
     const server = new SoloeServer({ runtimeEndpoint: 'unused', token: 'secret' });
     const client = {

@@ -8,6 +8,35 @@ import {
 import { createBrowserApi } from "./browser-api.js";
 
 describe("browser API", () => {
+  it("prepares artifact frames through the authenticated browser backend", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({
+          ok: true,
+          value: { url: "/api/artifact-frames/frame-ticket" },
+        }), {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const api = createBrowserApi({
+      clientId: "browser-test",
+      fetchImpl: fetchImpl as typeof fetch,
+      socketFactory: () => new FakeSocket(),
+    });
+    const html = '<script>parent.postMessage("ready", "*")</script>';
+
+    await expect(api.artifacts.prepareFrame(html)).resolves.toEqual({
+      ok: true,
+      value: { url: "/api/artifact-frames/frame-ticket" },
+    });
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({
+      namespace: "artifacts",
+      method: "prepareFrame",
+      args: [html],
+      clientId: "browser-test",
+    });
+  });
+
   it("exposes short DNS setup and removal through the browser backend", async () => {
     const fetchImpl = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>

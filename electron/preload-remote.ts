@@ -29,6 +29,8 @@ const api = createBrowserApi({
     ? { token: process.env.SOLOE_SERVER_TOKEN }
     : {})
 });
+api.artifacts.prepareFrame = (html: string) =>
+  ipcRenderer.invoke(IpcChannels.artifacts.prepareFrame, html);
 
 const windowApi: WindowApi = {
   minimize: () => ipcRenderer.invoke(IpcChannels.window.minimize),

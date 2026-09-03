@@ -5,6 +5,10 @@ import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 
 import { RuntimeClient } from "@soloe/runtime";
+import {
+  ARTIFACT_FRAME_CONTENT_SECURITY_POLICY,
+  type ArtifactFrameRegistry,
+} from "@soloe/domain";
 import type { TerminalControlProof } from "@shared/types/terminal.js";
 import {
   SOLOE_EVENT_FORMAT_V1,
@@ -29,6 +33,7 @@ export interface SoloeServerOptions {
   webRoot?: string;
   allowedTailscaleUsers?: string;
   rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
+  artifactFrames?: ArtifactFrameRegistry;
   clientDisconnected?: (clientId: string) => void;
   clientReconnected?: (clientId: string) => void;
   clientDisconnectGraceMs?: number;
@@ -58,6 +63,7 @@ export class SoloeServer {
     webRoot: string;
     allowedTailscaleUsers?: string;
     rpcHandler?: (call: BrowserRpcCall) => Promise<unknown>;
+    artifactFrames?: ArtifactFrameRegistry;
     clientDisconnected?: (clientId: string) => void;
     clientReconnected?: (clientId: string) => void;
     clientDisconnectGraceMs: number;
@@ -97,6 +103,7 @@ export class SoloeServer {
         ? { allowedTailscaleUsers: options.allowedTailscaleUsers }
         : {}),
       ...(options.rpcHandler ? { rpcHandler: options.rpcHandler } : {}),
+      ...(options.artifactFrames ? { artifactFrames: options.artifactFrames } : {}),
       ...(options.clientDisconnected
         ? { clientDisconnected: options.clientDisconnected }
         : {}),
@@ -575,6 +582,27 @@ export class SoloeServer {
         response.writeHead(204).end();
         return;
       }
+    }
+
+    const artifactFrameRoute = url.pathname.match(
+      /^\/api\/artifact-frames\/([a-f0-9-]+)$/,
+    );
+    if (request.method === "GET" && artifactFrameRoute) {
+      const token = artifactFrameRoute[1];
+      const html = token ? this.options.artifactFrames?.read(token) : null;
+      if (html === null || html === undefined) {
+        this.json(response, 404, { error: "artifact_frame_not_found" });
+        return;
+      }
+      response.writeHead(200, {
+        "cache-control": "no-store",
+        "content-security-policy": ARTIFACT_FRAME_CONTENT_SECURITY_POLICY,
+        "content-type": "text/html; charset=utf-8",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
+      });
+      response.end(html);
+      return;
     }
 
     if (request.method === "GET" && this.options.webRoot) {
