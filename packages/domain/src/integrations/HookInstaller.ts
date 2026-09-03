@@ -164,7 +164,7 @@ const SOLOE_VERSION_KEY = '_soloe_version';
 // delivery enough time to survive brief Device load without losing terminal
 // events such as Claude Stop; v18 adds Grok Build's native hook matrix; v19
 // identifies every provider-side delivery in the raw Session hook trace.
-export const SOLOE_HOOK_VERSION = 19;
+export const SOLOE_HOOK_VERSION = 20;
 const SOLOE_MCP_NAME = 'soloe';
 const SOLOE_BRIDGE_TOKEN_ENV = 'SOLOE_BRIDGE_TOKEN';
 const SOLOE_INTEGRATION_VERSION_HEADER = 'X-Soloe-Integration-Version';
