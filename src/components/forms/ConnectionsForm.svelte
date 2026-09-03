@@ -14,6 +14,7 @@
   import * as AlertDialog from '$lib/components/ui/alert-dialog/index.js';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
+  import * as Select from '$lib/components/ui/select/index.js';
   import { Switch } from '$lib/components/ui/switch';
   import type {
     ConnectionId,
@@ -35,6 +36,10 @@
   let removingDns = $state<ConnectionId | null>(null);
   let removeDnsOpen = $state(false);
   let removeDnsTargetId = $state<ConnectionId | null>(null);
+  let bridgeDeviceId = $state<string | undefined>(undefined);
+  let bridgePortDraft = $state('8971');
+  let openingBridge = $state(false);
+  let closingBridgePort = $state<number | null>(null);
 
   $effect(() => {
     if (!savingPreferences) {
@@ -45,6 +50,15 @@
     if (connections.snapshot.tailscale.state !== 'connected') return [];
     return connectionDevices(connections.snapshot.machines);
   });
+  let bridgeDevices = $derived(visibleMachines.filter(isBridgeDevice));
+  let effectiveBridgeDeviceId = $derived(
+    bridgeDevices.some((machine) => machine.deviceId === bridgeDeviceId)
+      ? bridgeDeviceId
+      : bridgeDevices[0]?.deviceId
+  );
+  let selectedBridgeDevice = $derived(
+    bridgeDevices.find((machine) => machine.deviceId === effectiveBridgeDeviceId) ?? null
+  );
 
   function setupTitle(): string {
     const network = connections.snapshot.tailscale.state;
@@ -173,6 +187,49 @@
     } finally {
       savingPreferences = false;
     }
+  }
+
+  async function openLocalhostBridge(): Promise<void> {
+    const port = Number(bridgePortDraft);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+      throw new Error('Port must be between 1 and 65535.');
+    }
+    if (!effectiveBridgeDeviceId) throw new Error('Choose a remote Device.');
+    openingBridge = true;
+    try {
+      const bridge = await connections.openLocalhostBridge({
+        deviceId: effectiveBridgeDeviceId,
+        port
+      });
+      await openBridge(bridge.port);
+    } finally {
+      openingBridge = false;
+    }
+  }
+
+  async function openBridge(port: number): Promise<void> {
+    await ipc.system.openExternal(`http://127.0.0.1:${port}`);
+  }
+
+  async function closeLocalhostBridge(port: number): Promise<void> {
+    closingBridgePort = port;
+    try {
+      await connections.closeLocalhostBridge(port);
+    } finally {
+      closingBridgePort = null;
+    }
+  }
+
+  type BridgeDevice = MachineConnection & { deviceId: string };
+
+  function isBridgeDevice(machine: MachineConnection): machine is BridgeDevice {
+    return !machine.isSelf
+      && machine.enabled
+      && machine.status === 'available'
+      && machine.trust === 'pinned'
+      && machine.compatibility?.status === 'compatible'
+      && !machine.updateRequired
+      && Boolean(machine.deviceId);
   }
 </script>
 
@@ -340,6 +397,93 @@
         </Button>
       </div>
     </div>
+
+    {#if connections.localhostBridgeSupported && connections.snapshot.preferences.tailscaleEnabled}
+      <div class="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
+        <div>
+          <h3 class="m-0 text-xs font-medium">Open remote localhost here</h3>
+          <p class="mt-1 mb-0 text-[11px] text-muted-foreground">
+            Use the same port on this Device. No DNS setup required; the bridge stops with Soloe.
+          </p>
+        </div>
+
+        <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
+          <Select.Root
+            type="single"
+            value={effectiveBridgeDeviceId}
+            onValueChange={(value) => bridgeDeviceId = value}
+          >
+            <Select.Trigger class="h-8 w-full text-xs" aria-label="Remote Device">
+              <span class="flex min-w-0 items-center gap-2">
+                <Monitor class="size-3.5 shrink-0" />
+                <span class="truncate">{selectedBridgeDevice?.name ?? 'Choose Device'}</span>
+              </span>
+            </Select.Trigger>
+            <Select.Content class="w-(--bits-select-anchor-width)">
+              {#each bridgeDevices as machine (machine.deviceId)}
+                <Select.Item value={machine.deviceId} label={machine.name}>
+                  <span class="flex items-center gap-2">
+                    <span class="size-2 rounded-full bg-success"></span>
+                    {machine.name}
+                  </span>
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <Input
+            class="h-8"
+            type="number"
+            min="1"
+            max="65535"
+            step="1"
+            bind:value={bridgePortDraft}
+            aria-label="Remote localhost port"
+          />
+          <Button
+            size="sm"
+            disabled={openingBridge || !effectiveBridgeDeviceId || !tailscaleReady}
+            onclick={() => void openLocalhostBridge().catch(reportError)}
+          >
+            <ExternalLink data-icon="inline-start" />
+            {openingBridge ? 'Opening…' : 'Open locally'}
+          </Button>
+        </div>
+
+        {#if bridgeDevices.length === 0}
+          <p class="m-0 text-[11px] text-muted-foreground">
+            Connect another Soloe Device to use a localhost bridge.
+          </p>
+        {/if}
+
+        {#if connections.localhostBridges.length > 0}
+          <div class="flex flex-col gap-1.5 border-t border-border pt-2.5">
+            {#each connections.localhostBridges as bridge (bridge.port)}
+              <div class="flex min-w-0 items-center gap-2 rounded border border-border bg-background/60 px-2.5 py-2">
+                <span class="min-w-0 flex-1 truncate font-mono text-[11px]">
+                  localhost:{bridge.port}
+                  <span class="text-muted-foreground">→ {bridge.deviceName}:{bridge.port}</span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onclick={() => void openBridge(bridge.port).catch(reportError)}
+                >
+                  Open
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={closingBridgePort === bridge.port}
+                  onclick={() => void closeLocalhostBridge(bridge.port).catch(reportError)}
+                >
+                  {closingBridgePort === bridge.port ? 'Stopping…' : 'Stop'}
+                </Button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     {#if connections.snapshot.tailscale.state === 'connected'}
       <div class="flex flex-col gap-2">

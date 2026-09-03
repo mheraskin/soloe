@@ -108,3 +108,16 @@ export interface ConnectionSelectionResult {
   activeId: ConnectionId;
   relaunching: boolean;
 }
+
+/** A process-local TCP bridge from this Device to another Device's loopback port. */
+export interface LocalhostBridge {
+  deviceId: DeviceId;
+  deviceName: string;
+  port: number;
+  localAddress: '127.0.0.1';
+}
+
+export interface OpenLocalhostBridgeRequest {
+  deviceId: DeviceId;
+  port: number;
+}

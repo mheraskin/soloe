@@ -2389,6 +2389,17 @@ export class SoloeDomain extends EventEmitter {
               request.port,
             );
       }
+      case "listLocalhostBridges":
+        return this.requireMultiDeviceSessions(deviceSessions).listLocalhostBridges();
+      case "openLocalhostBridge":
+        return this.requireMultiDeviceSessions(deviceSessions).openLocalhostBridge(
+          structuredClone(args[0] as import("../../../shared/types/connections.js").OpenLocalhostBridgeRequest),
+        );
+      case "closeLocalhostBridge":
+        await this.requireMultiDeviceSessions(deviceSessions).closeLocalhostBridge(
+          args[0] as number,
+        );
+        return true;
       case "setDeviceTerminalDemand":
         await this.requireMultiDeviceSessions(deviceSessions).setTerminalOutputDemand(
           structuredClone(args[0] as TerminalRef[]),

@@ -53,6 +53,18 @@ describe('MultiDeviceSessionsIpc', () => {
         port,
         forwarded: true
       })),
+      listLocalhostBridges: vi.fn(() => [{
+        deviceId: 'device-1',
+        deviceName: 'xps',
+        port: 8971,
+        localAddress: '127.0.0.1'
+      }]),
+      openLocalhostBridge: vi.fn(async (request) => ({
+        ...request,
+        deviceName: 'xps',
+        localAddress: '127.0.0.1'
+      })),
+      closeLocalhostBridge: vi.fn(async () => undefined),
       previewSessionCommand: vi.fn(async () => ({ description: 'pnpm codex' })),
       invokeWorktree: vi.fn(async () => ({ branch: 'remote-main' })),
       terminalPasteImages: vi.fn(async () => ({
@@ -85,6 +97,9 @@ describe('MultiDeviceSessionsIpc', () => {
     expect(electronMocks.handlers.has(
       IpcChannels.sessions.ensureDeviceTailscalePort
     )).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.listLocalhostBridges)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.openLocalhostBridge)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.closeLocalhostBridge)).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.previewCommandOnDevice)).toBe(true);
     expect(electronMocks.handlers.has(
       IpcChannels.sessions.deviceTerminalCurrentInputLease
@@ -176,6 +191,32 @@ describe('MultiDeviceSessionsIpc', () => {
       8877,
       'ember-oak.xps.tailnet.ts.net'
     );
+
+    await expect(invoke(IpcChannels.sessions.listLocalhostBridges)).resolves.toEqual({
+      ok: true,
+      value: [{
+        deviceId: 'device-1',
+        deviceName: 'xps',
+        port: 8971,
+        localAddress: '127.0.0.1'
+      }]
+    });
+    const bridgeRequest = { deviceId: 'device-1', port: 8971 };
+    await expect(invoke(IpcChannels.sessions.openLocalhostBridge, bridgeRequest)).resolves.toEqual({
+      ok: true,
+      value: {
+        deviceId: 'device-1',
+        deviceName: 'xps',
+        port: 8971,
+        localAddress: '127.0.0.1'
+      }
+    });
+    await expect(invoke(IpcChannels.sessions.closeLocalhostBridge, 8971)).resolves.toEqual({
+      ok: true,
+      value: true
+    });
+    expect(sessions.openLocalhostBridge).toHaveBeenCalledWith(bridgeRequest);
+    expect(sessions.closeLocalhostBridge).toHaveBeenCalledWith(8971);
 
     const ref = { deviceId: 'device-1', terminalId: 'terminal-1' };
     const imageRequest = {

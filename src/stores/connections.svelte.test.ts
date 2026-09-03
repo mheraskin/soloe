@@ -4,10 +4,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectionSnapshot } from '@shared/types/connections.js';
 
-const { refresh, setupShortDns, removeShortDns, onChange, off } = vi.hoisted(() => ({
+const {
+  get,
+  refresh,
+  setupShortDns,
+  removeShortDns,
+  listLocalhostBridges,
+  openLocalhostBridge,
+  closeLocalhostBridge,
+  onChange,
+  off
+} = vi.hoisted(() => ({
+  get: vi.fn(),
   refresh: vi.fn(),
   setupShortDns: vi.fn(),
   removeShortDns: vi.fn(),
+  listLocalhostBridges: vi.fn(),
+  openLocalhostBridge: vi.fn(),
+  closeLocalhostBridge: vi.fn(),
   onChange: vi.fn(),
   off: vi.fn()
 }));
@@ -16,7 +30,7 @@ vi.mock('../lib/ipc', () => ({
   supportsBackendOperation: () => true,
   ipc: {
     connections: {
-      get: vi.fn(),
+      get,
       refresh,
       setupShortDns,
       removeShortDns,
@@ -25,6 +39,11 @@ vi.mock('../lib/ipc', () => ({
       setEnabled: vi.fn(),
       select: vi.fn(),
       onChange
+    },
+    sessions: {
+      listLocalhostBridges,
+      openLocalhostBridge,
+      closeLocalhostBridge
     }
   }
 }));
@@ -69,7 +88,9 @@ describe('ConnectionsStore discovery lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    get.mockResolvedValue(SNAPSHOT);
     refresh.mockResolvedValue(SNAPSHOT);
+    listLocalhostBridges.mockResolvedValue([]);
     onChange.mockReturnValue(off);
   });
 
@@ -173,5 +194,43 @@ describe('ConnectionsStore discovery lifecycle', () => {
       'device:22222222-2222-4222-8222-222222222222'
     );
     expect(store.snapshot.machines[1]?.shortDns?.state).toBe('ready');
+  });
+
+  it('restores temporary localhost bridges when the renderer loads', async () => {
+    listLocalhostBridges.mockResolvedValue([{
+      deviceId: '22222222-2222-4222-8222-222222222222',
+      deviceName: 'xps',
+      port: 8971,
+      localAddress: '127.0.0.1'
+    }]);
+    const store = new ConnectionsStore();
+
+    await store.load();
+
+    expect(store.localhostBridges).toEqual([{
+      deviceId: '22222222-2222-4222-8222-222222222222',
+      deviceName: 'xps',
+      port: 8971,
+      localAddress: '127.0.0.1'
+    }]);
+  });
+
+  it('tracks localhost bridge open and close results', async () => {
+    const bridge = {
+      deviceId: '22222222-2222-4222-8222-222222222222',
+      deviceName: 'xps',
+      port: 8971,
+      localAddress: '127.0.0.1' as const
+    };
+    openLocalhostBridge.mockResolvedValue(bridge);
+    closeLocalhostBridge.mockResolvedValue(true);
+    const store = new ConnectionsStore();
+
+    await expect(store.openLocalhostBridge({ deviceId: bridge.deviceId, port: bridge.port }))
+      .resolves.toEqual(bridge);
+    expect(store.localhostBridges).toEqual([bridge]);
+
+    await store.closeLocalhostBridge(bridge.port);
+    expect(store.localhostBridges).toEqual([]);
   });
 });

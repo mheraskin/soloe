@@ -924,7 +924,114 @@ describe('MultiDeviceSessions', () => {
     await Promise.resolve();
     expect(laptop.readInventoryCalls).toBe(2);
   });
+
+  it('opens a localhost bridge through the remote Device Tailscale IP', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'xps',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    laptop.ensureTailscalePort = vi.fn().mockResolvedValue({
+      deviceId: LAPTOP_ID,
+      state: 'ready',
+      dnsName: 'xps.example.ts.net',
+      ipAddress: '100.99.182.95',
+      port: 8971,
+      forwarded: true,
+      message: null,
+      setupUrl: null
+    });
+    const localhostBridges = fakeLocalhostBridges();
+    const multiDevice = new MultiDeviceSessions({ devices: [laptop], localhostBridges });
+
+    await expect(multiDevice.openLocalhostBridge({ deviceId: LAPTOP_ID, port: 8971 }))
+      .resolves.toEqual({
+        deviceId: LAPTOP_ID,
+        deviceName: 'xps',
+        port: 8971,
+        localAddress: '127.0.0.1'
+      });
+
+    expect(laptop.ensureTailscalePort).toHaveBeenCalledWith(8971);
+    expect(localhostBridges.open).toHaveBeenCalledWith({
+      deviceId: LAPTOP_ID,
+      deviceName: 'xps',
+      localPort: 8971,
+      remoteHost: '100.99.182.95',
+      remotePort: 8971
+    });
+  });
+
+  it('does not open a localhost bridge without a ready IP-based remote route', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'xps',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe-feature',
+      branch: 'feature/multi-device',
+      sessions: []
+    });
+    laptop.ensureTailscalePort = vi.fn().mockResolvedValue({
+      deviceId: LAPTOP_ID,
+      state: 'error',
+      dnsName: null,
+      ipAddress: null,
+      port: 8971,
+      forwarded: false,
+      message: 'Nothing is listening on localhost:8971 on this Device.',
+      setupUrl: null
+    });
+    const localhostBridges = fakeLocalhostBridges();
+    const multiDevice = new MultiDeviceSessions({ devices: [laptop], localhostBridges });
+
+    await expect(multiDevice.openLocalhostBridge({ deviceId: LAPTOP_ID, port: 8971 }))
+      .rejects.toThrow('Nothing is listening on localhost:8971 on this Device.');
+    expect(localhostBridges.open).not.toHaveBeenCalled();
+  });
+
+  it('rejects bridging to this Device and disposes all temporary bridges', async () => {
+    const local = fakeDevice({
+      deviceId: MAC_ID,
+      name: 'MacBook',
+      projectId: 'mac-soloe',
+      projectPath: '/Users/me/soloe',
+      workspacePath: '/Users/me/soloe-feature',
+      branch: 'main',
+      sessions: [],
+      local: true
+    });
+    const localhostBridges = fakeLocalhostBridges();
+    const multiDevice = new MultiDeviceSessions({ devices: [local], localhostBridges });
+
+    await expect(multiDevice.openLocalhostBridge({ deviceId: MAC_ID, port: 8971 }))
+      .rejects.toThrow('Choose another Device.');
+    await multiDevice.dispose();
+    expect(localhostBridges.dispose).toHaveBeenCalledOnce();
+  });
 });
+
+function fakeLocalhostBridges() {
+  return {
+    list: vi.fn().mockReturnValue([]),
+    open: vi.fn(async (target: {
+      deviceId: string;
+      deviceName: string;
+      localPort: number;
+    }) => ({
+      deviceId: target.deviceId,
+      deviceName: target.deviceName,
+      port: target.localPort,
+      localAddress: '127.0.0.1' as const
+    })),
+    close: vi.fn().mockResolvedValue(undefined),
+    dispose: vi.fn().mockResolvedValue(undefined)
+  };
+}
 
 function fakeDevice(input: {
   deviceId: string;

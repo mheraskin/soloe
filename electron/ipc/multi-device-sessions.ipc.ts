@@ -29,6 +29,9 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'deleteSession'
     | 'previewSessionCommand'
     | 'ensureTailscalePort'
+    | 'listLocalhostBridges'
+    | 'openLocalhostBridge'
+    | 'closeLocalhostBridge'
     | 'onState'
     | 'onDeviceEvent'
     | 'setTerminalOutputDemand'
@@ -138,6 +141,20 @@ export class MultiDeviceSessionsIpc {
               request.virtualHostname
             )
           : this.options.sessions.ensureTailscalePort(request.deviceId, request.port))
+    );
+    ipcMain.handle(IpcChannels.sessions.listLocalhostBridges, () =>
+      ipcInvoke(() => this.options.sessions.listLocalhostBridges())
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.openLocalhostBridge,
+      (_event, request: import('@shared/types/connections.js').OpenLocalhostBridgeRequest) =>
+        ipcInvoke(() => this.options.sessions.openLocalhostBridge(structuredClone(request)))
+    );
+    ipcMain.handle(IpcChannels.sessions.closeLocalhostBridge, (_event, port: number) =>
+      ipcInvoke(async () => {
+        await this.options.sessions.closeLocalhostBridge(port);
+        return true as const;
+      })
     );
     ipcMain.handle(IpcChannels.sessions.deviceTerminalDemand, (_event, refs: TerminalRef[]) =>
       ipcInvoke(async () => {
@@ -258,6 +275,9 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.deleteOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.previewCommandOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.ensureDeviceTailscalePort);
+    ipcMain.removeHandler(IpcChannels.sessions.listLocalhostBridges);
+    ipcMain.removeHandler(IpcChannels.sessions.openLocalhostBridge);
+    ipcMain.removeHandler(IpcChannels.sessions.closeLocalhostBridge);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalDemand);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalInput);
     ipcMain.removeHandler(IpcChannels.sessions.deviceTerminalPasteImages);

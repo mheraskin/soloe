@@ -8,7 +8,11 @@ import type {
   TerminalRef
 } from '@shared/types/devices.js';
 import type { GitWorktree } from '@shared/types/git.js';
-import type { ShortDnsInfo } from '@shared/types/connections.js';
+import type {
+  LocalhostBridge,
+  OpenLocalhostBridgeRequest,
+  ShortDnsInfo
+} from '@shared/types/connections.js';
 import type {
   DeviceImagePasteRequest,
   ImagePasteRequest,
@@ -38,6 +42,7 @@ import type {
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { LocalhostBridgeManager } from '@soloe/domain';
 import { DEVICE_WORKTREE_RPC_METHODS } from '@shared/api-contract.js';
 import type {
   CreateMultiDeviceSessionRequest,
@@ -130,6 +135,16 @@ interface StoredSessionCreationPlan {
   devicePlan: DeviceWorkspacePlan | null;
 }
 
+export type LocalhostBridgeController = Pick<
+  LocalhostBridgeManager,
+  'list' | 'open' | 'close' | 'dispose'
+>;
+
+export interface MultiDeviceSessionsOptions {
+  devices: SessionDevice[];
+  localhostBridges?: LocalhostBridgeController;
+}
+
 export class MultiDeviceSessions {
   private devices: SessionDevice[];
   private readonly inventories = new Map<DeviceId, DeviceSessionInventory>();
@@ -147,9 +162,11 @@ export class MultiDeviceSessions {
   private refreshAfterCurrent = false;
   private revision = 0;
   private currentState: MultiDeviceSessionState;
+  private readonly localhostBridges: LocalhostBridgeController;
 
-  constructor(options: { devices: SessionDevice[] }) {
+  constructor(options: MultiDeviceSessionsOptions) {
     this.devices = [...options.devices];
+    this.localhostBridges = options.localhostBridges ?? new LocalhostBridgeManager();
     this.currentState = projectState([], this.devices, 0);
   }
 
@@ -616,6 +633,40 @@ export class MultiDeviceSessions {
       : await device.ensureTailscalePort(port));
   }
 
+  listLocalhostBridges(): LocalhostBridge[] {
+    return this.localhostBridges.list();
+  }
+
+  async openLocalhostBridge(request: OpenLocalhostBridgeRequest): Promise<LocalhostBridge> {
+    const port = validLocalhostBridgePort(request.port);
+    const device = this.requireReadyDevice(request.deviceId);
+    if (device.local) throw new Error('Choose another Device.');
+    if (!device.ensureTailscalePort) {
+      throw new Error('The selected Device cannot publish Tailscale ports.');
+    }
+    const published = await device.ensureTailscalePort(port);
+    if (published.state !== 'ready') {
+      throw new Error(
+        published.message
+        ?? `Could not publish localhost:${port} on ${device.displayName ?? request.deviceId}.`
+      );
+    }
+    if (!published.ipAddress) {
+      throw new Error('The selected Device did not return a Tailscale IP address.');
+    }
+    return this.localhostBridges.open({
+      deviceId: request.deviceId,
+      deviceName: device.status.descriptor?.name ?? device.displayName ?? request.deviceId,
+      localPort: port,
+      remoteHost: published.ipAddress,
+      remotePort: published.port
+    });
+  }
+
+  closeLocalhostBridge(port: number): Promise<void> {
+    return this.localhostBridges.close(validLocalhostBridgePort(port));
+  }
+
   async setupShortDns(deviceId: DeviceId): Promise<ShortDnsInfo> {
     const device = this.requireReadyDevice(deviceId);
     if (!device.setupShortDns) {
@@ -810,6 +861,7 @@ export class MultiDeviceSessions {
   }
 
   async dispose(): Promise<void> {
+    await this.localhostBridges.dispose();
     for (const deviceId of [...this.deviceDetachers.keys()]) this.detachDevice(deviceId);
     await Promise.allSettled(this.devices.map((device) => device.dispose()));
     this.devices = [];
@@ -899,6 +951,13 @@ export class MultiDeviceSessions {
     }
     return device;
   }
+}
+
+function validLocalhostBridgePort(port: number): number {
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('Port must be between 1 and 65535.');
+  }
+  return port;
 }
 
 function sameProjectedState(

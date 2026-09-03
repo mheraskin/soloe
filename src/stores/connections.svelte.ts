@@ -1,6 +1,8 @@
 import type {
   ConnectionId,
   ConnectionSnapshot,
+  LocalhostBridge,
+  OpenLocalhostBridgeRequest,
   MachineConnection
 } from '@shared/types/connections.js';
 import { ipc, supportsBackendOperation } from '../lib/ipc';
@@ -40,7 +42,12 @@ export class ConnectionsStore {
   readonly supported = supportsBackendOperation('connections', 'get');
   readonly shortDnsSetupSupported = supportsBackendOperation('connections', 'setupShortDns');
   readonly shortDnsRemovalSupported = supportsBackendOperation('connections', 'removeShortDns');
+  readonly localhostBridgeSupported =
+    supportsBackendOperation('sessions', 'listLocalhostBridges')
+    && supportsBackendOperation('sessions', 'openLocalhostBridge')
+    && supportsBackendOperation('sessions', 'closeLocalhostBridge');
   snapshot = $state<ConnectionSnapshot>(structuredClone(EMPTY_SNAPSHOT));
+  localhostBridges = $state<LocalhostBridge[]>([]);
   loaded = $state(false);
   refreshing = $state(false);
   switchingId = $state<ConnectionId | null>(null);
@@ -60,9 +67,13 @@ export class ConnectionsStore {
       return Promise.resolve();
     }
     if (this.loadRequest) return this.loadRequest;
-    this.loadRequest = ipc.connections.get()
-      .then((snapshot) => {
+    const bridges = this.localhostBridgeSupported
+      ? ipc.sessions.listLocalhostBridges().catch(() => [])
+      : Promise.resolve([]);
+    this.loadRequest = Promise.all([ipc.connections.get(), bridges])
+      .then(([snapshot, localhostBridges]) => {
         this.updateSnapshot(snapshot);
+        this.localhostBridges = localhostBridges;
         this.loaded = true;
         void this.refresh({ visible: false }).catch(() => undefined);
       })
@@ -105,6 +116,20 @@ export class ConnectionsStore {
 
   async removeShortDns(targetId: ConnectionId = 'local'): Promise<void> {
     this.snapshot = await ipc.connections.removeShortDns(targetId);
+  }
+
+  async openLocalhostBridge(request: OpenLocalhostBridgeRequest): Promise<LocalhostBridge> {
+    const bridge = await ipc.sessions.openLocalhostBridge(request);
+    this.localhostBridges = [
+      ...this.localhostBridges.filter((current) => current.port !== bridge.port),
+      bridge
+    ].sort((left, right) => left.port - right.port);
+    return bridge;
+  }
+
+  async closeLocalhostBridge(port: number): Promise<void> {
+    await ipc.sessions.closeLocalhostBridge(port);
+    this.localhostBridges = this.localhostBridges.filter((bridge) => bridge.port !== port);
   }
 
   async remove(id: ConnectionId): Promise<void> {

@@ -157,7 +157,9 @@ import type {
   AddMachineConnectionRequest,
   ConnectionId,
   ConnectionSelectionResult,
-  ConnectionSnapshot
+  ConnectionSnapshot,
+  LocalhostBridge,
+  OpenLocalhostBridgeRequest
 } from './connections.js';
 import type {
   DeviceEventEnvelope,
@@ -202,6 +204,9 @@ export const IpcChannels = {
     deleteOnDevice: 'sessions:delete-on-device',
     previewCommandOnDevice: 'sessions:preview-command-on-device',
     ensureDeviceTailscalePort: 'sessions:ensure-device-tailscale-port',
+    listLocalhostBridges: 'sessions:list-localhost-bridges',
+    openLocalhostBridge: 'sessions:open-localhost-bridge',
+    closeLocalhostBridge: 'sessions:close-localhost-bridge',
     deviceTerminalDemand: 'sessions:device-terminal-demand',
     deviceTerminalInput: 'sessions:device-terminal-input',
     deviceTerminalPasteImages: 'sessions:device-terminal-paste-images',
@@ -488,6 +493,11 @@ export interface SessionsApi {
   ensureDeviceTailscalePort?(
     request: { deviceId: DeviceId; port: number; virtualHostname?: string }
   ): Promise<IpcResult<DevicePortForwardResult>>;
+  listLocalhostBridges?(): Promise<IpcResult<LocalhostBridge[]>>;
+  openLocalhostBridge?(
+    request: OpenLocalhostBridgeRequest
+  ): Promise<IpcResult<LocalhostBridge>>;
+  closeLocalhostBridge?(port: number): Promise<IpcResult<true>>;
   setDeviceTerminalDemand?(refs: TerminalRef[]): Promise<IpcResult<true>>;
   deviceTerminalInput?(
     request: { ref: TerminalRef; data: string; control: TerminalControlProof }

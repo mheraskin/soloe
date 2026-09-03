@@ -124,6 +124,10 @@ import type {
   TerminalRef
 } from '@shared/types/devices.js';
 import type {
+  LocalhostBridge,
+  OpenLocalhostBridgeRequest
+} from '@shared/types/connections.js';
+import type {
   CreateMultiDeviceSessionRequest,
   DeviceWorktreeInvokeRequest,
   MultiDeviceSessionState
@@ -282,6 +286,26 @@ const localBackend = {
       return unwrap(await c.sessions.ensureDeviceTailscalePort(
         toIpcPayload({ deviceId, port, ...(virtualHostname ? { virtualHostname } : {}) })
       ));
+    },
+    listLocalhostBridges: async (): Promise<LocalhostBridge[]> => {
+      if (!c.sessions.listLocalhostBridges) {
+        throw new Error('Localhost bridges are unavailable.');
+      }
+      return unwrap(await c.sessions.listLocalhostBridges());
+    },
+    openLocalhostBridge: async (
+      request: OpenLocalhostBridgeRequest
+    ): Promise<LocalhostBridge> => {
+      if (!c.sessions.openLocalhostBridge) {
+        throw new Error('Localhost bridges are unavailable.');
+      }
+      return unwrap(await c.sessions.openLocalhostBridge(toIpcPayload(request)));
+    },
+    closeLocalhostBridge: async (port: number): Promise<true> => {
+      if (!c.sessions.closeLocalhostBridge) {
+        throw new Error('Localhost bridges are unavailable.');
+      }
+      return unwrap(await c.sessions.closeLocalhostBridge(port));
     },
     setDeviceTerminalDemand: async (refs: TerminalRef[]) => {
       if (!c.sessions.setDeviceTerminalDemand) {
