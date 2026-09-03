@@ -72,6 +72,10 @@ export class AgentHookDispatcher {
         await this.dispatchOpenCode(event.soloeSessionId, event.payload);
         return;
       }
+      if (event.provider === 'antigravity') {
+        await this.dispatchAntigravity(event.soloeSessionId, event.payload);
+        return;
+      }
       await this.dispatchGrok(event.soloeSessionId, event.payload);
     } finally {
       const normalizedEvent = normalizeEventName(hookEvent);
@@ -290,6 +294,50 @@ export class AgentHookDispatcher {
       );
     }
     await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'grok_build', hookEvent);
+  }
+
+  async dispatchAntigravity(
+    soloeSessionId: SessionId,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    const hookEvent = hookEventName(payload);
+    const normalizedEvent = normalizeEventName(hookEvent);
+    if (normalizedEvent === 'sessionstart') this.pendingAutoRename.add(soloeSessionId);
+    if (normalizedEvent === 'userpromptsubmit') {
+      const prompt = stringField(payload, 'prompt') ?? stringField(payload, 'userPrompt');
+      this.maybeTriggerAutoRename(soloeSessionId, prompt);
+    }
+    const usageLimit = detectUsageLimit(payload);
+    if (usageLimit) {
+      await this.logUsageLimitDetection({
+        provider: 'antigravity',
+        soloeSessionId,
+        hookEvent,
+        source: 'hook',
+        usageLimit,
+        payload
+      });
+      this.opts.observer.setTuiUsageLimit(soloeSessionId, {
+        ...usageLimit,
+        detectedAt: new Date().toISOString()
+      });
+      await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'antigravity', hookEvent);
+      return;
+    }
+    const mapping = await this.resolvePermissionMapping(
+      soloeSessionId,
+      mapAntigravityHook(hookEvent, payload),
+      payload
+    );
+    if (mapping) {
+      this.applyMapping(
+        soloeSessionId,
+        mapping,
+        payload,
+        interactiveEventForHook('antigravity', hookEvent, payload, mapping)
+      );
+    }
+    await this.syncCurrentAgentRuntime(soloeSessionId, payload, 'antigravity', hookEvent);
   }
 
   private maybeTriggerAutoRename(
@@ -540,7 +588,9 @@ function interactiveEventForHook(
       ? stringField(payload, 'turn_id')
       : provider === 'opencode'
         ? stringField(properties, 'messageID') ?? nestedStringField(properties, ['part', 'messageID'])
-        : stringField(payload, 'prompt_id');
+        : provider === 'antigravity'
+          ? stringField(payload, 'step_id') ?? stringField(payload, 'stepId') ?? stringField(payload, 'prompt_id')
+          : stringField(payload, 'prompt_id');
   const toolId = stringField(properties, 'tool_use_id')
     ?? stringField(properties, 'toolUseId')
     ?? stringField(properties, 'tool_call_id')
@@ -732,7 +782,7 @@ function buildLaunchPatch(
     delete base.fullscreenTui;
     delete base.grokSessionId;
     if (providerSessionId) base.openCodeSessionId = providerSessionId;
-  } else {
+  } else if (provider === 'grok_build') {
     delete base.claudeSessionId;
     delete base.claudeSessionName;
     delete base.codexSessionId;
@@ -741,7 +791,20 @@ function buildLaunchPatch(
     delete base.cursorMode;
     delete base.reasoningEffort;
     delete base.fullscreenTui;
+    delete base.conversationId;
+    delete base.effort;
     if (providerSessionId) base.grokSessionId = providerSessionId;
+  } else if (provider === 'antigravity') {
+    delete base.claudeSessionId;
+    delete base.claudeSessionName;
+    delete base.codexSessionId;
+    delete base.cursorSessionId;
+    delete base.openCodeSessionId;
+    delete base.grokSessionId;
+    delete base.cursorMode;
+    delete base.reasoningEffort;
+    delete base.fullscreenTui;
+    if (providerSessionId) base.conversationId = providerSessionId;
   }
 
   if (hasCapturedArgs) {
@@ -752,6 +815,11 @@ function buildLaunchPatch(
       base.reasoningEffort = parsed.reasoningEffort;
     } else if (provider === 'codex') {
       delete base.reasoningEffort;
+    }
+    if (provider === 'antigravity' && parsed.reasoningEffort !== undefined) {
+      base.effort = parsed.reasoningEffort;
+    } else if (provider === 'antigravity') {
+      delete base.effort;
     }
     if (provider === 'cursor' && parsed.cursorMode !== undefined) base.cursorMode = parsed.cursorMode;
     else if (provider === 'cursor') delete base.cursorMode;
@@ -787,6 +855,13 @@ function providerSessionId(
       ?? stringField(properties, 'sessionId')
       ?? nestedStringField(properties, ['info', 'id'])
       ?? nestedStringField(properties, ['part', 'sessionID']);
+    if (reported) return reported;
+  }
+  if (provider === 'antigravity') {
+    const reported = stringField(payload, 'conversation_id')
+      ?? stringField(payload, 'conversationId')
+      ?? stringField(payload, 'session_id')
+      ?? stringField(payload, 'sessionId');
     if (reported) return reported;
   }
   const reported = stringField(payload, 'session_id') ?? stringField(payload, 'sessionId');
@@ -869,6 +944,32 @@ function parseAgentLaunchArgs(
       continue;
     }
     if (provider === 'grok_build' && (arg === '--continue' || arg === '-c')) continue;
+    if (provider === 'antigravity' && (arg === '--conversation' || arg === '-c')) {
+      if (next && !next.startsWith('-')) {
+        providerSessionId = next;
+        i += 1;
+      }
+      continue;
+    }
+    if (provider === 'antigravity' && arg.startsWith('--conversation=')) {
+      providerSessionId = arg.slice('--conversation='.length);
+      continue;
+    }
+    if (provider === 'antigravity' && arg === '--continue') continue;
+    if (provider === 'antigravity' && arg === '--effort') {
+      if (next === 'low' || next === 'medium' || next === 'high') {
+        reasoningEffort = next;
+        i += 1;
+      }
+      continue;
+    }
+    if (provider === 'antigravity' && arg.startsWith('--effort=')) {
+      const val = arg.slice('--effort='.length);
+      if (val === 'low' || val === 'medium' || val === 'high') {
+        reasoningEffort = val;
+      }
+      continue;
+    }
 
     if (provider === 'cursor' && arg === '--mode') {
       if (next === 'agent' || next === 'plan' || next === 'ask') {
@@ -1176,6 +1277,54 @@ function mapGrokHook(
       return { state: 'running_tool', summary: 'running subagent' };
     case 'subagentstop':
       return { state: 'working', summary: 'thinking' };
+    case 'sessionend':
+      return stringField(payload, 'source') === 'shell_launch'
+        ? { state: 'idle', summary: 'idle', resolvesApproval: true }
+        : { state: 'exited', summary: 'session ended', resolvesApproval: true };
+    default:
+      return null;
+  }
+}
+
+function mapAntigravityHook(
+  hookEvent: string | undefined,
+  payload: Record<string, unknown>
+): HookMapping | null {
+  const event = normalizeEventName(hookEvent);
+  const toolName = stringField(payload, 'toolName')
+    ?? stringField(payload, 'tool_name')
+    ?? stringField(payload, 'tool');
+  switch (event) {
+    case 'sessionstart':
+      return { state: 'starting', summary: 'session started' };
+    case 'userpromptsubmit':
+    case 'preinvocation':
+      return { state: 'working', summary: 'thinking' };
+    case 'pretooluse':
+      return {
+        state: 'running_tool',
+        summary: toolName ? `tool: ${toolName}` : 'running tool'
+      };
+    case 'posttooluse':
+    case 'postinvocation':
+      return { state: 'working', summary: 'thinking' };
+    case 'posttoolusefailure':
+      return { state: 'working', summary: 'tool failed' };
+    case 'permissionrequest':
+      return { state: 'waiting_for_approval', summary: 'permission request' };
+    case 'permissiondenied':
+      return { state: 'working', summary: 'permission denied', resolvesApproval: true };
+    case 'notification': {
+      const message = stringField(payload, 'message') ?? 'waiting for input';
+      return {
+        state: 'waiting_for_input',
+        summary: notificationSummary(message, 'waiting for input')
+      };
+    }
+    case 'stop':
+      return { state: 'completed', summary: 'completed', resolvesApproval: true };
+    case 'stopfailure':
+      return { state: 'failed', summary: 'failed', resolvesApproval: true };
     case 'sessionend':
       return stringField(payload, 'source') === 'shell_launch'
         ? { state: 'idle', summary: 'idle', resolvesApproval: true }

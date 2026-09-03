@@ -68,7 +68,8 @@ describe('HookInstaller', () => {
         codex: { installed: false, current: false },
         cursor: { installed: false, current: false },
         opencode: { installed: false, current: false },
-        grok: { installed: false, current: false }
+        grok: { installed: false, current: false },
+        antigravity: { installed: false, current: false }
       }
     ]);
     expect(JSON.stringify(status)).not.toContain(homeDir);
@@ -955,6 +956,44 @@ describe('HookInstaller with bridge — MCP registration', () => {
     expect(config.mcp_servers).toEqual({ user: { command: 'user-mcp' } });
     await expect(fs.access(join(homeDir, '.grok', 'hooks', 'soloe.json')))
       .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('installAntigravity installs hooks into ~/.gemini/config/hooks.json', async () => {
+    const hooksPath = join(homeDir, '.gemini', 'config', 'hooks.json');
+    await fs.mkdir(join(homeDir, '.gemini', 'config'), { recursive: true });
+    await fs.writeFile(hooksPath, JSON.stringify({ user_hook: {} }));
+
+    await installer.installAntigravity(LOCAL);
+
+    const hooks = JSON.parse(await fs.readFile(hooksPath, 'utf8'));
+    expect(hooks.user_hook).toEqual({});
+    expect(hooks.soloe).toBeDefined();
+    expect(Object.keys(hooks.soloe)).toEqual(expect.arrayContaining([
+      'PreToolUse',
+      'PostToolUse',
+      'PreInvocation',
+      'PostInvocation',
+      'Stop'
+    ]));
+    expect(hooks.soloe.PreToolUse[0].hooks[0].command).toContain('/hook/antigravity');
+    expect((await installer.status()).hosts[0]?.antigravity).toEqual({
+      installed: true,
+      current: true,
+      version: SOLOE_HOOK_VERSION
+    });
+  });
+
+  it('uninstallAntigravity removes only Soloe-owned hooks from ~/.gemini/config/hooks.json', async () => {
+    const hooksPath = join(homeDir, '.gemini', 'config', 'hooks.json');
+    await fs.mkdir(join(homeDir, '.gemini', 'config'), { recursive: true });
+    await fs.writeFile(hooksPath, JSON.stringify({ user_hook: {} }));
+    await installer.installAntigravity(LOCAL);
+
+    await installer.uninstallAntigravity(LOCAL);
+
+    const hooks = JSON.parse(await fs.readFile(hooksPath, 'utf8'));
+    expect(hooks).toEqual({ user_hook: {} });
+    expect(hooks.soloe).toBeUndefined();
   });
 
   it('reinstall replaces the MCP entry rather than stacking it', async () => {

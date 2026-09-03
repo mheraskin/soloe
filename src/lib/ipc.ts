@@ -81,6 +81,7 @@ import type {
   AgentIntegrationCursorRequest,
   AgentIntegrationGrokRequest,
   AgentIntegrationOpenCodeRequest,
+  AgentIntegrationAntigravityRequest,
   AgentIntegrationStatus,
   ToastNotification
 } from '@shared/types/ipc.js';
@@ -714,6 +715,10 @@ const localBackend = {
       unwrap(await c.agentIntegration.installGrok(toIpcPayload(request))),
     uninstallGrok: async (request: AgentIntegrationGrokRequest) =>
       unwrap(await c.agentIntegration.uninstallGrok(toIpcPayload(request))),
+    installAntigravity: async (request: AgentIntegrationAntigravityRequest) =>
+      unwrap(await c.agentIntegration.installAntigravity(toIpcPayload(request))),
+    uninstallAntigravity: async (request: AgentIntegrationAntigravityRequest) =>
+      unwrap(await c.agentIntegration.uninstallAntigravity(toIpcPayload(request))),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       c.agentIntegration.onChange(cb)
   },

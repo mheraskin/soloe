@@ -6,6 +6,7 @@ import type {
   AgentIntegrationCursorRequest,
   AgentIntegrationGrokRequest,
   AgentIntegrationOpenCodeRequest,
+  AgentIntegrationAntigravityRequest,
   AgentIntegrationStatus,
   SoloeApi,
   TerminalInputPayload,
@@ -489,6 +490,10 @@ const soloe: SoloeApi = {
       ipcRenderer.invoke(IpcChannels.agentIntegration.installGrok, request),
     uninstallGrok: (request: AgentIntegrationGrokRequest) =>
       ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallGrok, request),
+    installAntigravity: (request: AgentIntegrationAntigravityRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.installAntigravity, request),
+    uninstallAntigravity: (request: AgentIntegrationAntigravityRequest) =>
+      ipcRenderer.invoke(IpcChannels.agentIntegration.uninstallAntigravity, request),
     onChange: (cb: (status: AgentIntegrationStatus) => void) =>
       subscribe<AgentIntegrationStatus>(IpcChannels.agentIntegration.changed, cb)
   },

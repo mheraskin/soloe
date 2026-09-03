@@ -40,6 +40,7 @@ export interface HostInstallStatus {
   cursor: AgentIntegrationTargetStatus;
   opencode: AgentIntegrationTargetStatus;
   grok: AgentIntegrationTargetStatus;
+  antigravity: AgentIntegrationTargetStatus;
 }
 
 export interface HookInstallStatus {
@@ -141,6 +142,14 @@ const GROK_EVENTS = [
   'SessionEnd'
 ];
 
+const ANTIGRAVITY_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'PreInvocation',
+  'PostInvocation',
+  'Stop'
+] as const;
+
 // Codex's persisted-hook-state keys use lowercase snake_case event labels (see
 // codex-rs/hooks/src/lib.rs::hook_event_key_label). PascalCase is only the
 // TOML event-array key.
@@ -174,13 +183,18 @@ const HOOK_COMMAND_CLAUDE = buildHookCommand('claude');
 const HOOK_COMMAND_CODEX = buildHookCommand('codex');
 const HOOK_COMMAND_CURSOR = buildHookCommand('cursor');
 const HOOK_COMMAND_GROK = buildHookCommand('grok');
+const HOOK_COMMAND_ANTIGRAVITY = buildHookCommand('antigravity');
 
-function buildHookCommand(provider: 'claude' | 'codex' | 'cursor' | 'grok'): string {
+function buildHookCommand(provider: 'claude' | 'codex' | 'cursor' | 'grok' | 'antigravity'): string {
   const endpoint = provider === 'claude'
     ? '/hook/claude'
     : provider === 'codex'
       ? '/hook/codex'
-      : provider === 'cursor' ? '/hook/cursor' : '/hook/grok';
+      : provider === 'cursor'
+        ? '/hook/cursor'
+        : provider === 'grok'
+          ? '/hook/grok'
+          : '/hook/antigravity';
   // POSIX sh: bail if no bridge URL; if URL points at host.wsl.internal and that
   // doesn't resolve (NAT-mode WSL2), swap the host for the WSL→Windows gateway
   // IP (or /etc/resolv.conf nameserver as fallback); then POST the payload.
@@ -272,17 +286,19 @@ export class HookInstaller {
             codex: emptyStatus(),
             cursor: emptyStatus(),
             opencode: emptyStatus(),
-            grok: emptyStatus()
+            grok: emptyStatus(),
+            antigravity: emptyStatus()
           };
         }
-        const [claude, codex, cursor, opencode, grok] = await Promise.all([
+        const [claude, codex, cursor, opencode, grok, antigravity] = await Promise.all([
           this.claudeHostSoloeStatus(host),
           this.codexFileSoloeStatus(this.codexConfigPath(host)),
           this.cursorHostSoloeStatus(host),
           this.openCodeHostSoloeStatus(host),
-          this.grokHostSoloeStatus(host)
+          this.grokHostSoloeStatus(host),
+          this.antigravityHostSoloeStatus(host)
         ]);
-        return { host: publicHost(host), claude, codex, cursor, opencode, grok };
+        return { host: publicHost(host), claude, codex, cursor, opencode, grok, antigravity };
       })
     );
     return { hosts };
@@ -499,6 +515,37 @@ export class HookInstaller {
     });
   }
 
+  async installAntigravity(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(() => this.installAntigravityNow(host));
+  }
+
+  private async installAntigravityNow(host: HookHostKey): Promise<void> {
+    const target = this.requireHost(host);
+    const hooksPath = this.antigravityHooksPath(target);
+    const hooksOriginal = await readJsonOrNull(hooksPath);
+    await this.writeAtomic(
+      hooksPath,
+      JSON.stringify(mergeAntigravityHooks(hooksOriginal ?? {}, HOOK_COMMAND_ANTIGRAVITY), null, 2) + '\n',
+      hooksOriginal !== null
+    );
+  }
+
+  async uninstallAntigravity(host: HookHostKey): Promise<void> {
+    return this.serializeMutation(async () => {
+      const target = this.requireHost(host);
+      const hooksPath = this.antigravityHooksPath(target);
+      const hooks = await readJsonOrNull(hooksPath);
+      if (hooks && antigravityHooksStatus(hooks).installed) {
+        const cleaned = removeSoloeFromAntigravity(hooks);
+        if (Object.keys(cleaned).length === 0) {
+          await fs.unlink(hooksPath);
+        } else {
+          await this.writeAtomic(hooksPath, JSON.stringify(cleaned, null, 2) + '\n', false);
+        }
+      }
+    });
+  }
+
   private async uninstallCodexNow(host: HookHostKey): Promise<void> {
     const target = this.requireHost(host);
     const filePath = this.codexConfigPath(target);
@@ -537,7 +584,8 @@ export class HookInstaller {
         const cursorChanged = await this.refreshCursorHost(host, key, url);
         const openCodeChanged = await this.refreshOpenCodeHost(host, key, url);
         const grokChanged = await this.refreshGrokHost(host, key, url);
-        if (claudeChanged || codexChanged || cursorChanged || openCodeChanged || grokChanged) {
+        const antigravityChanged = await this.refreshAntigravityHost(host, key);
+        if (claudeChanged || codexChanged || cursorChanged || openCodeChanged || grokChanged || antigravityChanged) {
           result.rewritten.push(key);
         }
       } catch (err) {
@@ -652,6 +700,18 @@ export class HookInstaller {
     return true;
   }
 
+  private async refreshAntigravityHost(host: HookHost, key: HookHostKey): Promise<boolean> {
+    const hooks = await readJsonOrNull(this.antigravityHooksPath(host));
+    if (!hooks) return false;
+    const status = antigravityHooksStatus(hooks);
+    if (!status.installed) return false;
+    if (typeof status.version === 'number' && status.version < SOLOE_HOOK_VERSION) {
+      await this.installAntigravityNow(key);
+      return true;
+    }
+    return false;
+  }
+
   private async refreshClaudeMcp(host: HookHost, url: string): Promise<boolean> {
     if (!this.bridge) return false;
     const filePath = this.claudeJsonPath(host);
@@ -747,6 +807,10 @@ export class HookInstaller {
     return path.join(host.homeDir, '.grok', 'hooks', 'soloe.json');
   }
 
+  private antigravityHooksPath(host: HookHost): string {
+    return path.join(host.homeDir, '.gemini', 'config', 'hooks.json');
+  }
+
   private async claudeHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
     const [settings, claudeJson] = await Promise.all([
       readJsonOrNull(this.claudeUserPath(host)),
@@ -791,6 +855,11 @@ export class HookInstaller {
       readJsonOrNull(this.grokHooksPath(host))
     ]);
     return combineGrokSoloeStatus(config, hooks);
+  }
+
+  private async antigravityHostSoloeStatus(host: HookHost): Promise<AgentIntegrationTargetStatus> {
+    const hooks = await readJsonOrNull(this.antigravityHooksPath(host));
+    return antigravityHooksStatus(hooks);
   }
 
   private async writeAtomic(filePath: string, content: string, backup: boolean): Promise<void> {
@@ -1039,6 +1108,45 @@ export function buildGrokHooks(command: string): Record<string, unknown> {
     ];
   }
   return { hooks };
+}
+
+export function buildAntigravityHooks(command: string): Record<string, unknown> {
+  const handler = {
+    type: 'command',
+    command,
+    timeout: 5,
+    env: { [SOLOE_INTEGRATION_VERSION_ENV]: String(SOLOE_HOOK_VERSION) }
+  };
+  return {
+    soloe: {
+      [SOLOE_MARKER]: true,
+      [SOLOE_VERSION_KEY]: SOLOE_HOOK_VERSION,
+      PreToolUse: [{ matcher: '.*', hooks: [handler] }],
+      PostToolUse: [{ matcher: '.*', hooks: [handler] }],
+      PreInvocation: [handler],
+      PostInvocation: [handler],
+      Stop: [handler]
+    }
+  };
+}
+
+export function mergeAntigravityHooks(
+  original: Record<string, unknown>,
+  command: string
+): Record<string, unknown> {
+  const built = buildAntigravityHooks(command);
+  return {
+    ...original,
+    soloe: built['soloe']
+  };
+}
+
+export function removeSoloeFromAntigravity(
+  original: Record<string, unknown>
+): Record<string, unknown> {
+  const next = { ...original };
+  delete next['soloe'];
+  return next;
 }
 
 export function openCodePluginSource(): string {
@@ -1634,6 +1742,60 @@ function grokHookHandlerVersion(handler: unknown): number | null {
   const command = handler['command'];
   const env = handler['env'];
   if (typeof command !== 'string' || !command.includes('/hook/grok') || !isObject(env)) {
+    return null;
+  }
+  const raw = env[SOLOE_INTEGRATION_VERSION_ENV];
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
+  return Number(raw);
+}
+
+export function antigravityHooksStatus(
+  data: Record<string, unknown> | null
+): AgentIntegrationTargetStatus {
+  if (!data || !isObject(data['soloe'])) return emptyStatus();
+  const soloe = data['soloe'] as Record<string, unknown>;
+  const marker = soloe[SOLOE_MARKER];
+  const versions: number[] = [];
+  let allEventsCurrent = true;
+  for (const event of ANTIGRAVITY_EVENTS) {
+    const list = soloe[event];
+    let currentEvent = false;
+    if (Array.isArray(list)) {
+      for (const item of list) {
+        if (!isObject(item)) continue;
+        if (Array.isArray(item['hooks'])) {
+          for (const handler of item['hooks']) {
+            const v = antigravityHookHandlerVersion(handler);
+            if (v !== null) {
+              versions.push(v);
+              if (v === SOLOE_HOOK_VERSION) currentEvent = true;
+            }
+          }
+        } else {
+          const v = antigravityHookHandlerVersion(item);
+          if (v !== null) {
+            versions.push(v);
+            if (v === SOLOE_HOOK_VERSION) currentEvent = true;
+          }
+        }
+      }
+    }
+    if (!currentEvent) allEventsCurrent = false;
+  }
+  if (versions.length === 0 && marker !== true) return emptyStatus();
+  const version = versions.length > 0 ? Math.min(...versions) : markerVersion(soloe);
+  return {
+    installed: true,
+    current: allEventsCurrent && version === SOLOE_HOOK_VERSION,
+    ...(version === null ? {} : { version })
+  };
+}
+
+function antigravityHookHandlerVersion(handler: unknown): number | null {
+  if (!isObject(handler)) return null;
+  const command = handler['command'];
+  const env = handler['env'];
+  if (typeof command !== 'string' || !command.includes('/hook/antigravity') || !isObject(env)) {
     return null;
   }
   const raw = env[SOLOE_INTEGRATION_VERSION_ENV];

@@ -12,7 +12,7 @@
   import { reportError } from '../stores/toast.svelte';
   import { Button } from '$lib/components/ui/button';
 
-  type Provider = 'claude' | 'codex' | 'cursor' | 'opencode' | 'grok';
+  type Provider = 'claude' | 'codex' | 'cursor' | 'opencode' | 'grok' | 'antigravity';
 
   let {
     status,
@@ -36,6 +36,7 @@
       if (!entry.cursor.current) out.push({ host: entry.host, provider: 'cursor' });
       if (!entry.opencode.current) out.push({ host: entry.host, provider: 'opencode' });
       if (!entry.grok.current) out.push({ host: entry.host, provider: 'grok' });
+      if (entry.antigravity && !entry.antigravity.current) out.push({ host: entry.host, provider: 'antigravity' });
       return out;
     })
   );
@@ -48,6 +49,7 @@
       if (entry.cursor.installed) out.push({ host: entry.host, provider: 'cursor' });
       if (entry.opencode.installed) out.push({ host: entry.host, provider: 'opencode' });
       if (entry.grok.installed) out.push({ host: entry.host, provider: 'grok' });
+      if (entry.antigravity && entry.antigravity.installed) out.push({ host: entry.host, provider: 'antigravity' });
       return out;
     })
   );
@@ -63,7 +65,9 @@
               ? availableHosts.find((h) => sameHost(h.host, a.host))?.cursor.installed === true
               : a.provider === 'opencode'
                 ? availableHosts.find((h) => sameHost(h.host, a.host))?.opencode.installed === true
-                : availableHosts.find((h) => sameHost(h.host, a.host))?.grok.installed === true
+                : a.provider === 'grok'
+                  ? availableHosts.find((h) => sameHost(h.host, a.host))?.grok.installed === true
+                  : availableHosts.find((h) => sameHost(h.host, a.host))?.antigravity.installed === true
       )
   );
 
@@ -103,7 +107,9 @@
         ? 'Codex'
         : provider === 'cursor'
           ? 'Cursor'
-          : provider === 'opencode' ? 'OpenCode' : 'Grok Build';
+          : provider === 'opencode'
+            ? 'OpenCode'
+            : provider === 'grok' ? 'Grok Build' : 'Antigravity';
   }
 
   async function install(host: AgentIntegrationHost, provider: Provider): Promise<AgentIntegrationStatus> {
@@ -112,7 +118,8 @@
     if (provider === 'codex') return ipc.agentIntegration.installCodex(args);
     if (provider === 'cursor') return ipc.agentIntegration.installCursor(args);
     if (provider === 'opencode') return ipc.agentIntegration.installOpenCode(args);
-    return ipc.agentIntegration.installGrok(args);
+    if (provider === 'grok') return ipc.agentIntegration.installGrok(args);
+    return ipc.agentIntegration.installAntigravity(args);
   }
 
   async function uninstall(host: AgentIntegrationHost, provider: Provider): Promise<AgentIntegrationStatus> {
@@ -121,7 +128,8 @@
     if (provider === 'codex') return ipc.agentIntegration.uninstallCodex(args);
     if (provider === 'cursor') return ipc.agentIntegration.uninstallCursor(args);
     if (provider === 'opencode') return ipc.agentIntegration.uninstallOpenCode(args);
-    return ipc.agentIntegration.uninstallGrok(args);
+    if (provider === 'grok') return ipc.agentIntegration.uninstallGrok(args);
+    return ipc.agentIntegration.uninstallAntigravity(args);
   }
 
   async function toggle(
@@ -250,6 +258,9 @@
           {@render providerButton(entry.host, 'cursor', entry.cursor)}
           {@render providerButton(entry.host, 'opencode', entry.opencode)}
           {@render providerButton(entry.host, 'grok', entry.grok)}
+          {#if entry.antigravity}
+            {@render providerButton(entry.host, 'antigravity', entry.antigravity)}
+          {/if}
         </div>
       </div>
     {/each}

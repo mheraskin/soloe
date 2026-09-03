@@ -40,7 +40,8 @@ describe('AgentCliDiscovery', () => {
         codex: { installed: false, current: false },
         cursor: { installed: false, current: false },
         opencode: { installed: false, current: false },
-        grok: { installed: false, current: false }
+        grok: { installed: false, current: false },
+        antigravity: { installed: false, current: false }
       }]
     };
 

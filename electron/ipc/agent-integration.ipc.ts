@@ -6,6 +6,7 @@ import type {
   AgentIntegrationCursorRequest,
   AgentIntegrationGrokRequest,
   AgentIntegrationOpenCodeRequest,
+  AgentIntegrationAntigravityRequest,
   AgentIntegrationStatus
 } from '@shared/types/ipc.js';
 import { ipcInvoke } from './result.js';
@@ -128,6 +129,20 @@ export class AgentIntegrationIpc {
         return this.broadcastStatus();
       })
     );
+    ipcMain.handle(
+      IpcChannels.agentIntegration.installAntigravity,
+      (_e, request: AgentIntegrationAntigravityRequest) => ipcInvoke(async () => {
+        await installer.installAntigravity(request.host);
+        return this.broadcastStatus();
+      })
+    );
+    ipcMain.handle(
+      IpcChannels.agentIntegration.uninstallAntigravity,
+      (_e, request: AgentIntegrationAntigravityRequest) => ipcInvoke(async () => {
+        await installer.uninstallAntigravity(request.host);
+        return this.broadcastStatus();
+      })
+    );
   }
 
   dispose(): void {
@@ -143,6 +158,8 @@ export class AgentIntegrationIpc {
     ipcMain.removeHandler(IpcChannels.agentIntegration.uninstallOpenCode);
     ipcMain.removeHandler(IpcChannels.agentIntegration.installGrok);
     ipcMain.removeHandler(IpcChannels.agentIntegration.uninstallGrok);
+    ipcMain.removeHandler(IpcChannels.agentIntegration.installAntigravity);
+    ipcMain.removeHandler(IpcChannels.agentIntegration.uninstallAntigravity);
     this.registered = false;
   }
 

@@ -294,6 +294,8 @@ export interface SoloeDomainOptions {
     | "uninstallOpenCode"
     | "installGrok"
     | "uninstallGrok"
+    | "installAntigravity"
+    | "uninstallAntigravity"
   >;
   cursorDiscovery?: Pick<CursorCliDiscovery, "detect">;
   agentCliDiscovery?: Pick<AgentCliDiscovery, "detect">;
@@ -1261,7 +1263,9 @@ export class SoloeDomain extends EventEmitter {
       method !== "installOpenCode" &&
       method !== "uninstallOpenCode" &&
       method !== "installGrok" &&
-      method !== "uninstallGrok"
+      method !== "uninstallGrok" &&
+      method !== "installAntigravity" &&
+      method !== "uninstallAntigravity"
     ) {
       throw unsupportedRpc("agentIntegration", method);
     }

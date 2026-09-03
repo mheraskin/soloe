@@ -379,6 +379,8 @@ export const IpcChannels = {
     uninstallOpenCode: 'agent-integration:uninstall-opencode',
     installGrok: 'agent-integration:install-grok',
     uninstallGrok: 'agent-integration:uninstall-grok',
+    installAntigravity: 'agent-integration:install-antigravity',
+    uninstallAntigravity: 'agent-integration:uninstall-antigravity',
     changed: 'agent-integration:changed'
   },
   notify: {
@@ -784,7 +786,7 @@ export interface AgentIntegrationHostStatus {
   cursor: AgentIntegrationTargetStatus;
   opencode: AgentIntegrationTargetStatus;
   grok: AgentIntegrationTargetStatus;
-  antigravity?: AgentIntegrationTargetStatus;
+  antigravity: AgentIntegrationTargetStatus;
 }
 
 export interface AgentIntegrationStatus {
@@ -811,6 +813,10 @@ export interface AgentIntegrationGrokRequest {
   host: AgentIntegrationHostKey;
 }
 
+export interface AgentIntegrationAntigravityRequest {
+  host: AgentIntegrationHostKey;
+}
+
 export interface AgentIntegrationApi {
   status(): Promise<IpcResult<AgentIntegrationStatus>>;
   installClaude(request: AgentIntegrationClaudeRequest): Promise<IpcResult<AgentIntegrationStatus>>;
@@ -833,6 +839,12 @@ export interface AgentIntegrationApi {
   ): Promise<IpcResult<AgentIntegrationStatus>>;
   installGrok(request: AgentIntegrationGrokRequest): Promise<IpcResult<AgentIntegrationStatus>>;
   uninstallGrok(request: AgentIntegrationGrokRequest): Promise<IpcResult<AgentIntegrationStatus>>;
+  installAntigravity(
+    request: AgentIntegrationAntigravityRequest
+  ): Promise<IpcResult<AgentIntegrationStatus>>;
+  uninstallAntigravity(
+    request: AgentIntegrationAntigravityRequest
+  ): Promise<IpcResult<AgentIntegrationStatus>>;
   onChange(listener: (status: AgentIntegrationStatus) => void): () => void;
 }
 

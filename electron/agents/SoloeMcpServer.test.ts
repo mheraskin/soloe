@@ -418,6 +418,26 @@ describe('SoloeMcpServer — hook endpoints', () => {
     });
   });
 
+  it('routes POST /hook/antigravity with valid auth to onHookEvent', async () => {
+    const payload = {
+      hookEventName: 'session_start',
+      conversationId: 'agy-conv-1',
+      cwd: '/repo'
+    };
+    const res = await post(
+      '/hook/antigravity',
+      payload,
+      { authorization: `Bearer ${info.token}`, 'x-soloe-session-id': 'sess-1' }
+    );
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(captured).toHaveLength(1));
+    expect(captured[0]).toEqual({
+      provider: 'antigravity',
+      soloeSessionId: 'sess-1',
+      payload
+    });
+  });
+
   it('returns 404 for unknown paths', async () => {
     const res = await post(
       '/hook/unknown',

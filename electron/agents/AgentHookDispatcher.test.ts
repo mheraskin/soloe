@@ -734,6 +734,77 @@ describe('AgentHookDispatcher', () => {
     });
   });
 
+  describe('antigravity hook events → observed state', () => {
+    it('maps session, tool, permission request, and stop events', async () => {
+      const session = await sessionStore.create({
+        name: 'Antigravity',
+        cwd: '/repo',
+        runMode: 'linux',
+        launch: { type: 'agent', provider: 'antigravity', resumeMode: 'new' }
+      });
+      await dispatcher.dispatch({
+        provider: 'antigravity',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'session_start',
+          conversationId: 'agy-conv-1',
+          cwd: '/repo'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        provider: 'antigravity',
+        providerThreadId: 'agy-conv-1',
+        state: 'starting'
+      });
+
+      await dispatcher.dispatch({
+        provider: 'antigravity',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'pre_tool_use',
+          conversationId: 'agy-conv-1',
+          toolUseId: 'tool-1',
+          toolName: 'run_command'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        state: 'running_tool',
+        interactive: { tool: { id: 'tool-1', name: 'run_command' } }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'antigravity',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'permission_request',
+          conversationId: 'agy-conv-1',
+          message: 'Approve run_command?'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        state: 'waiting_for_approval',
+        interactive: { attention: { kind: 'approval' } }
+      });
+
+      await dispatcher.dispatch({
+        provider: 'antigravity',
+        soloeSessionId: session.id,
+        payload: {
+          hookEventName: 'stop',
+          conversationId: 'agy-conv-1'
+        }
+      });
+      expect(observer.getSnapshot(session.id)).toMatchObject({
+        state: 'completed',
+        interactive: { attention: { kind: 'none' } }
+      });
+      expect(await sessionStore.get(session.id)).toMatchObject({
+        providerThreadId: 'agy-conv-1',
+        launch: { provider: 'antigravity', conversationId: 'agy-conv-1' }
+      });
+    });
+  });
+
   describe('captures provider session id', () => {
     it('stores claude session id on the matching session', async () => {
       const created = await sessionStore.create({

@@ -189,6 +189,8 @@ export const SOLOE_API_METHODS = {
     "uninstallOpenCode",
     "installGrok",
     "uninstallGrok",
+    "installAntigravity",
+    "uninstallAntigravity",
     "onChange",
   ],
   notify: ["onToast", "onActivateSession"],
@@ -439,6 +441,8 @@ export const SERVER_RPC_METHODS = new Set<string>([
   "agentIntegration.uninstallOpenCode",
   "agentIntegration.installGrok",
   "agentIntegration.uninstallGrok",
+  "agentIntegration.installAntigravity",
+  "agentIntegration.uninstallAntigravity",
   "comments.sendRpcResponse",
   "diff.sendRpcResponse",
   ...SOLOE_API_METHODS.connections

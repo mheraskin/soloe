@@ -325,6 +325,7 @@ export class SoloeMcpServer {
       && url !== '/hook/cursor'
       && url !== '/hook/opencode'
       && url !== '/hook/grok'
+      && url !== '/hook/antigravity'
     ) {
       writeJson(res, 404, { error: 'not found' });
       return;
@@ -704,6 +705,7 @@ function hookProviderForUrl(url: string): HookProvider | null {
     case '/hook/cursor': return 'cursor';
     case '/hook/opencode': return 'opencode';
     case '/hook/grok': return 'grok_build';
+    case '/hook/antigravity': return 'antigravity';
     default: return null;
   }
 }
