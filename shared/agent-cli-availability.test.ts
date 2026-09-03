@@ -19,5 +19,6 @@ describe('agent CLI availability', () => {
   it('names the missing CLI for launch affordances', () => {
     expect(agentCliUnavailableReason('cursor')).toContain('Cursor Agent CLI');
     expect(agentCliUnavailableReason('grok_build')).toContain('Grok Build CLI');
+    expect(agentCliUnavailableReason('antigravity')).toContain('Antigravity CLI');
   });
 });

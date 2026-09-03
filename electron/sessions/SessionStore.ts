@@ -24,7 +24,7 @@ interface StorageShape {
 
 type LegacySessionDraft = Omit<SessionDraft, 'launch'> & {
   launch?: never;
-  kind: 'standard_terminal' | 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build';
+  kind: 'standard_terminal' | 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build' | 'antigravity';
   shell?: ShellKind;
   command?: string;
   args?: string[];
@@ -420,6 +420,7 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
       && runtime.provider !== 'cursor'
       && runtime.provider !== 'opencode'
       && runtime.provider !== 'grok_build'
+      && runtime.provider !== 'antigravity'
     ) {
       throw new Error('currentAgentRuntime.provider must be a known agent provider');
     }
@@ -453,6 +454,7 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
         && s.launch.provider !== 'cursor'
         && s.launch.provider !== 'opencode'
         && s.launch.provider !== 'grok_build'
+        && s.launch.provider !== 'antigravity'
       ) {
         throw new Error('launch.provider must be a known agent provider');
       }
@@ -471,6 +473,9 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
       if (s.launch.provider === 'grok_build' && !isGrokBuildResumeMode(s.launch.resumeMode)) {
         throw new Error('resumeMode must be a known Grok Build resume mode');
       }
+      if (s.launch.provider === 'antigravity' && !isAntigravityResumeMode(s.launch.resumeMode)) {
+        throw new Error('resumeMode must be a known Antigravity resume mode');
+      }
       if (s.launch.provider === 'claude_code' && s.launch.resumeMode === 'resume_by_name' && !s.launch.claudeSessionName) {
         throw new Error('claudeSessionName is required for resume_by_name');
       }
@@ -488,6 +493,9 @@ function validateSession(s: Session, platform?: SupportedHostPlatform): void {
       }
       if (s.launch.provider === 'grok_build' && s.launch.resumeMode === 'resume_by_id' && !s.launch.grokSessionId) {
         throw new Error('grokSessionId is required for resume_by_id');
+      }
+      if (s.launch.provider === 'antigravity' && s.launch.resumeMode === 'resume_by_id' && !s.launch.conversationId) {
+        throw new Error('conversationId is required for resume_by_id');
       }
       if (s.launch.provider === 'cursor' && s.launch.cursorMode !== undefined && !isCursorMode(s.launch.cursorMode)) {
         throw new Error('cursorMode must be agent, plan, or ask');
@@ -512,7 +520,9 @@ function initialHasUserInput(draft: SessionDraft): boolean | undefined {
         ? draft.launch.cursorSessionId
         : draft.launch.provider === 'opencode'
           ? draft.launch.openCodeSessionId
-          : draft.launch.grokSessionId;
+          : draft.launch.provider === 'antigravity'
+            ? draft.launch.conversationId
+            : draft.launch.grokSessionId;
   if (providerSessionId || draft.providerThreadId) return undefined;
   return false;
 }
@@ -666,6 +676,7 @@ function parseCurrentAgentRuntime(raw: unknown): AgentRuntimeInfo | null {
     && provider !== 'cursor'
     && provider !== 'opencode'
     && provider !== 'grok_build'
+    && provider !== 'antigravity'
   ) return null;
   if (status !== 'active' && status !== 'exited') return null;
   return {
@@ -701,6 +712,7 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         && provider !== 'cursor'
         && provider !== 'opencode'
         && provider !== 'grok_build'
+        && provider !== 'antigravity'
       ) return null;
       return {
         type: 'agent',
@@ -712,6 +724,8 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         ...(typeof existing['cursorSessionId'] === 'string' ? { cursorSessionId: existing['cursorSessionId'] } : {}),
         ...(typeof existing['openCodeSessionId'] === 'string' ? { openCodeSessionId: existing['openCodeSessionId'] } : {}),
         ...(typeof existing['grokSessionId'] === 'string' ? { grokSessionId: existing['grokSessionId'] } : {}),
+        ...(typeof existing['conversationId'] === 'string' ? { conversationId: existing['conversationId'] } : {}),
+        ...(isEffort(existing['effort']) ? { effort: existing['effort'] } : {}),
         ...(isCursorMode(existing['cursorMode']) ? { cursorMode: existing['cursorMode'] } : {}),
         ...(typeof existing['fullscreenTui'] === 'boolean' ? { fullscreenTui: existing['fullscreenTui'] } : {}),
         ...(typeof existing['model'] === 'string' ? { model: existing['model'] } : {}),
@@ -785,6 +799,16 @@ function parseLaunch(raw: Record<string, unknown>): TerminalLaunch | AgentLaunch
         ...(typeof raw['model'] === 'string' ? { model: raw['model'] } : {}),
         ...(isStringArray(raw['extraArgs']) ? { extraArgs: raw['extraArgs'] } : {})
       };
+    case 'antigravity':
+      return {
+        type: 'agent',
+        provider: 'antigravity',
+        resumeMode: typeof raw['resumeMode'] === 'string' ? raw['resumeMode'] as AgentLaunch['resumeMode'] : 'new',
+        ...(typeof raw['conversationId'] === 'string' ? { conversationId: raw['conversationId'] } : {}),
+        ...(typeof raw['model'] === 'string' ? { model: raw['model'] } : {}),
+        ...(isEffort(raw['effort']) ? { effort: raw['effort'] } : {}),
+        ...(isStringArray(raw['extraArgs']) ? { extraArgs: raw['extraArgs'] } : {})
+      };
     default:
       return null;
   }
@@ -814,6 +838,14 @@ function isOpenCodeResumeMode(value: unknown): boolean {
 
 function isGrokBuildResumeMode(value: unknown): boolean {
   return value === 'new' || value === 'resume_by_id' || value === 'resume_last';
+}
+
+function isAntigravityResumeMode(value: unknown): boolean {
+  return value === 'new' || value === 'resume_by_id' || value === 'resume_last';
+}
+
+function isEffort(value: unknown): value is 'low' | 'medium' | 'high' {
+  return value === 'low' || value === 'medium' || value === 'high';
 }
 
 function isCursorMode(value: unknown): value is 'agent' | 'plan' | 'ask' {

@@ -25,6 +25,7 @@
   let cursorButton: HTMLButtonElement | null = $state(null);
   let openCodeButton: HTMLButtonElement | null = $state(null);
   let grokButton: HTMLButtonElement | null = $state(null);
+  let antigravityButton: HTMLButtonElement | null = $state(null);
   let kind = $state<SessionLaunchKind>('terminal');
   let workspaceKey = $state('');
   let deviceId = $state('');
@@ -222,7 +223,7 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="grid grid-cols-3 gap-2 sm:grid-cols-6" aria-label="Session kind">
+    <div class="grid grid-cols-3 gap-2 sm:grid-cols-7" aria-label="Session kind">
       <Button
         bind:ref={claudeButton}
         variant={kind === 'claude_code' ? 'secondary' : 'ghost'}
@@ -320,6 +321,23 @@
       >
         <KindIcon kind="grok_build" size={28} />
         <span class="leading-none">Grok Build</span>
+      </Button>
+      <Button
+        bind:ref={antigravityButton}
+        variant={kind === 'antigravity' ? 'secondary' : 'ghost'}
+        class={`h-20 flex-col gap-1.5 border border-border px-2 text-xs ${!isProviderAvailable('antigravity') ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+        disabled={!isProviderAvailable('antigravity')}
+        aria-disabled={!isProviderAvailable('antigravity') ? 'true' : undefined}
+        title={providerDisabledReason('antigravity') ?? 'Antigravity'}
+        onclick={() => {
+          if (!isProviderAvailable('antigravity')) return;
+          if (!placementAvailable) return legacyAgent('antigravity');
+          kind = 'antigravity';
+          resetPlan();
+        }}
+      >
+        <KindIcon kind="antigravity" size={28} />
+        <span class="leading-none">Antigravity</span>
       </Button>
     </div>
 

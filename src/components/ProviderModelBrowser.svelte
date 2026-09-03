@@ -28,7 +28,8 @@
     'codex',
     'cursor',
     'opencode',
-    'grok_build'
+    'grok_build',
+    'antigravity'
   ];
 
   const providerLabels: Record<AgentRuntimeProvider, string> = {
@@ -36,7 +37,8 @@
     codex: 'Codex',
     cursor: 'Cursor',
     opencode: 'OpenCode',
-    grok_build: 'Grok Build'
+    grok_build: 'Grok Build',
+    antigravity: 'Antigravity'
   };
 
   let {

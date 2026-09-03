@@ -13,7 +13,8 @@ export type AgentRuntimeProvider =
   | 'codex'
   | 'cursor'
   | 'opencode'
-  | 'grok_build';
+  | 'grok_build'
+  | 'antigravity';
 export type SessionLaunchKind = 'terminal' | AgentRuntimeProvider;
 export type SessionKind = 'standard_terminal' | AgentRuntimeProvider;
 
@@ -41,6 +42,7 @@ export type CodexResumeMode = 'new' | 'resume_last' | 'resume_by_id';
 export type CursorResumeMode = 'new' | 'resume_last' | 'resume_by_id';
 export type OpenCodeResumeMode = 'new' | 'resume_last' | 'resume_by_id';
 export type GrokBuildResumeMode = 'new' | 'resume_last' | 'resume_by_id';
+export type AntigravityResumeMode = 'new' | 'resume_last' | 'resume_by_id';
 export type CodexReasoningEffort = 'low' | 'medium' | 'high';
 export type CursorMode = 'agent' | 'plan' | 'ask';
 
@@ -52,13 +54,16 @@ export interface AgentLaunch {
     | CodexResumeMode
     | CursorResumeMode
     | OpenCodeResumeMode
-    | GrokBuildResumeMode;
+    | GrokBuildResumeMode
+    | AntigravityResumeMode;
   claudeSessionName?: string;
   claudeSessionId?: string;
   codexSessionId?: string;
   cursorSessionId?: string;
   openCodeSessionId?: string;
   grokSessionId?: string;
+  conversationId?: string;
+  effort?: 'low' | 'medium' | 'high';
   cursorMode?: CursorMode;
   fullscreenTui?: boolean;
   model?: string;
@@ -174,7 +179,8 @@ export function isAgentProvider(value: unknown): value is AgentRuntimeProvider {
     || value === 'codex'
     || value === 'cursor'
     || value === 'opencode'
-    || value === 'grok_build';
+    || value === 'grok_build'
+    || value === 'antigravity';
 }
 
 export function launchKind(session: Session | SessionDraft): SessionLaunchKind {

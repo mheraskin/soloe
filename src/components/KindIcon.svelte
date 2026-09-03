@@ -1,6 +1,8 @@
 <script lang="ts">
   import { TerminalSquare } from '@lucide/svelte';
   import type { SessionLaunchKind } from '@shared/types/sessions.js';
+  import antigravityDarkUrl from '../lib/icons/antigravity-dark.svg';
+  import antigravityLightUrl from '../lib/icons/antigravity-light.svg';
   import claudeUrl from '../lib/icons/claude.svg';
   import codexLightUrl from '../lib/icons/codex-light.svg';
   import codexUrl from '../lib/icons/codex.svg';
@@ -16,6 +18,11 @@
   const sources: Partial<
     Record<SessionLaunchKind, { lightSrc: string; darkSrc?: string; alt: string }>
   > = {
+    antigravity: {
+      lightSrc: antigravityLightUrl,
+      darkSrc: antigravityDarkUrl,
+      alt: 'Antigravity'
+    },
     claude_code: { lightSrc: claudeUrl, alt: 'Claude' },
     codex: { lightSrc: codexLightUrl, darkSrc: codexUrl, alt: 'Codex' },
     cursor: { lightSrc: cursorLightUrl, darkSrc: cursorUrl, alt: 'Cursor' },

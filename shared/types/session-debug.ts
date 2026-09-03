@@ -3,7 +3,8 @@ export type SessionHookProvider =
   | 'codex'
   | 'cursor'
   | 'opencode'
-  | 'grok_build';
+  | 'grok_build'
+  | 'antigravity';
 
 interface SessionHookTraceBase {
   id: string;

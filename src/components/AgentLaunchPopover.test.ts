@@ -1048,6 +1048,7 @@ describe('AgentLaunchPopover touch gestures', () => {
     const cursor = document.body.querySelector<HTMLButtonElement>('[data-launch-option="cursor"]');
     const opencode = document.body.querySelector<HTMLButtonElement>('[data-launch-option="opencode"]');
     const grok = document.body.querySelector<HTMLButtonElement>('[data-launch-option="grok_build"]');
+    const antigravity = document.body.querySelector<HTMLButtonElement>('[data-launch-option="antigravity"]');
     const terminal = document.body.querySelector<HTMLButtonElement>('[data-launch-option="terminal"]');
 
     expect(claude).not.toBeNull();
@@ -1069,6 +1070,9 @@ describe('AgentLaunchPopover touch gestures', () => {
 
     expect(grok?.disabled).toBe(true);
     expect(grok?.title).toContain('Grok Build CLI is not installed on this Device');
+
+    expect(antigravity?.disabled).toBe(true);
+    expect(antigravity?.title).toContain('Antigravity CLI is not installed on this Device');
 
     expect(terminal?.disabled).toBe(false);
 

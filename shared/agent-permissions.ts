@@ -33,6 +33,10 @@ export function sessionAutoApprovesPermissions(
       || hasOptionValue(args, ['--permission-mode'], 'bypasspermissions');
   }
 
+  if (launch.provider === 'antigravity') {
+    return hasFlag(args, '--dangerously-skip-permissions');
+  }
+
   return hasFlag(args, '--dangerously-skip-permissions')
     || hasOptionValue(args, ['--permission-mode'], 'bypasspermissions');
 }

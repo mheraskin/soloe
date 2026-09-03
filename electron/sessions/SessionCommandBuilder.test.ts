@@ -161,6 +161,8 @@ describe('SessionCommandBuilder — standard_terminal kind', () => {
     expect(rc).toContain('codex() { __soloe_agent_launch codex codex "$@"; }');
     expect(rc).toContain('agent() { __soloe_agent_launch cursor agent "$@"; }');
     expect(rc).toContain('cursor-agent() { __soloe_agent_launch cursor cursor-agent "$@"; }');
+    expect(rc).toContain('antigravity() { __soloe_agent_launch antigravity agy "$@"; }');
+    expect(rc).toContain('agy() { __soloe_agent_launch antigravity agy "$@"; }');
     expect(rc).toContain('"$__soloe_u/hook/$__soloe_provider"');
     expect(rc).toContain('"hook_event_name":"SessionStart"');
     expect(rc).toContain('"argv_b64":"%s"');
@@ -795,6 +797,45 @@ describe('SessionCommandBuilder — Grok Build kind', () => {
     expect(decodeAgentScript(innerLine(builder.build(latest, ctx).args))).toContain('--continue');
     expect(decodeAgentScript(innerLine(builder.build(exact, ctx).args)))
       .toContain('--resume grok-session-123');
+  });
+});
+
+describe('SessionCommandBuilder — Antigravity kind', () => {
+  const antigravity = (launch: Session['launch']): Session => ({
+    ...baseFields('antigravity'),
+    runMode: 'wsl',
+    wslDistro: 'Ubuntu',
+    launch
+  });
+
+  it('launches the configured Antigravity binary with a model and effort', () => {
+    const session = antigravity({
+      type: 'agent',
+      provider: 'antigravity',
+      resumeMode: 'new',
+      model: 'gemini-3.8-flash-high',
+      effort: 'high'
+    });
+    const script = innerLine(builder.build(session, {
+      ...ctx, binaries: { antigravity: '/opt/antigravity/bin/agy' }
+    }).args);
+    expect(script).toContain('exec /opt/antigravity/bin/agy');
+    expect(script).toContain('--model gemini-3.8-flash-high');
+    expect(script).toContain('--effort high');
+    expect(script).toContain('SOLOE_AGENT_PROVIDER=antigravity');
+  });
+
+  it('resumes the latest or an exact Antigravity conversation with documented flags', () => {
+    const latest = antigravity({ type: 'agent', provider: 'antigravity', resumeMode: 'resume_last' });
+    const exact = antigravity({
+      type: 'agent',
+      provider: 'antigravity',
+      resumeMode: 'resume_by_id',
+      conversationId: 'agy-conv-456'
+    });
+    expect(decodeAgentScript(innerLine(builder.build(latest, ctx).args))).toContain('--continue');
+    expect(decodeAgentScript(innerLine(builder.build(exact, ctx).args)))
+      .toContain('--conversation agy-conv-456');
   });
 });
 

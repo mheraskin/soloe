@@ -784,6 +784,7 @@ export interface AgentIntegrationHostStatus {
   cursor: AgentIntegrationTargetStatus;
   opencode: AgentIntegrationTargetStatus;
   grok: AgentIntegrationTargetStatus;
+  antigravity?: AgentIntegrationTargetStatus;
 }
 
 export interface AgentIntegrationStatus {

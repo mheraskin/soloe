@@ -23,6 +23,8 @@ export function agentCliUnavailableReason(provider: AgentRuntimeProvider): strin
       return 'OpenCode CLI is not installed on this Device';
     case 'grok_build':
       return 'Grok Build CLI is not installed on this Device';
+    case 'antigravity':
+      return 'Antigravity CLI is not installed on this Device';
     default: {
       const _exhaustive: never = provider;
       return _exhaustive;

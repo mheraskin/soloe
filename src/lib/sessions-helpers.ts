@@ -17,6 +17,7 @@ export function kindLabel(kind: SessionLaunchKind): string {
     case 'cursor': return 'Cursor';
     case 'opencode': return 'OpenCode';
     case 'grok_build': return 'Grok Build';
+    case 'antigravity': return 'Antigravity';
   }
 }
 
@@ -28,6 +29,7 @@ export function kindGlyph(kind: SessionLaunchKind): string {
     case 'cursor': return 'Cu';
     case 'opencode': return 'OC';
     case 'grok_build': return 'G';
+    case 'antigravity': return 'AG';
   }
 }
 
@@ -64,6 +66,8 @@ export function defaultDraft(kind: SessionLaunchKind, defaults?: SettingsDefault
       return { ...base, launch: { type: 'agent', provider: 'opencode', resumeMode: 'new' } };
     case 'grok_build':
       return { ...base, launch: { type: 'agent', provider: 'grok_build', resumeMode: 'new' } };
+    case 'antigravity':
+      return { ...base, launch: { type: 'agent', provider: 'antigravity', resumeMode: 'new' } };
   }
 }
 

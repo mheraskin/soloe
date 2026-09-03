@@ -4,6 +4,7 @@ import { CLI_DEFAULT_MODEL_ID } from '@shared/model-catalog.js';
 import {
   buildModelCatalogCommand,
   ModelCatalogService,
+  parseAntigravityModels,
   parseCursorModels,
   parseOpenCodeModels
 } from './ModelCatalogService.js';
@@ -103,6 +104,31 @@ describe('ModelCatalogService', () => {
     ]);
   });
 
+  it('parses Antigravity tab-separated model output', () => {
+    expect(parseAntigravityModels([
+      'Fetching available models...',
+      'gemini-3.8-flash-high\tGemini 3.8 Flash (High)',
+      'claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)',
+      'gpt-oss-120b-medium\tGPT-OSS 120B (Medium)'
+    ].join('\n'))).toEqual([
+      {
+        provider: 'antigravity',
+        id: 'gemini-3.8-flash-high',
+        label: 'Gemini 3.8 Flash (High)'
+      },
+      {
+        provider: 'antigravity',
+        id: 'claude-sonnet-4-6',
+        label: 'Claude Sonnet 4.6 (Thinking)'
+      },
+      {
+        provider: 'antigravity',
+        id: 'gpt-oss-120b-medium',
+        label: 'GPT-OSS 120B (Medium)'
+      }
+    ]);
+  });
+
   it('caches discovery until invalidated', async () => {
     const runCommand = vi.fn(async () => ({ exitCode: -1, stdout: '', stderr: '' }));
     const service = new ModelCatalogService({
@@ -112,10 +138,10 @@ describe('ModelCatalogService', () => {
 
     await service.getCatalog();
     await service.getCatalog();
-    expect(runCommand).toHaveBeenCalledTimes(7);
+    expect(runCommand).toHaveBeenCalledTimes(11);
     service.invalidate();
     await service.getCatalog();
-    expect(runCommand).toHaveBeenCalledTimes(14);
+    expect(runCommand).toHaveBeenCalledTimes(22);
   });
 });
 

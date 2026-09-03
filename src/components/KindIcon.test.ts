@@ -7,7 +7,8 @@ describe('KindIcon', () => {
     ['cursor', 'Cursor'],
     ['codex', 'Codex'],
     ['opencode', 'OpenCode'],
-    ['grok_build', 'Grok Build']
+    ['grok_build', 'Grok Build'],
+    ['antigravity', 'Antigravity']
   ] as const)('renders light and dark logo variants for %s', (kind, alt) => {
     const { body } = render(KindIcon, { props: { kind, size: 24 } });
 

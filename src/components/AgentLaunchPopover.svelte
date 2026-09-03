@@ -64,6 +64,7 @@
   const agentProviders = [
     { value: 'opencode', label: 'OpenCode' },
     { value: 'grok_build', label: 'Grok Build' },
+    { value: 'antigravity', label: 'Antigravity' },
     { value: 'claude_code', label: 'Claude' },
     { value: 'cursor', label: 'Cursor' },
     { value: 'codex', label: 'Codex' }
@@ -308,6 +309,7 @@
       || option === 'cursor'
       || option === 'opencode'
       || option === 'grok_build'
+      || option === 'antigravity'
     ) {
       return !isProviderAvailable(option);
     }
@@ -534,6 +536,7 @@
       || option === 'cursor'
       || option === 'opencode'
       || option === 'grok_build'
+      || option === 'antigravity'
     ) {
       return {
         type: 'agent',
@@ -563,6 +566,7 @@
     if (option === 'cursor') return branch ? `${branch} Cursor` : 'Cursor';
     if (option === 'opencode') return branch ? `${branch} OpenCode` : 'OpenCode';
     if (option === 'grok_build') return branch ? `${branch} Grok Build` : 'Grok Build';
+    if (option === 'antigravity') return branch ? `${branch} Antigravity` : 'Antigravity';
     return presets.find((candidate) => candidate.id === option.slice('preset:'.length))?.label
       ?? 'Session';
   }
@@ -741,6 +745,7 @@
       || option === 'cursor'
       || option === 'opencode'
       || option === 'grok_build'
+      || option === 'antigravity'
     ) {
       launchAgent(option);
       return;

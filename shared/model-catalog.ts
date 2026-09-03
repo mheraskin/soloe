@@ -40,6 +40,12 @@ export const CLI_DEFAULT_MODEL_CATALOG: ModelCatalogEntry[] = [
     id: CLI_DEFAULT_MODEL_ID,
     label: 'Grok Build default',
     isDefault: true
+  },
+  {
+    provider: 'antigravity',
+    id: CLI_DEFAULT_MODEL_ID,
+    label: 'Antigravity default',
+    isDefault: true
   }
 ];
 

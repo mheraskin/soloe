@@ -51,6 +51,20 @@ describe('AgentCliDiscovery', () => {
       version: '1.0.0'
     });
     expect(enriched.hosts[0]?.claude.cli?.available).toBe(false);
-    expect(discovery.detect).toHaveBeenCalledTimes(5);
+    expect(enriched.hosts[0]?.antigravity?.cli?.available).toBe(false);
+    expect(discovery.detect).toHaveBeenCalledTimes(6);
+  });
+
+  it('detects antigravity via agy or antigravity candidate binaries', async () => {
+    const run = vi.fn(async (cmd: string) => {
+      if (cmd === 'agy') return { exitCode: 0, stdout: '1.1.25\n', stderr: '' };
+      return { exitCode: 1, stdout: '', stderr: 'not found' };
+    });
+    const discovery = new AgentCliDiscovery({ run });
+    await expect(discovery.detect('antigravity', { kind: 'macos' })).resolves.toEqual({
+      available: true,
+      binary: 'agy',
+      version: '1.1.25'
+    });
   });
 });

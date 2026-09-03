@@ -6,7 +6,7 @@ import type {
 } from './sessions.js';
 
 export type AgentProvider = AgentRuntimeProvider;
-export type WorkerAgentProvider = Exclude<AgentProvider, 'opencode' | 'grok_build'>;
+export type WorkerAgentProvider = Exclude<AgentProvider, 'opencode' | 'grok_build' | 'antigravity'>;
 export type ObserverSubjectKind = 'session' | 'worker';
 
 export type InteractiveAgentLifecycle = 'starting' | 'running' | 'exited' | 'failed';

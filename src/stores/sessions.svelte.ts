@@ -937,6 +937,17 @@ export class SessionsStore {
               ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
             }
           };
+        case 'antigravity':
+          return {
+            ...base,
+            launch: {
+              type: 'agent',
+              provider: 'antigravity',
+              resumeMode: 'new',
+              ...(opts.model ? { model: opts.model } : {}),
+              ...(opts.extraArgs?.length ? { extraArgs: opts.extraArgs } : {})
+            }
+          };
       }
     })();
     const created = await this.create(draft);
@@ -1343,5 +1354,7 @@ function defaultSessionName(kind: SessionLaunchKind): string {
       return 'OpenCode';
     case 'grok_build':
       return 'Grok Build';
+    case 'antigravity':
+      return 'Antigravity';
   }
 }

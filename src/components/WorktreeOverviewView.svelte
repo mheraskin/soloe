@@ -334,6 +334,7 @@
     if (
       overview.generatedBy.provider === 'opencode'
       || overview.generatedBy.provider === 'grok_build'
+      || overview.generatedBy.provider === 'antigravity'
     ) return true;
     const generatedProvider: ModelProvider =
       overview.generatedBy.provider === 'claude_code' ? 'claude' : overview.generatedBy.provider;

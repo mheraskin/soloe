@@ -51,20 +51,22 @@ export class ModelCatalogService {
       claude: settings.binaries.claude ?? 'claude',
       cursor: settings.binaries.cursor ?? 'agent',
       opencode: settings.binaries.opencode ?? 'opencode',
-      grok: settings.binaries.grok ?? 'grok'
+      grok: settings.binaries.grok ?? 'grok',
+      antigravity: settings.binaries.antigravity ?? 'agy'
     });
     if (this.cache?.key === key && this.cache.expiresAt > Date.now()) {
       return this.cache.catalog.map((entry) => ({ ...entry }));
     }
 
-    const [codex, claude, cursor, opencode, grok] = await Promise.all([
+    const [codex, claude, cursor, opencode, grok, antigravity] = await Promise.all([
       this.discoverCodex(settings.binaries),
       this.discoverClaude(settings.binaries),
       this.discoverCursor(settings.binaries),
       this.discoverOpenCode(settings.binaries),
-      this.discoverGrok(settings.binaries)
+      this.discoverGrok(settings.binaries),
+      this.discoverAntigravity(settings.binaries)
     ]);
-    const catalog = dedupeCatalog([...codex, ...claude, ...cursor, ...opencode, ...grok]);
+    const catalog = dedupeCatalog([...codex, ...claude, ...cursor, ...opencode, ...grok, ...antigravity]);
     this.cache = {
       key,
       expiresAt: Date.now() + (this.opts.cacheMs ?? CACHE_MS),
@@ -153,6 +155,22 @@ export class ModelCatalogService {
     const result = await this.runCommand(executable, ['--version']);
     return result.exitCode === 0 ? [defaultEntry('grok_build')] : [];
   }
+
+  private async discoverAntigravity(binaries: SettingsBinaries): Promise<ModelCatalogEntry[]> {
+    const candidates = binaries.antigravity ? [binaries.antigravity] : ['agy', 'antigravity'];
+    for (const executable of candidates) {
+      const result = await this.runCommand(executable, ['models']);
+      if (result.exitCode === 0) {
+        const parsed = parseAntigravityModels(result.stdout);
+        return [defaultEntry('antigravity'), ...parsed];
+      }
+      const help = await this.runCommand(executable, ['--help']);
+      if (help.exitCode === 0) {
+        return [defaultEntry('antigravity')];
+      }
+    }
+    return [];
+  }
 }
 
 function defaultEntry(provider: ModelCatalogEntry['provider']): ModelCatalogEntry {
@@ -186,6 +204,22 @@ export function parseOpenCodeModels(stdout: string): ModelCatalogEntry[] {
     }
     seen.add(id);
     entries.push({ provider: 'opencode', id, label: humanizeOpenCodeModel(id) });
+  }
+  return entries;
+}
+
+export function parseAntigravityModels(stdout: string): ModelCatalogEntry[] {
+  const seen = new Set<string>();
+  const entries: ModelCatalogEntry[] = [];
+  for (const rawLine of stdout.replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, '').split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('Fetching') || line.startsWith('Available')) continue;
+    const parts = line.split('\t');
+    const id = parts[0]?.trim();
+    if (!id || /^(?:model|models)$/iu.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    const label = parts[1]?.trim() || humanizeModelId(id);
+    entries.push({ provider: 'antigravity', id, label });
   }
   return entries;
 }

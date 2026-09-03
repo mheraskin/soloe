@@ -8,7 +8,7 @@ import type {
 } from '@shared/types/ipc.js';
 import type { SettingsBinaries } from '@shared/types/settings.js';
 
-export type AgentCliProvider = 'claude' | 'codex' | 'cursor' | 'opencode' | 'grok';
+export type AgentCliProvider = 'claude' | 'codex' | 'cursor' | 'opencode' | 'grok' | 'antigravity';
 
 interface CommandResult {
   exitCode: number;
@@ -49,6 +49,12 @@ const PROVIDER_SPECS = {
     label: 'Grok Build CLI',
     defaultBinaries: ['grok'] as const,
     configuredKey: 'grok' as const satisfies keyof SettingsBinaries,
+    parseVersion: parseGenericVersion
+  },
+  antigravity: {
+    label: 'Antigravity CLI',
+    defaultBinaries: ['agy', 'antigravity'] as const,
+    configuredKey: 'antigravity' as const satisfies keyof SettingsBinaries,
     parseVersion: parseGenericVersion
   }
 } as const;

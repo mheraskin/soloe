@@ -114,7 +114,8 @@
     { value: 'codex', label: 'Codex' },
     { value: 'cursor', label: 'Cursor' },
     { value: 'opencode', label: 'OpenCode' },
-    { value: 'grok_build', label: 'Grok Build' }
+    { value: 'grok_build', label: 'Grok Build' },
+    { value: 'antigravity', label: 'Antigravity' }
   ];
   const binaryKeys: { key: keyof SettingsBinaries; label: string; placeholder: string }[] = [
     { key: 'claude', label: 'Claude binary', placeholder: 'claude' },
@@ -122,6 +123,7 @@
     { key: 'cursor', label: 'Cursor Agent binary', placeholder: 'agent' },
     { key: 'opencode', label: 'OpenCode binary', placeholder: 'opencode' },
     { key: 'grok', label: 'Grok Build binary', placeholder: 'grok' },
+    { key: 'antigravity', label: 'Antigravity binary', placeholder: 'agy' },
     { key: 'git', label: 'git', placeholder: 'git' },
     { key: 'gh', label: 'gh', placeholder: 'gh' },
     { key: 'fd', label: 'fd', placeholder: 'fd' },
@@ -439,7 +441,8 @@
     { value: 'codex', label: 'Codex' },
     { value: 'cursor', label: 'Cursor' },
     { value: 'opencode', label: 'OpenCode' },
-    { value: 'grok_build', label: 'Grok Build' }
+    { value: 'grok_build', label: 'Grok Build' },
+    { value: 'antigravity', label: 'Antigravity' }
   ];
 
   function generatePresetId(): string {
@@ -935,7 +938,11 @@
                   ? '--force --approve-mcps'
                   : preset.provider === 'opencode'
                     ? '--auto'
-                    : preset.provider === 'grok_build' ? '--always-approve' : '--full-auto'}
+                    : preset.provider === 'grok_build'
+                      ? '--always-approve'
+                      : preset.provider === 'antigravity'
+                        ? '--dangerously-skip-permissions'
+                        : '--full-auto'}
               value={preset.extraArgs ?? ''}
               onchange={(e) => {
                 const v = (e.currentTarget as HTMLInputElement).value.trim();
@@ -1020,7 +1027,11 @@
                   ? '--force --approve-mcps'
                   : draftPreset.provider === 'opencode'
                     ? '--auto'
-                    : draftPreset.provider === 'grok_build' ? '--always-approve' : '--full-auto'}
+                    : draftPreset.provider === 'grok_build'
+                      ? '--always-approve'
+                      : draftPreset.provider === 'antigravity'
+                        ? '--dangerously-skip-permissions'
+                        : '--full-auto'}
               value={draftPreset.extraArgs ?? ''}
               oninput={(e) =>
                 updateDraftPreset({ extraArgs: (e.currentTarget as HTMLInputElement).value })}

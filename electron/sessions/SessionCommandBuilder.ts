@@ -99,6 +99,7 @@ export class SessionCommandBuilder {
           case 'cursor': return this.buildCursor(session, session.launch, ctx);
           case 'opencode': return this.buildOpenCode(session, session.launch, ctx);
           case 'grok_build': return this.buildGrok(session, session.launch, ctx);
+          case 'antigravity': return this.buildAntigravity(session, session.launch, ctx);
         }
     }
   }
@@ -160,6 +161,20 @@ export class SessionCommandBuilder {
         ctx.binaries?.grok ?? 'grok',
         args,
         buildSoloeEnv(s.id, s.runMode, 'grok_build', ctx),
+        s.runMode
+      );
+    }
+
+    if (runtime.provider === 'antigravity') {
+      const threadId = runtime.providerThreadId ?? s.providerThreadId;
+      const args = threadId ? ['--conversation', threadId] : ['--continue'];
+      if (s.launch.type === 'agent' && s.launch.provider === 'antigravity') {
+        appendAgentLaunchArgs(args, s.launch, 'antigravity');
+      }
+      return buildAgentCommand(
+        ctx.binaries?.antigravity ?? 'agy',
+        args,
+        buildSoloeEnv(s.id, s.runMode, 'antigravity', ctx),
         s.runMode
       );
     }
@@ -379,6 +394,35 @@ export class SessionCommandBuilder {
       s.runMode
     );
   }
+
+  private buildAntigravity(s: Session, launch: AgentLaunch, ctx: SessionBuildContext): InnerCommand {
+    const args: string[] = [];
+    switch (launch.resumeMode) {
+      case 'new': {
+        const conversationId = launch.conversationId ?? s.providerThreadId;
+        if (conversationId) args.push('--conversation', conversationId);
+        break;
+      }
+      case 'resume_last':
+        args.push('--continue');
+        break;
+      case 'resume_by_id':
+        if (!launch.conversationId) {
+          throw new Error('conversationId is required for resume_by_id');
+        }
+        args.push('--conversation', launch.conversationId);
+        break;
+      case 'resume_by_name':
+        throw new Error('Antigravity does not support resume_by_name');
+    }
+    appendAgentLaunchArgs(args, launch, 'antigravity');
+    return buildAgentCommand(
+      ctx.binaries?.antigravity ?? 'agy',
+      args,
+      buildSoloeEnv(s.id, s.runMode, 'antigravity', ctx),
+      s.runMode
+    );
+  }
 }
 
 function appendCodexBridgeOverrides(
@@ -401,7 +445,7 @@ function appendCodexBridgeOverrides(
 function appendAgentLaunchArgs(
   args: string[],
   launch: AgentLaunch,
-  provider: 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build'
+  provider: 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build' | 'antigravity'
 ): void {
   if (launch.model) {
     if (provider === 'claude_code') args.push('--model', launch.model);
@@ -410,6 +454,9 @@ function appendAgentLaunchArgs(
   }
   if (provider === 'codex' && launch.reasoningEffort) {
     args.push('-c', `model_reasoning_effort=${launch.reasoningEffort}`);
+  }
+  if (provider === 'antigravity' && launch.effort) {
+    args.push('--effort', launch.effort);
   }
   if (provider === 'codex') appendCodexTerminalMode(args, launch.extraArgs);
   if (provider === 'cursor' && launch.cursorMode && launch.cursorMode !== 'agent') {
@@ -658,7 +705,7 @@ function buildWslAgentExecLine(
 function buildSoloeEnv(
   sessionId: SessionId,
   runMode: Session['runMode'],
-  provider: 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build' | undefined,
+  provider: 'claude_code' | 'codex' | 'cursor' | 'opencode' | 'grok_build' | 'antigravity' | undefined,
   ctx: SessionBuildContext
 ): Record<string, string> {
   const inheritedTerm = ctx.baseEnv['TERM']?.trim();
@@ -795,6 +842,8 @@ function buildAgentLaunchFunctions(): string {
     'agent() { __soloe_agent_launch cursor agent "$@"; }',
     'cursor-agent() { __soloe_agent_launch cursor cursor-agent "$@"; }',
     'opencode() { __soloe_agent_launch opencode opencode "$@"; }',
-    'grok() { __soloe_agent_launch grok grok "$@"; }'
+    'grok() { __soloe_agent_launch grok grok "$@"; }',
+    'antigravity() { __soloe_agent_launch antigravity agy "$@"; }',
+    'agy() { __soloe_agent_launch antigravity agy "$@"; }'
   ].join('\n');
 }

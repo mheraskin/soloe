@@ -38,7 +38,8 @@ describe('sessionAutoApprovesPermissions', () => {
     ['opencode', ['--auto']],
     ['grok_build', ['--always-approve']],
     ['grok_build', ['--yolo']],
-    ['grok_build', ['--permission-mode=bypassPermissions']]
+    ['grok_build', ['--permission-mode=bypassPermissions']],
+    ['antigravity', ['--dangerously-skip-permissions']]
   ] as const)('recognizes %s auto-approval arguments', (provider, extraArgs) => {
     expect(sessionAutoApprovesPermissions(agentSession(provider, [...extraArgs]))).toBe(true);
   });

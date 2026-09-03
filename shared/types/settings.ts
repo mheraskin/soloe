@@ -63,6 +63,7 @@ export interface SettingsBinaries {
   cursor?: string;
   opencode?: string;
   grok?: string;
+  antigravity?: string;
   git?: string;
   gh?: string;
   fd?: string;
@@ -71,7 +72,7 @@ export interface SettingsBinaries {
 }
 
 export type ModelProvider = 'codex' | 'claude' | 'cursor';
-export type ModelCatalogProvider = ModelProvider | 'opencode' | 'grok_build';
+export type ModelCatalogProvider = ModelProvider | 'opencode' | 'grok_build' | 'antigravity';
 
 export type ModelTask = 'textGeneration' | 'gitCommitGeneration' | 'worktreeOverview';
 
