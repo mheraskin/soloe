@@ -11,6 +11,8 @@ export * from "./integrations/WslHostDetector.js";
 export * from "./git/ReviewDiffMaterializer.js";
 export * from "./git/UntrackedFileCounter.js";
 export * from "./notes/NotesStore.js";
+export * from "./artifacts/ArtifactStore.js";
+export * from "./artifacts/GeneratedArtifactHome.js";
 export {
   NativeGitEvidenceAdapter,
   WslGitEvidenceAdapter,
