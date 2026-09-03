@@ -21,7 +21,18 @@ describe('SoloeMcpServer', () => {
   it('exposes MCP tool listing and worker lifecycle calls', async () => {
     const observer = new AgentObserverManager();
     const runtime = new AgentRuntimeManager({ observer, sdkLoader: async () => fakeAdapter });
-    const server = new SoloeMcpServer({ observer, runtime, token: 'secret' });
+    const listArtifacts = vi.fn().mockResolvedValue({ projectId: 'project', artifacts: [] });
+    const server = new SoloeMcpServer({
+      observer,
+      runtime,
+      token: 'secret',
+      artifacts: {
+        list: listArtifacts,
+        publish: vi.fn(),
+        edit: vi.fn(),
+        delete: vi.fn()
+      }
+    });
 
     const tools = await server.handlePayload({
       jsonrpc: '2.0',
@@ -30,6 +41,16 @@ describe('SoloeMcpServer', () => {
     });
     expect(JSON.stringify(tools)).toContain('create_worker_session');
     expect(JSON.stringify(tools)).toContain('cursor');
+    expect(JSON.stringify(tools)).toContain('list_artifacts');
+    expect(JSON.stringify(tools)).toContain('publish_artifact');
+    expect(JSON.stringify(tools)).toContain('edit_artifact');
+    expect(JSON.stringify(tools)).toContain('delete_artifact');
+
+    await expect(server.handlePayload({
+      tool: 'list_artifacts',
+      arguments: { cwd: '/repo' }
+    })).resolves.toMatchObject({ projectId: 'project' });
+    expect(listArtifacts).toHaveBeenCalledWith({ cwd: '/repo' });
 
     const created = await server.handlePayload({
       tool: 'create_worker_session',

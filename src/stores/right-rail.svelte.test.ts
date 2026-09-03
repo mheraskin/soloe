@@ -63,4 +63,16 @@ describe('RightRailStore logical continuity', () => {
     expect(store.fullscreen).toBe(false);
     expect(store.fullscreenTab).toBeNull();
   });
+
+  it('opens Artifacts fullscreen in one state transition', () => {
+    const store = new RightRailStore();
+    store.setActiveCwd('/worktrees/alpha');
+    store.openTab('diff');
+
+    store.openFullscreenTab('artifacts');
+
+    expect(store.openTabs).toEqual(['diff', 'artifacts']);
+    expect(store.fullscreen).toBe(true);
+    expect(store.fullscreenTab).toBe('artifacts');
+  });
 });
