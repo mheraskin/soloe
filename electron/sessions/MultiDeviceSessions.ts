@@ -92,6 +92,7 @@ export interface SessionDevice {
   terminalInput(terminalId: string, data: string, control: TerminalControlProof): Promise<void>;
   pasteImagesIntoTerminal(request: ImagePasteRequest): Promise<ImagePasteResult>;
   invokeWorktree?(request: DeviceWorktreeInvokeRequest): Promise<unknown>;
+  modelCatalog?(): Promise<import('@shared/types/settings.js').ModelCatalogEntry[]>;
   terminalAcquireInputLease?(
     terminalId: string,
     takeover?: boolean,
@@ -423,6 +424,14 @@ export class MultiDeviceSessions {
       throw new Error('Update Soloe on this Device to browse workspace locations.');
     }
     return device.browseWorkspaceDirectories(path);
+  }
+
+  async modelCatalog(deviceId: DeviceId): Promise<import('@shared/types/settings.js').ModelCatalogEntry[]> {
+    const device = this.requireReadyDevice(deviceId);
+    if (!device.modelCatalog) {
+      throw new Error('Update Soloe on this Device to detect installed agent CLIs.');
+    }
+    return device.modelCatalog();
   }
 
   async openProjectOnDevice(

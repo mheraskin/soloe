@@ -196,6 +196,7 @@ export const IpcChannels = {
     planCreateOnDevice: 'sessions:plan-create-on-device',
     executeCreateOnDevice: 'sessions:execute-create-on-device',
     browseDeviceWorkspaceDirectories: 'sessions:browse-device-workspace-directories',
+    modelCatalogOnDevice: 'sessions:model-catalog-on-device',
     openProjectOnDevice: 'sessions:open-project-on-device',
     updateProjectOnDevice: 'sessions:update-project-on-device',
     deleteProjectOnDevice: 'sessions:delete-project-on-device',
@@ -478,6 +479,9 @@ export interface SessionsApi {
   browseDeviceWorkspaceDirectories?(
     request: import('./multi-device-sessions.js').BrowseDeviceWorkspaceDirectoriesRequest
   ): Promise<IpcResult<import('./workspaces.js').WorkspaceDirectoryListing>>;
+  modelCatalogOnDevice?(
+    request: { deviceId: import('./devices.js').DeviceId }
+  ): Promise<IpcResult<import('./settings.js').ModelCatalogEntry[]>>;
   openProjectOnDevice?(
     request: { deviceId: import('./devices.js').DeviceId; project: ProjectOpenRequest }
   ): Promise<IpcResult<MultiDeviceSessionState>>;

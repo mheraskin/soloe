@@ -166,6 +166,12 @@
 )}
   {@const isBusy = busy[busyKey(host, provider)] === true || bulkBusy}
   {@const label = providerLabel(provider)}
+  {@const cli = target.cli}
+  {@const cliTitle = cli
+    ? cli.available
+      ? `CLI: ${cli.binary ?? label}${cli.version ? ` ${cli.version}` : ''}`
+      : (cli.reason ?? `${label} CLI missing`)
+    : undefined}
   {#if isBusy}
     <Button size="sm" variant="ghost" disabled class="h-7 min-w-[6rem] gap-1.5 px-2 text-[11px]">
       <Loader2 class="size-3 animate-spin" />
@@ -175,18 +181,22 @@
     <Button
       size="sm"
       variant="ghost"
-      class="h-7 min-w-[6rem] gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-      title={`Click to disconnect ${label}`}
+      class={`h-7 min-w-[6rem] gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground ${cli && !cli.available ? 'opacity-60' : ''}`}
+      title={cliTitle ?? `Click to disconnect ${label}`}
       onclick={() => toggle(host, provider, target)}
     >
       <Check class="size-3 text-emerald-500" />
       {label}
+      {#if cli && !cli.available}
+        <span class="text-[9px] text-amber-500">CLI</span>
+      {/if}
     </Button>
   {:else if target.installed}
     <Button
       size="sm"
       variant="ghost"
-      class="h-7 min-w-[6rem] gap-1.5 px-2 text-[11px] text-amber-200 hover:bg-amber-500/15 hover:text-amber-50"
+      class={`h-7 min-w-[6rem] gap-1.5 px-2 text-[11px] text-amber-200 hover:bg-amber-500/15 hover:text-amber-50 ${cli && !cli.available ? 'opacity-60' : ''}`}
+      title={cliTitle}
       onclick={() => toggle(host, provider, target)}
     >
       <RefreshCw class="size-3" />
@@ -196,10 +206,14 @@
     <Button
       size="sm"
       variant="ghost"
-      class="h-7 min-w-[6rem] gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+      class={`h-7 min-w-[6rem] gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-foreground ${cli && !cli.available ? 'opacity-60' : ''}`}
+      title={cliTitle}
       onclick={() => toggle(host, provider, target)}
     >
       Connect {label}
+      {#if cli && !cli.available}
+        <span class="text-[9px] text-amber-500">CLI</span>
+      {/if}
     </Button>
   {/if}
 {/snippet}
@@ -236,14 +250,6 @@
           {@render providerButton(entry.host, 'cursor', entry.cursor)}
           {@render providerButton(entry.host, 'opencode', entry.opencode)}
           {@render providerButton(entry.host, 'grok', entry.grok)}
-          {#if entry.cursor.cli}
-            <span
-              class={entry.cursor.cli.available ? 'ml-1 text-[10px] text-emerald-500' : 'ml-1 text-[10px] text-amber-500'}
-              title={entry.cursor.cli.reason ?? `Using ${entry.cursor.cli.binary}${entry.cursor.cli.version ? ` ${entry.cursor.cli.version}` : ''}`}
-            >
-              {entry.cursor.cli.available ? entry.cursor.cli.version ?? 'CLI found' : 'CLI missing'}
-            </span>
-          {/if}
         </div>
       </div>
     {/each}

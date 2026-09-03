@@ -11,6 +11,10 @@
   import { sessions } from '../stores/sessions.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
+  import {
+    agentCliUnavailableReason,
+    isAgentCliAvailable
+  } from '@shared/agent-cli-availability.js';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import KindIcon from './KindIcon.svelte';
@@ -46,6 +50,36 @@
   let placementAvailable = $derived(
     deviceSessions.multiDeviceActive && deviceSessions.loaded && workspaceChoices.length > 0
   );
+
+  let effectiveTargetDeviceId = $derived<import('@shared/types/devices.js').DeviceId | null>(
+    (placementAvailable ? deviceId : null)
+      ?? deviceSessions.selectedDeviceId
+      ?? deviceSessions.activeDeviceId
+      ?? deviceSessions.localDevice?.deviceId
+      ?? null
+  );
+
+  $effect(() => {
+    if (newSessionPicker.isOpen && effectiveTargetDeviceId) {
+      void deviceSessions.loadModelCatalog?.(effectiveTargetDeviceId)?.catch(() => undefined);
+    }
+  });
+
+  let currentDeviceCatalog = $derived(
+    effectiveTargetDeviceId ? deviceSessions.modelCatalogForDevice?.(effectiveTargetDeviceId) ?? null : null
+  );
+
+  function isProviderAvailable(provider: AgentRuntimeProvider): boolean {
+    if (!currentDeviceCatalog) return true;
+    return isAgentCliAvailable(currentDeviceCatalog, provider);
+  }
+
+  function providerDisabledReason(provider: AgentRuntimeProvider): string | null {
+    if (currentDeviceCatalog && !isAgentCliAvailable(currentDeviceCatalog, provider)) {
+      return agentCliUnavailableReason(provider);
+    }
+    return null;
+  }
 
   function ctxOpts() {
     const context = newSessionPicker.context;
@@ -192,8 +226,12 @@
       <Button
         bind:ref={claudeButton}
         variant={kind === 'claude_code' ? 'secondary' : 'ghost'}
-        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        class={`h-20 flex-col gap-1.5 border border-border px-2 text-xs ${!isProviderAvailable('claude_code') ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+        disabled={!isProviderAvailable('claude_code')}
+        aria-disabled={!isProviderAvailable('claude_code') ? 'true' : undefined}
+        title={providerDisabledReason('claude_code') ?? 'Claude'}
         onclick={() => {
+          if (!isProviderAvailable('claude_code')) return;
           if (!placementAvailable) return legacyAgent('claude_code');
           kind = 'claude_code';
           resetPlan();
@@ -205,8 +243,12 @@
       <Button
         bind:ref={cursorButton}
         variant={kind === 'cursor' ? 'secondary' : 'ghost'}
-        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        class={`h-20 flex-col gap-1.5 border border-border px-2 text-xs ${!isProviderAvailable('cursor') ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+        disabled={!isProviderAvailable('cursor')}
+        aria-disabled={!isProviderAvailable('cursor') ? 'true' : undefined}
+        title={providerDisabledReason('cursor') ?? 'Cursor'}
         onclick={() => {
+          if (!isProviderAvailable('cursor')) return;
           if (!placementAvailable) return legacyAgent('cursor');
           kind = 'cursor';
           resetPlan();
@@ -218,8 +260,12 @@
       <Button
         bind:ref={codexButton}
         variant={kind === 'codex' ? 'secondary' : 'ghost'}
-        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        class={`h-20 flex-col gap-1.5 border border-border px-2 text-xs ${!isProviderAvailable('codex') ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+        disabled={!isProviderAvailable('codex')}
+        aria-disabled={!isProviderAvailable('codex') ? 'true' : undefined}
+        title={providerDisabledReason('codex') ?? 'Codex'}
         onclick={() => {
+          if (!isProviderAvailable('codex')) return;
           if (!placementAvailable) return legacyAgent('codex');
           kind = 'codex';
           resetPlan();
@@ -231,8 +277,12 @@
       <Button
         bind:ref={openCodeButton}
         variant={kind === 'opencode' ? 'secondary' : 'ghost'}
-        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        class={`h-20 flex-col gap-1.5 border border-border px-2 text-xs ${!isProviderAvailable('opencode') ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+        disabled={!isProviderAvailable('opencode')}
+        aria-disabled={!isProviderAvailable('opencode') ? 'true' : undefined}
+        title={providerDisabledReason('opencode') ?? 'OpenCode'}
         onclick={() => {
+          if (!isProviderAvailable('opencode')) return;
           if (!placementAvailable) return legacyAgent('opencode');
           kind = 'opencode';
           resetPlan();
@@ -257,8 +307,12 @@
       <Button
         bind:ref={grokButton}
         variant={kind === 'grok_build' ? 'secondary' : 'ghost'}
-        class="h-20 flex-col gap-1.5 border border-border px-2 text-xs"
+        class={`h-20 flex-col gap-1.5 border border-border px-2 text-xs ${!isProviderAvailable('grok_build') ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+        disabled={!isProviderAvailable('grok_build')}
+        aria-disabled={!isProviderAvailable('grok_build') ? 'true' : undefined}
+        title={providerDisabledReason('grok_build') ?? 'Grok Build'}
         onclick={() => {
+          if (!isProviderAvailable('grok_build')) return;
           if (!placementAvailable) return legacyAgent('grok_build');
           kind = 'grok_build';
           resetPlan();

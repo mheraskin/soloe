@@ -623,6 +623,42 @@ describe('MultiDeviceSessions', () => {
     expect(laptop.readInventoryCalls).toBe(2);
   });
 
+  it('delegates model catalog discovery to the target ready Device', async () => {
+    const catalog = [{ provider: 'claude' as const, id: 'sonnet', label: 'Sonnet' }];
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe',
+      branch: 'main',
+      sessions: [],
+      modelCatalog: async () => catalog
+    });
+    const sessions = new MultiDeviceSessions({ devices: [laptop] });
+    await sessions.refresh();
+
+    await expect(sessions.modelCatalog(LAPTOP_ID)).resolves.toEqual(catalog);
+  });
+
+  it('rejects model catalog requests when the Device does not support it', async () => {
+    const laptop = fakeDevice({
+      deviceId: LAPTOP_ID,
+      name: 'LAPTOPLORES',
+      projectId: 'windows-soloe',
+      projectPath: 'C:\\src\\soloe',
+      workspacePath: 'C:\\src\\soloe',
+      branch: 'main',
+      sessions: []
+    });
+    const sessions = new MultiDeviceSessions({ devices: [laptop] });
+    await sessions.refresh();
+
+    await expect(sessions.modelCatalog(LAPTOP_ID)).rejects.toThrow(
+      'Update Soloe on this Device to detect installed agent CLIs.'
+    );
+  });
+
   it('propagates one merged Session order to every owning Device', async () => {
     const mac = fakeDevice({
       deviceId: MAC_ID,
@@ -1045,6 +1081,7 @@ function fakeDevice(input: {
   onCreate?: (request: DevicePlacedSessionRequest) => void;
   local?: boolean;
   hasProject?: boolean;
+  modelCatalog?: () => Promise<import('@shared/types/settings.js').ModelCatalogEntry[]>;
 }): SessionDevice & {
   readonly displayName: string;
   setState(state: SessionDeviceStatus['state']): void;
@@ -1247,6 +1284,7 @@ function fakeDevice(input: {
       sessionRef: null,
       snapshot: null
     }),
+    ...(input.modelCatalog ? { modelCatalog: input.modelCatalog } : {}),
     terminalStop: async (terminalId) => {
       lifecycleRequests.push(`stop:${terminalId}`);
       inventory.runtimes = inventory.runtimes.filter(

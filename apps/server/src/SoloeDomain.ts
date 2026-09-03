@@ -177,6 +177,10 @@ import { BackgroundAgentExecution } from "../../../electron/agents/BackgroundAge
 import { AutoRenameService } from "../../../electron/agents/AutoRenameService.js";
 import { ModelCatalogService } from "../../../electron/agents/ModelCatalogService.js";
 import {
+  AgentCliDiscovery,
+  enrichAgentCliStatus,
+} from "../../../electron/agents/AgentCliDiscovery.js";
+import {
   CursorCliDiscovery,
   enrichCursorCliStatus,
   resolveCursorSessionBinaries,
@@ -292,6 +296,7 @@ export interface SoloeDomainOptions {
     | "uninstallGrok"
   >;
   cursorDiscovery?: Pick<CursorCliDiscovery, "detect">;
+  agentCliDiscovery?: Pick<AgentCliDiscovery, "detect">;
   enableAgentBridge?: boolean;
   pathService?: Pick<BackendPathService, "openSessionPath">;
   wslHostDetector?: Pick<WslHostDetector, "detect">;
@@ -347,6 +352,7 @@ export class SoloeDomain extends EventEmitter {
     SoloeDomainOptions["integrationInstaller"]
   >;
   private readonly cursorDiscovery: Pick<CursorCliDiscovery, "detect">;
+  private readonly agentCliDiscovery: Pick<AgentCliDiscovery, "detect">;
   private readonly notes: NotesStore;
   private readonly artifacts: ArtifactStore;
   private readonly artifactFrames: ArtifactFrameRegistry;
@@ -513,6 +519,19 @@ export class SoloeDomain extends EventEmitter {
     this.integrationInstaller =
       options.integrationInstaller ?? new HookInstaller();
     this.cursorDiscovery = options.cursorDiscovery ?? new CursorCliDiscovery();
+    const defaultAgentCliDiscovery = new AgentCliDiscovery();
+    this.agentCliDiscovery =
+      options.agentCliDiscovery ??
+      (options.cursorDiscovery
+        ? {
+            detect: (provider, host, configured) => {
+              if (provider === 'cursor' && options.cursorDiscovery) {
+                return options.cursorDiscovery.detect(host, configured);
+              }
+              return defaultAgentCliDiscovery.detect(provider, host, configured);
+            },
+          }
+        : defaultAgentCliDiscovery);
     this.pathService =
       options.pathService ??
       new BackendPathService({
@@ -1262,8 +1281,12 @@ export class SoloeDomain extends EventEmitter {
 
   private async integrationStatus(): Promise<AgentIntegrationStatus> {
     const status = await this.integrationInstaller.status();
-    const configuredBinary = (await this.settings.get()).binaries.cursor;
-    return enrichCursorCliStatus(status, configuredBinary, this.cursorDiscovery);
+    if (this.options.cursorDiscovery && !this.options.agentCliDiscovery) {
+      const configuredBinary = (await this.settings.get()).binaries.cursor;
+      return enrichCursorCliStatus(status, configuredBinary, this.cursorDiscovery);
+    }
+    const binaries = (await this.settings.get()).binaries;
+    return enrichAgentCliStatus(status, binaries, this.agentCliDiscovery);
   }
 
   private async diagnosticsCall(
@@ -2345,6 +2368,12 @@ export class SoloeDomain extends EventEmitter {
         return this.requireMultiDeviceSessions(deviceSessions).browseWorkspaceDirectories(
           request.deviceId,
           request.path,
+        );
+      }
+      case "modelCatalogOnDevice": {
+        const request = args[0] as { deviceId: DeviceId };
+        return this.requireMultiDeviceSessions(deviceSessions).modelCatalog(
+          request.deviceId,
         );
       }
       case "openProjectOnDevice": {

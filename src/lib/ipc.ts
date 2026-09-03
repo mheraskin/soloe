@@ -230,6 +230,12 @@ const localBackend = {
       }
       return unwrap(await c.sessions.browseDeviceWorkspaceDirectories(toIpcPayload(request)));
     },
+    modelCatalogOnDevice: async (request: { deviceId: DeviceId }) => {
+      if (!c.sessions.modelCatalogOnDevice) {
+        throw new Error('Device agent CLI discovery is unavailable.');
+      }
+      return unwrap(await c.sessions.modelCatalogOnDevice(toIpcPayload(request)));
+    },
     openProjectOnDevice: async (
       request: { deviceId: DeviceId; project: import('@shared/types/projects.js').ProjectOpenRequest }
     ) => {

@@ -17,6 +17,7 @@ export const SOLOE_API_METHODS = {
     "planCreateOnDevice",
     "executeCreateOnDevice",
     "browseDeviceWorkspaceDirectories",
+    "modelCatalogOnDevice",
     "openProjectOnDevice",
     "updateProjectOnDevice",
     "deleteProjectOnDevice",

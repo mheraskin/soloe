@@ -55,6 +55,7 @@ import type { RuntimeTerminalInputControl } from '../terminal/RemoteRuntimePtyPr
 import { TerminalInputLeaseManager } from '@soloe/runtime';
 import type { FileService } from '@soloe/domain';
 import { randomUUID } from 'node:crypto';
+import type { ModelCatalogEntry } from '@shared/types/settings.js';
 import type {
   DeviceSessionInventory,
   SessionDevice,
@@ -79,6 +80,7 @@ export interface LocalSessionDeviceOptions {
   clientId?: string;
   tailscalePorts?: Pick<TailscalePortForwardManager, 'ensure'>;
   browserRoutes?: Pick<BrowserRouteProxy, 'ensure' | 'dispose'>;
+  modelCatalog?: () => Promise<ModelCatalogEntry[]> | ModelCatalogEntry[];
 }
 
 export class LocalSessionDevice implements SessionDevice {
@@ -413,6 +415,14 @@ export class LocalSessionDevice implements SessionDevice {
       request.sessionId,
       structuredClone(request.draft)
     );
+  }
+
+  async modelCatalog(): Promise<ModelCatalogEntry[]> {
+    this.assertActive();
+    if (!this.options.modelCatalog) {
+      throw new Error('Agent CLI discovery is unavailable on this Device.');
+    }
+    return structuredClone(await this.options.modelCatalog());
   }
 
   startSession(sessionId: string): Promise<TerminalStartResult> {

@@ -20,6 +20,7 @@ export interface MultiDeviceSessionsIpcOptions {
     | 'planCreate'
     | 'executeCreate'
     | 'browseWorkspaceDirectories'
+    | 'modelCatalog'
     | 'openProjectOnDevice'
     | 'updateProject'
     | 'deleteProject'
@@ -90,6 +91,11 @@ export class MultiDeviceSessionsIpc {
           request.deviceId,
           request.path
         ))
+    );
+    ipcMain.handle(
+      IpcChannels.sessions.modelCatalogOnDevice,
+      (_event, request: { deviceId: import('@shared/types/devices.js').DeviceId }) =>
+        ipcInvoke(() => this.options.sessions.modelCatalog(request.deviceId))
     );
     ipcMain.handle(
       IpcChannels.sessions.openProjectOnDevice,
@@ -266,6 +272,7 @@ export class MultiDeviceSessionsIpc {
     ipcMain.removeHandler(IpcChannels.sessions.planCreateOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.executeCreateOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.browseDeviceWorkspaceDirectories);
+    ipcMain.removeHandler(IpcChannels.sessions.modelCatalogOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.openProjectOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.updateProjectOnDevice);
     ipcMain.removeHandler(IpcChannels.sessions.deleteProjectOnDevice);

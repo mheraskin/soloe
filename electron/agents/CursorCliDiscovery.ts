@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import type {
   AgentCliAvailability,
   AgentIntegrationHost,
@@ -7,6 +6,11 @@ import type {
 import type { SettingsBinaries } from '@shared/types/settings.js';
 import type { Session } from '@shared/types/sessions.js';
 import { effectiveAgentProvider } from '@shared/types/sessions.js';
+import {
+  AgentCliDiscovery,
+  enrichAgentCliStatus,
+  parseCursorVersion
+} from './AgentCliDiscovery.js';
 
 interface CommandResult {
   exitCode: number;
@@ -19,40 +23,21 @@ interface CursorCliDiscoveryOptions {
 }
 
 export class CursorCliDiscovery {
-  private readonly run: NonNullable<CursorCliDiscoveryOptions['run']>;
+  private readonly discovery: AgentCliDiscovery;
 
   constructor(options: CursorCliDiscoveryOptions = {}) {
-    this.run = options.run ?? runVersionCommand;
+    this.discovery = new AgentCliDiscovery(options.run ? { run: options.run } : {});
   }
 
-  async detect(
+  detect(
     host: Pick<AgentIntegrationHost, 'kind' | 'distro'>,
     configuredBinary?: string
   ): Promise<AgentCliAvailability> {
-    const candidates = configuredBinary ? [configuredBinary] : ['agent', 'cursor-agent'];
-    for (const binary of candidates) {
-      const command = host.kind === 'wsl' ? 'wsl.exe' : binary;
-      const args = host.kind === 'wsl'
-        ? ['-d', host.distro ?? '', '--', binary, '--version']
-        : ['--version'];
-      const result = await this.run(command, args);
-      if (result.exitCode !== 0) continue;
-      const output = `${result.stdout}\n${result.stderr}`.trim();
-      return {
-        available: true,
-        binary,
-        ...(parseCursorVersion(output) ? { version: parseCursorVersion(output) } : {})
-      };
-    }
-    return {
-      available: false,
-      reason: configuredBinary
-        ? `Cursor Agent CLI is unavailable at ${configuredBinary}`
-        : 'Cursor Agent CLI is unavailable (tried agent and cursor-agent)'
-    };
+    return this.discovery.detect('cursor', host, configuredBinary);
   }
 }
 
+/** @deprecated Prefer enrichAgentCliStatus — kept for Cursor-focused call sites/tests. */
 export async function enrichCursorCliStatus(
   status: AgentIntegrationStatus,
   configuredBinary: string | undefined,
@@ -83,27 +68,4 @@ export async function resolveCursorSessionBinaries(
   return { ...binaries, cursor: cli.binary };
 }
 
-export function parseCursorVersion(output: string): string | undefined {
-  const line = output.split(/\r?\n/u).map((value) => value.trim()).find(Boolean);
-  if (!line) return undefined;
-  return line.replace(/^(?:cursor-agent|agent)\s+/iu, '').trim() || undefined;
-}
-
-async function runVersionCommand(executable: string, args: string[]): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    const timer = setTimeout(() => child.kill(), 5_000);
-    child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      resolve({ exitCode: 127, stdout, stderr: error.message });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code ?? 1, stdout, stderr });
-    });
-  });
-}
+export { parseCursorVersion, enrichAgentCliStatus, AgentCliDiscovery };

@@ -860,8 +860,8 @@
 
     <Tabs.Content value="quicklaunch" class={contentClass}>
       <p class="m-0 text-[11px] text-muted-foreground">
-        Presets appear below the provider icons in the <b>+</b> popover for quick one-click
-        launching.
+        Presets appear in Quick Launch beside the agent rail in the <b>+</b> popover.
+        Drag to reorder on pointer devices; Terminal stays pinned under the agents.
       </p>
       {#each settings.current.quickLaunch as preset (preset.id)}
         <div class="flex flex-col gap-2 rounded-md border border-border p-3">

@@ -73,6 +73,7 @@ describe('MultiDeviceSessionsIpc', () => {
       })),
       terminalCurrentInputLease: vi.fn(async () => null),
       terminalReleaseInputLease: vi.fn(async () => true),
+      modelCatalog: vi.fn(async () => [{ provider: 'claude', id: 'sonnet', label: 'Sonnet' }]),
       onState: vi.fn(() => () => undefined),
       onDeviceEvent: vi.fn(() => () => undefined)
     };
@@ -111,6 +112,12 @@ describe('MultiDeviceSessionsIpc', () => {
       IpcChannels.sessions.deviceTerminalPasteImages
     )).toBe(true);
     expect(electronMocks.handlers.has(IpcChannels.sessions.invokeWorktree)).toBe(true);
+    expect(electronMocks.handlers.has(IpcChannels.sessions.modelCatalogOnDevice)).toBe(true);
+    await expect(invoke(IpcChannels.sessions.modelCatalogOnDevice, { deviceId: 'device-1' })).resolves.toEqual({
+      ok: true,
+      value: [{ provider: 'claude', id: 'sonnet', label: 'Sonnet' }]
+    });
+    expect(sessions.modelCatalog).toHaveBeenCalledWith('device-1');
     await expect(invoke(IpcChannels.sessions.deviceState)).resolves.toEqual({
       ok: true,
       value: state

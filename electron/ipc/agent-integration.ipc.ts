@@ -10,22 +10,36 @@ import type {
 } from '@shared/types/ipc.js';
 import { ipcInvoke } from './result.js';
 import { HookInstaller } from '../integrations/HookInstaller.js';
-import { CursorCliDiscovery, enrichCursorCliStatus } from '../agents/CursorCliDiscovery.js';
+import {
+  AgentCliDiscovery,
+  enrichAgentCliStatus
+} from '../agents/AgentCliDiscovery.js';
 import type { Settings } from '@shared/types/settings.js';
 
 export interface AgentIntegrationIpcOptions {
   installer: HookInstaller;
   getWindows: () => BrowserWindow[];
   getSettings?: () => Promise<Settings> | Settings;
-  cursorDiscovery?: Pick<CursorCliDiscovery, 'detect'>;
+  cursorDiscovery?: Pick<import('../agents/CursorCliDiscovery.js').CursorCliDiscovery, 'detect'>;
+  agentCliDiscovery?: Pick<AgentCliDiscovery, 'detect'>;
 }
 
 export class AgentIntegrationIpc {
   private registered = false;
-  private readonly cursorDiscovery: Pick<CursorCliDiscovery, 'detect'>;
+  private readonly agentCliDiscovery: Pick<AgentCliDiscovery, 'detect'>;
 
   constructor(private readonly opts: AgentIntegrationIpcOptions) {
-    this.cursorDiscovery = opts.cursorDiscovery ?? new CursorCliDiscovery();
+    const defaultAgentCliDiscovery = new AgentCliDiscovery();
+    this.agentCliDiscovery = opts.agentCliDiscovery ?? (opts.cursorDiscovery
+      ? {
+          detect: (provider, host, configured) => {
+            if (provider === 'cursor' && opts.cursorDiscovery) {
+              return opts.cursorDiscovery.detect(host, configured);
+            }
+            return defaultAgentCliDiscovery.detect(provider, host, configured);
+          }
+        }
+      : defaultAgentCliDiscovery);
   }
 
   register(): void {
@@ -144,7 +158,7 @@ export class AgentIntegrationIpc {
 
   private async status(): Promise<AgentIntegrationStatus> {
     const status = await this.opts.installer.status();
-    const configuredBinary = (await this.opts.getSettings?.())?.binaries.cursor;
-    return enrichCursorCliStatus(status, configuredBinary, this.cursorDiscovery);
+    const binaries = (await this.opts.getSettings?.())?.binaries;
+    return enrichAgentCliStatus(status, binaries, this.agentCliDiscovery);
   }
 }

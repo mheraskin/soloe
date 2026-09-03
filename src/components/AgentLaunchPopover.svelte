@@ -31,6 +31,20 @@
   import { settings } from '../stores/settings.svelte';
   import { reportError } from '../stores/toast.svelte';
   import { quickLaunchExtraArgs } from '../lib/quick-launch';
+  import {
+    agentCliUnavailableReason,
+    isAgentCliAvailable
+  } from '@shared/agent-cli-availability.js';
+  import {
+    horizontalDropPosition,
+    orderProviders,
+    prefersFinePointer,
+    readProviderRailOrder,
+    reorderIds,
+    verticalDropPosition,
+    writeProviderRailOrder,
+    type DropPosition
+  } from '../lib/provider-rail-order';
   import { Button } from '$lib/components/ui/button';
   import * as Popover from '$lib/components/ui/popover';
   import * as Select from '$lib/components/ui/select';
@@ -41,6 +55,8 @@
   const HOVER_OPEN_DELAY_MS = 250;
   const HOVER_CLOSE_DELAY_MS = 180;
   const TOUCH_HOLD_OPEN_DELAY_MS = 350;
+  const PROVIDER_DND_MIME = 'application/x-soloe-provider';
+  const PRESET_DND_MIME = 'application/x-soloe-quick-launch';
 
   type LaunchOption = AgentRuntimeProvider | 'terminal' | `preset:${string}`;
   type PickerLevel = 'global' | 'project' | 'worktree';
@@ -112,6 +128,14 @@
   let deviceSelectOpen = $state(false);
   let planRequest = 0;
   let deviceRefreshOpen = false;
+  let providerOrder = $state<AgentRuntimeProvider[] | null>(readProviderRailOrder());
+  let finePointer = $state(prefersFinePointer());
+  let draggingProvider = $state<AgentRuntimeProvider | null>(null);
+  let providerDrop = $state<{ id: AgentRuntimeProvider; position: DropPosition } | null>(null);
+  let draggingPresetId = $state<string | null>(null);
+  let presetDrop = $state<{ id: string; position: DropPosition } | null>(null);
+  let suppressLaunchAfterDrag = false;
+  let finePointerMq: MediaQueryList | null = null;
 
   let usesDevicePlacement = $derived(deviceSessions.multiDeviceActive);
   let pickerLevel = $derived<PickerLevel>(
@@ -245,6 +269,56 @@
     void previewDevicePlan(deviceId, targetPath);
   });
 
+  let effectiveTargetDeviceId = $derived<DeviceId | null>(
+    (usesDevicePlacement ? selectedDeviceId : null)
+      ?? defaultDeviceId
+      ?? deviceSessions.selectedDeviceId
+      ?? deviceSessions.activeDeviceId
+      ?? deviceSessions.localDevice?.deviceId
+      ?? null
+  );
+
+  $effect(() => {
+    if (open && effectiveTargetDeviceId) {
+      void deviceSessions.loadModelCatalog?.(effectiveTargetDeviceId)?.catch(() => undefined);
+    }
+  });
+
+  let currentDeviceCatalog = $derived(
+    effectiveTargetDeviceId ? deviceSessions.modelCatalogForDevice?.(effectiveTargetDeviceId) ?? null : null
+  );
+
+  function isProviderAvailable(provider: AgentRuntimeProvider): boolean {
+    if (!currentDeviceCatalog) return true;
+    return isAgentCliAvailable(currentDeviceCatalog, provider);
+  }
+
+  function providerDisabledReason(provider: AgentRuntimeProvider): string | null {
+    if (currentDeviceCatalog && !isAgentCliAvailable(currentDeviceCatalog, provider)) {
+      return agentCliUnavailableReason(provider);
+    }
+    return null;
+  }
+
+  function isOptionDisabled(option: LaunchOption): boolean {
+    if (option === 'terminal') return false;
+    if (
+      option === 'claude_code'
+      || option === 'codex'
+      || option === 'cursor'
+      || option === 'opencode'
+      || option === 'grok_build'
+    ) {
+      return !isProviderAvailable(option);
+    }
+    if (option.startsWith('preset:')) {
+      const presetId = option.slice('preset:'.length);
+      const preset = presets.find((candidate) => candidate.id === presetId);
+      return preset ? !isProviderAvailable(preset.provider) : false;
+    }
+    return false;
+  }
+
   function clearOpenTimer(): void {
     if (openTimer) {
       clearTimeout(openTimer);
@@ -363,7 +437,8 @@
     if (event.pointerType !== 'touch' || event.pointerId !== touchPointerId) return;
     if (!touchGestureOpen) return;
     event.preventDefault();
-    selectedLaunchOption = launchOptionAtPoint(event.clientX, event.clientY);
+    const candidate = launchOptionAtPoint(event.clientX, event.clientY);
+    selectedLaunchOption = candidate && !isOptionDisabled(candidate) ? candidate : null;
   }
 
   function releasePointer(event: PointerEvent): void {
@@ -385,7 +460,8 @@
 
     event.preventDefault();
     event.stopPropagation();
-    const option = launchOptionAtPoint(event.clientX, event.clientY) ?? selectedLaunchOption;
+    const candidate = launchOptionAtPoint(event.clientX, event.clientY) ?? selectedLaunchOption;
+    const option = candidate && !isOptionDisabled(candidate) ? candidate : null;
     touchGestureOpen = false;
     selectedLaunchOption = null;
     suppressNextClick = true;
@@ -532,6 +608,7 @@
   }
 
   async function launchOnDevice(option: LaunchOption): Promise<void> {
+    if (isOptionDisabled(option)) return;
     const availableIds = new Set(deviceSessions.visibleDevices
       .filter((device) => device.available)
       .map((device) => device.deviceId));
@@ -653,6 +730,7 @@
   }
 
   function launchOption(option: LaunchOption): void {
+    if (isOptionDisabled(option)) return;
     if (option === 'terminal') {
       launchTerminal();
       return;
@@ -672,10 +750,134 @@
     if (preset) launchPreset(preset);
   }
 
+  let presets = $derived(settings.current.quickLaunch);
+  let orderedProviders = $derived(orderProviders(agentProviders, providerOrder));
+
+  function onFinePointerChange(): void {
+    finePointer = prefersFinePointer();
+  }
+
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    finePointerMq = window.matchMedia('(pointer: fine)');
+    finePointerMq.addEventListener('change', onFinePointerChange);
+  }
+
+  function endProviderDrag(): void {
+    draggingProvider = null;
+    providerDrop = null;
+  }
+
+  function endPresetDrag(): void {
+    draggingPresetId = null;
+    presetDrop = null;
+  }
+
+  function onProviderDragStart(event: DragEvent, provider: AgentRuntimeProvider): void {
+    if (!finePointer || touchPointerId !== null || touchGestureOpen || !event.dataTransfer) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(PROVIDER_DND_MIME, provider);
+    draggingProvider = provider;
+    providerDrop = null;
+    suppressLaunchAfterDrag = false;
+  }
+
+  function onProviderDragOver(event: DragEvent, provider: AgentRuntimeProvider, el: HTMLElement): void {
+    if (!draggingProvider || draggingProvider === provider) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const position = verticalDropPosition(event, el);
+    if (
+      providerDrop?.id !== provider
+      || providerDrop.position !== position
+    ) {
+      providerDrop = { id: provider, position };
+    }
+  }
+
+  function onProviderDrop(event: DragEvent, provider: AgentRuntimeProvider): void {
+    if (!draggingProvider || draggingProvider === provider) return;
+    event.preventDefault();
+    const position = providerDrop?.id === provider
+      ? providerDrop.position
+      : 'after';
+    const next = reorderIds(
+      orderedProviders.map((item) => item.value),
+      draggingProvider,
+      provider,
+      position
+    );
+    if (next) {
+      providerOrder = next;
+      writeProviderRailOrder(providerOrder);
+      suppressLaunchAfterDrag = true;
+    }
+    endProviderDrag();
+  }
+
+  function onProviderDragEnd(): void {
+    endProviderDrag();
+  }
+
+  function onPresetDragStart(event: DragEvent, presetId: string): void {
+    if (!finePointer || touchPointerId !== null || touchGestureOpen || !event.dataTransfer) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(PRESET_DND_MIME, presetId);
+    draggingPresetId = presetId;
+    presetDrop = null;
+    suppressLaunchAfterDrag = false;
+  }
+
+  function onPresetDragOver(event: DragEvent, presetId: string, el: HTMLElement): void {
+    if (!draggingPresetId || draggingPresetId === presetId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const position = horizontalDropPosition(event, el);
+    if (presetDrop?.id !== presetId || presetDrop.position !== position) {
+      presetDrop = { id: presetId, position };
+    }
+  }
+
+  function onPresetDrop(event: DragEvent, presetId: string): void {
+    if (!draggingPresetId || draggingPresetId === presetId) return;
+    event.preventDefault();
+    const position = presetDrop?.id === presetId ? presetDrop.position : 'after';
+    const ids = presets.map((preset) => preset.id);
+    const nextIds = reorderIds(ids, draggingPresetId, presetId, position);
+    if (nextIds) {
+      const byId = new Map(presets.map((preset) => [preset.id, preset]));
+      const next = nextIds.flatMap((id) => {
+        const preset = byId.get(id);
+        return preset ? [preset] : [];
+      });
+      suppressLaunchAfterDrag = true;
+      void settings.update({ quickLaunch: next }).catch(reportError);
+    }
+    endPresetDrag();
+  }
+
+  function onPresetDragEnd(): void {
+    endPresetDrag();
+  }
+
   function onLaunchOptionClick(event: MouseEvent, option: LaunchOption): void {
+    event.stopPropagation();
+    if (isOptionDisabled(option)) {
+      event.preventDefault();
+      return;
+    }
+    if (suppressLaunchAfterDrag) {
+      suppressLaunchAfterDrag = false;
+      event.preventDefault();
+      return;
+    }
     if (suppressNextClick) {
       event.preventDefault();
-      event.stopPropagation();
       suppressNextClick = false;
       clearSuppressClickTimer();
       return;
@@ -683,12 +885,11 @@
     launchOption(option);
   }
 
-  let presets = $derived(settings.current.quickLaunch);
-
   onDestroy(() => {
     clearTimers();
     clearTouchHoldTimer();
     clearSuppressClickTimer();
+    finePointerMq?.removeEventListener('change', onFinePointerChange);
   });
 </script>
 
@@ -726,29 +927,68 @@
     onpointerleave={scheduleClose}
   >
     <div bind:this={pickerEl} class="grid min-h-0 grid-cols-[3.75rem_minmax(0,1fr)] items-start">
-      <div class="relative max-h-[17rem] min-h-0 overflow-hidden border-r border-border bg-foreground/[0.035]">
+      <div
+        data-slot="provider-rail-column"
+        class="flex max-h-[13.5rem] min-h-0 flex-col border-r border-border bg-foreground/[0.035]"
+      >
         <div
           data-slot="provider-rail"
-          class="flex max-h-[17rem] flex-col gap-1 overflow-y-auto px-2 pt-2 pb-7"
+          class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pt-2 pb-1"
+          aria-label="Agents"
         >
-          {#each agentProviders as provider (provider.value)}
+          {#each orderedProviders as provider (provider.value)}
+            {@const unavailableReason = providerDisabledReason(provider.value)}
+            {@const isAvailable = !unavailableReason}
             <button
               type="button"
-              class={`relative mx-auto flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === provider.value ? 'bg-background text-foreground shadow-sm' : ''}`}
-              title={provider.label}
-              aria-label={`New ${provider.label} session`}
+              class={`relative mx-auto flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === provider.value ? 'bg-background text-foreground shadow-sm' : ''} ${draggingProvider === provider.value ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-transparent hover:text-muted-foreground' : ''}`}
+              title={unavailableReason ?? provider.label}
+              aria-label={unavailableReason ? `${provider.label} (${unavailableReason})` : `New ${provider.label} session`}
               data-launch-option={provider.value}
               data-gesture-selected={selectedLaunchOption === provider.value ? 'true' : undefined}
+              aria-disabled={!isAvailable ? 'true' : undefined}
+              disabled={!isAvailable}
+              draggable={finePointer}
               onclick={(event) => onLaunchOptionClick(event, provider.value)}
+              ondragstart={(event) => onProviderDragStart(event, provider.value)}
+              ondragover={(event) => onProviderDragOver(event, provider.value, event.currentTarget)}
+              ondrop={(event) => onProviderDrop(event, provider.value)}
+              ondragend={onProviderDragEnd}
             >
+              {#if providerDrop?.id === provider.value && providerDrop.position === 'before'}
+                <span
+                  class="pointer-events-none absolute inset-x-1 top-0 z-10 h-0.5 rounded-full bg-primary"
+                  aria-hidden="true"
+                ></span>
+              {/if}
+              {#if providerDrop?.id === provider.value && providerDrop.position === 'after'}
+                <span
+                  class="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0.5 rounded-full bg-primary"
+                  aria-hidden="true"
+                ></span>
+              {/if}
               <KindIcon kind={provider.value} size={21} />
             </button>
           {/each}
         </div>
         <div
-          class="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-card via-card/85 to-transparent"
+          data-slot="provider-rail-separator"
+          class="mx-2 shrink-0 border-t border-border"
           aria-hidden="true"
         ></div>
+        <div class="flex shrink-0 justify-center px-2 pt-1.5 pb-2">
+          <button
+            type="button"
+            class={`relative flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === 'terminal' ? 'bg-background text-foreground shadow-sm' : ''}`}
+            title="Terminal"
+            aria-label="New terminal"
+            data-launch-option="terminal"
+            data-gesture-selected={selectedLaunchOption === 'terminal' ? 'true' : undefined}
+            onclick={(event) => onLaunchOptionClick(event, 'terminal')}
+          >
+            <KindIcon kind="terminal" size={21} />
+          </button>
+        </div>
       </div>
 
       <div class="min-w-0">
@@ -1029,27 +1269,37 @@
             data-slot="quick-launch-strip"
             class="flex min-w-0 gap-1.5 overflow-x-auto pb-0.5"
           >
-            <Button
-              variant="ghost"
-              class={`h-9 shrink-0 gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 text-xs ${selectedLaunchOption === 'terminal' ? 'border-primary/50 bg-primary/10 text-foreground' : ''}`}
-              aria-label="New terminal"
-              data-launch-option="terminal"
-              data-gesture-selected={selectedLaunchOption === 'terminal' ? 'true' : undefined}
-              onclick={(event) => onLaunchOptionClick(event, 'terminal')}
-            >
-              <KindIcon kind="terminal" size={16} />
-              Terminal
-            </Button>
             {#each presets as preset (preset.id)}
+              {@const unavailableReason = providerDisabledReason(preset.provider)}
+              {@const isAvailable = !unavailableReason}
               <Button
                 variant="ghost"
-                class={`h-9 max-w-44 shrink-0 gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 text-xs ${selectedLaunchOption === `preset:${preset.id}` ? 'border-primary/50 bg-primary/10 text-foreground' : ''}`}
-                title={preset.label}
-                aria-label={preset.label}
+                class={`relative h-9 max-w-44 shrink-0 gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 text-xs ${selectedLaunchOption === `preset:${preset.id}` ? 'border-primary/50 bg-primary/10 text-foreground' : ''} ${draggingPresetId === preset.id ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+                title={unavailableReason ?? preset.label}
+                aria-label={unavailableReason ? `${preset.label} (${unavailableReason})` : preset.label}
                 data-launch-option={`preset:${preset.id}`}
                 data-gesture-selected={selectedLaunchOption === `preset:${preset.id}` ? 'true' : undefined}
+                aria-disabled={!isAvailable ? 'true' : undefined}
+                disabled={!isAvailable}
+                draggable={finePointer}
                 onclick={(event) => onLaunchOptionClick(event, `preset:${preset.id}`)}
+                ondragstart={(event) => onPresetDragStart(event, preset.id)}
+                ondragover={(event) => onPresetDragOver(event, preset.id, event.currentTarget)}
+                ondrop={(event) => onPresetDrop(event, preset.id)}
+                ondragend={onPresetDragEnd}
               >
+                {#if presetDrop?.id === preset.id && presetDrop.position === 'before'}
+                  <span
+                    class="pointer-events-none absolute top-1 bottom-1 left-0 z-10 w-0.5 rounded-full bg-primary"
+                    aria-hidden="true"
+                  ></span>
+                {/if}
+                {#if presetDrop?.id === preset.id && presetDrop.position === 'after'}
+                  <span
+                    class="pointer-events-none absolute top-1 right-0 bottom-1 z-10 w-0.5 rounded-full bg-primary"
+                    aria-hidden="true"
+                  ></span>
+                {/if}
                 <KindIcon kind={preset.provider} size={16} />
                 <span class="truncate">{preset.label}</span>
               </Button>

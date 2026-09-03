@@ -41,6 +41,7 @@ import type {
   WorkspaceDirectoryListing
 } from '@shared/types/workspaces.js';
 import type { DeviceCommandEnvelope, DeviceOperationReceipt } from '@shared/types/commands.js';
+import type { ModelCatalogEntry } from '@shared/types/settings.js';
 import type {
   CreateGitHubRepositoryIntent,
   GitHubOwner,
@@ -454,6 +455,10 @@ export class RemoteSessionDevice implements SessionDevice {
 
   deleteProject(projectId: string): Promise<void> {
     return this.rpc('projects', 'delete', [requiredId(projectId, 'Project')]).then(() => undefined);
+  }
+
+  modelCatalog(): Promise<ModelCatalogEntry[]> {
+    return this.rpc('settings', 'modelCatalog', []);
   }
 
   rebindSessionSource(request: DeviceSessionSourceUpdateRequest): Promise<Session> {

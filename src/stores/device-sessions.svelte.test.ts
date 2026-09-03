@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => ({
   deleteOnDevice: vi.fn(),
   updateProjectOnDevice: vi.fn(),
   deleteProjectOnDevice: vi.fn(),
-  reorderOnDevices: vi.fn()
+  reorderOnDevices: vi.fn(),
+  modelCatalogOnDevice: vi.fn()
 }));
 
 vi.mock('../lib/ipc', () => ({
@@ -53,6 +54,7 @@ vi.mock('../lib/ipc', () => ({
       updateProjectOnDevice: mocks.updateProjectOnDevice,
       deleteProjectOnDevice: mocks.deleteProjectOnDevice,
       reorderOnDevices: mocks.reorderOnDevices,
+      modelCatalogOnDevice: mocks.modelCatalogOnDevice,
       onDeviceStateChange: vi.fn((listener) => {
         mocks.stateChange = listener;
         return () => undefined;
@@ -883,6 +885,24 @@ describe('DeviceSessionsStore reconnect recovery', () => {
       'm',
       expect.objectContaining({ leaseId: 'lease-reclaimed' })
     );
+  });
+
+  it('loads and caches model catalog per device', async () => {
+    const store = new DeviceSessionsStore();
+    const catalog = [{ provider: 'claude' as const, id: 'sonnet', label: 'Sonnet' }];
+    mocks.modelCatalogOnDevice.mockResolvedValueOnce(catalog);
+
+    expect(store.modelCatalogForDevice('device-xps')).toBeNull();
+
+    const result = await store.loadModelCatalog('device-xps');
+    expect(result).toEqual(catalog);
+    expect(mocks.modelCatalogOnDevice).toHaveBeenCalledWith({ deviceId: 'device-xps' });
+    expect(store.modelCatalogForDevice('device-xps')).toEqual(catalog);
+
+    // Second call uses cached result
+    const second = await store.loadModelCatalog('device-xps');
+    expect(second).toEqual(catalog);
+    expect(mocks.modelCatalogOnDevice).toHaveBeenCalledTimes(1);
   });
 });
 

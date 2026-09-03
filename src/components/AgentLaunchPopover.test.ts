@@ -33,12 +33,15 @@ const deviceSessionMocks = vi.hoisted(() => ({
     warnings: [],
     expiresAt: '2099-01-01T00:00:00.000Z'
   })),
-  executeCreate: vi.fn(async () => undefined)
+  executeCreate: vi.fn(async () => undefined),
+  loadModelCatalog: vi.fn(async (deviceId: string) => deviceSessionState.modelCatalogs[deviceId] ?? []),
+  modelCatalogForDevice: vi.fn((deviceId?: string | null) => deviceSessionState.modelCatalogs[deviceId ?? ''] ?? null)
 }));
 
 const deviceSessionState = vi.hoisted(() => ({
   multiDeviceActive: true,
-  projects: [] as Array<Record<string, unknown>>
+  projects: [] as Array<Record<string, unknown>>,
+  modelCatalogs: {} as Record<string, import('@shared/types/settings.js').ModelCatalogEntry[]>
 }));
 
 const commandPaletteMocks = vi.hoisted(() => ({
@@ -157,7 +160,8 @@ vi.mock('../stores/settings.svelte', () => ({
       quickLaunch: [],
       defaults: { newSessionKind: 'codex', shell: 'auto' },
       shortcuts: { shiftNumberNavigation: 'off' }
-    }
+    },
+    update: vi.fn(async () => undefined)
   }
 }));
 
@@ -181,6 +185,8 @@ vi.mock('../stores/toast.svelte', () => ({
 }));
 
 import { dnd } from '../stores/dnd.svelte';
+import { settings } from '../stores/settings.svelte';
+import { PROVIDER_RAIL_ORDER_KEY } from '../lib/provider-rail-order';
 import AgentLaunchPopover from './AgentLaunchPopover.svelte';
 import WorktreeGroup from './WorktreeGroup.svelte';
 
@@ -216,13 +222,21 @@ function pointerEvent(
   return event;
 }
 
-function dragEvent(type: string): Event {
+function dragEvent(
+  type: string,
+  init: { clientX?: number; clientY?: number } = {}
+): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'dataTransfer', {
-    value: {
-      effectAllowed: 'none',
-      setData: vi.fn()
-    }
+  Object.defineProperties(event, {
+    dataTransfer: {
+      value: {
+        effectAllowed: 'none',
+        dropEffect: 'none',
+        setData: vi.fn()
+      }
+    },
+    clientX: { value: init.clientX ?? 0 },
+    clientY: { value: init.clientY ?? 0 }
   });
   return event;
 }
@@ -231,11 +245,28 @@ describe('AgentLaunchPopover touch gestures', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     document.body.innerHTML = '';
+    localStorage.clear();
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === '(pointer: fine)',
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn()
+      }))
+    });
     for (const mock of Object.values(sessionMocks)) mock.mockClear();
     for (const mock of Object.values(deviceSessionMocks)) mock.mockClear();
+    (settings.update as ReturnType<typeof vi.fn>).mockClear();
     deviceSessionMocks.isSelected.mockReturnValue(false);
     deviceSessionState.multiDeviceActive = true;
     deviceSessionState.projects = [];
+    deviceSessionState.modelCatalogs = {};
     commandPaletteMocks.openProject.mockClear();
     worktreeCreateMocks.openFor.mockClear();
   });
@@ -328,14 +359,70 @@ describe('AgentLaunchPopover touch gestures', () => {
     flushSync();
 
     const providerRail = document.body.querySelector<HTMLElement>('[data-slot="provider-rail"]');
+    const railColumn = document.body.querySelector<HTMLElement>('[data-slot="provider-rail-column"]');
+    const separator = document.body.querySelector<HTMLElement>('[data-slot="provider-rail-separator"]');
     const quickLaunch = document.body.querySelector<HTMLElement>('[data-slot="quick-launch-strip"]');
+    const terminal = document.body.querySelector<HTMLButtonElement>('[aria-label="New terminal"]');
     expect(providerRail).not.toBeNull();
     expect(providerRail?.className).toContain('overflow-y-auto');
+    expect(railColumn?.className).toContain('max-h-[13.5rem]');
+    expect(separator).not.toBeNull();
     expect(quickLaunch).not.toBeNull();
     expect(quickLaunch?.className).toContain('overflow-x-auto');
+    expect(terminal).not.toBeNull();
+    expect(railColumn?.contains(terminal!)).toBe(true);
+    expect(quickLaunch?.contains(terminal!)).toBe(false);
     expect(document.body.querySelector('[data-slot="model-browser"]')).toBeNull();
     expect(document.body.querySelector('[aria-label="Search models"]')).toBeNull();
     expect(document.body.textContent).toContain('Run on device');
+  });
+
+  it('reorders agent providers with HTML5 drag and drop on fine pointers', () => {
+    const target = mountComponent(AgentLaunchPopover, {});
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const opencode = document.body.querySelector<HTMLButtonElement>('[aria-label="New OpenCode session"]');
+    const claude = document.body.querySelector<HTMLButtonElement>('[aria-label="New Claude session"]');
+    expect(opencode?.draggable).toBe(true);
+    expect(claude).not.toBeNull();
+    Object.defineProperty(claude!, 'getBoundingClientRect', {
+      value: () => ({ top: 40, left: 0, height: 44, width: 44, bottom: 84, right: 44, x: 0, y: 40, toJSON() {} })
+    });
+
+    opencode!.dispatchEvent(dragEvent('dragstart'));
+    claude!.dispatchEvent(dragEvent('dragover', { clientY: 70 }));
+    claude!.dispatchEvent(dragEvent('drop', { clientY: 70 }));
+    flushSync();
+
+    const railButtons = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[data-slot="provider-rail"] [data-launch-option]')
+    ).map((button) => button.dataset.launchOption);
+    expect(railButtons[0]).toBe('grok_build');
+    expect(railButtons).toContain('opencode');
+    expect(JSON.parse(localStorage.getItem(PROVIDER_RAIL_ORDER_KEY) ?? '[]')).toContain('opencode');
+    expect(document.body.querySelector<HTMLElement>('[aria-label="New terminal"]')?.draggable).not.toBe(true);
+  });
+
+  it('does not enable provider drag handles on coarse pointers', () => {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }));
+    const target = mountComponent(AgentLaunchPopover, {});
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const claude = document.body.querySelector<HTMLButtonElement>('[aria-label="New Claude session"]');
+    expect(claude?.draggable).toBe(false);
   });
 
   it('launches a provider directly from the left rail', async () => {
@@ -944,5 +1031,104 @@ describe('AgentLaunchPopover touch gestures', () => {
       autoNamed: false
     });
     expect(deviceSessionMocks.clearSelectedSession).not.toHaveBeenCalled();
+  });
+
+  it('disables agent provider buttons that are not installed on the selected device in the dropdown', () => {
+    deviceSessionState.modelCatalogs = {
+      'remote-device': [{ provider: 'claude', id: 'sonnet', label: 'Claude 3.7 Sonnet' }]
+    };
+
+    const target = mountComponent(AgentLaunchPopover, { defaultDeviceId: 'remote-device' });
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const claude = document.body.querySelector<HTMLButtonElement>('[data-launch-option="claude_code"]');
+    const codex = document.body.querySelector<HTMLButtonElement>('[data-launch-option="codex"]');
+    const cursor = document.body.querySelector<HTMLButtonElement>('[data-launch-option="cursor"]');
+    const opencode = document.body.querySelector<HTMLButtonElement>('[data-launch-option="opencode"]');
+    const grok = document.body.querySelector<HTMLButtonElement>('[data-launch-option="grok_build"]');
+    const terminal = document.body.querySelector<HTMLButtonElement>('[data-launch-option="terminal"]');
+
+    expect(claude).not.toBeNull();
+    expect(claude?.disabled).toBe(false);
+    expect(claude?.getAttribute('aria-disabled')).toBeNull();
+    expect(claude?.title).toBe('Claude');
+
+    expect(codex).not.toBeNull();
+    expect(codex?.disabled).toBe(true);
+    expect(codex?.getAttribute('aria-disabled')).toBe('true');
+    expect(codex?.title).toContain('Codex CLI is not installed on this Device');
+    expect(codex?.className).toContain('opacity-40 cursor-not-allowed');
+
+    expect(cursor?.disabled).toBe(true);
+    expect(cursor?.title).toContain('Cursor Agent CLI is not installed on this Device');
+
+    expect(opencode?.disabled).toBe(true);
+    expect(opencode?.title).toContain('OpenCode CLI is not installed on this Device');
+
+    expect(grok?.disabled).toBe(true);
+    expect(grok?.title).toContain('Grok Build CLI is not installed on this Device');
+
+    expect(terminal?.disabled).toBe(false);
+
+    // Clicking disabled button does not trigger create/plan
+    deviceSessionMocks.planCreate.mockClear();
+    codex!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+    expect(deviceSessionMocks.planCreate).not.toHaveBeenCalled();
+    expect(sessionMocks.createAgentWithDefaults).not.toHaveBeenCalled();
+  });
+
+  it('disables quick launch presets whose agent CLI is not installed on the selected device', () => {
+    (settings.current as { quickLaunch: Array<{ id: string; label: string; provider: import('@shared/types/sessions.js').AgentRuntimeProvider }> }).quickLaunch = [
+      { id: 'preset-claude', label: 'My Claude', provider: 'claude_code' },
+      { id: 'preset-codex', label: 'My Codex', provider: 'codex' }
+    ];
+    deviceSessionState.modelCatalogs = {
+      'remote-device': [{ provider: 'claude', id: 'sonnet', label: 'Claude 3.7 Sonnet' }]
+    };
+
+    const target = mountComponent(AgentLaunchPopover, { defaultDeviceId: 'remote-device' });
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const claudePreset = document.body.querySelector<HTMLButtonElement>('[data-launch-option="preset:preset-claude"]');
+    const codexPreset = document.body.querySelector<HTMLButtonElement>('[data-launch-option="preset:preset-codex"]');
+
+    expect(claudePreset).not.toBeNull();
+    expect(claudePreset?.disabled).toBe(false);
+    expect(claudePreset?.title).toBe('My Claude');
+
+    expect(codexPreset).not.toBeNull();
+    expect(codexPreset?.disabled).toBe(true);
+    expect(codexPreset?.getAttribute('aria-disabled')).toBe('true');
+    expect(codexPreset?.title).toContain('Codex CLI is not installed on this Device');
+
+    deviceSessionMocks.planCreate.mockClear();
+    codexPreset!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+    expect(deviceSessionMocks.planCreate).not.toHaveBeenCalled();
+    expect(sessionMocks.createAgentWithDefaults).not.toHaveBeenCalled();
+  });
+
+  it('disables agent buttons in general context when device placement is not active', () => {
+    deviceSessionState.multiDeviceActive = false;
+    deviceSessionState.modelCatalogs = {
+      'local-device': [{ provider: 'opencode', id: 'default', label: 'OpenCode default' }]
+    };
+
+    const target = mountComponent(AgentLaunchPopover, {});
+    target.querySelector<HTMLButtonElement>('[aria-label="New session"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    flushSync();
+
+    const opencode = document.body.querySelector<HTMLButtonElement>('[data-launch-option="opencode"]');
+    const claude = document.body.querySelector<HTMLButtonElement>('[data-launch-option="claude_code"]');
+
+    expect(opencode?.disabled).toBe(false);
+    expect(claude?.disabled).toBe(true);
+    expect(claude?.title).toContain('Claude CLI is not installed on this Device');
   });
 });

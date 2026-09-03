@@ -21,6 +21,7 @@ import type {
 } from '@shared/types/sessions.js';
 import type { ObservedAgentSnapshot } from '@shared/types/agents.js';
 import type { ClipboardImagePayload, ImagePasteResult } from '@shared/types/files.js';
+import type { ModelCatalogEntry } from '@shared/types/settings.js';
 import type { SpawnSpec } from '@shared/types/terminal.js';
 import type { WorkspaceDirectoryListing } from '@shared/types/workspaces.js';
 import type {
@@ -104,6 +105,8 @@ export class DeviceSessionsStore {
   ownedInputLeases = $state<Record<string, TerminalInputLease>>({});
   pendingOperations = $state<Record<string, DeviceSessionPendingOperation>>({});
   pendingProjectOperations = $state<Record<string, DeviceProjectPendingOperation>>({});
+  deviceModelCatalogs = $state<Record<DeviceId, ModelCatalogEntry[]>>({});
+  private readonly modelCatalogRequests = new Map<DeviceId, Promise<ModelCatalogEntry[]>>();
   private detachState: (() => void) | null = null;
   private detachDeviceEvent: (() => void) | null = null;
   private detachReconnect: (() => void) | null = null;
@@ -538,6 +541,59 @@ export class DeviceSessionsStore {
       deviceId,
       ...(path ? { path } : {})
     });
+  }
+
+  loadModelCatalog(deviceId: DeviceId, force = false): Promise<ModelCatalogEntry[]> {
+    if (!force && this.deviceModelCatalogs[deviceId]) {
+      return Promise.resolve(this.deviceModelCatalogs[deviceId]);
+    }
+    const existing = this.modelCatalogRequests.get(deviceId);
+    if (existing) return existing;
+
+    const request = (async () => {
+      try {
+        const catalog = await ipc.sessions.modelCatalogOnDevice({ deviceId });
+        this.deviceModelCatalogs = {
+          ...this.deviceModelCatalogs,
+          [deviceId]: catalog
+        };
+        return catalog;
+      } catch {
+        if (this.localDevice?.deviceId === deviceId && ipc.settings?.modelCatalog) {
+          try {
+            const catalog = await ipc.settings.modelCatalog();
+            this.deviceModelCatalogs = {
+              ...this.deviceModelCatalogs,
+              [deviceId]: catalog
+            };
+            return catalog;
+          } catch {
+            // ignore
+          }
+        }
+        return [];
+      } finally {
+        this.modelCatalogRequests.delete(deviceId);
+      }
+    })();
+
+    this.modelCatalogRequests.set(deviceId, request);
+    return request;
+  }
+
+  modelCatalog(deviceId: DeviceId): Promise<ModelCatalogEntry[]> {
+    return this.loadModelCatalog(deviceId);
+  }
+
+  modelCatalogForDevice(deviceId?: DeviceId | null): ModelCatalogEntry[] | null {
+    if (deviceId && this.deviceModelCatalogs[deviceId]) {
+      return this.deviceModelCatalogs[deviceId];
+    }
+    const localId = this.localDevice?.deviceId;
+    if (!deviceId && localId && this.deviceModelCatalogs[localId]) {
+      return this.deviceModelCatalogs[localId];
+    }
+    return null;
   }
 
   async openProjectOnDevice(

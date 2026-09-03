@@ -190,6 +190,7 @@ interface AppServices {
   vaultIpc: VaultIpc;
   browserIpc: BrowserIpc;
   browserSessionsIpc: BrowserSessionsIpc;
+  modelCatalog: ModelCatalogService;
 }
 
 async function initializeConnections(): Promise<void> {
@@ -352,6 +353,7 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
           })
     });
   } else if (services) {
+    const localServices = services;
     const localSessionStore = services.store;
     const descriptor = await loadLocalDeviceDescriptor({
       dataDirectory: app.getPath('userData'),
@@ -407,7 +409,8 @@ async function resolveSessionDevices(snapshot: ConnectionSnapshot): Promise<Sess
             pty: services.pty,
             observer: services.observer,
             terminalInputControl: services.terminalInputControl,
-            files: services.filesIpc
+            files: services.filesIpc,
+            modelCatalog: () => localServices.modelCatalog.getCatalog()
           })
     });
   }
@@ -910,7 +913,8 @@ async function setupServices(): Promise<AppServices> {
     vault,
     vaultIpc,
     browserIpc,
-    browserSessionsIpc
+    browserSessionsIpc,
+    modelCatalog
   };
 }
 

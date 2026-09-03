@@ -279,6 +279,35 @@ describe('LocalSessionDevice', () => {
     });
     expect(pasteImagesIntoTerminal).toHaveBeenCalledWith(request);
   });
+
+  it('delegates model catalog discovery to options.modelCatalog', async () => {
+    const modelCatalog = vi.fn(async () => [
+      { provider: 'claude' as const, id: 'sonnet', label: 'Sonnet' }
+    ]);
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never,
+      modelCatalog
+    });
+
+    await expect(client.modelCatalog()).resolves.toEqual([
+      { provider: 'claude', id: 'sonnet', label: 'Sonnet' }
+    ]);
+    expect(modelCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails model catalog discovery when not configured on LocalSessionDevice', async () => {
+    const client = new LocalSessionDevice({
+      descriptor: descriptor(),
+      sessions: { list: vi.fn(async () => []), listArchived: vi.fn(async () => []) } as never,
+      pty: { listRunning: () => [], on: vi.fn(), off: vi.fn() } as never
+    });
+
+    await expect(client.modelCatalog()).rejects.toThrow(
+      'Agent CLI discovery is unavailable on this Device.'
+    );
+  });
 });
 
 function descriptor(): DeviceDescriptor {
