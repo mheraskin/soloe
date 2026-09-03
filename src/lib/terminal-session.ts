@@ -52,6 +52,7 @@ export class TerminalHistorySession {
   private unsubscribeReconnect: (() => void) | null = null;
   private syncToken = 0;
   private demandActive = false;
+  private demandSync: Promise<void> = Promise.resolve();
   private disposed = false;
 
   constructor(
@@ -112,15 +113,21 @@ export class TerminalHistorySession {
     await this.resync();
   }
 
-  private async syncDemand(): Promise<void> {
+  private syncDemand(): Promise<void> {
     const active = !this.disposed && this.hasVisibleAttachment();
-    if (active === this.demandActive) return;
+    if (active === this.demandActive) return this.demandSync;
     this.demandActive = active;
-    try {
-      await this.source.setOutputDemand(this.state.terminalId, active);
-    } catch (error) {
-      if (active && !this.disposed) this.fail(error);
-    }
+    const applyDemand = async (): Promise<void> => {
+      try {
+        await this.source.setOutputDemand(this.state.terminalId, active);
+      } catch (error) {
+        if (active && !this.disposed && this.demandActive === active) this.fail(error);
+      }
+    };
+    this.demandSync = this.demandSync
+      .catch(() => undefined)
+      .then(applyDemand);
+    return this.demandSync;
   }
 
   async resync(): Promise<void> {
@@ -239,10 +246,7 @@ export class TerminalHistorySession {
     this.unsubscribeReconnect?.();
     this.unsubscribeOutput = null;
     this.unsubscribeReconnect = null;
-    if (this.demandActive) {
-      this.demandActive = false;
-      void this.source.setOutputDemand(this.state.terminalId, false).catch(() => undefined);
-    }
+    void this.syncDemand();
     this.onEmpty?.();
   }
 }

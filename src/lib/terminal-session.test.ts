@@ -80,9 +80,66 @@ describe('TerminalHistorySession', () => {
     ]);
     connection.dispose();
   });
+
+  it('keeps output demand enabled when a delayed hide completes after reveal', async () => {
+    const hide = deferred<void>();
+    const completed: boolean[] = [];
+    let serverDemand = false;
+    const fixture = sourceFixture(
+      async () => snapshot({ data: 'ready', toSeq: 1 }),
+      async (active) => {
+        if (!active) await hide.promise;
+        serverDemand = active;
+        completed.push(active);
+      }
+    );
+    const states: TerminalSessionState[] = [];
+    const session = new TerminalHistorySession('terminal-1', 'session-1', fixture.source);
+    const connection = session.connect((state) => states.push(state), true);
+
+    await until(() => serverDemand);
+    connection.setVisible(false);
+    await until(() => fixture.setOutputDemand.mock.calls.some((call) => call[1] === false));
+    connection.setVisible(true);
+    await Promise.resolve();
+    hide.resolve();
+    await until(() => completed.includes(false));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(serverDemand).toBe(true);
+    if (serverDemand) fixture.output(event(2, 'few words'));
+    expect(states.at(-1)?.buffer).toBe('readyfew words');
+    connection.dispose();
+  });
+
+  it('leaves output demand disabled when disposal races a pending enable', async () => {
+    const enable = deferred<void>();
+    const completed: boolean[] = [];
+    let serverDemand = false;
+    const fixture = sourceFixture(
+      async () => snapshot(),
+      async (active) => {
+        if (active) await enable.promise;
+        serverDemand = active;
+        completed.push(active);
+      }
+    );
+    const session = new TerminalHistorySession('terminal-1', 'session-1', fixture.source);
+    const connection = session.connect(() => undefined, true);
+
+    await until(() => fixture.setOutputDemand.mock.calls.some((call) => call[1] === true));
+    connection.dispose();
+    enable.resolve();
+    await until(() => completed.includes(true) && completed.includes(false));
+
+    expect(serverDemand).toBe(false);
+  });
 });
 
-function sourceFixture(history: () => Promise<TerminalHistorySnapshot | null>) {
+function sourceFixture(
+  history: () => Promise<TerminalHistorySnapshot | null>,
+  demand: (active: boolean) => Promise<void> = async () => undefined
+) {
   let outputListener: ((event: TerminalOutputEvent) => void) | null = null;
   const order: string[] = [];
   const historySnapshot = vi.fn(async () => {
@@ -91,6 +148,7 @@ function sourceFixture(history: () => Promise<TerminalHistorySnapshot | null>) {
   });
   const setOutputDemand = vi.fn(async (_terminalId: string, active: boolean) => {
     order.push(`demand:${active}`);
+    await demand(active);
   });
   const source: TerminalSessionSource = {
     subscribeOutput: (listener) => {
