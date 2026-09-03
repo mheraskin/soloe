@@ -56,6 +56,16 @@ function snapshot(revision: string): ArtifactCatalogSnapshot {
   };
 }
 
+function document(id: string, catalog: ArtifactCatalogSnapshot): ArtifactDocument {
+  const artifact = catalog.artifacts.find((candidate) => candidate.id === id);
+  if (!artifact) throw new Error(`Unknown test artifact: ${id}`);
+  return {
+    ...artifact,
+    html: `<main>${artifact.title}</main>`,
+    catalogRevision: catalog.revision
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
   mocks.list.mockReset();
@@ -110,5 +120,64 @@ describe('ArtifactsStore', () => {
     expect(mocks.prepareFrame).toHaveBeenCalledWith('<main>Home</main>');
     expect(store.unread(project.id)).toBe(false);
     expect(store.unread('another-project')).toBe(false);
+  });
+
+  it('tracks backward and forward artifact navigation per Project', async () => {
+    const catalog = snapshot('revision-one');
+    catalog.artifacts.push(
+      {
+        ...catalog.artifacts[0]!,
+        id: 'implementation-handoff',
+        title: 'Implementation handoff',
+        revision: 'handoff-revision',
+        isHome: false,
+        homeOwnership: null
+      },
+      {
+        ...catalog.artifacts[0]!,
+        id: 'orchestration-status',
+        title: 'Orchestration status',
+        revision: 'status-revision',
+        isHome: false,
+        homeOwnership: null
+      }
+    );
+    mocks.list.mockResolvedValue(catalog);
+    mocks.read.mockImplementation(async (_project, artifactId: string) =>
+      document(artifactId, catalog)
+    );
+    mocks.prepareFrame.mockImplementation(async (html: string) => ({
+      url: `soloe-artifact://frame/${encodeURIComponent(html)}`
+    }));
+    const store = new ArtifactsStore();
+
+    await store.openHome(project);
+    expect(store.canGoBack(project.id)).toBe(false);
+    expect(store.canGoForward(project.id)).toBe(false);
+    await expect(store.back(project)).resolves.toBeNull();
+
+    await store.openArtifact(project, 'implementation-handoff');
+    await store.openArtifact(project, 'orchestration-status');
+    expect(store.canGoBack(project.id)).toBe(true);
+    expect(store.canGoForward(project.id)).toBe(false);
+
+    await store.back(project);
+    expect(store.documentsByProject[project.id]?.id).toBe('implementation-handoff');
+    expect(store.canGoBack(project.id)).toBe(true);
+    expect(store.canGoForward(project.id)).toBe(true);
+
+    await store.back(project);
+    expect(store.documentsByProject[project.id]?.id).toBe('home');
+    expect(store.canGoBack(project.id)).toBe(false);
+    expect(store.canGoForward(project.id)).toBe(true);
+
+    await store.forward(project);
+    expect(store.documentsByProject[project.id]?.id).toBe('implementation-handoff');
+    expect(store.canGoBack(project.id)).toBe(true);
+    expect(store.canGoForward(project.id)).toBe(true);
+
+    await store.openArtifact(project, 'home');
+    expect(store.canGoBack(project.id)).toBe(true);
+    expect(store.canGoForward(project.id)).toBe(false);
   });
 });

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import {
     ArrowLeft,
+    ArrowRight,
     Home,
     Loader2,
     Maximize2,
@@ -48,6 +49,13 @@
   let loading = $derived(
     activeProjectId ? artifacts.loadingByProject[activeProjectId] === true : false
   );
+  let canBack = $derived(activeProjectId ? artifacts.canGoBack(activeProjectId) : false);
+  let canForward = $derived(activeProjectId ? artifacts.canGoForward(activeProjectId) : false);
+  let canGoHome = $derived(Boolean(
+    document
+    && snapshot?.homeArtifactId
+    && document.id !== snapshot.homeArtifactId
+  ));
   let error = $derived(
     activeProjectId ? artifacts.errorByProject[activeProjectId] ?? null : null
   );
@@ -106,13 +114,18 @@
   });
 
   function goHome(): void {
-    if (!activeProject) return;
-    void artifacts.openHome(activeProject, route).catch(reportError);
+    if (!activeProject || !snapshot?.homeArtifactId) return;
+    void artifacts.openArtifact(activeProject, snapshot.homeArtifactId, route).catch(reportError);
   }
 
   function goBack(): void {
     if (!activeProject) return;
     void artifacts.back(activeProject, route).catch(reportError);
+  }
+
+  function goForward(): void {
+    if (!activeProject) return;
+    void artifacts.forward(activeProject, route).catch(reportError);
   }
 
   function refresh(): void {
@@ -157,7 +170,7 @@
         variant="ghost"
         size="icon-xs"
         onclick={goBack}
-        disabled={!activeProject || loading}
+        disabled={!canBack || loading}
         aria-label="Back"
         title="Back"
       >
@@ -166,8 +179,18 @@
       <Button
         variant="ghost"
         size="icon-xs"
+        onclick={goForward}
+        disabled={!canForward || loading}
+        aria-label="Forward"
+        title="Forward"
+      >
+        <ArrowRight class="size-3" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
         onclick={goHome}
-        disabled={!snapshot?.homeArtifactId || loading}
+        disabled={!canGoHome || loading}
         aria-label="Artifact home"
         title="Artifact home"
       >

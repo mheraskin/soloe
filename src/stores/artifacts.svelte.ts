@@ -9,9 +9,15 @@ import type {
 import { ipc } from '../lib/ipc';
 
 const SEEN_STORAGE_KEY = 'soloe.artifacts.seenByProject.v1';
+const MAX_NAVIGATION_HISTORY = 20;
 
 interface ArtifactRoute {
   deviceId?: DeviceId;
+}
+
+interface ArtifactNavigationState {
+  back: string[];
+  forward: string[];
 }
 
 export class ArtifactsStore {
@@ -23,7 +29,7 @@ export class ArtifactsStore {
   errorByProject = $state<Record<string, string | null>>({});
   seenRevisionByProject = $state<Record<string, string>>(loadSeenRevisions());
 
-  private readonly historyByProject = new Map<string, string[]>();
+  private navigationByProject = $state<Record<string, ArtifactNavigationState>>({});
   private readonly requestGeneration = new Map<string, number>();
   private readonly remoteDeviceByProject = new Map<string, DeviceId>();
   private detachers: Array<() => void> = [];
@@ -93,10 +99,12 @@ export class ArtifactsStore {
     if (!snapshot.homeArtifactId) {
       delete this.documentsByProject[project.id];
       delete this.frameSourcesByProject[project.id];
+      this.setNavigation(project.id, { back: [], forward: [] });
       return null;
     }
-    this.historyByProject.set(project.id, []);
-    return this.loadDocument(project, snapshot.homeArtifactId, route);
+    const document = await this.loadDocument(project, snapshot.homeArtifactId, route);
+    this.setNavigation(project.id, { back: [], forward: [] });
+    return document;
   }
 
   async openArtifact(
@@ -105,22 +113,63 @@ export class ArtifactsStore {
     route?: ArtifactRoute
   ): Promise<ArtifactDocument> {
     const current = this.documentsByProject[project.id];
-    if (current && current.id !== artifactId) {
-      const history = this.historyByProject.get(project.id) ?? [];
-      this.historyByProject.set(project.id, [...history, current.id].slice(-20));
+    const document = await this.loadDocument(project, artifactId, route);
+    if (!current) {
+      this.setNavigation(project.id, { back: [], forward: [] });
+    } else if (current.id !== artifactId) {
+      const navigation = this.navigation(project.id);
+      this.setNavigation(project.id, {
+        back: [...navigation.back, current.id].slice(-MAX_NAVIGATION_HISTORY),
+        forward: []
+      });
     }
-    return this.loadDocument(project, artifactId, route);
+    return document;
+  }
+
+  canGoBack(projectId: string): boolean {
+    return Boolean(
+      this.documentsByProject[projectId]
+      && this.navigation(projectId).back.length > 0
+    );
+  }
+
+  canGoForward(projectId: string): boolean {
+    return Boolean(
+      this.documentsByProject[projectId]
+      && this.navigation(projectId).forward.length > 0
+    );
   }
 
   async back(
     project: ArtifactProjectRef,
     route?: ArtifactRoute
   ): Promise<ArtifactDocument | null> {
-    const history = this.historyByProject.get(project.id) ?? [];
-    const artifactId = history.at(-1);
-    if (!artifactId) return this.openHome(project, route);
-    this.historyByProject.set(project.id, history.slice(0, -1));
-    return this.loadDocument(project, artifactId, route);
+    const current = this.documentsByProject[project.id];
+    const navigation = this.navigation(project.id);
+    const artifactId = navigation.back.at(-1);
+    if (!current || !artifactId) return null;
+    const document = await this.loadDocument(project, artifactId, route);
+    this.setNavigation(project.id, {
+      back: navigation.back.slice(0, -1),
+      forward: [...navigation.forward, current.id].slice(-MAX_NAVIGATION_HISTORY)
+    });
+    return document;
+  }
+
+  async forward(
+    project: ArtifactProjectRef,
+    route?: ArtifactRoute
+  ): Promise<ArtifactDocument | null> {
+    const current = this.documentsByProject[project.id];
+    const navigation = this.navigation(project.id);
+    const artifactId = navigation.forward.at(-1);
+    if (!current || !artifactId) return null;
+    const document = await this.loadDocument(project, artifactId, route);
+    this.setNavigation(project.id, {
+      back: [...navigation.back, current.id].slice(-MAX_NAVIGATION_HISTORY),
+      forward: navigation.forward.slice(0, -1)
+    });
+    return document;
   }
 
   async refresh(project: ArtifactProjectRef, route?: ArtifactRoute): Promise<void> {
@@ -130,7 +179,11 @@ export class ArtifactsStore {
       ? currentId
       : snapshot.homeArtifactId;
     if (nextId) await this.loadDocument(project, nextId, route);
-    else delete this.documentsByProject[project.id];
+    else {
+      delete this.documentsByProject[project.id];
+      delete this.frameSourcesByProject[project.id];
+      this.setNavigation(project.id, { back: [], forward: [] });
+    }
   }
 
   async delete(
@@ -194,7 +247,23 @@ export class ArtifactsStore {
     if (current && !event.snapshot.artifacts.some((artifact) => artifact.id === current.id)) {
       delete this.documentsByProject[event.projectId];
       delete this.frameSourcesByProject[event.projectId];
+      this.setNavigation(event.projectId, { back: [], forward: [] });
+      return;
     }
+    const memberIds = new Set(event.snapshot.artifacts.map((artifact) => artifact.id));
+    const navigation = this.navigation(event.projectId);
+    this.setNavigation(event.projectId, {
+      back: navigation.back.filter((artifactId) => memberIds.has(artifactId)),
+      forward: navigation.forward.filter((artifactId) => memberIds.has(artifactId))
+    });
+  }
+
+  private navigation(projectId: string): ArtifactNavigationState {
+    return this.navigationByProject[projectId] ?? { back: [], forward: [] };
+  }
+
+  private setNavigation(projectId: string, navigation: ArtifactNavigationState): void {
+    this.navigationByProject[projectId] = navigation;
   }
 }
 
