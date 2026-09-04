@@ -141,9 +141,12 @@ export type LocalhostBridgeController = Pick<
   'list' | 'open' | 'close' | 'dispose'
 >;
 
+export const DEFAULT_DEVICE_POLL_INTERVAL_MS = 60_000;
+
 export interface MultiDeviceSessionsOptions {
   devices: SessionDevice[];
   localhostBridges?: LocalhostBridgeController;
+  pollIntervalMs?: number;
 }
 
 export class MultiDeviceSessions {
@@ -158,6 +161,8 @@ export class MultiDeviceSessions {
   private readonly creationPlans = new Map<string, StoredSessionCreationPlan>();
   private terminalOutputDemand = new Map<DeviceId, Set<string>>();
   private readonly clientId = randomUUID();
+  private readonly devicePollTimers = new Map<DeviceId, NodeJS.Timeout>();
+  private readonly pollIntervalMs: number;
   private refreshRequest: Promise<MultiDeviceSessionState> | null = null;
   private eventRefreshScheduled = false;
   private refreshAfterCurrent = false;
@@ -168,7 +173,9 @@ export class MultiDeviceSessions {
   constructor(options: MultiDeviceSessionsOptions) {
     this.devices = [...options.devices];
     this.localhostBridges = options.localhostBridges ?? new LocalhostBridgeManager();
+    this.pollIntervalMs = options.pollIntervalMs ?? (process.env.NODE_ENV === 'test' ? 0 : DEFAULT_DEVICE_POLL_INTERVAL_MS);
     this.currentState = projectState([], this.devices, 0);
+    this.scheduleDevicePolling();
   }
 
   state(): MultiDeviceSessionState {
@@ -240,6 +247,7 @@ export class MultiDeviceSessions {
       removed.push(current);
     }
     this.devices = [...nextDevices];
+    this.scheduleDevicePolling();
     await Promise.allSettled(removed.map((device) => device.dispose()));
     await this.applyTerminalOutputDemand().catch(() => undefined);
     return this.refresh();
@@ -870,6 +878,7 @@ export class MultiDeviceSessions {
   }
 
   async dispose(): Promise<void> {
+    this.clearDevicePollTimers();
     await this.localhostBridges.dispose();
     for (const deviceId of [...this.deviceDetachers.keys()]) this.detachDevice(deviceId);
     await Promise.allSettled(this.devices.map((device) => device.dispose()));
@@ -878,6 +887,45 @@ export class MultiDeviceSessions {
     this.stateListeners.clear();
     this.eventListeners.clear();
     this.creationPlans.clear();
+  }
+
+  private scheduleDevicePolling(): void {
+    this.clearDevicePollTimers();
+    if (this.pollIntervalMs <= 0) return;
+
+    this.devices.forEach((device, index) => {
+      // Stagger start times (5s, 10s, 15s...) so devices never poll at the exact same time
+      const initialDelay = (index + 1) * 5_000;
+      const timer = setTimeout(() => {
+        void this.pollDevice(device.deviceId);
+        const interval = setInterval(() => {
+          void this.pollDevice(device.deviceId);
+        }, this.pollIntervalMs);
+        interval.unref?.();
+        this.devicePollTimers.set(device.deviceId, interval);
+      }, initialDelay);
+      timer.unref?.();
+      this.devicePollTimers.set(device.deviceId, timer);
+    });
+  }
+
+  private clearDevicePollTimers(): void {
+    for (const timer of this.devicePollTimers.values()) clearTimeout(timer);
+    this.devicePollTimers.clear();
+  }
+
+  private async pollDevice(deviceId: DeviceId): Promise<void> {
+    const device = this.devices.find((candidate) => candidate.deviceId === deviceId);
+    if (!device || device.status.state !== 'ready') return;
+    try {
+      const inventory = await device.readInventory();
+      if (inventory.descriptor.deviceId === device.deviceId) {
+        this.inventories.set(device.deviceId, structuredClone(inventory));
+        this.publishCachedState();
+      }
+    } catch {
+      // Ignore background poll errors
+    }
   }
 
   private attachDevices(): void {

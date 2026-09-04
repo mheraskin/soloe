@@ -75,14 +75,16 @@
       const discovered = settings.availableModels.filter(
         (entry) => entry.provider === catalogProvider
       );
-      const entries = discovered.some((entry) => entry.isDefault)
-        ? discovered
-        : [{
-            provider: catalogProvider,
-            id: CLI_DEFAULT_MODEL_ID,
-            label: `${providerLabels[runtimeProvider]} default`,
-            isDefault: true
-          }, ...discovered];
+      const entries = discovered.length === 0
+        ? []
+        : discovered.some((entry) => entry.isDefault)
+          ? discovered
+          : [{
+              provider: catalogProvider,
+              id: CLI_DEFAULT_MODEL_ID,
+              label: `${providerLabels[runtimeProvider]} default`,
+              isDefault: true
+            }, ...discovered];
       for (const entry of entries) {
         const searchable = `${entry.label} ${entry.id} ${providerLabels[runtimeProvider]}`.toLowerCase();
         if (normalizedQuery && !searchable.includes(normalizedQuery)) continue;

@@ -660,6 +660,7 @@ export function buildWslAgentPathPrelude(executable: string): string {
   const notFoundMsg = posixSingleQuote(`${executable}: command not found`);
   return [
     'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"',
+    'export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:$HOME/.cargo/bin:$HOME/.npm-global/bin:$HOME/.local/share/pnpm:$HOME/.pnpm-global/bin:$HOME/.volta/bin:$HOME/.fnm/current/bin:$HOME/.asdf/shims:$HOME/.mise/shims:/snap/bin:$PATH"',
     'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"',
     `__soloe_agent_bin="$(command -v ${exe} 2>/dev/null)"`,
     'case "$__soloe_agent_bin" in',

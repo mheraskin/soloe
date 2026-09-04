@@ -1049,6 +1049,60 @@ describe('MultiDeviceSessions', () => {
     await multiDevice.dispose();
     expect(localhostBridges.dispose).toHaveBeenCalledOnce();
   });
+
+  it('polls devices on a staggered schedule and cleans up timers on dispose', async () => {
+    vi.useFakeTimers();
+    try {
+      const mac = fakeDevice({
+        deviceId: MAC_ID,
+        name: 'MacBook',
+        projectId: 'mac-soloe',
+        projectPath: '/Users/me/soloe',
+        workspacePath: '/Users/me/soloe-feature',
+        branch: 'feature/multi-device',
+        sessions: [],
+        local: true
+      });
+      const laptop = fakeDevice({
+        deviceId: LAPTOP_ID,
+        name: 'LAPTOPLORES',
+        projectId: 'windows-soloe',
+        projectPath: 'C:\\src\\soloe',
+        workspacePath: 'C:\\src\\soloe-feature',
+        branch: 'feature/multi-device',
+        sessions: []
+      });
+
+      const macRead = vi.spyOn(mac, 'readInventory');
+      const laptopRead = vi.spyOn(laptop, 'readInventory');
+
+      const sessions = new MultiDeviceSessions({
+        devices: [mac, laptop],
+        pollIntervalMs: 10_000
+      });
+
+      expect(macRead).not.toHaveBeenCalled();
+      expect(laptopRead).not.toHaveBeenCalled();
+
+      // Advance by 5s: first device (mac) triggers initial poll
+      await vi.advanceTimersByTimeAsync(5_050);
+      expect(macRead).toHaveBeenCalledTimes(1);
+      expect(laptopRead).not.toHaveBeenCalled();
+
+      // Advance further: second device (laptop) triggers on its staggered offset
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(laptopRead).toHaveBeenCalledTimes(1);
+
+      await sessions.dispose();
+
+      // Further time does not trigger any polls after disposal
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(macRead).toHaveBeenCalledTimes(1);
+      expect(laptopRead).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 function fakeLocalhostBridges() {

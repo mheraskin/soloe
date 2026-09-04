@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type {
   AgentCliAvailability,
   AgentIntegrationHost,
@@ -137,11 +139,37 @@ function parseGenericVersion(output: string): string | undefined {
   return match?.[0] ?? line;
 }
 
+function buildDiscoveryEnv(): NodeJS.ProcessEnv {
+  const home = os.homedir();
+  const extraPaths = [
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    path.join(home, '.cargo', 'bin'),
+    path.join(home, '.npm-global', 'bin'),
+    path.join(home, '.local', 'share', 'pnpm'),
+    path.join(home, '.pnpm-global', 'bin'),
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.bun', 'bin'),
+    path.join(home, '.volta', 'bin'),
+    path.join(home, '.fnm', 'current', 'bin'),
+    '/snap/bin'
+  ];
+  const currentPath = process.env.PATH ?? '';
+  const mergedPath = [...extraPaths, currentPath].filter(Boolean).join(path.delimiter);
+  return { ...process.env, PATH: mergedPath };
+}
+
 async function runVersionCommand(executable: string, args: string[]): Promise<CommandResult> {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
-    const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(executable, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: buildDiscoveryEnv()
+    });
     const timer = setTimeout(() => child.kill(), 5_000);
     child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
     child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
