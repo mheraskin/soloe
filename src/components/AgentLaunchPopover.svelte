@@ -113,6 +113,22 @@
   let suppressNextClick = false;
   let selectedLaunchOption = $state<LaunchOption | null>(null);
   let pickerEl: HTMLElement | null = null;
+  let railEl: HTMLElement | null = null;
+  let railCanScroll = $state(false);
+  let railAtBottom = $state(false);
+
+  function updateRailScroll(): void {
+    if (!railEl) return;
+    const { scrollTop, scrollHeight, clientHeight } = railEl;
+    railCanScroll = scrollHeight > clientHeight + 1;
+    railAtBottom = scrollTop + clientHeight >= scrollHeight - 1;
+  }
+
+  function updateRailOnMount(node: HTMLElement): void {
+    railEl = node;
+    requestAnimationFrame(updateRailScroll);
+  }
+
   let selectedDeviceId = $state<DeviceId | null>(null);
   let selectedWorkspaceKey = $state<string | null>(null);
   let placementInitialized = false;
@@ -931,22 +947,24 @@
     onpointerenter={clearCloseTimer}
     onpointerleave={scheduleClose}
   >
-    <div bind:this={pickerEl} class="grid min-h-0 grid-cols-[3.75rem_minmax(0,1fr)] items-start">
+    <div bind:this={pickerEl} class="grid min-h-0 grid-cols-[3rem_minmax(0,1fr)] items-start">
       <div
         data-slot="provider-rail-column"
-        class="flex max-h-[13.5rem] min-h-0 flex-col border-r border-border bg-foreground/[0.035]"
+        class="relative flex max-h-[13.5rem] min-h-0 flex-col overflow-hidden border-r border-border bg-foreground/[0.035]"
       >
         <div
           data-slot="provider-rail"
-          class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pt-2 pb-1"
+          class="no-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pt-2 pb-1"
           aria-label="Agents"
+          onscroll={updateRailScroll}
+          use:updateRailOnMount
         >
           {#each orderedProviders as provider (provider.value)}
             {@const unavailableReason = providerDisabledReason(provider.value)}
             {@const isAvailable = !unavailableReason}
             <button
               type="button"
-              class={`relative mx-auto flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === provider.value ? 'bg-background text-foreground shadow-sm' : ''} ${draggingProvider === provider.value ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-transparent hover:text-muted-foreground' : ''}`}
+              class={`relative mx-auto flex size-9 shrink-0 items-center justify-center rounded-md border border-transparent outline-none transition-colors hover:bg-background/80 hover:border-border/70 active:bg-muted active:border-border focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === provider.value ? 'bg-background border-border shadow-sm' : ''} ${draggingProvider === provider.value ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-transparent hover:border-transparent' : ''}`}
               title={unavailableReason ?? provider.label}
               aria-label={unavailableReason ? `${provider.label} (${unavailableReason})` : `New ${provider.label} session`}
               data-launch-option={provider.value}
@@ -972,33 +990,39 @@
                   aria-hidden="true"
                 ></span>
               {/if}
-              <KindIcon kind={provider.value} size={21} />
+              <KindIcon kind={provider.value} size={17} />
             </button>
           {/each}
         </div>
+        {#if railCanScroll && !railAtBottom}
+          <div
+            class="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-card via-card/85 to-transparent"
+            aria-hidden="true"
+          ></div>
+        {/if}
         <div
           data-slot="provider-rail-separator"
           class="mx-2 shrink-0 border-t border-border"
           aria-hidden="true"
         ></div>
-        <div class="flex shrink-0 justify-center px-2 pt-1.5 pb-2">
+        <div class="flex shrink-0 justify-center px-1.5 pt-1.5 pb-2">
           <button
             type="button"
-            class={`relative flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === 'terminal' ? 'bg-background text-foreground shadow-sm' : ''}`}
+            class={`relative flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent outline-none transition-colors hover:bg-background/80 hover:border-border/70 active:bg-muted active:border-border focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === 'terminal' ? 'bg-background border-border shadow-sm' : ''}`}
             title="Terminal"
             aria-label="New terminal"
             data-launch-option="terminal"
             data-gesture-selected={selectedLaunchOption === 'terminal' ? 'true' : undefined}
             onclick={(event) => onLaunchOptionClick(event, 'terminal')}
           >
-            <KindIcon kind="terminal" size={21} />
+            <KindIcon kind="terminal" size={15} />
           </button>
         </div>
       </div>
 
       <div class="min-w-0">
         {#if usesDevicePlacement}
-          <div class="flex max-h-[18rem] flex-col gap-1.5 overflow-y-auto p-2">
+          <div class="no-scrollbar flex max-h-[18rem] flex-col gap-1.5 overflow-y-auto p-2">
           {#if pickerLevel !== 'worktree'}
             <span class="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Worktree</span>
             <DropdownMenu.Root bind:open={worktreeSelectOpen}>
@@ -1272,14 +1296,14 @@
           </div>
           <div
             data-slot="quick-launch-strip"
-            class="flex min-w-0 gap-1.5 overflow-x-auto pb-0.5"
+            class="no-scrollbar flex min-w-0 flex-wrap overflow-x-auto gap-1.5"
           >
             {#each presets as preset (preset.id)}
               {@const unavailableReason = providerDisabledReason(preset.provider)}
               {@const isAvailable = !unavailableReason}
               <Button
                 variant="ghost"
-                class={`relative h-9 max-w-44 shrink-0 gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 text-xs ${selectedLaunchOption === `preset:${preset.id}` ? 'border-primary/50 bg-primary/10 text-foreground' : ''} ${draggingPresetId === preset.id ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : ''}`}
+                class={`relative h-8 min-w-0 max-w-44 gap-1.5 rounded-md border border-border/60 bg-muted/20 px-2 text-xs transition-colors hover:bg-muted/60 hover:border-border active:bg-muted/90 active:border-primary/50 ${selectedLaunchOption === `preset:${preset.id}` ? 'border-primary/50 bg-primary/10 text-foreground' : ''} ${draggingPresetId === preset.id ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-muted/20 hover:border-border/60' : ''}`}
                 title={unavailableReason ?? preset.label}
                 aria-label={unavailableReason ? `${preset.label} (${unavailableReason})` : preset.label}
                 data-launch-option={`preset:${preset.id}`}
