@@ -56,4 +56,16 @@ describe('TerminalOutputBatcher', () => {
     expect(vi.getTimerCount()).toBe(0);
     batcher.destroy();
   });
+
+  it('forwards an authoritative Runtime sequence without renumbering it', () => {
+    const flush = vi.fn<(events: TerminalOutputEvent[]) => void>();
+    const batcher = new TerminalOutputBatcher(16, flush);
+
+    batcher.pushSequenced('t-1', 's-1', 'runtime batch', 42);
+
+    expect(flush).toHaveBeenCalledWith([
+      { terminalId: 't-1', sessionId: 's-1', data: 'runtime batch', seq: 42 }
+    ]);
+    batcher.destroy();
+  });
 });

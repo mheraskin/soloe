@@ -292,6 +292,10 @@ _Avoid_: Sync state, source of truth
   the restore path retries once and then returns an empty,
   sequence-qualified truncated tail without writing to, resizing, stopping, or
   restarting the PTY.
+- Renderer delivery holds one replay reset plus a 256-event, 256 KiB
+  sequence-qualified live tail instead of copying full history on every output
+  batch. A presentation that falls behind that tail requests a fresh
+  **Terminal Replay Tail**.
 - A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
 - A **Terminal Presentation** is reconstructed when its runtime Terminal identity changes; Session metadata changes such as rename preserve the existing presentation
 - Transient Soloe Device unavailability preserves the selected remote Session; reconnect resumes its visible presentation from the last applied sequence through the owning Device's **Terminal Replay Tail**

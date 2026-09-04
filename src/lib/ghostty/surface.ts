@@ -201,6 +201,30 @@ export interface TerminalScrollbarGeometry {
   readonly maxOffset: number;
 }
 
+export type TerminalViewportIntent =
+  | { readonly kind: "follow-output" }
+  | { readonly kind: "scrollback"; readonly rowsFromBottom: number };
+
+export function captureTerminalViewportIntent(
+  state: GhosttyScrollbar | null,
+): TerminalViewportIntent {
+  if (state === null) return { kind: "follow-output" };
+  const maxOffset = Math.max(0, state.total - state.len);
+  const rowsFromBottom = Math.max(0, maxOffset - state.offset);
+  return rowsFromBottom === 0
+    ? { kind: "follow-output" }
+    : { kind: "scrollback", rowsFromBottom };
+}
+
+export function terminalViewportOffsetForIntent(
+  intent: TerminalViewportIntent,
+  state: GhosttyScrollbar,
+): number {
+  const maxOffset = Math.max(0, state.total - state.len);
+  if (intent.kind === "follow-output") return maxOffset;
+  return Math.max(0, maxOffset - Math.max(0, intent.rowsFromBottom));
+}
+
 export function terminalScrollbarGeometry(
   state: GhosttyScrollbar,
   trackHeight: number,
@@ -1284,6 +1308,19 @@ export class GhosttyTerminalSurface {
 
   isAtBottom(): boolean {
     return this.core.isViewportActive();
+  }
+
+  captureViewportIntent(): TerminalViewportIntent {
+    if (this.disposed) return { kind: "follow-output" };
+    return captureTerminalViewportIntent(this.core.scrollbarState());
+  }
+
+  restoreViewportIntent(intent: TerminalViewportIntent): void {
+    if (this.disposed) return;
+    const state = this.readScrollbarState();
+    if (state === null) return;
+    const offset = terminalViewportOffsetForIntent(intent, state);
+    this.scrollViewport(offset - state.offset);
   }
 
   dispose(): void {

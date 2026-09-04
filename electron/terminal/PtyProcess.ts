@@ -1,6 +1,10 @@
 import type { SessionId } from '@shared/types/sessions.js';
-import type { SpawnSpec, TerminalId } from '@shared/types/terminal.js';
-import type { RuntimeHistorySnapshot, RuntimeTerminalState } from '@soloe/protocol';
+import type {
+  SpawnSpec,
+  TerminalHistorySnapshot,
+  TerminalId
+} from '@shared/types/terminal.js';
+import type { RuntimeTerminalState } from '@soloe/protocol';
 
 export interface PtyProcessDisposable {
   dispose(): void;
@@ -13,7 +17,7 @@ export interface PtyProcessExit {
 
 export interface PtyProcess {
   readonly pid: number;
-  onData(listener: (data: string) => void): PtyProcessDisposable;
+  onData(listener: (data: string, seq?: number) => void): PtyProcessDisposable;
   onExit(listener: (event: PtyProcessExit) => void): PtyProcessDisposable;
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -29,17 +33,22 @@ export interface PtyProcessSpawnOptions {
   env: Record<string, string>;
 }
 
+export interface PtyHistoryProvider {
+  snapshot(terminalId: TerminalId): Promise<TerminalHistorySnapshot | null>;
+  setLineLimit(lineLimit: number): Promise<unknown> | unknown;
+}
+
 /**
  * Physical PTY seam. The Node and Rust Adapters both satisfy this Interface;
- * session semantics, replay, and renderer publication stay in PtyManager.
+ * the optional history capability selects Runtime replay instead of a local
+ * fallback without creating two authorities for one process.
  */
 export interface PtyProcessFactory {
   readonly outputIsPrebatched?: boolean;
   readonly preservesProcessesOnDispose?: boolean;
+  readonly history?: PtyHistoryProvider;
   spawn(options: PtyProcessSpawnOptions): Promise<PtyProcess> | PtyProcess;
   listRunning?(): Promise<RuntimeTerminalState[]>;
   attach?(terminal: RuntimeTerminalState): PtyProcess;
-  historySnapshot?(terminalId: string): Promise<RuntimeHistorySnapshot | null>;
-  setHistoryLineLimit?(lineLimit: number): Promise<unknown> | unknown;
   dispose?(): Promise<void> | void;
 }

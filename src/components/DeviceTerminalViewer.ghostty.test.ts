@@ -41,6 +41,8 @@ vi.mock('../lib/ghostty/surface', () => ({
         resetAndWrite: vi.fn(),
         resetAndReplay: vi.fn(),
         write: vi.fn(),
+        captureViewportIntent: vi.fn(() => ({ kind: 'follow-output' })),
+        restoreViewportIntent: vi.fn(),
         focus: vi.fn(),
         fit: vi.fn(() => true),
         setTheme: vi.fn(),

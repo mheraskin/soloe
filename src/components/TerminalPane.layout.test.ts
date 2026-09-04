@@ -26,17 +26,25 @@ describe('Ghostty terminal presentation', () => {
     expect(source).toContain('connection?.setVisible(nextVisible)');
   });
 
-  it('applies incremental history bytes and resets only when the prefix changes', () => {
-    expect(surfaceSource).toContain('terminalState.buffer.startsWith(appliedBuffer)');
-    expect(surfaceSource).toContain('current.write(terminalState.buffer.slice(appliedBuffer.length))');
-    expect(surfaceSource).toContain('current.resetAndReplay(terminalState.buffer, terminalState.replay)');
+  it('applies bounded reset and append operations without copying full history', () => {
+    expect(surfaceSource).toContain('terminalPresentationUpdates');
+    expect(surfaceSource).toContain('current.resetAndReplay(update.reset.data, update.reset.replay)');
+    expect(surfaceSource).toContain('current.write(update.event.data)');
+    expect(surfaceSource).not.toContain('startsWith(appliedBuffer)');
+  });
+
+  it('preserves follow or scrollback intent when a Ghostty surface is recreated', () => {
+    expect(surfaceSource).toContain('current.captureViewportIntent()');
+    expect(surfaceSource).toContain('current.restoreViewportIntent(viewportIntent)');
   });
 
   it('requests a real PTY resize cycle after restoring a truncated replay tail', () => {
-    expect(source).toContain('terminalState.truncated ? terminalState.fromSeq : null');
+    expect(source).toContain("terminalState.status.kind === 'ready'");
+    expect(source).toContain('terminalState.status.truncated');
     expect(deviceViewerSource).toContain(
-      'terminalState?.truncated ? terminalState.fromSeq : null'
+      "terminalState?.status.kind === 'ready'"
     );
+    expect(deviceViewerSource).toContain('terminalState.status.truncated');
     expect(source).toContain('terminalPresentationRedrawSizes(dimensions)');
     expect(deviceViewerSource).toContain('terminalPresentationRedrawSizes(dimensions)');
   });

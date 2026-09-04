@@ -345,6 +345,7 @@ export class RuntimeHost {
       rows: input.rows
     });
     process.on('data', (data: string) => {
+      if (this.terminals.get(terminalId) !== terminal) return;
       for (const cwd of terminal.locationParser.push(data)) {
         if (cwd === state.cwd) continue;
         state.cwd = cwd;
@@ -366,9 +367,11 @@ export class RuntimeHost {
       this.broadcast('output', event);
     });
     process.once('exit', (event: { exitCode?: number | null; signal?: number | null } = {}) => {
+      if (this.terminals.get(terminalId) !== terminal) return;
       this.terminals.delete(terminalId);
       this.terminalBySession.delete(input.sessionId);
       this.outputSequence.delete(terminalId);
+      this.historyBuffer.remove(terminalId);
       this.inputLeases.clearTerminal(terminalId);
       this.broadcast('exit', {
         terminalId,

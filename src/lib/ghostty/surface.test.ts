@@ -6,6 +6,7 @@ import {
   DEFAULT_TERMINAL_FONT_SIZE,
   TerminalInteractiveWheelFrameCoalescer,
   advanceTerminalSelectionClickSequence,
+  captureTerminalViewportIntent,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
@@ -22,6 +23,7 @@ import {
   terminalInputPosition,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
+  terminalViewportOffsetForIntent,
   terminalLinkAtColumn,
   terminalLinkAtPosition,
   terminalLinkAtPositionWithRange,
@@ -712,5 +714,28 @@ describe("terminal scrollbar", () => {
       maxOffset: 9_980,
     });
     expect(terminalScrollbarOffsetAtPointer(state, 200, 191, 9)).toBe(9_980);
+  });
+
+  it("captures follow mode separately from a scrollback distance", () => {
+    expect(captureTerminalViewportIntent({ total: 100, offset: 80, len: 20 })).toEqual({
+      kind: "follow-output",
+    });
+    expect(captureTerminalViewportIntent({ total: 100, offset: 40, len: 20 })).toEqual({
+      kind: "scrollback",
+      rowsFromBottom: 40,
+    });
+  });
+
+  it("restores viewport intent against the rebuilt and possibly truncated history", () => {
+    const rebuilt = { total: 200, offset: 180, len: 20 };
+    expect(terminalViewportOffsetForIntent({ kind: "follow-output" }, rebuilt)).toBe(180);
+    expect(terminalViewportOffsetForIntent({
+      kind: "scrollback",
+      rowsFromBottom: 40,
+    }, rebuilt)).toBe(140);
+    expect(terminalViewportOffsetForIntent({
+      kind: "scrollback",
+      rowsFromBottom: 400,
+    }, rebuilt)).toBe(0);
   });
 });

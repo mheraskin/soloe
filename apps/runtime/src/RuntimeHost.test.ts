@@ -304,6 +304,51 @@ describe('Environment Runtime lifecycle', () => {
     }
   });
 
+  it('reclaims history and ignores process output delivered after exit', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
+    const endpoint = testRuntimeEndpoint(directory);
+    const process = new FakeRuntimeProcess();
+    const host = new RuntimeHost({
+      endpoint,
+      processFactory: { spawn: () => process }
+    });
+
+    try {
+      await host.listen();
+      const client = await RuntimeClient.connect(endpoint);
+      const outputs: string[] = [];
+      client.on('output', (event) => outputs.push(event.data));
+      const exit = new Promise((resolve) => client.once('exit', resolve));
+      await client.start({
+        sessionId: 'session-1',
+        spec: {
+          file: 'test-shell',
+          args: [],
+          cwd: directory,
+          env: {}
+        },
+        cols: 100,
+        rows: 30
+      });
+
+      process.emit('data', 'accepted output');
+      process.emit('exit', { exitCode: 0, signal: null });
+      await exit;
+      process.emit('data', 'late output');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(outputs).toEqual(['accepted output']);
+      const history = (host as unknown as {
+        historyBuffer: { retainedByteLength(): number };
+      }).historyBuffer;
+      expect(history.retainedByteLength()).toBe(0);
+      client.disconnect();
+    } finally {
+      await host.shutdown();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('publishes and retains the current Terminal cwd from shell integration output', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'soloe-runtime-'));
     const endpoint = testRuntimeEndpoint(directory);

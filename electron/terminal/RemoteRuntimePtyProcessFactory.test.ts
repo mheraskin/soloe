@@ -90,10 +90,12 @@ describe("RemoteRuntimePtyProcessFactory", () => {
         rows: 30,
         env: {},
       });
-      const data = new Promise<string>((resolve) => remoteProcess.onData(resolve));
+      const data = new Promise<{ data: string; seq: number | undefined }>((resolve) => {
+        remoteProcess.onData((value, seq) => resolve({ data: value, seq }));
+      });
 
       hostedProcess.emit("data", "runtime output");
-      expect(await data).toBe("runtime output");
+      expect(await data).toEqual({ data: "runtime output", seq: 1 });
       remoteProcess.write("electron input");
       remoteProcess.resize(100, 40);
       await remoteFactory.flush();
@@ -124,9 +126,11 @@ describe("RemoteRuntimePtyProcessFactory", () => {
         }),
       );
       const reattachedProcess = remoteFactory.attach(running!);
-      const reattachedData = new Promise<string>((resolve) => reattachedProcess.onData(resolve));
+      const reattachedData = new Promise<{ data: string; seq: number | undefined }>((resolve) => {
+        reattachedProcess.onData((value, seq) => resolve({ data: value, seq }));
+      });
       hostedProcess.emit("data", "output after Electron restart");
-      expect(await reattachedData).toBe("output after Electron restart");
+      expect(await reattachedData).toEqual({ data: "output after Electron restart", seq: 2 });
     } finally {
       await remoteFactory?.dispose();
       await runtime.shutdown();

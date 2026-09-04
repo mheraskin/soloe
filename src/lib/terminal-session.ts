@@ -6,21 +6,48 @@ import type {
 } from '@shared/types/terminal.js';
 import type { SessionId } from '@shared/types/sessions.js';
 
+export const MAX_TERMINAL_PRESENTATION_PENDING_EVENTS = 256;
+export const MAX_TERMINAL_PRESENTATION_PENDING_BYTES = 256 * 1024;
+
+export type TerminalPresentationStatus =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ready'; truncated: boolean }
+  | { kind: 'recovering' }
+  | { kind: 'error'; message: string };
+
+export interface TerminalPresentationReset {
+  generation: number;
+  data: string;
+  replay: TerminalHistoryReplayPlan;
+  fromSeq: number;
+  toSeq: number;
+}
+
 export interface TerminalSessionState {
   terminalId: TerminalId;
   sessionId: SessionId;
-  buffer: string;
-  replay: TerminalHistoryReplayPlan;
+  reset: TerminalPresentationReset;
+  tail: readonly TerminalOutputEvent[];
   fromSeq: number;
   toSeq: number;
   cols: number;
   rows: number;
-  truncated: boolean;
   byteLength: number;
-  version: number;
-  status: 'idle' | 'loading' | 'ready' | 'error';
-  error: string | null;
+  status: TerminalPresentationStatus;
 }
+
+export interface TerminalPresentationCursor {
+  terminalId: TerminalId | null;
+  sessionId: SessionId | null;
+  generation: number;
+  toSeq: number;
+}
+
+export type TerminalPresentationUpdate =
+  | { kind: 'reset'; reset: TerminalPresentationReset }
+  | { kind: 'append'; event: TerminalOutputEvent }
+  | { kind: 'resync' };
 
 export interface TerminalSessionConnection {
   setVisible(visible: boolean): void;
@@ -40,14 +67,51 @@ interface Attachment {
   visible: boolean;
 }
 
+interface PendingLiveOutput {
+  events: TerminalOutputEvent[];
+  bytes: number;
+  overflowed: boolean;
+}
+
+const textEncoder = new TextEncoder();
+
+/** Resolve bounded Session state into work for one independent presentation. */
+export function terminalPresentationUpdates(
+  state: TerminalSessionState,
+  cursor: TerminalPresentationCursor
+): TerminalPresentationUpdate[] {
+  if (state.status.kind !== 'ready') return [];
+  const resetChanged = cursor.terminalId !== state.terminalId
+    || cursor.sessionId !== state.sessionId
+    || cursor.generation !== state.reset.generation;
+  if (!resetChanged && (cursor.toSeq < state.reset.toSeq || cursor.toSeq > state.toSeq)) {
+    return [{ kind: 'resync' }];
+  }
+
+  let expectedSeq = resetChanged ? state.reset.toSeq : cursor.toSeq;
+  const updates: TerminalPresentationUpdate[] = resetChanged
+    ? [{ kind: 'reset', reset: state.reset }]
+    : [];
+  for (const event of state.tail) {
+    if (event.seq <= expectedSeq) continue;
+    if (event.seq !== expectedSeq + 1) return [{ kind: 'resync' }];
+    updates.push({ kind: 'append', event });
+    expectedSeq = event.seq;
+  }
+  if (expectedSeq !== state.toSeq) return [{ kind: 'resync' }];
+  return updates;
+}
+
 /**
- * One transport/session state machine shared by every Svelte presentation of
- * a terminal. The state is raw VT history; Ghostty owns all parser/grid state.
+ * Synchronizes Runtime history with every renderer attachment. History is one
+ * bounded reset plus a bounded operation tail; Ghostty owns parser/grid state.
  */
 export class TerminalHistorySession {
   private readonly attachments = new Set<Attachment>();
   private state: TerminalSessionState;
-  private pending: TerminalOutputEvent[] | null = null;
+  private pending: PendingLiveOutput | null = null;
+  private resetBytes = 0;
+  private tailBytes = 0;
   private unsubscribeOutput: (() => void) | null = null;
   private unsubscribeReconnect: (() => void) | null = null;
   private syncToken = 0;
@@ -104,13 +168,9 @@ export class TerminalHistorySession {
   private async activate(force = false): Promise<void> {
     await this.syncDemand();
     if (this.disposed || !this.hasVisibleAttachment()) return;
-    if (force || this.state.status === 'idle' || this.state.status === 'error') {
-      await this.resync();
-      return;
-    }
-    // Output demand is intentionally absent while hidden, so every reveal
-    // takes a fresh authoritative history even if the transport stayed online.
-    await this.resync();
+    // Output demand is absent while hidden, so reveal always replaces the
+    // presentation reset from Runtime authority before accepting live output.
+    if (force || this.state.status.kind !== 'loading') await this.resync();
   }
 
   private syncDemand(): Promise<void> {
@@ -133,28 +193,37 @@ export class TerminalHistorySession {
   async resync(): Promise<void> {
     if (this.disposed || !this.hasVisibleAttachment()) return;
     const token = ++this.syncToken;
-    this.pending = [];
-    this.update({ status: 'loading', error: null });
+    this.pending = { events: [], bytes: 0, overflowed: false };
+    this.update({
+      status: this.state.status.kind === 'idle' || this.state.status.kind === 'error'
+        ? { kind: 'loading' }
+        : { kind: 'recovering' }
+    });
     try {
-      const snapshot = await this.source.historySnapshot(this.state.terminalId);
+      const received = await this.source.historySnapshot(this.state.terminalId);
       if (this.disposed || token !== this.syncToken) return;
-      const pending = this.pending ?? [];
+      const pending = this.pending ?? { events: [], bytes: 0, overflowed: false };
       this.pending = null;
-      if (!snapshot || snapshot.sessionId !== this.state.sessionId) {
-        this.update({ ...emptyState(this.state.terminalId, this.state.sessionId), status: 'ready' });
+      if (pending.overflowed) {
+        void this.resync();
         return;
       }
-      this.applySnapshot(snapshot);
-      let gap = false;
-      for (const event of pending) {
-        if (event.sessionId !== this.state.sessionId || event.seq <= this.state.toSeq) continue;
-        if (event.seq !== this.state.toSeq + 1) {
-          gap = true;
-          break;
+      const snapshot = received?.sessionId === this.state.sessionId
+        ? received
+        : emptySnapshot(this.state.terminalId, this.state.sessionId);
+      const unseen = pending.events.filter((event) => (
+        event.sessionId === this.state.sessionId && event.seq > snapshot.toSeq
+      ));
+      let expectedSeq = snapshot.toSeq;
+      for (const event of unseen) {
+        if (event.seq !== expectedSeq + 1) {
+          void this.resync();
+          return;
         }
-        this.append(event);
+        expectedSeq = event.seq;
       }
-      if (gap) void this.resync();
+      this.applySnapshot(snapshot);
+      for (const event of unseen) this.append(event);
     } catch (error) {
       if (!this.disposed && token === this.syncToken) {
         this.pending = null;
@@ -170,7 +239,7 @@ export class TerminalHistorySession {
       || event.sessionId !== this.state.sessionId
     ) return;
     if (this.pending) {
-      this.pending.push(event);
+      this.collectPending(event);
       return;
     }
     if (event.seq <= this.state.toSeq) return;
@@ -181,46 +250,85 @@ export class TerminalHistorySession {
     this.append(event);
   }
 
+  private collectPending(event: TerminalOutputEvent): void {
+    const pending = this.pending;
+    if (!pending || pending.overflowed) return;
+    const bytes = textEncoder.encode(event.data).byteLength;
+    if (
+      bytes > MAX_TERMINAL_PRESENTATION_PENDING_BYTES
+      || pending.events.length >= MAX_TERMINAL_PRESENTATION_PENDING_EVENTS
+      || pending.bytes + bytes > MAX_TERMINAL_PRESENTATION_PENDING_BYTES
+    ) {
+      pending.events.length = 0;
+      pending.bytes = 0;
+      pending.overflowed = true;
+      return;
+    }
+    pending.events.push(event);
+    pending.bytes += bytes;
+  }
+
   private applySnapshot(snapshot: TerminalHistorySnapshot): void {
+    this.resetBytes = snapshot.byteLength;
+    this.tailBytes = 0;
+    const replay = snapshot.replay ?? {
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      resizes: []
+    };
     this.state = {
       terminalId: snapshot.terminalId,
       sessionId: snapshot.sessionId,
-      buffer: snapshot.data,
-      replay: snapshot.replay ?? {
-        cols: snapshot.cols,
-        rows: snapshot.rows,
-        resizes: []
+      reset: {
+        generation: this.state.reset.generation + 1,
+        data: snapshot.data,
+        replay,
+        fromSeq: snapshot.fromSeq,
+        toSeq: snapshot.toSeq
       },
+      tail: [],
       fromSeq: snapshot.fromSeq,
       toSeq: snapshot.toSeq,
       cols: snapshot.cols,
       rows: snapshot.rows,
-      truncated: snapshot.truncated,
       byteLength: snapshot.byteLength,
-      version: this.state.version + 1,
-      status: 'ready',
-      error: null
+      status: { kind: 'ready', truncated: snapshot.truncated }
     };
     this.publish();
   }
 
   private append(event: TerminalOutputEvent): void {
+    const bytes = textEncoder.encode(event.data).byteLength;
+    if (bytes > MAX_TERMINAL_PRESENTATION_PENDING_BYTES) {
+      if (this.hasVisibleAttachment()) void this.resync();
+      return;
+    }
+    const tail = [...this.state.tail, event];
+    let tailBytes = this.tailBytes + bytes;
+    let removeCount = 0;
+    while (
+      tail.length - removeCount > MAX_TERMINAL_PRESENTATION_PENDING_EVENTS
+      || tailBytes > MAX_TERMINAL_PRESENTATION_PENDING_BYTES
+    ) {
+      tailBytes -= textEncoder.encode(tail[removeCount]?.data ?? '').byteLength;
+      removeCount += 1;
+    }
+    this.tailBytes = tailBytes;
     this.state = {
       ...this.state,
-      buffer: `${this.state.buffer}${event.data}`,
+      tail: removeCount === 0 ? tail : tail.slice(removeCount),
       toSeq: event.seq,
-      byteLength: this.state.byteLength + new TextEncoder().encode(event.data).byteLength,
-      version: this.state.version + 1,
-      status: 'ready',
-      error: null
+      byteLength: this.resetBytes + tailBytes
     };
     this.publish();
   }
 
   private fail(error: unknown): void {
     this.update({
-      status: 'error',
-      error: error instanceof Error ? error.message : String(error)
+      status: {
+        kind: 'error',
+        message: error instanceof Error ? error.message : String(error)
+      }
     });
   }
 
@@ -277,16 +385,38 @@ function emptyState(terminalId: TerminalId, sessionId: SessionId): TerminalSessi
   return {
     terminalId,
     sessionId,
-    buffer: '',
-    replay: { cols: 1, rows: 1, resizes: [] },
+    reset: {
+      generation: 0,
+      data: '',
+      replay: { cols: 1, rows: 1, resizes: [] },
+      fromSeq: 1,
+      toSeq: 0
+    },
+    tail: [],
     fromSeq: 1,
     toSeq: 0,
     cols: 1,
     rows: 1,
-    truncated: false,
     byteLength: 0,
-    version: 0,
-    status: 'idle',
-    error: null
+    status: { kind: 'idle' }
+  };
+}
+
+function emptySnapshot(
+  terminalId: TerminalId,
+  sessionId: SessionId
+): TerminalHistorySnapshot {
+  return {
+    kind: 'ghostty-vt-history-v1',
+    terminalId,
+    sessionId,
+    cols: 1,
+    rows: 1,
+    data: '',
+    replay: { cols: 1, rows: 1, resizes: [] },
+    fromSeq: 1,
+    toSeq: 0,
+    truncated: false,
+    byteLength: 0
   };
 }

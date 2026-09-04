@@ -10,6 +10,7 @@ import type {
 } from '@shared/types/terminal.js';
 import { AgentObserverManager } from '../agents/AgentObserverManager.js';
 import { PtyManager, type PtyManagerOptions } from './PtyManager.js';
+import { TerminalHistoryBuffer } from './TerminalHistoryBuffer.js';
 import { TerminalOutputBatcher } from './TerminalOutputBatcher.js';
 import type { PtyProcessFactory } from './PtyProcess.js';
 
@@ -132,7 +133,7 @@ describe('PtyManager', () => {
     });
   });
 
-  it('reapplies replay retention before restoring local history from a stale Runtime', async () => {
+  it('reapplies replay retention before restoring history from a stale Runtime', async () => {
     const boundedSnapshot = {
       kind: 'ghostty-vt-history-v1',
       terminalId: 't-1',
@@ -159,12 +160,12 @@ describe('PtyManager', () => {
     const setHistoryLineLimit = vi.fn(async () => {
       bounded = true;
     });
-    const processFactory = {
+    const processFactory: PtyProcessFactory = {
       spawn: vi.fn(),
-      historySnapshot,
-      setHistoryLineLimit
-    } satisfies PtyProcessFactory & {
-      historySnapshot(terminalId: string): Promise<TerminalHistorySnapshot | null>;
+      history: {
+        snapshot: historySnapshot,
+        setLineLimit: setHistoryLineLimit
+      }
     };
     const manager = new PtyManager({ processFactory } as unknown as PtyManagerOptions);
 
@@ -174,6 +175,147 @@ describe('PtyManager', () => {
     expect(setHistoryLineLimit).toHaveBeenCalledWith(10_000);
     expect(historySnapshot).toHaveBeenCalledOnce();
     expect(restored).toEqual(boundedSnapshot);
+  });
+
+  it('uses Runtime history as the sole replay authority when the factory provides it', async () => {
+    const localHistory = new TerminalHistoryBuffer();
+    const runtimeSnapshot = {
+      kind: 'ghostty-vt-history-v1' as const,
+      terminalId: 't-1',
+      sessionId: 's-1',
+      cols: 100,
+      rows: 30,
+      data: 'runtime',
+      replay: { cols: 100, rows: 30, resizes: [] },
+      fromSeq: 1,
+      toSeq: 1,
+      truncated: false,
+      byteLength: 7
+    };
+    const snapshot = vi.fn(async () => runtimeSnapshot);
+    const setLineLimit = vi.fn(async () => true);
+    const processFactory: PtyProcessFactory = {
+      history: { snapshot, setLineLimit },
+      spawn: vi.fn()
+    };
+    const manager = new PtyManager({
+      historyBuffer: localHistory,
+      processFactory
+    } as unknown as PtyManagerOptions);
+
+    manager.forwardBatchedOutput([{
+      terminalId: 't-1',
+      sessionId: 's-1',
+      seq: 1,
+      data: 'runtime'
+    }]);
+
+    expect(localHistory.retainedByteLength()).toBe(0);
+    await expect(manager.historySnapshot('t-1')).resolves.toEqual(runtimeSnapshot);
+    await manager.setHistoryLineLimit(5_000);
+    expect(snapshot).toHaveBeenCalledWith('t-1');
+    expect(setLineLimit).toHaveBeenCalledWith(5_000);
+  });
+
+  it('ignores process output delivered after the terminal exits', async () => {
+    const listeners: {
+      data?: (data: string) => void;
+      exit?: (event: { exitCode: number; signal?: number }) => void;
+    } = {};
+    const processFactory: PtyProcessFactory = {
+      spawn: () => ({
+        pid: 3333,
+        onData: (listener) => {
+          listeners.data = listener;
+          return { dispose: vi.fn() };
+        },
+        onExit: (listener) => {
+          listeners.exit = listener;
+          return { dispose: vi.fn() };
+        },
+        write: vi.fn(),
+        resize: vi.fn(),
+        kill: vi.fn()
+      })
+    };
+    let manager!: PtyManager;
+    const batcher = new TerminalOutputBatcher(10_000, (events) => {
+      manager.forwardBatchedOutput(events);
+    });
+    manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher,
+      processFactory,
+      baseEnv: {}
+    });
+    const output = vi.fn();
+    manager.on('output', output);
+    const started = await manager.start({ sessionId: session.id });
+
+    listeners.exit?.({ exitCode: 0 });
+    listeners.data?.('late output');
+    batcher.flushAll();
+
+    expect(output).not.toHaveBeenCalled();
+    await expect(manager.historySnapshot(started.terminalId)).resolves.toBeNull();
+    await manager.dispose();
+  });
+
+  it('keeps the Runtime sequence used by the authoritative history snapshot', async () => {
+    const listeners: { data?: (data: string, seq?: number) => void } = {};
+    const pushSequenced = vi.fn();
+    const manager = new PtyManager({
+      commandBuilder: {
+        build: vi.fn(() => spec)
+      } as unknown as PtyManagerOptions['commandBuilder'],
+      store: {
+        get: vi.fn(async () => session),
+        touch: vi.fn(async () => {})
+      } as unknown as PtyManagerOptions['store'],
+      batcher: {
+        push: vi.fn(),
+        pushPrebatched: vi.fn(),
+        pushSequenced,
+        flushTerminal: vi.fn(),
+        removeTerminal: vi.fn(),
+        destroy: vi.fn()
+      } as unknown as PtyManagerOptions['batcher'],
+      processFactory: {
+        history: {
+          snapshot: vi.fn(async () => null),
+          setLineLimit: vi.fn()
+        },
+        spawn: () => ({
+          pid: 3333,
+          onData: (listener) => {
+            listeners.data = listener;
+            return { dispose: vi.fn() };
+          },
+          onExit: () => ({ dispose: vi.fn() }),
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn()
+        })
+      },
+      baseEnv: {}
+    });
+    const started = await manager.start({ sessionId: session.id });
+
+    listeners.data?.('runtime output', 42);
+
+    expect(pushSequenced).toHaveBeenCalledWith(
+      started.terminalId,
+      session.id,
+      'runtime output',
+      42
+    );
+    await manager.dispose();
   });
 
   it('semantically observes final buffered output before publishing terminal exit', async () => {

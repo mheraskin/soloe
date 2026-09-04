@@ -57,7 +57,7 @@ class RemotePtyProcess extends EventEmitter implements PtyProcess {
     super();
   }
 
-  onData(listener: (data: string) => void): PtyProcessDisposable {
+  onData(listener: (data: string, seq?: number) => void): PtyProcessDisposable {
     this.on("data", listener);
     return { dispose: () => this.off("data", listener) };
   }
@@ -95,13 +95,17 @@ class RemotePtyProcess extends EventEmitter implements PtyProcess {
 
 export class RemoteRuntimePtyProcessFactory implements PtyProcessFactory {
   readonly preservesProcessesOnDispose = true;
+  readonly history = {
+    snapshot: (terminalId: string) => this.historySnapshot(terminalId),
+    setLineLimit: (lineLimit: number) => this.setHistoryLineLimit(lineLimit),
+  };
   private readonly processes = new Map<string, RemotePtyProcess>();
   private readonly inputLeaseListeners = new Set<(event: TerminalInputLeaseEvent) => void>();
   private readonly inputOwnerId = `desktop-${randomUUID()}`;
 
   private constructor(private readonly client: RuntimeClient) {
     client.on("output", (event: RuntimeOutputEvent) => {
-      this.processes.get(event.terminalId)?.emit("data", event.data);
+      this.processes.get(event.terminalId)?.emit("data", event.data, event.seq);
     });
     client.on("exit", (event: RuntimeExitEvent) => {
       const process = this.processes.get(event.terminalId);

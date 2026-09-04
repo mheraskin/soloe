@@ -89,13 +89,13 @@
     size: settings.current.terminal.fontSize
   });
   let terminalTheme = $derived(terminalThemeFor(appearanceTheme.resolved));
-  let ready = $derived(surfaceReady && terminalState.status === 'ready');
+  let ready = $derived(surfaceReady && terminalState.status.kind === 'ready');
   let loadingLabel = $derived(
     transitioningControl || (!inputLease && focused && visible)
       ? 'Taking control and preparing terminal…'
       : sessions.runtime[sessionId]?.status === 'starting'
         ? 'Starting'
-        : terminalState.status === 'error'
+        : terminalState.status.kind === 'error'
           ? 'Reconnecting terminal'
           : 'Restoring terminal'
   );
@@ -141,7 +141,10 @@
   });
 
   $effect(() => {
-    const redrawFromSeq = terminalState.truncated ? terminalState.fromSeq : null;
+    const redrawFromSeq = terminalState.status.kind === 'ready'
+      && terminalState.status.truncated
+      ? terminalState.fromSeq
+      : null;
     if (
       redrawFromSeq === null
       || redrawFromSeq === lastRedrawnFromSeq
@@ -212,7 +215,10 @@
     terminal.fit();
     const dimensions = terminal.getDimensions();
     if (!dimensions) return;
-    const redrawFromSeq = terminalState.truncated ? terminalState.fromSeq : null;
+    const redrawFromSeq = terminalState.status.kind === 'ready'
+      && terminalState.status.truncated
+      ? terminalState.fromSeq
+      : null;
     if (redrawFromSeq !== null && lastRedrawnFromSeq !== redrawFromSeq) {
       lastRedrawnFromSeq = redrawFromSeq;
       const redraw = (async () => {
@@ -389,16 +395,17 @@
     void ipc.system.openPath(target).catch(reportError);
   }
 
-  function bufferText(): string {
-    return terminal?.getBufferText() || terminalState.buffer;
+  async function bufferText(): Promise<string> {
+    if (terminal) return terminal.getBufferText();
+    return (await ipc.terminal.historySnapshot(terminalId))?.data ?? '';
   }
 
   async function saveBuffer(): Promise<void> {
-    await ipc.system.saveText({ defaultPath: `${terminalId}.log`, content: bufferText() });
+    await ipc.system.saveText({ defaultPath: `${terminalId}.log`, content: await bufferText() });
   }
 
   async function copyBuffer(): Promise<void> {
-    await navigator.clipboard.writeText(bufferText());
+    await navigator.clipboard.writeText(await bufferText());
     toasts.push('Copied terminal buffer', 'info');
   }
 
@@ -407,7 +414,7 @@
     const header = session
       ? `# ${session.name || session.id}\n\n- cwd: ${session.cwd}\n- launch: ${launchKind(session)}\n- run mode: ${session.runMode}\n\n`
       : `# ${sessionId}\n\n`;
-    await navigator.clipboard.writeText(`${header}\`\`\`text\n${bufferText()}\`\`\`\n`);
+    await navigator.clipboard.writeText(`${header}\`\`\`text\n${await bufferText()}\`\`\`\n`);
     toasts.push('Copied session as Markdown', 'info');
   }
 
@@ -415,17 +422,20 @@
     return {
       terminalId: id,
       sessionId: ownerSessionId,
-      buffer: '',
-      replay: { cols: 1, rows: 1, resizes: [] },
+      reset: {
+        generation: 0,
+        data: '',
+        replay: { cols: 1, rows: 1, resizes: [] },
+        fromSeq: 1,
+        toSeq: 0
+      },
+      tail: [],
       fromSeq: 1,
       toSeq: 0,
       cols: 1,
       rows: 1,
-      truncated: false,
       byteLength: 0,
-      version: 0,
-      status: 'idle',
-      error: null
+      status: { kind: 'idle' }
     };
   }
 </script>
@@ -502,6 +512,7 @@
               onSelectionChange={handleSelectionChange}
               onLinkActivate={activateLink}
               onContextMenu={() => (menuHasSelection = terminal?.hasSelection() ?? false)}
+              onResync={() => void connection?.resync()}
               onReady={handleSurfaceReady}
             />
           </div>

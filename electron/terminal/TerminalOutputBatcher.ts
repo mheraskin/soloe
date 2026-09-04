@@ -31,6 +31,16 @@ export class TerminalOutputBatcher {
     this.flushTerminal(terminalId);
   }
 
+  pushSequenced(
+    terminalId: TerminalId,
+    sessionId: SessionId,
+    data: string,
+    seq: number
+  ): void {
+    if (this.destroyed) return;
+    this.flushFn([{ terminalId, sessionId, data, seq }]);
+  }
+
   private append(terminalId: TerminalId, sessionId: SessionId, data: string): void {
     let buffer = this.buffers.get(terminalId);
     if (!buffer) {

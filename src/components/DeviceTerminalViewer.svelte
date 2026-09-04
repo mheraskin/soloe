@@ -77,7 +77,7 @@
   let controlledByOther = $derived(Boolean(inputLease?.lease && !ownsInput));
   let acceptsInput = $derived(offline ? !controlledByOther : ownsInput);
   let readOnly = $derived(controlledByOther);
-  let ready = $derived(Boolean(surfaceReady && terminalState?.status === 'ready'));
+  let ready = $derived(Boolean(surfaceReady && terminalState?.status.kind === 'ready'));
   let theme = $derived(terminalThemeFor(appearanceTheme.resolved));
   let font = $derived({
     family: terminalFontFamily,
@@ -118,7 +118,7 @@
     const attached = session.connect(
       (next) => {
         terminalState = next;
-        error = next.error;
+        error = next.status.kind === 'error' ? next.status.message : null;
       },
       false
     );
@@ -140,7 +140,10 @@
   });
 
   $effect(() => {
-    const redrawFromSeq = terminalState?.truncated ? terminalState.fromSeq : null;
+    const redrawFromSeq = terminalState?.status.kind === 'ready'
+      && terminalState.status.truncated
+      ? terminalState.fromSeq
+      : null;
     if (
       redrawFromSeq === null
       || redrawFromSeq === lastRedrawnFromSeq
@@ -235,7 +238,10 @@
     terminal.fit();
     const dimensions = terminal.getDimensions();
     if (!dimensions) return;
-    const redrawFromSeq = terminalState?.truncated ? terminalState.fromSeq : null;
+    const redrawFromSeq = terminalState?.status.kind === 'ready'
+      && terminalState.status.truncated
+      ? terminalState.fromSeq
+      : null;
     if (redrawFromSeq !== null && lastRedrawnFromSeq !== redrawFromSeq) {
       lastRedrawnFromSeq = redrawFromSeq;
       const redraw = (async () => {
@@ -262,7 +268,7 @@
     } else {
       await resize(dimensions.cols, dimensions.rows, force);
     }
-    if (pageVisible && !compactTouchViewport()) terminal.focus();
+    if (pageVisible && !compactTouchViewport()) terminal?.focus();
   }
 
   function surfaceDidLoad(): void {
@@ -303,8 +309,9 @@
   }
 
   function compactTouchViewport(): boolean {
-    return window.matchMedia('(max-width: 767px)').matches
-      && window.matchMedia('(pointer: coarse)').matches;
+    const matchMedia = window.matchMedia?.bind(window);
+    return matchMedia?.('(max-width: 767px)').matches === true
+      && matchMedia('(pointer: coarse)').matches;
   }
 
 </script>
@@ -348,6 +355,7 @@
         onResize={(cols, rows) => void resize(cols, rows)}
         {beforeKey}
         onLinkActivate={activateLink}
+        onResync={() => void connection?.resync()}
         onReady={surfaceDidLoad}
       />
     {/if}
@@ -362,9 +370,9 @@
       <p class="m-0 min-w-0 flex-1">{error}</p>
     </div>
   {/if}
-  {#if terminalState?.truncated}
+  {#if terminalState?.status.kind === 'ready' && terminalState.status.truncated}
     <div class="border-t border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] text-amber-200">
-      Earlier terminal output was discarded before this Device connected. New output is retained in full.
+      Earlier terminal output was discarded before this Device connected. The newest output remains available in the bounded replay tail.
     </div>
   {/if}
 </section>

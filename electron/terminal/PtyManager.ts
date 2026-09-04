@@ -49,7 +49,11 @@ import { TerminalHistoryBuffer } from './TerminalHistoryBuffer.js';
 import { detectUsageLimitPlainText, stripAnsi } from '../agents/UsageLimitDetector.js';
 import type { UsageLimitInfo } from '../agents/UsageLimitDetector.js';
 import { NodePtyProcessFactory } from './NodePtyProcessFactory.js';
-import type { PtyProcess, PtyProcessFactory } from './PtyProcess.js';
+import type {
+  PtyHistoryProvider,
+  PtyProcess,
+  PtyProcessFactory
+} from './PtyProcess.js';
 
 interface TerminalInstance {
   terminalId: TerminalId;
@@ -110,6 +114,7 @@ export class PtyManager extends EventEmitter {
   private readonly pendingAgentInputPersistence = new Map<SessionId, Promise<void>>();
   private readonly historyBuffer: TerminalHistoryBuffer;
   private readonly processFactory: PtyProcessFactory;
+  private readonly historyProvider: PtyHistoryProvider | null;
   private readonly codexConfigReader: CodexConfigReader;
   private readonly cursorDiscovery: Pick<CursorCliDiscovery, 'detect'>;
   private historyLineLimit = DEFAULT_RUNTIME_HISTORY_LINE_LIMIT;
@@ -120,6 +125,7 @@ export class PtyManager extends EventEmitter {
     this.baseEnv = opts.baseEnv ?? process.env;
     this.historyBuffer = opts.historyBuffer ?? new TerminalHistoryBuffer();
     this.processFactory = opts.processFactory ?? new NodePtyProcessFactory();
+    this.historyProvider = this.processFactory.history ?? null;
     this.cursorDiscovery = opts.cursorDiscovery ?? new CursorCliDiscovery();
     this.codexConfigReader = opts.codexConfigReader ?? new CodexConfigReader({
       commandBuilder: opts.commandBuilder,
@@ -133,25 +139,26 @@ export class PtyManager extends EventEmitter {
     for (const ev of events) {
       const instance = this.terminals.get(ev.terminalId);
       if (instance?.sessionId === ev.sessionId) {
-        // Semantic observation follows the 16 ms output boundary instead of
-        // rescanning every raw node-pty chunk. Replay and publication still
-        // receive the exact same ordered bytes.
+        // Local PTYs arrive at the 16 ms batch boundary. Runtime PTYs arrive
+        // at their authoritative sequence boundary so snapshot reconciliation
+        // cannot be renumbered after an Electron restart.
         this.handleLocationSequences(instance, ev.data);
         this.handleAgentOutput(instance, ev.data);
       }
-      this.historyBuffer.append(ev);
+      if (!this.historyProvider) this.historyBuffer.append(ev);
       this.emit('output', ev);
     }
   }
 
   async historySnapshot(terminalId: TerminalId): Promise<TerminalHistorySnapshot | null> {
+    const historyProvider = this.historyProvider;
+    if (!historyProvider) return this.historyBuffer.snapshot(terminalId);
     return restoreTerminalHistory({
       terminalId,
       lineLimit: this.historyLineLimit,
       source: {
-        historySnapshot: async (id) =>
-          this.processFactory.historySnapshot?.(id) ?? this.historyBuffer.snapshot(id),
-        setHistoryLineLimit: (lineLimit) => this.setHistoryLineLimit(lineLimit)
+        historySnapshot: (id) => historyProvider.snapshot(id),
+        setHistoryLineLimit: (lineLimit) => historyProvider.setLineLimit(lineLimit)
       },
       log: (message, detail) => console.warn(`[terminal] ${message}`, detail)
     });
@@ -159,8 +166,11 @@ export class PtyManager extends EventEmitter {
 
   async setHistoryLineLimit(lineLimit: number): Promise<void> {
     this.historyLineLimit = lineLimit;
+    if (this.historyProvider) {
+      await this.historyProvider.setLineLimit(lineLimit);
+      return;
+    }
     this.historyBuffer.setLineLimit(lineLimit);
-    await this.processFactory.setHistoryLineLimit?.(lineLimit);
   }
 
   async start(options: TerminalStartOptions): Promise<TerminalStartResult> {
@@ -254,7 +264,9 @@ export class PtyManager extends EventEmitter {
       autoApprovesPermissions
     };
     this.terminals.set(terminalId, instance);
-    this.historyBuffer.register({ terminalId, sessionId, cols, rows });
+    if (!this.historyProvider) {
+      this.historyBuffer.register({ terminalId, sessionId, cols, rows });
+    }
     this.attachProcess(instance);
 
     void this.opts.store.touch(sessionId).catch(() => {});
@@ -305,12 +317,14 @@ export class PtyManager extends EventEmitter {
       };
       this.terminals.set(terminal.terminalId, instance);
       this.sessionToTerminal.set(terminal.sessionId, terminal.terminalId);
-      this.historyBuffer.register({
-        terminalId: terminal.terminalId,
-        sessionId: terminal.sessionId,
-        cols: terminal.cols,
-        rows: terminal.rows
-      });
+      if (!this.historyProvider) {
+        this.historyBuffer.register({
+          terminalId: terminal.terminalId,
+          sessionId: terminal.sessionId,
+          cols: terminal.cols,
+          rows: terminal.rows
+        });
+      }
       this.opts.observer?.registerTuiSession(session);
       this.opts.observer?.setAutoApprovesPermissions(
         terminal.sessionId,
@@ -406,7 +420,7 @@ export class PtyManager extends EventEmitter {
       instance.pty.resize(cols, rows);
       instance.cols = cols;
       instance.rows = rows;
-      this.historyBuffer.resize(terminalId, cols, rows);
+      if (!this.historyProvider) this.historyBuffer.resize(terminalId, cols, rows);
     } catch {
       // ignore - pty may have just exited
     }
@@ -475,7 +489,15 @@ export class PtyManager extends EventEmitter {
   }
 
   private attachProcess(instance: TerminalInstance): void {
-    instance.pty.onData((data) => {
+    instance.pty.onData((data, seq) => {
+      if (
+        this.terminals.get(instance.terminalId) !== instance
+        || instance.status !== 'running'
+      ) return;
+      if (seq !== undefined) {
+        this.opts.batcher.pushSequenced(instance.terminalId, instance.sessionId, data, seq);
+        return;
+      }
       if (this.processFactory.outputIsPrebatched) {
         this.opts.batcher.pushPrebatched(instance.terminalId, instance.sessionId, data);
       } else {
@@ -483,7 +505,7 @@ export class PtyManager extends EventEmitter {
       }
     });
     instance.pty.onExit(({ exitCode, signal }) => {
-      this.handleExit(instance.terminalId, exitCode, signal ?? null);
+      this.handleExit(instance.terminalId, exitCode, signal ?? null, instance);
     });
   }
 
@@ -517,9 +539,15 @@ export class PtyManager extends EventEmitter {
     });
   }
 
-  private handleExit(terminalId: TerminalId, exitCode: number | null, signal: number | null): void {
+  private handleExit(
+    terminalId: TerminalId,
+    exitCode: number | null,
+    signal: number | null,
+    expected?: TerminalInstance
+  ): void {
     const instance = this.terminals.get(terminalId);
     if (!instance) return;
+    if (expected && instance !== expected) return;
     instance.status = 'exited';
     instance.exitedAt = new Date().toISOString();
     instance.exitCode = exitCode;
@@ -531,7 +559,7 @@ export class PtyManager extends EventEmitter {
     this.emit('exit', { terminalId, sessionId, exitCode, signal });
     this.emitStatus(sessionId, terminalId, 'exited');
     this.terminals.delete(terminalId);
-    this.historyBuffer.remove(terminalId);
+    if (!this.historyProvider) this.historyBuffer.remove(terminalId);
   }
 
   private emitStatus(
