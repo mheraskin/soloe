@@ -950,56 +950,58 @@
     <div bind:this={pickerEl} class="grid min-h-0 grid-cols-[3rem_minmax(0,1fr)] items-start">
       <div
         data-slot="provider-rail-column"
-        class="relative flex max-h-[13.5rem] min-h-0 flex-col overflow-hidden border-r border-border bg-foreground/[0.035]"
+        class="flex max-h-[13.5rem] min-h-0 flex-col overflow-hidden border-r border-border bg-foreground/[0.035]"
       >
-        <div
-          data-slot="provider-rail"
-          class="no-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pt-2 pb-1"
-          aria-label="Agents"
-          onscroll={updateRailScroll}
-          use:updateRailOnMount
-        >
-          {#each orderedProviders as provider (provider.value)}
-            {@const unavailableReason = providerDisabledReason(provider.value)}
-            {@const isAvailable = !unavailableReason}
-            <button
-              type="button"
-              class={`relative mx-auto flex size-9 shrink-0 items-center justify-center rounded-md border border-transparent outline-none transition-colors hover:bg-background/80 hover:border-border/70 active:bg-muted active:border-border focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === provider.value ? 'bg-background border-border shadow-sm' : ''} ${draggingProvider === provider.value ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-transparent hover:border-transparent' : ''}`}
-              title={unavailableReason ?? provider.label}
-              aria-label={unavailableReason ? `${provider.label} (${unavailableReason})` : `New ${provider.label} session`}
-              data-launch-option={provider.value}
-              data-gesture-selected={selectedLaunchOption === provider.value ? 'true' : undefined}
-              aria-disabled={!isAvailable ? 'true' : undefined}
-              disabled={!isAvailable}
-              draggable={finePointer}
-              onclick={(event) => onLaunchOptionClick(event, provider.value)}
-              ondragstart={(event) => onProviderDragStart(event, provider.value)}
-              ondragover={(event) => onProviderDragOver(event, provider.value, event.currentTarget)}
-              ondrop={(event) => onProviderDrop(event, provider.value)}
-              ondragend={onProviderDragEnd}
-            >
-              {#if providerDrop?.id === provider.value && providerDrop.position === 'before'}
-                <span
-                  class="pointer-events-none absolute inset-x-1 top-0 z-10 h-0.5 rounded-full bg-primary"
-                  aria-hidden="true"
-                ></span>
-              {/if}
-              {#if providerDrop?.id === provider.value && providerDrop.position === 'after'}
-                <span
-                  class="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0.5 rounded-full bg-primary"
-                  aria-hidden="true"
-                ></span>
-              {/if}
-              <KindIcon kind={provider.value} size={17} />
-            </button>
-          {/each}
-        </div>
-        {#if railCanScroll && !railAtBottom}
+        <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <div
-            class="pointer-events-none absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-card via-card/85 to-transparent"
-            aria-hidden="true"
-          ></div>
-        {/if}
+            data-slot="provider-rail"
+            class="no-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1.5 pt-2 pb-1"
+            aria-label="Agents"
+            onscroll={updateRailScroll}
+            use:updateRailOnMount
+          >
+            {#each orderedProviders as provider (provider.value)}
+              {@const unavailableReason = providerDisabledReason(provider.value)}
+              {@const isAvailable = !unavailableReason}
+              <button
+                type="button"
+                class={`relative mx-auto flex size-9 shrink-0 items-center justify-center rounded-md border border-transparent outline-none transition-colors hover:bg-muted hover:border-border active:bg-muted/80 active:border-border focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === provider.value ? 'bg-background border-border shadow-sm' : ''} ${draggingProvider === provider.value ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-transparent hover:border-transparent' : ''}`}
+                title={unavailableReason ?? provider.label}
+                aria-label={unavailableReason ? `${provider.label} (${unavailableReason})` : `New ${provider.label} session`}
+                data-launch-option={provider.value}
+                data-gesture-selected={selectedLaunchOption === provider.value ? 'true' : undefined}
+                aria-disabled={!isAvailable ? 'true' : undefined}
+                disabled={!isAvailable}
+                draggable={finePointer}
+                onclick={(event) => onLaunchOptionClick(event, provider.value)}
+                ondragstart={(event) => onProviderDragStart(event, provider.value)}
+                ondragover={(event) => onProviderDragOver(event, provider.value, event.currentTarget)}
+                ondrop={(event) => onProviderDrop(event, provider.value)}
+                ondragend={onProviderDragEnd}
+              >
+                {#if providerDrop?.id === provider.value && providerDrop.position === 'before'}
+                  <span
+                    class="pointer-events-none absolute inset-x-1 top-0 z-10 h-0.5 rounded-full bg-primary"
+                    aria-hidden="true"
+                  ></span>
+                {/if}
+                {#if providerDrop?.id === provider.value && providerDrop.position === 'after'}
+                  <span
+                    class="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0.5 rounded-full bg-primary"
+                    aria-hidden="true"
+                  ></span>
+                {/if}
+                <KindIcon kind={provider.value} size={17} />
+              </button>
+            {/each}
+          </div>
+          {#if railCanScroll && !railAtBottom}
+            <div
+              class="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-card via-card/85 to-transparent"
+              aria-hidden="true"
+            ></div>
+          {/if}
+        </div>
         <div
           data-slot="provider-rail-separator"
           class="mx-2 shrink-0 border-t border-border"
@@ -1008,7 +1010,7 @@
         <div class="flex shrink-0 justify-center px-1.5 pt-1.5 pb-2">
           <button
             type="button"
-            class={`relative flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent outline-none transition-colors hover:bg-background/80 hover:border-border/70 active:bg-muted active:border-border focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === 'terminal' ? 'bg-background border-border shadow-sm' : ''}`}
+            class={`relative flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent outline-none transition-colors hover:bg-muted hover:border-border active:bg-muted/80 active:border-border focus-visible:ring-2 focus-visible:ring-ring/50 ${selectedLaunchOption === 'terminal' ? 'bg-background border-border shadow-sm' : ''}`}
             title="Terminal"
             aria-label="New terminal"
             data-launch-option="terminal"
@@ -1303,7 +1305,7 @@
               {@const isAvailable = !unavailableReason}
               <Button
                 variant="ghost"
-                class={`relative h-8 min-w-0 max-w-44 gap-1.5 rounded-md border border-border/60 bg-muted/20 px-2 text-xs transition-colors hover:bg-muted/60 hover:border-border active:bg-muted/90 active:border-primary/50 ${selectedLaunchOption === `preset:${preset.id}` ? 'border-primary/50 bg-primary/10 text-foreground' : ''} ${draggingPresetId === preset.id ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-muted/20 hover:border-border/60' : ''}`}
+                class={`relative h-8 min-w-0 max-w-44 gap-1.5 rounded-md border border-border/60 bg-muted/20 px-2 text-xs transition-colors hover:bg-muted hover:border-border active:bg-muted/80 active:border-primary/50 ${selectedLaunchOption === `preset:${preset.id}` ? 'border-primary/50 bg-primary/10 text-foreground' : ''} ${draggingPresetId === preset.id ? 'opacity-40' : ''} ${!isAvailable ? 'opacity-40 cursor-not-allowed hover:bg-muted/20 hover:border-border/60' : ''}`}
                 title={unavailableReason ?? preset.label}
                 aria-label={unavailableReason ? `${preset.label} (${unavailableReason})` : preset.label}
                 data-launch-option={`preset:${preset.id}`}
