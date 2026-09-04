@@ -16,8 +16,14 @@ const state = vi.hoisted(() => ({
   }>,
   sessions: [] as any[],
   selected: null as any,
+  selectedProjection: null as null | {
+    ref: { deviceId: string; sessionId: string };
+    session: ReturnType<typeof session>;
+    runtime: { terminalId: string; sessionId: string; status: 'running' };
+  },
   createAgent: vi.fn(),
-  paste: vi.fn()
+  paste: vi.fn(),
+  deviceInput: vi.fn()
 }));
 
 vi.mock('../stores/diff-comments.svelte', () => ({
@@ -57,11 +63,22 @@ vi.mock('../stores/sessions.svelte', () => ({
   }
 }));
 
-vi.mock('./terminal-paste', () => ({
-  sendBracketedPaste: (...args: unknown[]) => state.paste(...args)
+vi.mock('../stores/device-sessions.svelte', () => ({
+  deviceSessions: {
+    get selectedProjection() { return state.selectedProjection; },
+    terminalInput: (...args: unknown[]) => state.deviceInput(...args)
+  }
 }));
 
-import { sendComment } from './diff-comment-sender';
+vi.mock('./terminal-paste', () => ({
+  sendBracketedPaste: (...args: unknown[]) => state.paste(...args),
+  sendBracketedPasteWithInput: async (
+    input: (data: string) => Promise<void>,
+    text: string
+  ) => input(text)
+}));
+
+import { sendComment, sendComments } from './diff-comment-sender';
 
 describe('diff comment delivery Worktree scope', () => {
   beforeEach(() => {
@@ -69,8 +86,58 @@ describe('diff comment delivery Worktree scope', () => {
     state.agents.length = 0;
     state.sessions.length = 0;
     state.selected = null;
+    state.selectedProjection = null;
     state.createAgent.mockReset();
     state.paste.mockReset().mockResolvedValue(undefined);
+    state.deviceInput.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('delivers a mentionless comment to the selected remote Session', async () => {
+    const ubuntu = worktreeScope('/workspace/repo', {
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      deviceId: 'device-remote'
+    });
+    const remoteSession = session('remote', 'Ubuntu');
+    state.selectedProjection = {
+      ref: { deviceId: 'device-remote', sessionId: remoteSession.id },
+      session: remoteSession,
+      runtime: { terminalId: 'terminal-remote', sessionId: remoteSession.id, status: 'running' }
+    };
+    state.comments.set('comment', comment('comment', ubuntu, 'Please inspect this'));
+
+    const result = await sendComment('comment');
+
+    expect(result).toMatchObject({ delivered: 1, errors: [] });
+    expect(state.deviceInput).toHaveBeenCalledWith(
+      { deviceId: 'device-remote', terminalId: 'terminal-remote' },
+      expect.stringContaining('Please inspect this')
+    );
+  });
+
+  it('bundles mentionless comments for the selected remote Session', async () => {
+    const ubuntu = worktreeScope('/workspace/repo', {
+      runMode: 'wsl',
+      wslDistro: 'Ubuntu',
+      deviceId: 'device-remote'
+    });
+    const remoteSession = session('remote', 'Ubuntu');
+    state.selectedProjection = {
+      ref: { deviceId: 'device-remote', sessionId: remoteSession.id },
+      session: remoteSession,
+      runtime: { terminalId: 'terminal-remote', sessionId: remoteSession.id, status: 'running' }
+    };
+    state.comments.set('first', comment('first', ubuntu, 'First comment'));
+    state.comments.set('second', comment('second', ubuntu, 'Second comment'));
+
+    const result = await sendComments(['first', 'second']);
+
+    expect(result).toMatchObject({ delivered: 2, errors: [] });
+    expect(state.deviceInput).toHaveBeenCalledTimes(1);
+    expect(state.deviceInput).toHaveBeenCalledWith(
+      { deviceId: 'device-remote', terminalId: 'terminal-remote' },
+      expect.stringMatching(/First comment[\s\S]*Second comment/)
+    );
   });
 
   it('does not deliver a mentionless comment to the same path in another distro', async () => {

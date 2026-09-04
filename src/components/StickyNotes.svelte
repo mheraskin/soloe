@@ -13,10 +13,9 @@
     X
   } from '@lucide/svelte';
   import { notes } from '../stores/notes.svelte';
-  import { sessions } from '../stores/sessions.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { reportError } from '../stores/toast.svelte';
-  import { sendBracketedPaste } from '../lib/terminal-paste';
+  import { activeSessionTerminal } from '../lib/active-session-terminal';
   import { pasteImagesIntoNote } from '../lib/note-image-paste';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -103,11 +102,7 @@
   let suppressNextClick = false;
 
   let activeProjectId = $derived(notes.activeProjectId);
-  let activeTerminalId = $derived.by<string | null>(() => {
-    if (deviceSessions.selectedProjection) return null;
-    const selected = sessions.selected;
-    return selected ? sessions.terminalIdFor(selected.id) : null;
-  });
+  let activeTerminal = $derived.by(() => activeSessionTerminal());
   let editorValue = $derived(notes.isDraft ? notes.draftContent : notes.savedContent);
   let editorTitle = $derived.by<string>(() => {
     if (!activeProjectId) return 'No note selected';
@@ -122,7 +117,7 @@
     return 'Saved';
   });
   let hasContent = $derived(editorValue.trim().length > 0);
-  let canSend = $derived(activeTerminalId !== null && hasContent);
+  let canSend = $derived(activeTerminal !== null && hasContent);
 
   $effect(() => {
     if (!notes.stickyOpen) return;
@@ -313,15 +308,11 @@
   }
 
   async function sendText(text: string, submit: boolean): Promise<boolean> {
-    if (!text.trim() || !activeTerminalId) return false;
-    const selected = deviceSessions.selectedProjection ? null : sessions.selected;
+    if (!text.trim()) return false;
+    const terminal = activeTerminal;
+    if (!terminal) return false;
     try {
-      await sendBracketedPaste(
-        activeTerminalId,
-        text,
-        submit,
-        selected ? sessions.providerFor(selected.id) : null
-      );
+      await terminal.send(text, submit);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
       return true;
     } catch (err) {

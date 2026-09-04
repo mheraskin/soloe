@@ -18,12 +18,11 @@
   } from '@lucide/svelte';
   import { notes } from '../../stores/notes.svelte';
   import { projects } from '../../stores/projects.svelte';
-  import { sessions } from '../../stores/sessions.svelte';
   import { deviceSessions } from '../../stores/device-sessions.svelte';
   import { confirmStore } from '../../stores/confirm.svelte';
   import { reportError } from '../../stores/toast.svelte';
   import { ipc } from '../../lib/ipc';
-  import { sendBracketedPaste } from '../../lib/terminal-paste';
+  import { activeSessionTerminal } from '../../lib/active-session-terminal';
   import { pasteImagesIntoNote } from '../../lib/note-image-paste';
   import { kbdHints } from '../../stores/kbd-hints.svelte';
   import { rightRail } from '../../stores/right-rail.svelte';
@@ -52,13 +51,8 @@
       : activeProjectId ? projects.get(activeProjectId) : null
   );
 
-  let activeTerminalId = $derived.by<string | null>(() => {
-    if (deviceSessions.selectedProjection) return null;
-    const sel = sessions.selected;
-    if (!sel) return null;
-    return sessions.terminalIdFor(sel.id);
-  });
-  let canSend = $derived(activeTerminalId !== null);
+  let activeTerminal = $derived.by(() => activeSessionTerminal());
+  let canSend = $derived(activeTerminal !== null);
 
   $effect(() => {
     const id = activeProjectId;
@@ -229,11 +223,10 @@
   // the prompt area for the user to edit / submit themselves.
   async function sendText(text: string, submit: boolean): Promise<void> {
     if (!text) return;
-    const id = activeTerminalId;
-    if (!id) return;
-    const sel = deviceSessions.selectedProjection ? null : sessions.selected;
+    const terminal = activeTerminal;
+    if (!terminal) return;
     try {
-      await sendBracketedPaste(id, text, submit, sel ? sessions.providerFor(sel.id) : null);
+      await terminal.send(text, submit);
       window.dispatchEvent(new CustomEvent('soloe:refocus-terminal'));
     } catch (err) {
       reportError(err);

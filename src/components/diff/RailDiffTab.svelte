@@ -18,6 +18,7 @@
     MessageSquare,
     ChevronsUp,
     ChevronsDown,
+    ArrowUpToLine,
     ChevronDown,
     ChevronLeft,
     ChevronRight,
@@ -208,17 +209,11 @@
   // resident, but constructing all of those outer components still produced a
   // long renderer task. Keep the complete review model while yielding between
   // small DOM batches so controls, scrolling, and loading feedback stay live.
-  let changeRenderBatch = $state({ key: '', limit: 0 });
-  let changeRenderKey = $derived.by(() => {
-    const entries = stackChanges
-      .map((change) => reviewEntryId(change, reviewMode))
-      .join('\0');
-    return `${selectionContextKey}\0${entries}`;
-  });
+  let changeRenderBatch = $state({ contextKey: '', limit: 0, total: 0 });
   let renderedChangeCount = $derived(
     Math.min(
       stackChanges.length,
-      changeRenderBatch.key === changeRenderKey
+      changeRenderBatch.contextKey === selectionContextKey
         ? changeRenderBatch.limit
         : CHANGE_RENDER_BATCH_SIZE
     )
@@ -239,19 +234,26 @@
   );
 
   $effect(() => {
-    const key = changeRenderKey;
+    const contextKey = selectionContextKey;
     const total = stackChanges.length;
-    const initialLimit = Math.min(total, CHANGE_RENDER_BATCH_SIZE);
+    const previous = untrack(() => changeRenderBatch);
+    const contextChanged = previous.contextKey !== contextKey;
+    const previousComplete = !contextChanged && previous.limit >= previous.total;
+    const initialLimit = contextChanged
+      ? Math.min(total, CHANGE_RENDER_BATCH_SIZE)
+      : previousComplete
+        ? total
+        : Math.min(total, Math.max(previous.limit, CHANGE_RENDER_BATCH_SIZE));
     untrack(() => {
-      changeRenderBatch = { key, limit: initialLimit };
+      changeRenderBatch = { contextKey, limit: initialLimit, total };
     });
     if (initialLimit >= total) return;
 
     let frame = requestAnimationFrame(appendBatch);
     function appendBatch(): void {
-      if (changeRenderBatch.key !== key) return;
+      if (changeRenderBatch.contextKey !== contextKey) return;
       const limit = Math.min(total, changeRenderBatch.limit + CHANGE_RENDER_BATCH_SIZE);
-      changeRenderBatch = { key, limit };
+      changeRenderBatch = { contextKey, limit, total };
       if (limit < total) frame = requestAnimationFrame(appendBatch);
     }
 
@@ -830,12 +832,13 @@
     }
   }
 
-  // Per-cwd diff scroll persistence. Save on scroll (debounced), restore on
-  // cwd swap. Restore retries until diffRootEl is tall enough to accept the
-  // saved offset — diffs load async, so a single setTimeout would land
+  // Per-Worktree diff scroll persistence. Save on scroll (debounced), restore
+  // on Worktree swap. Restore retries until diffRootEl is tall enough to
+  // accept the saved offset — diffs load async, so a single setTimeout would land
   // before content was ready. Capped so we don't poll forever on a worktree
   // whose stack genuinely doesn't reach the saved offset.
   let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingScrollSave: { key: string; top: number } | null = null;
   let restoreTimer: ReturnType<typeof setTimeout> | null = null;
   let restoreDeadline = 0;
   const SCROLL_SAVE_DEBOUNCE_MS = 150;
@@ -847,6 +850,24 @@
       clearTimeout(restoreTimer);
       restoreTimer = null;
     }
+  }
+
+  function flushScrollSave(): void {
+    if (scrollSaveTimer !== null) {
+      clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = null;
+    }
+    if (!pendingScrollSave) return;
+    rightRail.setDiffScrollTop(pendingScrollSave.key, pendingScrollSave.top);
+    pendingScrollSave = null;
+  }
+
+  function scrollReviewToTop(): void {
+    const key = activeReviewScope ? worktreeScopeKey(activeReviewScope) : null;
+    if (!key) return;
+    pendingScrollSave = { key, top: 0 };
+    flushScrollSave();
+    diffViewportEl?.scrollTo({ top: 0, behavior: 'auto' });
   }
 
   function tryRestoreScroll(target: number): void {
@@ -867,12 +888,12 @@
   }
 
   $effect(() => {
-    const cwd = activeCwd;
+    const key = activeReviewScope ? worktreeScopeKey(activeReviewScope) : null;
     cancelRestore();
-    if (!cwd) return;
+    if (!key) return;
     // Read saved offset eagerly (untrack to keep this effect from re-firing
     // on writes back to the same key).
-    const target = untrack(() => rightRail.getDiffScrollTop(cwd));
+    const target = untrack(() => rightRail.getDiffScrollTop(key));
     if (target <= 0) return;
     restoreDeadline = Date.now() + RESTORE_TIMEOUT_MS;
     restoreTimer = setTimeout(() => tryRestoreScroll(target), RESTORE_POLL_MS);
@@ -880,25 +901,20 @@
   });
 
   $effect(() => {
-    const cwd = activeCwd;
-    if (!cwd) return;
-    return reviewViewport.subscribeScroll((scrollTop) => {
+    const key = activeReviewScope ? worktreeScopeKey(activeReviewScope) : null;
+    if (!key) return;
+    const unsubscribe = reviewViewport.subscribeScroll((scrollTop) => {
       // User input wins — abort any pending restore so we don't clobber it.
       if (restoreTimer !== null) cancelRestore();
       if (scrollSaveTimer !== null) clearTimeout(scrollSaveTimer);
+      pendingScrollSave = { key, top: scrollTop };
       scrollSaveTimer = setTimeout(() => {
-        scrollSaveTimer = null;
-        rightRail.setDiffScrollTop(cwd, scrollTop);
+        flushScrollSave();
       }, SCROLL_SAVE_DEBOUNCE_MS);
     });
-  });
-
-  $effect(() => {
     return () => {
-      if (scrollSaveTimer !== null) {
-        clearTimeout(scrollSaveTimer);
-        scrollSaveTimer = null;
-      }
+      unsubscribe();
+      flushScrollSave();
     };
   });
 
@@ -1005,6 +1021,12 @@
           {/if}
         </Popover.Content>
       </Popover.Root>
+      <span
+        class="hidden w-24 shrink-0 px-1 text-right text-[10px] text-muted-foreground sm:inline"
+        aria-live="polite"
+      >
+        {renderingChanges ? `Rendering ${renderedChangeCount}/${stackChanges.length}` : ''}
+      </span>
     </div>
     <div class="flex shrink-0 items-center gap-1">
       {#if showComments}
@@ -1041,6 +1063,16 @@
           <X class="size-3" />
         </Button>
       {/if}
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={scrollReviewToTop}
+        aria-label="Scroll review to top"
+        title="Scroll to top"
+        disabled={!activeCwd || showComments || reviewViewport.scrollTop <= 0}
+      >
+        <ArrowUpToLine class="size-3" />
+      </Button>
       <Button
         variant="ghost"
         size="xs"
@@ -1374,14 +1406,6 @@
         {/if}
       </div>
     </ScrollArea>
-    {#if renderingChanges}
-      <div
-        class="shrink-0 border-b border-border px-2 py-1 text-[10px] text-muted-foreground"
-        aria-live="polite"
-      >
-        Rendering {renderedChangeCount} of {stackChanges.length} files…
-      </div>
-    {/if}
     <button
       type="button"
       class={[

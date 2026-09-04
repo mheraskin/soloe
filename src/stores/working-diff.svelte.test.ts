@@ -320,31 +320,86 @@ describe('WorkingDiffStore review freshness', () => {
     store.detach();
   });
 
-  it('invalidates cached file content when a filesystem cause keeps the same summary', async () => {
+  it('preserves unchanged change identities when one file changes', async () => {
+    const initial: WorkingChangesResult = {
+      repoPath: '/repo',
+      isRepo: true,
+      changes: [
+        {
+          path: 'steady.ts', fromPath: null, kind: 'modified', staged: false,
+          insertions: 1, deletions: 1, binary: false
+        },
+        {
+          path: 'changing.ts', fromPath: null, kind: 'modified', staged: false,
+          insertions: 1, deletions: 1, binary: false
+        }
+      ]
+    };
+    mocks.workingChanges.mockResolvedValueOnce(initial);
+    const store = new WorkingDiffStore();
+    store.attachListeners();
+    const release = store.acquireReviewDemand(createReviewScope('/repo'));
+    await vi.waitFor(() => expect(store.changesFor('/repo').loading).toBe(false));
+    const before = store.changesFor('/repo').result!.changes;
+    const tick = (mocks.onTick.mock.calls as unknown as Array<[
+      (
+        cwd: string,
+        changes: WorkingChangesResult,
+        cause: { kind: 'poll' },
+        context: Record<string, never>
+      ) => void
+    ]>).at(-1)![0];
+
+    tick('/repo', {
+      ...initial,
+      changes: initial.changes.map((change) =>
+        change.path === 'changing.ts' ? { ...change, insertions: 2 } : { ...change }
+      )
+    }, { kind: 'poll' }, {});
+    await vi.waitFor(() =>
+      expect(store.changesFor('/repo').result?.changes[1]?.insertions).toBe(2)
+    );
+
+    const after = store.changesFor('/repo').result!.changes;
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).not.toBe(before[1]);
+
+    release();
+    store.detach();
+  });
+
+  it('keeps cached diff bodies mounted while a filesystem refresh replaces changed content', async () => {
     const observed: WorkingChangesResult = {
       repoPath: '/repo',
       isRepo: true,
-      changes: [{
-        path: 'same-summary.ts',
-        fromPath: null,
-        kind: 'modified',
-        staged: false,
-        insertions: 1,
-        deletions: 1,
-        binary: false
-      }]
+      changes: [
+        {
+          path: 'changed.ts', fromPath: null, kind: 'modified', staged: false,
+          insertions: 1, deletions: 1, binary: false
+        },
+        {
+          path: 'steady.ts', fromPath: null, kind: 'modified', staged: false,
+          insertions: 1, deletions: 1, binary: false
+        }
+      ]
     };
     mocks.workingChanges.mockResolvedValue(observed);
-    mocks.fileDiff.mockResolvedValueOnce(fileDiff('same-summary.ts'));
+    const changedBefore = fileDiff('changed.ts');
+    const steadyBefore = fileDiff('steady.ts');
+    mocks.fileDiff
+      .mockResolvedValueOnce(changedBefore)
+      .mockResolvedValueOnce(steadyBefore);
     const store = new WorkingDiffStore();
     await store.loadChanges('/repo');
-    await store.loadDiff('/repo', 'same-summary.ts');
-    expect(store.diffEntryFor('/repo', 'same-summary.ts').diff).not.toBeNull();
+    await store.loadDiff('/repo', 'changed.ts');
+    await store.loadDiff('/repo', 'steady.ts');
 
     store.attachListeners();
     const release = store.acquireReviewDemand(createReviewScope('/repo'));
     await vi.waitFor(() => expect(store.changesFor('/repo').loading).toBe(false));
     mocks.workingChanges.mockClear();
+    const refreshed = deferred<FileDiff[]>();
+    mocks.reviewDiffs.mockReturnValueOnce(refreshed.promise);
     const tickCalls = mocks.onTick.mock.calls as unknown as Array<[
       (
         cwd: string,
@@ -356,10 +411,19 @@ describe('WorkingDiffStore review freshness', () => {
       kind: 'filesystem',
       occurredAt: Date.now() + 1
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => expect(mocks.reviewDiffs).toHaveBeenCalledTimes(1));
 
-    expect(mocks.workingChanges).not.toHaveBeenCalled();
-    expect(store.diffEntryFor('/repo', 'same-summary.ts').diff).toBeNull();
+    expect(store.diffEntryFor('/repo', 'changed.ts').diff).toBe(changedBefore);
+    expect(store.diffEntryFor('/repo', 'steady.ts').diff).toBe(steadyBefore);
+
+    const changedAfter = fileDiff('changed.ts');
+    changedAfter.hunks[0]!.lines[0]!.text = 'new content';
+    refreshed.resolve([changedAfter, fileDiff('steady.ts')]);
+    await vi.waitFor(() =>
+      expect(store.diffEntryFor('/repo', 'changed.ts').diff).toBe(changedAfter)
+    );
+
+    expect(store.diffEntryFor('/repo', 'steady.ts').diff).toBe(steadyBefore);
     release();
     store.detach();
   });

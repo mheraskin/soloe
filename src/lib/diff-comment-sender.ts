@@ -7,6 +7,7 @@ import {
 } from '../stores/comment-agents.svelte';
 import { sessions } from '../stores/sessions.svelte';
 import { sendBracketedPaste } from './terminal-paste';
+import { activeSessionTerminal, type ActiveSessionTerminal } from './active-session-terminal';
 import {
   sameWorktreeIdentity,
   worktreeScopeKey,
@@ -172,6 +173,51 @@ function sessionMatchesScope(sessionId: string, scope: WorktreeScope): boolean {
   );
 }
 
+interface CommentDelivery {
+  key: string;
+  deliver(payload: string, scope: WorktreeScope): Promise<void>;
+}
+
+function localCommentDelivery(sessionId: string): CommentDelivery {
+  return {
+    key: `local:${sessionId}`,
+    deliver: (payload, scope) => deliverToSession(sessionId, payload, scope)
+  };
+}
+
+function activeCommentDelivery(
+  scope: WorktreeScope
+): { delivery: CommentDelivery | null; errors: string[] } {
+  const terminal = activeSessionTerminal();
+  if (!terminal) {
+    return { delivery: null, errors: ['No active session to receive the comment'] };
+  }
+  if (!sameWorktreeIdentity(scope.cwd, scope, terminal.session.cwd, terminal.worktree)) {
+    return {
+      delivery: null,
+      errors: ['Select a session in this Worktree to receive the comment']
+    };
+  }
+  return {
+    delivery: {
+      key: `active:${worktreeScopeKey(terminal.worktree)}:${terminal.session.id}`,
+      deliver: (payload, expectedScope) => deliverToActiveSession(terminal, payload, expectedScope)
+    },
+    errors: []
+  };
+}
+
+async function deliverToActiveSession(
+  terminal: ActiveSessionTerminal,
+  payload: string,
+  scope: WorktreeScope
+): Promise<void> {
+  if (!sameWorktreeIdentity(scope.cwd, scope, terminal.session.cwd, terminal.worktree)) {
+    throw new Error('target session belongs to a different Worktree');
+  }
+  await terminal.send(payload, true);
+}
+
 async function deliverToSession(
   sessionId: string,
   payload: string,
@@ -215,14 +261,11 @@ export async function sendComment(commentId: string): Promise<SendCommentResult>
       }
     }
   } else {
-    const selected = sessions.selected;
-    if (!selected) {
-      errors.push('No active session to receive the comment');
-    } else if (!sameWorktreeIdentity(comment.scope.cwd, comment.scope, selected.cwd, selected)) {
-      errors.push('Select a session in this Worktree to receive the comment');
-    } else {
+    const { delivery, errors: resolveErrors } = activeCommentDelivery(comment.scope);
+    errors.push(...resolveErrors);
+    if (delivery) {
       try {
-        await deliverToSession(selected.id, payload, comment.scope);
+        await delivery.deliver(payload, comment.scope);
         delivered += 1;
       } catch (err) {
         errors.push((err as Error).message);
@@ -242,28 +285,26 @@ export async function sendComment(commentId: string): Promise<SendCommentResult>
 // back to the currently-selected session (mirrors the "add as context" flow).
 async function resolveSessionTargets(
   comment: DiffComment
-): Promise<{ sessionIds: string[]; errors: string[] }> {
+): Promise<{ deliveries: CommentDelivery[]; errors: string[] }> {
   const errors: string[] = [];
-  const sessionIds = new Set<string>();
+  const deliveries = new Map<string, CommentDelivery>();
   const mentions = parseMentions(comment.text);
   const hasResolvedMention = mentions.some((n) => commentAgents.byName(comment.scope, n));
 
   if (hasResolvedMention) {
     const { targets, errors: resolveErrors } = await resolveTargets(comment);
     errors.push(...resolveErrors);
-    for (const { sessionId } of targets) sessionIds.add(sessionId);
-  } else {
-    const selected = sessions.selected;
-    if (!selected) {
-      errors.push('No active session to receive the comment');
-    } else if (!sameWorktreeIdentity(comment.scope.cwd, comment.scope, selected.cwd, selected)) {
-      errors.push('Select a session in this Worktree to receive the comment');
-    } else {
-      sessionIds.add(selected.id);
+    for (const { sessionId } of targets) {
+      const delivery = localCommentDelivery(sessionId);
+      deliveries.set(delivery.key, delivery);
     }
+  } else {
+    const resolved = activeCommentDelivery(comment.scope);
+    errors.push(...resolved.errors);
+    if (resolved.delivery) deliveries.set(resolved.delivery.key, resolved.delivery);
   }
 
-  return { sessionIds: [...sessionIds], errors };
+  return { deliveries: [...deliveries.values()], errors };
 }
 
 // Send a set of comments. Each session that receives any comment gets exactly
@@ -283,8 +324,7 @@ export async function sendComments(
   }
 
   const errors: string[] = [];
-  // sessionId -> ordered comments to bundle for that target.
-  const bySession = new Map<string, DiffComment[]>();
+  const bySession = new Map<string, { delivery: CommentDelivery; comments: DiffComment[] }>();
 
   for (const id of commentIds) {
     const comment = diffComments.byId(id);
@@ -296,17 +336,17 @@ export async function sendComments(
       errors.push('Comment is empty');
       continue;
     }
-    const { sessionIds, errors: resolveErrors } = await resolveSessionTargets(comment);
+    const { deliveries, errors: resolveErrors } = await resolveSessionTargets(comment);
     errors.push(...resolveErrors);
-    for (const sid of sessionIds) {
-      const list = bySession.get(sid) ?? [];
-      list.push(comment);
-      bySession.set(sid, list);
+    for (const delivery of deliveries) {
+      const batch = bySession.get(delivery.key) ?? { delivery, comments: [] };
+      batch.comments.push(comment);
+      bySession.set(delivery.key, batch);
     }
   }
 
   const deliveredIds = new Set<string>();
-  for (const [sessionId, comments] of bySession) {
+  for (const { delivery, comments } of bySession.values()) {
     const payload = buildBatchPrompt(comments, cleanPreamble);
     try {
       const first = comments[0];
@@ -315,7 +355,7 @@ export async function sendComments(
       if (comments.some((comment) => worktreeScopeKey(comment.scope) !== scopeKey)) {
         throw new Error('batch contains comments from different Worktrees');
       }
-      await deliverToSession(sessionId, payload, first.scope);
+      await delivery.deliver(payload, first.scope);
       for (const c of comments) deliveredIds.add(c.id);
     } catch (err) {
       errors.push(`Send to session failed: ${(err as Error).message}`);

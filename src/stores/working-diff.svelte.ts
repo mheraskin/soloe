@@ -78,6 +78,7 @@ interface DiffEntry {
   diff: FileDiff | null;
   loading: boolean;
   error: string | null;
+  stale: boolean;
   // Bumped on every fetch; used to discard stale responses if a newer
   // request was issued while the previous one was still in flight.
   generation: number;
@@ -319,6 +320,7 @@ export class WorkingDiffStore {
         diff: null,
         loading: false,
         error: null,
+        stale: false,
         generation: 0
       }
     );
@@ -489,10 +491,11 @@ export class WorkingDiffStore {
         } else if (retainedRangeChanges.length > 0) {
           merged.push(...retainedRangeChanges);
         }
+        const changes = this.reconcileChanges(previous?.result?.changes ?? [], merged, mode);
         const result: WorkingChangesResult = {
           repoPath: wt.repoPath ?? previous?.result?.repoPath ?? null,
           isRepo: wt.isRepo || (previous?.result?.isRepo ?? false),
-          changes: merged
+          changes
         };
         if ((this.changesEpochByCwd.get(identity) ?? 0) !== epoch) return result;
         if (
@@ -512,9 +515,11 @@ export class WorkingDiffStore {
         // pane doesn't show stale content. Pick the first available change
         // as a fallback so the user can keep reviewing.
         const selected = this.selectedByCwd[identity];
-        if (selected && !findReviewEntry(merged, selected, mode)) {
+        if (selected && !findReviewEntry(changes, selected, mode)) {
           const next = { ...this.selectedByCwd };
-          if (merged[0]) next[identity] = reviewEntryId(merged[0], mode ?? { kind: 'working-tree' });
+          if (changes[0]) {
+            next[identity] = reviewEntryId(changes[0], mode ?? { kind: 'working-tree' });
+          }
           else delete next[identity];
           this.selectedByCwd = next;
         }
@@ -579,7 +584,7 @@ export class WorkingDiffStore {
     // or context-lines change). Return immediately so re-mounting the
     // component or re-entering the effect costs nothing.
     const cached = this.diffsByKey[key];
-    if (cached?.diff && !cached.error) {
+    if (cached?.diff && !cached.error && !cached.stale) {
       this.reviewPayloadCache.touch('diff', key);
       return cached.diff;
     }
@@ -625,6 +630,7 @@ export class WorkingDiffStore {
         diff: previous?.diff ?? null,
         loading: true,
         error: null,
+        stale: false,
         generation
       }
     };
@@ -645,9 +651,12 @@ export class WorkingDiffStore {
       });
       const current = this.diffsByKey[key];
       if (current?.generation !== generation) return diff;
+      const retained = previous?.diff && sameFileDiff(previous.diff, diff)
+        ? previous.diff
+        : diff;
       this.diffsByKey = {
         ...this.diffsByKey,
-        [key]: { diff, loading: false, error: null, generation }
+        [key]: { diff: retained, loading: false, error: null, stale: false, generation }
       };
       this.applyReviewPayloadEvictions(
         this.reviewPayloadCache.remember({
@@ -655,10 +664,10 @@ export class WorkingDiffStore {
           key,
           cwd: identity,
           pinKey,
-          bytes: estimateFileDiffBytes(diff)
+          bytes: estimateFileDiffBytes(retained)
         })
       );
-      return diff;
+      return retained;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const current = this.diffsByKey[key];
@@ -669,6 +678,7 @@ export class WorkingDiffStore {
           diff: previous?.diff ?? null,
           loading: false,
           error: message,
+          stale: true,
           generation
         }
       };
@@ -720,7 +730,8 @@ export class WorkingDiffStore {
     ): Promise<void> => {
       const pending = group.filter((change) => {
         const key = this.diffKeyForIdentity(identity, change.path, base, head);
-        return !this.diffsByKey[key]?.diff && !this.inflightDiffs.has(key);
+        const entry = this.diffsByKey[key];
+        return (!entry?.diff || entry.stale) && !this.inflightDiffs.has(key);
       });
       if (pending.length === 0) return;
       const batchRequest = ipc.git.reviewDiffs({
@@ -763,11 +774,14 @@ export class WorkingDiffStore {
         for (const diff of diffs) {
           const key = this.diffKeyForIdentity(identity, diff.path, base, head);
           const owner = memberRequests.get(key);
-          if (!owner || this.inflightDiffs.get(key) !== owner || next[key]?.diff) continue;
+          if (!owner || this.inflightDiffs.get(key) !== owner) continue;
+          const previous = next[key]?.diff ?? null;
+          const retained = previous && sameFileDiff(previous, diff) ? previous : diff;
           next[key] = {
-            diff,
+            diff: retained,
             loading: false,
             error: null,
+            stale: false,
             generation: ++this.generationCounter
           };
           const source = group.find((change) => change.path === diff.path);
@@ -776,7 +790,7 @@ export class WorkingDiffStore {
             pinKey: source
               ? reviewEntryId(source, mode)
               : reviewEntryIdFrom(diff.path, base && head ? 'committed' : 'wt', mode),
-            diff
+            diff: retained
           });
           changed = true;
         }
@@ -1233,7 +1247,7 @@ export class WorkingDiffStore {
     const next = { ...this.diffsByKey };
     for (const key of Object.keys(next)) {
       const entry = next[key];
-      if (entry) next[key] = { ...entry, diff: null, generation: newGen };
+      if (entry) next[key] = { ...entry, diff: null, stale: false, generation: newGen };
     }
     this.diffsByKey = next;
     this.reviewPayloadCache.clear('diff');
@@ -1310,32 +1324,42 @@ export class WorkingDiffStore {
     }
   }
 
-  // Drop the cached diff bodies for a worktree without forgetting that the
-  // entries existed. Use this when the underlying files may have changed —
-  // e.g. a git change event — so the next click forces a fresh fetch and
-  // we re-prime the cache with current content.
-  private clearDiffCache(target: ReviewTarget): void {
+  // Refresh cached diff bodies without removing the versions currently on
+  // screen. Keyed Svelte blocks keep rendering those objects until the Git
+  // response proves that a particular file changed.
+  private refreshDiffCache(target: ReviewTarget): void {
     const { cwd: trimmed, identity } = this.resolveTarget(target);
     if (!trimmed) return;
     this.bumpPrefetchEpoch(identity);
     const prefix = `${identity}::`;
     const newGen = ++this.generationCounter;
     const next = { ...this.diffsByKey };
+    const changes = this.changesFor(target).result?.changes ?? [];
+    const mode = this.reviewModeFor(target);
+    const cachedEntries: ReviewEntryId[] = [];
     let touched = false;
+    for (const change of changes) {
+      const key = this.diffKeyForFile(target, change);
+      if (next[key]?.diff) cachedEntries.push(reviewEntryId(change, mode));
+    }
     for (const key of Object.keys(next)) {
       if (!key.startsWith(prefix)) continue;
       const entry = next[key];
       if (entry) {
-        next[key] = { ...entry, diff: null, error: null, generation: newGen };
+        next[key] = { ...entry, loading: false, error: null, stale: true, generation: newGen };
         touched = true;
       }
     }
     if (touched) this.diffsByKey = next;
-    this.reviewPayloadCache.forgetCwd(identity, 'diff');
     for (const key of Array.from(this.inflightDiffs.keys())) {
       if (key.startsWith(prefix)) this.inflightDiffs.delete(key);
     }
     this.dropFileLines(prefix);
+    if (cachedEntries.length > 0) {
+      // Keep showing the last successful bodies after a transient background
+      // refresh failure. A later poll or explicit load will retry stale entries.
+      void this.prefetchDiffs(target, cachedEntries).catch(() => undefined);
+    }
   }
 
   private applyReviewPayloadEvictions(evictions: ReviewPayloadEviction[]): void {
@@ -1471,8 +1495,24 @@ export class WorkingDiffStore {
       if (!result) return;
       const after = this.changesSignature(result);
       if (forceDiffRefresh || before !== after) {
-        this.clearDiffCache(target);
+        this.refreshDiffCache(target);
       }
+    });
+  }
+
+  private reconcileChanges(
+    previous: WorkingChange[],
+    next: WorkingChange[],
+    mode: ReviewMode | undefined
+  ): WorkingChange[] {
+    if (previous.length === 0 || next.length === 0) return next;
+    const reviewMode = mode ?? { kind: 'working-tree' as const };
+    const previousById = new Map(
+      previous.map((change) => [reviewEntryId(change, reviewMode), change])
+    );
+    return next.map((change) => {
+      const prior = previousById.get(reviewEntryId(change, reviewMode));
+      return prior && sameWorkingChange(prior, change) ? prior : change;
     });
   }
 
@@ -1514,6 +1554,62 @@ function sameReviewMode(a: ReviewMode, b: ReviewMode): boolean {
     if (a.commits[i]?.hash !== b.commits[i]?.hash) return false;
   }
   return true;
+}
+
+function sameWorkingChange(a: WorkingChange, b: WorkingChange): boolean {
+  if (
+    a.path !== b.path
+    || a.fromPath !== b.fromPath
+    || a.kind !== b.kind
+    || a.staged !== b.staged
+    || a.insertions !== b.insertions
+    || a.deletions !== b.deletions
+    || a.binary !== b.binary
+    || (a.section ?? 'wt') !== (b.section ?? 'wt')
+  ) {
+    return false;
+  }
+  const aCommits = a.commitsTouching ?? [];
+  const bCommits = b.commitsTouching ?? [];
+  return aCommits.length === bCommits.length
+    && aCommits.every((commit, index) => commit === bCommits[index]);
+}
+
+function sameFileDiff(a: FileDiff, b: FileDiff): boolean {
+  if (
+    a.path !== b.path
+    || a.fromPath !== b.fromPath
+    || a.kind !== b.kind
+    || a.binary !== b.binary
+    || a.empty !== b.empty
+    || a.hunks.length !== b.hunks.length
+  ) {
+    return false;
+  }
+  return a.hunks.every((hunk, hunkIndex) => {
+    const other = b.hunks[hunkIndex];
+    if (
+      !other
+      || hunk.header !== other.header
+      || hunk.oldStart !== other.oldStart
+      || hunk.oldCount !== other.oldCount
+      || hunk.newStart !== other.newStart
+      || hunk.newCount !== other.newCount
+      || hunk.lines.length !== other.lines.length
+    ) {
+      return false;
+    }
+    return hunk.lines.every((line, lineIndex) => {
+      const otherLine = other.lines[lineIndex];
+      return Boolean(
+        otherLine
+        && line.kind === otherLine.kind
+        && line.oldLine === otherLine.oldLine
+        && line.newLine === otherLine.newLine
+        && line.text === otherLine.text
+      );
+    });
+  });
 }
 
 function changesRequestKey(cwd: string, mode: ReviewMode | undefined, context: RepoContext): string {
