@@ -18,6 +18,7 @@ import {
   FeatureArtifactObservation,
   HookInstaller,
 } from "@soloe/domain";
+import type { RuntimeHistorySnapshot } from "@soloe/protocol";
 import { TerminalInputLeaseManager, type RuntimeSpawnSpec } from "@soloe/runtime";
 import { hostPlatform } from "../../../shared/platform.js";
 import { SERVER_RPC_METHODS } from "../../../shared/api-contract.js";
@@ -168,6 +169,196 @@ describe("SoloeDomain", () => {
 
       expect(setHistoryLineLimit).toHaveBeenCalledWith(25_000);
     } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reapplies replay retention before restoring history from a stale Runtime", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-stale-replay-"));
+    const boundedSnapshot = {
+      kind: "ghostty-vt-history-v1",
+      terminalId: "terminal-1",
+      sessionId: "session-1",
+      cols: 120,
+      rows: 30,
+      data: "bounded tail",
+      fromSeq: 2,
+      toSeq: 2,
+      truncated: true,
+      byteLength: 12,
+    } satisfies RuntimeHistorySnapshot;
+    const oversizedSnapshot = {
+      ...boundedSnapshot,
+      data: "x".repeat(4 * 1024 * 1024 + 1),
+      fromSeq: 1,
+      truncated: false,
+      byteLength: 4 * 1024 * 1024 + 1,
+    } satisfies RuntimeHistorySnapshot;
+    let bounded = true;
+    const historySnapshot = vi.fn(async () =>
+      bounded ? boundedSnapshot : oversizedSnapshot
+    );
+    const setHistoryLineLimit = vi.fn(async () => {
+      bounded = true;
+      return true;
+    });
+    const stop = vi.fn();
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime: {
+        start: vi.fn(),
+        listRunning: vi.fn(async () => []),
+        historySnapshot,
+        write: vi.fn(),
+        resize: vi.fn(),
+        stop,
+        setHistoryLineLimit,
+      },
+    });
+
+    try {
+      await domain.init();
+      bounded = false;
+      historySnapshot.mockClear();
+      setHistoryLineLimit.mockClear();
+
+      const restored = await domain.invoke({
+        namespace: "terminal",
+        method: "historySnapshot",
+        args: ["terminal-1"],
+      });
+
+      expect(setHistoryLineLimit).toHaveBeenCalledOnce();
+      expect(setHistoryLineLimit).toHaveBeenCalledWith(10_000);
+      expect(historySnapshot).toHaveBeenCalledOnce();
+      expect(restored).toEqual(boundedSnapshot);
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("restores bounded history when a stale Runtime rejects retention updates", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-replay-fallback-"));
+    const snapshot = {
+      kind: "ghostty-vt-history-v1",
+      terminalId: "terminal-1",
+      sessionId: "session-1",
+      cols: 120,
+      rows: 30,
+      data: "available tail",
+      fromSeq: 1,
+      toSeq: 1,
+      truncated: false,
+      byteLength: 14,
+    } satisfies RuntimeHistorySnapshot;
+    let rejectRetention = false;
+    const historySnapshot = vi.fn(async () => snapshot);
+    const setHistoryLineLimit = vi.fn(async () => {
+      if (rejectRetention) throw new Error("unsupported by stale Runtime");
+      return true;
+    });
+    const stop = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime: {
+        start: vi.fn(),
+        listRunning: vi.fn(async () => []),
+        historySnapshot,
+        write: vi.fn(),
+        resize: vi.fn(),
+        stop,
+        setHistoryLineLimit,
+      },
+    });
+
+    try {
+      await domain.init();
+      rejectRetention = true;
+
+      await expect(domain.invoke({
+        namespace: "terminal",
+        method: "historySnapshot",
+        args: ["terminal-1"],
+      })).resolves.toEqual(snapshot);
+
+      expect(historySnapshot).toHaveBeenCalledOnce();
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      await domain.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("discards an unrecoverable oversized replay without stopping the terminal", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-oversized-replay-"));
+    const oversizedSnapshot = {
+      kind: "ghostty-vt-history-v1",
+      terminalId: "terminal-1",
+      sessionId: "session-1",
+      cols: 120,
+      rows: 30,
+      data: "x".repeat(4 * 1024 * 1024 + 1),
+      fromSeq: 1,
+      toSeq: 42,
+      truncated: false,
+      byteLength: 4 * 1024 * 1024 + 1,
+      replay: {
+        cols: 100,
+        rows: 20,
+        resizes: [{ offset: 1, cols: 120, rows: 30 }],
+      },
+    } satisfies RuntimeHistorySnapshot;
+    const historySnapshot = vi.fn(async () => oversizedSnapshot);
+    const setHistoryLineLimit = vi.fn(async () => true);
+    const write = vi.fn();
+    const resize = vi.fn();
+    const stop = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const domain = new SoloeDomain({
+      dataDirectory: directory,
+      runtime: {
+        start: vi.fn(),
+        listRunning: vi.fn(async () => []),
+        historySnapshot,
+        write,
+        resize,
+        stop,
+        setHistoryLineLimit,
+      },
+    });
+
+    try {
+      await domain.init();
+      historySnapshot.mockClear();
+      setHistoryLineLimit.mockClear();
+
+      const restored = await domain.invoke({
+        namespace: "terminal",
+        method: "historySnapshot",
+        args: ["terminal-1"],
+      });
+
+      expect(JSON.stringify(restored).length).toBeLessThan(1_024);
+      expect(restored).toEqual({
+        ...oversizedSnapshot,
+        data: "",
+        fromSeq: 43,
+        truncated: true,
+        byteLength: 0,
+        replay: { cols: 120, rows: 30, resizes: [] },
+      });
+      expect(setHistoryLineLimit).toHaveBeenCalledTimes(2);
+      expect(historySnapshot).toHaveBeenCalledTimes(2);
+      expect(write).not.toHaveBeenCalled();
+      expect(resize).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
       await domain.dispose();
       await rm(directory, { recursive: true, force: true });
     }

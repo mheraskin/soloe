@@ -287,6 +287,11 @@ _Avoid_: Sync state, source of truth
   selected per-Session limit. Separate byte ceilings protect against
   pathological single-line output. The chronology contains only retained
   chunks. Replay removes snapshot overlap before it admits ordered live output.
+- Before each replay restore, Soloe reapplies the configured line limit to the
+  **Environment Runtime**. If a stale Runtime still returns an oversized tail,
+  the restore path retries once and then returns an empty,
+  sequence-qualified truncated tail without writing to, resizing, stopping, or
+  restarting the PTY.
 - A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
 - A **Terminal Presentation** is reconstructed when its runtime Terminal identity changes; Session metadata changes such as rename preserve the existing presentation
 - Transient Soloe Device unavailability preserves the selected remote Session; reconnect resumes its visible presentation from the last applied sequence through the owning Device's **Terminal Replay Tail**

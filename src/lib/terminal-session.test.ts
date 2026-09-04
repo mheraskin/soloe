@@ -40,6 +40,34 @@ describe('TerminalHistorySession', () => {
     connection.dispose();
   });
 
+  it('continues with live output after the server discards an oversized replay', async () => {
+    const history = deferred<TerminalHistorySnapshot | null>();
+    const fixture = sourceFixture(() => history.promise);
+    const states: TerminalSessionState[] = [];
+    const session = new TerminalHistorySession('terminal-1', 'session-1', fixture.source);
+    const connection = session.connect((state) => states.push(state), true);
+
+    await until(() => fixture.historySnapshot.mock.calls.length === 1);
+    fixture.output(event(43, 'live output'));
+    history.resolve(snapshot({
+      data: '',
+      fromSeq: 43,
+      toSeq: 42,
+      truncated: true,
+      byteLength: 0
+    }));
+    await until(() => states.at(-1)?.toSeq === 43);
+
+    expect(states.at(-1)).toMatchObject({
+      buffer: 'live output',
+      toSeq: 43,
+      truncated: true,
+      status: 'ready'
+    });
+    expect(fixture.historySnapshot).toHaveBeenCalledOnce();
+    connection.dispose();
+  });
+
   it('requests a fresh full history when a live sequence gap is observed', async () => {
     const snapshots = [
       snapshot({ data: 'one', toSeq: 1 }),

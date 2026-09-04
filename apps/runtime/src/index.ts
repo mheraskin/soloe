@@ -34,6 +34,11 @@ export {
   TerminalHistoryBuffer,
   type TerminalHistoryBufferOptions,
 } from "./TerminalHistoryBuffer.js";
+export {
+  restoreTerminalHistory,
+  type TerminalHistoryRecoveryOptions,
+  type TerminalHistoryRecoverySource,
+} from "./TerminalHistoryRecovery.js";
 export { sanitizeTerminalHistoryChunk } from './TerminalHistorySanitizer.js';
 export {
   TerminalInputLeaseError,

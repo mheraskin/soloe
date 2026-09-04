@@ -196,7 +196,7 @@ import {
 } from "../../../shared/terminal-agent-signals.js";
 import { NodePtyProcessFactory } from "../../../electron/terminal/NodePtyProcessFactory.js";
 import { BridgePersistence } from "../../../electron/integrations/BridgePersistence.js";
-import { ProcessTreeUsageSampler } from "@soloe/runtime";
+import { ProcessTreeUsageSampler, restoreTerminalHistory } from "@soloe/runtime";
 import { BackendUsageObservation } from "./BackendUsageObservation.js";
 import type { DeviceCommandEnvelope } from "../../../shared/types/commands.js";
 import type {
@@ -2698,12 +2698,24 @@ export class SoloeDomain extends EventEmitter {
           cwd: terminal.cwd,
         }));
       case "historySnapshot":
-        return this.options.runtime.historySnapshot(requireTerminalId(args[0]));
+        return this.terminalHistorySnapshot(requireTerminalId(args[0]));
       case "setOutputDemand":
         return true;
       default:
         throw unsupportedRpc("terminal", method);
     }
+  }
+
+  private async terminalHistorySnapshot(
+    terminalId: string,
+  ): Promise<RuntimeHistorySnapshot | null> {
+    const settings = await this.settings.get();
+    return restoreTerminalHistory({
+      terminalId,
+      lineLimit: settings.terminal.replayLineLimit,
+      source: this.options.runtime,
+      log: (message, detail) => console.warn(`[terminal] ${message}`, detail),
+    });
   }
 
   private async startTerminal(options: {

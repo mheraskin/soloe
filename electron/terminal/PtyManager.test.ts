@@ -3,6 +3,7 @@ import * as pty from 'node-pty';
 import type { Session } from '@shared/types/sessions.js';
 import type {
   SpawnSpec,
+  TerminalHistorySnapshot,
   TerminalLocationEvent,
   TerminalOutputEvent,
   TerminalStatusEvent
@@ -129,6 +130,50 @@ describe('PtyManager', () => {
       fromSeq: 1,
       toSeq: 1
     });
+  });
+
+  it('reapplies replay retention before restoring local history from a stale Runtime', async () => {
+    const boundedSnapshot = {
+      kind: 'ghostty-vt-history-v1',
+      terminalId: 't-1',
+      sessionId: 's-1',
+      cols: 120,
+      rows: 30,
+      data: 'bounded tail',
+      fromSeq: 2,
+      toSeq: 2,
+      truncated: true,
+      byteLength: 12
+    } satisfies TerminalHistorySnapshot;
+    const oversizedSnapshot = {
+      ...boundedSnapshot,
+      data: 'x'.repeat(4 * 1024 * 1024 + 1),
+      fromSeq: 1,
+      truncated: false,
+      byteLength: 4 * 1024 * 1024 + 1
+    } satisfies TerminalHistorySnapshot;
+    let bounded = false;
+    const historySnapshot = vi.fn(async () =>
+      bounded ? boundedSnapshot : oversizedSnapshot
+    );
+    const setHistoryLineLimit = vi.fn(async () => {
+      bounded = true;
+    });
+    const processFactory = {
+      spawn: vi.fn(),
+      historySnapshot,
+      setHistoryLineLimit
+    } satisfies PtyProcessFactory & {
+      historySnapshot(terminalId: string): Promise<TerminalHistorySnapshot | null>;
+    };
+    const manager = new PtyManager({ processFactory } as unknown as PtyManagerOptions);
+
+    const restored = await manager.historySnapshot('t-1');
+
+    expect(setHistoryLineLimit).toHaveBeenCalledOnce();
+    expect(setHistoryLineLimit).toHaveBeenCalledWith(10_000);
+    expect(historySnapshot).toHaveBeenCalledOnce();
+    expect(restored).toEqual(boundedSnapshot);
   });
 
   it('semantically observes final buffered output before publishing terminal exit', async () => {

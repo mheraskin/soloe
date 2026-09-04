@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import {
   DEFAULT_RUNTIME_HISTORY_LINE_LIMIT,
+  MAX_RUNTIME_HISTORY_BYTES_PER_TERMINAL,
   type RuntimeHistorySnapshot,
   type RuntimeOutputEvent
 } from '@soloe/protocol';
@@ -49,7 +50,6 @@ interface HistoryState {
   pendingControlSequence: string;
 }
 
-const DEFAULT_MAX_BYTES_PER_TERMINAL = 4 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 const GLOBAL_RETENTION_MULTIPLIER = 8;
 
@@ -84,7 +84,7 @@ export class TerminalHistoryBuffer {
     );
     this.maxBytesPerTerminal = positiveInteger(
       options.maxBytesPerTerminal,
-      DEFAULT_MAX_BYTES_PER_TERMINAL
+      MAX_RUNTIME_HISTORY_BYTES_PER_TERMINAL
     );
     this.maxTotalBytes = positiveInteger(options.maxTotalBytes, DEFAULT_MAX_TOTAL_BYTES);
     this.terminalEventsFollowLineLimit = options.maxEventsPerTerminal === undefined;

@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
+import { DEFAULT_RUNTIME_HISTORY_LINE_LIMIT } from '@soloe/protocol';
+import { restoreTerminalHistory } from '@soloe/runtime';
 import type {
   RunMode,
   Session,
@@ -110,6 +112,7 @@ export class PtyManager extends EventEmitter {
   private readonly processFactory: PtyProcessFactory;
   private readonly codexConfigReader: CodexConfigReader;
   private readonly cursorDiscovery: Pick<CursorCliDiscovery, 'detect'>;
+  private historyLineLimit = DEFAULT_RUNTIME_HISTORY_LINE_LIMIT;
   private disposed = false;
 
   constructor(private readonly opts: PtyManagerOptions) {
@@ -142,13 +145,20 @@ export class PtyManager extends EventEmitter {
   }
 
   async historySnapshot(terminalId: TerminalId): Promise<TerminalHistorySnapshot | null> {
-    const source = this.processFactory as PtyProcessFactory & {
-      historySnapshot?(terminalId: string): Promise<TerminalHistorySnapshot | null>;
-    };
-    return source.historySnapshot?.(terminalId) ?? this.historyBuffer.snapshot(terminalId);
+    return restoreTerminalHistory({
+      terminalId,
+      lineLimit: this.historyLineLimit,
+      source: {
+        historySnapshot: async (id) =>
+          this.processFactory.historySnapshot?.(id) ?? this.historyBuffer.snapshot(id),
+        setHistoryLineLimit: (lineLimit) => this.setHistoryLineLimit(lineLimit)
+      },
+      log: (message, detail) => console.warn(`[terminal] ${message}`, detail)
+    });
   }
 
   async setHistoryLineLimit(lineLimit: number): Promise<void> {
+    this.historyLineLimit = lineLimit;
     this.historyBuffer.setLineLimit(lineLimit);
     await this.processFactory.setHistoryLineLimit?.(lineLimit);
   }
