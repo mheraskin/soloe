@@ -80,7 +80,7 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Toaster } from '$lib/components/ui/sonner';
   import Sidebar from './components/Sidebar.svelte';
-  import TerminalArea from './components/TerminalArea.svelte';
+  import TerminalStage from './components/TerminalStage.svelte';
   import RightRail from './components/RightRail.svelte';
   import StickyNotes from './components/StickyNotes.svelte';
   import MobileWorkspaceNav, {
@@ -94,7 +94,6 @@
   import AppSkeleton from './components/AppSkeleton.svelte';
   import SettingsDialog from './components/SettingsDialog.svelte';
   import ConnectionMenu from './components/ConnectionMenu.svelte';
-  import DeviceTerminalStage from './components/DeviceTerminalStage.svelte';
   import { deviceSessionStatus } from './lib/device-terminal-presentation';
   import { deviceSessions } from './stores/device-sessions.svelte';
   import appIconUrl from '../build/favicon.svg';
@@ -1800,18 +1799,10 @@
             aria-hidden={mobileMode !== 'terminal'}
             inert={mobileMode !== 'terminal'}
           >
-            <div class={deviceSessions.selectedProjection ? 'hidden' : 'contents'}>
-              <TerminalArea
-                active={mobilePage === 'workspace'}
-                interactive={mobilePage === 'workspace' && mobileMode === 'terminal'}
-                onOpenNavigation={() => navigateMobile('navigation')}
-              />
-            </div>
-            <DeviceTerminalStage
-              projections={deviceSessions.sessions}
-              selected={deviceSessions.selectedProjection}
+            <TerminalStage
               active={mobilePage === 'workspace' && mobileMode === 'terminal'}
               interactive={mobilePage === 'workspace' && mobileMode === 'terminal'}
+              onOpenNavigation={() => navigateMobile('navigation')}
               onClose={() => deviceSessions.clearSelectedSession()}
             />
           </div>
@@ -1842,12 +1833,7 @@
       {/if}
       <!-- Stays mounted across fullscreen toggles so terminal session state remains resident. -->
       <div class={railFullscreen ? 'hidden' : 'contents'}>
-        <div class={deviceSessions.selectedProjection ? 'hidden' : 'contents'}>
-          <TerminalArea />
-        </div>
-        <DeviceTerminalStage
-          projections={deviceSessions.sessions}
-          selected={deviceSessions.selectedProjection}
+        <TerminalStage
           active={!railFullscreen}
           interactive={!railFullscreen}
           onClose={() => deviceSessions.clearSelectedSession()}

@@ -10,7 +10,9 @@ import {
   type SettingsModels,
   type SettingsUpdate,
   type TerminalReplayLineLimit,
-  TERMINAL_REPLAY_LINE_LIMITS
+  TERMINAL_REPLAY_LINE_LIMITS,
+  MIN_TERMINAL_RESIDENT_PRESENTATIONS,
+  MAX_TERMINAL_RESIDENT_PRESENTATIONS
 } from '@shared/types/settings.js';
 import { isAgentProvider } from '@shared/types/sessions.js';
 import { supportedRunModes, type SupportedHostPlatform } from '@shared/platform.js';
@@ -261,7 +263,10 @@ function parseSettings(
         terminal['confirmDeleteTabs'],
         DEFAULT_SETTINGS.terminal.confirmDeleteTabs
       ),
-      replayLineLimit: pickTerminalReplayLineLimit(terminal['replayLineLimit'])
+      replayLineLimit: pickTerminalReplayLineLimit(terminal['replayLineLimit']),
+      maxResidentPresentations: pickMaxResidentTerminalPresentations(
+        terminal['maxResidentPresentations']
+      )
     },
     diff: {
       fontSize: pickDiffFontSize(diff['fontSize'])
@@ -367,6 +372,18 @@ function pickTerminalReplayLineLimit(value: unknown): TerminalReplayLineLimit {
   return isTerminalReplayLineLimit(value)
     ? value
     : DEFAULT_SETTINGS.terminal.replayLineLimit;
+}
+
+function pickMaxResidentTerminalPresentations(
+  value: unknown
+): Settings['terminal']['maxResidentPresentations'] {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.terminal.maxResidentPresentations;
+  }
+  return Math.max(
+    MIN_TERMINAL_RESIDENT_PRESENTATIONS,
+    Math.min(Math.round(value), MAX_TERMINAL_RESIDENT_PRESENTATIONS)
+  );
 }
 
 function isTerminalReplayLineLimit(value: unknown): value is TerminalReplayLineLimit {
@@ -482,6 +499,11 @@ function validateSettings(s: Settings, platform: SupportedHostPlatform = 'window
   }
   if (!isTerminalReplayLineLimit(s.terminal.replayLineLimit)) {
     throw new Error('Invalid terminal.replayLineLimit');
+  }
+  if (!Number.isInteger(s.terminal.maxResidentPresentations)
+    || s.terminal.maxResidentPresentations < MIN_TERMINAL_RESIDENT_PRESENTATIONS
+    || s.terminal.maxResidentPresentations > MAX_TERMINAL_RESIDENT_PRESENTATIONS) {
+    throw new Error('Invalid terminal.maxResidentPresentations');
   }
   if (!VALID_DIFF_FONT_SIZES.has(s.diff.fontSize)) {
     throw new Error(`Invalid diff.fontSize: ${s.diff.fontSize}`);

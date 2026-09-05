@@ -704,6 +704,7 @@ export class GhosttyTerminalSurface {
   private scrollbarPointerId: number | null = null;
   private scrollbarPointerOffset = 0;
   private disposed = false;
+  private presented = true;
   private resizeNotifyTimer: number | null = null;
   private originY = CONTENT_PADDING;
   private mountHeight = 0;
@@ -1044,7 +1045,7 @@ export class GhosttyTerminalSurface {
   };
 
   fit(): boolean {
-    if (this.disposed) return false;
+    if (this.disposed || !this.presented) return false;
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
     if (width <= 0 || height <= 0) return false;
@@ -1103,7 +1104,34 @@ export class GhosttyTerminalSurface {
   }
 
   focus(): void {
+    if (!this.presented) return;
     this.input.focus({ preventScroll: true });
+  }
+
+  /**
+   * Suspends canvas work while retaining the live VT core. A resident hidden
+   * presentation keeps parsing output and repaints once when presented again.
+   */
+  setPresented(presented: boolean): void {
+    if (this.disposed || this.presented === presented) return;
+    this.presented = presented;
+    if (!presented) {
+      if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
+      this.frame = 0;
+      if (this.layoutFitFrame !== 0) window.cancelAnimationFrame(this.layoutFitFrame);
+      this.layoutFitFrame = 0;
+      if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
+      this.cursorTimer = null;
+      this.setSelectionAutoscroll(0);
+      this.cancelTouchMomentum();
+      this.input.blur();
+      this.forceFullRender = true;
+      this.scrollbarDirty = true;
+      return;
+    }
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    this.onLayoutChange();
   }
 
   /**
@@ -1922,6 +1950,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onLayoutChange = () => {
+    if (this.disposed || !this.presented) return;
     if (this.layoutFitFrame !== 0) window.cancelAnimationFrame(this.layoutFitFrame);
     // Mobile visualViewport updates publish before the browser has completed
     // the CSS layout pass. Fit on the next frame so the keyboard-sized app
@@ -2201,7 +2230,7 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
-    if (this.disposed || this.frame !== 0) return;
+    if (this.disposed || !this.presented || this.frame !== 0) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
       this.renderFrame();
@@ -2209,7 +2238,7 @@ export class GhosttyTerminalSurface {
   }
 
   private renderFrame(): void {
-    if (this.disposed) return;
+    if (this.disposed || !this.presented) return;
     if (this.frame !== 0) {
       window.cancelAnimationFrame(this.frame);
       this.frame = 0;
@@ -2271,7 +2300,7 @@ export class GhosttyTerminalSurface {
   private scheduleCursorBlink(): void {
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     this.cursorTimer = null;
-    if (!this.blinkEnabled()) return;
+    if (!this.presented || !this.blinkEnabled()) return;
     this.cursorTimer = window.setTimeout(() => {
       this.cursorTimer = null;
       this.cursorOn = !this.cursorOn;

@@ -15,7 +15,7 @@
 
   let {
     state: terminalState,
-    visible,
+    presented,
     focused,
     interactive = true,
     predictiveInput = false,
@@ -39,7 +39,7 @@
     onReady = () => undefined
   }: {
     state: TerminalSessionState;
-    visible: boolean;
+    presented: boolean;
     focused: boolean;
     interactive?: boolean;
     predictiveInput?: boolean;
@@ -73,7 +73,7 @@
 
   $effect(() => {
     const mount = host;
-    if (!mount || !visible) return;
+    if (!mount) return;
     delete mount.dataset.ghosttyReady;
     let cancelled = false;
     const initialTheme = untrack(() => theme);
@@ -104,7 +104,8 @@
         return;
       }
       surface = created;
-      if (untrack(() => focused)) created.focus();
+      created.setPresented(untrack(() => presented));
+      if (untrack(() => presented && focused)) created.focus();
     }).catch((error) => {
       console.error('[ghostty] failed to create terminal surface', error);
     });
@@ -192,7 +193,11 @@
   });
 
   $effect(() => {
-    if (visible && focused) surface?.focus();
+    surface?.setPresented(presented);
+  });
+
+  $effect(() => {
+    if (presented && focused) surface?.focus();
   });
 
   $effect(() => {

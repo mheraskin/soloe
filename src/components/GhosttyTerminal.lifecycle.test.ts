@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     resetAndReplay: ReturnType<typeof vi.fn>;
     captureViewportIntent: ReturnType<typeof vi.fn>;
     restoreViewportIntent: ReturnType<typeof vi.fn>;
+    setPresented: ReturnType<typeof vi.fn>;
   }>
 }));
 
@@ -20,7 +21,8 @@ vi.mock('../lib/ghostty/surface', () => ({
         dispose: vi.fn(),
         resetAndReplay: vi.fn(),
         captureViewportIntent: vi.fn(() => ({ kind: 'scrollback', rowsFromBottom: 12 })),
-        restoreViewportIntent: vi.fn()
+        restoreViewportIntent: vi.fn(),
+        setPresented: vi.fn()
       };
       mocks.surfaces.push(tracked);
       return {
@@ -53,7 +55,7 @@ describe('GhosttyTerminal surface lifecycle', () => {
     document.body.innerHTML = '';
   });
 
-  it('restores scrollback intent after a hidden surface is recreated', async () => {
+  it('keeps the Ghostty surface mounted while presentation is hidden', async () => {
     const target = document.createElement('div');
     document.body.append(target);
     component = mount(GhosttyTerminalHarness, { target });
@@ -63,14 +65,14 @@ describe('GhosttyTerminal surface lifecycle', () => {
 
     const harness = component as typeof component & { setVisible(visible: boolean): void };
     flushSync(() => harness.setVisible(false));
-    expect(mocks.surfaces[0]?.captureViewportIntent).toHaveBeenCalledOnce();
+    expect(mocks.surfaces).toHaveLength(1);
+    expect(mocks.surfaces[0]?.dispose).not.toHaveBeenCalled();
+    expect(mocks.surfaces[0]?.setPresented).toHaveBeenLastCalledWith(false);
 
     flushSync(() => harness.setVisible(true));
-    await vi.waitFor(() => expect(mocks.surfaces).toHaveLength(2));
-    await vi.waitFor(() => expect(mocks.surfaces[1]?.restoreViewportIntent).toHaveBeenCalledWith({
-      kind: 'scrollback',
-      rowsFromBottom: 12
-    }));
+    expect(mocks.surfaces).toHaveLength(1);
+    expect(mocks.surfaces[0]?.dispose).not.toHaveBeenCalled();
+    expect(mocks.surfaces[0]?.setPresented).toHaveBeenLastCalledWith(true);
   });
 
   it('does not carry scrollback intent across terminal identity changes', async () => {

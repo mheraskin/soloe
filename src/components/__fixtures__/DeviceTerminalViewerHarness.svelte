@@ -3,6 +3,7 @@
   import DeviceTerminalViewer from '../DeviceTerminalViewer.svelte';
 
   let projection = $state(createProjection());
+  let active = $state(true);
 
   export function refreshSameTerminal(): void {
     projection = {
@@ -14,6 +15,10 @@
 
   export function setAvailable(available: boolean): void {
     projection = { ...projection, available };
+  }
+
+  export function setActive(next: boolean): void {
+    active = next;
   }
 
   function createProjection(): MultiDeviceSessionView {
@@ -42,4 +47,4 @@
   }
 </script>
 
-<DeviceTerminalViewer {projection} onClose={() => undefined} />
+<DeviceTerminalViewer {projection} {active} onClose={() => undefined} />

@@ -6,6 +6,9 @@ export type TerminalFontSizePref = 11 | 12 | 13 | 14;
 export type DiffFontSizePref = 11 | 12 | 13 | 14 | 15 | 16;
 export const TERMINAL_REPLAY_LINE_LIMITS = [1_000, 5_000, 10_000, 25_000, 50_000] as const;
 export type TerminalReplayLineLimit = typeof TERMINAL_REPLAY_LINE_LIMITS[number];
+export const MIN_TERMINAL_RESIDENT_PRESENTATIONS = 2;
+export const MAX_TERMINAL_RESIDENT_PRESENTATIONS = 10;
+export const DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS = 3;
 
 export interface SettingsAppearance {
   theme: ThemePref;
@@ -15,6 +18,8 @@ export interface SettingsTerminal {
   fontSize: TerminalFontSizePref;
   confirmDeleteTabs: boolean;
   replayLineLimit: TerminalReplayLineLimit;
+  /** Maximum renderer-side Terminal Presentations retained with live emulator state. */
+  maxResidentPresentations: number;
 }
 
 export interface SettingsDiff {
@@ -212,7 +217,8 @@ export const DEFAULT_SETTINGS: Settings = {
   terminal: {
     fontSize: 13,
     confirmDeleteTabs: true,
-    replayLineLimit: DEFAULT_RUNTIME_HISTORY_LINE_LIMIT
+    replayLineLimit: DEFAULT_RUNTIME_HISTORY_LINE_LIMIT,
+    maxResidentPresentations: DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS
   },
   diff: { fontSize: 13 },
   browser: {

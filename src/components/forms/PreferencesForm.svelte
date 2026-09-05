@@ -39,7 +39,12 @@
     ThemePref,
     ShiftNumberNavigationTarget
   } from '@shared/types/settings.js';
-  import { TERMINAL_REPLAY_LINE_LIMITS } from '@shared/types/settings.js';
+  import {
+    DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS,
+    MAX_TERMINAL_RESIDENT_PRESENTATIONS,
+    MIN_TERMINAL_RESIDENT_PRESENTATIONS,
+    TERMINAL_REPLAY_LINE_LIMITS
+  } from '@shared/types/settings.js';
   import {
     CLI_DEFAULT_MODEL_ID,
     runtimeProviderForModelCatalog
@@ -316,6 +321,18 @@
     if (!replayLineLimit) return;
     try {
       await settings.update({ terminal: { replayLineLimit } });
+    } catch (e) { reportError(e); }
+  }
+
+  async function setMaxResidentTerminalPresentations(value: number) {
+    const maxResidentPresentations = Number.isFinite(value)
+      ? Math.max(
+          MIN_TERMINAL_RESIDENT_PRESENTATIONS,
+          Math.min(Math.round(value), MAX_TERMINAL_RESIDENT_PRESENTATIONS)
+        )
+      : DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS;
+    try {
+      await settings.update({ terminal: { maxResidentPresentations } });
     } catch (e) { reportError(e); }
   }
 
@@ -1159,6 +1176,27 @@
           checked={settings.current.terminal.confirmDeleteTabs}
           onCheckedChange={setConfirmDeleteTabs}
         />
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <Label class="text-xs text-muted-foreground" for="pref-terminal-resident-presentations">
+          Terminals kept ready
+        </Label>
+        <Input
+          id="pref-terminal-resident-presentations"
+          type="number"
+          min={MIN_TERMINAL_RESIDENT_PRESENTATIONS}
+          max={MAX_TERMINAL_RESIDENT_PRESENTATIONS}
+          step="1"
+          value={settings.current.terminal.maxResidentPresentations}
+          onchange={(event) =>
+            setMaxResidentTerminalPresentations(
+              Number((event.currentTarget as HTMLInputElement).value)
+            )}
+        />
+        <p class="m-0 text-[11px] text-muted-foreground">
+          The most recent terminals stay connected and switch instantly. Older terminals restore
+          from replay when selected.
+        </p>
       </div>
       <div class="flex flex-col gap-1.5">
         <Label class="text-xs text-muted-foreground">Replay history</Label>

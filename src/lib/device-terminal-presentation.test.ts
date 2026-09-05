@@ -2,32 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
 import appSource from '../App.svelte?raw';
 import {
-  DeviceTerminalResidency,
   deviceSessionStatus,
   deviceSessionSurface,
   deviceTerminalPresentationKey
 } from './device-terminal-presentation';
 
 describe('device terminal presentation identity', () => {
-  it('keeps recently selected remote terminal presentations resident across switches', () => {
-    const residency = new DeviceTerminalResidency(4);
-    const first = projection('terminal-1', 'First');
-    const second = {
-      ...projection('terminal-2', 'Second'),
-      ref: { deviceId: 'device-xps', sessionId: 'session-2' },
-      key: 'device-xps/session-2',
-      session: { ...projection('terminal-2', 'Second').session, id: 'session-2' },
-      runtime: { ...projection('terminal-2', 'Second').runtime!, sessionId: 'session-2' }
-    };
-
-    expect(residency.reconcile([first, second], first).map(deviceTerminalPresentationKey))
-      .toEqual([deviceTerminalPresentationKey(first)]);
-    expect(residency.reconcile([first, second], second).map(deviceTerminalPresentationKey))
-      .toEqual([deviceTerminalPresentationKey(second), deviceTerminalPresentationKey(first)]);
-    expect(residency.reconcile([first, second], first).map(deviceTerminalPresentationKey))
-      .toEqual([deviceTerminalPresentationKey(first), deviceTerminalPresentationKey(second)]);
-  });
-
   it('reconstructs a remote presentation when its runtime terminal changes', () => {
     const first = projection('terminal-1', 'Original name');
     const restarted = projection('terminal-2', 'Original name');
@@ -41,10 +21,11 @@ describe('device terminal presentation identity', () => {
     );
   });
 
-  it('mounts resident remote terminal stages instead of selected-only keyed surfaces', () => {
-    expect(appSource.match(/<DeviceTerminalStage/gu)).toHaveLength(2);
+  it('mounts one global terminal residency stage in each responsive branch', () => {
+    expect(appSource.match(/<TerminalStage/gu)).toHaveLength(2);
     expect(appSource).not.toContain('#key deviceTerminalPresentationKey(deviceSessions.selectedProjection)');
     expect(appSource).not.toContain('#key deviceSessions.selectedProjection.key');
+    expect(appSource).not.toContain('<DeviceTerminalStage');
     expect(appSource).not.toContain('<DeviceSessionArea');
     expect(appSource).not.toContain('<DeviceTerminalViewer');
   });

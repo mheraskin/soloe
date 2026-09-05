@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { MultiDeviceSessionView } from '@shared/types/multi-device-sessions.js';
+  import type { TerminalPresentationKey } from '../lib/terminal-residency';
   import {
-    DeviceTerminalResidency,
     deviceSessionSurface,
     deviceTerminalPresentationKey
   } from '../lib/device-terminal-presentation';
@@ -10,36 +10,29 @@
   let {
     projections,
     selected,
+    residentPresentationKeys,
     active = true,
     interactive = active,
     onClose
   }: {
     projections: readonly MultiDeviceSessionView[];
     selected: MultiDeviceSessionView | null;
+    residentPresentationKeys: readonly TerminalPresentationKey[];
     active?: boolean;
     interactive?: boolean;
     onClose: () => void;
   } = $props();
 
-  const residency = new DeviceTerminalResidency(4);
-  let residents = $state<MultiDeviceSessionView[]>([]);
+  let residents = $derived(
+    projections.filter((projection) => (
+      deviceSessionSurface(projection) === 'terminal'
+      && residentPresentationKeys.includes(deviceTerminalPresentationKey(projection))
+    ))
+  );
   let selectedKey = $derived(selected ? deviceTerminalPresentationKey(selected) : null);
   let selectedIsLive = $derived(Boolean(
     selected && deviceSessionSurface(selected) === 'terminal'
   ));
-
-  $effect(() => {
-    const next = residency.reconcile(projections, selected);
-    const nextKeys = next.map(deviceTerminalPresentationKey);
-    const currentKeys = residents.map(deviceTerminalPresentationKey);
-    if (
-      nextKeys.length !== currentKeys.length
-      || nextKeys.some((key, index) => currentKeys[index] !== key)
-      || next.some((projection, index) => residents[index] !== projection)
-    ) {
-      residents = next;
-    }
-  });
 </script>
 
 <section

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
   import { Copy, Loader2, MessageSquarePlus, Send, X } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -39,12 +38,12 @@
   let {
     terminalId,
     sessionId,
-    visible,
+    presented,
     focused
   }: {
     terminalId: TerminalId;
     sessionId: SessionId;
-    visible: boolean;
+    presented: boolean;
     focused: boolean;
   } = $props();
 
@@ -81,7 +80,7 @@
 
   let inputLease = $derived(terminalControl.lease(terminalId));
   let ownsInput = $derived(terminalControl.owns(terminalId));
-  let readOnly = $derived(Boolean(visible && inputLease && !ownsInput));
+  let readOnly = $derived(Boolean(presented && inputLease && !ownsInput));
   let terminalFont = $derived({
     family: terminalFontFamily,
     size: settings.current.terminal.fontSize
@@ -89,7 +88,7 @@
   let terminalTheme = $derived(terminalThemeFor(appearanceTheme.resolved));
   let ready = $derived(surfaceReady && terminalState.status.kind === 'ready');
   let loadingLabel = $derived(
-    transitioningControl || (!inputLease && focused && visible)
+    transitioningControl || (!inputLease && focused && presented)
       ? 'Taking control and preparing terminal…'
       : sessions.runtime[sessionId]?.status === 'starting'
         ? 'Starting'
@@ -110,7 +109,7 @@
       (next) => {
         terminalState = next;
       },
-      untrack(() => visible)
+      true
     );
     connection = attached;
     return () => {
@@ -120,13 +119,7 @@
   });
 
   $effect(() => {
-    const nextVisible = visible;
-    if (!nextVisible) surfaceReady = false;
-    untrack(() => connection?.setVisible(nextVisible));
-  });
-
-  $effect(() => {
-    if (!focused || !visible) return;
+    if (!focused || !presented) return;
     void terminalControl.select(terminalId);
   });
 
@@ -135,7 +128,7 @@
       lastAuthoritativeSize = null;
       return;
     }
-    if (visible && surfaceReady) void prepareInteractiveTerminal(true);
+    if (presented && surfaceReady) void prepareInteractiveTerminal(true);
   });
 
   $effect(() => {
@@ -146,7 +139,7 @@
     if (
       redrawFromSeq === null
       || redrawFromSeq === lastRedrawnFromSeq
-      || !visible
+      || !presented
       || !surfaceReady
       || !ownsInput
     ) return;
@@ -154,7 +147,7 @@
   });
 
   $effect(() => {
-    if (!focused || !visible || !ownsInput || !surfaceReady) return;
+    if (!focused || !presented || !ownsInput || !surfaceReady) return;
     requestAnimationFrame(() => terminal?.focus());
   });
 
@@ -209,7 +202,7 @@
   }
 
   async function prepareInteractiveTerminal(force = false): Promise<void> {
-    if (!ownsInput || !visible || !terminal) return;
+    if (!ownsInput || !presented || !terminal) return;
     terminal.fit();
     const dimensions = terminal.getDimensions();
     if (!dimensions) return;
@@ -494,9 +487,9 @@
             <GhosttyTerminal
               bind:this={terminal}
               state={terminalState}
-              {visible}
+              {presented}
               {focused}
-              interactive={ownsInput}
+              interactive={presented && ownsInput}
               theme={terminalTheme}
               font={terminalFont}
               onData={sendTerminalInput}

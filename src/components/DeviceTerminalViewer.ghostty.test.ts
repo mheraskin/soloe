@@ -49,6 +49,7 @@ vi.mock('../lib/ghostty/surface', () => ({
         fit: vi.fn(() => true),
         setTheme: vi.fn(),
         setFont: vi.fn(async () => undefined),
+        setPresented: vi.fn(),
         pasteFromClipboard: vi.fn(async () => undefined)
       };
     })
@@ -171,6 +172,25 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     expect(mocks.surfaceDisposes).toBe(0);
     expect(mocks.outputSubscriptions).toBe(1);
     expect(mocks.historyRequests).toBe(1);
+  });
+
+  it('reveals an inactive resident terminal without replaying history', async () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.historyRequests).toBe(1));
+
+    const harness = component as typeof component & { setActive(active: boolean): void };
+    flushSync(() => harness.setActive(false));
+    flushSync(() => harness.setActive(true));
+    await Promise.resolve();
+    flushSync();
+
+    expect(mocks.surfaceCreates).toBe(1);
+    expect(mocks.surfaceDisposes).toBe(0);
+    expect(mocks.historyRequests).toBe(1);
+    expect(mocks.outputSubscriptions).toBe(1);
   });
 
   it('reclaims input control when the renderer reconnects to a selected terminal', async () => {

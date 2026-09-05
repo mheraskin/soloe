@@ -121,7 +121,7 @@ clients and the Tray Host remain on Windows.
 _Avoid_: Session run mode, terminal shell, WSL connector
 
 **Terminal Output Demand**:
-Ref-counted intent from a visible Terminal Presentation to publish one PTY's live output across the main-to-renderer boundary.
+Ref-counted intent from a resident Terminal Presentation to publish one PTY's live output across the main-to-renderer boundary.
 _Avoid_: Terminal listener, running terminal
 
 **Terminal Control Lease**:
@@ -268,7 +268,7 @@ _Avoid_: Sync state, source of truth
 - Shared Project metadata persists only a selected relative icon path; **Project Icon Demand** owns bounded traversal and asset payloads without Project-list persistence or broadcast
 - **Notes Draft Durability** keys Worktree-owned state by **Worktree Identity**, keeps the latest in-memory text immediate, coalesces durable writes by immutable note address, flushes on shutdown, and cancels pending writes before discard
 - **Saved Note Recovery** remains restart-safe until the authoritative note write succeeds; navigation never replaces a dirty saved-note buffer after a failed flush
-- A running Session may outlive its **Terminal Presentation**; visible Sessions and a small recent set own the resident presentations
+- A running Session may outlive its **Terminal Presentation**; selected Sessions and a configurable recent set own the resident presentations across local and remote Devices
 - **Session Order** is shared presentation metadata, independent from Runtime
   Placement; reordering a merged local/remote list preserves global slots and
   propagates the same order to every represented Device
@@ -302,10 +302,12 @@ _Avoid_: Sync state, source of truth
   sequence-qualified live tail instead of copying full history on every output
   batch. A presentation that falls behind that tail requests a fresh
   **Terminal Replay Tail**.
-- A hidden resident **Terminal Presentation** is dormant; reveal resumes from its last applied sequence through the **Terminal Replay Tail**
+- The three most recently selected **Terminal Presentations** stay resident by default; the Terminal setting selects a global renderer limit from two through ten
+- A hidden resident **Terminal Presentation** keeps applying live output to its emulator while canvas paint, input, focus, and authoritative resize are suspended; reveal repaints current state without replay
+- Evicting a **Terminal Presentation** releases its emulator and **Terminal Output Demand** without stopping the PTY; selecting it again restores through the **Terminal Replay Tail**
 - A **Terminal Presentation** is reconstructed when its runtime Terminal identity changes; Session metadata changes such as rename preserve the existing presentation
 - Transient Soloe Device unavailability preserves the selected remote Session; reconnect resumes its visible presentation from the last applied sequence through the owning Device's **Terminal Replay Tail**
-- The first visible **Terminal Presentation** acquires **Terminal Output Demand** for its PTY; the final hidden owner releases cross-process publication without stopping replay retention or agent observation
+- The first resident **Terminal Presentation** acquires **Terminal Output Demand** for its PTY; the final resident owner releases cross-process publication without stopping replay retention or agent observation
 - Terminal input and PTY resize require the exact Session ID, owner Device ID, Controller Device ID, and Lease ID of the current **Terminal Control Lease**; generations may order observations but never establish ownership, a **Spectator** may explicitly take over, and neither lease loss nor takeover stops the PTY
 - Each output batch receives one **Terminal Semantic Observation** before replay publication; usage-limit state outranks approval redraws and hidden presentations remain observable
 - One **Review Surface** owns one text-selection action; resident file bodies contribute exact review-entry identity without adding global listeners

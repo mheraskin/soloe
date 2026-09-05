@@ -1,13 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { X } from '@lucide/svelte';
+  import type { SessionId } from '@shared/types/sessions.js';
   import { sessions } from '../stores/sessions.svelte';
   import EmptyState from './EmptyState.svelte';
   import SessionToolbar from './SessionToolbar.svelte';
   import UsageLimitOverlay from './UsageLimitOverlay.svelte';
   import { displaySessionKind } from '../lib/session-agent';
   import { LazyModule } from '../lib/lazy-module.svelte';
-  import { TerminalResidency } from '../lib/terminal-residency';
 
   type TerminalPaneComponent = typeof import('./TerminalPane.svelte').default;
 
@@ -16,15 +16,19 @@
   const terminalPaneModule = new LazyModule<TerminalPaneComponent>(() =>
     import('./TerminalPane.svelte').then((module) => module.default)
   );
-  const terminalResidency = new TerminalResidency(4);
-
   interface Props {
+    residentSessionIds: readonly SessionId[];
     onOpenNavigation?: () => void;
     active?: boolean;
     interactive?: boolean;
   }
 
-  let { onOpenNavigation, active = true, interactive = active }: Props = $props();
+  let {
+    residentSessionIds,
+    onOpenNavigation,
+    active = true,
+    interactive = active
+  }: Props = $props();
   let selected = $derived(sessions.selected);
   let split = $derived(sessions.activeSplit);
   let containerEl: HTMLDivElement | undefined = $state();
@@ -65,31 +69,10 @@
       ? { ...selectedRuntime, terminalId: selectedRuntime.terminalId }
       : null
   );
-  let visibleSessionIds = $derived.by<string[]>(() => {
-    if (split) {
-      const companion = split.focusedId === split.leftId ? split.rightId : split.leftId;
-      return [split.focusedId, companion];
-    }
-    return selectedPane ? [selectedPane.sessionId] : [];
-  });
-  let residentSessionIds = $state<string[]>([]);
   let residentPanes = $derived(
     runningPanes.filter((pane) => residentSessionIds.includes(pane.sessionId))
   );
   let showEmpty = $derived(!selected || !selectedPane);
-
-  $effect(() => {
-    const next = terminalResidency.reconcile({
-      liveSessionIds: runningPanes.map((pane) => pane.sessionId),
-      visibleSessionIds
-    });
-    if (
-      next.length !== residentSessionIds.length
-      || next.some((id, index) => residentSessionIds[index] !== id)
-    ) {
-      residentSessionIds = next;
-    }
-  });
 
   $effect(() => {
     if (!selected) return;
@@ -143,17 +126,17 @@
         : pane.sessionId === selected?.id
           ? 'full'
           : 'hidden'}
-      {@const visible = active && role !== 'hidden'}
+      {@const presented = active && role !== 'hidden'}
       {@const focused = interactive && (split ? pane.sessionId === split.focusedId : role === 'full')}
       {@const ratio = split?.ratio ?? 0.5}
       <!--
-        LRU-resident hidden panes retain only their transport state. The shared
-        Ghostty surface releases its canvas and WASM core until `visible` is true;
-        translating the pane keeps the surrounding split layout deterministic.
+        Resident panes retain their live Ghostty state. Hidden panes stay
+        off-screen so their last measurable layout remains stable while paint
+        and interaction are suspended.
       -->
       <div
         class={`terminal-surface group absolute inset-y-0 ${
-          visible ? 'z-10' : 'z-0 pointer-events-none'
+          presented ? 'z-10' : 'z-0 pointer-events-none'
         } ${role === 'left' || role === 'right' ? '' : 'inset-x-0'} ${
           split && focused ? 'rounded-sm ring-1 ring-ring/70 ring-inset' : ''
         }`}
@@ -176,7 +159,7 @@
           <TerminalPane
             terminalId={pane.terminalId}
             sessionId={pane.sessionId}
-            {visible}
+            {presented}
             {focused}
           />
         {:else if terminalPaneModule.error}
@@ -193,7 +176,7 @@
             Loading terminal…
           </div>
         {/if}
-        {#if split && visible}
+        {#if split && presented}
           <button
             type="button"
             class="absolute top-2.5 right-3 z-20 flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition hover:bg-accent hover:text-accent-foreground focus-visible:opacity-100 group-hover:opacity-100"

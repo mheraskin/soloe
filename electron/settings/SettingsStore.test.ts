@@ -47,6 +47,11 @@ describe('SettingsStore — defaults', () => {
     expect(settings.terminal.replayLineLimit).toBe(10_000);
   });
 
+  it('keeps three Terminal Presentations ready by default', async () => {
+    const settings = await new SettingsStore(path.join(tmpDir, 'residency-default.json')).get();
+    expect(settings.terminal.maxResidentPresentations).toBe(3);
+  });
+
   it('follows the system color scheme by default', async () => {
     const settings = await new SettingsStore(path.join(tmpDir, 'theme-default.json')).get();
     expect(settings.appearance.theme).toBe('system');
@@ -205,6 +210,22 @@ describe('SettingsStore — update', () => {
     expect(updated.terminal.fontSize).toBe(DEFAULT_SETTINGS.terminal.fontSize);
   });
 
+  it('persists and validates Terminal Presentation residency updates', async () => {
+    const store = new SettingsStore(storePath);
+    const updated = await store.update({ terminal: { maxResidentPresentations: 5 } });
+
+    expect(updated.terminal.maxResidentPresentations).toBe(5);
+    await expect(new SettingsStore(storePath).get()).resolves.toMatchObject({
+      terminal: { maxResidentPresentations: 5 }
+    });
+    await expect(
+      store.update({ terminal: { maxResidentPresentations: 1 } })
+    ).rejects.toThrow(/Invalid terminal\.maxResidentPresentations/);
+    await expect(
+      store.update({ terminal: { maxResidentPresentations: 11 } })
+    ).rejects.toThrow(/Invalid terminal\.maxResidentPresentations/);
+  });
+
   it('merges and validates browser residency updates', async () => {
     const store = new SettingsStore(storePath);
     const updated = await store.update({ browser: { maxResidentTabs: 2 } });
@@ -318,6 +339,7 @@ describe('SettingsStore — migration', () => {
     expect(s.terminal.fontSize).toBe(13);
     expect(s.terminal.confirmDeleteTabs).toBe(true);
     expect(s.terminal.replayLineLimit).toBe(10_000);
+    expect(s.terminal.maxResidentPresentations).toBe(3);
     expect(s.defaults.newSessionKind).toBe('terminal');
     expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
     expect(s.backend).toEqual(DEFAULT_SETTINGS.backend);

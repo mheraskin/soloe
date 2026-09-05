@@ -13,7 +13,7 @@ describe('Ghostty terminal presentation', () => {
   });
 
   it('renders read-only terminals through the same Ghostty grid', () => {
-    expect(source).toContain('interactive={ownsInput}');
+    expect(source).toContain('interactive={presented && ownsInput}');
     expect(deviceViewerSource).toContain(
       'interactive={active && interactive && acceptsInput && pageVisible}'
     );
@@ -23,7 +23,15 @@ describe('Ghostty terminal presentation', () => {
   it('does not renew or release durable Session Control with pane visibility', () => {
     expect(source).not.toContain('setInterval');
     expect(source).not.toContain('terminalControl.release(terminalId)');
-    expect(source).toContain('connection?.setVisible(nextVisible)');
+    expect(source).not.toContain('connection?.setVisible');
+    expect(source).toContain("ipc.terminal.attachSession(");
+    expect(source).toMatch(/ipc\.terminal\.attachSession\([\s\S]*?true\s*\)/);
+  });
+
+  it('keeps resident Ghostty state while pausing hidden canvas paint', () => {
+    expect(surfaceSource).toContain('surface?.setPresented(presented)');
+    expect(ghosttySurfaceSource).toContain('setPresented(presented: boolean)');
+    expect(source).toContain('interactive={presented && ownsInput}');
   });
 
   it('applies bounded reset and append operations without copying full history', () => {

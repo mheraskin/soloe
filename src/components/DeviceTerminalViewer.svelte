@@ -128,7 +128,7 @@
   });
 
   $effect(() => {
-    connection?.setVisible(active && !offline);
+    connection?.setVisible(!offline);
   });
 
   $effect(() => {
@@ -333,7 +333,7 @@
       <GhosttyTerminal
         bind:this={terminal}
         state={terminalState}
-        visible={true}
+        presented={active}
         focused={active && pageVisible}
         interactive={active && interactive && acceptsInput && pageVisible}
         {predictiveInput}

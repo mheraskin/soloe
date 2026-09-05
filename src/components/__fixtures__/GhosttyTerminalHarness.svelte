@@ -42,7 +42,7 @@
 
 <GhosttyTerminal
   state={terminalState}
-  {visible}
+  presented={visible}
   focused={false}
   theme={{} as GhosttyTheme}
   font={{}}
