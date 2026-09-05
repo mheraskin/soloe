@@ -1,4 +1,5 @@
 import type { TerminalId } from '@shared/types/terminal.js';
+import { DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS } from '@shared/types/settings.js';
 
 export type TerminalPresentationKey = string;
 
@@ -24,7 +25,10 @@ export class TerminalResidency {
     const live = new Set(intent.livePresentationKeys);
     const presented = unique(intent.presentedKeys).filter((key) => live.has(key));
     const presentedSet = new Set(presented);
-    const limit = positiveInteger(intent.maxResidents, 3);
+    const limit = positiveInteger(
+      intent.maxResidents,
+      DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS
+    );
     this.recent = [
       ...presented,
       ...this.recent.filter((key) => live.has(key) && !presentedSet.has(key))

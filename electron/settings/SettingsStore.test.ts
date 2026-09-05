@@ -47,9 +47,9 @@ describe('SettingsStore — defaults', () => {
     expect(settings.terminal.replayLineLimit).toBe(10_000);
   });
 
-  it('keeps three Terminal Presentations ready by default', async () => {
+  it('keeps five Terminal Presentations ready by default', async () => {
     const settings = await new SettingsStore(path.join(tmpDir, 'residency-default.json')).get();
-    expect(settings.terminal.maxResidentPresentations).toBe(3);
+    expect(settings.terminal.maxResidentPresentations).toBe(5);
   });
 
   it('follows the system color scheme by default', async () => {
@@ -212,11 +212,11 @@ describe('SettingsStore — update', () => {
 
   it('persists and validates Terminal Presentation residency updates', async () => {
     const store = new SettingsStore(storePath);
-    const updated = await store.update({ terminal: { maxResidentPresentations: 5 } });
+    const updated = await store.update({ terminal: { maxResidentPresentations: 6 } });
 
-    expect(updated.terminal.maxResidentPresentations).toBe(5);
+    expect(updated.terminal.maxResidentPresentations).toBe(6);
     await expect(new SettingsStore(storePath).get()).resolves.toMatchObject({
-      terminal: { maxResidentPresentations: 5 }
+      terminal: { maxResidentPresentations: 6 }
     });
     await expect(
       store.update({ terminal: { maxResidentPresentations: 1 } })
@@ -339,7 +339,7 @@ describe('SettingsStore — migration', () => {
     expect(s.terminal.fontSize).toBe(13);
     expect(s.terminal.confirmDeleteTabs).toBe(true);
     expect(s.terminal.replayLineLimit).toBe(10_000);
-    expect(s.terminal.maxResidentPresentations).toBe(3);
+    expect(s.terminal.maxResidentPresentations).toBe(5);
     expect(s.defaults.newSessionKind).toBe('terminal');
     expect(s.browser.maxResidentTabs).toBe(DEFAULT_SETTINGS.browser.maxResidentTabs);
     expect(s.backend).toEqual(DEFAULT_SETTINGS.backend);

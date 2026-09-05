@@ -302,7 +302,7 @@ _Avoid_: Sync state, source of truth
   sequence-qualified live tail instead of copying full history on every output
   batch. A presentation that falls behind that tail requests a fresh
   **Terminal Replay Tail**.
-- The three most recently selected **Terminal Presentations** stay resident by default; the Terminal setting selects a global renderer limit from two through ten
+- The five most recently touched **Terminal Presentations** stay resident by default; touching a resident presentation moves it to the newest position, and exceeding the Terminal setting's global limit evicts the least recently touched presentation
 - A hidden resident **Terminal Presentation** keeps applying live output to its emulator while canvas paint, input, focus, and authoritative resize are suspended; reveal repaints current state without replay
 - Evicting a **Terminal Presentation** releases its emulator and **Terminal Output Demand** without stopping the PTY; selecting it again restores through the **Terminal Replay Tail**
 - A **Terminal Presentation** is reconstructed when its runtime Terminal identity changes; Session metadata changes such as rename preserve the existing presentation

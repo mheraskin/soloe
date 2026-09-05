@@ -8,7 +8,7 @@ export const TERMINAL_REPLAY_LINE_LIMITS = [1_000, 5_000, 10_000, 25_000, 50_000
 export type TerminalReplayLineLimit = typeof TERMINAL_REPLAY_LINE_LIMITS[number];
 export const MIN_TERMINAL_RESIDENT_PRESENTATIONS = 2;
 export const MAX_TERMINAL_RESIDENT_PRESENTATIONS = 10;
-export const DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS = 3;
+export const DEFAULT_TERMINAL_RESIDENT_PRESENTATIONS = 5;
 
 export interface SettingsAppearance {
   theme: ThemePref;

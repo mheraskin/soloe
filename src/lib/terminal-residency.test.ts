@@ -19,6 +19,26 @@ describe('TerminalResidency', () => {
       .toEqual(['d', 'c', 'b']);
   });
 
+  it('moves a touched terminal to the newest end before evicting the least recent one', () => {
+    const residency = new TerminalResidency();
+    const livePresentationKeys = ['a', 'b', 'c', 'd', 'e', 'f'];
+
+    for (const presented of ['a', 'b', 'c', 'd', 'e']) {
+      residency.reconcile({ livePresentationKeys, presentedKeys: [presented], maxResidents: 5 });
+    }
+
+    expect(residency.reconcile({
+      livePresentationKeys,
+      presentedKeys: ['b'],
+      maxResidents: 5
+    })).toEqual(['b', 'e', 'd', 'c', 'a']);
+    expect(residency.reconcile({
+      livePresentationKeys,
+      presentedKeys: ['f'],
+      maxResidents: 5
+    })).toEqual(['f', 'b', 'e', 'd', 'c']);
+  });
+
   it('retains both Sessions in a split at the supported minimum', () => {
     const residency = new TerminalResidency();
 
