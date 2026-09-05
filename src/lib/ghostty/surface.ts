@@ -660,6 +660,8 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
+  /** Returns true when the host claims a native paste event. */
+  readonly onPaste?: (event: ClipboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   /**
    * A right-click the running application did not claim through mouse
@@ -1547,6 +1549,12 @@ export class GhosttyTerminalSurface {
     // would receive (for example an html-only clipboard converted to text)
     // leaks through onInput without bracketed-paste encoding.
     event.preventDefault();
+    if (this.options.onPaste?.(event)) {
+      // The host claimed non-text clipboard data. Cancel the shortcut's
+      // permission-gated text read so the same gesture cannot land twice.
+      this.pasteShortcutToken += 1;
+      return;
+    }
     const data = event.clipboardData?.getData("text/plain") ?? "";
     if (data.length === 0) return;
     // The native paste won the race with actual text; a pending clipboard read

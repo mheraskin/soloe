@@ -12,8 +12,7 @@
   import { appearanceTheme } from '../stores/appearance-theme.svelte';
   import { deviceSessions } from '../stores/device-sessions.svelte';
   import { settings } from '../stores/settings.svelte';
-  import { readClipboardImages } from '../lib/clipboard-images';
-  import { isClipboardPasteShortcut } from '../lib/terminal-input';
+  import { clipboardImagePayloads, clipboardImageSources } from '../lib/clipboard-images';
   import { terminalPresentationRedrawSizes } from '../lib/terminal-control';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import GhosttyTerminal from './GhosttyTerminal.svelte';
@@ -35,7 +34,6 @@
     focus(): void;
     fit(): boolean;
     getDimensions(): { cols: number; rows: number } | null;
-    pasteFromClipboard(readText: () => Promise<string>, isCurrent?: () => boolean): Promise<void>;
   }
 
   let terminal = $state.raw<GhosttyTerminalHandle | null>(null);
@@ -276,29 +274,19 @@
     if (active && interactive && ownsInput) void prepareInteractive(true);
   }
 
-  function beforeKey(event: KeyboardEvent): boolean {
-    if (!isClipboardPasteShortcut(event)) return true;
-    event.preventDefault();
-    void pasteFromClipboard().catch((cause) => {
-      error = cause instanceof Error ? cause.message : String(cause);
-    });
-    return false;
-  }
-
-  async function pasteFromClipboard(): Promise<void> {
+  function pasteImages(event: ClipboardEvent): boolean {
     const ref = terminalRef;
-    if (!ref || !terminal || !active || !interactive || !acceptsInput) return;
-    if (!offline && projection.session && effectiveAgentProvider(projection.session)) {
-      const images = await readClipboardImages().catch(() => []);
-      if (images.length > 0) {
-        await deviceSessions.pasteImagesIntoTerminal(ref, projection.ref.sessionId, images);
-        return;
-      }
-    }
-    await terminal.pasteFromClipboard(
-      () => navigator.clipboard.readText().catch(() => ''),
-      () => ownsInput
-    );
+    const session = projection.session;
+    if (!ref || offline || !session || !effectiveAgentProvider(session)) return false;
+    const sources = clipboardImageSources(event.clipboardData);
+    if (sources.length === 0) return false;
+    const sessionId = projection.ref.sessionId;
+    void clipboardImagePayloads(sources)
+      .then((images) => deviceSessions.pasteImagesIntoTerminal(ref, sessionId, images))
+      .catch((cause) => {
+        error = cause instanceof Error ? cause.message : String(cause);
+      });
+    return true;
   }
 
   function activateLink(text: string): void {
@@ -353,7 +341,7 @@
         {font}
         onData={sendData}
         onResize={(cols, rows) => void resize(cols, rows)}
-        {beforeKey}
+        onPaste={pasteImages}
         onLinkActivate={activateLink}
         onResync={() => void connection?.resync()}
         onReady={surfaceDidLoad}

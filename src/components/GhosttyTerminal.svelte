@@ -24,6 +24,7 @@
     onData,
     onResize,
     beforeKey = () => true,
+    onPaste = () => false,
     onSelectionChange = () => undefined,
     onLinkActivate = () => undefined,
     onContextMenu = () => undefined,
@@ -47,6 +48,7 @@
     onData: (data: string) => void;
     onResize: (cols: number, rows: number) => void;
     beforeKey?: (event: KeyboardEvent) => boolean;
+    onPaste?: (event: ClipboardEvent) => boolean;
     onSelectionChange?: () => void;
     onLinkActivate?: (text: string, event: MouseEvent) => void;
     onContextMenu?: (event: MouseEvent) => void;
@@ -92,6 +94,7 @@
       onResize: (cols, rows) => onResize(cols, rows),
       onSelectionChange: () => onSelectionChange(),
       beforeKey: (event) => interactive && beforeKey(event),
+      onPaste: (event) => interactive && onPaste(event),
       onLinkActivate: (text, event) => onLinkActivate(text, event),
       onContextMenu: (event) => onContextMenu(event),
       onClipboardWrite: (text) => onClipboardWrite(text)

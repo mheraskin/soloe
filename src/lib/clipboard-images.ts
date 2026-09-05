@@ -1,21 +1,36 @@
 import type { ClipboardImagePayload } from '@shared/types/files.js';
 
-export async function readClipboardImages(
-  clipboard: Pick<Clipboard, 'read'> | undefined = navigator.clipboard
-): Promise<ClipboardImagePayload[]> {
-  if (!clipboard?.read) return [];
-  const items = await clipboard.read();
-  const images: ClipboardImagePayload[] = [];
-  for (const item of items) {
-    const imageType = item.types.find((type) => type.startsWith('image/'));
-    if (!imageType) continue;
-    const blob = await item.getType(imageType);
-    images.push({
-      mimeType: imageType,
-      dataBase64: await blobToBase64(blob)
-    });
+export interface ClipboardImageSource {
+  readonly mimeType: string;
+  readonly blob: Blob;
+}
+
+export function clipboardImageSources(
+  data: Pick<DataTransfer, 'items' | 'files'> | null
+): ClipboardImageSource[] {
+  if (!data) return [];
+  const itemImages: ClipboardImageSource[] = [];
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+    const blob = item.getAsFile();
+    if (blob) itemImages.push({ mimeType: item.type, blob });
   }
-  return images;
+  if (itemImages.length > 0) return itemImages;
+
+  return Array.from(data.files)
+    .filter((file) => file.type.startsWith('image/'))
+    .map((blob) => ({ mimeType: blob.type, blob }));
+}
+
+export async function clipboardImagePayloads(
+  sources: readonly ClipboardImageSource[]
+): Promise<ClipboardImagePayload[]> {
+  return Promise.all(
+    sources.map(async ({ mimeType, blob }) => ({
+      mimeType,
+      dataBase64: await blobToBase64(blob)
+    }))
+  );
 }
 
 function blobToBase64(blob: Blob): Promise<string> {

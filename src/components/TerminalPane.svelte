@@ -28,11 +28,10 @@
   import { toggleRailTabAndFocus } from '../lib/rail-focus';
   import {
     ctrlSlashSequence,
-    isClipboardPasteShortcut,
     SHIFT_ENTER_SEQUENCE,
     shouldSendShiftEnterSequence
   } from '../lib/terminal-input';
-  import { readClipboardImages } from '../lib/clipboard-images';
+  import { clipboardImagePayloads, clipboardImageSources } from '../lib/clipboard-images';
   import { openDeviceBrowserUrl } from '../lib/browser-device-navigation';
   import { resolvePathLinkTarget } from '../lib/ghostty/links';
   import { terminalPresentationRedrawSizes } from '../lib/terminal-control';
@@ -59,7 +58,6 @@
     find(query: string, direction?: 'next' | 'previous'): boolean;
     getSelectionEndClientRect(): { right: number; bottom: number } | null;
     clearSelection(): void;
-    pasteFromClipboard(readText: () => Promise<string>, isCurrent?: () => boolean): Promise<void>;
   }
 
   let terminal = $state.raw<GhosttyTerminalHandle | null>(null);
@@ -284,11 +282,6 @@
     for (const binding of Object.values(Keymap)) {
       if (binding.match(event)) return false;
     }
-    if (isClipboardPasteShortcut(event)) {
-      event.preventDefault();
-      void pasteFromClipboard().catch(reportError);
-      return false;
-    }
     if (shouldSendShiftEnterSequence(event)) {
       event.preventDefault();
       sendTerminalInput(SHIFT_ENTER_SEQUENCE);
@@ -297,25 +290,25 @@
     return true;
   }
 
-  async function pasteFromClipboard(): Promise<void> {
-    if (!ownsInput || !terminal) return;
+  function pasteImages(event: ClipboardEvent): boolean {
+    const lease = inputLease;
+    if (!ownsInput || !lease) return false;
     const session = sessions.sessions.find((item) => item.id === sessionId);
-    if (session && effectiveAgentProvider(session)) {
-      const images = await readClipboardImages().catch(() => []);
-      if (images.length > 0) {
-        await ipc.files.pasteImagesIntoTerminal({
+    if (!session || !effectiveAgentProvider(session)) return false;
+    const sources = clipboardImageSources(event.clipboardData);
+    if (sources.length === 0) return false;
+    const control = terminalControlProof(lease);
+    void clipboardImagePayloads(sources)
+      .then((images) =>
+        ipc.files.pasteImagesIntoTerminal({
           terminalId,
           sessionId,
           images,
-          control: terminalControlProof(inputLease!)
-        });
-        return;
-      }
-    }
-    await terminal.pasteFromClipboard(
-      () => navigator.clipboard.readText().catch(() => ''),
-      () => ownsInput
-    );
+          control
+        })
+      )
+      .catch(reportError);
+    return true;
   }
 
   function handleSelectionChange(): void {
@@ -509,6 +502,7 @@
               onData={sendTerminalInput}
               onResize={(cols, rows) => void sendAuthoritativeResize(cols, rows)}
               beforeKey={beforeTerminalKey}
+              onPaste={pasteImages}
               onSelectionChange={handleSelectionChange}
               onLinkActivate={activateLink}
               onContextMenu={() => (menuHasSelection = terminal?.hasSelection() ?? false)}

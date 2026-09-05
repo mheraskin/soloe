@@ -22,10 +22,12 @@ const mocks = vi.hoisted(() => ({
     onData(data: string, priority: 'text' | 'immediate' | 'protocol'): void;
     onInputBoundary?(): void;
     onLinkActivate?(text: string, event: MouseEvent): void;
+    onPaste?(event: ClipboardEvent): boolean;
   },
   terminalInput: vi.fn(async () => undefined),
   terminalResize: vi.fn(async () => undefined),
   claimTerminalInputControl: vi.fn(async () => false),
+  pasteImagesIntoTerminal: vi.fn(async () => undefined),
   openDeviceBrowserUrl: vi.fn(async () => undefined)
 }));
 
@@ -91,7 +93,7 @@ vi.mock('../stores/device-sessions.svelte', () => ({
     }),
     terminalResize: mocks.terminalResize,
     terminalInput: mocks.terminalInput,
-    pasteImagesIntoTerminal: vi.fn(async () => undefined),
+    pasteImagesIntoTerminal: mocks.pasteImagesIntoTerminal,
     updateSession: vi.fn(async () => undefined),
     previewCommand: vi.fn(async () => ({ description: '' }))
   }
@@ -129,6 +131,7 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
     mocks.terminalInput.mockClear();
     mocks.terminalResize.mockClear();
     mocks.claimTerminalInputControl.mockClear();
+    mocks.pasteImagesIntoTerminal.mockClear();
     mocks.openDeviceBrowserUrl.mockClear();
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: false,
@@ -241,6 +244,45 @@ describe('DeviceTerminalViewer Ghostty lifecycle', () => {
       { deviceId: 'device-xps', terminalId: 'terminal-1' },
       'a'
     );
+  });
+
+  it('pastes a native clipboard image without Async Clipboard permission', async () => {
+    mocks.ownsInput = true;
+    const clipboardRead = vi.fn().mockRejectedValue(new DOMException('denied', 'NotAllowedError'));
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { read: clipboardRead }
+    });
+    const target = document.createElement('div');
+    document.body.append(target);
+    component = mount(DeviceTerminalViewerHarness, { target });
+    flushSync();
+    await vi.waitFor(() => expect(mocks.surfaceOptions).not.toBeNull());
+    const image = new File([new Uint8Array([1, 2, 3])], 'screenshot.png', {
+      type: 'image/png'
+    });
+    const event = {
+      clipboardData: {
+        items: [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => image
+          }
+        ],
+        files: []
+      }
+    } as unknown as ClipboardEvent;
+
+    expect(mocks.surfaceOptions?.onPaste?.(event)).toBe(true);
+    await vi.waitFor(() => {
+      expect(mocks.pasteImagesIntoTerminal).toHaveBeenCalledWith(
+        { deviceId: 'device-xps', terminalId: 'terminal-1' },
+        'session-1',
+        [{ mimeType: 'image/png', dataBase64: 'AQID' }]
+      );
+    });
+    expect(clipboardRead).not.toHaveBeenCalled();
   });
 
   it('keeps a cached offline terminal writable and queues input for reconnect', async () => {
