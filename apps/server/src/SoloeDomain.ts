@@ -139,6 +139,7 @@ import {
   VaultStoreError,
   WslHostDetector,
   BrowserRouteProxy,
+  BrowserRouteStore,
   TailscalePortForwardManager,
   SystemClipboardImageWriter,
   type ClipboardImageWriter,
@@ -345,6 +346,7 @@ export class SoloeDomain extends EventEmitter {
   private readonly browserSessions: BrowserSessionStore;
   private readonly tailscalePorts: Pick<TailscalePortForwardManager, "ensure">;
   private readonly browserRoutes: Pick<BrowserRouteProxy, "ensure" | "dispose">;
+  private readonly browserRouteStore: BrowserRouteStore;
   private readonly files: FileService;
   private readonly diagnostics: DiagnosticsService;
   private readonly git: GitService;
@@ -472,6 +474,9 @@ export class SoloeDomain extends EventEmitter {
     );
     this.tailscalePorts = options.tailscalePorts ?? new TailscalePortForwardManager();
     this.browserRoutes = options.browserRoutes ?? new BrowserRouteProxy();
+    this.browserRouteStore = new BrowserRouteStore(
+      path.join(options.dataDirectory, "browser-routes.json"),
+    );
     this.git = new GitService({
       getGitBinary: async () => (await this.settings.get()).binaries.git,
     });
@@ -668,10 +673,12 @@ export class SoloeDomain extends EventEmitter {
       this.sessions.init(),
       this.settings.init(),
       this.projects.init(),
+      this.browserRouteStore.init(),
       this.workspaceDevice?.init(),
       this.workspaceOperations?.init(),
       this.workspaceService?.init(),
     ]);
+    await this.restoreBrowserRoutes();
     await this.adoptLegacyWorkspaceState();
     const initialSettings = await this.settings.get();
     this.sessionHookTrace.setEnabled(initialSettings.debug.sessionEvents);
@@ -697,6 +704,26 @@ export class SoloeDomain extends EventEmitter {
     }
     if (this.options.enableAgentBridge) {
       await this.startAgentBridge();
+    }
+  }
+
+  private async restoreBrowserRoutes(): Promise<void> {
+    if (!this.options.deviceId) return;
+    for (const request of await this.browserRouteStore.list()) {
+      try {
+        const route = await this.browserRoutes.ensure(request);
+        const status = await this.tailscalePorts.ensure(request.targetPort, route.port);
+        if (status.state !== "ready") {
+          console.warn(
+            `[browser-routes] could not restore port ${request.targetPort}: ${status.message}`,
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `[browser-routes] could not restore port ${request.targetPort}`,
+          error,
+        );
+      }
     }
   }
 
@@ -1070,6 +1097,12 @@ export class SoloeDomain extends EventEmitter {
         const status = route
           ? await this.tailscalePorts.ensure(request.port, route.port)
           : await this.tailscalePorts.ensure(request.port);
+        if (route && status.state === "ready") {
+          await this.browserRouteStore.remember({
+            targetPort: route.targetPort,
+            virtualHostname: route.virtualHostname,
+          });
+        }
         return {
           deviceId: this.options.deviceId,
           ...status,

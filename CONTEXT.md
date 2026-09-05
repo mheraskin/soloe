@@ -177,6 +177,12 @@ _Avoid_: DevTools webview, floating debugger panel
 The bounded, exact-Worktree persistence record for browser tabs, navigation history, and emulation intent, separate from live webview residency.
 _Avoid_: Browser cache, whole browser store
 
+**Browser Route Intent**:
+A Device-owned, restart-safe record that one exact local development port was
+opened through a Device browser URL. It recreates the Application Server's
+loopback proxy and Tailscale forwarding without discovering or guessing ports.
+_Avoid_: Open browser tab, detected development server
+
 **Resource Usage Observation**:
 One demand-qualified snapshot of cheap application process totals and optional VM-wide WSL detail.
 _Avoid_: Resource poll, diagnostics tick
@@ -310,6 +316,7 @@ _Avoid_: Sync state, source of truth
 - Switching the file addressed by **Files Payload Residency** cannot replace an unsaved buffer without an explicit discard decision
 - A **Browser DevTools View** observes layout on demand; unchanged geometry performs no frame work or cross-process publication
 - **Browser Session State** is host-owned in bounded `browser-sessions.json` storage and persists only changed Worktree scopes after a short coalescing window; renderer localStorage is a migration and fallback mirror, never the authoritative record
+- A successful virtual-host browser navigation records one **Browser Route Intent** on the target Device; every Application Server start restores its proxy and exact Tailscale port before accepting browser navigation
 - A summary **Resource Usage Observation** never launches a WSL process; demanded WSL detail is serialized and briefly shared across observers
 - A Feature Snapshot is materialized from exactly one **Feature Artifact Index** revision
 - One active **Feature Artifact Observation** exists per subscribed **Worktree Identity**, regardless of renderer count

@@ -364,6 +364,73 @@ describe("SoloeDomain", () => {
     }
   });
 
+  it("restores an exposed browser route when the Application Server restarts", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-browser-routes-"));
+    const deviceId = "11111111-1111-4111-8111-111111111111";
+    const ensure = vi.fn(async (port: number) => ({
+      state: "ready" as const,
+      message: null,
+      setupUrl: null,
+      dnsName: "xps.tailnet.ts.net",
+      ipAddress: "100.64.0.1",
+      port,
+      forwarded: true,
+    }));
+    const ensureBrowserRoute = vi.fn(async (request: {
+      targetPort: number;
+      virtualHostname: string;
+    }) => ({
+      port: 43127,
+      targetPort: request.targetPort,
+      virtualHostname: request.virtualHostname,
+    }));
+    const createDomain = () => new SoloeDomain({
+      dataDirectory: directory,
+      deviceId,
+      runtime: {
+        start: vi.fn(),
+        listRunning: vi.fn(async () => []),
+        historySnapshot: vi.fn(),
+        write: vi.fn(),
+        resize: vi.fn(),
+        stop: vi.fn(),
+      },
+      tailscalePorts: { ensure },
+      browserRoutes: { ensure: ensureBrowserRoute, dispose: vi.fn() },
+    });
+    const first = createDomain();
+    let firstDisposed = false;
+    let restarted: SoloeDomain | null = null;
+
+    try {
+      await first.init();
+      await first.invoke({
+        namespace: "network",
+        method: "ensureTailscalePort",
+        args: [{ port: 8971, virtualHostname: "ember-oak.xps" }],
+      });
+      await first.dispose();
+      firstDisposed = true;
+      ensure.mockClear();
+      ensureBrowserRoute.mockClear();
+
+      restarted = createDomain();
+      await restarted.init();
+
+      expect(ensureBrowserRoute).toHaveBeenCalledOnce();
+      expect(ensureBrowserRoute).toHaveBeenCalledWith({
+        targetPort: 8971,
+        virtualHostname: "ember-oak.xps",
+      });
+      expect(ensure).toHaveBeenCalledOnce();
+      expect(ensure).toHaveBeenCalledWith(8971, 43127);
+    } finally {
+      if (!firstDisposed) await first.dispose();
+      await restarted?.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("exposes a Device localhost port through the network RPC", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "soloe-domain-network-"));
     const ensure = vi.fn(async (port: number) => ({
